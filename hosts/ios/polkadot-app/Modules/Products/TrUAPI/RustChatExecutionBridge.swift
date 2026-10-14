@@ -64,8 +64,10 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
 
         let roomFooter: Chat.RoomFooter =
             switch footer {
-            case .textInput: .textInput
+            case .input: .textInput
             case .empty: .empty
+            case .custom:
+                throw HostRejection.Rejected(reason: "this host does not draw a custom chat footer")
             }
         try await chatMessaging.setRoomFooter(roomId: roomId, footer: roomFooter)
     }

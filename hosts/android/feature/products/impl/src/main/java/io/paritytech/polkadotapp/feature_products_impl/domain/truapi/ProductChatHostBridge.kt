@@ -44,8 +44,9 @@ class ProductChatHostBridge(
     override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
         val showsTextInput = when (footer) {
-            ChatRoomFooter.TEXT_INPUT -> true
-            ChatRoomFooter.EMPTY -> false
+            is ChatRoomFooter.Input -> true
+            ChatRoomFooter.Empty -> false
+            ChatRoomFooter.Custom -> throw HostRejection.Rejected("this host does not draw a custom chat footer")
         }
         chatMessaging.setRoomFooter(ProductChatIdParameter(roomId), showsTextInput).orReject()
     }

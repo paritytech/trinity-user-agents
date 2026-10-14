@@ -317,7 +317,7 @@ pub trait Chat: Send + Sync {
 }
 ```
 
-Three legs gain a `V2`. The host upgrades each `V1` caller and answers it in its own version:
+Three legs gain a `V2` shape. The host upgrades each `V1` caller and answers it in its own version:
 
 | Leg                     | `V2` shape                                    | A `V1` caller                                                                                     |
 | ----------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -326,9 +326,10 @@ Three legs gain a `V2`. The host upgrades each `V1` caller and answers it in its
 | `action_subscribe` item | `{ room_id, peer, event: ChatEvent }`         | receives `MessagePosted`, `ActionTriggered` and `Command` only                                    |
 
 A `V1` subscriber receives a posted `Text` or `Custom` body as it is, any other body as `Text` with the body's text, and
-nothing for a body without text. Every new method has a single `V1` shape. The responses of methods `7` to `15` carry no
-payload, so each envelope is the bare `V1` variant. `register_bot`, `list_subscribe` and `post_message` keep their
-shapes.
+nothing for a body without text. The response and error of `create_room` and of `set_room_footer`, and the request and
+error of `action_subscribe`, gain a `V2` with the `V1` shape, so a caller's version reaches every leg of its call. Every
+new method has a single `V1` shape. The responses of methods `7` to `15` carry no payload, so each envelope is the bare
+`V1` variant. `register_bot`, `list_subscribe` and `post_message` keep their shapes.
 
 ### Types
 
@@ -440,7 +441,7 @@ pub enum ChatRoomOrder {
 /// The badge of a room in the chat list.
 pub enum ChatRoomBadge {
     /// No badge.
-    None,
+    Hidden,
     /// A number; `0` shows no badge.
     UnreadCount {
         /// The number shown.
@@ -1285,11 +1286,15 @@ pub struct HostChatActionSubscribeItem {
   or `ReactionRemoved` body applies as a reaction of `"product"`, and URL media, which `ChatMediaItem` cannot carry,
   is left out of the converted body.
 - In a product-source room the host persists no message. It applies `update_feed` to the pages of an open room screen
-  and to the chat-list preview, and refuses `post_message`.
+  and to the chat-list preview. The core refuses `post_message` with `Unknown`.
 - In a product-source room the host sends every user action to `user_action`. It draws a sent message as `Preparing`
   at once and replaces it with the `MessageCreated` answer. On `Rejected` it removes the message and shows the reason,
   and on time-out it marks the message `Failed`. It reverts any other action that fails and shows the reason.
-- `Seen` is reported only when `report_seen` is `true`, at most once per newest message on screen.
+- `Seen` is reported only when `report_seen` is `true`, at most once per newest message on screen. On `action_subscribe`
+  a room's `Seen` events reach the product at most once per second: the core holds the newest one and sends it when the
+  second ends.
+- The core answers a query whose flag the configuration does not set with `NotAvailable`, and a `user_action` in a
+  host-store room with `Unknown`, without starting the worker.
 - `Retry` is offered on a `Failed` message in a product-source room. A `Failed` message in a host-store room offers
   delete only.
 - A message whose first word is `/` and a declared command name is sent as `Command`, with the rest of the text as its
@@ -1378,24 +1383,30 @@ The core enforces these bounds before a host sees a value:
 
 | Value                                                                                           | Bound                                                    |
 | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `room_id`, `message_id`, `participant_id`, `action_id`, `suggestion_id`, `message_type`, command `name` | Identifier: normalized, screened, 256 bytes         |
-| `name`, `label`, `nickname`, `alt`, `file_name`, `mime_type`, `argument_hint`, input hint, preview text, suggestion and activity text | Display text: screened, 256 bytes |
-| `description` of a room or a command                                                            | Screened, 1 KiB                                          |
+| `room_id`, `message_id`, `participant_id`, `action_id`, `suggestion_id`, `message_type`, `product_id`, command `name` | Identifier: normalized, screened, 256 bytes |
+| `name`, `label`, `nickname`, `alt`, `file_name`, `mime_type`, `argument_hint`, media `placeholder`, emoji, input hint, preview text, suggestion and activity text | Display text: screened, 256 bytes |
+| `description` of a room or a command                                                            | Screened with line breaks kept, 1 KiB                    |
 | Message text, `preview_text`, room placeholder                                                  | 16 KiB                                                   |
 | `Custom` payload                                                                                | 256 KiB                                                  |
 | Inline avatar, icon or badge image                                                              | 64 KiB, raster image                                     |
 | Inline media item                                                                               | 1 MiB                                                    |
+| Preimage key                                                                                    | Exactly 32 bytes                                         |
 | Media per message, buttons per `Actions` body                                                   | 32                                                       |
-| Reaction summaries per message                                                                  | 64                                                       |
+| Reaction summaries per message, emoji in `allowed_reactions`                                    | 64                                                       |
 | Menu entries, toolbar buttons, quick replies, commands                                          | 16, 6, 8, 32                                             |
 | `page_size` the host asks                                                                       | 1 to 100 messages, 1 to 200 participants                 |
 | `ByIds`                                                                                         | 100 ids                                                  |
 | Cursor, deeplink                                                                                | 1 KiB; a deeplink also passes `system.navigate_to`       |
 | `update_feed`                                                                                   | 20 per second per room; the screen coalesces `Edited`    |
-| `set_room_preview`, `set_room_activity`                                                         | 5 per second per room                                    |
+| `set_room_preview` and `set_room_activity` together                                             | 5 per second per room                                    |
 
-A text or payload over its bound fails with `MessageTooLarge`, a rate over its bound with `RateLimited`, and any other
-bound with `Unknown` naming the field.
+No other request has a rate bound. The ids of the entries of a menu, of the toolbar buttons, of the quick replies and
+of the commands are unique in their list, and so are the emoji of `allowed_reactions` and of a message's reactions. The
+answers of a query pass the same bounds: a page of messages holds at most the `page_size` asked, and a page or list of
+participants at most 200.
+
+In `update_feed` and `post_message`, a message text or `Custom` payload over its bound fails with `MessageTooLarge`. A
+rate over its bound fails with `RateLimited`, and any other bound fails with `Unknown` naming the field.
 
 How long the host waits for a query:
 

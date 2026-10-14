@@ -115,9 +115,32 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ProductExecutionKind.chat`. Hosts without it pass nothing and
-Chat calls answer unsupported.
+A host serving the Chat modality implements `ChatHostBridge` and passes it
+when it opens the product's `.worker` execution. Hosts without it pass nothing
+and Chat calls answer unsupported.
+
+The bridge carries the requests of Chat Extension v2
+([RFC](../../docs/rfcs/chat-extension-v2.md)). `createRoom`, `registerBot`,
+`postMessage`, `setRoomFooter` and `listRooms` have no default. The other
+requests have defaults for a host that does not serve them yet:
+`roomConfig` answers `ChatRoomConfig.hostDefault`, `setRoomConfig` accepts only
+that configuration, `setRoomMetadata` keeps the name and icon of `createRoom`,
+and every other request answers a rejection. Each room the product creates
+carries a configuration and metadata, so these three defaults keep room
+creation working.
+
+| Request | What the host does |
+| --- | --- |
+| `roomConfig` | Answers the configuration last declared for the room. The core reads it before each feed update, posted message and query |
+| `setRoomConfig` | Replaces the configuration whole and keeps it across restarts; a change of `productSource` discards the stored messages or cached pages |
+| `setRoomMetadata`, `setRoomPreview` | Replace the name, avatar and description, and how the room shows in the chat list |
+| `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
+| `updateFeed` | Applies one change to the messages; `persist` is `true` for a room the host stores. Throw `NativeChatFeedRejection` to refuse it |
+| `setRoomFooter` | Shows the input with its `ChatInputConfig`, nothing, or a footer the product draws through `render` |
+| `setRoomToolbar`, `setRoomSuggestions`, `setRoomCommands`, `setRoomActivity` | Replace the toolbar buttons, the quick replies, the slash commands, and the activity line |
+
+The core checks that the product created the room before it calls any of
+these, and bounds and screens every field.
 
 ```swift
 // Called from a shared dispatch pool, so the backing store must be
@@ -154,6 +177,20 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
     }
 
     func listRooms() throws -> [ChatRoom] { store.rooms() }
+
+    func roomConfig(roomId: String) throws -> ChatRoomConfig {
+        store.config(roomId) ?? .hostDefault
+    }
+
+    func setRoomConfig(roomId: String, config: ChatRoomConfig) throws {
+        store.setConfig(roomId, config: config)
+    }
+
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws {
+        guard store.apply(update, to: roomId, persist: persist) else {
+            throw NativeChatFeedRejection.UnknownMessage
+        }
+    }
 }
 
 let runtime = try TrUAPIHostRuntime(
@@ -171,7 +208,7 @@ try runtime.activateLocalSession(secret: secret)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .chat),
+    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .worker),
     chat: MyChatBridge(store: store)
 )
 let endpoint = try execution.startWsBridge()
@@ -182,6 +219,36 @@ names, icons, message bodies, URLs, and the action and media counts. Ids and
 names are also normalized; a message body is bounded and screened but passed
 through byte-for-byte, and `ChatFile.sizeBytes` is product-asserted and
 unverified. Contextual output escaping is the host's job.
+
+The host asks a room that declares a handler in its configuration through six
+queries on the execution. Each one waits for one answer, and stops the query in
+the product after its timeout or when the task is cancelled:
+
+```swift
+let page = try await execution.chatMessagesQuery(
+    ProductChatMessagesQueryRequest(roomId: roomId, anchor: .before(cursor: nil), pageSize: 40)
+)
+```
+
+| Query | Default timeout (`ChatQueryTimeout`) |
+| --- | --- |
+| `chatMessagesQuery` | 10 s (`messages`) |
+| `chatUserAction` | 30 s for a sent message (`sentMessage`), 10 s for other actions (`userAction`) |
+| `chatReactionsQuery`, `chatParticipantsQuery`, `chatMessageActionsQuery`, `chatParticipantActionsQuery` | 5 s (`lookup`) |
+
+Each query also takes `timeout:`. A query with no answer throws
+`ChatQueryError`: `.refused(.notAvailable)` asks the host to apply its default,
+`.actionRefused` reverts a user action, and `.failed`, `.noAnswer` and
+`.timedOut` show the failure state of that query. The core answers
+`.notAvailable` itself for a room that does not declare the handler, without
+starting the worker.
+
+`publishChatEvent(roomId:peer:event:)` delivers what the user did in a room
+the host stores, and the room events of both kinds of room (`roomOpened`,
+`suggestionSelected` and the others), with peer `"native"` for the user of the
+host. The product receives at most one `seen` event for each room each second,
+and a product at the first protocol version receives only the events that its
+version carries.
 
 The id `postMessage` returns is the correlation key `ActionTrigger.messageId`
 carries back, so it must name that message for as long as the host stores it.
@@ -233,8 +300,9 @@ A card's face does not cross this bridge. The host keeps each card's newest
 face itself: that is what the card shows while the worker is down, and at cold
 start before the worker answers.
 
-On the execution: `publishChatAction` delivers a user's action back to the
-product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
+On the execution: `publishChatEvent` and `publishChatAction` deliver a user's
+action back to the product, buffering up to 64 before it subscribes;
+`notifyChatRoomsChanged`
 republishes the room list; `render` returns a stream of `RendererNode` trees
 for one render context; `publishRendererAction` delivers a renderer action
 back to the product; and `sessionChatIdentityKey` reads the session's X25519

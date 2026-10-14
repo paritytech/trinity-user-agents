@@ -43,7 +43,10 @@ struct RustChatExecutionBridgeTests {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
         try await bridge.setRoomFooter(roomId: "r", footer: .empty)
-        try await bridge.setRoomFooter(roomId: "r", footer: .textInput)
+        try await bridge.setRoomFooter(
+            roomId: "r",
+            footer: .input(ChatInputConfig(placeholder: nil, photo: true, video: true, file: false, payment: nil))
+        )
 
         #expect(api.roomFooters.map(\.footer) == [.empty, .textInput])
         #expect(api.roomFooters.map(\.roomId) == ["r", "r"])

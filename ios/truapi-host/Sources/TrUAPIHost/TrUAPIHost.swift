@@ -249,11 +249,122 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String
 
     /// Set what a product's native Chat room shows below its messages, and
-    /// keep it until the product sets another.
+    /// keep it until the product sets another. A room without a footer shows
+    /// the input with photo and video on.
     func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
 
     /// Return the current product-scoped native Chat rooms.
     func listRooms() async throws -> [ChatRoom]
+
+    /// Return the configuration the product last declared for a room, or
+    /// ``ChatRoomConfig/hostDefault`` when it declared none. The core reads it
+    /// before each feed update, posted message and query of the room.
+    func roomConfig(roomId: String) async throws -> ChatRoomConfig
+
+    /// Replace the configuration of a room whole, and keep it across
+    /// restarts. A change of `productSource` discards the stored messages or
+    /// the cached pages of the room.
+    func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws
+
+    /// Replace the name, avatar and description of a room.
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws
+
+    /// Replace how a room shows in the chat list.
+    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws
+
+    /// Delete a room with its messages, cache and declarations, and close its
+    /// screen. A room that does not exist is not an error.
+    func deleteRoom(roomId: String) async throws
+
+    /// Apply one change to the messages of a room. With `persist` the host
+    /// stores the change. Without it the host applies the change only to an
+    /// open room screen and to the chat list preview.
+    ///
+    /// Throw ``NativeChatFeedRejection`` to refuse the change. The product
+    /// receives each case as its own error, and any other error as
+    /// ``NativeChatFeedRejection/Rejected(reason:)``.
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws
+
+    /// Replace the toolbar buttons of a room.
+    func setRoomToolbar(roomId: String, actions: [ChatToolbarAction]) async throws
+
+    /// Replace the quick replies of a room.
+    func setRoomSuggestions(roomId: String, suggestions: [ChatSuggestion]) async throws
+
+    /// Replace the slash commands of a room.
+    func setRoomCommands(roomId: String, commands: [ChatCommandSpec]) async throws
+
+    /// Show the activity line of a room, or remove it with `nil`.
+    func setRoomActivity(roomId: String, activity: ChatActivity?) async throws
+}
+
+/// Defaults for a host that does not serve the Chat Extension v2 requests yet.
+/// The product receives a rejection for each request, except for the
+/// declarations that a new room always carries: the host keeps the name and
+/// icon of `createRoom`, and the configuration that the host serves anyway.
+public extension ChatHostBridge {
+    func roomConfig(roomId _: String) async throws -> ChatRoomConfig {
+        .hostDefault
+    }
+
+    func setRoomConfig(roomId _: String, config: ChatRoomConfig) async throws {
+        guard config == .hostDefault else { throw unservedChatRequest("setRoomConfig") }
+    }
+
+    func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
+
+    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws {
+        throw unservedChatRequest("setRoomPreview")
+    }
+
+    func deleteRoom(roomId _: String) async throws {
+        throw unservedChatRequest("deleteRoom")
+    }
+
+    func updateFeed(roomId _: String, update _: ChatFeedUpdate, persist _: Bool) async throws {
+        throw NativeChatFeedRejection.Rejected(reason: unservedChatRequestReason("updateFeed"))
+    }
+
+    func setRoomToolbar(roomId _: String, actions _: [ChatToolbarAction]) async throws {
+        throw unservedChatRequest("setRoomToolbar")
+    }
+
+    func setRoomSuggestions(roomId _: String, suggestions _: [ChatSuggestion]) async throws {
+        throw unservedChatRequest("setRoomSuggestions")
+    }
+
+    func setRoomCommands(roomId _: String, commands _: [ChatCommandSpec]) async throws {
+        throw unservedChatRequest("setRoomCommands")
+    }
+
+    func setRoomActivity(roomId _: String, activity _: ChatActivity?) async throws {
+        throw unservedChatRequest("setRoomActivity")
+    }
+}
+
+public extension ChatRoomConfig {
+    /// The configuration of a room that declares nothing: the host stores the
+    /// messages and serves every part of the room itself.
+    static var hostDefault: ChatRoomConfig {
+        ChatRoomConfig(
+            productSource: false,
+            reactionDetails: false,
+            participants: false,
+            messageActions: false,
+            participantActions: false,
+            allowedReactions: nil,
+            placeholder: nil,
+            reportSeen: false
+        )
+    }
+}
+
+private func unservedChatRequestReason(_ request: String) -> String {
+    "this host does not serve chat \(request)"
+}
+
+private func unservedChatRequest(_ request: String) -> HostRejection {
+    HostRejection.Rejected(reason: unservedChatRequestReason(request))
 }
 
 /// Native Pocket collection surface. Implement and pass to
@@ -441,6 +552,66 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
 
     func listRooms() async throws -> [ChatRoom] {
         try await withHostRejection { try await bridge.listRooms() }
+    }
+
+    func roomConfig(roomId: String) async throws -> ChatRoomConfig {
+        try await withHostRejection { try await bridge.roomConfig(roomId: roomId) }
+    }
+
+    func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomConfig(roomId: roomId, config: config)
+        }
+    }
+
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomMetadata(roomId: roomId, metadata: metadata)
+        }
+    }
+
+    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomPreview(roomId: roomId, preview: preview)
+        }
+    }
+
+    func deleteRoom(roomId: String) async throws {
+        try await withHostRejection { try await bridge.deleteRoom(roomId: roomId) }
+    }
+
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
+        do {
+            try await bridge.updateFeed(roomId: roomId, update: update, persist: persist)
+        } catch let rejection as NativeChatFeedRejection {
+            throw rejection
+        } catch {
+            throw NativeChatFeedRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+
+    func setRoomToolbar(roomId: String, actions: [ChatToolbarAction]) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomToolbar(roomId: roomId, actions: actions)
+        }
+    }
+
+    func setRoomSuggestions(roomId: String, suggestions: [ChatSuggestion]) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomSuggestions(roomId: roomId, suggestions: suggestions)
+        }
+    }
+
+    func setRoomCommands(roomId: String, commands: [ChatCommandSpec]) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomCommands(roomId: roomId, commands: commands)
+        }
+    }
+
+    func setRoomActivity(roomId: String, activity: ChatActivity?) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomActivity(roomId: roomId, activity: activity)
+        }
     }
 }
 
@@ -1070,6 +1241,31 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func stopWsBridge()
     func close()
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
+    func publishChatEvent(roomId: String, peer: String, event: ChatEvent) throws
+    func chatMessagesQuery(
+        _ request: ProductChatMessagesQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatMessagesQueryItem
+    func chatUserAction(
+        _ request: ProductChatUserActionRequest,
+        timeout: Duration
+    ) async throws -> ProductChatUserActionItem
+    func chatReactionsQuery(
+        _ request: ProductChatReactionsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatReactionsQueryItem
+    func chatParticipantsQuery(
+        _ request: ProductChatParticipantsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatParticipantsQueryItem
+    func chatMessageActionsQuery(
+        _ request: ProductChatMessageActionsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatMessageActionsQueryItem
+    func chatParticipantActionsQuery(
+        _ request: ProductChatParticipantActionsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatParticipantActionsQueryItem
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
@@ -1089,6 +1285,89 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func notifyChatRoomsChanged(rooms: [ChatRoom])
     func sessionChatIdentityKey() throws -> Data?
     func notifyPocketCardsChanged(cards: [PocketCard])
+}
+
+/// The chat queries with the timeouts of ``ChatQueryTimeout``.
+public extension TrUAPIProductExecutionProtocol {
+    func chatMessagesQuery(
+        _ request: ProductChatMessagesQueryRequest
+    ) async throws -> ProductChatMessagesQueryItem {
+        try await chatMessagesQuery(request, timeout: ChatQueryTimeout.messages)
+    }
+
+    func chatUserAction(
+        _ request: ProductChatUserActionRequest
+    ) async throws -> ProductChatUserActionItem {
+        try await chatUserAction(request, timeout: ChatQueryTimeout.timeout(for: request.action))
+    }
+
+    func chatReactionsQuery(
+        _ request: ProductChatReactionsQueryRequest
+    ) async throws -> ProductChatReactionsQueryItem {
+        try await chatReactionsQuery(request, timeout: ChatQueryTimeout.lookup)
+    }
+
+    func chatParticipantsQuery(
+        _ request: ProductChatParticipantsQueryRequest
+    ) async throws -> ProductChatParticipantsQueryItem {
+        try await chatParticipantsQuery(request, timeout: ChatQueryTimeout.lookup)
+    }
+
+    func chatMessageActionsQuery(
+        _ request: ProductChatMessageActionsQueryRequest
+    ) async throws -> ProductChatMessageActionsQueryItem {
+        try await chatMessageActionsQuery(request, timeout: ChatQueryTimeout.lookup)
+    }
+
+    func chatParticipantActionsQuery(
+        _ request: ProductChatParticipantActionsQueryRequest
+    ) async throws -> ProductChatParticipantActionsQueryItem {
+        try await chatParticipantActionsQuery(request, timeout: ChatQueryTimeout.lookup)
+    }
+}
+
+/// How long the host waits for the answer to a chat query. After the timeout
+/// the host shows its failure state for that query.
+public enum ChatQueryTimeout {
+    /// A page of messages.
+    public static let messages: Duration = .seconds(10)
+    /// A message that the user sent.
+    public static let sentMessage: Duration = .seconds(30)
+    /// A user action that is not a sent message.
+    public static let userAction: Duration = .seconds(10)
+    /// Reactions, participants, a message menu or a participant menu.
+    public static let lookup: Duration = .seconds(5)
+
+    /// The timeout of one user action.
+    public static func timeout(for action: ChatUserAction) -> Duration {
+        if case .newMessage = action { sentMessage } else { userAction }
+    }
+}
+
+/// Why a chat query has no answer.
+public enum ChatQueryError: Error, Equatable {
+    /// The product, or the core for a room that does not declare the handler,
+    /// refused the query. ``ProductChatQueryError/notAvailable`` asks the host
+    /// to apply its default.
+    case refused(ProductChatQueryError)
+    /// The product, or the core for a room that the host stores, refused the
+    /// user action. The host reverts the action, and shows the reason of
+    /// ``ProductChatUserActionError/rejected(reason:)`` to the user.
+    case actionRefused(ProductChatUserActionError)
+    /// The query failed on its way, for example because the worker stopped.
+    case failed(reason: String)
+    /// The product ended the query without an answer.
+    case noAnswer
+    /// No answer came before the timeout.
+    case timedOut
+
+    fileprivate init(_ refusal: NativeChatQueryRefusal) {
+        switch refusal {
+        case let .query(error): self = .refused(error)
+        case let .userAction(error): self = .actionRefused(error)
+        case let .failed(reason): self = .failed(reason: reason)
+        }
+    }
 }
 
 /// One App, Widget, or Worker executable connected to a shared host runtime.
@@ -1131,6 +1410,86 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func publishChatAction(_ action: HostChatActionSubscribeItem) throws {
         try inner.publishChatAction(action: action)
+    }
+
+    /// Publish one chat event, and keep it until the product connection
+    /// subscribes. A subscriber at the first protocol version receives only
+    /// the events that its version carries. The product receives at most one
+    /// `seen` event for each room each second.
+    public func publishChatEvent(roomId: String, peer: String, event: ChatEvent) throws {
+        try inner.publishChatEvent(roomId: roomId, peer: peer, event: event)
+    }
+
+    /// Ask the product for one page of messages of a room that it keeps.
+    public func chatMessagesQuery(
+        _ request: ProductChatMessagesQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatMessagesQueryItem {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatMessagesQuery(request: request, observer: observer)
+        } answer: { answer in
+            if case let .messages(page) = answer { page } else { nil }
+        }
+    }
+
+    /// Tell the product what the user did in a room that it keeps.
+    public func chatUserAction(
+        _ request: ProductChatUserActionRequest,
+        timeout: Duration
+    ) async throws -> ProductChatUserActionItem {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatUserAction(request: request, observer: observer)
+        } answer: { answer in
+            if case let .userAction(item) = answer { item } else { nil }
+        }
+    }
+
+    /// Ask the product who reacted to one message.
+    public func chatReactionsQuery(
+        _ request: ProductChatReactionsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatReactionsQueryItem {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatReactionsQuery(request: request, observer: observer)
+        } answer: { answer in
+            if case let .reactions(reactions) = answer { reactions } else { nil }
+        }
+    }
+
+    /// Ask the product about the participants of a room.
+    public func chatParticipantsQuery(
+        _ request: ProductChatParticipantsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatParticipantsQueryItem {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatParticipantsQuery(request: request, observer: observer)
+        } answer: { answer in
+            if case let .participants(item) = answer { item } else { nil }
+        }
+    }
+
+    /// Ask the product for the menu of one message.
+    public func chatMessageActionsQuery(
+        _ request: ProductChatMessageActionsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatMessageActionsQueryItem {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatMessageActionsQuery(request: request, observer: observer)
+        } answer: { answer in
+            if case let .messageMenu(menu) = answer { menu } else { nil }
+        }
+    }
+
+    /// Ask the product for the menu of one participant.
+    public func chatParticipantActionsQuery(
+        _ request: ProductChatParticipantActionsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatParticipantActionsQueryItem {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatParticipantActionsQuery(request: request, observer: observer)
+        } answer: { answer in
+            if case let .participantMenu(menu) = answer { menu } else { nil }
+        }
     }
 
     public func render(
@@ -1254,6 +1613,72 @@ private func hostRejectionReason(_ error: Error) -> String {
 /// Bounded: the reason reaches the product, and a host message can carry a
 /// whole failed statement.
 private let hostRejectionReasonMaxCharacters = 256
+
+/// Start one chat query, and wait for its answer. A timeout or a cancelled
+/// task stops the query in the product.
+func chatQuery<Answer>(
+    timeout: Duration,
+    start: (NativeChatQueryObserver) throws -> NativeChatQuery,
+    answer extract: (NativeChatQueryAnswer) -> Answer?
+) async throws -> Answer {
+    let outcome = ChatQueryOutcome()
+    let query = try start(outcome)
+    defer { query.cancel() }
+    let answer = try await withTaskCancellationHandler {
+        let timer = Task {
+            guard (try? await Task.sleep(for: timeout)) != nil else { return }
+            outcome.resolve(.failure(ChatQueryError.timedOut))
+        }
+        defer { timer.cancel() }
+        return try await outcome.value()
+    } onCancel: {
+        outcome.resolve(.failure(CancellationError()))
+    }
+    guard let typed = extract(answer) else {
+        throw ChatQueryError.failed(reason: "the product answered another query")
+    }
+    return typed
+}
+
+/// The first result of one chat query: the answer of the product, its
+/// refusal, a timeout or a cancellation. Later results have no effect.
+final class ChatQueryOutcome: NativeChatQueryObserver, @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<NativeChatQueryAnswer, Error>?
+    private var waiter: CheckedContinuation<NativeChatQueryAnswer, Error>?
+
+    func onAnswer(answer: NativeChatQueryAnswer) {
+        resolve(.success(answer))
+    }
+
+    func onRefusal(refusal: NativeChatQueryRefusal) {
+        resolve(.failure(ChatQueryError(refusal)))
+    }
+
+    func onComplete() {
+        resolve(.failure(ChatQueryError.noAnswer))
+    }
+
+    func resolve(_ outcome: Result<NativeChatQueryAnswer, Error>) {
+        let waiter: CheckedContinuation<NativeChatQueryAnswer, Error>? = lock.withLock {
+            guard result == nil else { return nil }
+            result = outcome
+            defer { self.waiter = nil }
+            return self.waiter
+        }
+        waiter?.resume(with: outcome)
+    }
+
+    func value() async throws -> NativeChatQueryAnswer {
+        try await withCheckedThrowingContinuation { continuation in
+            let ready: Result<NativeChatQueryAnswer, Error>? = lock.withLock {
+                if result == nil { waiter = continuation }
+                return result
+            }
+            if let ready { continuation.resume(with: ready) }
+        }
+    }
+}
 
 private func rendererStream(
     _ subscribe: (RendererStreamObserver) throws -> NativeRendererSubscription
