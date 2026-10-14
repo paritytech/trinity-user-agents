@@ -1,6 +1,7 @@
 {
   "@parity/truapi": ["paritytech/dotli-community", "paritytech/product-sdk"],
   "@parity/truapi-host": ["paritytech/dotli-community"],
-  "@parity/ios-host": [],
+  "@parity/truapi-provider": ["paritytech/dotli-community"],
+  "@parity/ios-host": ["paritytech/polkadot-ios-community"],
   "@parity/android-host": []
 }

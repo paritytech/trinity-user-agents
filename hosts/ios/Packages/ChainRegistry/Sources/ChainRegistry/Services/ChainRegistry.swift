@@ -1,0 +1,425 @@
+import Foundation
+import Operation_iOS
+import SubstrateSdk
+import ChainStore
+import SDKLogger
+
+public protocol ChainRegistryProtocol: ChainResourceProtocol, ConnectionRetentionProviding {
+    var availableChainIds: Set<ChainModel.Id>? { get }
+    var allAvailableChains: [ChainModel] { get }
+
+    func getChain(for chainId: ChainModel.Id) -> ChainModel?
+    func getChainByGenesis(for genesisHash: ChainModel.Id) -> ChainModel?
+    func getConnection(for chainId: ChainModel.Id) -> ChainConnection?
+    func getOneShotConnection(for chainId: ChainModel.Id) -> JSONRPCEngine?
+
+    func getRuntimeProvider(for chainId: ChainModel.Id) -> RuntimeProviderProtocol?
+    func switchSync(mode: ChainSyncMode, chainId: ChainModel.Id) throws
+
+    func chainsSubscribe(
+        _ target: AnyObject,
+        runningInQueue: DispatchQueue,
+        updateClosure: @escaping ([DataProviderChange<ChainModel>]) -> Void
+    )
+
+    func chainsUnsubscribe(_ target: AnyObject)
+
+    func subscribeChainState(_ subscriber: ConnectionStateSubscription, chainId: ChainModel.Id)
+    func unsubscribeChainState(_ subscriber: ConnectionStateSubscription, chainId: ChainModel.Id)
+
+    func syncUp()
+}
+
+public extension ChainRegistryProtocol {
+    func getConnectionOrError(for chainId: ChainModel.Id) throws -> ChainConnection {
+        guard let connection = getConnection(for: chainId) else {
+            throw ChainRegistryError.connectionUnavailable
+        }
+
+        return connection
+    }
+
+    func getRuntimeProviderOrError(for chainId: ChainModel.Id) throws -> RuntimeProviderProtocol {
+        guard let runtimeProvider = getRuntimeProvider(for: chainId) else {
+            throw ChainRegistryError.runtimeMetadaUnavailable
+        }
+
+        return runtimeProvider
+    }
+
+    func getChainOrError(for chainId: ChainModel.Id) throws -> ChainModel {
+        guard let chain = getChain(for: chainId) else {
+            throw ChainRegistryError.noChain(chainId)
+        }
+
+        return chain
+    }
+}
+
+public final class ChainRegistry: @unchecked Sendable {
+    public struct RuntimeSubscriptionInfo {
+        let subscription: SpecVersionSubscriptionProtocol
+        let syncMode: ChainSyncMode
+    }
+
+    public let runtimeProviderPool: RuntimeProviderPoolProtocol
+    public let connectionPool: ConnectionPoolProtocol
+    public let chainSyncService: ChainSyncServiceProtocol
+    public let runtimeSyncService: RuntimeSyncServiceProtocol
+    public let commonTypesSyncService: CommonTypesSyncServiceProtocol?
+    public let chainProvider: StreamableProvider<ChainModel>
+    public let specVersionSubscriptionFactory: SpecVersionSubscriptionFactoryProtocol
+    public let logger: SDKLoggerProtocol?
+
+    private(set) var runtimeVersionSubscriptions: [ChainModel.Id: RuntimeSubscriptionInfo] = [:]
+    private var availableChains: [ChainModel.Id: ChainModel] = [:]
+
+    private var chainsChangesObservers: [ChainsObserver] = []
+
+    private let mutex = NSLock()
+
+    public init(
+        runtimeProviderPool: RuntimeProviderPoolProtocol,
+        connectionPool: ConnectionPoolProtocol,
+        chainSyncService: ChainSyncServiceProtocol,
+        runtimeSyncService: RuntimeSyncServiceProtocol,
+        commonTypesSyncService: CommonTypesSyncServiceProtocol?,
+        chainProvider: StreamableProvider<ChainModel>,
+        specVersionSubscriptionFactory: SpecVersionSubscriptionFactoryProtocol,
+        logger: SDKLoggerProtocol? = nil
+    ) {
+        self.runtimeProviderPool = runtimeProviderPool
+        self.connectionPool = connectionPool
+        self.chainSyncService = chainSyncService
+        self.runtimeSyncService = runtimeSyncService
+        self.commonTypesSyncService = commonTypesSyncService
+        self.chainProvider = chainProvider
+        self.specVersionSubscriptionFactory = specVersionSubscriptionFactory
+        self.logger = logger
+
+        subscribeToChains()
+    }
+
+    private func subscribeToChains() {
+        let updateClosure: ([DataProviderChange<ChainModel>]) -> Void = { [weak self] changes in
+            self?.handle(changes: changes)
+        }
+
+        let failureClosure: (Error) -> Void = { [weak self] error in
+            self?.logger?.error("Unexpected error chains listener setup: \(error)")
+        }
+
+        let options = StreamableProviderObserverOptions(
+            alwaysNotifyOnRefresh: false,
+            waitsInProgressSyncOnAdd: false,
+            refreshWhenEmpty: false
+        )
+
+        chainProvider.addObserver(
+            self,
+            deliverOn: DispatchQueue.global(qos: .userInitiated),
+            executing: updateClosure,
+            failing: failureClosure,
+            options: options
+        )
+    }
+
+    private func handle(changes: [DataProviderChange<ChainModel>]) {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        guard !changes.isEmpty else {
+            return
+        }
+
+        let chainsBeforeChanges = availableChains
+
+        changes.forEach { change in
+            do {
+                switch change {
+                case let .insert(chain),
+                     let .update(chain):
+                    availableChains[chain.chainId] = chain
+
+                    try updateSyncMode(for: chain)
+                case let .delete(chainId):
+                    availableChains[chainId] = nil
+
+                    connectionPool.deactivateConnection(for: chainId)
+                    clearRuntimeSubscriptionIfExists(for: chainId)
+                    clearRuntimeHandlingIfNeeded(for: chainId)
+
+                    logger?.debug("Cleared runtime for: \(chainId)")
+                }
+            } catch {
+                logger?.error("Unexpected error on handling chains update: \(error)")
+            }
+        }
+
+        chainsChangesObservers.forEach { $0.updateClosure(changes, chainsBeforeChanges) }
+    }
+
+    private func updateSyncMode(for chain: ChainModel) throws {
+        switch chain.syncMode {
+        case .full,
+             .light:
+            let connection = try connectionPool.setupConnection(for: chain)
+
+            setupRuntimeHandlingIfNeeded(for: chain, connection: connection)
+            setupRuntimeVersionSubscriptionIfNeeded(for: chain, connection: connection)
+        case .disabled:
+            connectionPool.deactivateConnection(for: chain.chainId)
+            clearRuntimeSubscriptionIfExists(for: chain.chainId)
+            clearRuntimeHandlingIfNeeded(for: chain.chainId)
+        }
+
+        logger?.debug("Sync mode \(chain.syncMode) applied to \(chain.name)")
+    }
+
+    private func setupRuntimeHandlingIfNeeded(for chain: ChainModel, connection: ChainConnection) {
+        switch chain.syncMode {
+        case .full:
+            if chain.hasSubstrateRuntime {
+                _ = runtimeProviderPool.setupRuntimeProviderIfNeeded(for: chain)
+
+                runtimeSyncService.register(chain: chain, with: connection)
+
+                logger?.debug("Subscribed runtime for: \(chain.name)")
+            } else {
+                clearRuntimeHandlingIfNeeded(for: chain.chainId)
+
+                logger?.debug("No runtime for: \(chain.chainId)")
+            }
+        case .light,
+             .disabled:
+            clearRuntimeHandlingIfNeeded(for: chain.chainId)
+
+            logger?.debug("No runtime \(chain.name) needed for sync mode \(chain.syncMode)")
+        }
+    }
+
+    private func setupRuntimeVersionSubscriptionIfNeeded(for chain: ChainModel, connection: ChainConnection) {
+        let optInfo = runtimeVersionSubscriptions[chain.chainId]
+
+        guard optInfo == nil || optInfo?.syncMode != chain.syncMode else {
+            return
+        }
+
+        optInfo?.subscription.unsubscribe()
+
+        let subscription = specVersionSubscriptionFactory.createSubscription(
+            for: chain,
+            connection: connection
+        )
+
+        subscription.subscribe()
+
+        runtimeVersionSubscriptions[chain.chainId] = .init(subscription: subscription, syncMode: chain.syncMode)
+    }
+
+    private func clearRuntimeHandlingIfNeeded(for chainId: ChainModel.Id) {
+        runtimeProviderPool.destroyRuntimeProviderIfExists(for: chainId)
+        runtimeSyncService.unregisterIfExists(chainId: chainId)
+    }
+
+    private func clearRuntimeSubscriptionIfExists(for chainId: ChainModel.Id) {
+        if let info = runtimeVersionSubscriptions[chainId] {
+            info.subscription.unsubscribe()
+        }
+
+        runtimeVersionSubscriptions[chainId] = nil
+    }
+
+    private func syncUpServices() {
+        chainSyncService.syncUpChains()
+        commonTypesSyncService?.syncUp()
+    }
+
+    private func internalSwitchSync(mode: ChainSyncMode, chainId: ChainModel.Id) throws {
+        guard let chain = availableChains[chainId], chain.syncMode != mode else {
+            throw ChainRegistryError.noChain(chainId)
+        }
+
+        let newChain = chain.updatingSyncMode(for: mode)
+
+        availableChains[chainId] = newChain
+        try updateSyncMode(for: newChain)
+
+        chainSyncService.updateLocal(chain: newChain)
+    }
+}
+
+extension ChainRegistry: ChainRegistryProtocol {
+    public var availableChainIds: Set<ChainModel.Id>? {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        return Set(availableChains.keys)
+    }
+
+    public var allAvailableChains: [ChainModel] {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        return Array(availableChains.values)
+    }
+
+    public func getChain(for chainId: ChainModel.Id) -> ChainModel? {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        return availableChains[chainId]
+    }
+
+    public func getChainByGenesis(for genesisHash: ChainModel.Id) -> ChainModel? {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        return availableChains.values.first { $0.genesisHash == genesisHash } ?? availableChains[genesisHash]
+    }
+
+    public func getConnection(for chainId: ChainModel.Id) -> ChainConnection? {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        return connectionPool.getConnection(for: chainId)
+    }
+
+    public func getOneShotConnection(for chainId: ChainModel.Id) -> JSONRPCEngine? {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        guard let chain = availableChains[chainId] else {
+            return nil
+        }
+
+        return connectionPool.getOneShotConnection(for: chain)
+    }
+
+    public func getRuntimeProvider(for chainId: ChainModel.Id) -> RuntimeProviderProtocol? {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        if let runtimeProvider = runtimeProviderPool.getRuntimeProvider(for: chainId) {
+            return runtimeProvider
+        }
+
+        guard let chain = availableChains[chainId], chain.isLightSyncMode else {
+            return nil
+        }
+
+        // switch to full sync if one need runtime for some reason in light sync mode
+
+        try? internalSwitchSync(mode: .full, chainId: chainId)
+
+        return runtimeProviderPool.getRuntimeProvider(for: chainId)
+    }
+
+    public func retainConnections(_ scope: ConnectionRetainScope) -> ConnectionRetainToken {
+        connectionPool.retainConnections(scope)
+    }
+
+    public func switchSync(mode: ChainSyncMode, chainId: ChainModel.Id) throws {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        try internalSwitchSync(mode: mode, chainId: chainId)
+    }
+
+    public func chainsSubscribe(
+        _ target: AnyObject,
+        runningInQueue: DispatchQueue,
+        updateClosure: @escaping ([DataProviderChange<ChainModel>]) -> Void
+    ) {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        let closure: (
+            [DataProviderChange<ChainModel>],
+            [ChainModel.Id: ChainModel]
+        ) -> Void = { changes, _ in
+            runningInQueue.async {
+                updateClosure(changes)
+            }
+        }
+
+        guard !chainsChangesObservers.contains(where: { $0.target === target }) else {
+            return
+        }
+
+        chainsChangesObservers.append(
+            ChainsObserver(
+                target: target,
+                updateClosure: closure
+            )
+        )
+
+        guard !availableChains.isEmpty else {
+            return
+        }
+
+        closure(
+            availableChains.values.map { DataProviderChange<ChainModel>.insert(newItem: $0) },
+            availableChains
+        )
+    }
+
+    public func chainsUnsubscribe(_ target: AnyObject) {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        chainsChangesObservers = chainsChangesObservers.filter { $0.target !== target }
+    }
+
+    public func subscribeChainState(_ subscriber: ConnectionStateSubscription, chainId: ChainModel.Id) {
+        connectionPool.subscribe(subscriber, chainId: chainId)
+    }
+
+    public func unsubscribeChainState(_ subscriber: ConnectionStateSubscription, chainId: ChainModel.Id) {
+        connectionPool.unsubscribe(subscriber, chainId: chainId)
+    }
+
+    public func syncUp() {
+        syncUpServices()
+    }
+}
+
+public extension ChainRegistry {
+    struct ChainsObserver {
+        weak var target: AnyObject?
+        var updateClosure: ([DataProviderChange<ChainModel>], [ChainModel.Id: ChainModel]) -> Void
+    }
+}

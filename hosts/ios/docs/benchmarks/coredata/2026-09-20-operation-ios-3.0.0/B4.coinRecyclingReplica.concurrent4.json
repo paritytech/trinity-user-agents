@@ -1,0 +1,86 @@
+{
+  "counters" : {
+    "assetMapperCalls" : 2510,
+    "chatMapperCalls" : 5300,
+    "coinDeliveries" : 1,
+    "deliveries" : 1474,
+    "voucherDeliveries" : 489
+  },
+  "date" : "2026-09-20T10:26:08Z",
+  "operationIOSVersion" : "3.0.0-653010d",
+  "scale" : {
+    "chats" : 200,
+    "fetchesPerReader" : 200,
+    "messagesPerChat" : 50,
+    "readYourWritesIterations" : 1000,
+    "readerTasks" : 8,
+    "recyclingChats" : 100,
+    "recyclingCoins" : 500,
+    "rowsPerBatch" : 100,
+    "spikeReaderFetches" : 200,
+    "spikeSeedRows" : 5000,
+    "spikeWriteRows" : 20000,
+    "subscriptionRows" : 2000,
+    "subscriptionSaves" : 100,
+    "writerBatches" : 50
+  },
+  "scenario" : "B4.coinRecyclingReplica",
+  "summaries" : [
+    {
+      "count" : 500,
+      "maxMs" : 7.660542,
+      "opsPerSecond" : 894.9772528733008,
+      "p50Ms" : 1.021125,
+      "p95Ms" : 1.173084,
+      "p99Ms" : 5.053792,
+      "scenario" : "B4.voucherSave",
+      "variant" : "concurrent4",
+      "wallMs" : 558.673417
+    },
+    {
+      "count" : 1,
+      "maxMs" : 585.029292,
+      "opsPerSecond" : 1.7093161208755336,
+      "p50Ms" : 585.029292,
+      "p95Ms" : 585.029292,
+      "p99Ms" : 585.029292,
+      "scenario" : "B4.registration",
+      "variant" : "concurrent4",
+      "wallMs" : 585.029292
+    },
+    {
+      "count" : 1000,
+      "maxMs" : 5.595833,
+      "opsPerSecond" : 878.1517593312982,
+      "p50Ms" : 1.04125,
+      "p95Ms" : 1.338584,
+      "p99Ms" : 4.578417,
+      "scenario" : "B4.statusSave",
+      "variant" : "concurrent4",
+      "wallMs" : 1138.755334
+    },
+    {
+      "count" : 99,
+      "maxMs" : 2.877958,
+      "opsPerSecond" : 43.45778049825629,
+      "p50Ms" : 2.1745,
+      "p95Ms" : 2.4085,
+      "p99Ms" : 2.877958,
+      "scenario" : "B4.read",
+      "variant" : "concurrent4",
+      "wallMs" : 2278.073083
+    },
+    {
+      "count" : 1,
+      "maxMs" : 2283.042625,
+      "opsPerSecond" : 0.4380119709766697,
+      "p50Ms" : 2283.042625,
+      "p95Ms" : 2283.042625,
+      "p99Ms" : 2283.042625,
+      "scenario" : "B4.wall",
+      "variant" : "concurrent4",
+      "wallMs" : 2283.042625
+    }
+  ],
+  "variant" : "concurrent4"
+}

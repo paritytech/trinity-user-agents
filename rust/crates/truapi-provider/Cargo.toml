@@ -40,7 +40,9 @@ ws = [
 ]
 smoldot = [
     "dep:futures-timer",
+    "dep:log",
     "dep:getrandom",
+    "dep:libsecp256k1",
     "dep:js-sys",
     "dep:pin-project",
     "dep:rand",
@@ -66,45 +68,51 @@ uniffi = ["smoldot", "networks", "dep:uniffi"]
 cli = ["uniffi", "uniffi/cli"]
 
 [dependencies]
-truapi = { path = "../truapi" }
-truapi-platform = { path = "../truapi-platform" }
-derive_more = { version = "2", features = ["display"] }
-futures = "0.3"
-hex = "0.4"
-serde_json = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"], optional = true }
-url = "2"
+async-trait = { workspace = true }
+derive_more = { workspace = true, features = ["display", "error"] }
+futures = { workspace = true }
+hex = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["registry", "std"], optional = true }
+url = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-jsonrpsee-client-transport = { version = "0.24", features = ["ws", "tls-rustls-platform-verifier"], optional = true }
-jsonrpsee-core = { version = "0.24", features = ["client"], optional = true }
-tokio = { version = "1", features = ["io-util", "net", "rt", "sync", "time"], optional = true }
+# smoldot's native output goes through `log`, and this staticlib owns its own
+# copy of that global, so the sink lives here (see logging_native). Only that
+# module uses it, and only off wasm, so it arrives with the light client.
+log = { workspace = true, features = ["std"], optional = true }
+jsonrpsee-client-transport = { workspace = true, features = ["ws", "tls-rustls-platform-verifier"], optional = true }
+jsonrpsee-core = { workspace = true, features = ["client"], optional = true }
+tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"], optional = true }
 # Portable timer: `snapshot` deadlines the same way on native and on wasm.
-futures-timer = { version = "3", optional = true }
+futures-timer = { workspace = true, optional = true }
 # `ring` rather than the default `aws-lc-rs`, matching the backend the rest of
 # the tree already resolves, so the wss tunnel adds no new crypto dependency.
-tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring", "tls12"], optional = true }
-webpki-roots = { version = "0.26", optional = true }
-# Cargo.lock also pins smoldot-light 1.3 for subxt's optional subxt-lightclient, which this
-# workspace never enables, so only this version is ever compiled.
-smoldot-light = { version = "2.0", default-features = false, features = ["std"], optional = true }
-rand = { version = "0.8", optional = true }
-thiserror = { version = "1", optional = true }
+tokio-rustls = { workspace = true, features = ["logging", "ring", "tls12"], optional = true }
+webpki-roots = { workspace = true, optional = true }
+# Cargo.lock also pins smoldot 2 and smoldot-light 1.3 for subxt's optional subxt-lightclient,
+# which this workspace never enables, so neither of those is ever compiled.
+smoldot-light = { workspace = true, features = ["std"], optional = true }
+rand = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
 uniffi = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-futures-timer = { version = "3", features = ["wasm-bindgen"], optional = true }
-getrandom = { version = "0.2", features = ["js"], optional = true }
-js-sys = { version = "0.3", optional = true }
-pin-project = { version = "1", optional = true }
-send_wrapper = { version = "0.6", optional = true }
-smoldot = { version = "2", default-features = false, features = ["std"], optional = true }
-smoldot-light = { version = "2.0", default-features = false, optional = true }
-thiserror = { version = "1", optional = true }
-wasm-bindgen = { version = "0.2.118", optional = true }
-wasm-bindgen-futures = { version = "0.4", optional = true }
-web-sys = { version = "0.3", features = [
+futures-timer = { workspace = true, features = ["wasm-bindgen"], optional = true }
+getrandom = { workspace = true, features = ["js"], optional = true }
+# Not used directly: smoldot's secp256k1 multiplication tables are built on
+# first use instead of compiling in 1 MiB of incompressible precomputed points.
+libsecp256k1 = { workspace = true, optional = true }
+js-sys = { workspace = true, optional = true }
+pin-project = { workspace = true, optional = true }
+send_wrapper = { workspace = true, optional = true }
+smoldot = { workspace = true, features = ["std"], optional = true }
+smoldot-light = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+web-sys = { workspace = true, features = [
     "BinaryType",
     "CloseEvent",
     "console",
@@ -112,23 +120,19 @@ web-sys = { version = "0.3", features = [
     "MessageEvent",
     "WebSocket",
 ], optional = true }
-web-time = { version = "1", optional = true }
+web-time = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Derives a bundled spec's genesis hash so the catalog cannot drift off it.
-blake2b_simd = { version = "1", default-features = false }
+blake2b_simd = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-jsonrpsee = { version = "0.24", features = ["server"] }
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time", "test-util"] }
-tokio-tungstenite = "0.24"
+jsonrpsee = { workspace = true, features = ["server"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time", "test-util"] }
+tokio-tungstenite = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test = "0.3"
-
-[[example]]
-name = "paseo_demo"
-required-features = ["ws", "smoldot"]
+wasm-bindgen-test = { workspace = true }
 
 [[example]]
 name = "gateway"
@@ -137,4 +141,9 @@ required-features = ["ws", "networks"]
 # `deny` rather than `forbid`: the `uniffi` feature scopes an `allow(unsafe_code)`
 # for UniFFI's generated FFI glue (see src/lib.rs). Every other build has no unsafe.
 [lints.rust]
+missing_docs = "warn"
 unsafe_code = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"

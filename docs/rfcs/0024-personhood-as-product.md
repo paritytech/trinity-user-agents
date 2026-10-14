@@ -22,9 +22,9 @@ A proof is a bearer token for its context's alias and a signature is a bearer to
 
 ## Motivation
 
-**Personhood is welded into the Host.** RFC-0004 §"Host member-key selection" requires every Host to define the PoP ring collection internally, choose a member key corresponding to the requested `RingLocation`, fall back to the PoP key when correspondence is undeterminable, and tiebreak stably. `truapi-server` implements exactly that with the ring identities compiled in (`rust/crates/truapi-server/src/runtime/signing_host/ring_vrf.rs`: `FULL_PERSON_COLLECTION`, `LITE_PERSON_COLLECTION`, `enum PersonKey { Full, Lite }`). So every change to how a person key is derived, registered, renewed, or recovered is a Host release.
+**Personhood is welded into the Host.** RFC-0004 §"Host member-key selection" requires every Host to define the PoP ring collection internally, choose a member key corresponding to the requested `RingLocation`, fall back to the PoP key when correspondence is undeterminable, and tiebreak stably. `truapi` implements exactly that with the ring identities compiled in (`rust/crates/truapi/src/runtime/signing_host/ring_vrf.rs`: `FULL_PERSON_COLLECTION`, `LITE_PERSON_COLLECTION`, `enum PersonKey { Full, Lite }`). So every change to how a person key is derived, registered, renewed, or recovered is a Host release.
 
-A personhood product must instead own the full and light keys — under RFC-0022, the `peopl.dot` domain of the ring-VRF tree — while telling the Host and Account Holder enough to keep serving the app's own personhood-dependent features, and lending its keys and aliases to other products. The binding constraint across all of it: **no consumer may know which key is used**, not the app and not a calling product.
+A personhood product must instead own the full and light keys — under RFC-0022, the `peopl.<tld>` domain of the ring-VRF tree, `peopl.dot` on Polkadot — while telling the Host and Account Holder enough to keep serving the app's own personhood-dependent features, and lending its keys and aliases to other products. The binding constraint across all of it: **no consumer may know which key is used**, not the app and not a calling product.
 
 **The obstacle** is that the member keys serve three overlapping classes of work, and only one is not extractable:
 
@@ -108,7 +108,7 @@ fn list_ring_vrf_keys(
 - **Registration declares intent, not membership.** It means "this is the key I will use for that ring", not "the user is a person"; membership is still discovered only by attempting a proof, which returns `NotMember` (RFC-0004). This keeps the registry from being a personhood oracle.
 - **The public key is owner-visible by default, permissioned cross-product**, because a member public key is linkable across every ring it appears in.
 
-RFC-0022 already pins `//peopl.dot//index_bytes(0)` as the full personhood key and `index_bytes(1)` as the light one. Under this RFC those constants are the personhood product's own implementation detail, expressed to everyone else as two registry entries.
+RFC-0022 already pins `//peopl.<tld>//index_bytes(0)` as the full personhood key and `index_bytes(1)` as the light one, under the TLD of the network. Under this RFC those constants are the personhood product's own implementation detail, expressed to everyone else as two registry entries. The examples below are written for Polkadot, where the product is `peopl.dot`; on paseo-next-v2 read `peopl.paseo` throughout.
 
 ### Proofs, aliases, and signatures take an explicit key handle
 
@@ -301,7 +301,7 @@ Here the model is **user-approval driven**: an unapproved foreign access produce
 
 For these two the allowlist is not an optimization but the whole gate, per the rule above: a prompt is not a substitute and MUST NOT be offered, because consenting to an opaque message is not meaningful consent. **The interim fallback of the previous paragraph does not apply here** — the consequence is that foreign proofs and foreign signatures are simply **unavailable until the manifest RFC lands**, since there is nowhere yet to express the allowlist. Own-key use is unaffected and needs nothing.
 
-The allowlist belongs to the product manifest, specified separately ([RFC: Product Manifest Format](https://github.com/paritytech/host-rust-core/pull/206)), with two requirements from here: it must be **structurally extensible**, so a richer scheme (per-method grants, attestation thresholds) can replace a flat product-id list without a wire break; and it should be expressible **per method or category**, so "read my key handles" and "produce a proof with my key" need not be one grant.
+The allowlist belongs to the product manifest, specified separately ([RFC: Product Manifest Format](https://github.com/paritytech/trinity-user-agents/pull/206)), with two requirements from here: it must be **structurally extensible**, so a richer scheme (per-method grants, attestation thresholds) can replace a flat product-id list without a wire break; and it should be expressible **per method or category**, so "read my key handles" and "produce a proof with my key" need not be one grant.
 
 ### Accounts Protocol
 
@@ -329,7 +329,7 @@ struct ListRingVrfKeysResponse {
 }
 ```
 
-A Host holding a current registry snapshot answers `list` locally. `RingVrfProofRequest` and `RingVrfAliasRequest` gain `key_handle: ProductAccountId` alongside the `calling_product_id` they already carry, and a `RingVrfSignRequest` / `Response` pair mirrors `account_ring_vrf_sign` with the same two fields plus `message`. `RingVrfError` gains `KeyNotRegistered`, `KeyNotInRing`, and `NotAllowlisted`.
+A Host holding a current registry snapshot answers `list` locally. `CreateAccountProofRequest` and `GetAccountAliasRequest` carry `key_handle: ProductAccountId` and `calling_product_id`. The `RingVrfSignRequest` / `RingVrfSignResponse` pair mirrors `account_ring_vrf_sign` with the same two request fields plus `message`. `RingVrfError` includes `KeyNotRegistered`, `KeyNotInRing`, and `NotAllowlisted`.
 
 **Registration always reaches the Account Holder, but never blocks on it.** The phone is the authoritative registry — it needs the complete set to serve slot assignment and PGAS claims, and to show the user what their keys are used for. A Host holding the product's domain entropy answers immediately and mirrors the registration fire-and-forget; registration is idempotent, so re-notifying the phone about an entry it already has costs nothing. Without the entropy the Host issues the request and waits.
 
@@ -379,13 +379,13 @@ AutoSigning {
 ## Prior Art and References
 
 - [RFC-0004 — Redesign `account_create_account_proof`](0004-ringlocation-redesign.md) — `RingLocation`, `ProductProofContext`, the context derivation, and the member-key selection contract this RFC deletes. Its "Out of scope: explicit member-key management … left to a future RFC" is this RFC.
-- **RFC-0022 — Account key derivations** ([PR #296](https://github.com/paritytech/host-rust-core/pull/296)) — the ring-VRF tree, `Either<u32, [u8; 32]>` indices, the reserved `peopl.dot` identity, and the `AutoSigning` payload this RFC extends. Its deferral of well-known alias accounts is resolved here.
-- **RFC-0023 — sr25519 VRF signing for product accounts** ([PR #301](https://github.com/paritytech/host-rust-core/pull/301)) — the complementary non-member path, where this RFC's ring VRF path serves members.
+- **RFC-0022 — Account key derivations** ([PR #296](https://github.com/paritytech/trinity-user-agents/pull/296)) — the ring-VRF tree, `Either<u32, [u8; 32]>` indices, the reserved `peopl.dot` identity, and the `AutoSigning` payload this RFC extends. Its deferral of well-known alias accounts is resolved here.
+- **RFC-0023 — sr25519 VRF signing for product accounts** ([PR #301](https://github.com/paritytech/trinity-user-agents/pull/301)) — the complementary non-member path, where this RFC's ring VRF path serves members.
 - [RFC-0020 — `signing_create_transaction` and its AP mirror](0020-create-transaction.md) — the pattern of specifying a TrUAPI call together with its AP companion, followed here.
 - [RFC-0010 — W3S Allowance Management](0010-allowance.md) — AutoSigning and the PGAS / Bulletin / SSS flows that consume the person key.
-- [RFC-0002 — Permission Model](0002-permission-model.md) — the prompt-once lifecycle every cross-product grant reuses · [RFC-0009](0009-unauthenticated-product-access.md) — `NotConnected` semantics · [RFC: Product Manifest Format](https://github.com/paritytech/host-rust-core/pull/206) — where the allowlist is specified.
+- [RFC-0002 — Permission Model](0002-permission-model.md) — the prompt-once lifecycle every cross-product grant reuses · [RFC-0009](0009-unauthenticated-product-access.md) — `NotConnected` semantics · [RFC: Product Manifest Format](https://github.com/paritytech/trinity-user-agents/pull/206) — where the allowlist is specified.
 - [_SSO background availability — common model_](https://hackmd.io/rBEBjBzLQdOHvzwJkfufIQ) — the layered availability ladder the `onLoad` and AutoSigning sections lean on.
-- `rust/crates/truapi-server/src/runtime/signing_host/ring_vrf.rs` — the compiled-in selection this RFC removes.
+- `rust/crates/truapi/src/runtime/signing_host/ring_vrf.rs` — the compiled-in selection this RFC removes.
 - [Polkadot People Registry / Ring VRF](https://forum.polkadot.network/t/the-people-registry/12749) · [individuality#878](https://github.com/paritytech/individuality/pull/878) — alias-account assignment for derived product addresses.
 
 ## Unresolved Questions

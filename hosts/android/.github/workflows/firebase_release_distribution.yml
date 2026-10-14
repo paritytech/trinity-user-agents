@@ -1,0 +1,360 @@
+name: Firebase Release Distribution
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      release_branch:
+        description: "Release branch to build from"
+        required: true
+        type: string
+
+env:
+  APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+  IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
+  APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
+  CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+  CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+  FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL }}
+  LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
+  PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
+  SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+  TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
+  VERSIONS_KT_PATH: build-logic/convention/src/main/kotlin/Versions.kt
+  CI_BUILD_ID: ${{ github.run_number }}
+
+jobs:
+  check_and_build:
+    name: Check and Build Release
+    runs-on: ubuntu-latest
+    # Only run if PR is from a release-* branch (and not closed) OR triggered manually
+    # Held: this configuration ships from trinity-user-agents.
+    # The condition this replaces:
+    #   if: (startsWith(github.head_ref, 'release-') && github.event.action != 'closed') || github.event_name == 'workflow_dispatch'
+    if: false
+    outputs:
+      new_build: ${{ steps.increment_build.outputs.new_build }}
+      marketing_version: ${{ steps.increment_build.outputs.marketing_version }}
+
+    steps:
+      - name: Security Check - Verify bot-initiated workflow
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const eventName = '${{ github.event_name }}';
+            const releaseBranch = '${{ inputs.release_branch || github.head_ref }}';
+
+            console.log(`Event: ${eventName}`);
+            console.log(`Release branch: ${releaseBranch}`);
+
+            // Debug: Log all relevant context
+            console.log('Debug context:');
+            console.log(`  workflow: ${{ github.workflow }}`);
+            console.log(`  workflow_ref: ${{ github.workflow_ref }}`);
+            console.log(`  triggering_actor: ${{ github.triggering_actor }}`);
+            console.log(`  actor: ${{ github.actor }}`);
+            console.log(`  event_name: ${eventName}`);
+
+            // Check: Verify workflow is triggered by github-actions bot
+            if (eventName === 'workflow_dispatch') {
+              const triggeringActor = '${{ github.triggering_actor }}';
+              console.log(`Triggering actor: ${triggeringActor}`);
+
+              if (triggeringActor !== 'github-actions[bot]') {
+                core.setFailed(`Security: workflow_dispatch must be triggered by github-actions[bot] (via release_prepare.yml), got: ${triggeringActor}`);
+                return;
+              }
+              console.log('Workflow triggered by github-actions bot (from release_prepare.yml)');
+            } else if (eventName === 'pull_request') {
+              const prUser = '${{ github.event.pull_request.user.login }}';
+              console.log(`PR author: ${prUser}`);
+
+              if (prUser !== 'github-actions[bot]') {
+                core.setFailed(`Security: PR must be created by github-actions[bot], got: ${prUser}`);
+                return;
+              }
+              console.log('PR created by github-actions bot');
+            }
+
+            console.log('Security checks passed!');
+
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.release_branch || github.head_ref }}
+          token: ${{ github.token }}
+          fetch-depth: 0
+
+      - name: Install dependencies
+        uses: ./.github/actions/install/
+
+      - name: Prepare Google Services files
+        uses: ./.github/actions/prepare-android-build
+        with:
+          google_services_json_base64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+
+      - name: Run tests
+        env:
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+        run: ./gradlew testGpReleaseUnitTest --no-daemon --stacktrace
+
+      - name: Increment build number
+        id: increment_build
+        run: |
+          set -euo pipefail
+
+          echo "Incrementing build number..."
+          python3 .github/scripts/update_build_number.py \
+            --output-github
+
+          # Also read marketing version from Versions.kt
+          python3 .github/scripts/read_versions.py \
+            --output-format env | grep "marketing_version=" >> "$GITHUB_OUTPUT"
+
+      - name: Commit updated build number
+        env:
+          NEW_BUILD: ${{ steps.increment_build.outputs.new_build }}
+          BRANCH_NAME: ${{ inputs.release_branch || github.head_ref }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "${VERSIONS_KT_PATH}"
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit (build number might be already incremented)"
+          else
+            git commit -m "chore: increment build number to ${NEW_BUILD}"
+
+            # Push changes back to the branch
+            git push origin HEAD:refs/heads/${BRANCH_NAME}
+          fi
+
+      - name: Prepare release signing key
+        uses: ./.github/actions/prepare-android-build
+        with:
+          keystore_file_base64: ${{ secrets.RELEASE_GITHUB_KEYSTORE_KEY_FILE }}
+          keystore_path: release_key.jks
+
+      - name: Build Release apk
+        env:
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          RELEASE_KEYSTORE_KEY_ALIAS: ${{ secrets.RELEASE_KEYSTORE_KEY_ALIAS }}
+          RELEASE_KEYSTORE_KEY_PASS: ${{ secrets.RELEASE_KEYSTORE_KEY_PASS }}
+          RELEASE_KEYSTORE_PASS: ${{ secrets.RELEASE_KEYSTORE_PASS }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: ./gradlew assembleGpRelease --no-daemon --stacktrace
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: apk
+          path: app/build/outputs/apk/gp/release/
+
+  upload-to-firebase:
+    runs-on: ubuntu-latest
+    name: Upload Release apk to Firebase
+    needs: check_and_build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Download built artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: apk
+          path: app
+
+      - name: Set release notes
+        id: release_notes
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            NOTES="${{ github.event.pull_request.title }} (${{ github.event.pull_request.head.sha }})"
+          else
+            NOTES="Release build from ${{ inputs.release_branch }}"
+          fi
+          echo "notes=${NOTES}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to Firebase
+        uses: ./.github/actions/upload-to-firebase
+        with:
+          appId: ${{ secrets.ANDROID_FIREBASE_RELEASE_APP_ID }}
+          firebase-token: ${{ secrets.FIREBASE_GOOGLE_SERVICE_ACCOUNT }}
+          releaseNotes: ${{ steps.release_notes.outputs.notes }}
+          test-groups: dev-team
+          upload-file: app/app-gp-release.apk
+
+      - name: Comment on PR with build info
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const buildNumber = '${{ needs.check_and_build.outputs.new_build }}';
+            const marketingVersion = '${{ needs.check_and_build.outputs.marketing_version }}';
+
+            const comment = `### Firebase Release Build Completed
+
+            - **Version:** ${marketingVersion}
+            - **Build:** ${buildNumber}
+
+            The build will be available in Firebase App Distribution shortly.`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  upload-to-s3:
+    name: Upload APK to S3
+    runs-on: ubuntu-latest
+    needs: check_and_build
+    if: success()
+    env:
+      S3_BUCKET: s3://polkadot-app-artefacts
+      S3_REGION: fr-par
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Download built artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: apk
+          path: apk
+
+      - name: Upload to S3
+        uses: novasamatech/github-actions/s3-upload@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          s3_region: ${{ env.S3_REGION }}
+          s3_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          s3_secret_key: ${{ secrets.SCW_SECRET_KEY }}
+          s3_bucket: ${{ env.S3_BUCKET }}
+          source_path: apk/app-gp-release.apk
+          destination_path: /android/releases/polkadot-app-${{ needs.check_and_build.outputs.marketing_version }}-${{ needs.check_and_build.outputs.new_build }}.apk
+
+      - name: Upload to S3 (static path)
+        uses: novasamatech/github-actions/s3-upload@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          s3_region: ${{ env.S3_REGION }}
+          s3_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          s3_secret_key: ${{ secrets.SCW_SECRET_KEY }}
+          s3_bucket: ${{ env.S3_BUCKET }}
+          source_path: apk/app-gp-release.apk
+          destination_path: /android/releases/polkadot-app.apk
+
+  create_backport_pr:
+    name: Create backport PR to source branch
+    runs-on: ubuntu-latest
+    # Held: it carries back the build-number commit that check_and_build
+    # makes, and that job is held, so there is nothing left to carry.
+    # The condition this replaces:
+    #   if: startsWith(github.head_ref, 'release-') && github.event.action == 'closed' && (github.event.pull_request.merged == true)
+    if: false
+
+    steps:
+      - name: Extract source_ref from PR body and create backport PR
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const releaseBranch = context.payload.pull_request.head.ref;
+            const mergedPrBody = context.payload.pull_request.body || '';
+
+            console.log(`Processing backport for merged PR #${prNumber}`);
+            console.log(`Release branch: ${releaseBranch}`);
+
+            // Extract source_ref from PR body metadata
+            const metadataRegex = /<!--\s*RELEASE_METADATA:\s*source_ref=(\S+)\s*-->/;
+            const match = mergedPrBody.match(metadataRegex);
+
+            if (!match) {
+              console.log('No source_ref metadata found in PR body. Skipping backport.');
+              console.log('PR body:', mergedPrBody);
+              return;
+            }
+
+            const sourceRef = match[1];
+            console.log(`Found source_ref: ${sourceRef}`);
+
+            // Check if source_ref is a valid branch
+            try {
+              await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: sourceRef
+              });
+              console.log(`Source branch ${sourceRef} exists`);
+            } catch (error) {
+              console.log(`Source ref ${sourceRef} is not a branch or doesn't exist. Skipping backport.`);
+              return;
+            }
+
+            // Check if backport PR already exists
+            const { data: existingPrs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${releaseBranch}`,
+              base: sourceRef,
+              state: 'open'
+            });
+
+            if (existingPrs.length > 0) {
+              console.log(`Backport PR already exists: ${existingPrs[0].html_url}`);
+              return;
+            }
+
+            // Create backport PR
+            const backportTitle = `Backport: ${context.payload.pull_request.title}`;
+            const backportBody = `This PR backports changes from the release branch to the source branch.
+
+            **Release PR:** #${prNumber}
+            **Release branch:** \`${releaseBranch}\`
+            **Target branch:** \`${sourceRef}\`
+
+            ### Changes included:
+            - Incremented build numbers
+            - Any hotfixes made during the release process
+
+            ---
+            <!-- AUTO_BACKPORT_PR -->`;
+
+            try {
+              const { data: backportPr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: backportTitle,
+                head: releaseBranch,
+                base: sourceRef,
+                body: backportBody
+              });
+
+              console.log(`Created backport PR: ${backportPr.html_url}`);
+
+              // Add comment to original PR
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: `Backport PR created: #${backportPr.number}\n\nThis will merge release changes back to \`${sourceRef}\`.`
+              });
+            } catch (error) {
+              core.setFailed(`Failed to create backport PR: ${error.message}`);
+            }

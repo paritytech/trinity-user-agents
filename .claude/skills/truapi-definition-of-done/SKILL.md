@@ -34,7 +34,7 @@ git submodule update --init --recursive
 - [ ] **iOS bindings** — only if UniFFI-exposed types changed
       (`HostCallbacks`, `NativeTrUApiHostRuntime`, `NativeProductExecution`,
       the native mirror types in
-      `rust/crates/truapi-server/src/native*`). Run
+      `rust/crates/truapi/src/native*`). Run
       `make uniffi && ./ios/truapi-host/scripts/sync-bindings.sh`, then
       commit `ios/truapi-host/Sources/`. Also update every hand-written
       conformer — `HostCallbackAdapter` in `TrUAPIHost.swift` and
@@ -66,13 +66,16 @@ every PR. A green CI run is sufficient evidence for the static layers
 the e2e job runs the Playwright suite from the `e2e-dotli` skill against
 a freshly built dotli host.
 
-The `ios-bindings` job only compares the committed bindings against
-freshly generated ones. The `ios-swift` job compiles the package and its
+The `ios-bindings` job regenerates the Swift bindings, which proves
+every UniFFI-exposed type still has a binding representation; nothing is
+committed to diff against. The `ios-swift` job generates the package's
+Swift sources and container resource, then compiles the package and its
 test target on macOS, which is what catches a hand-written conformer
-that misses a new protocol requirement. It is path-filtered to pull
-requests touching `ios/`, `Package.swift`, the `Makefile` or
-`rust/crates/truapi-server/src/native*`, so it shows as skipped
-elsewhere.
+that misses a new protocol requirement. Both compile gates are
+path-filtered from one place: the `changes` job in `ci.yml` publishes
+`sdk_swift` and `sdk_kotlin`, and each gated job reads its output, so a
+job shows as skipped where it does not apply.
 
-Still uncovered: nothing compiles Kotlin, so `TrUAPIHost.kt` fails at
-release time, and the embedding apps are not built here at all.
+The Kotlin side is covered too: `android-bindings` compiles
+`TrUAPIHost.kt` against freshly generated bindings. Still uncovered:
+the embedding apps are not built here at all.

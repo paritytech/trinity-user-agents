@@ -1,0 +1,205 @@
+# Builds and packages the prebuilt truapi-host archives for macOS arm64 and
+# Linux (x86_64 and arm64). The Linux legs target musl so one artifact per
+# architecture runs on any distro. Every archive lands in the run's artifact
+# store as `cli-<target>`; release-cli.yml is what publishes them.
+name: cli-package
+
+on:
+  # release-cli.yml passes the version it is publishing, which builds every
+  # target and holds the crate to that version. ci.yml passes none, which
+  # builds one target to prove the packaging path still works: it breaks in
+  # ways only a real run of it shows, and a release is far too late to find out.
+  workflow_call:
+    inputs:
+      version:
+        description: "Version being published. Empty packages without publishing."
+        required: false
+        default: ""
+        type: string
+      ref:
+        description: "Commit to build, since a called workflow does not inherit the caller's checkout"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # The runner bundle is architecture-independent and needs generated sources,
+  # so it is built once here rather than three times across the matrix.
+  runner:
+    name: script runner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      # codegen.sh formats its generated Rust with the pinned nightly rustfmt, so the
+      # nightly toolchain needs rustfmt, exactly as the release job installs it.
+      - uses: ./.github/actions/rust-nightly
+        with:
+          components: rustfmt
+
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+
+      # A release run restores without saving, like every release job.
+      - uses: ./.github/actions/rust-cache
+        with:
+          save: ${{ inputs.version == '' && 'true' || 'false' }}
+
+      # The runner imports @parity/truapi from source, so the generated client
+      # has to exist before it can be bundled.
+      - name: Generate the TypeScript client
+        run: |
+          npm ci --ignore-scripts
+          npm ci --prefix js/container --ignore-scripts
+          ./scripts/codegen.sh
+
+      - name: Bundle and test the runner
+        run: |
+          make cli-runner
+          npm run typecheck:cli
+          bun test js/container/src scripts/cli-runner-package.test.ts
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runner-bundle
+          path: |
+            target/dist/runner.js
+            target/dist/script-types.d.ts
+            target/dist/sandbox-assets/container.js
+          if-no-files-found: error
+
+      # Carry generated sources so target builds need neither Node nor codegen.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: generated-rust
+          path: |
+            rust/crates/truapi/src/generated
+            rust/crates/truapi/src/wasm
+            rust/crates/truapi-host-cli/js/script-types.d.ts
+          if-no-files-found: error
+
+  build:
+    name: ${{ matrix.target }}
+    needs: runner
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      # What a publish ships, against what proves the packaging path still
+      # works. One leg answers the second question, and the macOS runner is the
+      # expensive one to spend on an answer already given.
+      matrix:
+        include: ${{ fromJSON(inputs.version != ''
+          && '[{"target":"aarch64-apple-darwin","runner":"macos-15"},{"target":"x86_64-unknown-linux-musl","runner":"ubuntu-latest"},{"target":"aarch64-unknown-linux-musl","runner":"ubuntu-24.04-arm"}]'
+          || '[{"target":"x86_64-unknown-linux-musl","runner":"ubuntu-latest"}]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - uses: ./.github/actions/rust-cache
+        with:
+          shared-key: cli-release-${{ matrix.target }}
+          save: ${{ inputs.version == '' && 'true' || 'false' }}
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      # The `cc` crate picks musl-gcc for a musl target; without it ring's C
+      # sources link against the host glibc toolchain.
+      - name: Install the musl toolchain
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y musl-tools
+
+      # Download the runner, declarations, and container for each target archive.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: runner-bundle
+          path: target/dist
+
+      # `make cli-dist` runs `check-generated` first, which refuses to proceed
+      # without these. Untracked since #551, so a fresh checkout has none.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: generated-rust
+          path: rust/crates
+
+      # The crate version is what the archive is named for and what the binary
+      # reports, so a release that declares a different one is a release of the
+      # wrong build. Without a declared version the crate stands on its own.
+      - name: Resolve the version to build
+        env:
+          DECLARED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # awk, not `sed -n '0,/re/'`: that address form is a GNU extension and
+          # silently yields nothing on the macOS runner's BSD sed.
+          crate="$(awk -F'"' '/^version = /{print $2; exit}' rust/crates/truapi-host-cli/Cargo.toml)"
+          if [ -n "${DECLARED}" ] && [ "${crate}" != "${DECLARED}" ]; then
+            echo "::error::truapi-host-cli is ${crate}, but the release declares ${DECLARED}. Run npm run version-packages."
+            exit 1
+          fi
+          echo "VERSION=${crate}" >> "$GITHUB_ENV"
+
+      - name: Build and package
+        run: make cli-dist CLI_TARGET=${{ matrix.target }} CLI_VERSION="${VERSION}"
+
+      # A published binary that cannot start is worse than no binary at all.
+      # Every leg builds natively, so each one can run what it just produced.
+      - name: Smoke-test the binary
+        run: |
+          set -euo pipefail
+          reported="$(./target/${{ matrix.target }}/release/truapi-host --version)"
+          [ "${reported}" = "truapi-host ${VERSION}" ] \
+            || { echo "::error::binary reports '${reported}'"; exit 1; }
+          archive="target/dist/truapi-host-${VERSION}-${{ matrix.target }}.tar.gz"
+          tar -tzf "${archive}" > "${RUNNER_TEMP}/cli-archive-files"
+          for asset in runner.js script-types.d.ts sandbox-assets/container.js; do
+            grep -Fqx "${asset}" "${RUNNER_TEMP}/cli-archive-files" \
+              || { echo "::error::archive is missing ${asset}"; exit 1; }
+          done
+          mkdir -p "${RUNNER_TEMP}/truapi-host-package"
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}/truapi-host-package"
+
+      - name: Smoke-test the packaged runner
+        env:
+          TRUAPI_HOST_NO_UPDATE: "1"
+        run: |
+          set -euo pipefail
+          package="${RUNNER_TEMP}/truapi-host-package"
+          printf '%s\n' 'assert(typeof Bun !== "undefined"); assert(typeof process !== "undefined"); console.log("sandbox-ok");' > "${RUNNER_TEMP}/sandbox-smoke.ts"
+          if ! "${package}/truapi-host" pairing-host --script "${RUNNER_TEMP}/sandbox-smoke.ts" --base-path "${RUNNER_TEMP}/sandbox-state" > "${RUNNER_TEMP}/sandbox-smoke.log" 2>&1; then
+            cat "${RUNNER_TEMP}/sandbox-smoke.log"
+            exit 1
+          fi
+          cat "${RUNNER_TEMP}/sandbox-smoke.log"
+          grep -q sandbox-ok "${RUNNER_TEMP}/sandbox-smoke.log"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-${{ matrix.target }}
+          path: |
+            target/dist/*.tar.gz
+            target/dist/*.sha256
+          if-no-files-found: error

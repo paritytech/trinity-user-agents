@@ -1,0 +1,25 @@
+name: "Configure Secrets"
+description: "Generates polkadot-app/Generated/Secrets.generated.swift from build secrets. The in-Xcode generation is skipped when RUN_IN_CI=true, so CI must run this before building."
+
+inputs:
+  sentry_dsn:
+    description: "Sentry DSN (TESTNET_FEATURE builds only)"
+    required: false
+    default: ""
+  meld_basic_auth_token:
+    description: "MELD fiat on-ramp Basic auth token"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate Secrets.generated.swift
+      shell: bash
+      env:
+        SRCROOT: ${{ github.workspace }}/hosts/ios
+        SENTRY_DSN: ${{ inputs.sentry_dsn }}
+        MELD_BASIC_AUTH_TOKEN: ${{ inputs.meld_basic_auth_token }}
+      run: |
+        set -euo pipefail
+        "${GITHUB_WORKSPACE:?}/hosts/ios/Runscripts/generate_secrets.sh"

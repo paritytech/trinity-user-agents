@@ -20,7 +20,7 @@ context.value.productId;
 
 Account and signing APIs require a full `dotNsIdentifier`, but products cannot query the exact identifier the host uses for authorization and account derivation. They must hardcode a suffix, inspect their URL, or guess the active network.
 
-Tracking issue: [#503](https://github.com/paritytech/host-rust-core/issues/503).
+Tracking issue: [#503](https://github.com/paritytech/trinity-user-agents/issues/503).
 
 ## Detailed Design
 
@@ -32,7 +32,7 @@ interface HostGetProductContextResponse {
 
 `productId` is the host runtime's existing canonical identifier. The method is available before account pairing and requires no permission.
 
-The host returns the full identifier, including `.dot`, `.paseo`, `.test`, or a localhost form. Products do not construct or normalize it. This keeps account requests, authorization, and account derivation on the same identifier.
+The host returns the full identifier, including `.dot`, `.paseo`, `.testnet`, or a localhost form. Products do not construct or normalize it. This keeps account requests, authorization, and account derivation on the same identifier.
 
 ## Alternatives
 

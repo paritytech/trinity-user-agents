@@ -1,0 +1,39 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "privacy.confirm.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This payment might reduce your privacy"
+          }
+        }
+      }
+    },
+    "privacy.confirm.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In this payment you are using funds that have not yet been fully processed by the privacy system."
+          }
+        }
+      }
+    },
+    "privacy.confirm.send.anyway": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send %@ anyway"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.1"
+}

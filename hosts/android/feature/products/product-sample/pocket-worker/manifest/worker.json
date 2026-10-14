@@ -1,0 +1,12 @@
+{
+  "$v": 1,
+  "kind": "worker",
+  "appVersion": [0, 1, 0],
+  "entrypoint": "worker.js",
+  "includes": { "chat": false, "pocket": true },
+  "pocket": {
+    "cards": [
+      { "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json", "faceShown": true }
+    ]
+  }
+}

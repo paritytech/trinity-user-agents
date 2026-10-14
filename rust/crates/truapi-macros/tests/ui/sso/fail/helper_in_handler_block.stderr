@@ -1,0 +1,5 @@
+error: expected `async fn name(&self, cx: &SsoRequestContext, request: <Request>) -> <Response>`
+ --> tests/ui/sso/fail/helper_in_handler_block.rs:5:5
+  |
+5 |     fn new() -> Self {
+  |     ^^^^^^^^^^^^^^^^

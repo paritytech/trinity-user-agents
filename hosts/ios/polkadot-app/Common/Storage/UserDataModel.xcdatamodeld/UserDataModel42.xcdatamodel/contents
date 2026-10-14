@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="24901" systemVersion="25F71" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithSwiftData="YES" userDefinedModelVersionIdentifier="">
+    <entity name="CDAirdropRegistration" representedClassName="CDAirdropRegistration" syncable="YES" codeGenerationType="class">
+        <attribute name="beneficiary" optional="YES" attributeType="Binary"/>
+        <attribute name="gameIndex" optional="YES" attributeType="Integer 64" usesScalarValueType="YES"/>
+        <attribute name="identifier" optional="YES" attributeType="String"/>
+        <attribute name="usesScoreAlias" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="CDAllowanceRecord" representedClassName="CDAllowanceRecord" syncable="YES" codeGenerationType="class">
+        <attribute name="accountId" optional="YES" attributeType="Binary"/>
+        <attribute name="allocatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="identifier" optional="YES" attributeType="String"/>
+        <attribute name="kind" optional="NO" attributeType="Integer 16" defaultValueString="-1" usesScalarValueType="YES"/>
+        <attribute name="latestRenewedPeriod" optional="NO" attributeType="Integer 64" defaultValueString="-1" usesScalarValueType="YES"/>
+        <attribute name="priorityLevel" optional="NO" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="CDBannedPlayer" representedClassName="CDBannedPlayer" syncable="YES" codeGenerationType="class">
+        <attribute name="accountId" optional="YES" attributeType="String"/>
+    </entity>
+    <entity name="CDChainAccount" representedClassName="CDChainAccount" syncable="YES" codeGenerationType="class">
+        <attribute name="accountId" attributeType="String"/>
+        <attribute name="chainId" attributeType="String"/>
+        <attribute name="cryptoType" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="publicKey" attributeType="Binary"/>
+    </entity>
+    <entity name="CDChat" representedClassName="CDChat" syncable="YES" codeGenerationType="class">
+        <attribute name="chatType" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="chatTypeContext" optional="YES" attributeType="String"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="identifier" optional="YES" attributeType="String"/>
+        <relationship name="contact" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="chat" inverseEntity="CDChatContact"/>
+        <relationship name="lastDisplayMessage" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="CDChatMessage" inverseName="lastDisplayMessageChat" inverseEntity="CDChatMessage"/>
+        <relationship name="messages" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDChatMessage" inverseName="chat" inverseEntity="CDChatMessage"/>
+        <relationship name="roomMetadata" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="CDChatRoomMetadata" inverseName="chat" inverseEntity="CDChatRoomMetadata"/>
+        <relationship name="unreadMessages" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDChatUnreadMessage" inverseName="chat" inverseEntity="CDChatUnreadMessage"/>
+    </entity>
+    <entity name="CDChatContact" representedClassName="CDChatContact" syncable="YES" codeGenerationType="class">
+        <attribute name="acceptedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="addedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="identifier" optional="YES" attributeType="String"/>
+        <attribute name="imageData" optional="YES" attributeType="Binary"/>
+        <attribute name="isBlocked" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="lastOwnToken" optional="YES" attributeType="Binary"/>
+        <attribute name="ownEncryptionKeyId" optional="YES" attributeType="String"/>
+        <attribute name="ownSignKeyId" optional="YES" attributeType="String"/>
+        <attribute name="pendingDevicesFanOut" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="pin" optional="YES" attributeType="String"/>
+        <attribute name="publicKey" attributeType="Binary"/>
+        <attribute name="pushId" optional="YES" attributeType="String"/>
+        <attribute name="pushPlatform" optional="YES" attributeType="String"/>
+        <attribute name="pushToken" optional="YES" attributeType="Binary"/>
+        <attribute name="username" attributeType="String"/>
+        <attribute name="voipLastOwnToken" optional="YES" attributeType="Binary"/>
+        <attribute name="voipPushToken" optional="YES" attributeType="Binary"/>
+        <relationship name="chat" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChat" inverseName="contact" inverseEntity="CDChat"/>
+        <relationship name="chatRequest" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatRequest" inverseName="contact" inverseEntity="CDChatRequest"/>
+        <relationship name="devices" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDContactDevice" inverseName="contact" inverseEntity="CDContactDevice"/>
+        <relationship name="game" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDContactGame" inverseName="contacts" inverseEntity="CDContactGame"/>
+    </entity>
+    <entity name="CDChatExtensionHistory" representedClassName="CDChatExtensionHistory" syncable="YES" codeGenerationType="class">
+        <attribute name="chatId" optional="YES" attributeType="String"/>
+        <attribute name="extensionId" optional="YES" attributeType="String"/>
+        <attribute name="identifier" optional="YES" attributeType="String"/>
+    </entity>
+    <entity name="CDChatMessage" representedClassName="CDChatMessage" syncable="YES" codeGenerationType="class">
+        <attribute name="compactionId" optional="YES" attributeType="String"/>
+        <attribute name="contentExpanded" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="contentKey" optional="YES" attributeType="String"/>
+        <attribute name="contentType" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="creationSource" optional="YES" attributeType="Integer 16" defaultValueString="-1" usesScalarValueType="YES"/>
+        <attribute name="groupingId" optional="YES" attributeType="String"/>
+        <attribute name="messageId" attributeType="String"/>
+        <attribute name="modifiedAt" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="originKey" optional="YES" attributeType="String"/>
+        <attribute name="originType" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="status" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="timestamp" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="chat" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChat" inverseName="messages" inverseEntity="CDChat"/>
+        <relationship name="chatRequest" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatRequest" inverseName="message" inverseEntity="CDChatRequest"/>
+        <relationship name="content" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="CDMessageContent" inverseName="message" inverseEntity="CDMessageContent"/>
+        <relationship name="lastDisplayMessageChat" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChat" inverseName="lastDisplayMessage" inverseEntity="CDChat"/>
+        <relationship name="reactions" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDChatMessageReaction" inverseName="message" inverseEntity="CDChatMessageReaction"/>
+        <relationship name="relatedMessages" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="CDChatMessage" inverseName="relatedMessages" inverseEntity="CDChatMessage"/>
+        <fetchIndex name="byGroupingIdIndex">
+            <fetchIndexElement property="groupingId" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="messageId"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDChatMessageReaction" representedClassName="CDChatMessageReaction" syncable="YES" codeGenerationType="class">
+        <attribute name="emoji" attributeType="String"/>
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="originKey" optional="YES" attributeType="String"/>
+        <attribute name="originType" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="timestamp" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="message" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatMessage" inverseName="reactions" inverseEntity="CDChatMessage"/>
+    </entity>
+    <entity name="CDChatRequest" representedClassName="CDChatRequest" syncable="YES" codeGenerationType="class">
+        <attribute name="contactId" optional="YES" attributeType="String"/>
+        <attribute name="identifier" optional="YES" attributeType="String"/>
+        <attribute name="status" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="timestamp" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="contact" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="chatRequest" inverseEntity="CDChatContact"/>
+        <relationship name="message" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatMessage" inverseName="chatRequest" inverseEntity="CDChatMessage"/>
+    </entity>
+    <entity name="CDChatRequestPeerDevice" representedClassName="CDChatRequestPeerDevice" syncable="YES" codeGenerationType="class">
+        <attribute name="encryptionPublicKey" attributeType="Binary"/>
+        <attribute name="requestId" attributeType="String"/>
+        <attribute name="statementAccountId" attributeType="Binary"/>
+    </entity>
+    <entity name="CDChatRoomMetadata" representedClassName="CDChatRoomMetadata" syncable="YES" codeGenerationType="class">
+        <attribute name="chatRelativeId" optional="YES" attributeType="String"/>
+        <attribute name="icon" optional="YES" attributeType="String"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <relationship name="chat" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChat" inverseName="roomMetadata" inverseEntity="CDChat"/>
+    </entity>
+    <entity name="CDChatUnreadMessage" representedClassName="CDChatUnreadMessage" syncable="YES" codeGenerationType="class">
+        <attribute name="messageId" attributeType="String"/>
+        <relationship name="chat" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChat" inverseName="unreadMessages" inverseEntity="CDChat"/>
+    </entity>
+    <entity name="CDClaimPlan" representedClassName="CDClaimPlan" syncable="YES" codeGenerationType="class">
+        <attribute name="claimedAmount" optional="YES" attributeType="String"/>
+        <attribute name="entriesData" optional="YES" attributeType="Binary"/>
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="memoKey" attributeType="Binary"/>
+        <attribute name="messageId" attributeType="String"/>
+        <attribute name="status" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="totalValue" optional="YES" attributeType="String"/>
+    </entity>
+    <entity name="CDCoin" representedClassName="CDCoin" syncable="YES" codeGenerationType="class">
+        <attribute name="age" optional="YES" attributeType="Integer 16" defaultValueString="-1" usesScalarValueType="YES"/>
+        <attribute name="derivationIndex" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="exponent" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="state" optional="YES" attributeType="Integer 16" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="CDContactDevice" representedClassName="CDContactDevice" syncable="YES" codeGenerationType="class">
+        <attribute name="encryptionPublicKey" attributeType="Binary"/>
+        <attribute name="statementAccountId" attributeType="Binary"/>
+        <relationship name="contact" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="devices" inverseEntity="CDChatContact"/>
+    </entity>
+    <entity name="CDContactGame" representedClassName="CDContactGame" syncable="YES" codeGenerationType="class">
+        <attribute name="gameDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="gameIndex" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="contacts" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="game" inverseEntity="CDChatContact"/>
+    </entity>
+    <entity name="CDExternalPayment" representedClassName="CDExternalPayment" syncable="YES" codeGenerationType="class">
+        <attribute name="amountInPlanks" attributeType="String"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="destination" attributeType="Binary"/>
+        <attribute name="failureReason" optional="YES" attributeType="String"/>
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="origin" attributeType="String"/>
+        <attribute name="readyAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="stage" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
+    </entity>
+    <entity name="CDGameVote" representedClassName="CDGameVote" syncable="YES" codeGenerationType="class">
+        <attribute name="accountId" optional="YES" attributeType="String"/>
+        <attribute name="gameIndex" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="identifier" optional="YES" attributeType="String"/>
+        <attribute name="isBanned" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="previewImageData" optional="YES" attributeType="Binary"/>
+        <attribute name="voteCounter" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="voteUpdateDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+    </entity>
+    <entity name="CDKeystoreIntegrity" representedClassName="CDKeystoreIntegrity" syncable="YES" codeGenerationType="class">
+        <attribute name="integrityKey" attributeType="Binary"/>
+        <attribute name="keyTag" attributeType="String"/>
+    </entity>
+    <entity name="CDLocalDevice" representedClassName="CDLocalDevice" syncable="YES" codeGenerationType="class">
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="encryptionPublicKey" attributeType="Binary"/>
+        <attribute name="hostName" optional="YES" attributeType="String"/>
+        <attribute name="hostVersion" optional="YES" attributeType="String"/>
+        <attribute name="identifier" optional="YES" attributeType="String"/>
+        <attribute name="lastSyncOfferId" optional="YES" attributeType="String"/>
+        <attribute name="osType" optional="YES" attributeType="String"/>
+        <attribute name="osVersion" optional="YES" attributeType="String"/>
+        <attribute name="outgoingUpdateTime" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="NO"/>
+        <attribute name="statementAccountId" attributeType="Binary"/>
+    </entity>
+    <entity name="CDLocalPrivacyVoucher" representedClassName="CDLocalPrivacyVoucher" syncable="YES" codeGenerationType="class">
+        <attribute name="alias" optional="YES" attributeType="Binary"/>
+        <attribute name="entropy" optional="YES" attributeType="Binary"/>
+        <attribute name="identifier" optional="YES" attributeType="String"/>
+        <attribute name="index" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="isClaimed" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="memberKey" optional="YES" attributeType="Binary"/>
+        <attribute name="type" optional="YES" attributeType="String"/>
+    </entity>
+    <entity name="CDMessageContent" representedClassName="CDMessageContent" syncable="YES" codeGenerationType="class">
+        <attribute name="data" optional="YES" attributeType="Binary"/>
+        <relationship name="message" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatMessage" inverseName="content" inverseEntity="CDChatMessage"/>
+    </entity>
+    <entity name="CDMixnetDownload" representedClassName="CDMixnetDownload" syncable="YES" codeGenerationType="class">
+        <attribute name="downloadedBytes" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="entryType" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="lastChunkIndex" attributeType="Integer 32" defaultValueString="-1" usesScalarValueType="YES"/>
+        <attribute name="metadata" optional="YES" attributeType="Binary"/>
+        <attribute name="totalChunks" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="CDMixnetUpload" representedClassName="CDMixnetUpload" syncable="YES" codeGenerationType="class">
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="node" optional="YES" attributeType="String"/>
+        <attribute name="ticket" optional="YES" attributeType="Binary"/>
+        <attribute name="uploadedChunks" optional="YES" attributeType="Binary"/>
+        <attribute name="uploadedSize" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="CDNotifiedMessageId" representedClassName="CDNotifiedMessageId" syncable="YES" codeGenerationType="class">
+        <attribute name="identifier" attributeType="String"/>
+    </entity>
+    <entity name="CDPaymentRecord" representedClassName="CDPaymentRecord" syncable="YES" codeGenerationType="class">
+        <attribute name="amountString" attributeType="String"/>
+        <attribute name="chainAssetId" attributeType="String"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="failureReason" optional="YES" attributeType="String"/>
+        <attribute name="memoData" attributeType="Binary"/>
+        <attribute name="merchantName" optional="YES" attributeType="String"/>
+        <attribute name="merchantPublicKey" attributeType="Binary"/>
+        <attribute name="paymentId" attributeType="String"/>
+        <attribute name="recipientTopic" attributeType="Binary"/>
+        <attribute name="status" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="submittedAtBlock" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="paymentId"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDPersonhoodMembership" representedClassName="CDPersonhoodMembership" syncable="YES" codeGenerationType="class">
+        <attribute name="memberKey" attributeType="String"/>
+    </entity>
+    <entity name="CDPolkadotSignInHost" representedClassName="CDPolkadotSignInHost" syncable="YES" codeGenerationType="class">
+        <attribute name="iconUrl" optional="YES" attributeType="String"/>
+        <attribute name="identifier" optional="YES" attributeType="String"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <attribute name="publicKey" optional="YES" attributeType="Binary"/>
+    </entity>
+    <entity name="CDProduct" representedClassName="CDProduct" syncable="YES" codeGenerationType="class">
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="name" attributeType="String"/>
+    </entity>
+    <entity name="CDProductPermissionGrant" representedClassName="CDProductPermissionGrant" syncable="YES" codeGenerationType="class">
+        <attribute name="granted" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="grantedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="permissionKey" attributeType="String"/>
+        <attribute name="permissionType" attributeType="String"/>
+        <attribute name="productId" attributeType="String"/>
+    </entity>
+    <entity name="CDRecentContact" representedClassName="CDRecentContact" syncable="YES" codeGenerationType="class">
+        <attribute name="assetID" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="chainID" attributeType="String"/>
+        <attribute name="hexAccountID" attributeType="String"/>
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="lastUsed" attributeType="Date" usesScalarValueType="NO"/>
+    </entity>
+    <entity name="CDRemovedChat" representedClassName="CDRemovedChat" syncable="YES" codeGenerationType="class">
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="removedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+    </entity>
+    <entity name="CDScheduledNotification" representedClassName="CDScheduledNotification" syncable="YES" codeGenerationType="class">
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="notificationId" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="productId" attributeType="String"/>
+    </entity>
+    <entity name="CDSSOHandledRequest" representedClassName="CDSSOHandledRequest" syncable="YES" codeGenerationType="class">
+        <attribute name="identifier" attributeType="String"/>
+    </entity>
+    <entity name="CDTransferWALEntry" representedClassName="CDTransferWALEntry" syncable="YES" codeGenerationType="class">
+        <attribute name="checkpointBlockHash" optional="YES" attributeType="Binary"/>
+        <attribute name="checkpointBlockNumber" attributeType="Integer 32" defaultValueString="-1" usesScalarValueType="YES"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="expectedCoinIndices" optional="YES" attributeType="String"/>
+        <attribute name="expectedVoucherIndices" optional="YES" attributeType="String"/>
+        <attribute name="extrinsicHash" optional="YES" attributeType="String"/>
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="inputCoinIds" optional="YES" attributeType="String"/>
+        <attribute name="inputVoucherIds" optional="YES" attributeType="String"/>
+        <attribute name="mortality" attributeType="Integer 32" defaultValueString="2400" usesScalarValueType="YES"/>
+        <attribute name="operationType" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="CDVoucher" representedClassName="CDVoucher" syncable="YES" codeGenerationType="class">
+        <attribute name="allocatedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="derivationIndex" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="exponent" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="localState" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="privacy" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="readyAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="recyclerIndex" optional="YES" attributeType="Integer 64" defaultValueString="-1" usesScalarValueType="YES"/>
+        <attribute name="recyclerRevision" optional="YES" attributeType="Integer 64" defaultValueString="-1" usesScalarValueType="YES"/>
+        <attribute name="state" optional="YES" attributeType="Integer 16" usesScalarValueType="YES"/>
+    </entity>
+</model>

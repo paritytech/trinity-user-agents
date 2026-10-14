@@ -1,0 +1,87 @@
+name: Genesis Hash Monitor
+
+on:
+  schedule:
+    - cron: "0 0,6,12,18 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-genesis-hashes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r .github/scripts/check_genesis_block/requirements.txt
+
+      - name: Check for existing open PR
+        id: existing-pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_DATA=$(gh pr list --state open --search "Update UNSTABLE genesis hashes" --json number,headRefName,url --jq '.[0]')
+          if [ -n "$PR_DATA" ] && [ "$PR_DATA" != "null" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            BRANCH=$(echo "$PR_DATA" | jq -r '.headRefName')
+            echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+            echo "url=$(echo "$PR_DATA" | jq -r '.url')" >> $GITHUB_OUTPUT
+            echo "Found existing open PR on branch $BRANCH"
+
+            git fetch origin "$BRANCH"
+            git checkout "$BRANCH"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Genesis Hashes
+        id: check
+        run: python3 .github/scripts/check_genesis_block/check_genesis_hashes.py
+
+      - name: Update existing PR
+        if: steps.check.outputs.changed == 'true' && steps.existing-pr.outputs.exists == 'true'
+        id: update-pr
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "update UNSTABLE genesis hashes"
+          git push origin ${{ steps.existing-pr.outputs.branch }}
+          echo "updated=true" >> $GITHUB_OUTPUT
+
+      - name: Generate branch name
+        if: steps.check.outputs.changed == 'true' && steps.existing-pr.outputs.exists != 'true'
+        id: branch
+        run: echo "name=auto/update_genesis_hashes_$(date +'%y%m%d-%H%M')" >> $GITHUB_OUTPUT
+
+      - name: Create PR if changed
+        id: create-pr
+        if: steps.check.outputs.changed == 'true' && steps.existing-pr.outputs.exists != 'true'
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
+        with:
+          title: "Update UNSTABLE genesis hashes"
+          body: "Automated update of genesis hashes."
+          base: main
+          branch: ${{ steps.branch.outputs.name }}
+          commit-message: "update UNSTABLE genesis hashes"
+          delete-branch: true
+
+      - name: Send Telegram Notification
+        if: steps.update-pr.outputs.updated == 'true' || steps.create-pr.outputs.pull-request-url
+        env:
+          MESSAGE: ${{ steps.check.outputs.message }}
+          PR_URL: ${{ steps.existing-pr.outputs.url || steps.create-pr.outputs.pull-request-url }}
+          GENESIS_MONITOR_BOT_TOKEN: ${{ secrets.GENESIS_MONITOR_BOT_TOKEN }}
+          GENESIS_MONITOR_CHAT_ID: ${{ secrets.GENESIS_MONITOR_CHAT_ID }}
+        run: |
+          python3 .github/scripts/check_genesis_block/send_genesis_update_to_telegram_chat.py \
+            --message "$MESSAGE" \
+            --pr-url "$PR_URL"

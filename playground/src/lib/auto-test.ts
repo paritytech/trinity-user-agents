@@ -30,6 +30,11 @@ const SKIPPED_SERVICES = new Map<string, string>([
     WEBRTC_SERVICE_NAME,
     "WebRTC needs a live camera/microphone grant, and a first-time WebRtc grant only takes effect after a reload; run it interactively from the method browser",
   ],
+  [
+    "Game",
+    "dot.li serves no Game surface; the truapi runtime tests cover it",
+  ],
+  ["Scanner", "dot.li has no camera viewfinder; it answers Unsupported"],
 ]);
 // Methods that trigger a host permission/signing prompt, so they need the
 // longer signing-class timeout to allow for the user to respond.
@@ -40,6 +45,8 @@ const LONG_TIMEOUT_METHODS = new Set([
   "Signing/sign_payload",
   "Signing/sign_raw",
   "Signing/sign_raw_with_legacy_account",
+  "Signing/sign_raw_unwatermarked_deprecated",
+  "Signing/sign_raw_unwatermarked_deprecated_with_legacy_account",
   "Signing/sign_payload_with_legacy_account",
   "Signing/create_transaction",
   "Signing/create_transaction_with_legacy_account",

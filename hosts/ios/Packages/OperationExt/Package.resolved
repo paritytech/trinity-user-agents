@@ -1,0 +1,24 @@
+{
+  "originHash" : "6bd1c8670061222747ce3ac862ed8c08677903e108dd1e7bbae8b0306fb53289",
+  "pins" : [
+    {
+      "identity" : "logger-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/logger-ios",
+      "state" : {
+        "revision" : "4d8a513664a272c201ba0a424a28d133827c924b",
+        "version" : "0.0.2"
+      }
+    },
+    {
+      "identity" : "operation-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/Operation-iOS",
+      "state" : {
+        "revision" : "1434daa4c32b8d90771888663ecdd1b0fe709690",
+        "version" : "2.6.0"
+      }
+    }
+  ],
+  "version" : 3
+}

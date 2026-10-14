@@ -61,7 +61,7 @@ The Diagnosis screen emits a per-host markdown report via "Copy report". Aggrega
 | `src/lib/diagnosis-report.ts` | Adapts App results to the shared deterministic Markdown formatter and adds host-mode detection and issue submission. |
 | `shared/diagnosis.ts` | Framework-independent diagnosis result model and Markdown formatter shared by the App and Worker executables. |
 | `worker/index.ts` | Coordinates the Chat diagnosis over the generated Chat API, from a `Worker` execution. |
-| `worker/diagnosis.ts` | Owns ordered Chat-only result state and renders both Markdown and native custom-renderer trees. |
+| `worker/diagnosis.ts` | Owns ordered Chat-only result state and renders both Markdown and native renderer trees. |
 | `src/lib/host-api-bridge.ts` | Just `stringify`, the JSON-with-bigint helper shared across components. |
 | `src/components/ExampleEditor.tsx` | Monaco editor wrapper. Auto-folds `// #region helpers` blocks on mount. |
 | `src/components/MethodView.tsx` | Per-method view: signature link to cargo doc, Example / Output tabs, status LED, Run / Stop buttons. Output is the example's `console.*` log; an explicit `assert`/error throw flips the LED to error and shows the thrown message. |

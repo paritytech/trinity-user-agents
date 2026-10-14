@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
 
-import { encodeWireMessage, PROTOCOL_ERROR_ID } from "./transport.js";
+import {
+  MESSAGE_TYPE_REQUEST,
+  MESSAGE_TYPE_RESPONSE,
+  encodeWireMessage,
+  PROTOCOL_ERROR_METHOD_ID,
+  PROTOCOL_ERROR_TRAIT_ID,
+} from "./transport.js";
 
 let importCounter = 0;
 
@@ -13,6 +19,8 @@ type MessageListener = (event: MessageEvent) => void;
 
 function installFakeIframeWindow(options: { referrer?: string; ancestorOrigins?: string[] }) {
     const listeners = new Set<MessageListener>();
+    const intervals = new Map<number, () => void>();
+    let intervalId = 0;
     const priorWindow = globalThis.window;
     const priorDocument = globalThis.document;
     const parentPostMessage = mock((_message: unknown, _origin: string) => {});
@@ -31,6 +39,14 @@ function installFakeIframeWindow(options: { referrer?: string; ancestorOrigins?:
         removeEventListener(name: string, callback: EventListener) {
             if (name === "message") listeners.delete(callback as MessageListener);
         },
+        setInterval(handler: TimerHandler) {
+            intervalId += 1;
+            intervals.set(intervalId, handler as () => void);
+            return intervalId;
+        },
+        clearInterval(id: number) {
+            intervals.delete(id);
+        },
     } as unknown as Window & typeof globalThis;
 
     globalThis.window = win;
@@ -47,6 +63,9 @@ function installFakeIframeWindow(options: { referrer?: string; ancestorOrigins?:
             for (const listener of [...listeners]) {
                 listener({ ports: [], ...event } as MessageEvent);
             }
+        },
+        runIntervals() {
+            for (const callback of [...intervals.values()]) callback();
         },
         restore() {
             if (priorWindow === undefined) {
@@ -137,6 +156,29 @@ describe("sandbox iframe MessagePort handshake", () => {
         expect(currentWindow.listeners.size).toBe(0);
     });
 
+    it("retries ready until the host transfers a port, then stops", async () => {
+        currentWindow = installFakeIframeWindow({
+            referrer: "https://host.example/product",
+        });
+        const sandbox = await importSandbox();
+
+        expect(sandbox.getClientSync()).not.toBeNull();
+        currentWindow.runIntervals();
+        expect(currentWindow.parentPostMessage.mock.calls).toHaveLength(2);
+
+        const accepted = trackChannel();
+        currentWindow.dispatch({
+            source: currentWindow.parent,
+            origin: "https://host.example",
+            data: { type: "truapi-init" },
+            ports: [accepted.port1],
+        });
+        currentWindow.runIntervals();
+
+        expect(currentWindow.parentPostMessage.mock.calls).toHaveLength(2);
+        expect(currentWindow.listeners.size).toBe(0);
+    });
+
     it('treats a masked "null" ancestor origin as hidden and pings with the wildcard', async () => {
         // Firefox implements location.ancestorOrigins but serializes cross-origin
         // ancestors as "null", which is not a valid postMessage targetOrigin.
@@ -221,7 +263,7 @@ describe("sandbox iframe MessagePort handshake", () => {
 
         const probe = encodeWireMessage({
             requestId: "legacy-probe",
-            payload: { id: 254, value: new Uint8Array() },
+            payload: { traitId: 254, methodId: 253, messageType: MESSAGE_TYPE_REQUEST, value: new Uint8Array() },
         });
         expect(probe.isOk()).toBe(true);
         if (probe.isErr()) throw probe.error;
@@ -255,7 +297,7 @@ describe("sandbox iframe MessagePort handshake", () => {
 
         const probe = encodeWireMessage({
             requestId: "legacy-probe",
-            payload: { id: 254, value: new Uint8Array() },
+            payload: { traitId: 254, methodId: 253, messageType: MESSAGE_TYPE_REQUEST, value: new Uint8Array() },
         });
         expect(probe.isOk()).toBe(true);
         if (probe.isErr()) throw probe.error;
@@ -269,8 +311,12 @@ describe("sandbox iframe MessagePort handshake", () => {
         const unsupported = encodeWireMessage({
             requestId: "legacy-probe",
             payload: {
-                id: PROTOCOL_ERROR_ID,
-                value: new Uint8Array([0, 0, 254]),
+                traitId: PROTOCOL_ERROR_TRAIT_ID,
+                methodId: PROTOCOL_ERROR_METHOD_ID,
+                messageType: MESSAGE_TYPE_RESPONSE,
+                // [0] version index, [0] variant index, then the pair that was
+                // not understood, echoed in arrival order.
+                value: new Uint8Array([0, 0, 254, 253]),
             },
         });
         expect(unsupported.isOk()).toBe(true);
@@ -317,6 +363,19 @@ describe("connectWebSocketHost", () => {
         const client = sandbox.connectWebSocketHost(frameServer());
 
         expect(sandbox.isCorrectEnvironment()).toBe(true);
+        expect(client).not.toBeNull();
+        expect(sandbox.getClientSync()).toBe(client);
+    });
+
+    it("uses an explicitly selected WebSocket without reading an injected client", async () => {
+        currentWindow = installFakeWebviewWindow();
+        Object.defineProperty(currentWindow.win, "__HOST_API_CLIENT__", {
+            get() {
+                throw new Error("explicit endpoints must not adopt the injected client");
+            },
+        });
+        const sandbox = await importSandbox();
+        const client = sandbox.connectWebSocketHost(frameServer());
         expect(client).not.toBeNull();
         expect(sandbox.getClientSync()).toBe(client);
     });
@@ -569,10 +628,10 @@ describe("sandbox after the pipe closes", () => {
         currentWindow = harness;
         const sandbox = await importSandbox();
         const channel = trackChannel();
-        // A locked global, as the container's freeze helpers make one.
+        // A host can prevent deletion while allowing its port to be replaced.
         Object.defineProperty(harness.win, "__HOST_API_PORT__", {
-            get: () => channel.port1,
-            set() {},
+            value: channel.port1,
+            writable: true,
             configurable: false,
         });
         const statuses: string[] = [];
@@ -592,10 +651,10 @@ describe("sandbox after the pipe closes", () => {
         currentWindow = harness;
         const sandbox = await importSandbox();
         const channel = trackChannel();
-        // A locked global, as the container's freeze helpers make one.
+        // A host can prevent deletion while allowing its port to be replaced.
         Object.defineProperty(harness.win, "__HOST_API_PORT__", {
-            get: () => channel.port1,
-            set() {},
+            value: channel.port1,
+            writable: true,
             configurable: false,
         });
         const statuses: string[] = [];
@@ -635,5 +694,20 @@ describe("sandbox after the pipe closes", () => {
 
         expect(harness.win.__HOST_API_PORT__).toBeUndefined();
         expect(sandbox.isCorrectEnvironment()).toBe(true);
+    });
+
+    it("treats a MessagePort from a locked getter as an ordinary terminal connection", async () => {
+        const channel = trackChannel();
+        currentWindow = installFakeWebviewWindow();
+        Object.defineProperty(currentWindow.win, "__HOST_API_PORT__", {
+            get: () => channel.port1,
+        });
+        const sandbox = await importSandbox();
+        const client = sandbox.getClientSync()!;
+        await settle();
+        closePipe(channel.port1);
+        await expect(Promise.resolve(client.system.handshake())).rejects.toThrow(
+            "message port closed unexpectedly",
+        );
     });
 });

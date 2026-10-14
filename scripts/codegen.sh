@@ -2,17 +2,29 @@
 # Regenerate js/packages/truapi/src/generated/* from rust/crates/truapi.
 #
 # Pipeline:
-#   1. cargo +nightly rustdoc -p truapi --output-format json -> target/doc/truapi.json
-#   2. cargo run -p truapi-codegen -- --input target/doc/truapi.json
+#   1. cargo +<pinned nightly> doc -p truapi --no-default-features
+#      -> target/doc/truapi.json, the protocol definitions alone, kept as
+#      target/doc/truapi_protocol.json
+#   2. cargo run -p truapi-codegen -- --input target/doc/truapi_protocol.json
+#                                     --output js/packages/truapi/src/generated
+#                                     --rust-output rust/crates/truapi/src/generated
+#      The runtime includes the dispatcher, so it has to exist before the
+#      runtime can be documented.
+#   3. cargo +<pinned nightly> doc -p truapi -p truapi-provider
+#      -> target/doc/{truapi,truapi_provider}.json, with the runtime
+#   4. cargo run -p truapi-codegen -- --input target/doc/truapi_protocol.json
 #                                     --output js/packages/truapi/src/generated
 #                                     --playground-output js/packages/truapi/src/playground
 #                                     --client-examples-output playground/test/generated/examples
-#                                     --rust-output rust/crates/truapi-server/src/generated
-#                                     --platform-input target/doc/truapi_platform.json
+#                                     --rust-output rust/crates/truapi/src/generated
+#                                     --platform-input target/doc/truapi.json
+#                                     --platform-input target/doc/truapi_provider.json
 #                                     --platform-ts-output js/packages/truapi-host/src/generated
 #                                     --platform-wasm-adapter-output js/packages/truapi-host/src/generated
-#                                     --platform-rust-output rust/crates/truapi-server/src/wasm
-#                                     --codec-version 1
+#                                     --platform-rust-output rust/crates/truapi/src/wasm
+#
+# The codec version is not passed: it defaults to `truapi::WIRE_CODEC_VERSION`,
+# so the generated client and the host's handshake derive it from one place.
 #
 # The client surface defaults to the latest wire version any versioned
 # wrapper exposes; pass `--client-version V<N>` to pin to an older one.
@@ -24,35 +36,46 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-NIGHTLY_TOOLCHAIN="${TRUAPI_NIGHTLY_TOOLCHAIN:-nightly}"
+# The dated nightly CI runs, from nightly-toolchain; TRUAPI_NIGHTLY_TOOLCHAIN
+# overrides it.
+NIGHTLY_TOOLCHAIN="${TRUAPI_NIGHTLY_TOOLCHAIN:-$(head -n1 "$ROOT/nightly-toolchain" | tr -d '[:space:]')}"
 
 # Homebrew LLVM on DYLD_LIBRARY_PATH makes rustc and rustdoc load a mismatched
 # libLLVM, which dies with SIGSEGV in initialize_available_targets.
 unset DYLD_LIBRARY_PATH
 
-cargo +"$NIGHTLY_TOOLCHAIN" rustdoc -p truapi -- -Z unstable-options --output-format json
-cargo +"$NIGHTLY_TOOLCHAIN" rustdoc -p truapi-platform -- -Z unstable-options --output-format json
+RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings -Z unstable-options --output-format json"
+export RUSTDOCFLAGS
+
+cargo +"$NIGHTLY_TOOLCHAIN" doc -p truapi --no-deps --no-default-features
+cp target/doc/truapi.json target/doc/truapi_protocol.json
 cargo run -p truapi-codegen -- \
-  --input target/doc/truapi.json \
+  --input target/doc/truapi_protocol.json \
+  --output js/packages/truapi/src/generated \
+  --rust-output rust/crates/truapi/src/generated
+cargo +"$NIGHTLY_TOOLCHAIN" doc -p truapi -p truapi-provider --no-deps
+cargo run -p truapi-codegen -- \
+  --input target/doc/truapi_protocol.json \
   --output js/packages/truapi/src/generated \
   --playground-output js/packages/truapi/src/playground \
   --client-examples-output playground/test/generated/examples \
-  --rust-output rust/crates/truapi-server/src/generated \
-  --platform-input target/doc/truapi_platform.json \
+  --rust-output rust/crates/truapi/src/generated \
+  --platform-input target/doc/truapi.json \
+  --platform-input target/doc/truapi_provider.json \
   --platform-ts-output js/packages/truapi-host/src/generated \
   --platform-wasm-adapter-output js/packages/truapi-host/src/generated \
-  --platform-rust-output rust/crates/truapi-server/src/wasm \
-  --explorer-output js/packages/truapi/src/explorer \
-  --codec-version 1
+  --platform-rust-output rust/crates/truapi/src/wasm \
+  --explorer-output js/packages/truapi/src/explorer
 
 rustfmt +"$NIGHTLY_TOOLCHAIN" --edition 2024 \
-  rust/crates/truapi-server/src/generated/dispatcher.rs \
-  rust/crates/truapi-server/src/generated/wire_table.rs \
-  rust/crates/truapi-server/src/wasm/generated_bridge.rs
+  rust/crates/truapi/src/generated/dispatcher.rs \
+  rust/crates/truapi/src/generated/wire_table.rs \
+  rust/crates/truapi/src/wasm/generated_bridge.rs
 
 node scripts/regen-explorer-versions.mjs
 
-npm exec --yes -- prettier --write \
+# --no: use the installed prettier, never resolve or fetch one.
+npm exec --no -- prettier --write \
   "js/packages/truapi/src/generated/**/*.ts" \
   "js/packages/truapi/src/playground/**/*.ts" \
   "js/packages/truapi/src/explorer/**/*.ts" \
@@ -81,6 +104,6 @@ fi
 echo "Generated client at js/packages/truapi/src/generated/"
 echo "Generated playground metadata at js/packages/truapi/src/playground/codegen/"
 echo "Generated client examples at playground/test/generated/examples/"
-echo "Generated Rust dispatcher at rust/crates/truapi-server/src/generated/"
+echo "Generated Rust dispatcher at rust/crates/truapi/src/generated/"
 echo "Generated host-callbacks WASM adapter at js/packages/truapi-host/src/generated/"
-echo "Generated Rust WASM bridge at rust/crates/truapi-server/src/wasm/generated_bridge.rs"
+echo "Generated Rust WASM bridge at rust/crates/truapi/src/wasm/generated_bridge.rs"

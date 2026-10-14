@@ -1,0 +1,63 @@
+name: Install Clang/LLVM
+description: Installs a specific version of Clang/LLVM from the official LLVM APT repository and sets CC, CXX, LD environment variables
+
+inputs:
+  clang-version:
+    description: "Clang/LLVM version to install (e.g. 20)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🔧 Install Clang ${{ inputs.clang-version }}
+      shell: bash
+      env:
+        CLANG_VERSION: ${{ inputs.clang-version }}
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        set -euo pipefail
+
+        # Determine Debian/Ubuntu codename
+        DISTRO_CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME}")
+        echo "Detected distro codename: ${DISTRO_CODENAME}"
+
+        # Import LLVM GPG key
+        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+
+        # Workaround for SHA1 signature acceptance (Sequoia-based GPG)
+        if command -v sq &> /dev/null; then
+          echo "Extending SHA1 acceptance for LLVM key (Sequoia workaround)"
+          sudo sq key approvals update \
+            --cert-file /usr/share/keyrings/llvm-archive-keyring.gpg \
+            --sha1-accept 2027-01-01 \
+            --output /tmp/llvm-keyring.gpg
+          sudo mv /tmp/llvm-keyring.gpg /usr/share/keyrings/llvm-archive-keyring.gpg
+        fi
+
+        # Add LLVM APT repository
+        ARCH=$(dpkg --print-architecture)
+        echo "deb [arch=${ARCH} signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/${DISTRO_CODENAME}/ llvm-toolchain-${DISTRO_CODENAME}-${CLANG_VERSION} main" \
+          | sudo tee /etc/apt/sources.list.d/llvm-${CLANG_VERSION}.list
+
+        # Install Clang and related tools
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          clang-${CLANG_VERSION} \
+          lldb-${CLANG_VERSION} \
+          lld-${CLANG_VERSION} \
+          libclang-${CLANG_VERSION}-dev
+
+    - name: 🔗 Register alternatives and set compiler environment variables
+      shell: bash
+      env:
+        CLANG_VERSION: ${{ inputs.clang-version }}
+      run: |
+        sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${CLANG_VERSION} 100
+        sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${CLANG_VERSION} 100
+        sudo update-alternatives --install /usr/bin/ld ld /usr/bin/ld.lld-${CLANG_VERSION} 100
+        sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-${CLANG_VERSION} 100
+        sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-${CLANG_VERSION} 100
+
+        echo "CC=clang-${CLANG_VERSION}" >> "$GITHUB_ENV"
+        echo "CXX=clang++-${CLANG_VERSION}" >> "$GITHUB_ENV"
+        echo "LD=lld-${CLANG_VERSION}" >> "$GITHUB_ENV"

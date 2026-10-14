@@ -1,0 +1,2 @@
+skip_build(true)
+devices([ENV.fetch("SCAN_DEVICE", "iPhone 17 Pro")])

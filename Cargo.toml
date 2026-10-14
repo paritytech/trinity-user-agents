@@ -1,17 +1,120 @@
 [workspace]
 resolver = "2"
 members = ["rust/crates/*"]
+# Gradle builds these Android JNI crates independently of the core workspace.
+exclude = [
+    "hosts/android/bindings/bandersnatch-crypto/rust",
+    "hosts/android/bindings/hydra-dx-math/rust",
+    "hosts/android/bindings/sr25519-vrf/rust",
+]
 
 [workspace.package]
 edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+anyhow = "1"
+async-sqlite = { version = "0.6", default-features = false }
+arboard = { version = "3.6.1", default-features = false }
+async-trait = "0.1"
+base64 = "0.22"
+bip39 = "2"
+blake2b_simd = { version = "1", default-features = false }
+chacha20poly1305 = { version = "0.10", default-features = false }
+clap = "4"
+console_error_panic_hook = "0.1"
+convert_case = "0.6"
+crossterm = "0.29"
+derive_more = "2"
+flate2 = "1"
+frame-metadata = { version = "23", default-features = false }
+fs2 = "0.4"
+futures = "0.3"
+futures-timer = "3"
+futures-util = "0.3"
+getrandom = "0.2"
+hex = "0.4"
+hkdf = "0.12"
+image = { version = "0.25", default-features = false }
+indoc = "2"
+itertools = "0.14"
+js-sys = "0.3"
+jsonrpsee = "0.26"
+jsonrpsee-client-transport = "0.26"
+jsonrpsee-core = "0.26"
+libc = "0.2"
+libsecp256k1 = { version = "0.7", default-features = false, features = ["lazy-static-context"] }
+log = "0.4"
+merlin = "3"
+nanoid = "0.4"
+parking_lot = "0.12"
+parity-scale-codec = "3"
+pin-project = "1"
+proc-macro2 = "1"
+qrcode = { version = "0.14.1", default-features = false }
+quote = "1"
+rand = "0.8"
+ratatui = { version = "0.30.2", default-features = false }
+reqwest = { version = "0.12", default-features = false }
+rqrr = { version = "0.10.1", default-features = false }
+rusqlite = "0.40"
+rusqlite_migration = "2.6"
+rustix = "1"
+rustls = { version = "0.23", default-features = false }
+scale-decode = "0.16"
+scale-info = { version = "2.11", default-features = false }
+schnorrkel = { version = "0.11.5", default-features = false }
+send_wrapper = "0.6"
+serde = "1"
+serde_json = "1"
+sha2 = "0.10"
+shlex = "1"
+smoldot = { version = "4", default-features = false }
+smoldot-light = { version = "2.1", default-features = false }
+socket2 = "0.6"
+sp-crypto-hashing = { version = "0.1", default-features = false }
+substrate-bip39 = { version = "0.6", default-features = false }
+subxt = { version = "0.51.1", default-features = false }
+subxt-rpcs = { version = "0.51.1", default-features = false }
+syn = "2"
+tar = "0.4"
+tempfile = "3"
+thiserror = "1"
+tokio = "1"
+tokio-rustls = { version = "0.26", default-features = false }
+tokio-stream = "0.1"
+tokio-tungstenite = "0.24"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false }
+trybuild = "1"
+unicode-normalization = "0.1"
+unicode-width = "0.2"
 uniffi = "0.32.0"
+url = "2"
+wasm-bindgen = "0.2.118"
+wasm-bindgen-futures = "0.4"
+wasm-bindgen-test = "0.3"
+web-sys = "0.3"
+web-time = "1"
+webpki-roots = "0.26"
+x25519-dalek = { version = "2", default-features = false }
+zeroize = { version = "1", default-features = false }
 
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_code = "deny"
+
+[workspace.lints.clippy]
+complexity = "warn"
+correctness = "warn"
+
+# Line tables carry the file and line a failing test's backtrace needs, without
+# the variable-level DWARF only an attached debugger reads. Measured on a cold
+# `cargo test -p truapi --all-features --lib`: 41.7s and 1.9G of
+# artifacts with full debuginfo, 31.9s and 1.6G with line tables. Warm rebuilds
+# are unaffected. Step-through debugging with locals wants `debug = true` here.
+[profile.dev]
+debug = "line-tables-only"
 
 [profile.release]
 opt-level = "z"
@@ -28,3 +131,13 @@ debug = false
 [profile.codegen]
 inherits = "release"
 strip = false
+# This dylib is never shipped: uniffi-bindgen only reads its exported metadata
+# symbols. Size optimisation, whole-program LTO and a single codegen unit buy
+# nothing here and cost the whole wait on every core edit, so the profile
+# optimises for build speed instead. The bindings it produces are unchanged.
+opt-level = 0
+lto = false
+codegen-units = 16
+# Most core edits touch one crate, so reusing the previous compilation is the
+# largest remaining win on this path.
+incremental = true

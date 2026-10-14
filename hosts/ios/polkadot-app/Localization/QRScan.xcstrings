@@ -1,0 +1,116 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "error.camera.restricted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unfortunately, access to the camera is restricted."
+          }
+        }
+      }
+    },
+    "error.camera.restricted_previously": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unfortunately, you denied access to camera previously. Would you like to allow access now?"
+          }
+        }
+      }
+    },
+    "error.camera.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Camera Access"
+          }
+        }
+      }
+    },
+    "error.gallery.restricted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unfortunately, access to the photos is restricted."
+          }
+        }
+      }
+    },
+    "error.gallery.restricted.previously": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unfortunately, you denied access to photos previously. Would you like to allow access now?"
+          }
+        }
+      }
+    },
+    "error.gallery.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photos Access"
+          }
+        }
+      }
+    },
+    "error.invalid.image": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't process the selected image"
+          }
+        }
+      }
+    },
+    "error.no.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The QR can't be decoded"
+          }
+        }
+      }
+    },
+    "unsupported": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The QR code has is invalid"
+          }
+        }
+      }
+    },
+    "upload.gallery": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Upload from gallery"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.1"
+}

@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "arrow_forward_ios.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

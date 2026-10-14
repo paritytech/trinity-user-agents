@@ -1,0 +1,35 @@
+package io.paritytech.polkadotapp.common.utils
+
+typealias MutableMultiMap<K, V> = MutableMap<K, MutableSet<V>>
+typealias MutableMultiMapList<K, V> = MutableMap<K, MutableList<V>>
+typealias MultiMap<K, V> = Map<K, Set<V>>
+typealias MultiMapList<K, V> = Map<K, List<V>>
+
+fun <K, V> Map<K, List<V>>.toMutableMultiMapList(): MutableMultiMapList<K, V> {
+    val mutableMultiMap = mutableMultiListMapOf<K, V>()
+    onEach { (key, value) ->
+        mutableMultiMap.put(key, value)
+    }
+    return mutableMultiMap
+}
+
+fun <K, V> mutableMultiMapOf(): MutableMultiMap<K, V> = mutableMapOf()
+
+fun <K, V> mutableMultiListMapOf(): MutableMultiMapList<K, V> = mutableMapOf()
+
+fun <K, V> MutableMultiMap<K, V>.put(key: K, value: V) {
+    getOrPut(key, ::mutableSetOf).add(value)
+}
+
+@JvmName("putIntoList")
+fun <K, V> MutableMultiMapList<K, V>.put(key: K, value: V) {
+    getOrPut(key, ::mutableListOf).add(value)
+}
+
+fun <K, V> MutableMultiMapList<K, V>.put(key: K, values: List<V>) {
+    getOrPut(key, ::mutableListOf).addAll(values)
+}
+
+inline fun <K, V> buildMultiMapList(builder: MutableMultiMapList<K, V>.() -> Unit): MultiMapList<K, V> {
+    return mutableMultiListMapOf<K, V>().apply(builder)
+}

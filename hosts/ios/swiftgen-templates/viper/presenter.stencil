@@ -1,0 +1,31 @@
+import Foundation
+import PolkadotUI
+
+final class {{moduleName}}Presenter {
+    weak var view: {{moduleName}}ViewProtocol?
+    let wireframe: {{moduleName}}WireframeProtocol
+    let interactor: {{moduleName}}InteractorInputProtocol
+
+    init(
+        interactor: {{moduleName}}InteractorInputProtocol,
+        wireframe: {{moduleName}}WireframeProtocol
+    ) {
+        self.interactor = interactor
+        self.wireframe = wireframe
+    }
+}
+
+extension {{moduleName}}Presenter: {{moduleName}}PresenterProtocol {
+    func setup() {
+        provideViewModel()
+    }
+}
+
+extension {{moduleName}}Presenter: {{moduleName}}InteractorOutputProtocol {
+}
+
+private extension {{moduleName}}Presenter {
+    func provideViewModel() {
+    }
+}
+

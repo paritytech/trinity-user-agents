@@ -1,13 +1,14 @@
 import { getClientSync } from "@parity/truapi/sandbox";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type {
-  CustomRendererNode,
+  CallErrorValue,
   HostChatActionSubscribeItem,
   HostChatListSubscribeItem,
+  HostRendererActionSubscribeItem,
   ObservableLike,
-  ObservableSource,
-  Observer,
-  ProductChatCustomMessageRenderRequest,
+  ProductRendererRenderRequest,
+  RendererNode,
+  VersionedProductRendererRenderError,
 } from "@parity/truapi";
 import { filter, firstValueFrom, from, timeout } from "rxjs";
 import {
@@ -15,6 +16,7 @@ import {
   CHAT_DIAGNOSIS_REFRESH_ACTION,
   ChatDiagnosis,
 } from "./diagnosis";
+import { servePocket } from "./pocket";
 
 const ROOM_ID = "truapi-playground";
 const ROOM_NAME = "TrUAPI Playground";
@@ -33,11 +35,13 @@ if (!client) {
   throw new Error("TrUAPI Playground Chat worker requires a host connection");
 }
 const chat = client.chat;
+const renderer = client.renderer;
 let customMessageId: string | undefined;
 let finalReportPosted = false;
 type RenderInstance = {
-  request: ProductChatCustomMessageRenderRequest;
-  observer: Partial<Observer<CustomRendererNode>>;
+  messageId: string;
+  send: (node: RendererNode) => void;
+  interrupt: (reason?: CallErrorValue<VersionedProductRendererRenderError>) => void;
   disposed: boolean;
 };
 const activeRenderInstances = new Set<RenderInstance>();
@@ -54,7 +58,9 @@ const diagnosis = new ChatDiagnosis(() => {
   void publishFinalReportIfComplete();
 });
 
-chat.onCustomMessageRender(handleRenderRequest);
+renderer.onRender(handleRenderRequest);
+
+servePocket(client.pocket);
 
 chat.actionSubscribe().subscribe({
   next(action) {
@@ -66,6 +72,37 @@ chat.actionSubscribe().subscribe({
     diagnosis.fail("Chat/action_subscribe", error);
   },
 });
+
+renderer.actionSubscribe().subscribe({
+  next(action) {
+    void handleRendererAction(action).catch((error: unknown) => {
+      diagnosis.fail("Renderer/action_subscribe", error);
+    });
+  },
+  error(error) {
+    diagnosis.fail("Renderer/action_subscribe", error);
+  },
+});
+// Only a human press produces a renderer action, so the row passes on the
+// open subscription; an action that does arrive replaces this detail.
+diagnosis.pass(
+  "Renderer/action_subscribe",
+  "renderer action stream is open; a press inside the rendered tree is delivered on it",
+);
+
+async function handleRendererAction(
+  action: HostRendererActionSubscribeItem,
+): Promise<void> {
+  if (action.context.tag !== "ChatMessage") return;
+  if (action.context.value.messageId !== customMessageId) return;
+  diagnosis.pass(
+    "Renderer/action_subscribe",
+    "received a renderer action for the diagnosis message",
+  );
+  if (action.actionId === CHAT_DIAGNOSIS_REFRESH_ACTION) renderActiveMessages();
+  else if (action.actionId === CHAT_DIAGNOSIS_COPY_ACTION)
+    await copyDiagnosisReport();
+}
 
 await runStartupDiagnosis().catch((error: unknown) => {
   diagnosis.failPending(error);
@@ -112,6 +149,16 @@ async function runStartupDiagnosis(): Promise<void> {
 
   await roomAppeared;
   diagnosis.pass("Chat/list_subscribe", "observed the newly created room");
+
+  // The diagnosis asks the user to type a command, so its room keeps the input.
+  const footer = await chat.setRoomFooter({
+    roomId: diagnosticRoomId,
+    footer: "TextInput",
+  });
+  if (footer.isErr()) {
+    throw new Error(`setRoomFooter failed: ${JSON.stringify(footer.error)}`);
+  }
+  diagnosis.pass("Chat/set_room_footer", "kept the text input");
 
   const textMessageId = await postMessage({
     tag: "Text",
@@ -177,10 +224,16 @@ async function ensureRoom(roomId: string, name: string): Promise<void> {
 }
 
 function handleRenderRequest(
-  request: ProductChatCustomMessageRenderRequest,
-): ObservableSource<CustomRendererNode> {
-  if (request.messageType !== RENDER_MESSAGE_TYPE) {
-    throw new Error(`unsupported custom message type: ${request.messageType}`);
+  request: ProductRendererRenderRequest,
+  send: (node: RendererNode) => void,
+  interrupt: (reason?: CallErrorValue<VersionedProductRendererRenderError>) => void,
+): () => void {
+  if (request.context.tag !== "ChatMessage") {
+    throw new Error(`unsupported renderer context: ${request.context.tag}`);
+  }
+  const { messageId, messageType } = request.context.value;
+  if (messageType !== RENDER_MESSAGE_TYPE) {
+    throw new Error(`unsupported message type: ${messageType}`);
   }
   const payload = JSON.parse(
     new TextDecoder().decode(hexToBytes(request.payload)),
@@ -199,19 +252,13 @@ function handleRenderRequest(
     throw new Error("render request did not preserve the custom payload");
   }
 
-  return {
-    subscribe(observer) {
-      const instance: RenderInstance = { request, observer, disposed: false };
-      if (customMessageId) activateRenderInstance(instance);
-      else pendingRenderInstances.add(instance);
-      return {
-        unsubscribe() {
-          instance.disposed = true;
-          pendingRenderInstances.delete(instance);
-          activeRenderInstances.delete(instance);
-        },
-      };
-    },
+  const instance: RenderInstance = { messageId, send, interrupt, disposed: false };
+  if (customMessageId) activateRenderInstance(instance);
+  else pendingRenderInstances.add(instance);
+  return () => {
+    instance.disposed = true;
+    pendingRenderInstances.delete(instance);
+    activeRenderInstances.delete(instance);
   };
 }
 
@@ -224,18 +271,19 @@ function activatePendingRenderInstances(): void {
 
 function activateRenderInstance(instance: RenderInstance): void {
   if (instance.disposed) return;
-  if (instance.request.messageId !== customMessageId) {
-    instance.observer.error?.(
-      new Error(
-        `render request message ${instance.request.messageId} did not match ${customMessageId}`,
-      ),
-    );
+  if (instance.messageId !== customMessageId) {
+    instance.interrupt({
+      tag: "HostFailure",
+      value: {
+        reason: `render request message ${instance.messageId} did not match ${customMessageId}`,
+      },
+    });
     return;
   }
   activeRenderInstances.add(instance);
-  instance.observer.next?.(diagnosis.rendererNode());
+  instance.send(diagnosis.rendererNode());
   diagnosis.pass(
-    "Chat/custom_message_render",
+    "Renderer/render",
     "served initial and replacement trees on a host-initiated render stream",
   );
 }
@@ -243,24 +291,13 @@ function activateRenderInstance(instance: RenderInstance): void {
 function renderActiveMessages(): void {
   const node = diagnosis.rendererNode();
   for (const instance of activeRenderInstances) {
-    instance.observer.next?.(node);
+    instance.send(node);
   }
 }
 
 async function handleAction(
   action: HostChatActionSubscribeItem,
 ): Promise<void> {
-  if (action.payload.tag === "ActionTriggered") {
-    const trigger = action.payload.value;
-    if (trigger.messageId === customMessageId) {
-      if (trigger.actionId === CHAT_DIAGNOSIS_REFRESH_ACTION) {
-        renderActiveMessages();
-      } else if (trigger.actionId === CHAT_DIAGNOSIS_COPY_ACTION) {
-        await copyDiagnosisReport();
-      }
-    }
-    return;
-  }
   if (action.payload.tag !== "MessagePosted") return;
   if (action.payload.value.tag !== "Text") return;
 

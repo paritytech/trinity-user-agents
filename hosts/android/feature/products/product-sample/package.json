@@ -1,0 +1,30 @@
+{
+  "name": "products-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "strip-metadata": "for f in .papi/descriptors/dist/*_metadata-*.js; do echo 'export default \"\"' > \"$f\"; done",
+    "build:prod": "npm run strip-metadata && esbuild src/scripts/*.tsx --bundle --outdir=scripts --format=iife --target=es2020 --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\"",
+    "build:prod:minified": "npm run strip-metadata && esbuild src/scripts/*.tsx --bundle --outdir=scripts --format=iife --target=es2020 --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --minify",
+    "build:dev": "npm run strip-metadata && esbuild src/scripts/*.tsx --bundle --outdir=scripts --format=iife --target=es2020 --jsx=automatic",
+    "build:watch": "npm run build:dev -- --watch",
+    "deploy": "node deploy.mjs",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "npx papi"
+  },
+  "dependencies": {
+    "@novasamatech/host-api": "0.12.0",
+    "@novasamatech/host-api-wrapper": "0.12.0",
+    "@novasamatech/product-react-renderer": "0.12.0",
+    "@novasamatech/scale": "0.12.0",
+    "@polkadot-api/descriptors": "file:.papi/descriptors",
+    "@polkadot-api/json-rpc-provider": "^0.2.0",
+    "@polkadot-api/pjs-signer": "^0.6.19",
+    "polkadot-api": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}

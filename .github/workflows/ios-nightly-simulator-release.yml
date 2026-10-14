@@ -1,0 +1,222 @@
+name: Nightly Simulator Release
+
+# Builds an ad-hoc-signed `.app` bundle for iOS Simulator on the Nightly
+# configuration, then uploads it as a GitHub Release asset. Consumed by
+# paritytech/triangle-e2e for the iOS shard of the App Tests matrix — the
+# direct analogue of how `app-nightly.apk` from polkadot-app-android-v2
+# Releases feeds the Android shard.
+#
+# The nightly calls this as a job of its own run, so the bundle and the
+# TestFlight build come from one commit and are announced together. A schedule
+# of its own would only ever be near the nightly's commit, and nothing would
+# report when the two had drifted apart.
+#
+# Re-runs are idempotent: each run creates a fresh
+# `simulator-YYYYMMDD-HHMM-<sha>` tag and release.
+
+concurrency:
+  group: ios-nightly-simulator-${{ github.run_id }}
+  cancel-in-progress: true
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Ref to build. Defaults to the commit the calling run is for."
+        required: false
+        type: string
+        default: ""
+    outputs:
+      tag:
+        description: "Tag of the release carrying the bundle."
+        value: ${{ jobs.build_simulator.outputs.tag }}
+      download_url:
+        description: "Direct download for the published bundle."
+        value: ${{ jobs.build_simulator.outputs.download_url }}
+    secrets:
+      GOOGLE_SERVICE_INFO_RELEASE_BASE64:
+        required: true
+      MELD_BASIC_AUTH_TOKEN:
+        required: true
+      SENTRY_AUTH_TOKEN:
+        required: true
+      SENTRY_DSN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ref to build. Defaults to the commit this run is for."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  IOS_BUNDLE_ID: "io.parity.polkadotapp"
+  FASTLANE_CONFIGURATION: "Nightly"
+  RUN_IN_CI: "true"
+  SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+jobs:
+  build_simulator:
+    name: Build & publish simulator .app
+    runs-on: macos-26
+    timeout-minutes: 60
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      download_url: ${{ steps.tag.outputs.download_url }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+
+      # Package.swift resolves targets at generated paths that are gitignored,
+      # so xcodebuild cannot resolve dependencies until the core is built from
+      # this tree. The app repository got the core as a published package and
+      # needed none of this; here it has to be generated before any build.
+      - name: Bootstrap the in-tree core
+        uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Configure Google services
+        uses: ./hosts/ios/.github/actions/configure-google-services
+        with:
+          google_service_info_base64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
+          expected_bundle_id: ${{ env.IOS_BUNDLE_ID }}
+
+      - name: Configure secrets
+        uses: ./hosts/ios/.github/actions/configure-secrets
+        with:
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      - name: Build simulator .app
+        working-directory: hosts/ios
+        run: bundle exec fastlane build_app_simulator
+
+      # The commit is read from the checkout rather than from GITHUB_SHA, which
+      # names the commit the run was started for and not the one a caller asked
+      # this job to build.
+      - name: Compute release tag + name
+        id: tag
+        env:
+          ASSET: polkadot-app-simulator.app.zip
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          DATE_TAG=$(date -u +%Y%m%d-%H%M)
+          DATE_NAME=$(date -u +'%d.%m.%Y %H:%M')
+          TAG="simulator-${DATE_TAG}-${SHA:0:7}"
+          {
+            echo "tag=${TAG}"
+            echo "name=Nightly Simulator ${DATE_NAME} UTC"
+            echo "sha=${SHA}"
+            echo "download_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Zip .app bundle
+        id: zip
+        working-directory: hosts/ios
+        run: |
+          set -euo pipefail
+          cd build_simulator
+          # `.app` is a directory bundle; zip preserves the structure so
+          # consumers can unzip and `xcrun simctl install` the result.
+          shopt -s nullglob
+          candidates=(./*.app)
+          shopt -u nullglob
+          if [ ${#candidates[@]} -eq 0 ]; then
+            echo "::error::No .app directory found under build_simulator/"
+            exit 1
+          fi
+          APP_DIR="${candidates[0]}"
+          ARCHIVE="polkadot-app-simulator.app.zip"
+          zip -ry "$ARCHIVE" "$APP_DIR"
+
+          # A bundle that unpacks without its executable installs and then does
+          # nothing, which reads downstream as the application being broken rather
+          # than as the archive being wrong. The listing is materialised first: a
+          # grep that exits on its first match would send zip's reader SIGPIPE, and
+          # pipefail would turn that into a failure on a perfectly good archive.
+          if [ ! -s "$ARCHIVE" ]; then
+            echo "::error::$ARCHIVE is empty"
+            exit 1
+          fi
+          BUNDLE="$(basename "$APP_DIR")"
+          listing="$(unzip -Z1 "$ARCHIVE")"
+          for required in "$BUNDLE/Info.plist" "$BUNDLE/$(basename "$BUNDLE" .app)"; do
+            if ! grep -qxF "$required" <<<"$listing"; then
+              echo "::error::$ARCHIVE does not contain $required"
+              printf '%s\n' "$listing" | head -20 || true
+              exit 1
+            fi
+          done
+          echo "archive carries $BUNDLE with an Info.plist and an executable"
+
+          echo "archive=hosts/ios/build_simulator/$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          # Without this the tag is created at the default branch, so a build of
+          # any other ref produces a tag naming one commit and pointing at
+          # another, and generated notes computed from the wrong base.
+          target_commitish: ${{ steps.tag.outputs.sha }}
+          name: ${{ steps.tag.outputs.name }}
+          # GitHub auto-generates a "What's Changed" PR list between this tag
+          # and the previous one. softprops/action-gh-release prepends the
+          # body below to those notes, so the install snippet sits above the
+          # PR list — same shape Android nightlies use.
+          generate_release_notes: true
+          body: |
+            Ad-hoc-signed arm64-iphonesimulator `.app` bundle built from commit
+            `${{ steps.tag.outputs.sha }}` on the `${{ env.FASTLANE_CONFIGURATION }}` configuration.
+
+            Install on a booted simulator:
+            ```
+            unzip polkadot-app-simulator.app.zip
+            xcrun simctl install booted polkadot-app.app
+            xcrun simctl launch booted ${{ env.IOS_BUNDLE_ID }}
+            ```
+
+            Consumed by https://github.com/paritytech/triangle-e2e for the
+            iOS shard of the App Tests matrix — mirror of how
+            `app-nightly.apk` feeds the Android shard.
+          prerelease: true
+          files: ${{ steps.zip.outputs.archive }}
+
+      # A release can be created with the upload having quietly failed,
+      # leaving a tag that looks published and a consumer that gets a 404.
+      # Read the asset back rather than trusting that it uploaded.
+      - name: Confirm the published asset is present and not empty
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          ASSET: polkadot-app-simulator.app.zip
+        run: |
+          set -euo pipefail
+          # jq takes the name from the environment rather than from the shell, so a
+          # name needing escaping cannot break the filter. `uploaded` is the state
+          # that matters: an asset stranded mid-upload still reports a size, which is
+          # exactly the case this step exists to catch.
+          # shellcheck disable=SC2016  # $ENV.ASSET is jq, and must not expand here
+          size="$(gh release view "$TAG" --json assets \
+            --jq '[.assets[] | select(.name == $ENV.ASSET and .state == "uploaded") | .size] | first // 0')"
+          case "$size" in
+            ''|*[!0-9]*)
+              echo "::error::Could not read a size for $ASSET on $TAG"
+              exit 1
+              ;;
+          esac
+          if [ "$size" -le 0 ]; then
+            echo "::error::$ASSET is missing, empty or unfinished on $TAG"
+            gh release view "$TAG" --json assets \
+              --jq '.assets[] | "\(.name) \(.size) \(.state)"' || true
+            exit 1
+          fi
+          echo "$ASSET published on $TAG, $size bytes"

@@ -1,8 +1,8 @@
 js/packages/truapi/src/explorer/codegen/versions/** linguist-generated=true
 
 rust/crates/truapi-codegen/tests/golden/* linguist-generated=true
-rust/crates/truapi-server/src/generated/* linguist-generated=true
-rust/crates/truapi-server/src/wasm/generated_bridge.rs linguist-generated=true
+rust/crates/truapi/src/generated/* linguist-generated=true
+rust/crates/truapi/src/wasm/generated_bridge.rs linguist-generated=true
 
 ios/truapi-host/Sources/TrUAPIHost/truapi*.swift linguist-generated=true
 ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js linguist-generated=true

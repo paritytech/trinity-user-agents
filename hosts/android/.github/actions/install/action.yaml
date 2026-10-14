@@ -1,0 +1,156 @@
+name: Install dependencies for Android build
+description: Contains all dependencies for Android build
+inputs:
+  truapi_ref:
+    description: >-
+      paritytech/trinity-user-agents commit to build the TrUAPI core from. Pinned to a
+      SHA so an unrelated merge there cannot turn this build red; bump it
+      deliberately.
+      The app's HostCallbacks implementation must match the native API surface
+      at this commit. Currently seven commits past the 0.16.0 release tag that
+      polkadot-app-ios-v2 pins, for the Pocket collection (#706) the Android
+      Pocket modality needs. Drop back to the tag once Pocket ships in a
+      release; iOS pins its own ref and the two are bumped independently.
+    required: false
+    default: "b0d95f0d4d2526f7dd0a58b78452667e9b22b99d"
+
+runs:
+  using: "composite"
+  steps:
+    - name: System Diagnostics
+      shell: bash
+      run: |
+        echo "=== DISK SPACE ==="
+        df -h
+
+        echo ""
+        echo "=== MEMORY INFO ==="
+        free -h
+        echo "Total RAM: $(grep MemTotal /proc/meminfo | awk '{print $2 $3}')"
+        echo "Available RAM: $(grep MemAvailable /proc/meminfo | awk '{print $2 $3}')"
+
+        echo ""
+        echo "=== CPU INFO ==="
+        echo "CPU cores: $(nproc)"
+        echo "CPU model: $(grep -m 1 "model name" /proc/cpuinfo | cut -d: -f2 | sed 's/^ *//')"
+        grep -c ^processor /proc/cpuinfo
+        echo "CPU architecture: $(uname -m)"
+
+        echo ""
+        echo "=== SYSTEM INFO ==="
+        echo "OS: $(cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"')"
+        echo "Kernel: $(uname -r)"
+
+    - name: ☕️ Install Java
+      uses: actions/setup-java@387ac29b308b003ca37ba93a6cab5eb57c8f5f93 # v4.0.0
+      with:
+        distribution: "temurin"
+        java-version: "21"
+        cache: "gradle"
+
+    # `packages` defaults to `tools platform-tools`. `tools` is the obsolete
+    # Android SDK Tools package; it pulls the emulator, which nothing here needs,
+    # and its download is what fails with "Error on ZipFile unknown archive".
+    # platform-tools is kept for the adb that instrumental_tests.yaml relies on.
+    - name: 📱 Install Android SDK
+      uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+      with:
+        packages: "platform-tools"
+
+    - name: 📦 Install Node.js
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      with:
+        node-version: "24"
+
+    - name: 🐍 Install Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      with:
+        python-version: "3.13"
+
+    - name: 🐙 Install GitHub CLI
+      shell: bash
+      run: |
+        if command -v gh &> /dev/null; then
+          echo "gh already installed: $(gh --version | head -1)"
+        else
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            | sudo tee /etc/apt/sources.list.d/github-cli.list
+          sudo apt-get update
+          sudo apt-get install -y gh
+        fi
+
+    - name: Add execute permissions to gradle
+      run: chmod +x gradlew
+      shell: bash
+
+    - name: 🛠️ Install NDK
+      id: setup-ndk
+      uses: nttld/setup-ndk@6a7e9c5494a25c4842ca1011f710300132eacd94 # v1.4.2
+      with:
+        ndk-version: "r29"
+
+    - name: Set ndk.dir in local.properties
+      run: echo "ndk.dir=${{ steps.setup-ndk.outputs.ndk-path }}" >> ./local.properties
+      shell: bash
+
+    - name: 🔨 Install Clang
+      uses: ./.github/actions/setup-clang
+      with:
+        clang-version: "21"
+
+    # :bindings:truapi-host compiles the TrUAPI Rust core from an out-of-repo
+    # checkout, and :feature:products:impl depends on that module, so without a
+    # truapi checkout the whole build fails to configure. Pinned to a SHA rather
+    # than a branch so an unrelated truapi merge cannot turn this build red;
+    # bump it deliberately.
+    #
+    # Ordered before the Rust toolchain because that action's built-in rust-cache
+    # keys on the Cargo.lock files present when it runs. Checking truapi out
+    # afterwards leaves `.truapi/target` uncached, so the core is rebuilt from
+    # scratch on every job.
+    - name: 🧩 Checkout truapi
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        repository: paritytech/trinity-user-agents
+        ref: ${{ inputs.truapi_ref }}
+        path: .truapi
+
+    # The host cdylib build and UniFFI Kotlin generation are Gradle task
+    # dependencies of compileKotlin (buildHostCdylib -> generateUniffiKotlin),
+    # so any compile task triggers them; no explicit steps needed here.
+    - name: Set truapi.dir in local.properties
+      shell: bash
+      run: echo "truapi.dir=$GITHUB_WORKSPACE/.truapi" >> ./local.properties
+
+    - name: 🦀 Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      with:
+        # The nightly the codegen needs is installed by date in the step below,
+        # rather than as whatever `nightly` resolves to on the day.
+        toolchain: stable
+        override: true
+        components: rustfmt, clippy
+        # truapi is a separate cargo workspace outside this repo's tree, so
+        # rust-cache does not discover it on its own.
+        cache-workspaces: |
+          .
+          .truapi -> target
+
+    # :bindings:truapi-host runs the core's own codegen script, whose rustdoc JSON
+    # only a nightly emits and whose output it formats with that toolchain's
+    # rustfmt. Dated, because the JSON format moves with the toolchain; Gradle
+    # passes the same property to the script as TRUAPI_NIGHTLY_TOOLCHAIN.
+    - name: Add nightly for the core codegen
+      run: |
+        nightly="$(sed -n 's/^truapi.rustNightly=//p' gradle.properties)"
+        rustup toolchain install "$nightly" --profile minimal --component rustfmt
+      shell: bash
+
+    - name: Add targets
+      run: |
+        rustup target add armv7-linux-androideabi
+        rustup target add i686-linux-android
+        rustup target add x86_64-linux-android
+        rustup target add aarch64-linux-android
+      shell: bash

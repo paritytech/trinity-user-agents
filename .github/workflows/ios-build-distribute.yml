@@ -1,0 +1,417 @@
+name: Reusable Build and Distribute
+
+on:
+  workflow_call:
+    inputs:
+      release_branch:
+        required: true
+        type: string
+      release_pr_number:
+        # Empty means a direct build (no release PR): release notes fall back to a
+        # generic message, PR comment and commit status steps are skipped.
+        required: false
+        type: string
+        default: ""
+      increment_step:
+        # Used only for direct builds; PR builds read it from the PR-body metadata.
+        required: false
+        type: string
+        default: ""
+      build_configuration:
+        required: true
+        type: string
+      distribute_to_external_group:
+        required: false
+        type: boolean
+        default: false
+      external_group_name:
+        required: false
+        type: string
+        default: ""
+    outputs:
+      build_number:
+        value: ${{ jobs.prepare_build_metadata.outputs.build_number }}
+      marketing_version:
+        value: ${{ jobs.prepare_build_metadata.outputs.marketing_version }}
+      release_notes:
+        value: ${{ jobs.prepare_build_metadata.outputs.release_notes }}
+      pr_list_markdown:
+        value: ${{ jobs.prepare_build_metadata.outputs.pr_list_markdown }}
+      succeeded:
+        value: ${{ jobs.check_build_result.outputs.succeeded }}
+    # Declared rather than inherited, so a caller hands over exactly what this
+    # workflow reads and nothing else.
+    secrets:
+      ASC_ISSUER_ID:
+        required: true
+      ASC_KEY_BASE64:
+        required: true
+      ASC_KEY_ID:
+        required: true
+      FASTLANE_RO_PAT:
+        required: true
+      GOOGLE_SERVICE_INFO_DEV_BASE64:
+        required: true
+      GOOGLE_SERVICE_INFO_RELEASE_BASE64:
+        required: true
+      GOOGLE_SERVICE_INFO_SAFETY_BASE64:
+        # Read only on the Safetynet branch, so a production run must not
+        # depend on it. It is set today; optional here describes the contract.
+        required: false
+      KEYCHAIN_PASSWORD:
+        required: true
+      MATCH_PASSWORD:
+        required: true
+      MELD_BASIC_AUTH_TOKEN:
+        required: false
+      NOTIFICATION_BOT_TOKEN:
+        required: false
+      NOTIFICATION_BOT_URL:
+        required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
+      SENTRY_DSN:
+        required: false
+
+env:
+  MAIN_BRANCH: main
+  # Safetynet ships as a separate app (`.safety` suffix, see Configs/base.safetynet.xcconfig),
+  # so it has its own App Store Connect record, Match profiles and Firebase app. Every other
+  # configuration builds the production app. The identity follows the configuration, not the
+  # nightly/release axis — a nightly run builds both Nightly and Safetynet.
+  # Workflow-level env cannot reference other env vars, hence the repeated suffix expression.
+  IOS_BUNDLE_ID: "io.parity.polkadotapp${{ inputs.build_configuration == 'Safetynet' && '.safety' || '' }}"
+  IOS_EXTENSION_BUNDLE_ID: "io.parity.polkadotapp${{ inputs.build_configuration == 'Safetynet' && '.safety' || '' }}.NotificationServiceExtension"
+  PROVISIONING_PROFILE_SPECIFIER: "match AppStore io.parity.polkadotapp${{ inputs.build_configuration == 'Safetynet' && '.safety' || '' }}"
+  EXTENSION_PROVISIONING_PROFILE_SPECIFIER: "match AppStore io.parity.polkadotapp${{ inputs.build_configuration == 'Safetynet' && '.safety' || '' }}.NotificationServiceExtension"
+  CODE_SIGN_IDENTITY: "Apple Distribution"
+  EXPORT_METHOD: "app-store"
+  RUN_IN_CI: true
+  SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+jobs:
+  prepare_build_metadata:
+    name: Prepare Build Metadata
+    runs-on: macos-26
+    # actions: read is what lets the pull request lookup below find the run
+    # this one follows. check_build_result declares it for the same call.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      build_number: ${{ steps.build_version.outputs.build_number }}
+      marketing_version: ${{ steps.build_version.outputs.marketing_version }}
+      release_notes: ${{ steps.release_notes.outputs.notes }}
+      pr_list_markdown: ${{ steps.collect_prs_markdown.outputs.release_notes
+        || steps.collect_prs_since_last_build.outputs.release_notes }}
+    steps:
+      # Safetynet ships from the app repository, which produces it from its
+      # nightly pipeline. Every upload to Apple passes through this workflow,
+      # so refusing the configuration here closes the standalone route and the
+      # leg inside nightly at once, and fails closed for any caller added
+      # later. Remove this when Safetynet moves here, not before.
+      - name: Safetynet is not published from this repository
+        env:
+          BUILD_CONFIGURATION: ${{ inputs.build_configuration }}
+        run: |
+          set -euo pipefail
+          if [ "${BUILD_CONFIGURATION}" = "Safetynet" ]; then
+            echo "::error::Safetynet is published from the app repository. Building it here would upload a second binary to the same App Store Connect record."
+            exit 1
+          fi
+          echo "${BUILD_CONFIGURATION} is published from this repository."
+
+      - name: Security Check - Verify bot-initiated workflow
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const eventName = context.eventName;
+            console.log(`Event: ${eventName}`);
+            console.log(`Release branch: ${process.env.RELEASE_BRANCH}`);
+
+            if (eventName === 'workflow_dispatch') {
+              const triggeringActor = process.env.TRIGGERING_ACTOR;
+              console.log(`Triggering actor: ${triggeringActor}`);
+              if (triggeringActor !== 'github-actions[bot]') {
+                core.setFailed(`Security: workflow_dispatch must be triggered by github-actions[bot], got: ${triggeringActor}`);
+                return;
+              }
+              console.log('Actor verification passed for workflow_dispatch');
+            } else if (eventName === 'pull_request') {
+              const prUser = process.env.PR_AUTHOR;
+              console.log(`PR author: ${prUser}`);
+              if (prUser !== 'github-actions[bot]') {
+                core.setFailed(`Security: PR must be created by github-actions[bot], got: ${prUser}`);
+                return;
+              }
+              console.log('PR author verification passed');
+            }
+            console.log('Security checks passed!');
+
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.release_branch }}
+          fetch-depth: 0
+
+      - name: Prepare TestFlight release notes
+        id: release_notes
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+          INCREMENT_STEP_INPUT: ${{ inputs.increment_step }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const prNumberRaw = process.env.RELEASE_PR_NUMBER || '';
+            if (!prNumberRaw) {
+              console.log('No release PR — direct build, using generic release notes');
+              core.setOutput('notes', `Release build from ${process.env.RELEASE_BRANCH}.`);
+              core.setOutput('increment_step', process.env.INCREMENT_STEP_INPUT || '');
+              return;
+            }
+
+            const prNumber = parseInt(prNumberRaw, 10);
+            console.log(`Fetching PR #${prNumber}`);
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            const prBody = pr.body || '';
+
+            const incrementStepMatch = prBody.match(/<!--\s*RELEASE_METADATA:.*?increment_step=(\d*).*?-->/);
+            const incrementStep = incrementStepMatch ? incrementStepMatch[1] : '';
+            console.log(`Increment step: ${incrementStep || '(empty, will default to 1)'}`);
+
+            let releaseNotes = prBody
+              .replace(/\n---\s*[\s\S]*$/, '')
+              .trim();
+
+            console.log('='.repeat(50));
+            console.log('RELEASE NOTES FOR TESTFLIGHT:');
+            console.log(releaseNotes);
+            console.log('='.repeat(50));
+
+            core.setOutput('notes', releaseNotes);
+            core.setOutput('increment_step', incrementStep);
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+
+      - name: Read version and build number
+        id: build_version
+        uses: ./hosts/ios/.github/actions/read-build-version
+        with:
+          increment_step: ${{ steps.release_notes.outputs.increment_step }}
+          # Safetynet has its own App Store Connect record, so it carries a TestFlight
+          # build-number sequence independent of the production app's.
+          ios_bundle_id: ${{ env.IOS_BUNDLE_ID }}
+          config_name: ${{ inputs.build_configuration }}
+          asc_key_id: ${{ secrets.ASC_KEY_ID }}
+          asc_issuer_id: ${{ secrets.ASC_ISSUER_ID }}
+          asc_key_base64: ${{ secrets.ASC_KEY_BASE64 }}
+
+      # A release branch carries the pull requests that main does not yet have,
+      # so the diff between the two is the list.
+      - name: Collect merged PRs from the release branch
+        id: collect_prs_markdown
+        if: inputs.release_branch != env.MAIN_BRANCH || inputs.build_configuration != 'Nightly'
+        uses: novasamatech/github-actions/collect-prs@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5
+        with:
+          github_token: ${{ github.token }}
+          src_ref: ${{ inputs.release_branch }}
+          dst_ref: ${{ env.MAIN_BRANCH }}
+          release_notes_format: markdown
+
+      # A nightly builds main itself, where that diff compares the branch with
+      # itself and is empty by construction. The range is the one since the last
+      # successful run of this pipeline instead. Narrowed to the nightly: a
+      # Release built straight from main reaches here too, and it carries its
+      # own notes rather than a range since the last nightly.
+      - name: Collect merged PRs since the last successful build
+        id: collect_prs_since_last_build
+        if: inputs.release_branch == env.MAIN_BRANCH && inputs.build_configuration == 'Nightly'
+        uses: ./.github/actions/collect-prs-since-last-build
+        with:
+          github_token: ${{ github.token }}
+
+  check_and_build:
+    # The configuration is part of the name so that a caller invoking this workflow
+    # twice in one run (nightly_distribution builds Nightly and Release together)
+    # produces distinct job names — check-job-conclusion matches by name suffix and
+    # would otherwise resolve both lookups to the same leg.
+    name: Check and Build TestFlight (${{ inputs.build_configuration }})
+    # The same runner as the pull request gate, because the app's
+    # timing-sensitive tests exceed their limits on the standard runner.
+    runs-on: macos-26-xlarge
+    needs: prepare_build_metadata
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.release_branch }}
+          fetch-depth: 0
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+        with:
+          match_auth_required: "true"
+          match_repository_pat: ${{ secrets.FASTLANE_RO_PAT }}
+
+      # Package.swift resolves targets at generated paths that are gitignored,
+      # so xcodebuild cannot resolve dependencies until the core is built from
+      # this tree. The app repository got the core as a published package and
+      # needed none of this; here it has to be generated before any build.
+      - name: Bootstrap the in-tree core
+        uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Distribute TestFlight build
+        uses: ./hosts/ios/.github/actions/distribute-testflight
+        with:
+          ios_bundle_id: ${{ env.IOS_BUNDLE_ID }}
+          ios_extension_bundle_id: ${{ env.IOS_EXTENSION_BUNDLE_ID }}
+          provisioning_profile_specifier: ${{ env.PROVISIONING_PROFILE_SPECIFIER }}
+          extension_provisioning_profile_specifier: ${{ env.EXTENSION_PROVISIONING_PROFILE_SPECIFIER }}
+          code_sign_identity: ${{ env.CODE_SIGN_IDENTITY }}
+          run_in_ci: ${{ env.RUN_IN_CI }}
+          perform_checkout: "false"
+          release_notes: ${{ needs.prepare_build_metadata.outputs.release_notes }}
+          distribute_to_external_group: ${{ inputs.distribute_to_external_group }}
+          external_group_name: ${{ inputs.external_group_name }}
+          build_number: ${{ needs.prepare_build_metadata.outputs.build_number }}
+          build_configuration: ${{ inputs.build_configuration }}
+          asc_key_id: ${{ secrets.ASC_KEY_ID }}
+          asc_issuer_id: ${{ secrets.ASC_ISSUER_ID }}
+          asc_key_base64: ${{ secrets.ASC_KEY_BASE64 }}
+          keychain_password: ${{ secrets.KEYCHAIN_PASSWORD }}
+          match_password: ${{ secrets.MATCH_PASSWORD }}
+          google_service_info_dev_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
+          google_service_info_release_base64: ${{ inputs.build_configuration == 'Safetynet' && secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 || secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      - name: Comment on PR with build info
+        if: inputs.release_pr_number != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          BUILD_NUMBER: ${{ needs.prepare_build_metadata.outputs.build_number }}
+          MARKETING_VERSION: ${{ needs.prepare_build_metadata.outputs.marketing_version }}
+          RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
+          BUILD_CONFIGURATION: ${{ inputs.build_configuration }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const buildNumber = process.env.BUILD_NUMBER;
+            const marketingVersion = process.env.MARKETING_VERSION;
+            const configuration = process.env.BUILD_CONFIGURATION;
+            const prNumber = parseInt(process.env.RELEASE_PR_NUMBER, 10);
+
+            const comment = `### ${configuration} TestFlight Build Done
+
+            - **Version:** ${marketingVersion}
+            - **Build number:** ${buildNumber}
+
+            The build will be available in TestFlight shortly.`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: comment
+            });
+
+      - name: Setting commit status for PR
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.release_pr_number != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
+          # Statuses are keyed by context, so each configuration needs its own — a nightly
+          # run builds two configurations against the same PR head SHA.
+          STATUS_CONTEXT: "Check and Build TestFlight (${{ inputs.build_configuration }})"
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const prNumber = parseInt(process.env.RELEASE_PR_NUMBER, 10);
+            const statusContext = process.env.STATUS_CONTEXT;
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            const sha = pr.head.sha;
+            console.log(`Setting commit status for PR #${prNumber}, SHA: ${sha}`);
+            try {
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: sha,
+                state: 'success',
+                context: statusContext,
+                description: 'Build uploaded to TestFlight successfully',
+                target_url: `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+              });
+              console.log('Commit status created successfully');
+            } catch (error) {
+              core.warning(`Failed to set commit status for PR #${prNumber}: ${error.message}`);
+            }
+
+  check_build_result:
+    name: Check build result
+    runs-on: ubuntu-latest
+    needs: [prepare_build_metadata, check_and_build]
+    permissions:
+      contents: read
+      actions: read
+    if: ${{ !cancelled() && needs.prepare_build_metadata.result == 'success' }}
+    outputs:
+      succeeded: ${{ steps.check.outputs.succeeded }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Check the build result
+        id: check
+        uses: ./hosts/ios/.github/actions/check-job-conclusion
+        with:
+          job_name: "Check and Build TestFlight (${{ inputs.build_configuration }})"
+          github_token: ${{ github.token }}
+
+  send_failure_notification:
+    name: Send Failure Notification
+    runs-on: ubuntu-latest
+    needs: [prepare_build_metadata, check_and_build, check_build_result]
+    # Held: the only room configured is the one the release announcements go
+    # to, and a build failure is not news for that audience. Restoring this
+    # wants a room of its own.
+    #
+    # The condition this replaces:
+    # if: failure()
+    if: false
+    steps:
+      - name: Send failure notification
+        uses: novasamatech/github-actions/send-notification@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5
+        with:
+          message: |
+            ❌ iOS ${{ inputs.build_configuration }} build failed
+            Branch: ${{ inputs.release_branch }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          html_message: |
+            ❌ <b>iOS ${{ inputs.build_configuration }} build failed</b>
+            Branch: <code>${{ inputs.release_branch }}</code>
+            <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View run</a>
+          bot_url: ${{ secrets.NOTIFICATION_BOT_URL }}
+          bot_api_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
+          # No destination while this is held. Restoring it means a room of
+          # its own and declaring that secret on this workflow, which only
+          # receives what its caller passes.
+          matrix_room_ids: ""

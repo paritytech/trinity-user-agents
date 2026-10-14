@@ -1,0 +1,51 @@
+name: Prepare Android build files
+description: Creates configuration and signing files required by an Android build
+
+inputs:
+  google_services_json_base64:
+    description: Base64-encoded google-services.json
+    required: false
+    default: ""
+  keystore_file_base64:
+    description: Base64-encoded signing keystore
+    required: false
+    default: ""
+  keystore_path:
+    description: Repository-relative destination for the signing keystore
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Create Google Services files
+      if: inputs.google_services_json_base64 != ''
+      shell: bash
+      env:
+        GOOGLE_SERVICES_JSON_BASE64: ${{ inputs.google_services_json_base64 }}
+      run: |
+        set -euo pipefail
+        umask 077
+
+        printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > \
+          ./app/google-services.json
+
+    - name: Create signing keystore
+      if: inputs.keystore_file_base64 != ''
+      shell: bash
+      env:
+        KEYSTORE_FILE_BASE64: ${{ inputs.keystore_file_base64 }}
+        KEYSTORE_PATH: ${{ inputs.keystore_path }}
+      run: |
+        set -euo pipefail
+        umask 077
+
+        case "$KEYSTORE_PATH" in
+          develop_key.jks|release_key.jks) ;;
+          *)
+            echo "Unsupported keystore path: $KEYSTORE_PATH" >&2
+            exit 1
+            ;;
+        esac
+
+        printf '%s' "$KEYSTORE_FILE_BASE64" | base64 --decode > "$KEYSTORE_PATH"

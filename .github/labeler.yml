@@ -1,0 +1,54 @@
+# Labels applied from the paths a pull request touches. Every label here already
+# exists in the repository; adding one means adding it there first.
+#
+# The same paths drive reviewer assignment in .github/CODEOWNERS. The two files
+# are different formats and cannot be one file, so scripts/check-path-routing.py
+# holds them to the same set of roots and CI runs it. Change one and the check
+# tells you about the other.
+
+rfc:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/rfcs/**"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "*.md"
+
+github_actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - ".github/actions/**"
+
+javascript:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "js/**"
+          - "playground/**"
+          - "explorer/**"
+
+# The core reaches every host at once, so a change here is the most expensive
+# one to get wrong. It carried no label at all, which left it indistinguishable
+# from a documentation edit on the pull request list.
+rust:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "rust/crates/**"
+
+# The hosts are labelled apart rather than together. An iOS-only change and an
+# Android-only change are reviewed by different people and break differently,
+# and a single host-work label said neither.
+host-ios:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "hosts/ios/**"
+          - "ios/**"
+
+host-android:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "hosts/android/**"
+          - "android/**"

@@ -1,0 +1,15 @@
+<resources>
+    <style name="Theme.PolkadotApp.App" parent="Theme.PolkadotApp.Dark" />
+
+    <style name="Theme.PolkadotApp" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="android:forceDarkAllowed" >false</item>
+    </style>
+
+    <style name="Theme.PolkadotApp.Dark" parent="Theme.PolkadotApp">
+        <item name="android:windowBackground">#FF0B0C0F</item>
+
+        <item name="bg_surface_main">#FF0B0C0F</item>
+        <item name="bg_surface_nested">#FF23252A</item>
+        <item name="stroke_primary">#FF23252A</item>
+    </style>
+</resources>

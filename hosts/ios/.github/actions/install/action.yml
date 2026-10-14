@@ -1,0 +1,70 @@
+name: "Setup iOS Environment"
+description: >-
+  Installs Xcode, Ruby and Python. The Swift package graph is resolved on
+  every run rather than cached. A warm resolve saves about 90 seconds per job,
+  but cloned the graph is about 2.6 GB, over a quarter of the repository's
+  10 GB cache, and holding it evicts the Rust caches every pull request
+  restores.
+inputs:
+  xcode-version:
+    description: "The Xcode version to install"
+    required: true
+    default: "26.4.1"
+  match_repository_pat:
+    description: "Fine-grained GitHub PAT for the private Match repository"
+    required: false
+    default: ""
+  match_auth_required:
+    description: "Whether this job requires access to the Match repository"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure Match repository authentication
+      if: ${{ inputs.match_auth_required == 'true' }}
+      shell: bash
+      env:
+        MATCH_REPOSITORY_PAT: ${{ inputs.match_repository_pat }}
+        MATCH_GIT_URL: "https://github.com/paritytech/fastlane-polkadotapp-develop.git"
+      run: |
+        set -euo pipefail
+
+        token_suffix="${MATCH_REPOSITORY_PAT#github_pat_}"
+        if [[ "$MATCH_REPOSITORY_PAT" != github_pat_* || -z "$token_suffix" || "$MATCH_REPOSITORY_PAT" =~ [[:space:]] ]]; then
+          echo "::error::Match repository credential must contain a fine-grained GitHub PAT (github_pat_...) without whitespace"
+          exit 1
+        fi
+
+        basic_auth="$(printf 'x-access-token:%s' "$MATCH_REPOSITORY_PAT" | base64 | tr -d '\n')"
+        echo "::add-mask::$basic_auth"
+
+        if ! (
+          cd "${RUNNER_TEMP:?}"
+          GIT_TERMINAL_PROMPT=0 git \
+            -c http.extraheader="Authorization: Basic $basic_auth" \
+            ls-remote --exit-code "$MATCH_GIT_URL" HEAD >/dev/null 2>&1
+        ); then
+          echo "::error::Match repository credential cannot read paritytech/fastlane-polkadotapp-develop; check its repository access, Contents permission, expiration, and organization approval"
+          exit 1
+        fi
+
+        printf 'MATCH_GIT_BASIC_AUTHORIZATION=%s\n' "$basic_auth" >> "$GITHUB_ENV"
+
+    # Pinned: the step above puts a credential for the signing repository
+    # into the job environment, and every later step inherits it.
+    - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+      with:
+        xcode-version: ${{ inputs.xcode-version }}
+
+    # v1 here is a branch rather than a tag, so it moves on every release.
+    - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1.324.0
+      with:
+        bundler-cache: true
+        working-directory: hosts/ios
+
+    - name: Install Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with:
+        python-version: "3.13"

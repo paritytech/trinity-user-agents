@@ -1,0 +1,21 @@
+import Foundation
+import Operation_iOS
+import Keystore_iOS
+
+enum {{moduleName}}ViewFactory {
+    static func createView() -> {{moduleName}}ViewProtocol? {
+        let interactor = {{moduleName}}Interactor()
+
+        let wireframe = {{moduleName}}Wireframe()
+
+        let presenter = {{moduleName}}Presenter(interactor: interactor, wireframe: wireframe)
+
+        let view = {{moduleName}}ViewController(presenter: presenter)
+
+        presenter.view = view
+        interactor.presenter = presenter
+
+        return view
+    }
+}
+

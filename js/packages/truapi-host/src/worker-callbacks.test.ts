@@ -95,4 +95,48 @@ describe("worker raw callbacks", () => {
     expect(stop).toBeUndefined();
     expect(subscriptions).toEqual([]);
   });
+
+  it("omits the pocket proxies when no pocket capability is reported", () => {
+    const { bridge } = stubBridge();
+
+    const callbacks = createWorkerRawCallbacks(
+      bridge as unknown as Parameters<typeof createWorkerRawCallbacks>[0],
+    );
+
+    expect(callbacks.subscribePocketCards).toBeUndefined();
+    expect(callbacks.removePocketCard).toBeUndefined();
+  });
+
+  it("proxies pocket through the bridge when the capability is reported", async () => {
+    const { bridge, requests, subscriptions } = stubBridge();
+
+    const callbacks = createWorkerRawCallbacks(
+      bridge as unknown as Parameters<typeof createWorkerRawCallbacks>[0],
+      { pocket: true },
+    );
+
+    const product = new Uint8Array([1]);
+    await (
+      callbacks.removePocketCard as (
+        product: Uint8Array,
+        request: Uint8Array,
+      ) => Promise<unknown>
+    )(product, new Uint8Array([2]));
+    (
+      callbacks.subscribePocketCards as (
+        product: Uint8Array,
+        sendItem: () => void,
+        sendError: () => void,
+      ) => void
+    )(
+      product,
+      () => {},
+      () => {},
+    );
+
+    expect(requests.map((r) => r.name)).toContain("removePocketCard");
+    expect(subscriptions).toEqual([
+      { name: "subscribePocketCards", payload: product },
+    ]);
+  });
 });

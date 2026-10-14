@@ -1,7 +1,11 @@
 name: Deploy Docs
 
 on:
-  push:
+  # After CI, not alongside it. A push triggers both at once, so a commit
+  # that failed its checks would still publish.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -14,21 +18,71 @@ permissions:
 
 jobs:
   build:
+    # Only a commit CI validated. workflow_run fires whatever the conclusion
+    # was, so the conclusion is checked rather than assumed, and a manual
+    # dispatch is allowed through deliberately.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pages: write
       id-token: write
     steps:
+      # The run that validated this commit, not whatever main happens to be.
+      # Between CI finishing and this starting, main can have moved.
+      - name: Establish the commit CI validated
+        id: validated
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT}" = "workflow_dispatch" ]; then
+            echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "dispatched by hand; publishing ${GITHUB_SHA}"
+            exit 0
+          fi
+          if [ -z "${RUN_SHA}" ]; then
+            echo "::error::No commit on the triggering run, so nothing is known to be validated"
+            exit 1
+          fi
+          echo "sha=${RUN_SHA}" >> "$GITHUB_OUTPUT"
+          echo "publishing ${RUN_SHA}, validated by run ${{ github.event.workflow_run.id }}"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ steps.validated.outputs.sha }}
+
+      # Evidence rather than inference: the codegen artifact exists only if that
+      # run produced it for this commit. Absent, there is nothing to show CI
+      # ever saw this tree, so publishing stops.
+      - name: Take the evidence from the run that validated it
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codegen-output
+          path: ${{ runner.temp }}/ci-evidence
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Confirm the tree is the one that was validated
+        env:
+          EXPECTED: ${{ steps.validated.outputs.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          if [ "${actual}" != "${EXPECTED}" ]; then
+            echo "::error::Checked out ${actual}, but CI validated ${EXPECTED}"
+            exit 1
+          fi
+          echo "publishing ${actual}, which is the commit CI validated"
 
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
         with:
           toolchain: stable
-
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -38,10 +92,17 @@ jobs:
         id: pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
+
+      # codegen.sh is the same work as ci.yml's codegen job, which owns the
+      # cache. The key hashes the default toolchain, so this runs after
+      # nightly, as it does there.
+      - uses: ./.github/actions/rust-cache
+        with:
+          shared-key: codegen
+          save: "false"
 
       - name: Install workspace dependencies
         run: npm ci
@@ -88,7 +149,7 @@ jobs:
           cp -R explorer/dist/. site/
           # GitHub Pages serves the site-root 404.html for every missing path.
           # Serving a copy of the SPA index lets React Router resolve explorer
-          # deep links (e.g. /host-rust-core/v/main/method/foo) on a fresh load.
+          # deep links (e.g. /trinity-user-agents/v/main/method/foo) on a fresh load.
           cp site/index.html site/404.html
           # Playground mounted at /playground/ (its Next.js basePath).
           mkdir -p site/playground
@@ -120,4 +181,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

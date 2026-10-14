@@ -1,7 +1,11 @@
 name: Deploy Playground
 
 on:
-  push:
+  # After CI, not alongside it. A push triggers both at once, so a commit
+  # that failed its checks would still deploy.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -24,11 +28,63 @@ permissions:
 
 jobs:
   deploy-playground:
+    # Only a commit CI validated. workflow_run fires whatever the conclusion
+    # was, so the conclusion is checked here rather than assumed, and a manual
+    # dispatch is allowed through deliberately.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
+      # The run that validated this commit, not whatever main happens to be.
+      # Between CI finishing and this starting, main can have moved.
+      - name: Establish the commit CI validated
+        id: validated
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT}" = "workflow_dispatch" ]; then
+            echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "dispatched by hand; deploying ${GITHUB_SHA}"
+            exit 0
+          fi
+          if [ -z "${RUN_SHA}" ]; then
+            echo "::error::No commit on the triggering run, so nothing is known to be validated"
+            exit 1
+          fi
+          echo "sha=${RUN_SHA}" >> "$GITHUB_OUTPUT"
+          echo "deploying ${RUN_SHA}, validated by run ${{ github.event.workflow_run.id }}"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ steps.validated.outputs.sha }}
+
+      # Evidence rather than inference: the codegen artifact exists only if that
+      # run produced it for this commit. Absent, there is nothing to show CI
+      # ever saw this tree, so the deploy stops.
+      - name: Take the evidence from the run that validated it
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codegen-output
+          path: ${{ runner.temp }}/ci-evidence
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Confirm the tree is the one that was validated
+        env:
+          EXPECTED: ${{ steps.validated.outputs.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          if [ "${actual}" != "${EXPECTED}" ]; then
+            echo "::error::Checked out ${actual}, but CI validated ${EXPECTED}"
+            exit 1
+          fi
+          echo "deploying ${actual}, which is the commit CI validated"
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -38,12 +94,17 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      # codegen.sh is the same work as ci.yml's codegen job, which owns the
+      # cache. The key hashes the default toolchain, so this runs after
+      # nightly, as it does there.
+      - uses: ./.github/actions/rust-cache
+        with:
+          shared-key: codegen
+          save: "false"
 
       - name: Build @parity/truapi
         run: npm ci && ./scripts/codegen.sh
@@ -79,9 +140,9 @@ jobs:
           # is bulletin-deploy's assets/environments.json: only `preview` and
           # `paseo-next-v2` declare one, the rest fall back to dotNS's `dot`.
           case "$BULLETIN_ENV" in
-            paseo-next-v2) tld=paseo ;;
-            preview)       tld=test ;;
-            *)             tld=dot ;;
+            paseo-next-v2) tld="paseo" ;;
+            preview)       tld="test" ;;
+            *)             tld="dot" ;;
           esac
           echo "name=truapi-playground.$tld" >> "$GITHUB_OUTPUT"
 

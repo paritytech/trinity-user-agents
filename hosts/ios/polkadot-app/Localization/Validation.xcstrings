@@ -1,0 +1,127 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "amount.too.high": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Amount too high"
+          }
+        }
+      }
+    },
+    "amount.too.low": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Amount too low"
+          }
+        }
+      }
+    },
+    "calculating.fee": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Calculating fee"
+          }
+        }
+      }
+    },
+    "enter.amount": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter Amount"
+          }
+        }
+      }
+    },
+    "fee.too.high": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your balance is too low to pay the transaction fee"
+          }
+        }
+      }
+    },
+    "insufficient.balance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insufficient funds"
+          }
+        }
+      }
+    },
+    "invalid.recipient": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid recipient"
+          }
+        }
+      }
+    },
+    "min.balance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your remaining balance after paying the transaction fee must stay above the Existential Deposit."
+          }
+        }
+      }
+    },
+    "send.all.warning.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This transaction will cause %@ to be lost. If your balance falls below the minimum of %@, any remaining tokens will be forfeited"
+          }
+        }
+      }
+    },
+    "send.all.warning.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirm forfeit"
+          }
+        }
+      }
+    },
+    "transfer.not.enough": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You don’t have enough funds"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.1"
+}

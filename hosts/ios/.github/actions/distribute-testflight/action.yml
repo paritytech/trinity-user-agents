@@ -1,0 +1,156 @@
+name: "Distribute TestFlight Build"
+description: "Runs tests, builds and distributes the iOS app to TestFlight using Fastlane. Expects iOS environment (install action) to be set up by the caller."
+
+inputs:
+  ios_bundle_id:
+    description: "Bundle Identifier to use for signing"
+    required: false
+    default: "io.parity.polkadotapp"
+  ios_extension_bundle_id:
+    description: "Bundle Identifier for notification extension"
+    required: false
+    default: "io.parity.polkadotapp.NotificationServiceExtension"
+  provisioning_profile_specifier:
+    description: "Provisioning profile specifier for code signing"
+    required: false
+    default: "match AppStore io.parity.polkadotapp"
+  extension_provisioning_profile_specifier:
+    description: "Provisioning profile specifier for notification extension code signing"
+    required: false
+    default: "match AppStore io.parity.polkadotapp.NotificationServiceExtension"
+  code_sign_identity:
+    description: "Code sign identity to use"
+    required: false
+    default: "Apple Distribution"
+
+  run_in_ci:
+    description: "Flag to indicate CI environment for Fastlane"
+    required: false
+    default: "true"
+
+  ref:
+    description: "Git ref (branch, tag, or SHA) to checkout"
+    required: false
+    default: ""
+  perform_checkout:
+    description: "Whether this action should perform actions/checkout. Set to 'false' if the caller already checked out the desired ref."
+    required: false
+    default: "true"
+
+  release_notes:
+    description: "Release notes for TestFlight"
+    required: false
+    default: ""
+
+  distribute_to_external_group:
+    description: "Whether to distribute to external TestFlight group (waits for build processing)"
+    required: false
+    default: "false"
+
+  external_group_name:
+    description: "Name of the external TestFlight group to distribute to"
+    required: false
+    default: ""
+
+  build_number:
+    description: "Build number to use for this build"
+    required: true
+
+  build_configuration:
+    description: "Xcode build configuration (e.g. Release, Nightly)"
+    required: false
+    default: "Release"
+
+  asc_key_id:
+    description: "App Store Connect API key ID"
+    required: true
+  asc_issuer_id:
+    description: "App Store Connect API issuer ID"
+    required: true
+  asc_key_base64:
+    description: "Base64-encoded App Store Connect API private key"
+    required: true
+  keychain_password:
+    description: "Password for the temporary CI keychain"
+    required: true
+  match_password:
+    description: "Passphrase used to decrypt Match signing assets"
+    required: true
+  google_service_info_dev_base64:
+    description: "Base64-encoded development GoogleService-Info.plist used by tests"
+    required: true
+  google_service_info_release_base64:
+    description: "Base64-encoded production GoogleService-Info.plist used by the archive"
+    required: true
+  sentry_dsn:
+    description: "Sentry DSN"
+    required: false
+    default: ""
+  meld_basic_auth_token:
+    description: "MELD fiat on-ramp Basic auth token"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository (ref)
+      if: ${{ inputs.perform_checkout == 'true' && inputs.ref != '' }}
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      with:
+        ref: ${{ inputs.ref }}
+
+    - name: Checkout repository (default)
+      if: ${{ inputs.perform_checkout == 'true' && inputs.ref == '' }}
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+    - name: Configure secrets
+      uses: ./hosts/ios/.github/actions/configure-secrets
+      with:
+        # Release links no Sentry, so the DSN would only sit unused in the shipped binary.
+        sentry_dsn: ${{ inputs.build_configuration != 'Release' && inputs.sentry_dsn || '' }}
+        meld_basic_auth_token: ${{ inputs.meld_basic_auth_token }}
+
+    - name: Configure Google services for tests
+      uses: ./hosts/ios/.github/actions/configure-google-services
+      with:
+        google_service_info_base64: ${{ inputs.google_service_info_dev_base64 }}
+        expected_bundle_id: io.parity.polkadotapp.develop
+
+    - name: Run tests
+      shell: bash
+      env:
+        RUN_IN_CI: ${{ inputs.run_in_ci }}
+      working-directory: hosts/ios
+      run: |
+        bundle exec fastlane run_unit_tests
+
+    - name: Configure Google services for TestFlight
+      uses: ./hosts/ios/.github/actions/configure-google-services
+      with:
+        google_service_info_base64: ${{ inputs.google_service_info_release_base64 }}
+        expected_bundle_id: ${{ inputs.ios_bundle_id }}
+
+    - name: Distribute TestFlight build
+      shell: bash
+      env:
+        IOS_BUNDLE_ID: ${{ inputs.ios_bundle_id }}
+        IOS_EXTENSION_BUNDLE_ID: ${{ inputs.ios_extension_bundle_id }}
+        PROVISIONING_PROFILE_SPECIFIER: ${{ inputs.provisioning_profile_specifier }}
+        EXTENSION_PROVISIONING_PROFILE_SPECIFIER: ${{ inputs.extension_provisioning_profile_specifier }}
+        CODE_SIGN_IDENTITY: ${{ inputs.code_sign_identity }}
+        RUN_IN_CI: ${{ inputs.run_in_ci }}
+        RELEASE_NOTES: ${{ inputs.release_notes }}
+        DISTRIBUTE_EXTERNAL: ${{ inputs.distribute_to_external_group }}
+        EXTERNAL_GROUP_NAME: ${{ inputs.external_group_name }}
+        BUILD_NUMBER: ${{ inputs.build_number }}
+        FASTLANE_CONFIGURATION: ${{ inputs.build_configuration }}
+        ASC_KEY_ID: ${{ inputs.asc_key_id }}
+        ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
+        ASC_KEY_BASE64: ${{ inputs.asc_key_base64 }}
+        KEYCHAIN_PASSWORD: ${{ inputs.keychain_password }}
+        MATCH_PASSWORD: ${{ inputs.match_password }}
+      working-directory: hosts/ios
+      run: |
+        set -euo pipefail
+        bundle exec fastlane distribute_testflight

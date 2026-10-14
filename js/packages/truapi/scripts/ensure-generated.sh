@@ -8,12 +8,20 @@ cd "$ROOT"
 codegen_required=(
   "js/packages/truapi/src/generated/client.ts"
   "js/packages/truapi/src/generated/types.ts"
+  "js/packages/truapi/src/generated/internal.ts"
+  "js/packages/truapi/src/generated/internal-client.ts"
   "js/packages/truapi/src/generated/wire-table.ts"
+  "js/packages/truapi/src/generated/wire-decode.ts"
   "js/packages/truapi/src/playground/codegen/services.ts"
   "js/packages/truapi/src/explorer/codegen/types.ts"
   "js/packages/truapi/src/explorer/versions.ts"
+  "rust/crates/truapi/src/generated/mod.rs"
+  "rust/crates/truapi/src/generated/dispatcher.rs"
+  "rust/crates/truapi/src/generated/wire_table.rs"
+  "rust/crates/truapi/src/wasm/generated_bridge.rs"
 )
 truapi_dts="js/packages/truapi/src/playground/codegen/truapi-dts.ts"
+host_script_dts="rust/crates/truapi-host-cli/js/script-types.d.ts"
 
 missing=0
 for path in "${codegen_required[@]}"; do
@@ -35,7 +43,7 @@ if [ "$missing" -eq 1 ] || [ -z "$example_file" ]; then
   TRUAPI_SKIP_PACKAGE_BUILD=1 ./scripts/codegen.sh
 fi
 
-if [ -f "$truapi_dts" ]; then
+if [ -f "$truapi_dts" ] && [ -f "$host_script_dts" ]; then
   exit 0
 fi
 

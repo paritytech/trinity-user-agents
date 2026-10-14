@@ -36,7 +36,8 @@ jobs:
       - name: Refresh chain specs
         run: bash scripts/update-chain-specs.sh
         env:
-          SKIP_BOOTNODE_CHECK: ${{ inputs.skip_bootnode_check == '' && 'true' || inputs.skip_bootnode_check }}
+          # The weekly refresh keeps its own bootnodes. A dispatch decides.
+          SKIP_BOOTNODE_CHECK: ${{ github.event_name == 'schedule' && 'true' || inputs.skip_bootnode_check }}
 
       - name: Check for changes
         id: diff

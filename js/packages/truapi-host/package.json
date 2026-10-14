@@ -1,17 +1,17 @@
 {
   "name": "@parity/truapi-host",
-  "version": "0.8.0",
+  "version": "0.25.0",
   "description": "WASM-backed TrUAPI host runtime: embeds the Rust core, with web iframe and Web Worker entry points",
   "license": "MIT",
   "author": "Parity Technologies <admin@parity.io>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/paritytech/host-rust-core.git",
+    "url": "git+https://github.com/paritytech/trinity-user-agents.git",
     "directory": "js/packages/truapi-host"
   },
-  "homepage": "https://github.com/paritytech/host-rust-core#readme",
+  "homepage": "https://github.com/paritytech/trinity-user-agents#readme",
   "bugs": {
-    "url": "https://github.com/paritytech/host-rust-core/issues"
+    "url": "https://github.com/paritytech/trinity-user-agents/issues"
   },
   "type": "module",
   "main": "dist/index.js",
@@ -29,6 +29,39 @@
       "types": "./dist/web/index.d.ts",
       "import": "./dist/web/index.js"
     },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    },
+    "./testing/playwright": {
+      "types": "./dist/testing/playwright.d.ts",
+      "import": "./dist/testing/playwright.js",
+      "require": "./dist/testing/playwright.cjs"
+    },
+    "./testing/server": {
+      "types": "./dist/testing/server.d.ts",
+      "import": "./dist/testing/server.js",
+      "require": "./dist/testing/server.cjs"
+    },
+    "./testing/dev-accounts": {
+      "types": "./dist/testing/dev-accounts.d.ts",
+      "import": "./dist/testing/dev-accounts.js",
+      "require": "./dist/testing/dev-accounts.cjs"
+    },
+    "./testing/client": {
+      "types": "./dist/testing/create-mock-client.d.ts",
+      "import": "./dist/testing/create-mock-client.js",
+      "require": "./dist/testing/create-mock-client.cjs"
+    },
+    "./testing/host-page": {
+      "types": "./dist/testing/host-page.d.ts",
+      "import": "./dist/testing/host-page.js",
+      "require": "./dist/testing/host-page.cjs"
+    },
+    "./wasm/testing": {
+      "types": "./dist/wasm/testing/truapi_server.d.ts",
+      "import": "./dist/wasm/testing/truapi_server.js"
+    },
     "./worker-runtime": {
       "types": "./dist/worker-runtime.d.ts",
       "import": "./dist/worker-runtime.js"
@@ -40,20 +73,41 @@
   },
   "files": [
     "dist",
+    "!dist/**/*.wasm.gz",
+    "!dist/**/*.wasm.br",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && node scripts/build-cjs.mjs",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"scripts/**/*.{js,mjs,ts}\" \"!src/generated/**\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"scripts/**/*.{js,mjs,ts}\" \"!src/generated/**\"",
+    "typecheck:harness": "tsc -p tsconfig.harness.json",
     "build:wasm": "node scripts/build-wasm.mjs",
     "test": "bun test"
   },
   "dependencies": {
-    "@parity/truapi": "^0.11.0"
+    "@noble/hashes": "^2.2.0",
+    "@parity/truapi": "^0.25.0",
+    "neverthrow": "^8.2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "happy-dom": "^20.11.2",
     "@types/bun": "^1.3.0",
-    "neverthrow": "^8.2.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.40",
+    "esbuild": ">=0.20"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    },
+    "esbuild": {
+      "optional": true
+    }
   }
 }

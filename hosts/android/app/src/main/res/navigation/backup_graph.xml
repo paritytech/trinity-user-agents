@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/backup_graph"
+    app:startDestination="@id/BackupStatusFragment">
+
+    <fragment
+        android:id="@+id/BackupStatusFragment"
+        android:name="io.paritytech.polkadotapp.feature_settings_impl.presentation.backup.status.BackupStatusFragment"
+        android:label="BackupStatusFragment" >
+        <action
+            android:id="@+id/action_BackupStatusFragment_to_mnemonicRevealFragment"
+            app:destination="@id/mnemonicRevealFragment" />
+        <action
+            android:id="@+id/action_BackupStatusFragment_to_backupConflictBottomSheet"
+            app:destination="@id/backupConflictBottomSheet" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/mnemonicRevealFragment"
+        android:name="io.paritytech.polkadotapp.feature_settings_impl.presentation.backup.mnemonic.MnemonicRevealFragment"
+        android:label="MnemonicRevealFragment" />
+
+    <dialog
+        android:id="@+id/backupConflictBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_settings_impl.presentation.backup.conflict.BackupConflictBottomSheet"
+        android:label="BackupConflictBottomSheet" />
+</navigation>

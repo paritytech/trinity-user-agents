@@ -19,7 +19,7 @@ import type { DiagnosisRow } from "./diagnosis.ts";
 /** Room every case posts into, created by the first case. */
 const ROOM_ID = "support";
 
-/** Published limits, mirrored from `truapi-platform` so a case can cross one. */
+/** Published limits, mirrored from `truapi::platform` so a case can cross one. */
 const BODY_MAX_BYTES = 16 * 1024;
 const URL_MAX_BYTES = 2048;
 const ICON_MAX_BYTES = 64 * 1024;

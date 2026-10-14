@@ -3,18 +3,36 @@ import { err, ok, type Result, type ResultAsync } from "neverthrow";
 
 import { str, u8, type CallErrorValue, type ResultPayload } from "./scale.js";
 
-/** Wire discriminant reserved for method-independent protocol errors. **/
-export const PROTOCOL_ERROR_ID = 255 as const;
+/**
+ * Wire trait discriminant reserved for method-independent protocol errors. No
+ * API trait may declare it, so no method is ever addressed here.
+ **/
+export const PROTOCOL_ERROR_TRAIT_ID = 255 as const;
+
+/** Wire method discriminant reserved for method-independent protocol errors. **/
+export const PROTOCOL_ERROR_METHOD_ID = 255 as const;
 
 /** The peer rejected an outbound frame because it does not support its API. **/
 export class UnsupportedMessageError extends Error {
-  /** Wire discriminant of the unsupported outbound frame. **/
-  readonly discriminant: number;
+  /** Trait discriminant of the unsupported outbound frame. **/
+  readonly traitId: number;
 
-  constructor(discriminant: number) {
-    super(`Peer does not support wire message ${discriminant}`);
+  /** Method discriminant of the unsupported outbound frame. **/
+  readonly methodId: number;
+
+  constructor(traitId: number, methodId: number) {
+    super(`Peer does not support wire message (${traitId}, ${methodId})`);
     this.name = "UnsupportedMessageError";
-    this.discriminant = discriminant;
+    this.traitId = traitId;
+    this.methodId = methodId;
+  }
+}
+
+/** The host connection ended; interrupted operations are not retried. */
+export class ConnectionResetError extends Error {
+  constructor(options?: ErrorOptions) {
+    super("TrUAPI host connection interrupted", options);
+    this.name = "ConnectionResetError";
   }
 }
 
@@ -127,55 +145,55 @@ export interface ObservableLike<Item, Reason = never> {
 }
 
 /**
- * Observable source accepted by generated channel methods as the
- * product-to-host request stream. Structurally satisfied by RxJS subjects and
- * observables as well as generated `ObservableLike` values.
+ * Product-side handler for a subscription the native host initiates.
+ *
+ * It receives the decoded request and two callbacks: `send` delivers one item
+ * to the host, and `interrupt` ends the stream, cleanly when called with no
+ * argument and with the method's interrupt value otherwise. The returned
+ * teardown, if any, runs once the stream ends: on the host's stop frame, on
+ * `interrupt`, when the transport closes, or when the host restarts the same
+ * request id.
  **/
-export interface ObservableSource<Item> {
+export type HostInitiatedSubscriptionHandler<Request, Item, Reason = never> = (
+  request: Request,
+  send: (item: Item) => void,
+  interrupt: (reason?: Reason) => void,
+) => (() => void) | void;
+
+/**
+ * Wire discriminant pair addressing a method. One id addresses a method
+ * regardless of shape (request/response, or a subscription's four phases):
+ * which leg of the exchange a frame carries is the wire's own `messageType`
+ * byte, not a separate id per leg.
+ **/
+export interface MethodIds {
   /**
-   * Start consuming the source until the returned handle unsubscribes.
+   * Wire trait discriminant.
    **/
-  subscribe(observer: Partial<Observer<Item>>): { unsubscribe(): void };
+  trait: number;
+
+  /**
+   * Wire method discriminant within the trait.
+   **/
+  method: number;
+
+  /**
+   * Whether this method's legs follow the request/response shape or the
+   * subscription shape (`"subscription"` covers both plain and result
+   * subscriptions, which share the same four-leg wire shape). The one piece
+   * of shape a payload-blind reader needs to interpret a frame's own
+   * `messageType` byte without decoding the payload.
+   **/
+  kind: "request" | "subscription";
 }
 
 /**
- * Numeric frame ids for a one-shot request method.
+ * Per-call options every generated request method accepts as its last
+ * argument.
  **/
-export interface RequestFrameIds {
-  /**
-   * Wire discriminant for the outbound request frame.
-   **/
-  request: number;
-
-  /**
-   * Wire discriminant for the inbound response frame.
-   **/
-  response: number;
-}
-
-/**
- * Numeric frame ids for a subscription method.
- **/
-export interface SubscriptionFrameIds {
-  /**
-   * Wire discriminant for the outbound start frame.
-   **/
-  start: number;
-
-  /**
-   * Wire discriminant for the outbound stop frame.
-   **/
-  stop: number;
-
-  /**
-   * Wire discriminant for the inbound interrupt frame.
-   **/
-  interrupt: number;
-
-  /**
-   * Wire discriminant for the inbound receive frame.
-   **/
-  receive: number;
+export interface CallOptions {
+  /** See {@link RequestParams.signal}. **/
+  signal?: AbortSignal;
 }
 
 /**
@@ -185,19 +203,34 @@ export interface RequestParams<Ok, Err> {
   /**
    * Wire discriminants for this request method.
    **/
-  ids: RequestFrameIds;
+  ids: MethodIds;
 
   /**
-   * SCALE-encoded request payload bytes.
+   * SCALE-encoded request wrapper payload bytes (its own `V<N>` tag is the
+   * wire's only version signal), constructed by the generated caller.
    **/
   payload: Uint8Array;
 
   /**
-   * Decode SCALE response payload bytes into the wire `ResultPayload`
-   * envelope. The transport unwraps the envelope into
-   * `ResultAsync<Ok, Err | UnsupportedCallError>`.
+   * Decode a `Response`-leg frame's raw payload bytes into the typed Ok/Err
+   * outcome. Implementations decode `Result<{Method}Response,
+   * CallError<{Method}Error>>` directly. The transport unwraps the result
+   * into `ResultAsync<Ok, Err | UnsupportedCallError>`.
    **/
   decodeResponse: (payload: Uint8Array) => ResultPayload<Ok, Err>;
+
+  /**
+   * Withdraw the call. Aborting sends a `Cancel` frame on this method's own
+   * address; the promise still settles on the response the host sends, which
+   * for a call the host stopped is `CallError::Cancelled`. A signal already
+   * aborted when the call is made sends nothing and rejects immediately.
+   *
+   * A host that predates the `Cancel` leg drops the frame, so an aborted call
+   * against one settles on its deadline instead. There is no way to detect that
+   * first: `system.featureSupported` answers only about chains, so an abort
+   * against an older host is indistinguishable from one it honoured.
+   **/
+  signal?: AbortSignal;
 }
 
 /**
@@ -207,20 +240,22 @@ export interface SubscribeRawParams {
   /**
    * Wire discriminants for this subscription method.
    **/
-  ids: SubscriptionFrameIds;
+  ids: MethodIds;
 
   /**
-   * SCALE-encoded subscription start payload bytes.
+   * SCALE-encoded `Start`-leg payload bytes: the request wrapper's own
+   * encoding, or empty bytes for a method with no request at all,
+   * constructed by the generated caller.
    **/
   payload: Uint8Array;
 
   /**
-   * Called with raw SCALE receive payload bytes.
+   * Called with a `Receive`-leg frame's raw payload bytes.
    **/
   onReceive: (payload: Uint8Array) => void;
 
   /**
-   * Called with raw SCALE interrupt payload bytes when the peer interrupts the subscription.
+   * Called with an `Interrupt`-leg frame's raw payload bytes.
    **/
   onInterrupt?: (payload: Uint8Array) => void;
 
@@ -231,31 +266,46 @@ export interface SubscribeRawParams {
   onClose?: (error: Error) => void;
 }
 
-/**
- * Handler for a subscription initiated by the native host.
- **/
-export type HostInitiatedSubscriptionHandler<Request, Item> = (
-  request: Request,
-) => ObservableSource<Item>;
-
 /** Product-side registration for one host-initiated subscription method. **/
-export interface HostInitiatedSubscriptionRegistration<Request, Item> {
+export interface HostInitiatedSubscriptionRegistration<
+  Request,
+  Item,
+  Reason = never,
+> {
   /** Install or replace the handler used for future start frames. **/
-  setHandler(handler: HostInitiatedSubscriptionHandler<Request, Item>): {
+  setHandler(
+    handler: HostInitiatedSubscriptionHandler<Request, Item, Reason>,
+  ): {
     unsubscribe(): void;
   };
 }
 
 /** Options used to register a host-initiated subscription method. **/
-export interface RegisterHostInitiatedSubscriptionParams<Request, Item> {
+export interface RegisterHostInitiatedSubscriptionParams<
+  Request,
+  Item,
+  Reason = never,
+> {
   /** Wire discriminants for the host-initiated subscription. **/
-  ids: SubscriptionFrameIds;
-  /** Decode the host's start payload. **/
+  ids: MethodIds;
+  /**
+   * Decode a `Start`-leg frame's raw payload bytes into the typed request.
+   **/
   decodeRequest(payload: Uint8Array): Request;
-  /** Encode one product renderer emission. **/
+  /**
+   * Encode one product emission as a `Receive`-leg frame's raw payload bytes.
+   **/
   encodeItem(item: Item): Uint8Array;
-  /** Exact payload used when the product declines a render instance. **/
-  interruptPayload: Uint8Array;
+  /**
+   * Encode an `Interrupt`-leg frame's raw payload bytes: the stream's clean
+   * end when `reason` is omitted, and the method's interrupt value otherwise.
+   **/
+  encodeInterrupt(reason?: Reason): Uint8Array;
+  /**
+   * Exact payload used when the transport ends a stream the product's handler
+   * never got to serve.
+   **/
+  declinePayload: Uint8Array;
   /** Number of starts retained before a handler is installed. **/
   bufferCapacity: number;
 }
@@ -264,15 +314,6 @@ export interface RegisterHostInitiatedSubscriptionParams<Request, Item> {
  * Byte-level transport used by generated client stubs.
  **/
 export interface TrUApiTransport {
-  /**
-   * SCALE codec version used by generated handshake calls.
-   *
-   * @deprecated TODO(shared-core-wire): remove this public transport field once
-   * generated handshake requests read `TRUAPI_CODEC_VERSION` directly instead
-   * of going through transport state.
-   **/
-  readonly codecVersion: number;
-
   /**
    * Send a one-shot request and resolve with the typed Ok/Err outcome.
    **/
@@ -286,9 +327,9 @@ export interface TrUApiTransport {
   subscribeRaw(params: SubscribeRawParams): Subscription;
 
   /** Register product-side handling for a host-initiated subscription. **/
-  registerHostInitiatedSubscription<Request, Item>(
-    params: RegisterHostInitiatedSubscriptionParams<Request, Item>,
-  ): HostInitiatedSubscriptionRegistration<Request, Item>;
+  registerHostInitiatedSubscription<Request, Item, Reason>(
+    params: RegisterHostInitiatedSubscriptionParams<Request, Item, Reason>,
+  ): HostInitiatedSubscriptionRegistration<Request, Item, Reason>;
 
   /**
    * Tear down the transport and release the listeners it registered on the
@@ -307,15 +348,47 @@ export interface TrUApiTransport {
  **/
 export interface Payload {
   /**
-   * Wire-table numeric discriminant.
+   * Wire-table trait discriminant: first byte of the `(trait, method)` pair.
    **/
-  id: number;
+  traitId: number;
 
   /**
-   * SCALE-encoded payload body.
+   * Wire-table method discriminant within the trait: second byte of the pair.
+   **/
+  methodId: number;
+
+  /**
+   * Which leg of the method's exchange this frame carries: `Request`/`Start`
+   * = 0, `Response`/`Receive` = 1, `Interrupt` = 2, `Stop` = 3. Third byte of
+   * the wire frame — readable generically, without decoding `value`.
+   **/
+  messageType: number;
+
+  /**
+   * SCALE-encoded payload body: that leg's own versioned wrapper, with no
+   * further tag identifying direction or version beyond the wrapper's own.
    **/
   value: Uint8Array;
 }
+
+/** See {@link Payload.messageType}. */
+export const MESSAGE_TYPE_REQUEST = 0;
+/** See {@link Payload.messageType}. */
+export const MESSAGE_TYPE_START = 0;
+/** See {@link Payload.messageType}. */
+export const MESSAGE_TYPE_RESPONSE = 1;
+/** See {@link Payload.messageType}. */
+export const MESSAGE_TYPE_RECEIVE = 1;
+/** See {@link Payload.messageType}. */
+export const MESSAGE_TYPE_INTERRUPT = 2;
+/** See {@link Payload.messageType}. */
+export const MESSAGE_TYPE_STOP = 3;
+/**
+ * A request's withdrawal, correlated by the same `requestId` and carrying no
+ * payload. The call still settles with exactly one response; this only fires
+ * the handler's cancellation token on the far side.
+ **/
+export const MESSAGE_TYPE_CANCEL = 4;
 
 /**
  * Top-level TrUAPI wire message.
@@ -357,6 +430,9 @@ export interface WireProvider {
    **/
   subscribeClose?(callback: (error: Error) => void): () => void;
 
+  /** End current operations while keeping the provider available for new work. */
+  subscribeReset?(callback: (error: Error) => void): () => void;
+
   /**
    * Release provider resources and close the underlying pipe.
    **/
@@ -379,12 +455,24 @@ export interface WebSocketWireProvider extends WireProvider {
 export function encodeWireMessage(
   message: ProtocolMessage,
 ): Result<Uint8Array, Error> {
-  const id = message.payload.id;
-  if (!Number.isInteger(id) || id < 0 || id > 255) {
-    return err(new Error(`Invalid wire discriminant: ${id}`));
+  const { traitId, methodId, messageType } = message.payload;
+  if (!Number.isInteger(traitId) || traitId < 0 || traitId > 255) {
+    return err(new Error(`Invalid wire trait discriminant: ${traitId}`));
+  }
+  if (!Number.isInteger(methodId) || methodId < 0 || methodId > 255) {
+    return err(new Error(`Invalid wire method discriminant: ${methodId}`));
+  }
+  if (!Number.isInteger(messageType) || messageType < 0 || messageType > 255) {
+    return err(new Error(`Invalid wire message type: ${messageType}`));
   }
   return ok(
-    concatBytes(str.enc(message.requestId), u8.enc(id), message.payload.value),
+    concatBytes(
+      str.enc(message.requestId),
+      u8.enc(traitId),
+      u8.enc(methodId),
+      u8.enc(messageType),
+      message.payload.value,
+    ),
   );
 }
 
@@ -406,15 +494,30 @@ export function decodeWireMessage(
   const requestId = str.dec(cursor.subarray(0, requestIdEnd));
   cursor = cursor.subarray(requestIdEnd);
   if (cursor.length < 1) {
-    return err(new Error("Wire frame too short: missing discriminant byte"));
+    return err(
+      new Error("Wire frame too short: missing trait discriminant byte"),
+    );
   }
-  const id = cursor[0];
-  const value = cursor.subarray(1);
+  if (cursor.length < 2) {
+    return err(
+      new Error("Wire frame too short: missing method discriminant byte"),
+    );
+  }
+  if (cursor.length < 3) {
+    return err(new Error("Wire frame too short: missing message-type byte"));
+  }
+  const traitId = cursor[0];
+  const methodId = cursor[1];
+  const messageType = cursor[2];
+  const value = cursor.subarray(3);
   // Hand the value bytes back as a fresh slice so callers may safely retain
   // it even if the source buffer is reused by the transport.
   const valueCopy = new Uint8Array(value.length);
   valueCopy.set(value);
-  return ok({ requestId, payload: { id, value: valueCopy } });
+  return ok({
+    requestId,
+    payload: { traitId, methodId, messageType, value: valueCopy },
+  });
 }
 
 /**
@@ -661,75 +764,123 @@ export function createMessagePortProvider(
  * caller never has to await {@link WebSocketWireProvider.opened} first.
  **/
 export function createWebSocketProvider(url: string): WebSocketWireProvider {
-  const base = createBaseProvider();
-  const socket = new WebSocket(url);
-  socket.binaryType = "arraybuffer";
-  const pending: Uint8Array[] = [];
-  let open = false;
+  return createWebSocketProviderFactory()(url);
+}
 
-  // `send` types its view as ArrayBuffer-backed. Frames never come from a
-  // SharedArrayBuffer, and only the view's own bytes go on the wire, so a
-  // frame that is a window into a larger buffer stays correct.
-  const send = (frame: Uint8Array) =>
-    socket.send(frame as Uint8Array<ArrayBuffer>);
+/** Capture native socket APIs before product code installs network gates. */
+export function createWebSocketProviderFactory(): (
+  url: string,
+) => WebSocketWireProvider {
+  const NativeWebSocket = WebSocket;
+  const socketSend = NativeWebSocket.prototype.send;
+  const socketClose = NativeWebSocket.prototype.close;
+  const addEventListener = EventTarget.prototype.addEventListener;
+  const messageData = Object.getOwnPropertyDescriptor(
+    MessageEvent.prototype,
+    "data",
+  )!.get!;
+  const setBinaryType = Object.getOwnPropertyDescriptor(
+    NativeWebSocket.prototype,
+    "binaryType",
+  )!.set!;
+  const apply = Reflect.apply;
 
-  let resolveOpened!: () => void;
-  let rejectOpened!: (error: Error) => void;
-  const opened = new Promise<void>((resolve, reject) => {
-    resolveOpened = resolve;
-    rejectOpened = reject;
-  });
-  // `opened` is optional for callers, so a failed connection must not surface as
-  // an unhandled rejection. Close still reaches every `subscribeClose`.
-  opened.catch(() => {});
+  const bufferLength = Object.getOwnPropertyDescriptor(
+    ArrayBuffer.prototype,
+    "byteLength",
+  )!.get!;
 
-  socket.addEventListener("open", () => {
-    open = true;
-    for (const frame of pending.splice(0)) send(frame);
-    resolveOpened();
-  });
-  socket.addEventListener("message", (event: MessageEvent) => {
-    base.deliver(new Uint8Array(event.data as ArrayBuffer));
-  });
-  socket.addEventListener("error", () => {
-    const error = new Error(`websocket error (${url})`);
-    rejectOpened(error);
-    base.close(error);
-  });
-  socket.addEventListener("close", () => {
-    const error = new Error(`websocket closed (${url})`);
-    rejectOpened(error);
-    base.close(error);
-  });
-  base.onClose(() => {
-    try {
-      socket.close();
-    } catch {
-      // ignore duplicate close during shutdown
-    }
-  });
+  return (url) => {
+    const base = createBaseProvider();
+    const socket = new NativeWebSocket(url);
+    apply(setBinaryType, socket, ["arraybuffer"]);
+    const pending: Uint8Array[] = [];
+    let open = false;
 
-  return {
-    opened,
-    postMessage(message) {
-      const error = base.closed();
-      if (error) throw error;
-      if (open) {
+    // `send` types its view as ArrayBuffer-backed. Frames never come from a
+    // SharedArrayBuffer, and only the view's own bytes go on the wire, so a
+    // frame that is a window into a larger buffer stays correct.
+    const send = (frame: Uint8Array) =>
+      apply(socketSend, socket, [frame as Uint8Array<ArrayBuffer>]);
+
+    let resolveOpened!: () => void;
+    let rejectOpened!: (error: Error) => void;
+    const opened = new Promise<void>((resolve, reject) => {
+      resolveOpened = resolve;
+      rejectOpened = reject;
+    });
+    // `opened` is optional for callers, so a failed connection must not surface as
+    // an unhandled rejection. Close still reaches every `subscribeClose`.
+    opened.catch(() => {});
+
+    apply(addEventListener, socket, [
+      "open",
+      () => {
+        open = true;
+        for (const frame of pending.splice(0)) send(frame);
+        resolveOpened();
+      },
+    ]);
+    apply(addEventListener, socket, [
+      "message",
+      (event: MessageEvent) => {
+        let frame: Uint8Array;
         try {
-          send(message);
+          const buffer = apply(messageData, event, []);
+          frame = new Uint8Array(buffer, 0, apply(bufferLength, buffer, []));
         } catch (error) {
           base.close(error);
-          throw toError(error);
+          return;
         }
-      } else {
-        pending.push(message);
+        base.deliver(frame);
+      },
+    ]);
+    apply(addEventListener, socket, [
+      "error",
+      () => {
+        const error = new Error(`websocket error (${url})`);
+        rejectOpened(error);
+        base.close(error);
+      },
+    ]);
+    apply(addEventListener, socket, [
+      "close",
+      () => {
+        const error = new Error(`websocket closed (${url})`);
+        rejectOpened(error);
+        base.close(error);
+      },
+    ]);
+    base.onClose(() => {
+      try {
+        apply(socketClose, socket, []);
+      } catch {
+        // ignore duplicate close during shutdown
       }
-    },
-    subscribe: base.subscribe,
-    subscribeClose: base.subscribeClose,
-    dispose() {
-      base.close(new Error("websocket provider disposed"));
-      pending.length = 0;
-    },
+    });
+
+    return {
+      opened,
+      postMessage(message) {
+        const error = base.closed();
+        if (error) throw error;
+        if (open) {
+          try {
+            send(message);
+          } catch (error) {
+            base.close(error);
+            throw toError(error);
+          }
+        } else {
+          pending.push(message);
+        }
+      },
+      subscribe: base.subscribe,
+      subscribeClose: base.subscribeClose,
+      dispose() {
+        base.close(new Error("websocket provider disposed"));
+        pending.length = 0;
+      },
+    };
   };
 }

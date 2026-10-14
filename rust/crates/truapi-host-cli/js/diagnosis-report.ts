@@ -48,6 +48,23 @@ export function cliChatDiagnosisReportMetadata(
   };
 }
 
+/**
+ * Report metadata for the same CLI host serving a Pocket execution.
+ *
+ * The aggregator picks the matrix from the parent directory, so a Pocket
+ * report belongs under `diagnosis-reports/pocket/`; the title carries the
+ * modality too.
+ */
+export function cliPocketDiagnosisReportMetadata(
+  role: string | undefined,
+): CliDiagnosisReportMetadata {
+  const spa = cliDiagnosisReportMetadata(role);
+  return {
+    filename: spa.filename,
+    title: spa.title.replace(/ Diagnosis$/, " Pocket Diagnosis"),
+  };
+}
+
 /** Render the same Markdown matrix used by the playground diagnosis reports. */
 export function renderDiagnosisReport(
   title: string,

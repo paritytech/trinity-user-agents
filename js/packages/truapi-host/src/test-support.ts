@@ -11,6 +11,10 @@ type HostCallbackOverrides = {
 export function makeHostCallbacks(
   overrides: HostCallbackOverrides = {},
 ): CompleteHostCallbacks {
+  // An operation id names one operation, so the default hands out a fresh one
+  // per call rather than a constant: the core keys the worker reference it
+  // holds by that id, and a shared id loses all but the first.
+  let nextOperationId = 1;
   const defaults: CompleteHostCallbacks = {
     navigation: { navigateTo: async () => {} },
     notifications: {
@@ -18,8 +22,8 @@ export function makeHostCallbacks(
       cancelNotification: async () => {},
     },
     permissions: {
-      devicePermission: async () => ({ granted: false }),
-      remotePermission: async () => ({ granted: false }),
+      devicePermission: async () => "Deny",
+      remotePermission: async () => "Deny",
     },
     features: {
       featureSupported: async () => ({ supported: false }),
@@ -29,6 +33,11 @@ export function makeHostCallbacks(
       read: async () => undefined,
       write: async () => {},
       clear: async () => {},
+      async *subscribeStorage() {},
+    },
+    productOperations: {
+      beginOperation: async () => ({ id: nextOperationId++ }),
+      endOperation: async () => {},
     },
     coreStorage: {
       readCoreStorage: async () => undefined,
@@ -36,11 +45,15 @@ export function makeHostCallbacks(
       clearCoreStorage: async () => {},
     },
     auth: { authStateChanged: () => {} },
-    userConfirmation: { confirmUserAction: async () => false },
+    userConfirmation: {
+      confirmUserAction: async () => false,
+      confirmPermission: async () => "Deny",
+    },
     preimage: {
       async *lookupPreimage() {},
     },
     theme: { async *subscribeTheme() {} },
+    locale: { async *subscribeLocale() {} },
     chain: {
       connect: async () => ({
         send() {},
@@ -65,6 +78,10 @@ export function makeHostCallbacks(
       ...defaults.productStorage,
       ...overrides.productStorage,
     },
+    productOperations: {
+      ...defaults.productOperations,
+      ...overrides.productOperations,
+    },
     coreStorage: {
       ...defaults.coreStorage,
       ...overrides.coreStorage,
@@ -76,6 +93,7 @@ export function makeHostCallbacks(
     },
     preimage: { ...defaults.preimage, ...overrides.preimage },
     theme: { ...defaults.theme, ...overrides.theme },
+    locale: { ...defaults.locale, ...overrides.locale },
     chain: { ...defaults.chain, ...overrides.chain },
     // Chat is an optional capability: only fixtures that ask for it get the
     // group, so the default fixture is a host that does not serve chat.
@@ -85,6 +103,7 @@ export function makeHostCallbacks(
             createChatRoom: async () => ({ status: "New" as const }),
             registerChatBot: async () => ({ status: "New" as const }),
             postChatMessage: async () => ({ messageId: "message" }),
+            setChatRoomFooter: async () => {},
             async *subscribeChatRooms() {},
             ...overrides.chat,
           },
@@ -97,6 +116,38 @@ export function makeHostCallbacks(
           permissionStatus: {
             devicePermissionStatus: async () => "NotApplicable" as const,
             ...overrides.permissionStatus,
+          },
+        }
+      : {}),
+    // And for Pocket: the default fixture is a host that keeps no card
+    // collection, so Pocket calls are answered `Unsupported`.
+    ...(overrides.pocket
+      ? {
+          pocket: {
+            async *subscribePocketCards() {},
+            removePocketCard: async () => {},
+            ...overrides.pocket,
+          },
+        }
+      : {}),
+    // And for Game: the default fixture is a host that holds no reminders,
+    // so Game calls are answered `Unsupported`.
+    ...(overrides.game
+      ? {
+          game: {
+            scheduleGameReminder: async () => {},
+            cancelGameReminder: async () => {},
+            ...overrides.game,
+          },
+        }
+      : {}),
+    // And for the scanner: the default fixture is a host with no viewfinder,
+    // so scans are answered `Unsupported`, as on a web host.
+    ...(overrides.scanner
+      ? {
+          scanner: {
+            scanCode: async () => ({ tag: "Dismissed" as const }),
+            ...overrides.scanner,
           },
         }
       : {}),

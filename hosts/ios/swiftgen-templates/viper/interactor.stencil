@@ -1,0 +1,14 @@
+import UIKit
+import Operation_iOS
+import Foundation_iOS
+
+final class {{moduleName}}Interactor {
+    weak var presenter: {{moduleName}}InteractorOutputProtocol?
+
+    init() {
+    }
+}
+
+extension {{moduleName}}Interactor: {{moduleName}}InteractorInputProtocol {
+}
+

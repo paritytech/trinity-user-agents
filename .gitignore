@@ -61,8 +61,18 @@ android/truapi-host/src/main/kotlin/generated/
 android/truapi-host/src/main/jniLibs/
 android/truapi-provider/src/main/kotlin/generated/
 android/truapi-provider/src/main/jniLibs/
+# UniFFI Swift bindings and the bundled container script
+ios/truapi-host/Sources/TrUAPIHost/truapi.swift
+ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
+ios/truapi-host/Sources/truapiFFI/
+ios/truapi-provider/Sources/TrUAPIProvider/truapi_provider.swift
+ios/truapi-provider/Sources/truapi_providerFFI/
 ios/truapi-provider/Binaries/
-rust/crates/truapi-server/pkg/
+rust/crates/truapi/pkg/
+# truapi-codegen Rust outputs
+rust/crates/truapi/src/generated/
+rust/crates/truapi/src/wasm/generated_bridge.rs
+rust/crates/truapi-host-cli/js/script-types.d.ts
 js/packages/truapi/src/generated/
 js/packages/truapi/dist/generated/
 js/packages/truapi-host/src/generated/

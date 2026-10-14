@@ -1,0 +1,105 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "enableNotification.enableButton": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable notifications"
+          }
+        }
+      }
+    },
+    "enableNotification.ignoreButton": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don't enable"
+          }
+        }
+      }
+    },
+    "game.alarm.playGame": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play game"
+          }
+        }
+      }
+    },
+    "game.notification.game.start.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The game is starting! Jump in!"
+          }
+        }
+      }
+    },
+    "game.notification.game.start.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Game Starts in %@ Seconds!"
+          }
+        }
+      }
+    },
+    "notification.person.added.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You've been added to a ring"
+          }
+        }
+      }
+    },
+    "notification.person.added.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Added to ring"
+          }
+        }
+      }
+    },
+    "notification.person.registration.check.update.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap to check if your registration status has been updated"
+          }
+        }
+      }
+    },
+    "notification.person.registration.check.update.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check registration status"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.1"
+}

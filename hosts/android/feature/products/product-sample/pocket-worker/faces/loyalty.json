@@ -1,0 +1,28 @@
+{
+  "tag": "Column",
+  "value": {
+    "modifiers": [
+      { "tag": "FillWidth", "value": true },
+      { "tag": "Padding", "value": { "top": 16, "end": 16 } }
+    ],
+    "props": { "verticalArrangement": "SpaceBetween" },
+    "children": [
+      {
+        "tag": "Text",
+        "value": {
+          "modifiers": [],
+          "props": { "style": "TitleMediumRegular", "color": "FgPrimary" },
+          "children": [ { "tag": "String", "value": { "text": "Loyalty" } } ]
+        }
+      },
+      {
+        "tag": "Text",
+        "value": {
+          "modifiers": [],
+          "props": { "style": "BodyMediumRegular", "color": "FgSecondary" },
+          "children": [ { "tag": "String", "value": { "text": "Collect stamps with every visit" } } ]
+        }
+      }
+    ]
+  }
+}

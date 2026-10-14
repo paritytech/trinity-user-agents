@@ -1,0 +1,186 @@
+{
+  "originHash" : "d48062826ab726b89d2a35d6cedc6880dd5c037cac6e322a449b45f9daa5bff2",
+  "pins" : [
+    {
+      "identity" : "bigint",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/attaswift/BigInt",
+      "state" : {
+        "revision" : "114343a705df4725dfe7ab8a2a326b8883cfd79c",
+        "version" : "5.5.1"
+      }
+    },
+    {
+      "identity" : "blake2.c",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/blake2.c",
+      "state" : {
+        "revision" : "7095d1e2dcc892859d4ab8d4b50f102e44e1a773",
+        "version" : "0.1.1"
+      }
+    },
+    {
+      "identity" : "crypto-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/Crypto-iOS",
+      "state" : {
+        "revision" : "f569b9c271c8694409bdb7ae3802408d48cc512a",
+        "version" : "0.4.1"
+      }
+    },
+    {
+      "identity" : "ed25519.c",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/ed25519.c.git",
+      "state" : {
+        "revision" : "204195f8068fe17e2db8b6fe35ae05ea91f09519",
+        "version" : "0.1.2"
+      }
+    },
+    {
+      "identity" : "extrinsic-service-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/extrinsic-service-ios",
+      "state" : {
+        "revision" : "0bd6530383977188b4c64effd6e754f96d0cee55",
+        "version" : "1.15.0"
+      }
+    },
+    {
+      "identity" : "foundation-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/Foundation-iOS",
+      "state" : {
+        "revision" : "08a65862d8e90daeae1288e34bccc7c6e0a7c93b",
+        "version" : "1.4.0"
+      }
+    },
+    {
+      "identity" : "hydra-math-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/hydra-math-swift",
+      "state" : {
+        "revision" : "52c6a9882721751254b0615892c289e08f0ce663",
+        "version" : "0.4.1"
+      }
+    },
+    {
+      "identity" : "keccak.c",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/keccak.c",
+      "state" : {
+        "revision" : "f218b2a929cd8af378c706324c930d28e736ac06",
+        "version" : "0.1.3"
+      }
+    },
+    {
+      "identity" : "keystore-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/Keystore-iOS",
+      "state" : {
+        "revision" : "105cfc6984f45a61ba410fbc3751e4952afb51e9",
+        "version" : "1.1.0"
+      }
+    },
+    {
+      "identity" : "logger-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/logger-ios",
+      "state" : {
+        "revision" : "4d8a513664a272c201ba0a424a28d133827c924b",
+        "version" : "0.0.2"
+      }
+    },
+    {
+      "identity" : "metadata-shortener-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/metadata-shortener-ios",
+      "state" : {
+        "revision" : "1531b0e4091e74041331dcc8230e490e9f59183c",
+        "version" : "0.2.1"
+      }
+    },
+    {
+      "identity" : "operation-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/Operation-iOS",
+      "state" : {
+        "revision" : "1434daa4c32b8d90771888663ecdd1b0fe709690",
+        "version" : "2.6.0"
+      }
+    },
+    {
+      "identity" : "reachability.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ashleymills/Reachability.swift",
+      "state" : {
+        "revision" : "21d1dc412cfecbe6e34f1f4c4eb88d3f912654a6",
+        "version" : "5.2.4"
+      }
+    },
+    {
+      "identity" : "secp256k1.c",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/secp256k1.c.git",
+      "state" : {
+        "revision" : "ecbbc343d9895e00627fe932bdb983d5e48681d8",
+        "version" : "0.1.4"
+      }
+    },
+    {
+      "identity" : "sr25519.c",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/sr25519.c.git",
+      "state" : {
+        "revision" : "f04ba5e9bfb48651334eee96167dfffc72b68c4d",
+        "version" : "0.2.1"
+      }
+    },
+    {
+      "identity" : "starscream",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/Starscream.git",
+      "state" : {
+        "revision" : "3a13d13fb653645cb646a04f5a6bfcd438517eb3",
+        "version" : "4.0.13"
+      }
+    },
+    {
+      "identity" : "substrate-sdk-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/substrate-sdk-ios",
+      "state" : {
+        "revision" : "fd0bd87c53cded6aa098b410ed80fc48f5756404",
+        "version" : "5.12.0"
+      }
+    },
+    {
+      "identity" : "swift-scrypt",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/swift-scrypt",
+      "state" : {
+        "revision" : "d8bec07b8becf1bcbd8426d5816dfe6c8234f0bd",
+        "version" : "1.0.3"
+      }
+    },
+    {
+      "identity" : "tweetnacl-swiftwrap",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/bitmark-inc/tweetnacl-swiftwrap",
+      "state" : {
+        "revision" : "f8fd111642bf2336b11ef9ea828510693106e954",
+        "version" : "1.1.0"
+      }
+    },
+    {
+      "identity" : "xxhash-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/daisuke-t-jp/xxHash-Swift",
+      "state" : {
+        "revision" : "e86a07ab4867f81481d430e1370a5ec97b6e3359",
+        "version" : "1.1.1"
+      }
+    }
+  ],
+  "version" : 3
+}

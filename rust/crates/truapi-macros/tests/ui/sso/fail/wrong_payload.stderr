@@ -1,0 +1,15 @@
+error[E0277]: the trait bound `SsoReply<Result<u32, String>>: From<Result<&str, _>>` is not satisfied
+ --> tests/ui/sso/fail/wrong_payload.rs:9:1
+  |
+9 | #[truapi_macros::sso_service]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `From<Result<&str, _>>` is not implemented for `SsoReply<Result<u32, String>>`
+      but trait `From<Result<u32, String>>` is implemented for it
+ --> tests/ui/sso/fail/../support/runtime.rs
+  |
+  |         impl<P> From<P> for SsoReply<P> {
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = help: for that trait implementation, expected `u32`, found `&str`
+  = note: required for `Result<&str, _>` to implement `Into<SsoReply<Result<u32, String>>>`
+  = note: this error originates in the attribute macro `truapi_macros::sso_service` (in Nightly builds, run with -Z macro-backtrace for more info)

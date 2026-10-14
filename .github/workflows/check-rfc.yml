@@ -19,25 +19,109 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # ── A new RFC must land with the interfaces it specifies ──
-      # Edits to an already-accepted RFC (addenda recording what the host
-      # actually does) are not gated: they describe behavior that often lives
-      # entirely in the runtime crates.
-      - name: Require truapi interface changes for new RFCs
+      - name: Validate RFC documents
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          BASE=${{ github.event.pull_request.base.sha }}
-          NEW_RFCS=$(git diff --name-only --diff-filter=A "$BASE"...HEAD -- docs/rfcs/ ':!docs/rfcs/_index.md')
-          if [ -z "$NEW_RFCS" ]; then
-            echo "No new RFC documents; nothing to gate."
+          set -euo pipefail
+
+          MERGE_BASE=$(git merge-base "$BASE_SHA" HEAD)
+          EXCLUDE=(':!docs/rfcs/_index.md' ':!docs/rfcs/0001-template.md')
+          CHANGED=$(git diff --name-only --diff-filter=d "$MERGE_BASE" HEAD -- 'docs/rfcs/*.md' "${EXCLUDE[@]}")
+          ADDED=$(git diff --name-only --diff-filter=A "$MERGE_BASE" HEAD -- 'docs/rfcs/*.md' "${EXCLUDE[@]}")
+
+          if [ -z "$CHANGED" ]; then
+            echo "No RFC documents in this change."
             exit 0
           fi
-          echo "New RFCs:"
-          echo "$NEW_RFCS"
 
-          API_CHANGED=$(git diff --name-only "$BASE"...HEAD -- rust/crates/truapi/)
-          if [ -z "$API_CHANGED" ]; then
-            echo "::error::PRs adding an RFC must include corresponding changes to the truapi interfaces in rust/crates/truapi/."
+          failed=0
+          fail() {
+            echo "::error file=$1::$2"
+            failed=1
+          }
+
+          frontmatter_value() {
+            awk -v key="$2" '
+              NR == 1 && $0 != "---" { exit }
+              NR > 1 && $0 == "---" { exit }
+              $0 ~ "^" key ": *[^ ]" { sub("^" key ": *", ""); gsub(/^"|"$/, ""); print; exit }
+            ' "$1"
+          }
+
+          # A new RFC is held to the full shape of docs/rfcs/0001-template.md.
+          # An edit to an existing one is not: several predate the template and
+          # would fail on defects their author never introduced.
+          for file in $ADDED; do
+            for key in title owner; do
+              if [ -z "$(frontmatter_value "$file" "$key")" ]; then
+                fail "$file" "frontmatter is missing a non-empty '$key'"
+              fi
+            done
+            for section in Summary Motivation; do
+              if ! grep -qx "## $section" "$file"; then
+                fail "$file" "missing required section: ## $section"
+              fi
+            done
+
+            # Three names for the same section are in circulation: docs/rfcs/
+            # holds "Detailed Design" and the Fellowship's "Explanation", and
+            # the rfc skill's template emits "Approach". Any of them counts;
+            # settling on one is a template cleanup, not this gate's business.
+            if ! grep -qxE '## (Detailed Design|Explanation|Approach)' "$file"; then
+              fail "$file" "missing a design section: ## Detailed Design, ## Explanation or ## Approach"
+            fi
+          done
+
+          # What a file is judged on: the lines it adds. The RFCs written before
+          # the template carry placeholders and open TBDs, and a change that
+          # touches one for an unrelated reason is not the change that
+          # introduced them. A new RFC is still judged whole, because for an
+          # added file every line is an added line.
+          #
+          # Both paths go to the diff so a rename keeps its pre-image. Restricted
+          # to the new path alone a rename has no old side, git calls the whole
+          # file added, and a renamed legacy RFC fails on TBDs it did not write.
+          #
+          # `--output-indicator-new` moves added lines off `+` so the filter
+          # cannot eat content: a file line starting with `++`, such as the `+++`
+          # of TOML frontmatter, is indistinguishable from the `+++` header once
+          # the diff has added its own prefix.
+          RENAMED_FROM=$(git diff --name-status --find-renames --diff-filter=R \
+            "$MERGE_BASE" HEAD -- 'docs/rfcs/*.md' "${EXCLUDE[@]}")
+
+          subject() {
+            local old
+            old=$(printf '%s\n' "$RENAMED_FROM" | awk -v new="$1" '$3 == new { print $2 }')
+            git diff -U0 --find-renames --output-indicator-new='>' \
+              "$MERGE_BASE" HEAD -- "$1" ${old:+"$old"} \
+              | grep '^>' | cut -c2- || true
+          }
+
+          for file in $CHANGED; do
+            text=$(subject "$file")
+
+            while IFS= read -r placeholder; do
+              if printf '%s\n' "$text" | grep -qF -- "$placeholder"; then
+                fail "$file" "unedited text from docs/rfcs/0001-template.md: '$placeholder'"
+              fi
+            done <<'PLACEHOLDERS'
+          title: "Title"
+          owner: "@handle"
+          Two or three sentences: what changes, and for whom.
+          How it works, at the level a reviewer needs in order to agree or object.
+          What this costs, and what was considered and dropped.
+          PLACEHOLDERS
+
+            if printf '%s\n' "$text" | grep -qE '\b(TODO|TBD|FIXME)\b'; then
+              fail "$file" "unresolved TODO, TBD or FIXME"
+            fi
+          done
+
+          if [ "$failed" -eq 1 ]; then
+            echo "::error::RFC validation failed. docs/rfcs/0001-template.md defines the expected shape."
             exit 1
           fi
-          echo "API changes detected:"
-          echo "$API_CHANGED"
+
+          echo "RFC documents validated:"
+          echo "$CHANGED"

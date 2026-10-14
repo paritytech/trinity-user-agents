@@ -1,0 +1,54 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "chainStatus.message": {
+      "comment": "Message of the tip pointing at the chain status strip",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These rings track your connection to each chain."
+          }
+        }
+      }
+    },
+    "chainStatus.title": {
+      "comment": "Title of the tip pointing at the chain status strip",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Network status"
+          }
+        }
+      }
+    },
+    "scan.message": {
+      "comment": "Message of the tab bar tip pointing at the scan action",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan to pay or add a contact."
+          }
+        }
+      }
+    },
+    "scan.title": {
+      "comment": "Title of the tab bar tip pointing at the scan action",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan a QR code"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.1"
+}

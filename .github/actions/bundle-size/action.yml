@@ -1,0 +1,71 @@
+name: Bundle size
+description: >-
+  Measure the JS and WASM files of the given asset groups and report them
+  against main's last measurement. A pull request gets one comment, kept up to
+  date; a push to main stores the measurement as the next baseline. Every group
+  must be built before this runs.
+
+# The baseline is main's latest measurement, not the pull request's merge base,
+# so a branch behind main also shows main's own changes since it branched.
+# The job's token needs `actions: read` to find that baseline and
+# `pull-requests: write` to comment.
+
+inputs:
+  assets:
+    description: >-
+      The groups to measure, one per line as `<name> <dir> [!<prefix>...]`.
+      Every `.js`, `.cjs`, `.mjs` and `.wasm` file under the directory, relative
+      to the repository root, is measured, except the paths starting with a `!`
+      prefix. `#` starts a comment.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Download the baseline from main
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        run_id="$(gh api "repos/$REPO/actions/artifacts?name=bundle-size-baseline&per_page=20" \
+          --jq '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == "main")][0].workflow_run.id // empty')"
+        if [ -z "$run_id" ] || ! gh run download "$run_id" --repo "$REPO" \
+          --name bundle-size-baseline --dir "$RUNNER_TEMP/bundle-size-baseline"; then
+          echo "::warning::No bundle size baseline from main; reporting sizes without a comparison"
+        fi
+
+    - name: Measure and report
+      shell: bash
+      env:
+        ASSETS: ${{ inputs.assets }}
+        COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: |
+        set -euo pipefail
+        node scripts/bundle-size.mjs --assets "$ASSETS" \
+          --baseline "$RUNNER_TEMP/bundle-size-baseline/bundle-size.json" \
+          --snapshot "$RUNNER_TEMP/bundle-size.json" \
+          | tee -a "$GITHUB_STEP_SUMMARY" > "$RUNNER_TEMP/bundle-size.md"
+
+    # A fork's or Dependabot's token cannot write comments; the step summary
+    # above still carries the report.
+    - name: Update the pull request comment
+      if: >-
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.actor != 'dependabot[bot]'
+      uses: ./.github/actions/upsert-pr-comment
+      with:
+        marker: "<!-- bundle-size-report -->"
+        body-file: ${{ runner.temp }}/bundle-size.md
+
+    - name: Upload the baseline
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: bundle-size-baseline
+        path: ${{ runner.temp }}/bundle-size.json
+        if-no-files-found: error
+        retention-days: 90

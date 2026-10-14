@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Test-only: the diagnostics WebView loads the playground dev server over
+         cleartext http://localhost:3000 (via `adb reverse`). This flag lives in
+         the androidTest source set so it never merges into consuming apps. -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

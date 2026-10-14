@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createTransport } from "./client.js";
+import { createClient } from "./generated/client.js";
 
 import {
     createIframeProvider,
     createMessagePortProvider,
     createWebSocketProvider,
+    createWebSocketProviderFactory,
 } from "./transport.js";
 
 /**
@@ -114,6 +117,28 @@ describe("createIframeProvider", () => {
 });
 
 describe("createMessagePortProvider", () => {
+    it("notifies later close listeners when a subscription observer throws", () => {
+        const { port1, port2 } = new MessageChannel();
+        const provider = createMessagePortProvider(port1);
+        const client = createClient(createTransport(provider));
+        client.theme.subscribe().subscribe({
+            error() {
+                throw new Error("broken observer");
+            },
+        });
+        const errors: Error[] = [];
+        provider.subscribeClose?.((error) => errors.push(error));
+        try {
+            expect(() => provider.dispose()).not.toThrow();
+            expect(errors.map((error) => error.message)).toEqual([
+                "message port provider disposed",
+            ]);
+        } finally {
+            port1.close();
+            port2.close();
+        }
+    });
+
     it("queues sends, round-trips inbound frames, and errors after dispose", async () => {
         const { port1, port2 } = new MessageChannel();
         const provider = createMessagePortProvider(port1);
@@ -154,7 +179,7 @@ describe("createWebSocketProvider", () => {
     });
 
     /** Echo server on a loopback port, standing in for a host's frame socket. */
-    function echoServer() {
+    function echoServer(onClose?: () => void) {
         const server = Bun.serve({
             hostname: "127.0.0.1",
             port: 0,
@@ -166,11 +191,61 @@ describe("createWebSocketProvider", () => {
                 message(socket, message) {
                     socket.send(message);
                 },
+                close() {
+                    onClose?.();
+                },
             },
         });
         servers.push(server);
         return `ws://127.0.0.1:${server.port}`;
     }
+
+    it("opens replacement sockets with the captured browser APIs", async () => {
+        let socketClosed!: () => void;
+        const closed = new Promise<void>((resolve) => {
+            socketClosed = resolve;
+        });
+        const url = echoServer(socketClosed);
+        const createProvider = createWebSocketProviderFactory();
+        const originals = [
+            [globalThis, "WebSocket"],
+            [WebSocket.prototype, "send"],
+            [WebSocket.prototype, "close"],
+            [WebSocket.prototype, "binaryType"],
+            [EventTarget.prototype, "addEventListener"],
+            [MessageEvent.prototype, "data"],
+        ].map(([owner, key]) => ({
+            owner: owner as object,
+            key: key as string,
+            descriptor: Object.getOwnPropertyDescriptor(owner, key as string)!,
+        }));
+        const replaced = () => {
+            throw new Error("product replaced the browser API");
+        };
+        let provider: ReturnType<typeof createProvider> | undefined;
+        try {
+            for (const { owner, key, descriptor } of originals) {
+                Object.defineProperty(
+                    owner,
+                    key,
+                    "value" in descriptor
+                        ? { ...descriptor, value: replaced }
+                        : { ...descriptor, get: replaced, set: replaced },
+                );
+            }
+            provider = createProvider(url);
+            const response = new Promise<Uint8Array>((resolve) => provider!.subscribe(resolve));
+            provider.postMessage(new Uint8Array([7, 8, 9]));
+            await provider.opened;
+            expect(await response).toEqual(new Uint8Array([7, 8, 9]));
+            provider.dispose();
+            await closed;
+        } finally {
+            for (const { owner, key, descriptor } of originals)
+                Object.defineProperty(owner, key, descriptor);
+            provider?.dispose();
+        }
+    });
 
     it("queues frames posted before the socket opens", async () => {
         const provider = createWebSocketProvider(echoServer());

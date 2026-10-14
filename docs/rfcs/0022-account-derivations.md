@@ -270,10 +270,18 @@ reserved product identities as their `productId`:
 | Migrating to a product soon          | Game (DIM2)                  | `dim2.dot`   | Governance-reserved 3–5 char name                                                              |
 | Migrating long-term / product-shaped | PoI (DIM1)                   | `poi.dot`    | Governance-reserved 3–5 char name                                                              |
 | Migrating long-term / product-shaped | Funding                      | `fund.dot`   | Governance-reserved 3–5 char name                                                              |
-| Migrating long-term / product-shaped | Public light person identity | `uid.dot`    | Governance-reserved 3–5 char name                                                              |
-| Migrating long-term / product-shaped | Personhood                   | `peopl.dot`  | Governance-reserved 3–5 char name                                                              |
+| Migrating long-term / product-shaped | Public light person identity | `uid.<tld>`  | Governance-reserved 3–5 char name                                                              |
+| Migrating long-term / product-shaped | Personhood                   | `peopl.<tld>`| Governance-reserved 3–5 char name                                                              |
 | Not coercible to a product           | Coinage                      | —            | Deferred to a separate RFC (own layout today: `//pps//coin/{index}`, `//pps//ring-vrf/{index}`) |
 
+A reserved `productId` is a dotNS name like any other, so it ends in the TLD of
+the network the host runs against: `uid.dot` and `peopl.dot` on Polkadot,
+`uid.paseo` and `peopl.paseo` on paseo-next-v2, `uid.testnet` and
+`peopl.testnet` on previewnet. The TLD is the same network suffix the People
+runtime scopes its product contexts with (`product/peopl.<tld>/…`), so accounts,
+contexts and keys agree on which network a person belongs to, and one seed is one
+person per network. A host learns the suffix from the network it is configured
+for (`SigningHostConfig::network_suffix` in the Rust core) and never assumes it.
 ### Well-known alias accounts
 
 The runtime defines well-known Account Contexts (`resources`, `score`,
@@ -322,16 +330,22 @@ reserved product identity from the table above. `DerivationIndex` is the same
 32-byte index format as product accounts, so each domain gets its own index
 space.
 
-The personhood keys live under the `peopl.dot` domain:
+The personhood keys live under the `peopl.<tld>` domain of the network:
 
 ```rust
 // Full personhood ring-VRF key
-full_personhood_key  = //peopl.dot//index_bytes(0)
+full_personhood_key  = //peopl.<tld>//index_bytes(0)
 
 // Light personhood ring-VRF key
-light_personhood_key = //peopl.dot//index_bytes(1)
+light_personhood_key = //peopl.<tld>//index_bytes(1)
 ```
 
+On Polkadot these are `//peopl.dot//index_bytes(0)` and
+`//peopl.dot//index_bytes(1)`; on paseo-next-v2 the same seed yields the
+`peopl.paseo` keys, a different pair. The `peopl.<tld>` domain is also what the
+personhood product on that network derives from when it registers its keys
+under RFC-0024, so the reserved keys and the product's own registry entries are
+the same bytes.
 Existing keys migrate to these paths. Coinage's ring-VRF keys
 (recyclers/vouchers) are deferred to the coinage RFC.
 
@@ -384,7 +398,7 @@ game_domain = "game"
 There are no production deployments of secret-component derivations or of the
 `u32`-index wire types; the selector change is wire-breaking for
 `ProductAccountId`, `ProductProofContext`, `PaymentTopUpSource`, and
-`AllocatableResource`, and is made freely, with no migration path. Existing ring-VRF keys move to their `peopl.dot`
+`AllocatableResource`, and is made freely, with no migration path. Existing ring-VRF keys move to their `peopl.<tld>`
 paths; deployed encryption keys are handled by the encryption RFC.
 
 ## Drawbacks

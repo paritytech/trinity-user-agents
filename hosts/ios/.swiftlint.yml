@@ -1,0 +1,64 @@
+excluded:
+  - build/
+  - Package.swift
+  - "**/*.generated.swift"
+  - polkadot-appTests
+  - polkadot-appIntegrationTests
+  - vendor/bundle
+  - ".git/"
+  - ".claude/"
+  - ".gitignore"
+  - ".gitmodules"
+  - ".build/"
+  - ".swiftpm/"
+  - "**/Packages/"
+  - "**/.swiftpm/"
+  - "*.xcodeproj"
+  - "source_packages/"
+custom_rules:
+  raw_accessibility_identifier:
+    name: "Raw accessibilityIdentifier"
+    regex: 'accessibilityIdentifier\s*(\(|=[^=])'
+    message: "Use the typed accessibilityId(_:) applier from ExternalAccessibility; instance-selection logic belongs in an AccessibilityID+<Domain>.swift file."
+    excluded:
+      - ".*/AccessibilityID\\+.*\\.swift"
+      - ".*/RoundedTextView\\.swift"
+    severity: error
+identifier_name:
+  excluded:
+    - id
+nesting:
+  type_level: 3
+disabled_rules:
+  - legacy_swiftui_aspect_ratio
+opt_in_rules:
+  - array_init
+  - closure_spacing
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - convenience_type
+  - empty_count
+  - empty_string
+  - first_where
+  - multiline_arguments
+  - multiline_arguments_brackets
+  - multiline_function_chains
+  - multiline_literal_brackets
+  - multiline_parameters
+  - multiline_parameters_brackets
+  - vertical_whitespace_closing_braces
+  - vertical_whitespace_opening_braces
+function_body_length: 100
+file_length: 500
+type_name:
+  max_length:
+    warning: 50
+    error: 100
+function_parameter_count: 6
+line_length:
+  warning: 120
+  error: 200
+  ignores_comments: true
+  ignores_urls: true
+  ignores_interpolated_strings: true

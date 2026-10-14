@@ -1,0 +1,48 @@
+# CODEOWNERS file
+# Lines starting with '#' are comments.
+# Each line is a file pattern followed by one or more owners.
+
+
+/design @valentunn
+/chains @valentunn @mikyar
+/database @valentunn @mikyar
+
+/scripts @valentunn
+/config/detekt @valentunn
+/bindings @valentunn
+/tools/car-parser @valentunn
+/tools/ipfs @valentunn
+/tools/auth @mikyar
+/tools/backup @mikyar @valentunn
+/tools/integrity @mikyar
+/tools/remoteconfig @mikyar @valentunn
+/tools/jwt-auth @mikyar @valentunn
+/tools/media-connection @valentunn
+
+/feature/chats @valentunn
+/feature/people @valentunn
+/feature/fund @valentunn @mikyar
+/feature/statement-store @valentunn
+/feature/videogame @valentunn
+/feature/balances @valentunn @mikyar
+/feature/cross-chain-transfers @valentunn
+/feature/backup @valentunn @mikyar
+/feature/sso @valentunn
+/feature/tokens @valentunn @mikyar
+/feature/transactions @valentunn @mikyar
+/feature/usernames @mikyar @valentunn
+/feature/wallet @mikyar @valentunn
+/feature/xcm @valentunn
+/feature/swap @valentunn
+/feature/account @valentunn @mikyar
+/feature/transfers @valentunn
+/feature/dotns @valentunn
+/feature/revive @valentunn
+/feature/products @valentunn
+/feature/calls @valentunn
+/feature/coinage @mikyar @valentunn
+/feature/members @valentunn @mikyar
+/feature/pgas @valentunn
+/feature/transaction-storage @valentunn
+/feature/connection-status @valentunn @subhannaeem
+/feature/device-sync @valentunn

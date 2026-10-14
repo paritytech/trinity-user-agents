@@ -1,0 +1,140 @@
+name: pr-title
+
+# Pull requests are squashed, so the title becomes the commit on main, and the
+# nightly announcements read it to list breaking changes first. This holds the
+# title to the conventional-commit format, with `!` for a breaking change, and
+# holds a major changeset to carrying that `!`. What counts as breaking is in
+# .claude/skills/semver-pr-title/SKILL.md.
+
+on:
+  pull_request:
+    # Only main is gated. Pull requests into release branches carry generated
+    # titles that never reach main as they are.
+    branches: [main]
+    # `edited` so that fixing a title re-runs the check without a new commit.
+    types: [opened, edited, synchronize, reopened]
+  # The check is required, and a required check has to report in the merge
+  # queue too, or every queued pull request waits on a check that never runs.
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    name: PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # A job-level block replaces the workflow's, so contents is restated for the
+    # changeset step, which reads files at the head commit.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # The title was checked on the pull request, and a queued entry cannot
+      # change it, so the queue only needs this job to report.
+      - name: Title already checked on the pull request
+        if: github.event_name == 'merge_group'
+        run: echo "The title was validated on the pull request."
+
+      - name: A revert of a conventional title
+        if: >-
+          github.event_name == 'pull_request'
+          && (startsWith(github.event.pull_request.title, 'Revert "')
+              || startsWith(github.event.pull_request.title, 'Reapply "'))
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          # GitHub's Revert button titles a pull request `Revert "<original>"`,
+          # which no type matches, and reverting a revert nests it. A local
+          # `git revert` of a revert writes `Reapply "<original>"` instead. It
+          # passes when the innermost title was conventional.
+          inner="${TITLE}"
+          while [[ "${inner}" == 'Revert "'* || "${inner}" == 'Reapply "'* ]]; do
+            inner="${inner#*\"}"
+            inner="${inner%\"}"
+          done
+          types='feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert|release'
+          if grep -qE "^(${types})(\([^)]*\))?!?: .+" <<<"$inner"; then
+            echo "Reverts a conventional title: ${inner}"
+          else
+            echo "::error::A revert title passes only when what it reverts was conventional, got: ${TITLE}"
+            exit 1
+          fi
+
+      - name: Conventional-commit title
+        if: >-
+          github.event_name == 'pull_request'
+          && !startsWith(github.event.pull_request.title, 'Revert "')
+          && !startsWith(github.event.pull_request.title, 'Reapply "')
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # The types this repository uses. `release` is not a conventional
+          # type, but the release flow keys on `release:` titles.
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            build
+            ci
+            chore
+            style
+            revert
+            release
+          requireScope: false
+
+      # A changeset that bumps a package's major version is a breaking change
+      # by definition, and the title is what announces it. The reverse is not
+      # checked: a host app or CLI change can break without touching a package.
+      - name: A major changeset needs a breaking title
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const title = process.env.TITLE;
+            const breaking = /^\w+(\([^)]*\))?!:/.test(title);
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number: context.payload.pull_request.number, per_page: 100,
+            });
+            const changesets = files.filter((f) =>
+              /^\.changeset\/[^/]+\.md$/.test(f.filename) && f.status !== 'removed');
+
+            const major = [];
+            for (const file of changesets) {
+              const { data } = await github.rest.repos.getContent({
+                owner, repo, path: file.filename, ref: process.env.HEAD_SHA,
+              });
+              const text = Buffer.from(data.content, 'base64').toString('utf8')
+                .replace(/^\uFEFF/, '').replace(/^\s+/, '');
+              // Fences on their own lines, trailing whitespace allowed as the
+              // changesets parser allows it, and the opening one at the very
+              // start, so a `---` rule in the body is never read as a fence.
+              const front = /^---[ \t]*\r?\n([\s\S]*?)^---[ \t]*\r?$/m.exec(text);
+              if (front && front.index !== 0) continue;
+              if (front && /:\s*["']?major["']?\s*$/m.test(front[1])) major.push(file.filename);
+            }
+
+            if (major.length > 0 && !breaking) {
+              core.setFailed(
+                `${major.join(', ')} bumps a major version, so this is a breaking change and the title needs a \`!\`, ` +
+                `for example \`feat(truapi)!: ...\`. See .claude/skills/semver-pr-title/SKILL.md.`);
+              return;
+            }
+            core.info(major.length > 0
+              ? `Major changeset with a breaking title: ${major.join(', ')}`
+              : 'No major changeset.');

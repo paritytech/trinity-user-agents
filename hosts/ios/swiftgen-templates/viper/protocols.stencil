@@ -1,0 +1,19 @@
+import PolkadotUI
+
+protocol {{moduleName}}ViewProtocol: ControllerBackedProtocol {
+}
+
+protocol {{moduleName}}PresenterProtocol: AnyObject {
+    func setup()
+}
+
+protocol {{moduleName}}InteractorInputProtocol: AnyObject {
+}
+
+@MainActor
+protocol {{moduleName}}InteractorOutputProtocol: AnyObject {
+}
+
+protocol {{moduleName}}WireframeProtocol: AnyObject, AlertPresentable, ErrorPresentable {
+}
+

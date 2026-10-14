@@ -1,0 +1,151 @@
+name: Set up an Android build
+description: >-
+  Everything the vendored app tree needs before Gradle runs: the toolchains it
+  builds with, validation of the wrapper it runs through, and the two files it
+  will not configure or sign without.
+
+  Defined once so a toolchain bump is one change rather than one per workflow.
+  Three workflows build this tree and a version that moves in only two of them
+  fails in a way that looks like a credential problem.
+
+outputs:
+  build_id:
+    description: >-
+      Monotonic build number for this run. The tree falls back to a constant
+      when it is absent, which would have every build claim the same version.
+    value: ${{ steps.build.outputs.id }}
+
+inputs:
+  google_services_json_base64:
+    description: >-
+      Base64 of the Google configuration the build reads. Omit for a job that
+      compiles without configuring or signing the application.
+    required: false
+    default: ""
+  keystore_base64:
+    description: >-
+      Base64 of the keystore the build signs with. Omit alongside the Google
+      configuration.
+    required: false
+    default: ""
+  keystore_pass:
+    description: Store password for the keystore above.
+    required: false
+    default: ""
+  keystore_alias:
+    description: Key alias within the keystore.
+    required: false
+    default: ""
+  keystore_key_pass:
+    description: Key password within the keystore.
+    required: false
+    default: ""
+  require_inputs:
+    description: >-
+      Whether this job signs and configures the application. A job that does
+      and finds nothing fails here, rather than twenty minutes later inside a
+      Gradle plugin, which reads as a broken branch instead of a missing
+      credential.
+    required: false
+    default: "false"
+  save_cache:
+    description: >-
+      Whether this job owns the Rust cache the others read, and so saves it
+      when it runs on main. One job should.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install the pinned nightly
+      id: nightly
+      uses: ./.github/actions/rust-nightly
+
+    # The Gradle build runs codegen under the nightly the app tree names in
+    # truapi.rustNightly, not under the one installed above. The two have to be
+    # the same toolchain, or codegen here and in the rest of CI reads rustdoc
+    # JSON of different format versions.
+    - name: Check the app tree names the same nightly
+      shell: bash
+      env:
+        PINNED: ${{ steps.nightly.outputs.toolchain }}
+      run: |
+        set -euo pipefail
+        app="$(sed -n 's/^truapi\.rustNightly=//p' hosts/android/gradle.properties | head -n1)"
+        if [ "${app}" != "${PINNED}" ]; then
+          echo "::error::hosts/android/gradle.properties names truapi.rustNightly=${app}, but nightly-toolchain pins ${PINNED}. Change truapi.rustNightly in hosts/android/gradle.properties to ${PINNED}."
+          exit 1
+        fi
+
+    # An APK carries the core for every ABI it ships. The convention plugin
+    # builds four, and only the truapi-host module narrows to three.
+    - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+      with:
+        toolchain: stable
+        targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+    # rust-cache directly rather than through ./.github/actions/rust-cache. An
+    # action's post step evaluates its inputs again, and two composites deep
+    # they come back empty, so rust-cache reads save-if as false and never
+    # saves. The rule it applies is the same one: only a run on main saves.
+    - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.8.1
+      with:
+        shared-key: host-android-bindings-gate
+        save-if: ${{ inputs.save_cache == 'true' && github.ref == 'refs/heads/main' }}
+
+    # The wrapper jar and its distribution url are both tracked files, and the
+    # jobs that call this sign what they build.
+    - uses: gradle/actions/wrapper-validation@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+    - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+      with:
+        distribution: temurin
+        java-version: "21"
+
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: "22"
+
+    # Skipped by jobs that only compile. Requiring them would make every such
+    # job carry credentials it has no use for.
+    # Expressions have no arithmetic, so this is computed once here.
+    - name: Compute the build number
+      id: build
+      shell: bash
+      run: echo "id=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+
+    - name: Decode the build inputs
+      if: inputs.google_services_json_base64 != '' || inputs.keystore_base64 != ''
+      shell: bash
+      working-directory: hosts/android
+      env:
+        GOOGLE_SERVICES_JSON_BASE64: ${{ inputs.google_services_json_base64 }}
+        KEYSTORE_BASE64: ${{ inputs.keystore_base64 }}
+        KEYSTORE_PASS: ${{ inputs.keystore_pass }}
+        KEYSTORE_ALIAS: ${{ inputs.keystore_alias }}
+        KEYSTORE_KEY_PASS: ${{ inputs.keystore_key_pass }}
+      run: |
+        set -euo pipefail
+        umask 077
+        # All of them or none. A partial set produces an obscure signing
+        # failure deep in Gradle rather than naming what is missing, and on a
+        # fork the whole set is empty, which is worth saying plainly.
+        present=0
+        for name in GOOGLE_SERVICES_JSON_BASE64 KEYSTORE_BASE64 \
+                    KEYSTORE_PASS KEYSTORE_ALIAS KEYSTORE_KEY_PASS; do
+          if [ -n "${!name-}" ]; then
+            present=$((present + 1))
+          fi
+        done
+
+        if [ "${present}" -eq 0 ]; then
+          echo "::error::This build signs and configures the application, and none of the five values it needs are set. A pull request opened from a fork cannot reach them, so push the branch to this repository instead."
+          exit 1
+        fi
+        if [ "${present}" -ne 5 ]; then
+          echo "::error::Signing is partly configured, ${present} of 5 values are set. Set all five or none."
+          exit 1
+        fi
+        printf '%s' "${GOOGLE_SERVICES_JSON_BASE64}" | base64 --decode > app/google-services.json
+        printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > develop_key.jks

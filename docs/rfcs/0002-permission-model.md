@@ -9,11 +9,22 @@ owner: "@johnthecat"
 > This RFC below specifies batched remote-permission requests (`remote_permission` taking a `Vec<RemotePermission>`). That part has been rolled back: `remote_permission` again accepts a single `RemotePermission`. After the initial implementation it became clear that the batched API is hard to justify to the end user — a single prompt covering several distinct grants produces bad UX (the user cannot reason about or selectively approve what they are consenting to). The rest of this RFC (device permissions, lifecycle, persistence, implicit triggering) still stands; only the batching of remote permissions is reverted.
 
 > **NOTE (2026-08-18): first-party products hold remote permissions without a prompt.**
-> The lifecycle below specifies that every permission is prompted on first request. That holds for device permissions, identity disclosure and cross-product account access, but not for remote permissions requested by a product on the trusted list in `truapi_platform::REMOTE_PERMISSION_TRUSTED_LABELS`. Those products hold every `RemotePermission` variant — domain access, WebRTC, chain submit, preimage submit, statement submit — without a prompt, because they ship alongside the host and their remote access belongs to the host's own trust boundary. The grant is not persisted, so a `Denied` written through the permission administration surface still outranks it and revokes the access; clearing that denial restores the auto-grant. An empty `Remote` domain bundle remains denied, since it grants nothing. The list holds bare product labels with no TLD, so one entry covers the product on every network. This is an interim mechanism: the allowlist is intended to move into the product manifest, per RFC 0024.
+> The lifecycle below specifies that every permission is prompted on first request. That holds for device permissions, identity disclosure and cross-product account access, but not for remote permissions requested by a product on the trusted list in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS`. Those products hold every `RemotePermission` variant — domain access, WebRTC, chain submit, preimage submit, statement submit — without a prompt, because they ship alongside the host and their remote access belongs to the host's own trust boundary. The grant is not persisted, so a `Denied` written through the permission administration surface still outranks it and revokes the access; clearing that denial restores the auto-grant. An empty `Remote` domain bundle remains denied, since it grants nothing. The list holds bare product labels with no TLD, so one entry covers the product on every network. This is an interim mechanism: the allowlist is intended to move into the product manifest, per RFC 0024.
+
+> **NOTE (2026-09-18): external navigation uses `OpenUrl`, matching legacy Swift.**
+> This revises [#434](https://github.com/paritytech/trinity-user-agents/pull/434), which gated external HTTP(S) navigation by destination domain and exempted application schemes. External `host_navigate_to` calls now require `DevicePermission::OpenUrl`, including allowed application schemes. `AllowAlways` covers future handoffs to any external destination; `AllowOnce` covers one handoff. Domain permissions continue to govern outbound network requests. Internal dotNS, localhost and host-handled Pocket navigation remain exempt.
+
+> **NOTE (2026-09-18): retain the legacy Google Fonts exception.**
+> For compatibility, `BLESSED_REMOTE_DOMAINS` lets every product access `fonts.googleapis.com` and `fonts.gstatic.com` without a prompt. This covers all paths and query strings on those hosts, not only font requests, and requests disclose the user's IP address to Google. An explicit matching denial overrides the exception. These implicit grants are not stored.
 
 ## Summary
 
-The Host API currently has two underdefined permission calls — `host_device_permission` and `remote_permission` — that lack coverage for several device capabilities (NFC, Clipboard, OpenUrl, Biometrics), do not support batched remote-permission requests, and have no specified lifecycle for when prompts occur or how decisions are persisted. This RFC defines the complete set of device and remote permissions, updates the `remote_permission` signature to accept a batch, specifies that permission decisions are prompted once and then stored permanently, and establishes that business methods (`host_sign_raw`, `host_sign_payload`, `host_create_transaction`, `host_create_transaction_with_non_product_account`, `remote_statement_store_submit`, `remote_preimage_submit`, `remote_chain_transaction_broadcast`) implicitly trigger permission prompts if permission has not yet been granted.
+The host callback distinguishes `AllowOnce`, `AllowAlways`, and `Deny`.
+One-use grants stay in memory for the product execution and are consumed by
+the operation that needs them. Requesting permission upfront does not consume
+the grant. Product-facing permission responses remain boolean.
+
+The Host API currently has two underdefined permission calls — `host_device_permission` and `remote_permission` — that lack coverage for several device capabilities (NFC, Clipboard, OpenUrl, Biometrics), do not support batched remote-permission requests, and have no specified lifecycle for when prompts occur or how decisions are persisted. This RFC defines the complete set of device and remote permissions, updates the `remote_permission` signature to accept a batch, specifies lasting and one-use permission decisions, and establishes that business methods (`host_sign_raw`, `host_sign_payload`, `host_create_transaction`, `host_create_transaction_with_non_product_account`, `remote_statement_store_submit`, `remote_preimage_submit`, `remote_chain_transaction_broadcast`) implicitly trigger permission prompts if permission has not yet been granted.
 
 ## Motivation
 
@@ -52,7 +63,20 @@ The result is that products cannot predictably reason about which operations wil
 
 Since some interactions with the Web platform cannot be covered by the Host API, the permission system is coupled to the sandbox implementation.
 That means that fetch requests, WebSockets, WebRTC, and device permissions should be handled by the Host's sandbox implementation.
-The exact mechanism is out of scope for this RFC.
+
+`#[wire(internal)]` hides the consuming authorization methods from the product
+SDK; it does not authenticate callers. Rust still accepts those calls and
+checks permissions for the calling product execution. A direct product call
+can consume that execution's one-use grant. `ProductExecutionKind` describes
+App, Widget or Worker entrypoints, not whether the caller is the container.
+
+The shared container authorizes operations through generated internal SDK
+methods, using the SDK's codecs, request handling and cancellation. Internal
+methods and their transport references are protected; public product methods
+remain replaceable. Before product code runs, the container freezes the shared
+constructors and prototypes used by authorization and prevents extensions to
+`Object.prototype`. Products cannot monkey-patch these shared dependencies.
+Approved fetches retain native redirect behavior.
 
 ### Updated Type Definitions
 
@@ -130,25 +154,24 @@ The return value is a single `bool`. A `true` result means all requested permiss
 
 ### Domain Matching Semantics
 
-`Remote(Vec<String>)` is one grant per host covering everything a product does
-with that host: outbound HTTP/WS requests, and sending the user there with
-`host_navigate_to`. Both hand the same third party the same thing — that the user
-is here, plus whatever the product puts in the URL — so they are one question,
-asked once. `DevicePermission::OpenUrl` is not part of this: it is about handing
-a URL to the operating system at all, not about which hosts are reachable.
+`Remote(Vec<String>)` authorizes outbound HTTP/WS requests to matching hosts.
+External `host_navigate_to` calls use `DevicePermission::OpenUrl`, covering
+HTTP(S) URLs and allowed application schemes such as mail, phone, messages and
+maps. A one-use grant authorizes one handoff. Internal dotNS, localhost and
+host-handled Pocket navigation do not consume an external-navigation grant.
 
 Each string entry is matched against the host portion of the URL. The matching
 rules are:
 
 - **Exact domain**: `"api.coingecko.com"` matches requests to `https://api.coingecko.com` only.
-- **Wildcard subdomain**: `"*.coingecko.com"` matches any single subdomain level, e.g. `api.coingecko.com`, `cdn.coingecko.com`, but NOT `coingecko.com` itself or `deep.api.coingecko.com` (two levels).
+- **Wildcard subdomain**: `"*.coingecko.com"` matches descendants at every depth, e.g. `api.coingecko.com`, `cdn.coingecko.com`, and `deep.api.coingecko.com`, but not `coingecko.com` itself.
 - **Wildcard all**: `"*"` matches any HTTP(S) host. This is a broad grant and host implementations SHOULD present a more prominent warning to the user when this entry appears.
 
-A pattern one label deep — `"*.com"`, `"*.dot"` — is a legal wildcard subdomain
-and is matched like any other. It is nearly as broad as `"*"`, so the prominent
-warning above applies to it too. Nothing narrower is enforced at match time: a
-pattern a host can persist is a pattern the core must consult, or a product would
-keep prompting for hosts the user already approved.
+Wildcard expansion stops at parents with at least two labels, matching legacy
+native coverage. A stored `"*.com"` or `"*.dot"` does not authorize concrete hosts;
+`"*"` remains the universal pattern. This is a label rule rather than a public
+suffix rule, so `"*.co.uk"` covers `example.co.uk`. A grant for a bare parent,
+such as `"coingecko.com"`, does not cover its subdomains.
 
 Matching is case-insensitive and runs on the IDNA ASCII form of the host, so
 every spelling of the same site — case, trailing root dot, Unicode or punycode —
@@ -165,29 +188,60 @@ later request for one of those domains alone still gets its own prompt.
 ### Permission Lifecycle
 
 1. **First request** — When a permission is requested for the first time (either via an explicit permission API call or implicitly by a business method), the Host prompts the user with an approval dialog.
-2. **Decision persisted** — The user's decision (grant or deny) is stored by the Host and associated with the product identity. The persistence scope is indefinite; the decision survives app restarts and session boundaries.
-3. **Subsequent requests** — All subsequent calls for the same permission resolve immediately from persisted state without showing a prompt. The product does not need to re-request a permission it has already obtained.
+2. **Decision lifetime**: `AllowAlways` and `Deny` are stored for the product and survive restarts. `AllowOnce` stays in memory for the execution and authorizes one operation. It is never converted into a durable grant.
+3. **Subsequent requests**: Saved decisions resolve without another prompt. An upfront permission request can observe a one-use grant without consuming it; the operation atomically consumes it. After consumption, the next operation needs another decision unless a lasting grant or an automatic exemption covers it.
 4. **Device capabilities are also gated by the OS** — A device permission has a second gate the persisted decision does not describe: the OS grant held by the host application, which the user can revoke in system settings, device policy can suspend, and the platform can reset on its own. A host that can read that state serves `PermissionStatusHost`, and a device capability then resolves as usable only while both gates are open. An OS refusal denies the request without a prompt, since only system settings can reach it, and leaves the persisted product decision in place for when the user restores the OS grant. An OS grant that is merely undetermined does not change the answer: the OS puts its own dialog up when the capability is used, and the core cannot reach that dialog without also re-asking the product's question, which step 3 forbids. Reading a status without prompting resolves the same two gates, so a host settings screen and a request cannot disagree about whether a capability is usable. A host that cannot report OS state resolves from the persisted decision alone.
 5. **Revocation** — Revocation of the product-scoped decision is out of scope for this RFC. Hosts MAY provide a settings interface for users to revoke permissions, but the protocol does not define a revocation notification to the product.
 
 Products MAY request permissions lazily (on first use) or upfront during initialization. Both patterns are valid. Requesting upfront is recommended when the product can predict its needs, as it provides a better user experience by batching consent into a single moment.
 
+The shared fetch, XHR and WebSocket wrappers validate the request URL with
+captured browser URL primitives and pass its hostname to the internal
+`authorize_remote_permission` method. Rust normalizes the host and resolves
+its domain permission, consuming a one-use grant when applicable. The fetch
+and XHR wrappers check the initial URL; native requests retain the legacy
+redirect behavior. Redirect targets and DOM resource loads are not separately
+checked by these wrappers. Swift supplies native callbacks, such as the
+permission dialog, but does not forward authorization messages.
+
+Before each `getUserMedia` request, the container calls the internal
+`authorize_device_permission` method for each requested capability, camera
+before microphone. Each approval consumes its one-use grant for that attempt.
+If microphone permission is denied after camera approval, the camera grant
+has already been consumed; a native capture failure does not restore grants
+either. The returned stream remains usable until stopped. Another capture
+requires new authorization, including when WebKit reuses its native decision.
+
+The container enforces product consent in the product's realm; native media
+delegates enforce OS permission without consuming product consent again.
+This relies on installing the container before product code in every frame
+and locking the native methods and their prototypes. The authorization
+transport and its response handler stay private, with browser primitives
+captured before product code runs. Replacing collection or Promise methods
+therefore cannot obtain a pending approval callback, unlike the earlier
+asynchronous gate. A native OS grant alone is not product consent.
+
+Synchronous XHR, `Worker`, `WebTransport` and `getDisplayMedia` screen capture
+are unavailable. Workers would provide a separate realm with unguarded
+network APIs; WebTransport has no permission wrapper, and screen capture has
+no product permission.
+
 ### Implicit Permission Triggering by Business Methods
 
-The following business methods gate on a specific `RemotePermission` and MUST internally trigger a permission prompt if the permission has not yet been resolved:
+The following business methods gate on a specific permission and MUST internally trigger a permission prompt if the permission has not yet been resolved:
 
 | Business Method                      | Required Permission                       |
 | ------------------------------------ | ----------------------------------------- |
 | `remote_chain_transaction_broadcast` | `RemotePermission::ChainSubmit`           |
 | `remote_preimage_submit`             | `RemotePermission::PreimageSubmit`        |
 | `remote_statement_store_submit`      | `RemotePermission::StatementSubmit`       |
-| `host_navigate_to`                   | `RemotePermission::Remote([target host])` |
+| `host_navigate_to`                   | `DevicePermission::OpenUrl`               |
+| `send_push_notification`             | `DevicePermission::Notifications`         |
 
-`host_navigate_to` gates only an external `http`/`https` destination, on a grant
-for that one host. dotNS names and `localhost` resolve back into the host's own
-product surface and consume no grant, and the app-handoff schemes (`mailto:`,
-`tel:`, `polkadot:`, `dot:`) name no host a grant could speak about. Denial is
-reported as `HostNavigateToError::PermissionDenied`.
+`host_navigate_to` consumes `OpenUrl` for external HTTP(S) destinations and
+allowed application schemes (`mailto:`, `tel:`, `sms:`, `maps:`, `polkadot:`,
+`dot:`). Internal dotNS, localhost and host-handled Pocket navigation consume
+no grant. Denial is reported as `HostNavigateToError::PermissionDenied`.
 
 The following business methods relate to signing and require the user's active consent via their own approval flow (e.g. a signing confirmation dialog). They return `PermissionDenied` when the user cancels or denies that confirmation — this is distinct from the remote permission system but is documented here for completeness:
 
@@ -287,7 +341,7 @@ Migration is straightforward for implementors following semantic versioning: bum
 
 2. **Permission query API**: Should there be a `remote_permission_status` / `host_device_permission_status` call that returns the current persisted state without prompting? This would allow products to check permission state on startup and adapt their UI accordingly without triggering a prompt.
 
-3. **`OpenUrl` scope** — settled. Which hosts a product may send the user to is `RemotePermission::Remote`, at the same per-host granularity as outbound requests to them, because it is the same disclosure to the same third party (see [Domain Matching Semantics](#domain-matching-semantics)). `OpenUrl` keeps the narrower device-permission meaning it already had — handing a URL to the operating system at all — and names no destination.
+3. **`OpenUrl` scope**: settled. External navigation requires `OpenUrl`, matching legacy behavior. Remote-domain permission applies to outbound requests; opening a link does not require both grants (see [Domain Matching Semantics](#domain-matching-semantics)).
 
 4. **HTTP/WS permission enforcement point**: The RFC specifies that `RemotePermission::Remote` governs outbound HTTP/WS requests, but the transport layer routes all network calls through the Host. How the Host enforces HTTP domain matching at the transport level (interception vs. validation before handing off) is an implementation detail left unspecified — should this RFC say more?
 

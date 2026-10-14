@@ -1,0 +1,52 @@
+name: "Configure Google Services"
+description: "Creates GoogleService-Info.plist from a Base64-encoded GitHub Actions secret"
+
+inputs:
+  google_service_info_base64:
+    description: "Base64-encoded GoogleService-Info.plist"
+    required: true
+  expected_bundle_id:
+    description: "Bundle ID that the decoded plist must contain"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Write GoogleService-Info.plist
+      shell: bash
+      env:
+        GOOGLE_SERVICE_INFO_BASE64: ${{ inputs.google_service_info_base64 }}
+        EXPECTED_BUNDLE_ID: ${{ inputs.expected_bundle_id }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${GOOGLE_SERVICE_INFO_BASE64}" ]]; then
+          echo "::error::GoogleService-Info.plist secret is empty"
+          exit 1
+        fi
+
+        destination="${GITHUB_WORKSPACE:?}/hosts/ios/polkadot-app/GoogleService-Info.plist"
+        temporary="$(mktemp "${RUNNER_TEMP:?}/GoogleService-Info.XXXXXX")"
+        trap 'rm -f "${temporary}"' EXIT
+
+        if ! ruby -rbase64 -e '
+          encoded = ENV.fetch("GOOGLE_SERVICE_INFO_BASE64").gsub(/\s+/, "")
+          File.binwrite(ARGV.fetch(0), Base64.strict_decode64(encoded))
+        ' "${temporary}"; then
+          echo "::error::Failed to decode GoogleService-Info.plist secret"
+          exit 1
+        fi
+
+        if ! plutil -lint "${temporary}"; then
+          echo "::error::Decoded GoogleService-Info.plist is invalid"
+          exit 1
+        fi
+
+        actual_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "${temporary}" 2>/dev/null || true)"
+        if [[ "${actual_bundle_id}" != "${EXPECTED_BUNDLE_ID}" ]]; then
+          echo "::error::GoogleService-Info.plist BUNDLE_ID mismatch: expected '${EXPECTED_BUNDLE_ID}', got '${actual_bundle_id}'"
+          exit 1
+        fi
+
+        install -m 600 "${temporary}" "${destination}"
+        echo "Configured GoogleService-Info.plist for ${EXPECTED_BUNDLE_ID}"

@@ -1,0 +1,74 @@
+name: "Check Job Conclusion"
+description: "Look up a job conclusion in the current workflow run"
+
+inputs:
+  job_name:
+    description: "Exact job name as it appears in the run's job list"
+    required: true
+  github_token:
+    description: "GitHub token used to call the Actions API"
+    required: true
+  fail_if_not_found:
+    description: "Fail the action when no job with the requested name is found"
+    required: false
+    default: "true"
+
+outputs:
+  conclusion:
+    description: "Raw conclusion of the matching job, or empty if not found"
+    value: ${{ steps.check.outputs.conclusion }}
+  succeeded:
+    description: "'true' when the job conclusion is 'success'"
+    value: ${{ steps.check.outputs.succeeded }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Look up job conclusion
+      id: check
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      env:
+        JOB_NAME: ${{ inputs.job_name }}
+        FAIL_IF_NOT_FOUND: ${{ inputs.fail_if_not_found }}
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const jobName = process.env.JOB_NAME;
+          const failIfNotFound =
+            (process.env.FAIL_IF_NOT_FOUND || '').toLowerCase() === 'true';
+          const jobs = await github.paginate(
+            github.rest.actions.listJobsForWorkflowRun,
+            {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            }
+          );
+          // Jobs of a workflow_call workflow are listed as "<caller job> / <job name>",
+          // so match the bare name or the prefixed form.
+          const job = jobs.find(
+            j => j.name === jobName || j.name.endsWith(` / ${jobName}`)
+          );
+
+          if (!job) {
+            const message =
+              `Job "${jobName}" was not found in this workflow run`;
+            console.log(message);
+            core.setOutput('conclusion', '');
+            core.setOutput('succeeded', 'false');
+
+            if (failIfNotFound) {
+              core.setFailed(message);
+            }
+
+            return;
+          }
+
+          const conclusion = job.conclusion || '';
+          const printableConclusion = conclusion || '(not completed)';
+          console.log(`Job "${jobName}" conclusion: ${printableConclusion}`);
+          core.setOutput('conclusion', conclusion);
+          core.setOutput(
+            'succeeded',
+            conclusion === 'success' ? 'true' : 'false'
+          );

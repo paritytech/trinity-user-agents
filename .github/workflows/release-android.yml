@@ -1,6 +1,6 @@
 # Builds and publishes the Android host AAR (io.parity:truapi-host-android) to
-# GitHub Packages. The AAR bundles the per-ABI Rust core (ws-bridge feature), the
-# UniFFI Kotlin bindings generated from the same source, and the Kotlin shell.
+# GitHub Packages. The AAR bundles the per-ABI Rust core, the
+# UniFFI Kotlin bindings, shared browser container and Kotlin shell.
 name: release-android
 
 on:
@@ -40,11 +40,18 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
+      # codegen.sh formats its generated Rust with the pinned nightly rustfmt.
+      - uses: ./.github/actions/rust-nightly
+        with:
+          components: rustfmt
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
         with:
+          toolchain: stable
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.8.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          save: "false"
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
@@ -58,20 +65,33 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      # The runtime feature enables generated modules that are gitignored, so
+      # codegen must run before the crate builds.
+      - name: Generate the Rust codegen output
+        run: |
+          npm ci --ignore-scripts
+          TRUAPI_SKIP_PACKAGE_BUILD=1 ./scripts/codegen.sh
       - name: Generate UniFFI Kotlin bindings
         run: make uniffi-kotlin
 
-      - name: Cross-compile libtruapi_server.so for every ABI
+      - name: Cross-compile libtruapi.so for every ABI
         run: make android-jni
+
+      - name: Build shared browser container
+        run: gradle :truapi-host:copyTrUAPIContainer
 
       - name: Verify AAR inputs
         run: |
           set -e
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            test -f "android/truapi-host/src/main/jniLibs/$abi/libtruapi_server.so" \
+            test -f "android/truapi-host/src/main/jniLibs/$abi/libtruapi.so" \
               || { echo "missing .so for $abi"; exit 1; }
           done
-          test -f android/truapi-host/src/main/kotlin/generated/uniffi/truapi_server/truapi_server.kt
+          test -f android/truapi-host/src/main/kotlin/generated/uniffi/truapi/truapi.kt
+          test -s android/truapi-host/build/generated/truapi-assets/truapi-container.js
 
       - name: Publish to GitHub Packages
         env:

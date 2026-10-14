@@ -15,6 +15,10 @@
     "lib": ["ES2022", "DOM", "WebWorker"]
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/test-support.ts"],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/test-support.ts",
+    "src/web/worker-test-harness.ts"
+  ],
   "references": [{ "path": "../truapi" }]
 }

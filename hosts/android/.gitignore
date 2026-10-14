@@ -1,0 +1,85 @@
+# Gradle files
+.gradle/
+.kotlin/
+build/
+
+# Rust build outputs
+target/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Default location for the TrUAPI core checkout (scripts/setup-truapi.py)
+.truapi/
+.DS_Store
+
+# Log/OS Files
+*.log
+
+# Android Studio generated files and folders
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+output.json
+
+# IntelliJ
+*.iml
+.idea/
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services (e.g. APIs or Firebase)
+google-services.json
+
+# Android Profiling
+*.hprof
+
+.prettierrc
+
+.mcp.json
+.cursor/
+.codeium/
+.gemini/
+
+docs/.local
+
+node_modules
+*.js
+!**/androidTest/assets/*.js
+**/.papi/metadata/
+
+# Secrets
+/token*
+.env*
+!.env.example
+# Claude Code: share docs, skills, hooks, and settings; keep local-only state out
+/.claude/*
+!/.claude/docs/
+!/.claude/skills/
+!/.claude/hooks/
+!/.claude/settings.json
+!/.claude/plugins
+/.claude/settings.local.json
+/.claude/worktrees/
+/.claude/PLAN.md
+
+# Sentry Config File
+sentry.properties
+
+.serena/
+
+# Lavish Editor generated review artifacts
+.lavish/
+
+# Temp
+tmp/
+
+# Agent scratch notes (worklog, memory, tools)
+.agent/

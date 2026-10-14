@@ -1,0 +1,21 @@
+[package]
+authors = ['Parity Technologies']
+edition = '2021'
+license = 'GPL-3.0-or-later'
+name = "bandersnatch-crypto"
+repository = 'https://github.com/paritytech/polkadot-android-community'
+version = "0.1.0"
+
+[dependencies]
+verifiable = { git = "https://github.com/paritytech/verifiable", rev = "1f9f67524acce0d9c46dbbb566f84ce52757b114", default-features = false, features = ["std"]}
+jni = { version = "0.17.0", default-features = false }
+toml_datetime = {version = "0.6.5"}
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "s"
+
+[lib]
+name = "bandersnatch_crypto_java"
+crate-type = ["cdylib"]

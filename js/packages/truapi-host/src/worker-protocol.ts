@@ -1,5 +1,5 @@
 // Wire format between the main thread (`createWebWorkerPairingHostRuntime`) and the
-// Web Worker that hosts the truapi-server WASM runtime.
+// Web Worker that hosts the truapi WASM runtime.
 //
 //   Main window / host JS
 //   ┌─────────────────────────────────────────────────────────────────┐
@@ -12,7 +12,7 @@
 //                   v
 //   Dedicated Worker
 //   ┌─────────────────────────────────────────────────────────────────┐
-//   │ shared truapi-server WASM PairingHostRuntime + product runtimes │
+//   │ shared truapi WASM PairingHostRuntime + product runtimes        │
 //   │ generated raw-callback proxy                                    │
 //   └───────────────┬─────────────────────────────────────────────────┘
 //                   │ WorkerToMain: coreReady, frame, callbackRequest,
@@ -55,6 +55,9 @@ export type CallbackArgs = readonly unknown[];
  * worker/core lifecycle, forward encoded TrUAPI frames into the core, or return
  * host callback/subscription/chain responses requested by the worker.
  */
+/** Which host role a worker runtime plays. */
+export type HostRole = "pairing" | "signing";
+
 export type MainToWorker =
   | {
       kind: "init";
@@ -66,6 +69,17 @@ export type MainToWorker =
        * the boundary.
        */
       capabilities: OptionalCapabilities;
+      // Dev-only: when set, the worker dials this debugger and streams tapped
+      // frames to it. Null in production, so the host tap stays inert.
+      debuggerUrl: string | null;
+      /**
+       * Which host role the worker constructs. Omitted means `"pairing"`, so a
+       * host written before this existed behaves exactly as it did.
+       *
+       * `"signing"` needs the `testing` WASM bundle, which is the only one
+       * built with a signing host in it.
+       */
+      role?: HostRole;
     }
   | { kind: "createCore"; coreId: number; product: unknown }
   | { kind: "disposeCore"; coreId: number }
@@ -74,8 +88,44 @@ export type MainToWorker =
   | { kind: "disconnectSession"; requestId: number }
   | { kind: "cancelPairing" }
   | { kind: "notifySessionStoreChanged" }
+  | { kind: "notifyContactsChanged" }
+  | { kind: "acquireWorker"; productId: string }
+  | { kind: "releaseWorker"; productId: string }
   | { kind: "activateStoredSession"; requestId: number }
   | { kind: "activateExternalSession"; requestId: number; blob: Uint8Array }
+  /**
+   * Establish a session from host-held entropy. Signing hosts only: a pairing
+   * host has no local secret and answers this with an error.
+   */
+  | {
+      kind: "activateLocalSession";
+      requestId: number;
+      secret: Uint8Array;
+      /**
+       * Display name to activate the session under. Absent activates without
+       * one, which leaves the session with no primary username -- and
+       * `account.get_user_id` answers `Unknown` rather than a name.
+       */
+      liteUsername?: string;
+    }
+  | {
+      kind: "setGrantAllowancesUnchecked";
+      requestId: number;
+      /** Answer allocation as granted without performing it. */
+      granted: boolean;
+    }
+  | {
+      kind: "setSubmitPreimagesLocally";
+      requestId: number;
+      /** Keep preimage submissions in the core instead of the Bulletin chain. */
+      local: boolean;
+    }
+  | {
+      kind: "setWithheldResources";
+      requestId: number;
+      /** Resource tags answered as refused, replacing any earlier set. */
+      tags: string[];
+    }
   | { kind: "resetSessionState"; requestId: number }
   | {
       kind: "getPermissionAuthorizationStatus";
@@ -97,6 +147,7 @@ export type MainToWorker =
       status: PermissionAuthorizationStatus;
     }
   | { kind: "getSessionChatIdentityKey"; requestId: number }
+  | { kind: "getDeviceStatementKey"; requestId: number }
   | { kind: "getDeviceEncryptionKey"; requestId: number }
   | {
       kind: "getProductSubtreePublicKey";
@@ -108,17 +159,24 @@ export type MainToWorker =
       kind: "publishChatAction";
       coreId: number;
       requestId: number;
+      /** SCALE-encoded `HostChatActionSubscribeItem`. */
       action: Uint8Array;
     }
   | {
-      kind: "renderCustomMessageStart";
+      kind: "publishRendererAction";
+      coreId: number;
+      requestId: number;
+      /** SCALE-encoded `HostRendererActionSubscribeItem`. */
+      action: Uint8Array;
+    }
+  | {
+      kind: "renderStart";
       coreId: number;
       renderId: number;
-      messageId: string;
-      messageType: string;
-      payload: Uint8Array;
+      /** SCALE-encoded `ProductRendererRenderRequest`. */
+      request: Uint8Array;
     }
-  | { kind: "renderCustomMessageStop"; renderId: number }
+  | { kind: "renderStop"; renderId: number }
   | { kind: "callbackResponse"; requestId: number; ok: true; value: unknown }
   | { kind: "callbackResponse"; requestId: number; ok: false; error: string }
   | { kind: "subscriptionItem"; subId: number; value: unknown }
@@ -135,7 +193,15 @@ export type MainToWorker =
  */
 export type WorkerToMain =
   | { kind: "loaded" }
-  | { kind: "ready" }
+  | {
+      kind: "ready";
+      /**
+       * The encoding core's wire-schema hash, when it reports one. The page needs
+       * it to stamp an in-host debugger tap with the same identity a dialing host
+       * puts on a standalone envelope; without it a tap is grouped but not decoded.
+       */
+      schema?: string;
+    }
   | { kind: "coreReady"; coreId: number }
   | { kind: "coreError"; coreId: number; error: string }
   | { kind: "fatalError"; error: string }
@@ -209,6 +275,18 @@ export type WorkerToMain =
       error: string;
     }
   | {
+      kind: "deviceStatementKeyResponse";
+      requestId: number;
+      ok: true;
+      key: Uint8Array | undefined;
+    }
+  | {
+      kind: "deviceStatementKeyResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
       kind: "productSubtreePublicKeyResponse";
       requestId: number;
       ok: true;
@@ -239,11 +317,23 @@ export type WorkerToMain =
       ok: false;
       error: string;
     }
-  /** One replacement tree, as a SCALE-encoded `CustomRendererNode`. */
-  | { kind: "renderCustomMessageItem"; renderId: number; node: Uint8Array }
+  /**
+   * Demand on one product's worker crossed zero. Posted in ledger order, so
+   * the latest message for a product is its current level.
+   */
+  | { kind: "workerDemandChanged"; productId: string; wanted: boolean }
+  | { kind: "publishRendererActionResponse"; requestId: number; ok: true }
+  | {
+      kind: "publishRendererActionResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  /** One replacement tree, as a SCALE-encoded `RendererNode`. */
+  | { kind: "renderItem"; renderId: number; node: Uint8Array }
   /** The product ended the render stream; no further items follow. */
-  | { kind: "renderCustomMessageComplete"; renderId: number }
-  | { kind: "renderCustomMessageError"; renderId: number; error: string }
+  | { kind: "renderComplete"; renderId: number }
+  | { kind: "renderError"; renderId: number; error: string }
   | {
       kind: "callbackRequest";
       requestId: number;
@@ -254,9 +344,42 @@ export type WorkerToMain =
       kind: "subscriptionStart";
       subId: number;
       name: SubscriptionName;
-      payload: Uint8Array | null;
+      payload: Uint8Array | string | null;
     }
   | { kind: "subscriptionStop"; subId: number }
   | { kind: "chainConnectStart"; connId: number; genesisHash: string }
   | { kind: "chainSend"; connId: number; request: string }
   | { kind: "chainClose"; connId: number };
+
+/**
+ * Is `url` a `ws://` URL on a loopback host? The tap forwards every frame
+ * verbatim, key material included, and redacts nothing, so loopback is the whole
+ * confinement story.
+ *
+ * `ws://` only, matching the native sink. A loopback socket has no path for TLS
+ * to defend, so `wss://` would buy nothing and cost a certificate `localhost`
+ * cannot get from a real CA.
+ *
+ * `WsDebugSink::connect` resolves the host and checks every address; this matches
+ * the normalized hostname. A Worker has no resolver and needs none, since this
+ * same string is handed to `new WebSocket`, so the native "validate one string,
+ * dial another" gap cannot open here.
+ *
+ * Accepts what the native sink accepts: `localhost`, 127.0.0.0/8 and `::1`. An
+ * IPv4-mapped literal is refused in both, since `Ipv6Addr::is_loopback` matches
+ * only `::1`.
+ */
+export function isLoopbackWsUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "ws:") return false;
+    const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return (
+      host === "localhost" ||
+      host === "::1" ||
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+    );
+  } catch {
+    return false;
+  }
+}

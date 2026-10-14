@@ -3,9 +3,11 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cross-product-ringvrf-context e2e-preimage-submit-prompt e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
 
 CARGO ?= cargo
+# The dated nightly CI runs; see nightly-toolchain.
+NIGHTLY_TOOLCHAIN ?= $(or $(TRUAPI_NIGHTLY_TOOLCHAIN),$(shell head -n1 nightly-toolchain))
 TRUAPI_PKG := js/packages/truapi
 PLAYGROUND := playground
 JS_PACKAGES := js/packages
@@ -25,6 +27,8 @@ DOTLI_TRUAPI_LINK := $(DOTLI_NODE_MODULES)/@parity/truapi
 DOTLI_HOST_WASM_LINK := $(DOTLI_NODE_MODULES)/@parity/truapi-host
 DOTLI_UI_TRUAPI_SHADOW := $(DOTLI_UI)/node_modules/@parity/truapi
 DOTLI_UI_HOST_WASM_SHADOW := $(DOTLI_UI)/node_modules/@parity/truapi-host
+DEBUGGER_PKG := $(JS_PACKAGES)/truapi-debugger
+DEBUGGER_PORT ?= 9231
 VITE_NETWORKS ?= paseo-next-v2,previewnet
 export VITE_NETWORKS
 
@@ -33,6 +37,19 @@ export VITE_NETWORKS
 # preview by default. Override with `DOTLI_PREVIEW=preview` to test production
 # preview behavior.
 DOTLI_PREVIEW ?= preview:debug
+
+# The default runtime feature enables these generated modules. They are
+# gitignored and produced by scripts/codegen.sh.
+GENERATED_RUST := \
+	rust/crates/truapi/src/generated/mod.rs \
+	rust/crates/truapi/src/generated/dispatcher.rs \
+	rust/crates/truapi/src/generated/wire_table.rs \
+	rust/crates/truapi/src/wasm/generated_bridge.rs
+
+check-generated:
+	@for file in $(GENERATED_RUST); do \
+		test -f "$$file" || { echo "Missing $$file. Run: make codegen"; exit 1; }; \
+	done
 
 help: ## Show this help.
 	@awk 'BEGIN { FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n" } \
@@ -49,19 +66,17 @@ setup: ## First-time setup: submodules, JS dependencies, generated artifacts.
 	cd $(DOTLI) && bun install --frozen-lockfile
 	$(MAKE) dotli-link
 
-build: ## Build the Rust workspace and the TypeScript client.
+build: check-generated ## Build the Rust workspace and the TypeScript client.
 	cargo build --workspace
 	cd $(TRUAPI_PKG) && npm run build
 	cd $(HOST_WASM_PKG) && npm run build
 
 headless: ## Build the truapi-host CLI and generated TypeScript client.
-	# The client build shells out to tsc, which `ensure-generated.sh` looks for at
-	# the root or in the package. Install workspace deps when neither is present so
-	# this target works on a checkout that has not run `make setup`.
-	@[ -x node_modules/.bin/tsc ] || [ -x $(TRUAPI_PKG)/node_modules/.bin/tsc ] \
+	@[ -x node_modules/.bin/tsc ] && [ -x node_modules/.bin/prettier ] \
 		|| npm ci --ignore-scripts
+	./scripts/codegen.sh
 	cargo build -p truapi-host-cli
-	cd $(TRUAPI_PKG) && npm run build
+	bun scripts/build-cli-runner.ts "$(CLI_DIST_DIR)"
 
 install: headless ## Install the truapi-host CLI into Cargo's bin dir; use as `make headless install`.
 	# A prebuilt install and a cargo one shadow each other depending on PATH
@@ -76,36 +91,45 @@ install: headless ## Install the truapi-host CLI into Cargo's bin dir; use as `m
 # Release packaging for the truapi-host binary. CLI_TARGET picks the triple;
 # CLI_VERSION defaults to the crate version, which tracks the protocol version.
 # The layout here is what scripts/truapi-host-installer.sh expects to download.
-CLI_INSTALLER_URL := https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh
+CLI_INSTALLER_URL := https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh
 CLI_DIST_DIR := target/dist
 # Default to the triple that is actually published, not the rustc host: the
 # Linux releases are musl so one artifact per architecture runs anywhere.
 CLI_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p' | sed 's/-linux-gnu$$/-linux-musl/')
 CLI_VERSION ?= $(shell awk -F'"' '/^version = /{print $$2; exit}' rust/crates/truapi-host-cli/Cargo.toml)
-CLI_ARCHIVE := truapi-host-$(CLI_VERSION)-$(CLI_TARGET).tar.gz
+CLI_ARCHIVE = truapi-host-$(CLI_VERSION)-$(CLI_TARGET).tar.gz
 CLI_RUNNER := $(CLI_DIST_DIR)/runner.js
-CLI_STAGE := $(CLI_DIST_DIR)/$(CLI_TARGET)
+CLI_SCRIPT_TYPES_SOURCE := rust/crates/truapi-host-cli/js/script-types.d.ts
+CLI_SCRIPT_TYPES := $(CLI_DIST_DIR)/script-types.d.ts
+CLI_CONTAINER := $(CLI_DIST_DIR)/sandbox-assets/container.js
+CLI_STAGE = $(CLI_DIST_DIR)/$(CLI_TARGET)
 # macOS ships shasum, most Linux images ship only sha256sum.
 SHA256 := $(shell command -v sha256sum >/dev/null 2>&1 && echo "sha256sum" || echo "shasum -a 256")
 
-# The checkout's runner imports @parity/truapi by relative path, so it only
-# works from a built source tree. Bundling inlines the client, which is what
-# lets a downloaded binary run product scripts. Needs generated sources, so run
-# `make codegen` first on a fresh checkout. Architecture-independent, so a file
-# target: CI builds it once and every per-target archive reuses it.
-$(CLI_RUNNER):
+# Generated SDK sources are needed before bundling. CI builds the runner,
+# dev container once, then reuses them in every target archive.
+$(CLI_RUNNER): $(CLI_CONTAINER)
+	@test -f "$@" || bun scripts/build-cli-runner.ts "$(CLI_DIST_DIR)"
+
+$(CLI_SCRIPT_TYPES): $(CLI_SCRIPT_TYPES_SOURCE)
 	mkdir -p $(CLI_DIST_DIR)
-	bun build rust/crates/truapi-host-cli/js/runner.ts --target=bun --outfile $@
+	cp $< $@
 
-cli-runner: $(CLI_RUNNER) ## Bundle the self-contained product-script runner into target/dist.
+$(CLI_CONTAINER):
+	bun scripts/build-cli-runner.ts "$(CLI_DIST_DIR)"
 
-cli-dist: $(CLI_RUNNER) ## Package truapi-host for CLI_TARGET into target/dist in the release artifact layout.
+cli-runner: $(CLI_SCRIPT_TYPES) ## Bundle the product-script runner, browser sandbox, and script types into target/dist.
+	bun scripts/build-cli-runner.ts "$(CLI_DIST_DIR)"
+	node scripts/check-host-script-types.mjs
+
+cli-dist: check-generated $(CLI_RUNNER) $(CLI_SCRIPT_TYPES) ## Package truapi-host for CLI_TARGET into target/dist in the release artifact layout.
 	rustup target add $(CLI_TARGET)
 	$(CARGO) build -p truapi-host-cli --release --target $(CLI_TARGET)
 	rm -rf $(CLI_STAGE)
 	mkdir -p $(CLI_STAGE)
-	cp target/$(CLI_TARGET)/release/truapi-host $(CLI_RUNNER) $(CLI_STAGE)/
-	tar -czf $(CLI_DIST_DIR)/$(CLI_ARCHIVE) -C $(CLI_STAGE) truapi-host runner.js
+	cp target/$(CLI_TARGET)/release/truapi-host $(CLI_RUNNER) $(CLI_SCRIPT_TYPES) $(CLI_STAGE)/
+	cp -R $(CLI_DIST_DIR)/sandbox-assets $(CLI_STAGE)/
+	tar -czf $(CLI_DIST_DIR)/$(CLI_ARCHIVE) -C $(CLI_STAGE) truapi-host runner.js script-types.d.ts sandbox-assets
 	cd $(CLI_DIST_DIR) && $(SHA256) $(CLI_ARCHIVE) > $(CLI_ARCHIVE).sha256
 	@echo "packaged $(CLI_DIST_DIR)/$(CLI_ARCHIVE)"
 
@@ -113,12 +137,12 @@ codegen: ## Regenerate generated TS/Rust artifacts from the Rust crates.
 	./scripts/codegen.sh
 	cd $(PLAYGROUND) && rm -rf node_modules/@parity && yarn install
 
-wasm: ## Rebuild the truapi-server and truapi-provider WASM bundles under js/packages/*/dist/.
+wasm: check-generated ## Rebuild the truapi runtime and truapi-provider WASM bundles under js/packages/*/dist/.
 	cd $(HOST_WASM_PKG) && npm run build:wasm
-	cd $(PROVIDER_WASM_PKG) && npm run build:wasm
+	cd $(PROVIDER_WASM_PKG) && npm run build
 
 wasm-crypto-test: ## Run crypto/vector tests on wasm32 via wasm-pack/node.
-	wasm-pack test --node rust/crates/truapi-server --test wasm_crypto_vectors --no-default-features
+	wasm-pack test --node rust/crates/truapi --test wasm_crypto_vectors --no-default-features --features runtime
 
 dotli-link: ## Link dotli to this checkout's local @parity/truapi packages.
 	cd $(DOTLI) && TRUAPI_REPO="$(CURDIR)" bun run link:truapi
@@ -128,18 +152,18 @@ dotli-link: ## Link dotli to this checkout's local @parity/truapi packages.
 UNIFFI_CDYLIB_DIR := target/codegen
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-UNIFFI_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi_server.dylib
+UNIFFI_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi.dylib
 PROVIDER_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi_provider.dylib
 else
-UNIFFI_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi_server.so
+UNIFFI_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi.so
 PROVIDER_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi_provider.so
 endif
 
 UNIFFI_SWIFT_TMP := target/uniffi-swift-out
-PROVIDER_SWIFT_TMP := target/uniffi-provider-swift-check
+PROVIDER_SWIFT_TMP := target/uniffi-provider-swift-out
 
-uniffi: ## Generate Swift bindings from the truapi-server cdylib into target/uniffi-swift-out (consumed by ios/truapi-host/scripts/rebuild.sh).
-	$(CARGO) build -p truapi-server --profile codegen --features ws-bridge
+uniffi: check-generated ## Generate Swift bindings from the truapi cdylib into target/uniffi-swift-out (consumed by ios/truapi-host/scripts/rebuild.sh).
+	$(CARGO) build -p truapi --profile codegen
 	rm -rf $(UNIFFI_SWIFT_TMP)
 	mkdir -p $(UNIFFI_SWIFT_TMP)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -150,10 +174,10 @@ uniffi: ## Generate Swift bindings from the truapi-server cdylib into target/uni
 IOS_HOST ?= ../polkadot-app-ios-v2
 IOS_DERIVED_DATA ?= $(IOS_HOST)/build/DerivedData
 IOS_CONFIGURATION ?= Debug
-IOS_SWIFT_FLAGS ?= -DNIGHTLY -DW3S -DIOS_PASEO_E2E
+IOS_SWIFT_FLAGS ?= -DNIGHTLY -DW3S -DIOS_PASEO_E2E -DTRUAPI_RUNTIME_DEFAULT
 IOS_SIMULATOR_DEVICE ?=
 IOS_XCODE_DESTINATION ?= generic/platform=iOS Simulator
-IOS_BUNDLE ?= io.pcf.polkadotapp.develop
+IOS_BUNDLE ?= io.parity.polkadotapp.develop
 IOS_GOOGLE_SERVICE_PLIST ?= $(IOS_HOST)/polkadot-app/GoogleService/GoogleService-Info-Release.plist
 IOS_PRODUCT_HOST ?= truapi-playground.dot
 IOS_PRODUCT_URL ?= http://localhost:3100
@@ -166,6 +190,13 @@ IOS_HOST_PLAYGROUND_HOST ?= host-playground.dot
 IOS_HOST_PLAYGROUND_NAME ?= Host Playground
 IOS_HOST_PLAYGROUND_URL ?= http://127.0.0.1:3101
 IOS_APP := $(abspath $(IOS_DERIVED_DATA)/Build/Products/$(IOS_CONFIGURATION)-iphonesimulator/polkadot-app.app)
+
+ios-bootstrap: ## Generate everything hosts/ios needs before Xcode can load its package graph (SIM_ONLY=1 for simulator slices only).
+	./scripts/codegen.sh
+	./ios/truapi-host/scripts/rebuild.sh
+	$(MAKE) provider-swift
+	sh ios/truapi-provider/scripts/sync-bindings.sh
+	@echo "hosts/ios can now be opened in Xcode."
 
 ios-build: ## Rebuild the local Rust package and the TestFlight-configured iOS simulator app.
 	@test -d "$(IOS_HOST)/.git" || { \
@@ -227,10 +258,20 @@ ios-chat-host-playground-run: ios-build ## Verify Host Playground Chat through t
 
 ios-chat-all: ios-chat-run ios-chat-host-playground-run ## Run both local iOS Chat playground integrations.
 
+TRUAPI_ANDROID_E2E_APK ?= hosts/android/app/build/outputs/apk/vanilla/debug/app-vanilla-debug.apk
+
+android-chat-playground-run: ## Run the TrUAPI Playground Chat diagnosis in a headless Android emulator (build the debug APK with Gradle first).
+	@test -f "$(TRUAPI_ANDROID_E2E_APK)" || { \
+		echo "Missing debug APK at $(TRUAPI_ANDROID_E2E_APK)"; \
+		echo "Build it first: cd hosts/android && ./gradlew :app:assembleVanillaDebug"; \
+		exit 1; \
+	}
+	TRUAPI_ANDROID_E2E_APK="$(TRUAPI_ANDROID_E2E_APK)" node scripts/launch-android-chat-playground.mjs
+
 UNIFFI_KOTLIN_OUT := android/truapi-host/src/main/kotlin/generated
 
-uniffi-kotlin: ## Regenerate Kotlin UniFFI bindings from the truapi-server cdylib.
-	$(CARGO) build -p truapi-server --profile codegen --features ws-bridge
+uniffi-kotlin: check-generated ## Regenerate Kotlin UniFFI bindings from the truapi cdylib.
+	$(CARGO) build -p truapi --profile codegen
 	rm -rf $(UNIFFI_KOTLIN_OUT)
 	mkdir -p $(UNIFFI_KOTLIN_OUT)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -243,14 +284,14 @@ uniffi-kotlin: ## Regenerate Kotlin UniFFI bindings from the truapi-server cdyli
 ANDROID_ABIS ?= arm64-v8a armeabi-v7a x86_64
 ANDROID_JNILIBS := android/truapi-host/src/main/jniLibs
 
-android-jni: ## Cross-compile libtruapi_server.so for Android ABIs into jniLibs (needs cargo-ndk + NDK).
+android-jni: check-generated ## Cross-compile libtruapi.so for Android ABIs into jniLibs (needs cargo-ndk + NDK).
 	@command -v cargo-ndk >/dev/null || { echo "cargo-ndk not found: cargo install cargo-ndk"; exit 1; }
 	$(CARGO) ndk $(foreach abi,$(ANDROID_ABIS),-t $(abi)) \
 		-o $(ANDROID_JNILIBS) \
-		build --release -p truapi-server --features ws-bridge
+		build --release -p truapi
 	# cargo-ndk also copies dependency cdylib intermediates (hash-suffixed,
-	# statically linked into libtruapi_server.so already); keep only ours.
-	find $(ANDROID_JNILIBS) -name '*.so' ! -name 'libtruapi_server.so' -delete
+	# statically linked into libtruapi.so already); keep only ours.
+	find $(ANDROID_JNILIBS) -name '*.so' ! -name 'libtruapi.so' -delete
 
 android-check: uniffi-kotlin ## Compile the Kotlin host adapter against freshly generated bindings (needs Gradle + Android SDK).
 	gradle :truapi-host:compileReleaseKotlin
@@ -274,18 +315,8 @@ provider-swift: ## Generate the TrUAPIProvider Swift bindings into target/uniffi
 		--language swift \
 		--out-dir $(PROVIDER_SWIFT_TMP)
 
-provider-swift-check: provider-swift ## Fail if the committed TrUAPIProvider bindings are stale.
-	@diff -u ios/truapi-provider/Sources/TrUAPIProvider/truapi_provider.swift \
-		$(PROVIDER_SWIFT_TMP)/truapi_provider.swift \
-		&& diff -u ios/truapi-provider/Sources/truapi_providerFFI/include/truapi_providerFFI.h \
-		$(PROVIDER_SWIFT_TMP)/truapi_providerFFI.h \
-		&& diff -u ios/truapi-provider/Sources/truapi_providerFFI/include/module.modulemap \
-		$(PROVIDER_SWIFT_TMP)/truapi_providerFFI.modulemap \
-		&& echo "Committed TrUAPIProvider bindings are current." \
-		|| { echo "Committed TrUAPIProvider bindings are stale: run 'make provider-ios'."; exit 1; }
-
 provider-ios: ## Build the TrUAPIProvider Swift bindings + xcframework (adds --sim-only via SIM_ONLY=1).
-	bash ios/truapi-provider/scripts/rebuild.sh $(if $(SIM_ONLY),--sim-only,)
+	bash ios/truapi-provider/scripts/rebuild.sh $(if $(SIM_ONLY_ON),--sim-only,)
 
 provider-kotlin: ## Regenerate Kotlin UniFFI bindings from the truapi-provider cdylib.
 	$(CARGO) build -p truapi-provider --profile codegen --no-default-features --features uniffi
@@ -302,27 +333,33 @@ provider-android-jni: ## Cross-compile libtruapi_provider.so for Android ABIs in
 		-o $(PROVIDER_JNILIBS) \
 		build --release -p truapi-provider --no-default-features --features uniffi
 
-provider-android-check: provider-kotlin ## Compile the provider Kotlin bindings against freshly generated sources (needs Gradle + Android SDK).
+provider-android-check: provider-kotlin ## Assemble the provider AAR against freshly generated bindings (needs Gradle + Android SDK).
 	@test -n "$$(find $(PROVIDER_KOTLIN_OUT) -name '*.kt' -print -quit)" \
 		|| { echo "no generated Kotlin under $(PROVIDER_KOTLIN_OUT): the module would compile an empty source set and pass"; exit 1; }
-	gradle :truapi-provider:compileReleaseKotlin
+	gradle :truapi-provider:assembleRelease
 
 provider-android-publish-local: provider-kotlin provider-android-jni ## Publish the self-contained provider AAR (bindings + cdylib) to ~/.m2.
 	gradle :truapi-provider:publishReleasePublicationToMavenLocal
 
-test: ## Run Rust + TypeScript client tests.
+test: check-generated ## Run Rust + TypeScript client tests.
 	cargo test --workspace
 	cd $(TRUAPI_PKG) && npm test
 	cd $(HOST_WASM_PKG) && npm run build && npm test
 
-check: ## Full verification suite (build, fmt, clippy, test, TS tests, playground build + lint).
+fmt: ## Format Rust sources.
+	cargo +$(NIGHTLY_TOOLCHAIN) fmt --all $(RUSTFMT_FLAGS)
+
+fmt-check: RUSTFMT_FLAGS := --check
+fmt-check: fmt ## Check Rust formatting.
+
+check: check-generated ## Full verification suite (build, fmt, clippy, test, TS tests, playground build + lint).
 	cargo build --workspace
-	cargo check --target wasm32-unknown-unknown -p truapi-server
-	cargo +nightly fmt --check
+	cargo check --target wasm32-unknown-unknown -p truapi
+	$(MAKE) fmt-check
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	cargo test --workspace --all-features --all-targets
 	cd $(TRUAPI_PKG) && npm run build && npm test
-	cd $(HOST_WASM_PKG) && npm install --no-fund --no-audit && npm run build && npm test
+	cd $(HOST_WASM_PKG) && npm install --no-fund --no-audit && npm run format:check && npm run build && npm test
 	cd $(PLAYGROUND) && yarn build && yarn lint && yarn test:unit
 
 clean: ## Remove local build/test artifacts without deleting dependencies.
@@ -382,7 +419,7 @@ dev-link-check: dotli-link ## Verify dotli can resolve the local @parity/truapi-
 	@node -e 'const fs = require("node:fs"); const checks = [["$(DOTLI_TRUAPI_LINK)/package.json", "@parity/truapi"], ["$(DOTLI_HOST_WASM_LINK)/package.json", "@parity/truapi-host"]]; for (const [path, name] of checks) { const pkg = JSON.parse(fs.readFileSync(path, "utf8")); if (pkg.name !== name) { console.error(path + " resolves " + pkg.name + ", expected local " + name + ". Run: make dotli-link"); process.exit(1); } }'
 	cd $(DOTLI_UI) && bun -e 'await import("@parity/truapi-host"); await import("@parity/truapi-host/web");'
 
-dev-cli: ## Start the playground (:3000) against the local signing-host CLI; open http://localhost:3000
+dev-cli: cli-runner ## Start the playground (:3000) against the local signing-host CLI; open http://localhost:3000
 	cargo build --release -p truapi-host-cli
 	cd $(PLAYGROUND) && "$(abspath target/release/truapi-host)" dev -- yarn dev
 
@@ -393,12 +430,41 @@ dev: dev-bootstrap ## Start dotli host (:5173) + playground (:3000) together; op
 	( until curl -fsS http://localhost:3000/ >/dev/null 2>&1; do sleep 1; done; curl -fsS http://localhost:3000/diagnostics >/dev/null 2>&1 || true ) & \
 	wait
 
+debugger: dev-bootstrap ## Wire debugger (:9231) + a DEV-MODE dotli host (:5173) + playground (:3000). Open http://127.0.0.1:9231
+	# `make dev` cannot drive this: dotli ships only production builds, and the dial
+	# sits behind `import.meta.env.DEV`, so the host never dials and the board stays
+	# empty with no error. Hence a dev-mode host build here.
+	#
+	# Build every app EXCEPT the host, then the host below. Excluding it by name
+	# would put a list of dotli's apps in this repo that a new app there would
+	# silently fall off; skipping the siblings entirely leaves apps/sandbox unbuilt
+	# and the preview server exits 1, which a stale dist from an earlier `make dev`
+	# hides. The host is separate because dotli's own build runs `tsc` and does not
+	# typecheck against this repo's newer `@parity/truapi`; `vite build` does not.
+	cd $(DOTLI) && VITE_APP_DEBUG=true bunx turbo run build --filter='!@dotli/host'
+	cd $(DOTLI)/apps/host && NODE_ENV=development VITE_APP_DEBUG=true \
+		VITE_TRUAPI_DEBUGGER_URL=ws://127.0.0.1:$(DEBUGGER_PORT) bunx --bun vite build
+	@printf '\n  Debugger:  http://127.0.0.1:$(DEBUGGER_PORT)\n'
+	@printf '  Host:      http://localhost:5173/localhost:3000\n'
+	@printf '  Another port:  DEBUGGER_PORT=9300 make debugger\n\n'
+	# The three servers log for a while after they start, which buries anything
+	# printed here. Waiting for the slowest to answer and then reprinting the two
+	# URLs puts them at the bottom, where they are still on screen.
+	@trap 'kill 0' EXIT; \
+	( cd $(DEBUGGER_PKG) && TRUAPI_DEBUGGER_PORT=$(DEBUGGER_PORT) bun run src/server.ts ) & \
+	( cd $(DOTLI) && bun scripts/preview-server.ts ) & \
+	( cd $(PLAYGROUND) && yarn dev ) & \
+	( until curl -sfo /dev/null http://localhost:3000; do sleep 1; done; \
+	  printf '\n  Ready.  Debugger:  http://127.0.0.1:$(DEBUGGER_PORT)\n'; \
+	  printf '          Host:      http://localhost:5173/localhost:3000\n\n' ) & \
+	wait
+
 e2e-dotli: ## Fully automated dotli + playground diagnosis e2e using the local signing-host CLI.
 	@$(MAKE) dev-bootstrap
 	cargo build -p truapi-host-cli
 	cd $(PLAYGROUND) && bun tests/e2e/dotli-diagnosis.ts
 
-e2e-cli-diagnosis: ## Full playground diagnosis in a plain browser tab, hosted by `truapi-host dev`.
+e2e-cli-diagnosis: cli-runner ## Full playground diagnosis in a plain browser tab, hosted by `truapi-host dev`.
 	cargo build --release -p truapi-host-cli
 	cd $(PLAYGROUND) && TRUAPI_HOST_BIN="$(abspath target/release/truapi-host)" bun tests/e2e/cli-diagnosis.ts
 
@@ -410,6 +476,24 @@ e2e-pairing-cli: ## Run the generated battery against the paired pairing-host CL
 
 e2e-chat-cli: ## Run the Chat content-screening battery against a chat signing-host CLI.
 	scripts/battery.sh --chat-host
+
+e2e-pocket-cli: ## Run the Pocket protocol battery against a Pocket signing-host CLI.
+	scripts/battery.sh --pocket-host
+
+e2e-cross-product-storage: ## One product reads another's storage on the signing-host CLI, granted by a local product config.
+	scripts/cross-product-storage-e2e.sh
+
+e2e-cross-product-ringvrf: ## One product signs with another's ring-VRF key on the signing-host CLI, granted by a local product config.
+	scripts/cross-product-ringvrf-e2e.sh
+
+e2e-cross-product-signing: ## One product signs with another's account on the signing-host CLI, granted by a local product config.
+	scripts/cross-product-signing-e2e.sh
+
+e2e-cross-product-ringvrf-context: ## One product proves with another's ring-VRF key in a third product's context on the signing-host CLI, granted by local product configs.
+	scripts/cross-product-ringvrf-context-e2e.sh
+
+e2e-preimage-submit-prompt: ## Upload preimages under a PreimageSubmit grant on the signing-host CLI with no per-upload confirmation.
+	scripts/preimage-submit-prompt-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
 	node scripts/e2e-cli-update.mjs
@@ -431,24 +515,32 @@ XCFRAMEWORK_HEADERS := target/xcframework-headers
 # Slices and cargo profile the xcframework is assembled from. The defaults are
 # what a release needs; a compile-only consumer overrides both for speed. The
 # profile name doubles as cargo's output directory.
-XCFRAMEWORK_TARGETS ?= $(IOS_DEVICE_TARGET) $(IOS_SIM_TARGET)
+# SIM_ONLY=1 drops the device slice while iterating, which halves the target
+# builds. publish.sh refuses a framework missing either slice, so this cannot
+# reach a release asset. XCFRAMEWORK_TARGETS still overrides both.
+#
+# 0, false, no and off mean off. Make treats any non-empty value as true, so
+# without this SIM_ONLY=0 would drop the device slice.
+SIM_ONLY_ON := $(filter-out 0 false no off,$(SIM_ONLY))
+XCFRAMEWORK_TARGETS ?= $(if $(SIM_ONLY_ON),$(IOS_SIM_TARGET),$(IOS_DEVICE_TARGET) $(IOS_SIM_TARGET))
 XCFRAMEWORK_PROFILE ?= release
 XCFRAMEWORK_CARGO_FLAGS := $(if $(filter release,$(XCFRAMEWORK_PROFILE)),--release,)
 
-xcframework: uniffi ## Build truapi_server.xcframework for iOS device + simulator.
+# One cargo invocation carrying every slice, so the target graphs are scheduled
+# together: the release profile's single codegen unit and fat LTO leave a long
+# serial tail per slice, which the other slice fills.
+xcframework: uniffi ## Build truapi_server.xcframework for iOS device + simulator (SIM_ONLY=1 for simulator only).
 	rustup target add $(XCFRAMEWORK_TARGETS)
-	for target in $(XCFRAMEWORK_TARGETS); do \
-		IPHONEOS_DEPLOYMENT_TARGET=$(IOS_DEPLOYMENT_TARGET) $(CARGO) build -p truapi-server \
-			$(XCFRAMEWORK_CARGO_FLAGS) --features ws-bridge --target $$target || exit 1; \
-	done
+	IPHONEOS_DEPLOYMENT_TARGET=$(IOS_DEPLOYMENT_TARGET) $(CARGO) build -p truapi \
+		$(XCFRAMEWORK_CARGO_FLAGS) \
+		$(XCFRAMEWORK_TARGETS:%=--target %)
 	rm -rf $(XCFRAMEWORK_OUT) $(XCFRAMEWORK_HEADERS)
 	mkdir -p $(XCFRAMEWORK_HEADERS)
-	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.h $(UNIFFI_SWIFT_TMP)/truapi_platformFFI.h \
-		$(UNIFFI_SWIFT_TMP)/truapi_serverFFI.h $(XCFRAMEWORK_HEADERS)/
-	cp $(UNIFFI_SWIFT_TMP)/truapi_serverFFI.modulemap $(XCFRAMEWORK_HEADERS)/module.modulemap
+	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.h $(XCFRAMEWORK_HEADERS)/
+	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.modulemap $(XCFRAMEWORK_HEADERS)/module.modulemap
 	slices=""; \
 	for target in $(XCFRAMEWORK_TARGETS); do \
-		slices="$$slices -library target/$$target/$(XCFRAMEWORK_PROFILE)/libtruapi_server.a \
+		slices="$$slices -library target/$$target/$(XCFRAMEWORK_PROFILE)/libtruapi.a \
 			-headers $(XCFRAMEWORK_HEADERS)"; \
 	done; \
 	xcodebuild -create-xcframework $$slices -output $(XCFRAMEWORK_OUT)

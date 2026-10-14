@@ -1,0 +1,4 @@
+#include "../../Configs/base.safetynet.xcconfig"
+
+OTHER_SWIFT_FLAGS = $(inherited) $(BASE_SWIFT_FLAGS)
+BUNDLE = $(APP_MAIN_BUNDLE)

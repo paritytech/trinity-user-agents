@@ -1,54 +1,61 @@
 [package]
 name = "truapi-host-cli"
-version = "0.11.0"
+version = "0.25.0"
 edition.workspace = true
 description = "Headless TrUAPI hosts: a signing-host companion and a pairing host that pair over the real People-chain statement store, for end-to-end testing without an external signer service"
 license = "MIT"
+include = ["src/**", "js/**", "README.md", "SPEC.md"]
 
 [[bin]]
 name = "truapi-host"
 path = "src/main.rs"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1", features = ["process"] }
+rustix = { workspace = true, features = ["process"] }
 
 [lints.rust]
+missing_docs = "warn"
 unsafe_code = "forbid"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
 
 [dependencies]
 truapi = { path = "../truapi" }
-truapi-platform = { path = "../truapi-platform" }
-truapi-server = { path = "../truapi-server" }
-anyhow = "1"
-arboard = { version = "3.6.1", default-features = false }
-async-trait = "0.1"
-base64 = "0.22"
-bip39 = { version = "2", features = ["rand"] }
-clap = { version = "4", features = ["derive", "env"] }
-crossterm = { version = "0.29", features = ["event-stream"] }
-flate2 = "1"
-futures = "0.3"
-futures-util = "0.3"
-fs2 = "0.4"
-hex = "0.4"
-parity-scale-codec = { version = "3", features = ["derive"] }
-qrcode = { version = "0.14.1", default-features = false }
-ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "unstable-rendered-line-info"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.10"
-shlex = "1"
-subxt-rpcs = { version = "0.50.1", default-features = false, features = ["jsonrpsee", "native"] }
-tar = "0.4"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "io-std", "net", "time", "signal", "process"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
-tokio-tungstenite = { version = "0.24", features = ["connect", "rustls-tls-webpki-roots"] }
-tempfile = "3"
+anyhow = { workspace = true }
+arboard = { workspace = true, features = ["image-data"] }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bip39 = { workspace = true, features = ["rand"] }
+clap = { workspace = true, features = ["derive", "env"] }
+crossterm = { workspace = true, features = ["event-stream"] }
+derive_more = { workspace = true, features = ["debug", "display", "error"] }
+flate2 = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+fs2 = { workspace = true }
+hex = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png", "webp"] }
+parity-scale-codec = { workspace = true, features = ["derive"] }
+qrcode = { workspace = true }
+ratatui = { workspace = true, features = ["crossterm", "unstable-rendered-line-info"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+rqrr = { workspace = true }
+rustls = { workspace = true, features = ["ring"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+shlex = { workspace = true }
+subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"] }
+tar = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io-util", "io-std", "net", "time", "signal", "process"] }
+tokio-stream = { workspace = true, features = ["sync"] }
+tokio-tungstenite = { workspace = true, features = ["connect", "rustls-tls-webpki-roots"] }
+tempfile = { workspace = true }
 # TLS is compiled in for the People, Bulletin and Asset Hub host traffic the preset
 # serves as roles, plus `Chain/*` playground methods. See src/chain.rs.
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-unicode-width = "0.2"
-zeroize = { version = "1", features = ["derive"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }
+unicode-width = { workspace = true }
+zeroize = { workspace = true, features = ["alloc", "derive"] }

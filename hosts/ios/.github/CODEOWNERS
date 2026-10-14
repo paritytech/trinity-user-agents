@@ -1,0 +1,75 @@
+# CODEOWNERS file
+# Lines starting with '#' are comments.
+# Each line is a file pattern followed by one or more owners.
+
+# Workflows and GitHub Actions configuration
+/.github/ @ERussel @sergkononenko
+
+# Fastlane and Ruby dependencies
+/fastlane/ @ERussel @sergkononenko
+/Gemfile @ERussel @sergkononenko
+/Gemfile.lock @ERussel @sergkononenko
+
+# Brand identity. A one-token edit here changes the App Group, the keychain access
+# group and the claimed applinks: domains of every signed build.
+/Configs/ @ERussel @sergkononenko
+
+/Packages/AppDependencies @sergkononenko @ERussel
+/Packages/AssetExchange @ERussel
+/Packages/AssetHubSdk @ERussel
+/Packages/BulletinChain @ERussel @sergkononenko
+/Packages/CarParser @ERussel @sergkononenko
+/Packages/ChainStore @sergkononenko @ERussel
+/Packages/Coinage @sergkononenko
+/Packages/CommonService @ERussel
+/Packages/FoundationExt @sergkononenko
+/Packages/HandoffService @ERussel @sergkononenko
+/Packages/HydrationSdk @ERussel
+/Packages/Individuality @ERussel @sergkononenko
+/Packages/JailbreakDetection @sergkononenko
+/Packages/KeyDerivation @ERussel
+/Packages/MessageExchangeKit @ERussel
+/Packages/OperationExt @sergkononenko
+/Packages/PolkadotUI @sergkononenko
+/Packages/Products @ERussel
+/Packages/StatementStore @ERussel
+/Packages/StructuredConcurrency @sergkononenko
+/Packages/SubstrateOperation @ERussel
+/Packages/SubstrateSdkExt @sergkononenko
+/Packages/UIDependencies @sergkononenko
+/Packages/XcmDefinition @ERussel
+/Packages/XcmTransfer @ERussel
+
+/polkadot-app/AppConfig @ERussel @sergkononenko
+/polkadot-app/Common @ERussel @sergkononenko
+/polkadot-app/Configs @ERussel @sergkononenko
+/polkadot-app/Modules/AssetDetails @sergkononenko
+/polkadot-app/Modules/Chat @ERussel
+/polkadot-app/Modules/ChatAttachments @ERussel
+/polkadot-app/Modules/ChatCall @ERussel
+/polkadot-app/Modules/ChatRequestList @ERussel
+/polkadot-app/Modules/ChatWithPlayers @sergkononenko @ERussel
+/polkadot-app/Modules/ClaimUsername @sergkononenko
+/polkadot-app/Modules/Coinage @sergkononenko
+/polkadot-app/Modules/ContactsList @sergkononenko
+/polkadot-app/Modules/Deposit @sergkononenko @ERussel
+/polkadot-app/Modules/FiatOnRamp @sergkononenko
+/polkadot-app/Modules/FiatOnRampProvider @sergkononenko
+/polkadot-app/Modules/IdentityDetails @sergkononenko @ERussel
+/polkadot-app/Modules/IncomingChatRequest @ERussel
+/polkadot-app/Modules/LocalAuth @sergkononenko @ERussel
+/polkadot-app/Modules/MainTabBar @sergkononenko @ERussel
+/polkadot-app/Modules/Onboarding @sergkononenko
+/polkadot-app/Modules/PolkadotSignIn @ERussel
+/polkadot-app/Modules/Products @ERussel
+/polkadot-app/Modules/Root @ERussel @sergkononenko
+/polkadot-app/Modules/SearchAccount @sergkononenko
+/polkadot-app/Modules/SearchContact @sergkononenko
+/polkadot-app/Modules/SelectToken @sergkononenko
+/polkadot-app/Modules/Settings @sergkononenko
+/polkadot-app/Modules/SPA @ERussel
+/polkadot-app/Modules/SPAMoreActions @ERussel
+/polkadot-app/Modules/TransactionResult @sergkononenko
+/polkadot-app/Modules/TransferAmount @sergkononenko
+/polkadot-app/Modules/URLHandling @sergkononenko @ERussel
+/polkadot-app/Modules/Wallet @sergkononenko @ERussel

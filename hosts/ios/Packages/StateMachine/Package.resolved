@@ -1,0 +1,33 @@
+{
+  "originHash" : "96cc63fe8013b40a534c47bc7027ad8394df56c6d8c6a996cf35f2e41935a9cd",
+  "pins" : [
+    {
+      "identity" : "asyncextensions",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/paritytech/AsyncExtensions",
+      "state" : {
+        "revision" : "9fd3785a5d9b84e55f3e7950a5758378cd134da9",
+        "version" : "0.5.6"
+      }
+    },
+    {
+      "identity" : "logger-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/logger-ios",
+      "state" : {
+        "revision" : "4d8a513664a272c201ba0a424a28d133827c924b",
+        "version" : "0.0.2"
+      }
+    },
+    {
+      "identity" : "swift-collections",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-collections.git",
+      "state" : {
+        "revision" : "6675bc0ff86e61436e615df6fc5174e043e57924",
+        "version" : "1.4.1"
+      }
+    }
+  ],
+  "version" : 3
+}

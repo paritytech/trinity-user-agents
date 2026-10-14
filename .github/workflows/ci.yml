@@ -7,8 +7,13 @@ on:
   merge_group:
   workflow_dispatch:
 
+# release.yml publishes only when this workflow concludes success for a
+# `release:` commit, and a cancelled run is not success, so it publishes
+# nothing and reports nothing. A release commit therefore gets a group of its
+# own, keyed by its SHA, where no later push to the same branch can reach it.
+# Ordinary pushes keep sharing a group and keep cancelling each other.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ startsWith(github.event.head_commit.message, 'release:') && github.sha || 'shared' }}
   cancel-in-progress: true
 
 permissions:
@@ -16,18 +21,23 @@ permissions:
 
 jobs:
   rust:
+    needs: codegen
     name: Rust workspace
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: "-D warnings"
+      # The wire-table parity test soft-skips when the generated TypeScript is
+      # absent. The codegen artifact carries it, so this is the run that holds
+      # the Rust dispatcher and the TypeScript client to the same table.
+      TRUAPI_REQUIRE_GENERATED_TS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
 
@@ -36,33 +46,108 @@ jobs:
           toolchain: stable
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: ./.github/actions/rust-cache
+
+      - name: Download codegen output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codegen-output
 
       - name: cargo build
         run: cargo build --workspace --all-targets --all-features
 
-      - name: cargo check wasm32
-        run: cargo check --target wasm32-unknown-unknown -p truapi-server
+      - name: Check Rust library documentation
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --lib --all-features --no-deps
 
-      - name: cargo +nightly clippy wasm32 (truapi-provider browser backends)
-        run: cargo +nightly clippy -p truapi-provider --target wasm32-unknown-unknown --no-default-features --features "js smoldot networks" --all-targets -- -D warnings
+      - name: cargo check wasm32
+        run: cargo check --target wasm32-unknown-unknown -p truapi
+
+      - name: cargo (pinned nightly) clippy wasm32 (truapi-provider browser backends)
+        run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" clippy -p truapi-provider --target wasm32-unknown-unknown --no-default-features --features "js smoldot networks" --all-targets -- -D warnings
 
       # The native-bindings build has no `ws` backend, which makes ChainSource a
       # single-variant enum; --all-features never exercises that shape.
-      - name: cargo +nightly clippy (truapi-provider native bindings)
-        run: cargo +nightly clippy -p truapi-provider --no-default-features --features uniffi --all-targets -- -D warnings
+      - name: cargo (pinned nightly) clippy (truapi-provider native bindings)
+        run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" clippy -p truapi-provider --no-default-features --features uniffi --all-targets -- -D warnings
 
-      - name: cargo +nightly fmt --check
-        run: cargo +nightly fmt --check
+      - name: cargo (pinned nightly) fmt --check
+        run: make fmt-check
 
-      - name: cargo +nightly clippy
-        run: cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings
+      - name: cargo (pinned nightly) clippy
+        run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: cargo test
         run: cargo test --workspace --all-features
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: Test launcher isolation from product configuration
+        run: cargo test -p truapi-host-cli --bin truapi-host caller_configuration_cannot_execute_before_the_sandbox -- --include-ignored
+
+  headless-install:
+    name: Headless source install
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
+      TRUAPI_HOST_NO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/rust-nightly
+        with:
+          components: rustfmt
+
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - uses: ./.github/actions/rust-cache
+
+      - name: Isolate the installation
+        run: |
+          printf '%s\n' \
+            "CARGO_INSTALL_ROOT=$RUNNER_TEMP/headless-install/cargo" \
+            "TRUAPI_HOST_INSTALL_DIR=$RUNNER_TEMP/headless-install/prebuilt" \
+            "TRUAPI_HOST_BIN_DIR=$RUNNER_TEMP/headless-install/bin" >> "$GITHUB_ENV"
+
+      - name: Build and install from a fresh checkout
+        run: make headless install
+
+      - name: Build and install with stale generated sources
+        run: |
+          printf '%s\n' 'compile_error!("stale generated dispatcher");' > rust/crates/truapi/src/generated/dispatcher.rs
+          printf '%s\n' 'const staleGeneratedClient: never = "stale";' > js/packages/truapi/src/generated/client.ts
+          make headless install
+
+      - name: Smoke-test the installed CLI
+        run: |
+          "$CARGO_INSTALL_ROOT/bin/truapi-host" --version
+          printf '%s\n' 'assert(typeof truapi === "object"); console.log("headless-install-ok");' > "$RUNNER_TEMP/headless-smoke.ts"
+          timeout 60s "$CARGO_INSTALL_ROOT/bin/truapi-host" pairing-host \
+            --script "$RUNNER_TEMP/headless-smoke.ts" \
+            --base-path "$RUNNER_TEMP/headless-state" > "$RUNNER_TEMP/headless-smoke.log" 2>&1 \
+            || { cat "$RUNNER_TEMP/headless-smoke.log"; exit 1; }
+          cat "$RUNNER_TEMP/headless-smoke.log"
+          grep -q headless-install-ok "$RUNNER_TEMP/headless-smoke.log"
+
   wasm-provider:
     name: truapi-provider (wasm browser tests)
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,7 +159,7 @@ jobs:
           toolchain: stable
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: ./.github/actions/rust-cache
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
@@ -84,6 +169,7 @@ jobs:
 
   licenses:
     name: Dependency licenses
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,6 +183,7 @@ jobs:
 
   codegen:
     name: Codegen
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,31 +194,33 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: ./.github/actions/rust-cache
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install workspace deps
         run: npm ci --ignore-scripts
 
+      - name: Check no generated outputs are committed
+        run: |
+          committed="$(git ls-files -ci --exclude-standard)"
+          if [ -n "$committed" ]; then
+            echo "$committed"
+            echo "Generated outputs above are committed. Untrack them with 'git rm --cached'." >&2
+            exit 1
+          fi
+
       - name: Run codegen
         run: ./scripts/codegen.sh
 
-      - name: Check generated Rust output is committed
-        run: |
-          git diff --exit-code -- \
-            rust/crates/truapi-server/src/generated \
-            rust/crates/truapi-server/src/wasm/generated_bridge.rs
-
-      - name: Check Rust/TS wire table parity
-        run: TRUAPI_REQUIRE_GENERATED_TS=1 cargo test -p truapi-server --test wire_table_ts_parity
+      - name: Type-check headless host scripts
+        run: node scripts/check-host-script-types.mjs
 
       - name: Upload codegen output
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -146,9 +235,14 @@ jobs:
             js/packages/truapi/src/explorer/versions.ts
             js/packages/truapi-host/src/generated
             playground/test/generated
+            rust/crates/truapi-host-cli/js/script-types.d.ts
+            rust/crates/truapi/src/generated
+            rust/crates/truapi/src/wasm
 
   ios-bindings:
     name: iOS bindings (uniffi)
+    needs: codegen
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -159,60 +253,125 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: ./.github/actions/rust-cache
+
+      # The runtime feature enables generated modules, so the cdylib bindgen builds
+      # need the codegen output.
+      - name: Download codegen output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codegen-output
 
       # Swift bindgen is pure Rust codegen, so this needs neither Xcode nor the
-      # iOS targets, unlike rebuild.sh which also builds the xcframework.
+      # iOS targets, unlike rebuild.sh which also builds the xcframework. It
+      # gates that every UniFFI-exposed type still has a binding representation.
       - name: Generate Swift bindings
         run: make uniffi
 
-      - name: Check committed iOS bindings are current
-        run: ./ios/truapi-host/scripts/sync-bindings.sh --check
+      - name: Sync iOS bindings into package
+        run: ./ios/truapi-host/scripts/sync-bindings.sh
 
-      # The provider ships its own UniFFI surface and its own committed
-      # bindings; `rebuild.sh` overwrites them in place, so only this check
-      # can fail on drift.
-      - name: Check committed TrUAPIProvider bindings are current
-        run: make provider-swift-check
+      - name: Generate TrUAPIProvider bindings
+        run: make provider-swift
 
-  ios-changes:
-    name: iOS change filter
+  changes:
+    name: Change filter
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     outputs:
-      ios: ${{ steps.filter.outputs.ios }}
+      sdk_swift: ${{ steps.filter.outputs.sdk_swift }}
+      sdk_kotlin: ${{ steps.filter.outputs.sdk_kotlin }}
+      sdk_provider_kotlin: ${{ steps.filter.outputs.sdk_provider_kotlin }}
+      host_android: ${{ steps.filter.outputs.host_android }}
+      cli_package: ${{ steps.filter.outputs.cli_package }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+      needs_changeset: ${{ steps.filter.outputs.needs_changeset }}
+      adds_changeset: ${{ steps.filter.outputs.adds_changeset }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
           persist-credentials: false
 
-      # Actions has no per-job paths filter, so compute it once here and gate
-      # ios-swift on the output. On pull_request the checkout is the merge
-      # commit, so HEAD^1 is the base. Other events always run the gate.
+      # Actions has no per-job paths filter, so compute every gate once here and
+      # have each gated job read an output. On pull_request the checkout is the
+      # merge commit, so HEAD^1 is the base. Other events always run every gate.
       #
-      # The list needs no broader rust/ entry: the generated bindings are
-      # committed under ios/, and ios-bindings runs unconditionally, so a Rust
-      # change that moves the UniFFI surface either carries an ios/ change or
-      # fails there first.
-      - name: Detect iOS-relevant changes
+      # Neither binding set is committed, so a UniFFI surface change leaves no
+      # ios/ or android/ diff to key on. Each list therefore names every input
+      # its gated job actually reads: the crates the bindings are generated
+      # from, the generator itself, the Makefile targets that drive it, and the
+      # manifest that pins each platform's toolchain, and the workspace manifest
+      # and lockfile, which is where the bindings generator version and the
+      # codegen profile live. js/container is in the
+      # Swift list because it is compiled into the TrUAPIHost target as a
+      # resource; the root Gradle files are in the Kotlin list because they pin
+      # AGP and Kotlin. Both lists name this workflow, so editing a filter
+      # exercises the jobs that filter gates.
+      - name: Detect which areas changed
         id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "ios=true" >> "$GITHUB_OUTPUT"
+
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            {
+              echo "sdk_swift=true"
+              echo "sdk_kotlin=true"
+              echo "sdk_provider_kotlin=true"
+              echo "host_android=true"
+              echo "cli_package=true"
+              echo "workflows=true"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only HEAD^1 HEAD \
-            | grep -qE '^(ios/|Package\.swift$|Makefile$|rust/crates/truapi-server/src/native|rust/crates/truapi-provider/)'; then
-            echo "ios=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ios=false" >> "$GITHUB_OUTPUT"
-          fi
+
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          gate() {
+            if grep -qE "$2" <<<"$changed"; then
+              echo "$1=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$1=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+
+          gate sdk_swift '^(ios/|Package\.swift$|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|js/container/|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/truapi-provider/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
+          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/labeler\.yml$|\.github/CODEOWNERS$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing)\.py$)'
+          gate sdk_kotlin '^(android/|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|build\.gradle\.kts$|settings\.gradle\.kts$|gradle\.properties$|package\.json$|package-lock\.json$|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
+
+          # The provider AAR is generated from its own cdylib and compiles
+          # without codegen output, so it moves on a narrower set than the host
+          # shell: the crate, the bindings generator and the Gradle wiring that
+          # compiles the result.
+          gate sdk_provider_kotlin '^(android/truapi-provider/|rust/crates/truapi-provider/|rust/crates/uniffi-bindgen-cli/|Makefile$|Cargo\.toml$|Cargo\.lock$|build\.gradle\.kts$|settings\.gradle\.kts$|gradle\.properties$|\.github/workflows/ci\.yml$)'
+          # The vendored Android host, plus the crates its bindings are
+          # generated from. Nothing gated on this tree before, so a core change
+          # that broke it reached a release with no gate in between.
+          gate host_android '^(hosts/android/|android/truapi-host/|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|scripts/(codegen\.sh|regen-explorer-versions\.mjs)$|Cargo\.toml$|nightly-toolchain$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
+
+          # The packaging path has its own inputs: the archive layout in the
+          # Makefile, the runner bundle, the generated sources cli-dist refuses
+          # to build without, and the dependency set the musl link has to
+          # survive. `@parity/truapi` is here because the runner inlines it from
+          # source, and bundling it is a step no other job performs. A release
+          # is the wrong place to find out one of them moved.
+          gate cli_package '^(rust/crates/(truapi-host-cli|truapi|truapi-codegen|truapi-macros)/|js/container/|js/packages/truapi/(src/|package\.json$|tsconfig[^/]*\.json$)|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|scripts/(codegen\.sh|build-cli-runner\.ts|cli-runner-package\.test\.ts)$|\.github/workflows/(ci|cli-package|release-cli)\.yml$)'
+
+          # Include generators, dependency pins and package build configuration:
+          # these can change a published artifact without touching its sources.
+          gate needs_changeset '^(rust/crates/truapi(-server|-provider|-macros|-host-cli|-codegen)?/|js/packages/[^/]+/(src/|scripts/|package\.json$|tsconfig[^/]*\.json$)|Cargo\.(toml|lock)$|package(-lock)?\.json$|rust-toolchain(\.toml)?$|nightly-toolchain$|\.cargo/|Makefile$|scripts/(codegen\.sh|bundle-truapi-dts\.mjs|regen-explorer-versions\.mjs)$)'
+
+          # Deleting, editing or renaming an old changeset does not declare a
+          # new change. README.md is Changesets' documentation, not a release.
+          changed="$(git diff --name-only --find-renames --diff-filter=A HEAD^1 HEAD -- .changeset/)"
+          changed="$(sed '\|^\.changeset/README\.md$|d' <<<"$changed")"
+          gate adds_changeset '^\.changeset/[^/]+\.md$'
 
   ios-swift:
-    name: iOS package (swift compile)
-    needs: ios-changes
-    if: needs.ios-changes.outputs.ios == 'true'
+    name: iOS package (Swift + WebKit)
+    needs: [changes, codegen]
+    if: needs.changes.outputs.sdk_swift == 'true'
     runs-on: macos-15
     timeout-minutes: 30
     env:
@@ -224,43 +383,332 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
         with:
           toolchain: stable
           targets: aarch64-apple-ios-sim
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           shared-key: ios-swift-gate
 
-      # Simulator slice only, debug profile. This gate compiles Swift and ships
+      - name: Download codegen output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codegen-output
+
+      # Simulator slice only, debug profile. This gate tests Swift and ships
       # no binary, so the device slice and release codegen are waste. The
       # published binary is older than the current Rust surface, so
       # TRUAPI_USE_LOCAL_BINARY points the manifest at this build instead.
       - name: Build the simulator XCFramework
         run: make xcframework XCFRAMEWORK_TARGETS=aarch64-apple-ios-sim XCFRAMEWORK_PROFILE=debug
 
+      # make xcframework leaves the bindings in target/uniffi-swift-out; the
+      # package's Swift targets are gitignored, so they only exist once this
+      # copies them in.
+      - name: Sync the generated Swift bindings into the package
+        run: ./ios/truapi-host/scripts/sync-bindings.sh
+
       - name: Stage it into the package
         run: ./ios/truapi-host/scripts/stage-xcframework.sh
+
+      # TrUAPIHost declares Resources/truapi-container.js as a .copy resource,
+      # so SwiftPM refuses to resolve the package until this exists.
+      - name: Build the lockdown container bundle
+        run: |
+          npm ci --ignore-scripts
+          npm run build --prefix js/packages/truapi
+          npm --prefix js/container install --no-fund --no-audit
+          npm --prefix js/container run typecheck
+          npm --prefix js/container run build
 
       - name: Build the simulator XCFramework for TrUAPIProvider
         run: PROFILE=debug ./ios/truapi-provider/scripts/rebuild.sh --sim-only
 
-      # Compiling the test target is the point: the hand-written conformers a
-      # generated-file diff cannot see live there and in TrUAPIHost.swift.
-      - name: Compile the package and its tests
+      # Build the tag a release would cut, then compile from a clean clone of
+      # it. Compiling in place would pass on generated files that the tag does
+      # not carry, which is exactly the failure this guards: a consumer only
+      # ever sees the tag.
+      - name: Build the SwiftPM consumer tag
         run: |
-          xcodebuild build-for-testing \
-            -scheme TrUAPIHost \
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ./ios/truapi-host/scripts/tag-release.sh 0.0.0-ci
+
+      - name: Check the tag carries every generated file
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/tag-probe"
+          rm -rf "$probe"
+          git clone --quiet --branch 0.0.0-ci "file://$PWD" "$probe"
+          while read -r path; do
+            diff -u <(cd "$probe" && find "$path" -type f | sort) \
+                    <(find "$path" -type f | sort)
+          done <<< "$(sed -n -E 's/^[[:space:]]*path: "([^"]+)".*/\1/p' Package.swift | grep -v '/Binaries/')"
+
+      # The xcframework ships as a release asset rather than in the tag, so the
+      # locally built one stands in for it here.
+      - name: Compile the package and its tests from the tag
+        run: |
+          set -euo pipefail
+          simulator="$(node --input-type=module -e 'import { selectSimulator } from "./scripts/lib/ios-simulator.mjs"; console.log(selectSimulator().udid)')"
+          echo "TRUAPI_TEST_SIMULATOR=$simulator" >> "$GITHUB_ENV"
+          probe="$RUNNER_TEMP/tag-probe"
+          mkdir -p "$probe/ios/truapi-host/Binaries" "$probe/ios/truapi-provider/Binaries"
+          cp -R ios/truapi-host/Binaries/truapi_server.xcframework "$probe/ios/truapi-host/Binaries/"
+          cp -R ios/truapi-provider/Binaries/truapi_provider.xcframework "$probe/ios/truapi-provider/Binaries/"
+          cd "$probe"
+          TRUAPI_TEST_SIMULATOR="$simulator" ./ios/truapi-host/scripts/test.sh build-for-testing \
+            -derivedDataPath "$RUNNER_TEMP/TrUAPINetworkTestHost"
+          # Built for the simulator like TrUAPIHost above, not with `swift build`,
+          # which targets macOS: the xcframeworks carry iOS slices only, and the
+          # generated bindings use Swift concurrency, which the package's macOS
+          # floor would have to declare purely to satisfy a host-platform build.
+          xcodebuild build \
+            -scheme TrUAPIProvider \
             -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath "$RUNNER_TEMP/TrUAPIHostDerivedData" \
+            -derivedDataPath "$RUNNER_TEMP/TrUAPIProviderDerivedData" \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Compile TrUAPIProvider
-        run: swift build --target TrUAPIProvider
+      - name: Test native product network permissions in WKWebView
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/tag-probe"
+          ./ios/truapi-host/scripts/test.sh test-without-building \
+            -derivedDataPath "$RUNNER_TEMP/TrUAPINetworkTestHost" \
+            -only-testing:NetworkPermissionTests/ProductNetworkAccessTests \
+            -resultBundlePath "$RUNNER_TEMP/TrUAPINetworkTests.xcresult"
+
+      - name: Export native test diagnostics
+        if: always()
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/TrUAPINetworkTests.xcresult"
+          if [[ -d "$result" ]]; then
+            xcrun xcresulttool get test-results summary --path "$result"
+            xcrun xcresulttool get test-results tests --path "$result"
+            xcrun xcresulttool export diagnostics --path "$result" \
+              --output-path "$RUNNER_TEMP/TrUAPINetworkDiagnostics"
+          fi
+
+      - name: Upload native test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-network-test-results
+          path: |
+            ${{ runner.temp }}/TrUAPINetworkTests.xcresult
+            ${{ runner.temp }}/TrUAPINetworkDiagnostics
+          if-no-files-found: ignore
+
+  # Compile gate for the Android host module: regenerates the UniFFI Kotlin
+  # bindings and compiles the shell against them. No cross-compile, no
+  # publishing.
+  android-bindings:
+    name: Android host (kotlin compile)
+    needs: changes
+    if: needs.changes.outputs.sdk_kotlin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # codegen.sh formats its generated Rust with the pinned nightly rustfmt.
+      - uses: ./.github/actions/rust-nightly
+        with:
+          components: rustfmt
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+      - uses: ./.github/actions/rust-cache
+        with:
+          shared-key: android-bindings-gate
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          gradle-version: "8.9"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      # The runtime feature enables generated modules that are gitignored, so
+      # codegen must run before the crate builds.
+      - name: Generate the Rust codegen output
+        run: |
+          npm ci --ignore-scripts
+          TRUAPI_SKIP_PACKAGE_BUILD=1 ./scripts/codegen.sh
+      - name: Generate UniFFI Kotlin bindings
+        run: make uniffi-kotlin
+      - name: Compile the shell against the bindings
+        run: gradle :truapi-host:assembleRelease
+
+  # The app tree vendored at hosts/android consumes the core in this repository
+  # rather than a published package, so a core change that breaks it fails here
+  # instead of at the next version bump. The job builds the core, generates the
+  # Kotlin bindings, and compiles the app code that pattern matches over the
+  # generated types, which is where a removed or renamed variant surfaces.
+  #
+  # Scoped to :feature:products:impl and what it depends on. That is where every
+  # consumer of the generated types lives, and it configures from environment
+  # placeholders, where the app module would need values this repository does
+  # not hold.
+  host-android-bindings:
+    name: Android host app (compile and unit tests)
+    needs: changes
+    if: needs.changes.outputs.host_android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Shared with the Android distribution workflows, so a toolchain moves
+      # in one place. This job compiles rather than signs, so it takes no
+      # configuration or keystore, and it is the one that writes the cache the
+      # others read.
+      - name: Set up the Android build
+        id: setup
+        uses: ./.github/actions/setup-android-build
+        with:
+          save_cache: "true"
+
+      # No truapi.dir: the core resolves two levels up, which is one of the
+      # properties this job keeps true.
+      #
+      # The target is the module that consumes the bindings, not the module that
+      # produces them. Generated bindings cannot disagree with the library they
+      # were generated from, so compiling them proves nothing; the signal is in
+      # the app code that pattern matches over core types. Compiling this module
+      # builds :bindings:truapi-host on the way, so both are covered.
+      #
+      # These values are configuration rather than credentials, and the app tree
+      # reads each of them from the environment when it is absent from
+      # local.properties. Placeholders are enough to configure the module, and
+      # keep the gate independent of secrets this repository does not hold.
+      - name: Compile Android consumers and instrumentation, run product unit tests
+        working-directory: hosts/android
+        env:
+          # The real id, because it is the one the Google configuration is
+          # built for. Inert in this job, which compiles a library module and
+          # never applies the Google Services plugin.
+          APPLICATION_ID: io.parity.polkadotapp
+          IOS_BUNDLE_ID: io.parity.polkadotapp
+          APPLICATION_NAME: Polkadot
+          CURRENCY_SYMBOL: DOT
+          FIAT_SYMBOL: "$"
+          FIRESTORE_DATABASE_ID: ci
+          GOOGLE_OAUTH_ID: ci
+          # Typed as a long, so a non-numeric placeholder is a compile error.
+          GOOGLE_PROJECT_ID: "0"
+          LOG_COLLECTION_EMAIL: ci@example.invalid
+          NIGHTLY_FUNDING_MNEMONIC: ci
+          PRIVACY_POLICY_URL: https://example.invalid/privacy
+          SENTRY_ORG: ci
+          SENTRY_PROJECT: ci
+          TERMS_OF_USE_URL: https://example.invalid/terms
+        run: >-
+          ./gradlew --configure-on-demand
+          :feature:products:impl:testReleaseUnitTest
+          :bindings:truapi-host:compileDebugAndroidTestKotlin
+
+  host-android-detekt:
+    name: Android host (detekt)
+    needs: changes
+    if: needs.changes.outputs.host_android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Reads the cache the compile gate writes rather than writing its own,
+      # since the two want the same toolchain and only one of them needs to
+      # pay for it.
+      - name: Set up the Android build
+        uses: ./.github/actions/setup-android-build
+
+      # Static analysis reads sources, but Gradle configures the whole build to
+      # find the task, and configuration is where a missing value throws. This
+      # needs CONTACT_EMAIL where the compile gate does not: that gate names a
+      # module and configures on demand, while detekt at the root configures
+      # every module, including the one that reads it.
+      - name: Run detekt
+        working-directory: hosts/android
+        env:
+          APPLICATION_ID: io.parity.polkadotapp
+          IOS_BUNDLE_ID: io.parity.polkadotapp
+          APPLICATION_NAME: Polkadot
+          CONTACT_EMAIL: ci@example.invalid
+          CURRENCY_SYMBOL: DOT
+          FIAT_SYMBOL: "$"
+          FIRESTORE_DATABASE_ID: ci
+          GOOGLE_OAUTH_ID: ci
+          GOOGLE_PROJECT_ID: "0"
+          LOG_COLLECTION_EMAIL: ci@example.invalid
+          NIGHTLY_FUNDING_MNEMONIC: ci
+          PRIVACY_POLICY_URL: https://example.invalid/privacy
+          SENTRY_ORG: ci
+          SENTRY_PROJECT: ci
+          TERMS_OF_USE_URL: https://example.invalid/terms
+        run: ./gradlew detekt --no-daemon
+
+  # The provider ships as its own AAR, so its bindings compile on a path the
+  # host gate never touches. `make provider-android-check` generates first and
+  # refuses to run against an empty source set, which is the way this gate
+  # would otherwise pass without compiling anything, then assembles the AAR so
+  # the Gradle wiring this exists to cover is exercised rather than only the
+  # Kotlin.
+  provider-android-bindings:
+    name: Android provider (kotlin compile)
+    needs: changes
+    if: needs.changes.outputs.sdk_provider_kotlin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+      - uses: ./.github/actions/rust-cache
+        with:
+          shared-key: provider-android-bindings-gate
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          gradle-version: "8.9"
+      - name: Generate the bindings and compile them
+        run: make provider-android-check
+
+  # Packages truapi-host through the same workflow the release runs, so a change
+  # that breaks packaging fails here rather than on a release that has already
+  # published its npm half. No version means no publish: archives and nothing else.
+  cli-package:
+    name: CLI packaging
+    needs: changes
+    if: needs.changes.outputs.cli_package == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cli-package.yml
 
   ts-client:
     name: "@parity/truapi"
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     needs: codegen
     env:
@@ -272,13 +720,13 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
 
-      # Node builtins only, so this needs neither the codegen output nor npm ci.
+      # No npm dependencies, so this needs neither the codegen output nor npm ci.
       - name: Test scripts
         run: npm run test:scripts
 
@@ -296,8 +744,14 @@ jobs:
       - name: Test
         run: npm test --prefix js/packages/truapi
 
+      - name: Test shared product container
+        run: |
+          npm ci --prefix js/container --ignore-scripts
+          bun test js/container/src
+
   ts-host:
     name: "@parity/truapi-host"
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     needs: codegen
     env:
@@ -309,7 +763,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -323,14 +777,176 @@ jobs:
       - name: Install
         run: npm ci --ignore-scripts
 
+      - name: Check formatting
+        run: npm run format:check --prefix js/packages/truapi-host
+
       - name: Build
         run: npm run build --prefix js/packages/truapi-host
+
+      - name: Typecheck test harnesses
+        run: npm run typecheck:harness --prefix js/packages/truapi-host
 
       - name: Test
         run: npm test --prefix js/packages/truapi-host
 
+  host-wasm:
+    name: "@parity/truapi-host (wasm bridge)"
+    runs-on: ubuntu-latest
+    needs: codegen
+    env:
+      TRUAPI_REQUIRE_GENERATED: 1
+      # Without this a missing artefact skips the bridge suite green, which is
+      # how it went unrun on every pull request until now.
+      REQUIRE_WASM: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - uses: ./.github/actions/rust-cache
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Download codegen output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codegen-output
+
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build --prefix js/packages/truapi-host
+
+      # Builds both bundles: the production browser host and the
+      # signing-enabled `testing` one the mock host runs on.
+      - name: Build wasm
+        run: npm run build:wasm --prefix js/packages/truapi-host
+
+      - name: Test
+        run: npm test --prefix js/packages/truapi-host
+
+  ts-debugger:
+    name: "@parity/truapi-debugger"
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    needs: codegen
+    env:
+      TRUAPI_REQUIRE_GENERATED: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: Download codegen output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codegen-output
+
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Build @parity/truapi (workspace dependency)
+        run: npm run build --prefix js/packages/truapi
+
+      - name: Build
+        run: npm run build --prefix js/packages/truapi-debugger
+
+      - name: Typecheck tests
+        run: npm run typecheck:tests --prefix js/packages/truapi-debugger
+
+      - name: Test
+        run: npm test --prefix js/packages/truapi-debugger
+
+  bundle-size:
+    name: Bundle size
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    needs: codegen
+    permissions:
+      contents: read
+      # Reads main's baseline artifact from another run, and comments.
+      actions: read
+      pull-requests: write
+    env:
+      TRUAPI_REQUIRE_GENERATED: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      # host-wasm builds the same truapi-host wasm and owns the cache.
+      - uses: ./.github/actions/rust-cache
+        with:
+          shared-key: host-wasm
+          save: "false"
+
+      # The version release.yml builds the published bundles with, since
+      # wasm-pack also picks the wasm-opt that shapes their size.
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.14.0 --locked
+
+      - name: Download codegen output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codegen-output
+
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      # tsc -b also builds @parity/truapi, which truapi-host references.
+      - name: Build the TypeScript packages
+        run: npm run build --prefix js/packages/truapi-host
+
+      - name: Build the WASM bundles
+        run: |
+          npm run build:wasm --prefix js/packages/truapi-host -- --web-only
+          npm run build --prefix js/packages/truapi-provider
+
+      # What the truapi-* packages ship to products. The test host behind
+      # truapi-host's `./testing` subpath is left out.
+      - name: Report bundle sizes
+        uses: ./.github/actions/bundle-size
+        with:
+          assets: |
+            truapi-host      js/packages/truapi-host/dist  !wasm/testing/ !testing/ !testing.js !web/create-mock-host.js
+            truapi-provider  js/packages/truapi-provider/dist
+            truapi           js/packages/truapi/dist
+
   playground:
     name: Playground (build + lint + unit)
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     needs: ts-client
     env:
@@ -342,7 +958,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -362,8 +978,10 @@ jobs:
         working-directory: playground
         run: yarn install --frozen-lockfile
 
-      - name: Cache Next.js build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Saved only on main, like the Rust caches, so every ref restores it.
+      - name: Restore the Next.js build cache
+        id: nextjs-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: playground/.next/cache
           key: ${{ runner.os }}-nextjs-${{ hashFiles('playground/yarn.lock') }}-${{ hashFiles('playground/src/**', 'playground/scripts/**', 'playground/public/**', 'playground/next.config.js', 'playground/tsconfig.json', 'playground/package.json') }}
@@ -373,6 +991,13 @@ jobs:
       - name: Build
         working-directory: playground
         run: yarn build
+
+      - name: Save the Next.js build cache
+        if: github.ref == 'refs/heads/main' && steps.nextjs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: playground/.next/cache
+          key: ${{ steps.nextjs-cache.outputs.cache-primary-key }}
 
       - name: Lint
         working-directory: playground
@@ -384,6 +1009,7 @@ jobs:
 
   explorer:
     name: Explorer (build + lint)
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     needs: ts-client
     env:
@@ -395,7 +1021,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Download codegen output
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -436,7 +1062,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -476,48 +1102,410 @@ jobs:
           path: playground/playwright-report
           retention-days: 14
 
+  workflow-lint:
+    name: Workflow lint
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pinned by version and checksum rather than piping an install script, so
+      # a change in what gets linted is a change in this file.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --status
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -version
+
+      # actionlint runs shellcheck over every run: block when shellcheck is on
+      # PATH, which is what catches the quoting and expansion mistakes the inline
+      # shell here carries a lot of. Fail if it is missing rather than quietly
+      # linting less than intended.
+      - name: Check shellcheck is available
+        run: shellcheck --version
+
+      # Deliberate uses of a constant condition, which actionlint reports as
+      # if-cond: the e2e job while its smoke test is stabilised, the nightly's
+      # safetynet leg and the workflow that builds it on demand, and the failure
+      # notification, which has no room of its own to announce into. Drop this
+      # ignore once those four are gone, or workflow-lint goes red.
+      #
+      # The flag matches on message text across the whole tree, so it also
+      # silences any accidental constant condition added elsewhere.
+      #
+      # Two shellcheck rules are excluded by code rather than by lowering the
+      # severity bar: SC2012 prefers find over ls, SC2129 prefers grouped
+      # redirects, and both are preference. Severity is left alone because
+      # SC2086, unquoted expansions that word-split, is only info and is exactly
+      # what this job exists to catch.
+      - name: Lint the workflows
+        env:
+          SHELLCHECK_OPTS: "--exclude=SC2012,SC2129"
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/actionlint" \
+            -ignore 'constant expression "false" in condition' \
+            -color
+
+      # actionlint reads a local action.yml only to validate the caller's
+      # inputs, so a composite action's shell reaches shellcheck only if it
+      # lives in a file of its own and is checked here.
+      - name: Lint the composite action scripts
+        env:
+          SHELLCHECK_OPTS: "--exclude=SC2012,SC2129"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          scripts=(.github/actions/*/*.sh)
+          if [ ${#scripts[@]} -eq 0 ]; then
+            echo "no composite action scripts to lint"
+            exit 0
+          fi
+          printf 'linting %s\n' "${scripts[@]}"
+          shellcheck "${scripts[@]}"
+
+      # A composite action's shell usually lives inline in its action.yml
+      # rather than in a file of its own, where the step above cannot see it.
+      #
+      # The parser is installed rather than assumed: the runner image does not
+      # ship PyYAML, and it imports today only because an unrelated system
+      # package happens to depend on it. Were that to change, every run would
+      # fail on an import error instead of linting.
+      - name: Lint the inline composite action shell
+        env:
+          SHELLCHECK_OPTS: "--exclude=SC2012,SC2129"
+        run: |
+          set -euo pipefail
+          python3 -c 'import yaml' 2>/dev/null || pip install --quiet pyyaml
+          python3 scripts/lint-composite-shell.py
+
+      # Labelling and reviewer assignment answer the same question about the
+      # same paths, in two formats that cannot be one file. This holds them to
+      # the same set so neither quietly stops describing an area.
+      - name: Check labelling and ownership describe the same paths
+        run: python3 scripts/check-path-routing.py
+  release-guard:
+    name: Release guard
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Check the merge result, including a queued stack, for unconsumed changes
+      # whenever a published version changes. The PR title cannot bypass this.
+      - name: A version bump must consume every changeset
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
+          PUSH_BASE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          case "$EVENT_NAME" in
+            pull_request) base="HEAD^1" ;;
+            merge_group) base="$MERGE_BASE" ;;
+            push) base="$PUSH_BASE" ;;
+            *) base="HEAD^" ;;
+          esac
+          git rev-parse --verify "${base}^{commit}" >/dev/null
+
+          # Match by package name so moving a manifest cannot hide its bump.
+          base_paths="$(git ls-tree -r --name-only "$base" -- js/packages/)"
+          base_packages='[]'
+          while IFS= read -r manifest; do
+            if [[ ! "$manifest" =~ ^js/packages/[^/]+/package\.json$ ]]; then
+              continue
+            fi
+            package="$(git show "${base}:${manifest}")"
+            if [ "$(jq -r '.private // false' <<<"$package")" = true ]; then
+              continue
+            fi
+            package="$(jq -ce '{name, version} | if (.name | type == "string" and length > 0) and (.version | type == "string" and length > 0) then . else error("Invalid package manifest") end' <<<"$package")"
+            base_packages="$(jq -c --argjson package "$package" '. + [$package]' <<<"$base_packages")"
+          done <<<"$base_paths"
+
+          bumped=()
+          for manifest in js/packages/*/package.json; do
+            if [ "$(jq -r '.private // false' "${manifest}")" = "true" ]; then
+              continue
+            fi
+            name="$(jq -er '.name | select(type == "string" and length > 0)' "$manifest")"
+            head_version="$(jq -er '.version | select(type == "string" and length > 0)' "$manifest")"
+            base_version="$(jq -r --arg name "$name" '.[] | select(.name == $name) | .version' <<<"$base_packages")"
+            if [ -n "${base_version}" ] && [ "${base_version}" != "${head_version}" ]; then
+              bumped+=("${name} ${base_version} -> ${head_version}")
+            fi
+          done
+
+          if [ "${#bumped[@]}" -eq 0 ]; then
+            echo "No published package version changed; nothing to guard."
+            exit 0
+          fi
+
+          printf 'Version bump in this change:\n'
+          printf '  %s\n' "${bumped[@]}"
+
+          remaining_changesets="$(find .changeset -maxdepth 1 -type f -name '*.md' ! -name README.md -print)"
+          if [ -n "${remaining_changesets}" ]; then
+            echo "::error::A changeset merged after these versions were computed, so the bump does not describe it. Rebuild the release commit from the default branch: reset to it, then rerun \`npm run version-packages\` and \`scripts/cut-version.sh\`. Rebasing and rerunning compounds the bump instead of replacing it."
+            echo "${remaining_changesets}"
+            exit 1
+          fi
+
+          echo "Every changeset is consumed by this bump."
+
+  changeset-guard:
+    name: Changeset guard
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.needs_changeset == 'true'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      # Read live metadata so "Re-run failed jobs" sees a label or title edit
+      # without restarting the compile jobs on every metadata change.
+      - name: Released code needs a changeset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ADDS_CHANGESET: ${{ needs.changes.outputs.adds_changeset }}
+        run: |
+          set -euo pipefail
+
+          pr="$(gh pr view "$PR_NUMBER" --json title,labels)"
+          if jq -e '(.title | startswith("release:")) or any(.labels[]; .name == "no-changeset")' <<<"$pr" >/dev/null; then
+            echo "Release PR or explicit no-changeset opt-out."
+            exit 0
+          fi
+
+          if [ "$ADDS_CHANGESET" = true ]; then
+            echo "Changeset present."
+            exit 0
+          fi
+
+          echo "::error::This change reaches a published artifact but adds no changeset, so it would ship undescribed and at a version level chosen by some other change. Run \`npm run changeset\`, or add the \`no-changeset\` label if it genuinely ships nothing."
+          exit 1
+
   ci-status:
     name: CI Status
     if: always()
+    timeout-minutes: 10
     runs-on: ubuntu-latest
+    # Writing the sticky summary needs more than the workflow's read-only
+    # default. Nothing else here writes anything.
+    permissions:
+      contents: read
+      pull-requests: write
     needs:
       [
         rust,
+        headless-install,
         wasm-provider,
         licenses,
         codegen,
         ios-bindings,
-        ios-changes,
+        changes,
         ios-swift,
+        android-bindings,
+        provider-android-bindings,
+        host-android-bindings,
+        host-android-detekt,
+        cli-package,
         ts-client,
         ts-host,
+        host-wasm,
+        ts-debugger,
+        bundle-size,
         playground,
         explorer,
         e2e,
+        workflow-lint,
+        release-guard,
+        changeset-guard,
       ]
     steps:
-      - name: Check all jobs
+      # Only for `.github/actions/upsert-pr-comment`, which is a local action
+      # and so has to exist on disk. Nothing else here reads the tree, and a
+      # checkout that fails must not redden the one required check, so the
+      # comment step is allowed to be the only casualty.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/upsert-pr-comment
+
+      # The results come from the needs context itself rather than a second list
+      # of `needs.<job>.result` expressions, so the set of jobs checked cannot
+      # drift from the set depended on. `REQUIRED` is the one list to maintain:
+      # a job present here but absent from the run reported nothing, which is
+      # how a gate gets deleted without anyone noticing, and a job in the run
+      # that is absent here means this list went stale.
+      #
+      # A job skipped by its path filter counts towards the gate as a pass,
+      # which is what stops a gate stalling a pull request it does not apply
+      # to. The rendered verdict still counts it as skipped, so a filtered-out
+      # host is never reported to a reviewer as a host that compiled.
+      #
+      # A pull request that builds three hosts produces a long list of checks,
+      # and a reviewer reads all of them to answer one question. The same
+      # comparison that decides the gate renders the verdict, so the comment
+      # and the check cannot disagree. This step records the verdict rather
+      # than acting on it, and the gate is the last step, so the verdict
+      # reaches the pull request whether the run is green or red.
+      - name: Evaluate every required job
+        id: evaluate
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          REQUIRED: >-
+            rust headless-install wasm-provider licenses codegen ios-bindings changes ios-swift
+            android-bindings provider-android-bindings host-android-bindings
+            host-android-detekt
+            cli-package ts-client
+            ts-host host-wasm ts-debugger bundle-size playground explorer e2e workflow-lint
+            release-guard changeset-guard
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          results=(
-            "${{ needs.rust.result }}"
-            "${{ needs.wasm-provider.result }}"
-            "${{ needs.licenses.result }}"
-            "${{ needs.codegen.result }}"
-            "${{ needs.ios-bindings.result }}"
-            # ios-changes is listed because a failure there skips ios-swift,
-            # and skipped counts as a pass below.
-            "${{ needs.ios-changes.result }}"
-            "${{ needs.ios-swift.result }}"
-            "${{ needs.ts-client.result }}"
-            "${{ needs.ts-host.result }}"
-            "${{ needs.playground.result }}"
-            "${{ needs.explorer.result }}"
-            "${{ needs.e2e.result }}"
-          )
-          for r in "${results[@]}"; do
-            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
-              echo "::error::One or more CI jobs failed or were cancelled."
-              exit 1
-            fi
+          set -euo pipefail
+
+          passed=()
+          skipped=()
+          failed=()
+          missing=()
+          undeclared=()
+
+          for job in $REQUIRED; do
+            result="$(jq -r --arg j "$job" '.[$j].result // "ABSENT"' <<<"$NEEDS")"
+            case "$result" in
+              success) passed+=("$job") ;;
+              skipped) skipped+=("$job") ;;
+              ABSENT) missing+=("$job") ;;
+              *) failed+=("$job=$result") ;;
+            esac
           done
-          echo "All CI jobs passed."
+
+          while read -r job; do
+            [ -n "$job" ] && undeclared+=("$job")
+          done < <(jq -r --arg req "$REQUIRED" \
+            '($req | split(" ") | map(select(length > 0))) as $r | (keys - $r)[]' \
+            <<<"$NEEDS")
+
+          total="$(wc -w <<<"$REQUIRED" | tr -d ' ')"
+          bad=$(( ${#failed[@]} + ${#missing[@]} + ${#undeclared[@]} ))
+
+          {
+            if [ "$bad" -eq 0 ] && [ ${#skipped[@]} -eq 0 ]; then
+              echo "**CI Status: all $total required jobs passed.**"
+            elif [ "$bad" -eq 0 ]; then
+              echo "**CI Status: $total required jobs green, ${#passed[@]} passed and ${#skipped[@]} skipped by path filter.**"
+            else
+              if [ "$bad" -eq 1 ]; then
+                echo "**CI Status: not green, 1 item needs attention.**"
+              else
+                echo "**CI Status: not green, $bad items need attention.**"
+              fi
+              echo
+              for entry in "${failed[@]:-}"; do
+                [ -n "$entry" ] || continue
+                echo "- \`${entry%%=*}\`: ${entry#*=}"
+              done
+              for job in "${missing[@]:-}"; do
+                [ -n "$job" ] || continue
+                echo "- \`$job\`: reported nothing, so a gate is missing from this workflow"
+              done
+              for job in "${undeclared[@]:-}"; do
+                [ -n "$job" ] || continue
+                echo "- \`$job\`: depended on but absent from the required list, which is now stale"
+              done
+            fi
+            echo
+            echo "<details><summary>All job results</summary>"
+            echo
+            echo "| job | result |"
+            echo "| --- | --- |"
+            jq -r 'to_entries | sort_by(.key) | .[] | "| \(.key) | \(.value.result) |"' <<<"$NEEDS"
+            echo
+            echo "</details>"
+            echo
+            # Credential expiry should be found by a schedule rather than by
+            # a failed release, so what that schedule last said belongs where
+            # someone is already looking. Never run, or unreadable, is
+            # reported as such rather than as healthy.
+            creds="$(gh run list --workflow=validate-signing-credentials.yml \
+              --limit 1 --json conclusion,updatedAt \
+              --jq '.[0] | "\(.conclusion) \(.updatedAt[0:10])"' 2>/dev/null || true)"
+            case "${creds%% *}" in
+              success) echo "Signing credentials: valid as of ${creds##* }" ;;
+              "")      echo "Signing credentials: never checked" ;;
+              *)       echo "Signing credentials: **${creds%% *}** as of ${creds##* }, a release may fail" ;;
+            esac
+            echo
+            echo "<sub>Commit \`${SHA:0:8}\` &middot; [run log]($RUN_URL)</sub>"
+          } > "$RUNNER_TEMP/ci-summary.md"
+
+          cat "$RUNNER_TEMP/ci-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "::error::CI jobs did not pass: ${failed[*]}"
+          fi
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Required jobs reported nothing, so a gate is missing from this workflow: ${missing[*]}"
+          fi
+          if [ ${#undeclared[@]} -gt 0 ]; then
+            echo "::error::Jobs are depended on but not listed in REQUIRED, so this gate is stale: ${undeclared[*]}"
+          fi
+
+          if [ "$bad" -eq 0 ]; then
+            echo "verdict=ok" >> "$GITHUB_OUTPUT"
+          else
+            echo "verdict=bad" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Upsert rather than post, so a pull request carries one comment however
+      # many times CI runs. A pull request from a fork gets a read-only token
+      # and cannot comment, so a failure here is tolerated; the run summary
+      # above is written either way.
+      #
+      # `--paginate` applies `--jq` once per page, so matches are collected
+      # across every page and slurped before one comment is chosen. The newest
+      # match is kept and any older duplicate is deleted, rather than left on
+      # the pull request showing a verdict from an earlier run.
+      - name: Upsert the pull request comment
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          marker: "<!-- ci-status-summary -->"
+          body-file: ${{ runner.temp }}/ci-summary.md
+
+      # Last, so the verdict above reaches the pull request first. Anything
+      # other than an explicit pass fails the check, including the evaluation
+      # step not having run at all.
+      - name: Fail if a required job did not pass
+        if: always()
+        env:
+          VERDICT: ${{ steps.evaluate.outputs.verdict }}
+        run: |
+          set -euo pipefail
+          if [ "$VERDICT" != "ok" ]; then
+            echo "CI is not green. The verdict above lists what needs attention."
+            exit 1
+          fi
+          echo "Every required job reported and passed."

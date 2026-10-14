@@ -1,0 +1,14 @@
+{
+  // Typechecks the test files, which `tsconfig.json` excludes because they are
+  // never emitted. Without this nothing checks them at all: `tsc -b` skips them
+  // by that exclude, and `bun test` does not typecheck - so a genuine type error
+  // in a test file reported "pass" and shipped. Wired into CI as `typecheck:tests`.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.ts"],
+  "exclude": [],
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false
+  }
+}

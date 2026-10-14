@@ -1,0 +1,122 @@
+opt_out_usage
+default_platform(:ios)
+
+ENV["FASTLANE_XCODEBUILD_SETTINGS_RETRIES"] = "10"
+ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] = "120"
+
+platform :ios do
+  # imports
+  import ("lanes/lane_build.rb")
+  import ("lanes/lane_tests.rb")
+  import ("lanes/lane_firebase_distribute.rb")
+  import ("lanes/lane_register_device.rb")
+  import ("lanes/lane_testflight.rb")
+  import ("lanes/lane_signing.rb")
+  import ("lanes/lane_simulator_build.rb")
+
+  # shared variables
+  main_target = "polkadot-app"
+  main_scheme = "polkadot-app"
+  main_configuration = ENV["FASTLANE_CONFIGURATION"].to_s.empty? ? "DevCI" : ENV["FASTLANE_CONFIGURATION"]
+
+  test_scheme = "polkadot-app"
+
+  testflight_distribution_scheme = "polkadot-app"
+  testflight_distribution_configuration = ENV["FASTLANE_CONFIGURATION"].to_s.empty? ? "Release" : ENV["FASTLANE_CONFIGURATION"]
+
+  desc "Runs unit tests"
+  desc "Example usage: fastlane run_unit_tests"
+  desc "Example usage: fastlane run_unit_tests debug:true"
+  lane :run_unit_tests do |options|
+    # Pass debug option to test_build if provided
+    test_build(
+      scheme: test_scheme,
+      debug: options[:debug]
+    )
+  end
+
+  desc "Build app for CI"
+  desc "Parameters:"
+  desc "- 'debug : true/false' to enable verbose logging for troubleshooting build failures"
+  desc " "
+  desc "Example usage: fastlane build_app_ci"
+  desc "Example usage: fastlane build_app_ci debug:true"
+  lane :build_app_ci do |options|
+    prepare_code_signing
+    base_build_app(
+      scheme: main_scheme,
+      target: main_target,
+      configuration: main_configuration,
+      debug: options[:debug],
+      result_bundle: true
+    )
+  end
+
+  desc "Distribute app to Firebase"
+  desc "Parameters:"
+  desc "- 'release_notes : <value>' to define release notes"
+  desc " "
+  desc "Example usage: fastlane distribute_app_to_firebase release_notes:'Release notes'"
+  lane :distribute_app_to_firebase do |options|
+    prepare_code_signing
+    base_build_app(
+      scheme: main_scheme,
+      target: main_target,
+      configuration: main_configuration
+    )
+    distribute_to_firebase(
+      release_notes: options[:release_notes]
+    )
+  end
+
+  desc "Distribute new iOS build through TestFlight"
+  desc "Requires BUILD_NUMBER env var to be set by the caller"
+  desc "Example usage: BUILD_NUMBER=42 fastlane distribute_testflight"
+  lane :distribute_testflight do
+    build_number = ENV["BUILD_NUMBER"]
+    UI.user_error!("BUILD_NUMBER env var is required") if build_number.to_s.empty?
+
+    load_asc_api_key
+    prepare_code_signing
+    base_build_app(
+      scheme: testflight_distribution_scheme,
+      target: main_target,
+      configuration:  testflight_distribution_configuration,
+      build_number: build_number.to_i
+    )
+
+    distribute_external = ENV["DISTRIBUTE_EXTERNAL"] == "true"
+    external_group = ENV["EXTERNAL_GROUP_NAME"].to_s
+
+    upload_testflight(
+      changelog: ENV["RELEASE_NOTES"],
+      distribute_external: distribute_external,
+      groups: distribute_external && !external_group.empty? ? [external_group] : nil
+    )
+
+    # Release links no Sentry, so there is nothing to symbolicate and no reason
+    # to ship sources to a third party. Mirrors base_build_app's issue_monitoring_enabled.
+    #
+    # Symbol upload runs after the build has already been delivered, so failing
+    # it fails a lane whose work is done and consumes a TestFlight build number
+    # on every retry. Skipped when there is no token rather than attempted with
+    # an empty one.
+    if testflight_distribution_configuration == "Release"
+      UI.message("Release links no Sentry; skipping the debug symbol upload.")
+    elsif (ENV["SENTRY_AUTH_TOKEN"] || "").strip.empty?
+      UI.important("SENTRY_AUTH_TOKEN is not set; skipping the debug symbol upload.")
+    else
+      sentry_debug_files_upload(
+        org_slug: 'paritytech',
+        project_slug: 'polkadot-ios',
+        include_sources: true
+      )
+    end
+  end
+
+  desc "Update signing data"
+  desc "Example usage: fastlane update_signing"
+  lane :update_signing do
+    update_signing_data
+  end
+end

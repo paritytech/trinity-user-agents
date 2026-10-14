@@ -1,0 +1,18 @@
+// Shared Safetynet settings for polkadot-app and NotificationServiceExtension.
+// Leaf configs under <target>/Configs/ include this file and add only BUNDLE.
+// Flags are vended as BASE_SWIFT_FLAGS so each leaf keeps its own OTHER_SWIFT_FLAGS line.
+// Brand identity values come from Configs/brand.xcconfig — gitignored, created from
+// Configs/brand.template.xcconfig. Identity is not in version control.
+//
+// Only the environment axis is set: SAFETYNET selects the safetynet chains, assets and Firebase
+// environment signal, and TESTNET_FEATURE enables the testnet affordances that environment
+// needs. No FEATURE_* flag is set, so the shipped surface stays the Release one — see
+// polkadot-app/Configs/BuildFeatures.swift for the flag matrix.
+
+#include "brand.xcconfig"
+
+BASE_SWIFT_FLAGS = "-DSAFETYNET" "-DTESTNET_FEATURE" "-DFEATURE_INPUT"
+
+APP_NAME        = $(BRAND_DISPLAY_NAME)
+APP_MAIN_BUNDLE = $(BRAND_BUNDLE_ROOT).safety
+DEEPLINK        = $(BRAND_DEEPLINK)safety

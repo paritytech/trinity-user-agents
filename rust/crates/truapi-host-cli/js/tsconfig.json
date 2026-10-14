@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "types": [
+      "bun"
+    ],
+    "paths": {
+      "@parity/truapi": [
+        "../../../../js/packages/truapi/src/index.ts"
+      ],
+      "@parity/truapi/internal": [
+        "../../../../js/packages/truapi/src/internal.ts"
+      ]
+    }
+  },
+  "include": [
+    "runner.ts",
+    "browser-sandbox.ts",
+    "../../../../scripts/build-cli-runner.ts",
+    "../../../../scripts/cli-runner-package.test.ts",
+    "runner-types.fixture.ts"
+  ]
+}

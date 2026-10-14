@@ -1,0 +1,24 @@
+{
+  "originHash" : "267efae46971b3475a354cf3ee4970087fe27f3b5d24d3a76db8a8efe27aa0cd",
+  "pins" : [
+    {
+      "identity" : "foundation-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/Foundation-iOS",
+      "state" : {
+        "revision" : "08a65862d8e90daeae1288e34bccc7c6e0a7c93b",
+        "version" : "1.4.0"
+      }
+    },
+    {
+      "identity" : "keystore-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/novasamatech/Keystore-iOS",
+      "state" : {
+        "revision" : "105cfc6984f45a61ba410fbc3751e4952afb51e9",
+        "version" : "1.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

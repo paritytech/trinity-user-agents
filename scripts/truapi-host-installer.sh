@@ -2,7 +2,7 @@
 #
 # Install the truapi-host CLI:
 #
-#   curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 #
 # Everything lives in functions that `main` at the very bottom invokes, so a
 # download truncated mid-transfer cannot execute a partial install.
@@ -20,7 +20,7 @@ set -euo pipefail
 BINARY="truapi-host"
 CRATE="truapi-host-cli"
 STABLE_TAG="truapi-host-cli-stable"
-DEFAULT_BASE_URL="https://github.com/paritytech/host-rust-core"
+DEFAULT_BASE_URL="https://github.com/paritytech/trinity-user-agents"
 
 # Global so the EXIT trap can still see it once main's locals are gone.
 WORK_DIR=""
@@ -62,7 +62,7 @@ detect_target() {
         "Linux x86_64") echo "x86_64-unknown-linux-musl" ;;
         "Linux aarch64" | "Linux arm64") echo "aarch64-unknown-linux-musl" ;;
         *)
-            die "unsupported platform: $os $arch. Build from source instead: https://github.com/paritytech/host-rust-core/blob/main/rust/crates/truapi-host-cli/README.md"
+            die "unsupported platform: $os $arch. Build from source instead: https://github.com/paritytech/trinity-user-agents/blob/main/rust/crates/truapi-host-cli/README.md"
             ;;
     esac
 }

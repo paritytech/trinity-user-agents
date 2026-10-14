@@ -1,0 +1,118 @@
+name: Release Distribution
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      release_branch:
+        description: "Release branch to build from"
+        required: true
+        type: string
+      release_pr_number:
+        description: "Release PR number (empty for direct builds from main)"
+        required: false
+        type: string
+        default: ""
+      increment_step:
+        description: "Build number increment step for direct builds (1 if empty)"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build:
+    # Only an app release opened by ios-prepare-pipeline.yml builds here. It is
+    # identified by both of the things that pipeline writes: the branch name it
+    # creates, `release/release-<version>-<timestamp>`, and the source_ref metadata
+    # it puts in the PR body. Requiring the marker as well as the prefix is what
+    # keeps a hand-named branch out, because the prefix alone is a convention
+    # nothing enforces. Every other `release/` branch belongs to this repository's
+    # package release flow, which ships npm packages and the host XCFramework and
+    # must never reach App Store Connect. The PR trigger covers hotfix pushes to an
+    # app release branch; nightly PRs are excluded by the same metadata block, since
+    # a failed nightly is redone via nightly_prepare.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (startsWith(github.head_ref, 'release/release-') &&
+      contains(github.event.pull_request.body, 'RELEASE_METADATA: source_ref=') &&
+      !contains(github.event.pull_request.body, 'nightly_build=true'))
+    uses: ./.github/workflows/ios-build-distribute.yml
+    with:
+      release_branch: ${{ inputs.release_branch || github.head_ref }}
+      release_pr_number: ${{ inputs.release_pr_number || github.event.pull_request.number || '' }}
+      increment_step: ${{ inputs.increment_step || '' }}
+      build_configuration: "Release"
+      distribute_to_external_group: false
+      external_group_name: ""
+    secrets:
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      FASTLANE_RO_PAT: ${{ secrets.FASTLANE_RO_PAT }}
+      GOOGLE_SERVICE_INFO_DEV_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
+      GOOGLE_SERVICE_INFO_RELEASE_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
+      GOOGLE_SERVICE_INFO_SAFETY_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+      MELD_BASIC_AUTH_TOKEN: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+      NOTIFICATION_BOT_TOKEN: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
+      NOTIFICATION_BOT_URL: ${{ secrets.NOTIFICATION_BOT_URL }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+
+  send-release-notification:
+    name: Send Release Notification
+    runs-on: ubuntu-latest
+    # The build shipped to TestFlight before this runs. A relay that is
+    # briefly unreachable should not turn that into a failed run.
+    continue-on-error: true
+    needs: build
+    # Dispatch only. The pull_request trigger rebuilds on every push to a release PR, and
+    # those intermediate builds are not a release worth announcing.
+    if: >-
+      ${{ !cancelled() && github.event_name == 'workflow_dispatch' &&
+      needs.build.outputs.succeeded == 'true' }}
+    steps:
+      # The action prints the message it renders. It rewrites the markdown entry
+      # the secret holds into an anchor, so what reaches the log is the bare URL,
+      # a substring of the secret rather than its value, and nothing redacts it.
+      # This repository is public, so registering the URL masks it for the rest
+      # of the job.
+      - name: Mask the join link
+        env:
+          LINK: ${{ secrets.TESTFLIGHT_DISTRIBUTION_LINK }}
+        run: |
+          set -euo pipefail
+          urls="$(printf '%s' "$LINK" | grep -oE 'https?://[^)[:space:]]+' | sort -u || true)"
+          if [ -z "${urls}" ]; then
+            echo "::warning::TESTFLIGHT_DISTRIBUTION_LINK holds no URL, so the announcement will carry no download"
+            exit 0
+          fi
+          while IFS= read -r url; do
+            [ -n "${url}" ] && echo "::add-mask::${url}"
+          done <<< "${urls}"
+
+      - name: Send release notification
+        uses: novasamatech/github-actions/send-release-notification@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5
+        with:
+          platform: iOS
+          # The template renders the heading either way, so an empty range says
+          # so rather than showing an empty list.
+          pr_list: ${{ needs.build.outputs.pr_list_markdown != ''
+            && needs.build.outputs.pr_list_markdown
+            || '- No pull requests merged into this release.' }}
+          release_info: |
+            Version: ${{ needs.build.outputs.marketing_version }}
+            Build number: ${{ needs.build.outputs.build_number }}
+          download_links_format: inline
+          # The secret holds a ready-to-render markdown entry, label included, so
+          # that an access hint stays out of this public repo. No web page link is
+          # configured, so TestFlight is the only entry.
+          download_links: |
+            ${{ secrets.TESTFLIGHT_DISTRIBUTION_LINK }}
+          bot_url: ${{ secrets.NOTIFICATION_BOT_URL }}
+          bot_api_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
+          matrix_room_ids: ${{ secrets.CI_MATRIX_ROOM_IDS }}

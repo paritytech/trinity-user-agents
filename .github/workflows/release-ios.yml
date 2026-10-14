@@ -1,0 +1,295 @@
+# Publishes the TrUAPIHost XCFramework and the tag SwiftPM consumers resolve.
+#
+# The repo git-ignores the generated bindings and the container bundle, but a
+# SwiftPM consumer resolves source targets from the git checkout. So a release
+# is two artifacts, not one: the xcframework as a GitHub release asset, and a
+# plain semver tag whose commit carries the generated sources and a manifest
+# pointing at that asset. Consumers pin the semver tag.
+name: release-ios
+
+on:
+  # release.yml calls this for a `release: @parity/ios-host <version>` commit
+  # subject, so the release flow and a manual publish produce the same tag.
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish"
+        required: true
+        type: string
+      ref:
+        description: "Commit to build, since a called workflow does not inherit the caller's checkout"
+        required: true
+        type: string
+      manifest_branch:
+        description: "Branch to open the Package.swift follow-up pull request against; empty to skip it"
+        required: false
+        default: ""
+        type: string
+  # Manual escape hatch, and the way to cut a pre-release for app-side testing
+  # of an unmerged change. There is deliberately no tag trigger: a tag push
+  # cannot use release.yml's workflow_run gate on green CI.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.12.0 or 0.12.0-beta.1)"
+        required: true
+        type: string
+      # Empty by default: a dispatch is also how a pre-release is cut, and the
+      # default branch must not fall back to one.
+      manifest_branch:
+        description: "Branch for the Package.swift follow-up pull request; empty to skip it, main for a real release"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish iOS host
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      # A stable version and no manifest branch is how the default branch ends
+      # up falling back to an older release with nothing saying so. A
+      # pre-release is the opposite case: it exists for app-side testing of an
+      # unmerged change and must never become the fallback.
+      - name: Decide whether the manifest follows this release
+        id: manifest
+        env:
+          IOS_VERSION: ${{ inputs.version }}
+          MANIFEST_BRANCH: ${{ inputs.manifest_branch }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${IOS_VERSION}" ]; then
+            echo "::error::No version to publish."
+            exit 1
+          fi
+
+          case "${IOS_VERSION}" in
+            *-*)
+              # A pre-release exists for app-side testing of an unmerged change.
+              # The branch must never fall back to one, whichever path asked
+              # for it, so this is a decision rather than a rejection.
+              echo "update=false" >> "$GITHUB_OUTPUT"
+              echo "${IOS_VERSION} is a pre-release; the manifest is left alone."
+              ;;
+            *)
+              if [ -z "${MANIFEST_BRANCH}" ]; then
+                echo "::error::${IOS_VERSION} is a stable release, so the manifest has to follow it. Dispatch it with manifest_branch set to the branch to open the follow-up against, normally main."
+                exit 1
+              fi
+              echo "update=true" >> "$GITHUB_OUTPUT"
+              echo "${IOS_VERSION} will update the manifest on ${MANIFEST_BRANCH}."
+              ;;
+          esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      # codegen.sh formats its generated Rust with the pinned nightly rustfmt.
+      - uses: ./.github/actions/rust-nightly
+        with:
+          components: rustfmt
+
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+
+      - uses: ./.github/actions/rust-cache
+        with:
+          shared-key: ios-host-release
+          save: "false"
+
+      # The runtime feature enables generated modules that are gitignored, so
+      # codegen must run before the crate builds.
+      - name: Generate the Rust codegen output
+        run: |
+          npm ci --ignore-scripts
+          TRUAPI_SKIP_PACKAGE_BUILD=1 ./scripts/codegen.sh
+
+      # Bindings, xcframework and the container bundle for the host.
+      - name: Rebuild iOS host
+        run: ./ios/truapi-host/scripts/rebuild.sh
+
+      # Package.swift declares TrUAPIProvider as a source target, so its
+      # bindings have to exist even for a consumer that only imports
+      # TrUAPIHost. Generating them needs no Xcode and no iOS targets.
+      - name: Generate TrUAPIProvider bindings
+        run: |
+          make provider-swift
+          ./ios/truapi-provider/scripts/sync-bindings.sh
+
+      - name: Test local XCFramework in the simulator
+        env:
+          TRUAPI_USE_LOCAL_BINARY: "1"
+        run: |
+          set -euo pipefail
+          ./ios/truapi-host/scripts/test.sh test \
+            -derivedDataPath "$RUNNER_TEMP/TrUAPIHostDerivedData"
+
+      - name: Publish XCFramework
+        id: ios_publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IOS_RELEASE_TARGET: ${{ inputs.ref || github.sha }}
+          IOS_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          read_manifest_value() {
+            sed -n -E "s/^let $1 = \"([^\"]+)\"$/\1/p" Package.swift
+          }
+
+          base_url="$(read_manifest_value publishedBinaryURL)"
+          base_checksum="$(read_manifest_value publishedBinaryChecksum)"
+          ./ios/truapi-host/scripts/publish.sh "${IOS_VERSION}"
+          published_url="$(read_manifest_value publishedBinaryURL)"
+          published_checksum="$(read_manifest_value publishedBinaryChecksum)"
+
+          {
+            echo "base_url=${base_url}"
+            echo "base_checksum=${base_checksum}"
+            echo "published_url=${published_url}"
+            echo "published_checksum=${published_checksum}"
+          } >> "$GITHUB_OUTPUT"
+
+      # The consumer artifact. Commits the generated sources and the manifest
+      # that now points at the asset uploaded above, and tags it. A rerun finds
+      # the tag already present and the script accepts it when its manifest
+      # matches, so the push below is a no-op instead of a failure.
+      - name: Build the SwiftPM consumer tag
+        env:
+          IOS_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ./ios/truapi-host/scripts/tag-release.sh "${IOS_VERSION}"
+
+      # Resolve and compile the tag exactly as a consumer would, from a clean
+      # clone with no build outputs, before the tag is pushed. A tag that
+      # cannot be resolved is worse than no tag, so this gates the push.
+      - name: Verify the tag resolves as a consumer
+        env:
+          IOS_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/tag-probe"
+          rm -rf "$probe"
+          git clone --quiet --branch "${IOS_VERSION}" "file://$PWD" "$probe"
+
+          missing=0
+          while read -r path; do
+            [ -e "$probe/$path" ] || { echo "::error::$path missing from tag"; missing=1; }
+          done <<< "$(sed -n -E 's/^[[:space:]]*path: "([^"]+)".*/\1/p' "$probe/Package.swift" | grep -v '/Binaries/')"
+          [ -e "$probe/ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js" ] \
+            || { echo "::error::container resource missing from tag"; missing=1; }
+          [ "$missing" -eq 0 ]
+
+          # No TRUAPI_USE_LOCAL_BINARY here on purpose: this must exercise the
+          # published asset and its checksum, like a real consumer.
+          cd "$probe"
+          xcodebuild build \
+            -scheme TrUAPIHost \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/TagProbeDerivedData" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Push the tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IOS_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          git push origin "refs/tags/${IOS_VERSION}"
+
+      # Keeps the branch's manifest pointing at the newest asset so a local
+      # build with the local binary off resolves it. Lands as a pull request
+      # rather than a direct push so the branch protection still applies.
+      # Skipped for a dispatched pre-release, which must not touch any branch.
+      - name: Open published manifest pull request
+        if: steps.manifest.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IOS_VERSION: ${{ inputs.version }}
+          RELEASE_BRANCH: ${{ inputs.manifest_branch }}
+          BASE_URL: ${{ steps.ios_publish.outputs.base_url }}
+          BASE_CHECKSUM: ${{ steps.ios_publish.outputs.base_checksum }}
+          PUBLISHED_URL: ${{ steps.ios_publish.outputs.published_url }}
+          PUBLISHED_CHECKSUM: ${{ steps.ios_publish.outputs.published_checksum }}
+        run: |
+          set -euo pipefail
+
+          read_manifest_value() {
+            sed -n -E "s/^let $1 = \"([^\"]+)\"$/\1/p" Package.swift
+          }
+
+          git fetch origin "${RELEASE_BRANCH}"
+          git switch --force-create ios-manifest-update "origin/${RELEASE_BRANCH}"
+
+          current_url="$(read_manifest_value publishedBinaryURL)"
+          current_checksum="$(read_manifest_value publishedBinaryChecksum)"
+          if [ "${current_url}" = "${PUBLISHED_URL}" ] && [ "${current_checksum}" = "${PUBLISHED_CHECKSUM}" ]; then
+            echo "Package.swift already references @parity/ios-host@${IOS_VERSION}."
+            exit 0
+          fi
+          if [ "${current_url}" != "${BASE_URL}" ] || [ "${current_checksum}" != "${BASE_CHECKSUM}" ]; then
+            echo "::error::Package.swift changed after the release commit; refusing to overwrite the newer manifest."
+            exit 1
+          fi
+
+          sed -i '' -E "s|^let publishedBinaryURL = .*|let publishedBinaryURL = \"${PUBLISHED_URL}\"|" Package.swift
+          sed -i '' -E "s|^let publishedBinaryChecksum = .*|let publishedBinaryChecksum = \"${PUBLISHED_CHECKSUM}\"|" Package.swift
+          grep -q '^let useLocalBinary = ProcessInfo' Package.swift
+
+          git add Package.swift
+          git commit -m "build(ios): publish host XCFramework ${IOS_VERSION}"
+
+          gh auth setup-git
+          manifest_branch="release/ios-host-${IOS_VERSION}"
+          if git ls-remote --exit-code --heads origin "refs/heads/${manifest_branch}" >/dev/null 2>&1; then
+            git fetch origin "refs/heads/${manifest_branch}:refs/remotes/origin/${manifest_branch}"
+            if ! git show "origin/${manifest_branch}:Package.swift" | cmp - Package.swift; then
+              echo "::error::${manifest_branch} already exists with a different Package.swift."
+              exit 1
+            fi
+          else
+            git push origin "HEAD:refs/heads/${manifest_branch}"
+          fi
+
+          pr_number="$(gh pr list \
+            --base "${RELEASE_BRANCH}" \
+            --head "${manifest_branch}" \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')"
+          if [ -z "${pr_number}" ]; then
+            gh pr create \
+              --base "${RELEASE_BRANCH}" \
+              --head "${manifest_branch}" \
+              --title "build(ios): publish host XCFramework ${IOS_VERSION}" \
+              --body "Updates Package.swift with the published @parity/ios-host@${IOS_VERSION} XCFramework URL and verified checksum." \
+              --reviewer paritytech/host-sdk-team
+          else
+            echo "Manifest PR #${pr_number} is already open."
+          fi
+
+          # Events created by GITHUB_TOKEN do not start another workflow, so
+          # dispatch CI explicitly for the generated branch.
+          gh workflow run ci.yml --ref "${manifest_branch}"

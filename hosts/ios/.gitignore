@@ -1,0 +1,116 @@
+# Xcode
+#
+# gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
+
+## User settings
+xcuserdata/
+
+## Obj-C/Swift specific
+*.hmap
+
+## App packaging
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+## fastlane build_app_simulator outputs (see fastlane/lanes/lane_simulator_build.rb)
+build/
+build_simulator/
+build_simulator_dd/
+
+## Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Swift Package Manager
+#
+# Add this line if you want to avoid checking in source code from Swift Package Manager dependencies.
+# Packages/
+# Package.pins
+# Package.resolved
+# *.xcodeproj
+#
+# Xcode automatically generates this directory with a .xcworkspacedata file and xcuserdata
+# hence it is not needed unless you have added a package configuration file to your project
+.swiftpm/
+.build/
+source_packages
+
+# CocoaPods
+#
+# We recommend against adding the Pods directory to your .gitignore. However
+# you should judge for yourself, the pros and cons are mentioned at:
+# https://guides.cocoapods.org/using/using-cocoapods.html#should-i-check-the-pods-directory-into-source-control
+#
+# Pods/
+#
+# Add this line if you want to avoid checking in source code from the Xcode workspace
+# *.xcworkspace
+
+# Carthage
+#
+# Add this line if you want to avoid checking in source code from Carthage dependencies.
+# Carthage/Checkouts
+
+Carthage/Build/
+
+# fastlane
+#
+# It is recommended to not store the screenshots in the git repo.
+# Instead, use fastlane to re-generate the screenshots whenever they are needed.
+# For more information about the recommended setup visit:
+# https://docs.fastlane.tools/best-practices/source-control/#source-control
+
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+### SwiftPackageManager ###
+xcuserdata
+# *.xcodeproj
+
+### Xcode Patch ###
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+!*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+!*.xcworkspace/contents.xcworkspacedata
+/*.gcno
+**/xcshareddata/WorkspaceSettings.xcsettings
+
+# MCP config (may embed an org-specific Sentry org/project; keep local)
+.mcp.json
+
+# Lavish tool for planing with AI
+
+.lavish/
+
+# Claude
+
+.claude/PLAN.md
+.claude/worktrees
+docs/superpowers/
+
+# Secrets
+polkadot-app/env-vars.sh
+polkadot-app/GoogleService-Info.plist
+polkadot-app/GoogleService/GoogleService-Info-*.plist
+*.generated.swift
+
+# Misc
+**/.DS_Store
+
+# Python
+__pycache__
+.venv
+.pytest_cache
+.sentryclirc
+
+# temp
+tmp/
+
+.scratch/
+
+# Merge leftovers
+*.orig

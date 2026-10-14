@@ -1,0 +1,190 @@
+# An installable APK, produced on demand rather than on every commit.
+#
+# Its own workflow rather than a job in ci.yml, because starting it needs the
+# `labeled` event and adding that to ci.yml would rerun every gate each time
+# any label changed.
+#
+# The artifact is attached to the run and nothing else. Unlike the iOS device
+# preview there is no provisioning to do: an Android debug build installs on
+# any phone that will accept it, so no device has to be registered anywhere.
+#
+# It builds the flavour that ships. The other flavour replaces Google auth,
+# Firebase auth, push and backup with stubs that return failure, so a preview
+# built from it cannot sign in and would read as the branch being broken. A
+# pull request from a fork cannot reach the configuration this needs, so it is
+# told that rather than handed a build that misleads.
+name: Android device preview
+
+on:
+  pull_request:
+    # `labeled` starts it. `synchronize` keeps it current once the label is on,
+    # so the APK follows the branch rather than pinning to whichever commit was
+    # the head when someone asked.
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+  # The run links its artifact from the pull request, so a reviewer does not
+  # have to find it in the Actions tab.
+  pull-requests: write
+
+jobs:
+  build:
+    name: Installable APK
+    # Narrow on purpose. `labeled` fires for every label, so matching only on
+    # the label being present lets anything else being added, by a person or by
+    # labeler.yml, start a second run for the same commit that cancels the one
+    # already building.
+    if: >-
+      (github.event.action == 'labeled'
+       && github.event.label.name == 'android-device-build')
+      || (github.event.action == 'synchronize'
+          && contains(github.event.pull_request.labels.*.name, 'android-device-build'))
+    # On the job rather than the workflow. Adding any label starts a run of this
+    # workflow, and a workflow-level group would let that run cancel a build in
+    # progress before its own job is skipped. A skipped job never joins the
+    # group.
+    concurrency:
+      group: android-device-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up the Android build
+        id: setup
+        uses: ./.github/actions/setup-android-build
+        with:
+          require_inputs: "true"
+          google_services_json_base64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          keystore_base64: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
+          keystore_pass: ${{ secrets.CI_KEYSTORE_PASS }}
+          keystore_alias: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          keystore_key_pass: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+
+      # Cosmetic strings are placeholders, because nothing reads them back.
+      # The three backend identifiers are not: they name the Google project the
+      # running app authenticates against, so a placeholder does not merely look
+      # wrong, it stops the app at registration. Play Integrity refuses cloud
+      # project number 0, attestation fails on the first network call, and the
+      # username screen reports the generic error it falls back to. They match
+      # what android-nightly.yml passes. The application id is fixed rather than
+      # a placeholder because it has to match the Google configuration above.
+      - name: Build the APK
+        working-directory: hosts/android
+        env:
+          APPLICATION_ID: io.parity.polkadotapp
+          IOS_BUNDLE_ID: io.parity.polkadotapp
+          APPLICATION_NAME: Polkadot
+          CURRENCY_SYMBOL: DOT
+          FIAT_SYMBOL: "$"
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          CONTACT_EMAIL: preview@example.invalid
+          LOG_COLLECTION_EMAIL: preview@example.invalid
+          NIGHTLY_FUNDING_MNEMONIC: preview
+          PRIVACY_POLICY_URL: https://example.invalid/privacy
+          SENTRY_ORG: preview
+          SENTRY_PROJECT: preview
+          TERMS_OF_USE_URL: https://example.invalid/terms
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+          # Goes into the version name, so the installed app can say which
+          # commit it came from. Verified below rather than assumed.
+          PREVIEW_COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: ./gradlew assembleGpDebug --no-daemon
+
+      - name: Check exactly one APK came out, and that it is signed
+        id: package
+        working-directory: hosts/android
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          apks=("app/build/outputs/apk/gp/debug"/*.apk)
+          if [ ${#apks[@]} -ne 1 ]; then
+            echo "::error::Expected exactly one APK, found ${#apks[@]}"
+            exit 1
+          fi
+
+          # A build can produce an unsigned APK without failing, which then
+          # installs nowhere. Better to fail here than to hand someone a file
+          # that their phone refuses.
+          apksigner="$(ls -d "${ANDROID_HOME}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n1)"
+          if [ -z "${apksigner}" ]; then
+            echo "::error::No apksigner under ${ANDROID_HOME}/build-tools"
+            exit 1
+          fi
+          "${apksigner}" verify "${apks[0]}"
+
+          # The stamp is the whole point of a preview build: without it a
+          # reviewer cannot tell the change under review from a cached
+          # artifact. Read it back out rather than trusting the build.
+          aapt2="$(ls -d "${ANDROID_HOME}"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -n1)"
+          if [ -z "${aapt2}" ]; then
+            echo "::error::No aapt2 under ${ANDROID_HOME}/build-tools"
+            exit 1
+          fi
+          # Matched as a suffix rather than against a whole version string.
+          # The marketing version is a constant in the vendored tree that a
+          # release bump rewrites, and duplicating it here would fail the next
+          # bump as though the stamp were broken.
+          stamped="$("${aapt2}" dump badging "${apks[0]}" \
+            | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")"
+          case "${stamped}" in
+            *"+${COMMIT}") ;;
+            *)
+              echo "::error::APK names version '${stamped}', which does not end in '+${COMMIT}'"
+              exit 1
+              ;;
+          esac
+          echo "APK reports ${stamped}"
+
+          short="${COMMIT:0:9}"
+          mv "${apks[0]}" "polkadot-app-${short}.apk"
+          echo "short=${short}" >> "$GITHUB_OUTPUT"
+          echo "apk=hosts/android/polkadot-app-${short}.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the APK
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-preview-pr-${{ github.event.pull_request.number }}
+          path: ${{ steps.package.outputs.apk }}
+          overwrite: true
+          retention-days: 5
+          if-no-files-found: error
+
+      - name: Describe the build
+        env:
+          SHORT: ${{ steps.package.outputs.short }}
+          URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/preview.md" <<EOF
+          ### Android preview
+
+          Built from \`${SHORT}\`, which the app reports as its version.
+
+          [Download it](${URL}). It arrives as a zip around the APK, so it needs
+          unzipping once, then:
+
+          \`\`\`bash
+          adb install polkadot-app-${SHORT}.apk
+          \`\`\`
+
+          Signed with the shared develop key, so it installs over an existing
+          debug build rather than asking to be uninstalled. Kept for 5 days.
+          EOF
+
+      - uses: ./.github/actions/upsert-pr-comment
+        with:
+          marker: "<!-- android-preview-build -->"
+          body-file: ${{ runner.temp }}/preview.md

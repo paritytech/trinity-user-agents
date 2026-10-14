@@ -1,0 +1,220 @@
+{
+  "count": 43,
+  "warnings": [
+    {
+      "path": "",
+      "line": null,
+      "message": "Run script build phase 'Upload Debug Symbols to Sentry' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking \"Based on dependency analysis\" in the script phase."
+    },
+    {
+      "path": "",
+      "line": null,
+      "message": "sentry-cli not installed, download from https://github.com/getsentry/sentry-cli/releases"
+    },
+    {
+      "path": "Packages/CarParser/Sources/CarParser/Generated/merkledag.pb.swift",
+      "line": 23,
+      "message": "'init(dictionaryLiteral:)' is deprecated: Please regenerate your .pb.swift files with the current version of the SwiftProtobuf protoc plugin."
+    },
+    {
+      "path": "Packages/CarParser/Sources/CarParser/Generated/merkledag.pb.swift",
+      "line": 79,
+      "message": "'init(dictionaryLiteral:)' is deprecated: Please regenerate your .pb.swift files with the current version of the SwiftProtobuf protoc plugin."
+    },
+    {
+      "path": "Packages/CarParser/Sources/CarParser/Generated/unixfs.pb.swift",
+      "line": 65,
+      "message": "'init(dictionaryLiteral:)' is deprecated: Please regenerate your .pb.swift files with the current version of the SwiftProtobuf protoc plugin."
+    },
+    {
+      "path": "Packages/CarParser/Sources/CarParser/Generated/unixfs.pb.swift",
+      "line": 134,
+      "message": "'init(dictionaryLiteral:)' is deprecated: Please regenerate your .pb.swift files with the current version of the SwiftProtobuf protoc plugin."
+    },
+    {
+      "path": "Packages/PolkadotUI/Sources/Modules/Chat/FAQViewConfiguration.swift",
+      "line": 79,
+      "message": "'contentEdgeInsets' was deprecated in iOS 15.0: This property is ignored when using UIButtonConfiguration"
+    },
+    {
+      "path": "polkadot-app/Common/Bandersnatch/BandersnatchApiProtocol.swift",
+      "line": 4,
+      "message": "Todo Violation: TODOs should be resolved (Maybe change BandersnatchApi t...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Common/Currency/Currency+Default.swift",
+      "line": 503,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 503 (file_length)"
+    },
+    {
+      "path": "polkadot-app/Common/Services/Extrinsic/RuntimeMetadataItemProvider.swift",
+      "line": 31,
+      "message": "Extension declares a conformance of imported type 'RuntimeMetadataItem' to imported protocol 'RuntimeMetadataItemProtocol'; this will not behave correctly if the owners of 'ChainRegistry' introduce this conformance in the future"
+    },
+    {
+      "path": "polkadot-app/Common/Services/ServiceCoordinator.swift",
+      "line": 608,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 608 (file_length)"
+    },
+    {
+      "path": "polkadot-app/Common/Wallet/WalletCardViewModel.swift",
+      "line": 3,
+      "message": "Todo Violation: TODOs should be resolved (consider refactoring) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/ChatInteractor.swift",
+      "line": 135,
+      "message": "Todo Violation: TODOs should be resolved (Add support for attachments in...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/Helpers/ChatViewModelFactory.swift",
+      "line": 718,
+      "message": "Todo Violation: TODOs should be resolved (fetch info by content.assetId ...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/Model/ChatMessage.swift",
+      "line": 163,
+      "message": "Todo Violation: TODOs should be resolved (migrate to custom renderer) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/Model/ChatMessage.swift",
+      "line": 167,
+      "message": "Todo Violation: TODOs should be resolved (shouldn't be content type but ...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/Model/ChatMessage.swift",
+      "line": 169,
+      "message": "Todo Violation: TODOs should be resolved (remove chatRequest case after ...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/Model/ChatMessage.swift",
+      "line": 184,
+      "message": "Todo Violation: TODOs should be resolved (We don't save candidates local...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/Model/ChatMessage.swift",
+      "line": 762,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 762 (file_length)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/Model/RemoteChatMessage.swift",
+      "line": 643,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 643 (file_length)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/Service/ChatOutboxService.swift",
+      "line": 704,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 704 (file_length)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/Service/MessageExchangeChatCoordinator+PeerSessionDelegate.swift",
+      "line": 99,
+      "message": "Todo Violation: TODOs should be resolved (Consider to remove before rele...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Chat/Service/MessageExchangeChatCoordinator.swift",
+      "line": 306,
+      "message": "Todo Violation: TODOs should be resolved (Move sender device activation ...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/ChatCall/Connection/CallEngine.swift",
+      "line": 675,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 675 (file_length)"
+    },
+    {
+      "path": "polkadot-app/Modules/ChatCall/Connection/ChatPeerConnectionSignaler.swift",
+      "line": 169,
+      "message": "Cyclomatic Complexity Violation: Function should have complexity 10 or less; currently complexity is 12 (cyclomatic_complexity)"
+    },
+    {
+      "path": "polkadot-app/Modules/ContactsList/Helpers/ContactsListViewModelFactory.swift",
+      "line": 280,
+      "message": "Todo Violation: TODOs should be resolved (Design a user-facing represent...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/DebugSettings/Products/DebugProductEditView.swift",
+      "line": 4,
+      "message": "Todo Violation: TODOs should be resolved (Temp interface for adding prod...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/DebugSettings/Products/DebugProductsListView.swift",
+      "line": 4,
+      "message": "Todo Violation: TODOs should be resolved (Temp interface for adding prod...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Deposit/AssetExchange/AssetExchangeServiceFactory.swift",
+      "line": 108,
+      "message": "Todo Violation: TODOs should be resolved (enable if we have proper hydra...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Deposit/AssetExchange/AssetExchangeServiceFactory.swift",
+      "line": 109,
+      "message": "Orphaned Doc Comment Violation: A doc comment should be attached to a declaration (orphaned_doc_comment)"
+    },
+    {
+      "path": "polkadot-app/Modules/Deposit/Service/DepositService.swift",
+      "line": 558,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 558 (file_length)"
+    },
+    {
+      "path": "polkadot-app/Modules/Deposit/Views/DepositViewLayout+SummaryView.swift",
+      "line": 104,
+      "message": "Todo Violation: TODOs should be resolved (Pass outside) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/FiatOnRampProvider/FiatOnRampProviderPresenter.swift",
+      "line": 81,
+      "message": "Call to main actor-isolated instance method 'handleRefreshTick()' in a synchronous nonisolated context"
+    },
+    {
+      "path": "polkadot-app/Modules/IncomingChatRequest/Model/ChatRequestPeerDeviceMapper.swift",
+      "line": 87,
+      "message": "Todo Violation: TODOs should be resolved (- remove when not needed) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/IncomingChatRequest/Services/ChatRequestFactory.swift",
+      "line": 124,
+      "message": "Todo Violation: TODOs should be resolved (Add statement account id to re...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/IncomingChatRequest/Services/ChatRequestServiceFactory.swift",
+      "line": 105,
+      "message": "Todo Violation: TODOs should be resolved (Implement alias signer when av...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/PolkadotSignIn/LinkedDevices/LinkedDevicesPresenter.swift",
+      "line": 41,
+      "message": "Todo Violation: TODOs should be resolved (Navigate to how it works) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/PolkadotSignIn/Services/PolkadotHandshakeService.swift",
+      "line": 161,
+      "message": "Todo Violation: TODOs should be resolved (Derive shared statement store ...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Products/Permissions/OS/OSPermissionAsker.swift",
+      "line": 28,
+      "message": "Todo Violation: TODOs should be resolved (These capabilities require a n...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Products/Permissions/OS/OSPermissionAsker.swift",
+      "line": 49,
+      "message": "Todo Violation: TODOs should be resolved (These capabilities require a n...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Products/ProductsNativeApi+StatementStore.swift",
+      "line": 26,
+      "message": "Todo Violation: TODOs should be resolved (Remove when all migrate to aut...) (todo)"
+    },
+    {
+      "path": "polkadot-app/Modules/Products/ProductsNativeApiFactory.swift",
+      "line": 65,
+      "message": "Main actor-isolated class property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode"
+    },
+    {
+      "path": "polkadot-app/Modules/Products/TrUAPI/RustHostRuntimeBridge.swift",
+      "line": 82,
+      "message": "Todo Violation: TODOs should be resolved (pass the real SSO host identit...) (todo)"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 // TrUAPIHost - iOS host adapter.
 //
-// The Rust core (compiled to `libtruapi_server`, surfaced through UniFFI in
-// the sibling `truapi_server.swift` file) owns wire decoding, request
+// The Rust core (compiled to `libtruapi`, surfaced through UniFFI in the
+// sibling `truapi.swift` file) owns wire decoding, request
 // routing, subscription lifecycle, and platform trait dispatch.
 //
 // This file exposes the process-owned `TrUAPIHostRuntime`, its independently
@@ -9,201 +9,24 @@
 // `LocalhostBridgeBootstrap` helper used to publish an execution's WS endpoint.
 //
 // Products running inside a `WKWebView` connect to the Rust core via the
-// localhost WebSocket bridge. The bootstrap script publishes the URL
-// (`ws://127.0.0.1:<port>/?t=<token>`) and a MessagePort-shaped compatibility
-// object that proxies the product's existing webview transport onto it.
+// localhost WebSocket bridge. The bootstrap publishes its endpoint in
+// `window.__truapi_localhost` for the shared container to consume.
 
 import Foundation
+import UIKit
 
 /// Package metadata.
 public enum TrUAPIHost {
     public static let version = "0.1.0"
 }
 
-/// Immutable process-wide configuration shared by all product executions.
-public struct HostRuntimeConfig: Sendable, Equatable {
-    public let hostName: String
-    public let hostIcon: String?
-    public let hostVersion: String?
-    public let platformType: String?
-    public let platformVersion: String?
-    public let peopleChainGenesisHash: Data
-    public let bulletinChainGenesisHash: Data
-    public let localSessionSecret: Data?
-    public let localSessionLiteUsername: String?
-
-    public init(
-        hostName: String,
-        hostIcon: String? = nil,
-        hostVersion: String? = nil,
-        platformType: String? = nil,
-        platformVersion: String? = nil,
-        peopleChainGenesisHash: Data,
-        bulletinChainGenesisHash: Data,
-        localSessionSecret: Data? = nil,
-        localSessionLiteUsername: String? = nil
-    ) {
-        self.hostName = hostName
-        self.hostIcon = hostIcon
-        self.hostVersion = hostVersion
-        self.platformType = platformType
-        self.platformVersion = platformVersion
-        self.peopleChainGenesisHash = peopleChainGenesisHash
-        self.bulletinChainGenesisHash = bulletinChainGenesisHash
-        self.localSessionSecret = localSessionSecret
-        self.localSessionLiteUsername = localSessionLiteUsername
-    }
-
-    fileprivate var native: NativeHostRuntimeConfig {
-        NativeHostRuntimeConfig(
-            hostName: hostName,
-            hostIcon: hostIcon,
-            hostVersion: hostVersion,
-            hostPlatform: .ios,
-            platformType: platformType,
-            platformVersion: platformVersion,
-            peopleChainGenesisHash: peopleChainGenesisHash,
-            bulletinChainGenesisHash: bulletinChainGenesisHash,
-            localSessionSecret: localSessionSecret,
-            localSessionLiteUsername: localSessionLiteUsername
-        )
-    }
-}
-
-/// Host-selected identity and trusted kind for one executable connection.
-public struct ProductExecutionConfig: Sendable, Equatable {
-    public let productId: String
-    public let executionKind: ProductExecutionKind
-
-    public init(productId: String, executionKind: ProductExecutionKind) {
-        self.productId = productId
-        self.executionKind = executionKind
-    }
-
-    fileprivate var native: NativeProductExecutionConfig {
-        NativeProductExecutionConfig(
-            productId: productId,
-            executionKind: executionKind
-        )
-    }
-}
-
 /// Bootstrap helper for the native localhost WebSocket bridge that a product
-/// execution starts when the cdylib is built with the `ws-bridge` feature.
+/// execution starts.
 public enum LocalhostBridgeBootstrap {
-    /// Returns a `<script>`-injectable snippet that publishes the endpoint
-    /// metadata on `window.__truapi_localhost`, the pre-resolved permission
-    /// decisions on `window.__truapi_policy__`, exposes the legacy
-    /// `window.__HOST_API_PORT__` webview transport shape, and fires a
-    /// `truapi-native-ready` event.
-    ///
-    /// `webRtcAllowed` must come from `permissionAuthorizationStatus` for
-    /// `RemotePermission.remote(.webRtc)` — a peek, never a prompt. It is baked
-    /// in as a literal because the container enforces it inside the product's
-    /// own realm, where an asynchronous permission request would be forgeable:
-    /// product script can hook the primitives such a request's bookkeeping
-    /// relies on and resolve it itself. A settled value has nothing to steal.
-    /// The consequence is that a fresh grant only takes effect once the web
-    /// view reloads.
-    public static func script(port: UInt16, token: String, webRtcAllowed: Bool) -> String {
-        let url = "ws://127.0.0.1:\(port)/?t=\(token)"
-        let safeUrl = jsStringLiteral(url)
-        let safeToken = jsStringLiteral(token)
-        let safeWebRtc = webRtcAllowed ? "true" : "false"
-        return """
-        (function() {
-          var endpoint = { url: \(safeUrl), token: \(safeToken) };
-
-          function createWebSocketMessagePort(url) {
-            var socket = null;
-            var started = false;
-            var queue = [];
-
-            var port = {
-              onmessage: null,
-              onmessageerror: null,
-
-              postMessage: function(message) {
-                if (!started) {
-                  port.start();
-                }
-
-                if (socket && socket.readyState === WebSocket.OPEN) {
-                  socket.send(message);
-                } else {
-                  queue.push(message);
-                }
-              },
-
-              start: function() {
-                if (started) return;
-                started = true;
-
-                socket = new WebSocket(url);
-                socket.binaryType = "arraybuffer";
-
-                socket.onopen = function() {
-                  var pending = queue;
-                  queue = [];
-                  pending.forEach(function(message) {
-                    socket.send(message);
-                  });
-                };
-
-                socket.onmessage = function(event) {
-                  if (typeof port.onmessage === "function") {
-                    port.onmessage({ data: new Uint8Array(event.data) });
-                  }
-                };
-
-                socket.onerror = function() {
-                  if (typeof port.onmessageerror === "function") {
-                    port.onmessageerror();
-                  }
-                };
-
-                socket.onclose = function() {
-                  if (typeof port.onmessageerror === "function") {
-                    port.onmessageerror();
-                  }
-                };
-              },
-
-              close: function() {
-                queue = [];
-                if (socket) {
-                  socket.close();
-                }
-              }
-            };
-
-            return port;
-          }
-
-          window.__truapi_localhost = endpoint;
-          window.__truapi_policy__ = { webRtcAllowed: \(safeWebRtc) };
-          window.__HOST_WEBVIEW_MARK__ = true;
-          window.__HOST_API_PORT__ = createWebSocketMessagePort(endpoint.url);
-          window.dispatchEvent(new Event('truapi-native-ready'));
-        })();
-        """
-    }
-
-    /// Encodes `value` as a complete double-quoted JavaScript string literal,
-    /// safe to embed inside a `<script>` body. `JSONEncoder` escapes quotes,
-    /// backslashes, control characters, and forward slashes (closing `</script`
-    /// tags); U+2028 / U+2029 are escaped explicitly because JSON leaves them
-    /// raw while JS treats them as line terminators. Falls back to an empty
-    /// literal if encoding ever fails.
-    private static func jsStringLiteral(_ value: String) -> String {
-        guard let data = try? JSONEncoder().encode(value),
-              let encoded = String(data: data, encoding: .utf8)
-        else {
-            return "\"\""
-        }
-        return encoded
-            .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
-            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+    /// Publishes the WebSocket endpoint for the product's SDK.
+    /// Inject at document start, before the container and product scripts.
+    public static func script(port: UInt16, token: String) -> String {
+        localhostBridgeBootstrapScript(port: port, token: token)
     }
 }
 
@@ -215,7 +38,7 @@ public protocol HostStorageBackend: AnyObject, Sendable {
 }
 
 /// Core-owned host-private storage backend. Keys are SCALE-encoded
-/// `truapi_platform::CoreStorageKey` values, so embedders can persist them
+/// `truapi::platform::CoreStorageKey` values, so embedders can persist them
 /// opaquely or decode them to choose a secure backing store per slot.
 public protocol HostCoreStorageBackend: AnyObject, Sendable {
     func read(key: Data) throws -> Data?
@@ -227,47 +50,42 @@ public protocol HostCoreStorageBackend: AnyObject, Sendable {
 /// native shell owns. The permission split mirrors the Rust `Permissions`
 /// trait:
 ///
-///   * ``devicePermission(request:)`` handles OS-scoped grants (camera,
-///     mic, location).
-///   * ``remotePermission(request:)`` handles per-product capability
+///   * ``devicePermission(product:request:)`` handles OS-scoped grants
+///     (camera, mic, location).
+///   * ``remotePermission(product:request:)`` handles per-product capability
 ///     bundles.
 ///
-/// Threading: the Rust core invokes every callback on a background thread it
-/// owns, never the main thread. These six each run on their own thread from a
-/// blocking pool, so an implementation may safely block its calling thread
-/// (e.g. with `DispatchQueue.main.sync` or a semaphore) until the user
-/// decides; other TrUAPI traffic keeps flowing: ``navigateTo(url:)``,
-/// ``pushNotification(payload:)``, ``devicePermission(request:)``,
-/// ``remotePermission(request:)``, ``featureSupported(request:)``, and
-/// ``confirmUserAction(review:)``.
-/// The remaining callbacks (auth state, storage, core storage, chain, theme,
-/// preimage lookups, and ``cancelNotification(id:)``) run inline on the
-/// dispatcher thread and must return promptly without blocking.
-/// Any UI work MUST still hop to the main thread, e.g.
-/// `await MainActor.run { ... }` or `DispatchQueue.main.async { ... }`. Calling
-/// UIKit/WebKit off the main thread is undefined behaviour.
+/// The Rust core invokes callbacks on its shared background bridge executor.
+/// Async callbacks must suspend while waiting for a decision; blocking their
+/// thread stalls other TrUAPI traffic. Synchronous callbacks must return promptly.
+/// Run UI work on the main actor, for example with `await MainActor.run { ... }`.
 public protocol HostBridge: AnyObject, Sendable {
     /// Lifecycle logger. Marker is a stable slug, detail is free-form.
     func onCoreLog(marker: String, detail: String)
 
-    /// Open a URL in the system browser. Invoked on a blocking-pool thread;
-    /// hop to the main thread to present UI. May block the calling thread if
-    /// the user has to approve the navigation.
+    /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
 
+    /// Show or hide the face above this execution's expanded card. Answers
+    /// `.notPresented` when the product is not under its card and `.userMoving`
+    /// while the user drags it, and returns without waiting for the animation.
+    /// Defaults to `.unsupported`, so an app without cards says so instead of
+    /// pretending it moved one.
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
+
     /// Deliver a push notification (`HostPushNotificationRequest`)
-    /// and return the host-assigned notification id. Invoked on the dispatcher
-    /// thread; hop to the main thread for any UI work and return promptly.
+    /// and return the host-assigned notification id. Run any UI work on the main actor.
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32
 
     /// Cancel a previously scheduled notification id.
     func cancelNotification(id: UInt32) throws
 
-    /// Prompt for a device-level permission. Returns the granted flag. Invoked
-    /// on a blocking-pool thread; present the prompt on the main thread and
-    /// block the calling thread until the user decides. Blocking here does
-    /// not stall other TrUAPI traffic.
-    func devicePermission(request: HostDevicePermissionRequest) async throws -> Bool
+    /// Prompt for a device-level permission `product` requested on the main
+    /// actor, suspending until the user decides. Preserve the approval lifetime.
+    func devicePermission(
+        product: ProductExecutionConfig,
+        request: HostDevicePermissionRequest
+    ) async throws -> PermissionDecision
 
     /// Report the OS status of a device capability without prompting. Answer
     /// from the platform's authorization APIs, for example
@@ -280,13 +98,14 @@ public protocol HostBridge: AnyObject, Sendable {
     /// governing. Defaults to `.notApplicable`, so an app that does not
     /// implement it keeps today's behaviour.
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
-        -> NativeDevicePermissionStatus
+        -> DevicePermissionStatus
 
-    /// Prompt for a remote (product-scoped) permission bundle. Invoked on a
-    /// blocking-pool thread; present the prompt on the main thread and block
-    /// the calling thread until the user decides. Blocking here does not
-    /// stall other TrUAPI traffic.
-    func remotePermission(request: RemotePermission) async throws -> Bool
+    /// Prompt for a remote permission bundle `product` requested on the main
+    /// actor, suspending until the user decides.
+    func remotePermission(
+        product: ProductExecutionConfig,
+        request: RemotePermission
+    ) async throws -> PermissionDecision
 
     /// Observe an auth state change, in transition order: render `.pairing` as
     /// the pairing QR UI, `.connected`/`.disconnected` as the account badge,
@@ -314,6 +133,9 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Confirm one user-reviewed core action before it continues.
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool
 
+    /// Preserve the selected lifetime for identity and account access consent.
+    func confirmPermission(review: UserConfirmationReview) async throws -> PermissionDecision
+
     /// Return the current preimage value for `key`, or nil for a miss.
     func lookupPreimage(key: Data) async throws -> Data?
 
@@ -333,6 +155,51 @@ public protocol HostBridge: AnyObject, Sendable {
     /// per chain role. Invoked on the dispatcher thread; must return promptly.
     func supportedChains() throws -> HostChainSet
 
+    /// Observe demand on a product's worker crossing zero. `.start` means run
+    /// the worker now, `.stop` that nothing wants it any more. Every
+    /// transition arrives here in ledger order, the ones the app asks for by
+    /// taking a reference of its own included.
+    ///
+    /// Demand is runtime-wide, so the core invokes this only on the bridge
+    /// ``TrUAPIHostRuntime/init(bridge:runtimeConfig:)`` was given, never on
+    /// the per-execution bridge passed to
+    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``.
+    /// Can arrive on any thread, including synchronously on the calling
+    /// thread during `acquireWorker`/`releaseWorker`, often the main thread
+    /// and re-entrantly: hand the transition off rather than blocking on
+    /// another thread from inside it. Defaults to a no-op for a host that
+    /// runs no workers.
+    func workerDemandChanged(productId: String, transition: WorkerTransition)
+
+    /// Begin a pending operation, whose id keeps the product's worker alive
+    /// until it ends. `label` is a log/UI hint, empty when the product gave none.
+    func beginOperation(productId: String, label: String) async throws -> UInt32
+
+    /// End a pending operation. Idempotent: an unknown or already-ended id
+    /// succeeds, so a retry after an ambiguous failure is safe.
+    func endOperation(productId: String, id: UInt32) async throws
+
+    /// A device finished pairing with this signing host.
+    ///
+    /// The core has no chat of its own, so announcing the new device to the
+    /// user's existing contacts is the host's to do. At least once per
+    /// pairing, and the host keeps its own record of which devices it has
+    /// already seen: a resumed pairing reports nothing and the core has no
+    /// list to replay. Arrives on the thread answering the handshake, while
+    /// the pairing call is still running: hand the device off rather than
+    /// announcing it inline. Defaults to a no-op for a host that answers no
+    /// pairing.
+    func devicePaired(device: PairedSsoPeer)
+
+    /// Whether the core has durable transactions still awaiting a verdict.
+    /// While `pending` is true, keep a background task running that awaits
+    /// ``TrUAPIHostRuntime/runDurableRecovery()``; false means nothing needs
+    /// it. Reported on change, starting with the state the runtime finds at
+    /// launch. Runtime-wide, like `workerDemandChanged`, and arrives on a
+    /// core thread: hand it off rather than blocking. Defaults to a no-op
+    /// for a host that runs no durable work.
+    func durableWorkChanged(pending: Bool)
+
     /// Scoped key-value storage for the Rust core.
     var storage: HostStorageBackend { get }
 
@@ -343,11 +210,11 @@ public protocol HostBridge: AnyObject, Sendable {
 }
 
 /// Native Chat storage and UI surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:)``
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
 /// when the host supports the Chat modality; hosts without it pass nothing.
 /// Native Chat storage and UI surface, called from the process-wide dispatch
 /// pool shared by every product execution: implementations must be safe to
-/// enter concurrently, and one that blocks stalls the others.
+/// enter concurrently.
 ///
 /// Throw ``HostRejection`` (or an error conforming to `LocalizedError`) to
 /// decline a call. A plain `Error` reaches the product as its type name alone,
@@ -356,13 +223,13 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// Create or resolve a native product Chat room. The core has bounded and
     /// normalized these arguments and screened the icon scheme; escaping them
     /// for the surface that renders them is still the host's job.
-    func createRoom(roomId: String, name: String, icon: String) throws
+    func createRoom(roomId: String, name: String, icon: String) async throws
         -> ChatRoomRegistrationStatus
 
     /// Register or resolve a native product Chat bot. The core has bounded and
     /// normalized these arguments and screened the icon scheme; escaping them
     /// for the surface that renders them is still the host's job.
-    func registerBot(botId: String, name: String, icon: String) throws
+    func registerBot(botId: String, name: String, icon: String) async throws
         -> ChatBotRegistrationStatus
 
     /// Persist a product-authored message in native Chat storage. Throw for a
@@ -376,10 +243,97 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// must name this message for as long as the host stores it. An id
     /// arriving in a `reaction` or `reactionRemoved` is product-chosen and
     /// untrusted: it may name a message in another room, or none at all.
-    func postMessage(roomId: String, content: ChatMessageContent) throws -> String
+    ///
+    /// `alt` is the product's one-line description of the message, already
+    /// trimmed and screened, for places that list it without drawing it.
+    func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String
+
+    /// Set what a product's native Chat room shows below its messages, and
+    /// keep it until the product sets another.
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
 
     /// Return the current product-scoped native Chat rooms.
-    func listRooms() throws -> [ChatRoom]
+    func listRooms() async throws -> [ChatRoom]
+}
+
+/// Native Pocket collection surface. Implement and pass to
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
+/// when the host has a Pocket surface; hosts without one pass nothing. Called
+/// from the process-wide dispatch pool shared by every product execution:
+/// implementations must be safe to enter concurrently, and one that blocks
+/// stalls the others.
+///
+/// Throw ``HostRejection`` (or an error conforming to `LocalizedError`) to
+/// decline a call.
+public protocol PocketHostBridge: AnyObject, Sendable {
+    /// Return the product's cards as this host holds them, each carrying
+    /// whether the host pinned it.
+    func listCards() throws -> [PocketCard]
+
+    /// Remove one of the product's cards and report what happened. Decide and
+    /// remove together, under whatever lock this host holds, so a card cannot
+    /// be pinned between the two.
+    func removeCard(cardId: String) throws -> NativePocketRemoval
+}
+
+/// Native game-reminder surface. Implement and pass to
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
+/// when the host can hold reminders; hosts without one pass nothing. Both
+/// calls are async, so an implementation may hop to the main actor to answer;
+/// implementations must be safe to enter concurrently.
+///
+/// The host holds one reminder per product: a schedule replaces the reminder
+/// the same product already holds. The core asks for no per-product consent;
+/// the host asks the OS for what it needs, rings an alarm where the OS allows
+/// one and delivers a notification otherwise, may add the game to the
+/// calendar, keeps the reminder across app kill and reboot, and drops it once
+/// the game starts.
+///
+/// Both calls throw ``HostRejection`` (or an error conforming to
+/// `LocalizedError`) to decline. A failed schedule reaches the product as a
+/// host failure carrying its reason, a failed cancel as its generic error.
+public protocol GameHostBridge: AnyObject, Sendable {
+    /// Hold `startsAt` (Unix milliseconds, UTC) as this product's reminder,
+    /// replacing any it holds. Throw when the OS allows neither alarms nor
+    /// notifications.
+    func scheduleReminder(startsAt: UInt64) async throws
+
+    /// Drop this product's reminder. Dropping none succeeds.
+    func cancelReminder() async throws
+}
+
+/// Host-implemented contacts surface: a lookup from handles to contacts, and
+/// the picker drawn over them.
+///
+/// Installed once on the runtime with
+/// ``TrUAPIHostRuntime/setContacts(_:)``, because the list belongs to the host
+/// and not to any one product. A runtime without one answers `contacts.pick`
+/// with `Unsupported`.
+///
+/// Nothing here reaches a product, and the list never reaches the core: it
+/// asks only about the handles a transaction names, and the picker returns the
+/// one person the user chose. Omit the contacts the user has blocked, from both.
+public protocol ContactsHostBridge: AnyObject, Sendable {
+    /// Resolve `lookup.handles` to contacts: one entry per handle, in order,
+    /// `nil` where none matches. A contact's handle is BLAKE2b-256 keyed with
+    /// `lookup.handleKey` over its 32-byte account. Called inline, so answer
+    /// from what is already in hand.
+    func contacts(lookup: HostContactLookup) throws -> HostContactMatches
+
+    /// Present the picker on behalf of `productId` and report what the user
+    /// did. With no contacts, answer `.noContacts` instead of drawing an empty
+    /// overlay.
+    func pickContact(productId: String) async throws -> HostContactPick
+}
+
+/// Draws the viewfinder for `scanner.scan`, following the rules on the core's
+/// `ScannerPlatform`. Closes it when the task is cancelled.
+public protocol ScannerHostBridge: AnyObject, Sendable {
+    func scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest
+    ) async throws -> HostScan
 }
 
 public extension HostBridge {
@@ -392,6 +346,9 @@ public extension HostBridge {
     func chainSend(connectionId: UInt32, request: String) throws {}
     func chainClose(connectionId: UInt32) throws {}
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool { false }
+    func confirmPermission(review: UserConfirmationReview) async throws -> PermissionDecision {
+        try await confirmUserAction(review: review) ? .allowAlways : .deny
+    }
     func lookupPreimage(key: Data) async throws -> Data? { nil }
     func currentTheme() throws -> HostThemeSubscribeItem {
         HostThemeSubscribeItem(name: .default, variant: .dark)
@@ -402,9 +359,44 @@ public extension HostBridge {
         )
     }
     func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
+    func workerDemandChanged(productId: String, transition: WorkerTransition) {}
+    func devicePaired(device: PairedSsoPeer) {}
+    func durableWorkChanged(pending: Bool) {}
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
-        -> NativeDevicePermissionStatus { .notApplicable }
+        -> DevicePermissionStatus { .notApplicable }
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        .unsupported
+    }
+    /// Defaults opt out of worker keep-alive; override to run background work
+    /// past the product's surface. The id is still distinct per call, because
+    /// an `OperationId` names one operation: a host overriding only
+    /// `endOperation`, and the core's own demand accounting, both end the
+    /// wrong ones when every operation shares an id.
+    func beginOperation(productId: String, label: String) async throws -> UInt32 {
+        defaultOperationIds.take()
+    }
+
+    func endOperation(productId: String, id: UInt32) async throws {}
 }
+
+/// Ids handed out by the default `beginOperation`, distinct for the life of
+/// the process.
+private final class DefaultOperationIds: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nextId: UInt32 = 1
+
+    func take() -> UInt32 {
+        lock.lock()
+        defer { lock.unlock() }
+        let id = nextId
+        // Never zero, and never traps: an id is only ever compared, so wrapping
+        // back to one costs nothing.
+        nextId = nextId == UInt32.max ? 1 : nextId + 1
+        return id
+    }
+}
+
+private let defaultOperationIds = DefaultOperationIds()
 
 /// Adapter that bridges the public `ChatHostBridge` to the generated UniFFI
 /// `NativeChatCallbacks` protocol.
@@ -419,9 +411,9 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         roomId: String,
         name: String,
         icon: String
-    ) throws -> ChatRoomRegistrationStatus {
-        try withHostRejection {
-            try bridge.createRoom(roomId: roomId, name: name, icon: icon)
+    ) async throws -> ChatRoomRegistrationStatus {
+        try await withHostRejection {
+            try await bridge.createRoom(roomId: roomId, name: name, icon: icon)
         }
     }
 
@@ -429,29 +421,99 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         botId: String,
         name: String,
         icon: String
-    ) throws -> ChatBotRegistrationStatus {
-        try withHostRejection {
-            try bridge.registerBot(botId: botId, name: name, icon: icon)
+    ) async throws -> ChatBotRegistrationStatus {
+        try await withHostRejection {
+            try await bridge.registerBot(botId: botId, name: name, icon: icon)
         }
     }
 
-    func postMessage(roomId: String, content: ChatMessageContent) throws -> String {
-        try withHostRejection {
-            try bridge.postMessage(roomId: roomId, content: content)
+    func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String {
+        try await withHostRejection {
+            try await bridge.postMessage(roomId: roomId, content: content, alt: alt)
         }
     }
 
-    func listRooms() throws -> [ChatRoom] {
-        try withHostRejection { try bridge.listRooms() }
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomFooter(roomId: roomId, footer: footer)
+        }
     }
 
-    private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
-        do {
-            return try operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+    func listRooms() async throws -> [ChatRoom] {
+        try await withHostRejection { try await bridge.listRooms() }
+    }
+}
+
+/// Adapter that bridges the public `PocketHostBridge` to the generated UniFFI
+/// `NativePocketCallbacks` protocol.
+private final class PocketCallbackAdapter: NativePocketCallbacks, @unchecked Sendable {
+    private let bridge: PocketHostBridge
+
+    init(bridge: PocketHostBridge) {
+        self.bridge = bridge
+    }
+
+    func listCards() throws -> [PocketCard] {
+        try withHostRejection { try bridge.listCards() }
+    }
+
+    func removeCard(cardId: String) throws -> NativePocketRemoval {
+        try withHostRejection { try bridge.removeCard(cardId: cardId) }
+    }
+}
+
+/// Adapter that bridges the public `GameHostBridge` to the generated UniFFI
+/// `NativeGameCallbacks` protocol.
+private final class GameCallbackAdapter: NativeGameCallbacks, @unchecked Sendable {
+    private let bridge: GameHostBridge
+
+    init(bridge: GameHostBridge) {
+        self.bridge = bridge
+    }
+
+    func scheduleReminder(startsAt: UInt64) async throws {
+        try await withHostRejection { try await bridge.scheduleReminder(startsAt: startsAt) }
+    }
+
+    func cancelReminder() async throws {
+        try await withHostRejection { try await bridge.cancelReminder() }
+    }
+}
+
+/// Adapter that bridges the public `ContactsHostBridge` to the generated
+/// UniFFI `NativeContactsCallbacks` protocol.
+private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked Sendable {
+    private let bridge: ContactsHostBridge
+
+    init(bridge: ContactsHostBridge) {
+        self.bridge = bridge
+    }
+
+    func contacts(lookup: HostContactLookup) throws -> HostContactMatches {
+        try withHostRejection { try bridge.contacts(lookup: lookup) }
+    }
+
+    func pickContact(productId: String) async throws -> HostContactPick {
+        try await withHostRejection { try await bridge.pickContact(productId: productId) }
+    }
+}
+
+/// Adapter that bridges the public `ScannerHostBridge` to the generated UniFFI
+/// `NativeScannerCallbacks` protocol.
+private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked Sendable {
+    private let bridge: ScannerHostBridge
+
+    init(bridge: ScannerHostBridge) {
+        self.bridge = bridge
+    }
+
+    func scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest
+    ) async throws -> HostScan {
+        try await withHostRejection {
+            try await bridge.scanCode(productId: productId, executionKind: executionKind, request: request)
         }
     }
 }
@@ -468,6 +530,18 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func onCoreLog(marker: String, detail: String) {
         bridge.onCoreLog(marker: marker, detail: detail)
+    }
+
+    func workerDemandChanged(productId: String, transition: WorkerTransition) {
+        bridge.workerDemandChanged(productId: productId, transition: transition)
+    }
+
+    func devicePaired(device: PairedSsoPeer) {
+        bridge.devicePaired(device: device)
+    }
+
+    func durableWorkChanged(pending: Bool) {
+        bridge.durableWorkChanged(pending: pending)
     }
 
     func navigateTo(url: String) async throws {
@@ -488,23 +562,41 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func devicePermission(request: HostDevicePermissionRequest) async throws -> Bool {
+    func devicePermission(
+        product: ProductExecutionConfig,
+        request: HostDevicePermissionRequest
+    ) async throws -> PermissionDecision {
         try await withHostRejection {
-            try await bridge.devicePermission(request: request)
+            try await bridge.devicePermission(
+                product: product,
+                request: request
+            )
         }
     }
 
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
-        -> NativeDevicePermissionStatus
+        -> DevicePermissionStatus
     {
         try await withHostRejection {
             try await bridge.devicePermissionStatus(request: request)
         }
     }
 
-    func remotePermission(request: RemotePermission) async throws -> Bool {
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
         try await withHostRejection {
-            try await bridge.remotePermission(request: request)
+            try await bridge.setExpandedCardFaceShown(shown: shown)
+        }
+    }
+
+    func remotePermission(
+        product: ProductExecutionConfig,
+        request: RemotePermission
+    ) async throws -> PermissionDecision {
+        try await withHostRejection {
+            try await bridge.remotePermission(
+                product: product,
+                request: request
+            )
         }
     }
 
@@ -551,6 +643,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
         try await withHostRejection {
             try await bridge.confirmUserAction(review: review)
+        }
+    }
+
+    func confirmPermission(review: UserConfirmationReview) async throws -> PermissionDecision {
+        try await withHostRejection {
+            try await bridge.confirmPermission(review: review)
         }
     }
 
@@ -602,53 +700,45 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
-        do {
-            return try operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+    func beginOperation(productId: String, label: String) async throws -> UInt32 {
+        try await withHostRejection {
+            try await bridge.beginOperation(productId: productId, label: label)
         }
     }
 
-    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
-        do {
-            return try await operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+    func endOperation(productId: String, id: UInt32) async throws {
+        try await withHostRejection {
+            try await bridge.endOperation(productId: productId, id: id)
         }
     }
 
     private func withNavigationRejection<T>(_ operation: () throws -> T) throws -> T {
         do {
             return try operation()
-        } catch let error as HostNavigateRejection {
+        } catch let error as HostNavigateToError {
             throw error
         } catch {
-            throw HostNavigateRejection.Navigate(.unknown(reason: hostRejectionReason(error)))
+            throw HostNavigateToError.Unknown(reason: hostRejectionReason(error))
         }
     }
 
     private func withNavigationRejection<T>(_ operation: () async throws -> T) async throws -> T {
         do {
             return try await operation()
-        } catch let error as HostNavigateRejection {
+        } catch let error as HostNavigateToError {
             throw error
         } catch {
-            throw HostNavigateRejection.Navigate(.unknown(reason: hostRejectionReason(error)))
+            throw HostNavigateToError.Unknown(reason: hostRejectionReason(error))
         }
     }
 
     private func withStorageError<T>(_ operation: () throws -> T) throws -> T {
         do {
             return try operation()
-        } catch let error as HostStorageError {
+        } catch let error as HostLocalStorageReadError {
             throw error
         } catch {
-            throw HostStorageError.Storage(.unknown(reason: hostRejectionReason(error)))
+            throw HostLocalStorageReadError.Unknown(reason: hostRejectionReason(error))
         }
     }
 }
@@ -658,40 +748,211 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let inner: NativeTrUApiHostRuntime
     private let callbackRetainer: HostCallbacks
+    private let notificationCenter: NotificationCenter
+    private let foregroundObserver: NSObjectProtocol
+    private var contactsRetainer: NativeContactsCallbacks?
+    private var scannerRetainer: NativeScannerCallbacks?
 
-    public init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
+    public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
+        try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
+    }
+
+    init(
+        bridge: HostBridge,
+        runtimeConfig: HostRuntimeConfig,
+        notificationCenter: NotificationCenter
+    ) throws {
         let adapter = HostCallbackAdapter(bridge: bridge)
         callbackRetainer = adapter
-        inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
+        let inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
             callbacks: adapter,
-            runtimeConfig: runtimeConfig.native
+            runtimeConfig: runtimeConfig
         )
+        self.inner = inner
+        self.notificationCenter = notificationCenter
+        // iOS reclaims a suspended app's listening sockets. Rebinding waits on
+        // the Rust runtime's threads, so it runs off the main thread and at their QoS.
+        foregroundObserver = notificationCenter.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: nil
+        ) { _ in
+            DispatchQueue.global().async(flags: .noQoS) {
+                inner.relistenWsBridge()
+            }
+        }
+    }
+
+    deinit {
+        notificationCenter.removeObserver(foregroundObserver)
+    }
+
+    /// Install the host's contacts adapter, which owns the contact list and
+    /// draws the picker.
+    ///
+    /// Set-once, so the picker cannot change hands under a running product.
+    /// Answers whether this call installed it. Call it before opening any
+    /// product execution.
+    @discardableResult
+    public func setContacts(_ contacts: ContactsHostBridge) -> Bool {
+        let adapter = ContactsCallbackAdapter(bridge: contacts)
+        contactsRetainer = adapter
+        return inner.setContactsCallbacks(callbacks: adapter)
+    }
+
+    /// Install the host's scanner before opening any product execution.
+    /// Set-once: answers whether this call installed it.
+    @discardableResult
+    public func setScanner(_ scanner: ScannerHostBridge) -> Bool {
+        let adapter = ScannerCallbackAdapter(bridge: scanner)
+        scannerRetainer = adapter
+        return inner.setScannerCallbacks(callbacks: adapter)
+    }
+
+    /// Tell the core the host's contacts changed. Call it whenever a contact
+    /// is removed or blocked, so a contact handle the core cached stops
+    /// resolving.
+    public func notifyContactsChanged() {
+        inner.notifyContactsChanged()
     }
 
     /// Open one executable connection with a host-assigned immutable context.
     /// Pass `chat` to install the host's Chat adapter; hosts without the Chat
-    /// modality omit it.
+    /// modality omit it. Pass `pocket` to install the card collection, and
+    /// omit that where the host has no Pocket surface. Pass `game` to hold
+    /// game reminders, and omit it where the host cannot.
     public func openProductExecution(
         bridge: HostBridge,
         configuration: ProductExecutionConfig,
-        chat: ChatHostBridge? = nil
+        chat: ChatHostBridge? = nil,
+        pocket: PocketHostBridge? = nil,
+        game: GameHostBridge? = nil
     ) throws -> TrUAPIProductExecution {
         let adapter = HostCallbackAdapter(bridge: bridge)
         let chatAdapter = chat.map { ChatCallbackAdapter(bridge: $0) }
+        let pocketAdapter = pocket.map { PocketCallbackAdapter(bridge: $0) }
+        let gameAdapter = game.map { GameCallbackAdapter(bridge: $0) }
         let execution = try inner.openProductExecution(
             callbacks: adapter,
             chatCallbacks: chatAdapter,
-            executionConfig: configuration.native
+            pocketCallbacks: pocketAdapter,
+            gameCallbacks: gameAdapter,
+            executionConfig: configuration
         )
         return TrUAPIProductExecution(
             inner: execution,
             callbackRetainer: adapter,
-            chatRetainer: chatAdapter
+            chatRetainer: chatAdapter,
+            pocketRetainer: pocketAdapter,
+            gameRetainer: gameAdapter
         )
     }
 
     public func disconnect() {
         inner.disconnect()
+    }
+
+    /// Take one reference on the product's worker for a modality holder that
+    /// is on screen or in flight. The first one reports `.start` to
+    /// ``HostBridge/workerDemandChanged(productId:transition:)``, which is
+    /// where the host starts the worker. Pair every call with one
+    /// ``releaseWorker(productId:)``.
+    public func acquireWorker(productId: String) {
+        inner.acquireWorker(productId: productId)
+    }
+
+    /// Release one reference. The last one reports `.stop`, after which the
+    /// host may stop the worker. Releasing with none held is a no-op.
+    public func releaseWorker(productId: String) {
+        inner.releaseWorker(productId: productId)
+    }
+
+    /// Tell the pairing host behind `deeplink` that allowance allocation is
+    /// under way, so it leaves its QR screen while the allocation runs.
+    ///
+    /// Answering needs this host's own statement-store allowance, so register
+    /// the `WalletSso` renewal target first. The peer's own device statement
+    /// account is the other target, read with ``parsePairingDeeplink(deeplink:)``
+    /// and tracked before ``establishPairing(deeplink:)`` runs; the allocation
+    /// this notice covers is what that call waits on. The returned handle is
+    /// owed a ``notifyPairingFailed(announced:reason:)`` if pairing then
+    /// fails: the peer has dropped its QR and waits without a deadline of its
+    /// own, and the handle holds the responder secret until it is released.
+    public func notifyPairingAllowanceAllocation(
+        deeplink: String
+    ) async throws -> NativeAnnouncedPairing {
+        try await inner.notifyPairingAllowanceAllocation(deeplink: deeplink)
+    }
+
+    /// Tell a pairing host that already dropped its QR why pairing stopped.
+    ///
+    /// Takes the handle from
+    /// ``notifyPairingAllowanceAllocation(deeplink:)``, so the notice is
+    /// signed by the account that already reached that peer even if this
+    /// host's signer has rotated since.
+    public func notifyPairingFailed(
+        announced: NativeAnnouncedPairing,
+        reason: String
+    ) async throws {
+        try await inner.notifyPairingFailed(announced: announced, reason: reason)
+    }
+
+    /// Answer a pairing host's handshake deeplink, without serving the session
+    /// it opens.
+    ///
+    /// The answer is signed by this host's own SSO statement identity, so the
+    /// `.walletSso` renewal target has to be allocated for it to reach the
+    /// Statement Store at all. The peer's device statement account is the
+    /// other tracked target, since this host allocates the allowance the peer
+    /// authors its own session statements under; read it from the deeplink
+    /// with ``parsePairingDeeplink(deeplink:)``. A pairing that fails after
+    /// that leaves the peer's target to untrack again, unless the device was
+    /// already paired and the target still carries a live pairing.
+    ///
+    /// A device that pairs here reaches ``HostBridge/devicePaired(device:)``.
+    /// Serving the session is ``resumePairing(peer:)``, called with the peer
+    /// this host persisted.
+    public func establishPairing(deeplink: String) async throws {
+        try await inner.establishPairing(deeplink: deeplink)
+    }
+
+    /// Serve a paired host's SSO session until it ends.
+    ///
+    /// Runs for the life of the session, so give it its own task. Only
+    /// `.peerDisconnected` authorises dropping the stored pairing; after
+    /// `.subscriptionEnded` or a thrown error the peer is still paired and
+    /// this can be called again.
+    public func resumePairing(peer: PairedSsoPeer) async throws -> ResponderExit {
+        try await inner.resumePairing(peer: peer)
+    }
+
+    /// Tell a paired host this signing host is ending their SSO session.
+    ///
+    /// Submits the disconnect notice and nothing else. The local side is the
+    /// caller's: cancel that peer's ``resumePairing(peer:)`` task, which
+    /// otherwise keeps answering a host this one no longer considers paired,
+    /// and untrack its device statement account, which otherwise keeps being
+    /// renewed every period. Dropping the stored pairing alone leaves both
+    /// running.
+    public func disconnectPairedHost(peer: PairedSsoPeer) async throws {
+        try await inner.disconnectPairedHost(peer: peer)
+    }
+
+    /// Reports the core database's SQLite version, schema version and file
+    /// path.
+    public func coreDatabaseStatus() async throws -> DbStatus {
+        try await inner.coreDatabaseStatus()
+    }
+
+    /// Decides durable transactions from the chain until none is live, then
+    /// returns. Await it from the background task
+    /// ``HostBridge/durableWorkChanged(pending:)`` asks for; a throw means
+    /// recovery stopped early and the task should be retried. Cancelling the
+    /// Swift task does not stop the run in the core, so a background task
+    /// completes itself from its expiration handler rather than waiting for
+    /// this call to return.
+    public func runDurableRecovery() async throws {
+        try await inner.runDurableRecovery()
     }
 
     public func activateLocalSession(secret: Data, liteUsername: String? = nil) throws {
@@ -735,7 +996,34 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// dropped by the next pass after ``activateLocalSession(secret:liteUsername:)``
     /// installs a different identity. Re-track those whenever the identity changes.
     public func trackStatementRenewalTargets(_ targets: [StatementRenewalTarget]) throws {
-        try inner.trackStatementRenewalTargets(targets: targets.map(\.native))
+        try inner.trackStatementRenewalTargets(targets: targets)
+    }
+
+    /// The accounts the ledger tracks, in the order they were tracked.
+    ///
+    /// Needs no active session, so a `BGTaskScheduler` wake can read it on a
+    /// cold start before deciding whether a pass is worth running.
+    public func statementRenewalTargets() throws -> [TrackedStatementRenewalTarget] {
+        try inner.statementRenewalTargets()
+    }
+
+    /// The root public key the active identity records its fixed entries under.
+    ///
+    /// Needs an active session. An entry from ``statementRenewalTargets()``
+    /// whose owner is this key, or which has no owner, is one a pass will
+    /// renew; any other is one it will prune.
+    public func statementRenewalOwnerKey() throws -> Data {
+        try inner.statementRenewalOwnerKey()
+    }
+
+    /// Stop renewing one fixed statement account, reporting whether the ledger
+    /// held it.
+    ///
+    /// Scoped to the active identity, so it never removes an entry another
+    /// identity promised.
+    @discardableResult
+    public func untrackStatementRenewalAccount(accountId: Data) throws -> Bool {
+        try inner.untrackStatementRenewalAccount(accountId: accountId)
     }
 
     /// Run one renewal pass now, reporting what each tracked target got.
@@ -776,40 +1064,14 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 }
 
-/// An account renewal should keep allowed on the Statement Store.
-public enum StatementRenewalTarget: Sendable {
-    /// The statement-store allowance account derived for one product. Resolves
-    /// under whatever root entropy is active, so it survives a rotation.
-    case productStatementAllowance(productId: String)
-    /// The wallet's own SSO account. Also a derivation, so it survives a rotation.
-    case walletSso
-    /// A fixed account, such as a pairing peer's device statement key. Must be
-    /// exactly 32 bytes, and is dropped when the promising identity changes.
-    case account(accountId: Data, label: String)
-
-    var native: NativeStatementRenewalTarget {
-        switch self {
-        case let .productStatementAllowance(productId):
-            .productStatementAllowance(productId: productId)
-        case .walletSso:
-            .walletSso
-        case let .account(accountId, label):
-            .account(accountId: accountId, label: label)
-        }
-    }
-}
-
 /// Testable surface for one connection-scoped product execution.
 public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func startWsBridge(bindPort: UInt16) throws -> WsBridgeEndpoint
     func stopWsBridge()
     func close()
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
-    func renderCustomMessage(
-        messageId: String,
-        messageType: String,
-        payload: Data
-    ) throws -> AsyncThrowingStream<CustomRendererNode, Error>
+    func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
+    func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus
@@ -819,11 +1081,13 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     ) throws
     func notifyThemeChanged(theme: HostThemeSubscribeItem)
     func notifyLocaleChanged(locale: HostLocaleSubscribeItem)
+    func notifyStorageChanged(key: String, value: Data?)
     func notifyPreimageChanged(key: Data, value: Data?)
     func notifyChainResponse(connectionId: UInt32, json: String)
     func notifyChainClosed(connectionId: UInt32)
     func notifyChatRoomsChanged(rooms: [ChatRoom])
     func sessionChatIdentityKey() throws -> Data?
+    func notifyPocketCardsChanged(cards: [PocketCard])
 }
 
 /// One App, Widget, or Worker executable connected to a shared host runtime.
@@ -831,15 +1095,21 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     private let inner: NativeProductExecution
     private let callbackRetainer: HostCallbacks
     private let chatRetainer: NativeChatCallbacks?
+    private let pocketRetainer: NativePocketCallbacks?
+    private let gameRetainer: NativeGameCallbacks?
 
     fileprivate init(
         inner: NativeProductExecution,
         callbackRetainer: HostCallbacks,
-        chatRetainer: NativeChatCallbacks?
+        chatRetainer: NativeChatCallbacks?,
+        pocketRetainer: NativePocketCallbacks?,
+        gameRetainer: NativeGameCallbacks?
     ) {
         self.inner = inner
         self.callbackRetainer = callbackRetainer
         self.chatRetainer = chatRetainer
+        self.pocketRetainer = pocketRetainer
+        self.gameRetainer = gameRetainer
     }
 
     deinit {
@@ -862,19 +1132,20 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         try inner.publishChatAction(action: action)
     }
 
-    public func renderCustomMessage(
-        messageId: String,
-        messageType: String,
-        payload: Data
-    ) throws -> AsyncThrowingStream<CustomRendererNode, Error> {
-        try customRendererStream { observer in
-            try inner.renderCustomMessage(
-                messageId: messageId,
-                messageType: messageType,
-                payload: payload,
-                observer: observer
-            )
+    public func render(
+        _ request: ProductRendererRenderRequest
+    ) throws -> AsyncThrowingStream<RendererNode, Error> {
+        try rendererStream { observer in
+            try inner.render(request: request, observer: observer)
         }
+    }
+
+    public func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws {
+        try inner.publishRendererAction(item: item)
+    }
+
+    public func notifyPocketCardsChanged(cards: [PocketCard]) {
+        inner.notifyPocketCardsChanged(cards: cards)
     }
 
     public func permissionAuthorizationStatus(
@@ -883,6 +1154,7 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         try await inner.permissionAuthorizationStatus(request: request)
     }
 
+    /// Updates the product decision used by subsequent permission checks.
     public func setPermissionAuthorizationStatus(
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus
@@ -896,6 +1168,16 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func notifyLocaleChanged(locale: HostLocaleSubscribeItem) {
         inner.notifyLocaleChanged(locale: locale)
+    }
+
+    /// Push a host storage change to active TrUAPI storage subscriptions,
+    /// across every execution of the product; `nil` means cleared.
+    ///
+    /// Only for changes the host makes itself. A write a product made through
+    /// TrUAPI already reaches its subscribers, so reporting one here delivers
+    /// it twice.
+    public func notifyStorageChanged(key: String, value: Data?) {
+        inner.notifyStorageChanged(key: key, value: value)
     }
 
     public func notifyPreimageChanged(key: Data, value: Data?) {
@@ -916,6 +1198,26 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func notifyChatRoomsChanged(rooms: [ChatRoom]) {
         inner.notifyChatRoomsChanged(rooms: rooms)
+    }
+}
+
+private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
+    do {
+        return try operation()
+    } catch let error as HostRejection {
+        throw error
+    } catch {
+        throw HostRejection.Rejected(reason: hostRejectionReason(error))
+    }
+}
+
+private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
+    do {
+        return try await operation()
+    } catch let error as HostRejection {
+        throw error
+    } catch {
+        throw HostRejection.Rejected(reason: hostRejectionReason(error))
     }
 }
 
@@ -946,13 +1248,13 @@ private func hostRejectionReason(_ error: Error) -> String {
 /// whole failed statement.
 private let hostRejectionReasonMaxCharacters = 256
 
-private func customRendererStream(
-    _ subscribe: (CustomRendererStreamObserver) throws -> NativeCustomRendererSubscription
-) throws -> AsyncThrowingStream<CustomRendererNode, Error> {
+private func rendererStream(
+    _ subscribe: (RendererStreamObserver) throws -> NativeRendererSubscription
+) throws -> AsyncThrowingStream<RendererNode, Error> {
     let (stream, continuation) = AsyncThrowingStream.makeStream(
-        of: CustomRendererNode.self
+        of: RendererNode.self
     )
-    let observer = CustomRendererStreamObserver(continuation: continuation)
+    let observer = RendererStreamObserver(continuation: continuation)
     let subscription = try subscribe(observer)
     continuation.onTermination = { @Sendable _ in
         subscription.cancel()
@@ -960,14 +1262,14 @@ private func customRendererStream(
     return stream
 }
 
-private final class CustomRendererStreamObserver: NativeCustomRendererObserver, @unchecked Sendable {
-    private let continuation: AsyncThrowingStream<CustomRendererNode, Error>.Continuation
+private final class RendererStreamObserver: NativeRendererObserver, @unchecked Sendable {
+    private let continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
 
-    init(continuation: AsyncThrowingStream<CustomRendererNode, Error>.Continuation) {
+    init(continuation: AsyncThrowingStream<RendererNode, Error>.Continuation) {
         self.continuation = continuation
     }
 
-    func onUpdate(node: CustomRendererNode) {
+    func onUpdate(node: RendererNode) {
         continuation.yield(node)
     }
 
@@ -978,12 +1280,12 @@ private final class CustomRendererStreamObserver: NativeCustomRendererObserver, 
     /// The product could not serve the render, so the last tree yielded is
     /// partial. Finishing with an error keeps that distinct from a clean end.
     func onError(reason: String) {
-        continuation.finish(throwing: CustomRendererStreamError(reason: reason))
+        continuation.finish(throwing: RendererStreamError(reason: reason))
     }
 }
 
 /// A render the product declined or could not encode.
-public struct CustomRendererStreamError: Error, CustomStringConvertible {
+public struct RendererStreamError: Error, CustomStringConvertible {
     /// Why the product ended the render.
     public let reason: String
 

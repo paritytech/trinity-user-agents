@@ -14,6 +14,9 @@ import type { DiagnosisRow } from "./diagnosis.ts";
 
 export const VRF_APPROVAL_ACTION = "sign VRF transcript";
 export const ALLOCATION_APPROVAL_ACTION = "allocate resources";
+export const SIGN_RAW_APPROVAL_ACTION = "sign raw data";
+export const SIGN_PAYLOAD_APPROVAL_ACTION = "sign payload";
+export const CREATE_TRANSACTION_APPROVAL_ACTION = "create transaction";
 
 /** Non-empty transcript lines, oldest first. */
 export function approvalLines(text: string): string[] {
@@ -125,9 +128,91 @@ export async function runAutoSigningE2e(
         );
       }
     }
+    // The RFC-0023 VRF path is one of four the grant covers. The rest are
+    // product-account signing APIs, each asserted the same way: open a
+    // transcript window, call, and require the call's own action to be absent.
+    const account = {
+      dotNsIdentifier: productId,
+      derivationIndex: { tag: "Index", value: 0 } as const,
+    };
+    /** Lines for `action` appended since `before`. Empty means no prompt fired. */
+    const promptsSince = (before: string[], action: string): string[] =>
+      actionLines(newLinesSince(before, readTranscript()), action);
+
+    /**
+     * Run one covered call and require it to append no line for `action`.
+     * Returns an error row, or null when the call was served prompt-free.
+     */
+    const requireNoPrompt = async (
+      name: string,
+      action: string,
+      call: () => Promise<{ isOk: () => boolean; error: unknown }>,
+    ): Promise<DiagnosisRow | null> => {
+      const before = readTranscript();
+      const result = await call();
+      if (!result.isOk()) {
+        return finish(
+          "fail",
+          `${name} failed: ${JSON.stringify(result.error)}`,
+        );
+      }
+      const prompts = promptsSince(before, action);
+      return prompts.length > 0
+        ? finish(
+            "fail",
+            `${name} consulted a confirmation despite the AutoSigning grant: ${prompts.join("; ")}`,
+          )
+        : null;
+    };
+
+    const failure =
+      (await requireNoPrompt("sign_raw", SIGN_RAW_APPROVAL_ACTION, () =>
+        client.signing.signRaw({
+          account,
+          payload: { tag: "Bytes", value: { bytes: "0x48656c6c6f" } },
+        }),
+      )) ??
+      (await requireNoPrompt("sign_payload", SIGN_PAYLOAD_APPROVAL_ACTION, () =>
+        // Optional fields are absent rather than null: the codec wraps each in
+        // `Option`, so a null reaches the hex encoder as a value.
+        client.signing.signPayload({
+          account,
+          payload: {
+            blockHash: `0x${"00".repeat(32)}`,
+            blockNumber: "0x00000000",
+            era: "0x0000",
+            genesisHash: `0x${"00".repeat(32)}`,
+            method: "0x00003448656c6c6f2c20776f726c6421",
+            nonce: "0x00000000",
+            signedExtensions: [],
+            specVersion: "0x00000000",
+            tip: "0x00000000000000000000000000000000",
+            transactionVersion: "0x00000000",
+            version: 4,
+          },
+        }),
+      )) ??
+      (await requireNoPrompt(
+        "create_transaction",
+        CREATE_TRANSACTION_APPROVAL_ACTION,
+        () =>
+          // V4 is assembled offline, so the grant is the only variable here.
+          client.signing.createTransaction({
+            signer: account,
+            genesisHash: `0x${"01".repeat(32)}`,
+            callData: "0x0400",
+            extensions: [],
+            txExtVersion: 0,
+          }),
+      ));
+    if (failure) {
+      return failure;
+    }
+
     return finish(
       "pass",
-      "AutoSigning allocated with consent; 2 sign_vrf calls served without a confirmation prompt",
+      "AutoSigning allocated with consent; 2 sign_vrf calls plus sign_raw, " +
+        "sign_payload and create_transaction served without a confirmation prompt",
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

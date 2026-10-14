@@ -1,0 +1,212 @@
+[
+ {
+  "id": "g0",
+  "lods": {
+   "mid": {
+    "file": "meshes/g0-mid.bin",
+    "layout": {
+     "position": {
+      "offset": 0,
+      "count": 915,
+      "components": 3
+     },
+     "normal": {
+      "offset": 10980,
+      "count": 915,
+      "components": 3
+     },
+     "surf": {
+      "offset": 21960,
+      "count": 915,
+      "components": 4
+     },
+     "index": {
+      "offset": 36600,
+      "count": 5040,
+      "components": 1
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "g1",
+  "lods": {
+   "mid": {
+    "file": "meshes/g1-mid.bin",
+    "layout": {
+     "position": {
+      "offset": 0,
+      "count": 960,
+      "components": 3
+     },
+     "normal": {
+      "offset": 11520,
+      "count": 960,
+      "components": 3
+     },
+     "surf": {
+      "offset": 23040,
+      "count": 960,
+      "components": 4
+     },
+     "index": {
+      "offset": 38400,
+      "count": 5292,
+      "components": 1
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "g2",
+  "lods": {
+   "mid": {
+    "file": "meshes/g2-mid.bin",
+    "layout": {
+     "position": {
+      "offset": 0,
+      "count": 855,
+      "components": 3
+     },
+     "normal": {
+      "offset": 10260,
+      "count": 855,
+      "components": 3
+     },
+     "surf": {
+      "offset": 20520,
+      "count": 855,
+      "components": 4
+     },
+     "index": {
+      "offset": 34200,
+      "count": 4704,
+      "components": 1
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "g3",
+  "lods": {
+   "mid": {
+    "file": "meshes/g3-mid.bin",
+    "layout": {
+     "position": {
+      "offset": 0,
+      "count": 1403,
+      "components": 3
+     },
+     "normal": {
+      "offset": 16836,
+      "count": 1403,
+      "components": 3
+     },
+     "surf": {
+      "offset": 33672,
+      "count": 1403,
+      "components": 4
+     },
+     "index": {
+      "offset": 56120,
+      "count": 7920,
+      "components": 1
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "g5",
+  "lods": {
+   "mid": {
+    "file": "meshes/g5-mid.bin",
+    "layout": {
+     "position": {
+      "offset": 0,
+      "count": 1311,
+      "components": 3
+     },
+     "normal": {
+      "offset": 15732,
+      "count": 1311,
+      "components": 3
+     },
+     "surf": {
+      "offset": 31464,
+      "count": 1311,
+      "components": 4
+     },
+     "index": {
+      "offset": 52440,
+      "count": 7392,
+      "components": 1
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "g6",
+  "lods": {
+   "mid": {
+    "file": "meshes/g6-mid.bin",
+    "layout": {
+     "position": {
+      "offset": 0,
+      "count": 915,
+      "components": 3
+     },
+     "normal": {
+      "offset": 10980,
+      "count": 915,
+      "components": 3
+     },
+     "surf": {
+      "offset": 21960,
+      "count": 915,
+      "components": 4
+     },
+     "index": {
+      "offset": 36600,
+      "count": 5040,
+      "components": 1
+     }
+    }
+   }
+  }
+ },
+ {
+  "id": "g7",
+  "lods": {
+   "mid": {
+    "file": "meshes/g7-mid.bin",
+    "layout": {
+     "position": {
+      "offset": 0,
+      "count": 1472,
+      "components": 3
+     },
+     "normal": {
+      "offset": 17664,
+      "count": 1472,
+      "components": 3
+     },
+     "surf": {
+      "offset": 35328,
+      "count": 1472,
+      "components": 4
+     },
+     "index": {
+      "offset": 58880,
+      "count": 8316,
+      "components": 1
+     }
+    }
+   }
+  }
+ }
+]

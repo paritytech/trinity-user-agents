@@ -1,0 +1,18 @@
+// Shared Release settings for polkadot-app and NotificationServiceExtension.
+// Leaf configs under <target>/Configs/ include this file and add only BUNDLE.
+// Flags are vended as BASE_SWIFT_FLAGS so each leaf keeps its own OTHER_SWIFT_FLAGS line.
+// Brand identity values come from Configs/brand.xcconfig — gitignored, created from
+// Configs/brand.template.xcconfig. Identity is not in version control.
+//
+// ICON_SUFFIX is intentionally unset: ASSETCATALOG_COMPILER_APPICON_NAME resolves to "AppIcon".
+//
+// BASE_SWIFT_FLAGS is intentionally empty: Release carries no environment and no feature
+// flags. See polkadot-app/Configs/BuildFeatures.swift for the flag matrix.
+
+#include "brand.xcconfig"
+
+BASE_SWIFT_FLAGS =
+
+APP_NAME        = $(BRAND_DISPLAY_NAME)
+APP_MAIN_BUNDLE = $(BRAND_BUNDLE_ROOT)
+DEEPLINK        = $(BRAND_DEEPLINK)

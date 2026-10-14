@@ -1,0 +1,8 @@
+{
+  "name": "polkadotapp-workflows",
+  "description": "PolkadotApp project workflow skills: /architect for planning, /implementer for writing code, /reviewer for auditing diffs, /commit-message for commit formatting. Loads architecture and code docs from .claude/docs/ on demand.",
+  "version": "1.0.0",
+  "author": {
+    "name": "PolkadotApp"
+  }
+}

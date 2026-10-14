@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The localhost WebSocket bridge binds a 127.0.0.1 TCP socket, which
+         requires the INTERNET permission even for loopback. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

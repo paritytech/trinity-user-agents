@@ -1,0 +1,41 @@
+name: Upsert a pull request comment
+description: >-
+  Keep exactly one marker-tagged comment on a pull request. Edits the existing
+  comment rather than adding another, and deletes duplicates the thread has
+  collected, so a branch that moves does not accumulate one comment per push.
+
+inputs:
+  marker:
+    description: >-
+      HTML comment identifying this comment, for example
+      `<!-- ci-status-summary -->`. Prepended to the body, and the string
+      matched against to find what to edit, so it must be unique per caller.
+    required: true
+  body-file:
+    description: >-
+      File holding the comment body, without the marker. A missing file posts
+      nothing and succeeds, so a caller with nothing to say needs no condition
+      of its own.
+    required: true
+  pr-number:
+    description: Pull request to comment on.
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  github-token:
+    description: >-
+      Token used to read and write comments. Needs `pull-requests` write
+      permission on the calling job.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ inputs.pr-number }}
+        MARKER: ${{ inputs.marker }}
+        BODY_FILE: ${{ inputs.body-file }}
+      run: '"${{ github.action_path }}/upsert.sh"'

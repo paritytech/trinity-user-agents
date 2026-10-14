@@ -1,0 +1,138 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "account.backup.pending" : {
+      "comment" : "Warning row on the asset details while the installation's on-chain backup registration is still pending",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account backup is still in progress. Keep the app open until it completes."
+          }
+        }
+      }
+    },
+    "backup.updated.message" : {
+      "comment" : "Toast message shown after confirming balance sync completion",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Balance updated. You're all set."
+          }
+        }
+      }
+    },
+    "cancel.confirm" : {
+      "comment" : "Confirm button in the cancel balance sync confirmation sheet",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yes, I'm done"
+          }
+        }
+      }
+    },
+    "cancel.description" : {
+      "comment" : "Description in the cancel balance sync confirmation sheet",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Once you close this, manual update\nwon't be available again"
+          }
+        }
+      }
+    },
+    "cancel.keep" : {
+      "comment" : "Keep button in the cancel balance sync confirmation sheet",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "cancel.title" : {
+      "comment" : "Title of the cancel balance sync confirmation sheet",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Done updating your\nbalance?"
+          }
+        }
+      }
+    },
+    "notification.description" : {
+      "comment" : "Description on the backup notification card",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If it differs from the previous value, press Update until correct"
+          }
+        }
+      }
+    },
+    "notification.title" : {
+      "comment" : "Title label on the backup notification card",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Balance restored"
+          }
+        }
+      }
+    },
+    "notification.why" : {
+      "comment" : "Why update link on the backup notification card",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Why update?"
+          }
+        }
+      }
+    },
+    "why.description" : {
+      "comment" : "Description in the why update balance bottom sheet",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Private accounts don’t support automatic syncing. Manually updating your balance helps keep it accurate."
+          }
+        }
+      }
+    },
+    "why.title" : {
+      "comment" : "Title of the why update balance bottom sheet",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Why is this required?"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

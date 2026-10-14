@@ -1,0 +1,199 @@
+name: Collect PRs since the last build
+description: >
+  Pull requests behind the commits between what the last successful run of this
+  workflow built and what this one is building.
+
+# A host that builds its default branch directly has no release branch to diff
+# against, and diffing that branch with itself yields nothing. The range that
+# describes such a build is the one between consecutive builds, which is what
+# this reads: the previous successful run of the same workflow records the
+# commit it built, and every pull request reachable from there to here belongs
+# in the announcement.
+#
+# Anchoring on a commit rather than on a time window is what makes the list
+# exact. A window is measured from when the step runs, so it drifts by the
+# length of the build, repeats a pull request when one night builds faster than
+# the last, and drops everything merged over a weekend the schedule skipped.
+
+inputs:
+  github_token:
+    description: Token used to read workflow runs, commits and pull requests.
+    required: true
+  head_sha:
+    description: The commit being built. Defaults to the commit this run is for.
+    required: false
+    default: ""
+  event:
+    description: >
+      Only anchor on runs started by this event. A caller that announces on one
+      event alone must set it, or a run that announced nothing becomes the
+      anchor and the work it covered is never reported by anything.
+    required: false
+    default: ""
+  required_job:
+    description: >
+      Only anchor on runs in which the job with this name succeeded. A run that
+      skipped its build still concludes success, so without this a night that
+      built nothing becomes the anchor and the work before it goes unannounced.
+    required: false
+    default: ""
+
+outputs:
+  release_notes:
+    description: Markdown list of the pull requests in the range, one per line.
+    value: ${{ steps.collect.outputs.release_notes }}
+  pr_count:
+    description: How many pull requests the range covers.
+    value: ${{ steps.collect.outputs.pr_count }}
+  breaking_count:
+    description: How many of those pull requests are titled as breaking changes.
+    value: ${{ steps.collect.outputs.breaking_count }}
+  base_sha:
+    description: The commit the last successful run built, empty when there was none.
+    value: ${{ steps.collect.outputs.base_sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Collect the pull requests
+      id: collect
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      env:
+        INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+        INPUT_EVENT: ${{ inputs.event }}
+        INPUT_REQUIRED_JOB: ${{ inputs.required_job }}
+        MAX_COMMIT_PAGES: "5"
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const emitNothing = (notes) => {
+            core.setOutput('release_notes', notes || '');
+            core.setOutput('pr_count', '0');
+            core.setOutput('breaking_count', '0');
+            core.setOutput('base_sha', '');
+          };
+          try {
+            const { owner, repo } = context.repo;
+            const head = process.env.INPUT_HEAD_SHA || context.sha;
+
+            const empty = (notes) => {
+              core.setOutput('release_notes', notes || '');
+              core.setOutput('pr_count', '0');
+              core.setOutput('breaking_count', '0');
+            };
+
+            // The workflow is read from this run. Inside a reusable workflow that
+            // resolves to the caller, so each pipeline that calls this keeps its
+            // own history and a nightly is never anchored on a release.
+            const { data: thisRun } = await github.rest.actions.getWorkflowRun({
+              owner, repo, run_id: context.runId,
+            });
+            core.info(`Anchoring on workflow ${thisRun.workflow_id}, branch ${thisRun.head_branch}`);
+
+            const event = process.env.INPUT_EVENT || '';
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner, repo,
+              workflow_id: thisRun.workflow_id,
+              branch: thisRun.head_branch,
+              status: 'success',
+              ...(event ? { event } : {}),
+              per_page: 20,
+            });
+
+            // Newest first, and a run still in progress is not a success, so the
+            // only reason this run could appear is a re-read after it finished.
+            const candidates = runs.data.workflow_runs
+              .filter((run) => run.id !== context.runId)
+              .filter((run) => new Date(run.created_at) < new Date(thisRun.created_at))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+            const requiredJob = process.env.INPUT_REQUIRED_JOB || '';
+            let previous;
+            for (const run of candidates) {
+              if (!requiredJob) { previous = run; break; }
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                owner, repo, run_id: run.id, per_page: 100,
+              });
+              if (jobs.some((job) => job.name === requiredJob && job.conclusion === 'success')) {
+                previous = run;
+                break;
+              }
+              core.info(`Run ${run.id} succeeded without '${requiredJob}' running; not an anchor.`);
+            }
+
+            if (!previous) {
+              core.warning('No earlier successful run of this workflow, so there is no range to list.');
+              core.setOutput('base_sha', '');
+              empty('- First build of this pipeline, so there is nothing to compare it with.');
+              return;
+            }
+
+            core.info(`Previous successful run ${previous.id} built ${previous.head_sha} at ${previous.created_at}`);
+            core.setOutput('base_sha', previous.head_sha);
+
+            if (previous.head_sha === head) {
+              core.info('The last successful run built this same commit.');
+              empty('');
+              return;
+            }
+
+            const maxPages = Number(process.env.MAX_COMMIT_PAGES);
+            const commits = [];
+            let total = null;
+            for (let page = 1; page <= maxPages; page += 1) {
+              const { data } = await github.rest.repos.compareCommitsWithBasehead({
+                owner, repo,
+                basehead: `${previous.head_sha}...${head}`,
+                per_page: 100,
+                page,
+              });
+              total = data.total_commits;
+              commits.push(...data.commits);
+              if (commits.length >= total || data.commits.length === 0) break;
+            }
+            if (total !== null && commits.length < total) {
+              core.warning(`The range holds ${total} commits and only the first ${commits.length} were read, so the list below is partial.`);
+            }
+            core.info(`Range ${previous.head_sha.slice(0, 8)}..${head.slice(0, 8)} holds ${commits.length} commits`);
+
+            const seen = new Set();
+            const merged = [];
+            for (const commit of commits) {
+              const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner, repo, commit_sha: commit.sha,
+              });
+              for (const pr of prs) {
+                if (!pr.merged_at || seen.has(pr.number)) continue;
+                seen.add(pr.number);
+                merged.push(pr);
+              }
+            }
+
+            core.info(`Found ${merged.length} merged pull request(s)`);
+            if (merged.length === 0) {
+              empty('');
+              return;
+            }
+
+            // One line per pull request, the same shape the release-branch diff
+            // produces. A title carrying `!` is a breaking change by this
+            // repository's convention (.claude/skills/semver-pr-title). Those
+            // come first and say so inside their own line: the announcement
+            // renders every line as a list item, so a heading line would show
+            // up as an item of its own.
+            const isBreaking = (pr) => /^\w+(\([^)]*\))?!:/.test(pr.title || '');
+            const line = (pr) =>
+              `- [#${pr.number}](${pr.html_url}): ${isBreaking(pr) ? 'Breaking: ' : ''}${pr.title}`.trimEnd();
+            const breaking = merged.filter(isBreaking);
+            const rest = merged.filter((pr) => !isBreaking(pr));
+            const notes = [...breaking, ...rest].map(line).join('\n');
+            core.info(notes);
+            core.setOutput('release_notes', notes);
+            core.setOutput('pr_count', String(merged.length));
+            core.setOutput('breaking_count', String(breaking.length));
+          } catch (error) {
+            // Warn rather than fail. An announcement without its list is worse
+            // than one with it and better than no build at all.
+            core.warning(`Could not read the range of pull requests: ${error.message}`);
+            emitNothing('');
+          }

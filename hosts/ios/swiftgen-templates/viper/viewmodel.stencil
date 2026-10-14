@@ -1,0 +1,15 @@
+import Observation
+import SwiftUI
+
+public protocol {{moduleName}}ViewModelProtocol {
+    // Add your view model properties here
+}
+
+@Observable
+public class {{moduleName}}ViewModel: {{moduleName}}ViewModelProtocol {
+    // Add your view model properties here
+
+    public init() {
+    }
+}
+

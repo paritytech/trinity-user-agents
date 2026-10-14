@@ -1,189 +1,391 @@
 import { describe, expect, it } from 'bun:test';
 
-import { POLICY_GLOBAL, consumeWebRtcPolicy, installWebRtcPolicy } from './webrtc.js';
+import { installWebRtcPolicy } from './webrtc.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-/** Stand-in for the native constructor, so a test can tell it apart. */
-class NativePeerConnection {
-  createOffer() { return Promise.resolve({ sdp: 'native', type: 'offer' }); }
-  createAnswer() { return Promise.resolve({ sdp: 'native', type: 'answer' }); }
-  setLocalDescription() { return Promise.resolve(); }
-  setRemoteDescription() { return Promise.resolve(); }
-  addIceCandidate() { return Promise.resolve(); }
-  createDataChannel() { return { send() {} }; }
-}
+function realm(): any {
+  class NativePeerConnection {
+    operations: Array<[string, unknown[]]> = [];
+    pools: number[] = [];
+    closed = false;
+    configuration: any;
 
-function realm(policy?: unknown): any {
-  const win: any = {
+    constructor(configuration: any = {}) {
+      this.configuration = {
+        iceCandidatePoolSize: configuration?.iceCandidatePoolSize ?? 0,
+        iceServers: configuration?.iceServers ?? [],
+      };
+      this.pools.push(this.configuration.iceCandidatePoolSize);
+    }
+    createOffer(...args: any[]) {
+      this.operations.push(['createOffer', args]);
+      const offer = { sdp: 'native', type: 'offer' };
+      if (typeof args[0] === 'function') args[0](offer);
+      return Promise.resolve(offer);
+    }
+    createAnswer(...args: any[]) {
+      this.operations.push(['createAnswer', args]);
+      return Promise.resolve({ sdp: 'native', type: 'answer' });
+    }
+    setLocalDescription(...args: any[]) {
+      this.operations.push(['setLocalDescription', args]);
+      return Promise.resolve();
+    }
+    setRemoteDescription(...args: any[]) {
+      this.operations.push(['setRemoteDescription', args]);
+      return Promise.resolve();
+    }
+    addIceCandidate(...args: any[]) {
+      this.operations.push(['addIceCandidate', args]);
+      return Promise.resolve();
+    }
+    getConfiguration() {
+      return { ...this.configuration };
+    }
+    setConfiguration(configuration: any) {
+      this.configuration = {
+        iceCandidatePoolSize: configuration.iceCandidatePoolSize ?? 0,
+        iceServers: configuration.iceServers ?? [],
+      };
+      this.pools.push(this.configuration.iceCandidatePoolSize);
+    }
+    close() {
+      this.closed = true;
+    }
+    createDataChannel() {
+      return { send() {} };
+    }
+  }
+  return {
     RTCPeerConnection: NativePeerConnection,
     webkitRTCPeerConnection: NativePeerConnection,
+    Promise,
+    TypeError,
   };
-  if (policy !== undefined) {
-    win[POLICY_GLOBAL] = policy;
-  }
-  return win;
+}
+
+function gated() {
+  const win = realm();
+  const decisions: Array<(allowed: boolean) => void> = [];
+  let cancelled = 0;
+  installWebRtcPolicy(win, (decide) => {
+    decisions.push(decide);
+    return () => {
+      cancelled += 1;
+    };
+  });
+  return { win, decisions, cancellations: () => cancelled };
 }
 
 function denied(): any {
-  const win = realm({ webRtcAllowed: false });
-  installWebRtcPolicy(win, consumeWebRtcPolicy(win));
+  const win = realm();
+  installWebRtcPolicy(win, false);
   return win;
 }
 
-describe('the decision', () => {
-  it('leaves the constructor in place when granted', () => {
-    const win = realm({ webRtcAllowed: true });
-    installWebRtcPolicy(win, consumeWebRtcPolicy(win));
-    expect(win.RTCPeerConnection).toBe(NativePeerConnection);
+describe('connection permission', () => {
+  it('shares one decision across concurrent methods and reuses it only for that connection', async () => {
+    const { win, decisions } = gated();
+    const first = new win.RTCPeerConnection();
+    const offer = first.createOffer({ iceRestart: true });
+    const answer = first.createAnswer();
+    expect([decisions.length, first.operations]).toEqual([1, []]);
+    decisions[0]!(true);
+    expect(await offer).toEqual({ sdp: 'native', type: 'offer' });
+    expect(await answer).toEqual({ sdp: 'native', type: 'answer' });
+    await first.setLocalDescription({ type: 'offer', sdp: 'native' });
+    await first.setRemoteDescription({ type: 'answer', sdp: 'remote' });
+    await first.addIceCandidate({ candidate: 'candidate' });
+    expect([decisions.length, first.operations]).toEqual([
+      1,
+      [
+        ['createOffer', [{ iceRestart: true }]],
+        ['createAnswer', []],
+        ['setLocalDescription', [{ type: 'offer', sdp: 'native' }]],
+        ['setRemoteDescription', [{ type: 'answer', sdp: 'remote' }]],
+        ['addIceCandidate', [{ candidate: 'candidate' }]],
+      ],
+    ]);
+    const second = new win.RTCPeerConnection();
+    const rejected = second.createOffer();
+    decisions[1]!(false);
+    await expect(rejected).rejects.toThrow('WebRTC access is not allowed');
+    expect([decisions.length, second.closed, second.operations]).toEqual([
+      2,
+      true,
+      [],
+    ]);
   });
 
-  it('removes the constructor when denied', () => {
-    expect(denied().RTCPeerConnection).toBeUndefined();
+  it('closes a denied connection and cannot revive it with a late approval', async () => {
+    const { win, decisions } = gated();
+    const connection = new win.RTCPeerConnection();
+    const pending = connection.createOffer();
+    decisions[0]!(false);
+    decisions[0]!(true);
+    await expect(pending).rejects.toThrow('WebRTC access is not allowed');
+    await expect(connection.createAnswer()).rejects.toThrow(
+      'WebRTC access is not allowed',
+    );
+    expect([
+      connection.operations,
+      decisions.length,
+      connection.closed,
+    ]).toEqual([[], 1, true]);
   });
 
-  it('removes vendor-prefixed aliases too', () => {
-    // A separate constructor, not a view of the standard one: leaving it
-    // behind would reopen the path outright.
-    expect(denied().webkitRTCPeerConnection).toBeUndefined();
+  it('cancels pending authorization when closed without running queued methods', async () => {
+    const { win, decisions, cancellations } = gated();
+    const connection = new win.RTCPeerConnection();
+    const pending = connection.createOffer();
+    connection.close();
+    decisions[0]!(true);
+    await expect(pending).rejects.toThrow('WebRTC connection is closed');
+    await expect(connection.createOffer()).rejects.toThrow(
+      'WebRTC connection is closed',
+    );
+    expect([connection.operations, connection.closed, cancellations()]).toEqual(
+      [[], true, 1],
+    );
   });
 
-  it('consumes the policy global so the realm does not carry it', () => {
-    const win = realm({ webRtcAllowed: true });
-    consumeWebRtcPolicy(win);
-    expect(win[POLICY_GLOBAL]).toBeUndefined();
-  });
-});
-
-describe('fails closed', () => {
-  // A subframe gets the container but no bootstrap, so it has no policy at all.
-  it('with no policy global', () => {
+  it('supports immediate decisions and native callback arguments', async () => {
     const win = realm();
-    installWebRtcPolicy(win, consumeWebRtcPolicy(win));
-    expect(win.RTCPeerConnection).toBeUndefined();
-  });
-
-  // Only an explicit `true` may grant, so a truthy-but-not-true value — the
-  // shape a sloppy host or a tampered global would produce — must still deny.
-  const nonGrants: Array<[string, unknown]> = [
-    ['a truthy string', 'yes'],
-    ['a truthy number', 1],
-    ['null', null],
-    ['undefined', undefined],
-    ['an empty policy object', {}],
-  ];
-  for (const [label, value] of nonGrants) {
-    it(`on ${label}`, () => {
-      const win = realm({ webRtcAllowed: value });
-      installWebRtcPolicy(win, consumeWebRtcPolicy(win));
-      expect(win.RTCPeerConnection).toBeUndefined();
+    installWebRtcPolicy(win, (decide) => {
+      decide(true);
+      return () => {};
     });
-  }
+    const connection = new win.RTCPeerConnection();
+    let received: unknown;
+    await connection.createOffer(
+      (offer: unknown) => {
+        received = offer;
+      },
+      () => {},
+    );
+    expect(received).toEqual({ sdp: 'native', type: 'offer' });
+  });
+
+  it('reports denial through a supplied legacy error callback', async () => {
+    const { win, decisions } = gated();
+    const connection = new win.RTCPeerConnection();
+    let failure: unknown;
+    const pending = connection.createOffer(
+      () => {},
+      (error: unknown) => {
+        failure = error;
+      },
+    );
+    decisions[0]!(false);
+    await pending;
+    expect(String(failure)).toContain('WebRTC access is not allowed');
+    expect(connection.operations).toEqual([]);
+  });
 });
 
-// The four escapes that killed the gate in truapi#379. Each recovered a working
-// peer connection from a *subclass*-based gate, because a subclass leaves the
-// native class reachable. Each route below must yield no connection that can
-// produce an offer — that is the property, not "some property access throws".
-//
-// `attempt` runs a route and reports what a product would actually get: an
-// offer means the route won.
-async function attempt(route: () => any): Promise<string | null> {
-  try {
-    const offer = await route().createOffer();
-    return offer?.sdp ?? null;
-  } catch {
-    return null;
-  }
-}
-
-describe('resists the #379 escapes when denied', () => {
-  it('yields no connection by deleting a shadowing prototype method', async () => {
-    const win = denied();
-    expect(
-      await attempt(() => {
-        delete win.RTCPeerConnection.prototype.createOffer;
-        return new win.RTCPeerConnection();
-      }),
-    ).toBeNull();
+describe('ICE pooling before consent', () => {
+  it('defers constructor pooling and preserves inherited and nonenumerable configuration', async () => {
+    const { win, decisions } = gated();
+    const configuration = Object.create({
+      iceServers: [{ urls: 'stun:example.com' }],
+    });
+    Object.defineProperty(configuration, 'iceCandidatePoolSize', { value: 4 });
+    const connection = new win.RTCPeerConnection(configuration);
+    expect([
+      connection.pools,
+      connection.getConfiguration(),
+      decisions.length,
+    ]).toEqual([
+      [0],
+      { iceCandidatePoolSize: 4, iceServers: [{ urls: 'stun:example.com' }] },
+      0,
+    ]);
+    const pending = connection.createOffer();
+    decisions[0]!(true);
+    await pending;
+    expect(connection.pools).toEqual([0, 4]);
   });
 
-  it('yields no connection by reaching the parent prototype', async () => {
-    const win = denied();
-    expect(
-      await attempt(() => {
-        const pc = new win.RTCPeerConnection();
-        const parent = Object.getPrototypeOf(Object.getPrototypeOf(pc));
-        return { createOffer: () => parent.createOffer.call(pc) };
-      }),
-    ).toBeNull();
+  it('defers setConfiguration pooling and applies only the latest requested value', async () => {
+    const { win, decisions } = gated();
+    const connection = new win.RTCPeerConnection({ iceCandidatePoolSize: 4 });
+    connection.setConfiguration({ iceCandidatePoolSize: 7 });
+    expect(connection.pools).toEqual([0, 0]);
+    const pending = connection.createOffer();
+    connection.setConfiguration({ iceCandidatePoolSize: 2 });
+    decisions[0]!(true);
+    await pending;
+    connection.setConfiguration({ iceCandidatePoolSize: 3 });
+    expect(connection.pools).toEqual([0, 0, 0, 2, 3]);
   });
 
-  it('yields no connection by recovering the class [[Prototype]]', async () => {
-    const win = denied();
-    expect(
-      await attempt(() => new (Object.getPrototypeOf(win.RTCPeerConnection))()),
-    ).toBeNull();
-  });
-
-  it('has no pending request whose resolver could be stolen', () => {
-    // The decisive #379 break: hook the primitive the pending-request
-    // bookkeeping used, steal the `{resolve, reject}` pair, and forge a grant.
-    // A settled boolean has no such bookkeeping, so there is nothing to hand a
-    // product.
-    const win = realm({ webRtcAllowed: false });
-    const realSet = Map.prototype.set;
-    let stolen: unknown;
-    Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
-      stolen = value;
-      return realSet.call(this, key, value);
-    };
-    try {
-      installWebRtcPolicy(win, consumeWebRtcPolicy(win));
-    } finally {
-      Map.prototype.set = realSet;
+  it('validates the WebIDL octet range without starting ICE', () => {
+    const { win } = gated();
+    for (const iceCandidatePoolSize of [
+      -1,
+      256,
+      NaN,
+      Infinity,
+      1n,
+      Symbol('pool'),
+    ]) {
+      expect(
+        () => new win.RTCPeerConnection({ iceCandidatePoolSize }),
+      ).toThrow();
     }
-    expect(stolen).toBeUndefined();
-    expect(win.RTCPeerConnection).toBeUndefined();
+    const connection = new win.RTCPeerConnection({
+      iceCandidatePoolSize: '2.8',
+    });
+    expect([
+      connection.pools,
+      connection.getConfiguration().iceCandidatePoolSize,
+    ]).toEqual([[0], 2]);
   });
 
-  it('cannot be restored by redefining the property', () => {
-    const win = denied();
-    expect(() =>
-      Object.defineProperty(win, 'RTCPeerConnection', { value: NativePeerConnection }),
-    ).toThrow();
-    expect(win.RTCPeerConnection).toBeUndefined();
-  });
-
-  it('ignores a plain assignment', () => {
-    const win = denied();
-    win.RTCPeerConnection = NativePeerConnection;
-    expect(win.RTCPeerConnection).toBeUndefined();
+  it('cannot start pooling through the recovered prototype constructor or setConfiguration', async () => {
+    const { win, decisions } = gated();
+    const Constructor = win.RTCPeerConnection.prototype.constructor;
+    const connection = new Constructor({ iceCandidatePoolSize: 8 });
+    Object.getPrototypeOf(connection).setConfiguration.call(connection, {
+      iceCandidatePoolSize: 9,
+    });
+    expect(connection.pools).toEqual([0, 0]);
+    const pending = connection.createOffer();
+    decisions[0]!(false);
+    await expect(pending).rejects.toThrow();
+    expect(connection.pools).toEqual([0, 0]);
   });
 });
 
-// Guard the guard: the same routes must succeed against the subclass design, or
-// the tests above would pass for a gate that does nothing.
-describe('the escape routes are real against a subclass gate', () => {
-  function subclassGated(): any {
-    const Gated = class extends NativePeerConnection {
-      override createOffer(): any {
-        return Promise.reject(new TypeError('WebRTC access is not allowed'));
-      }
-    };
-    return { RTCPeerConnection: Gated };
-  }
-
-  it('the parent prototype still answers', async () => {
-    const win = subclassGated();
-    const pc = new win.RTCPeerConnection();
-    const parent = Object.getPrototypeOf(Object.getPrototypeOf(pc));
-    expect(await parent.createOffer.call(pc)).toMatchObject({ sdp: 'native' });
+describe('authorization cannot be forged by product code', () => {
+  it('keeps native methods guarded after prototype and constructor recovery', async () => {
+    const { win, decisions } = gated();
+    const Constructor = win.RTCPeerConnection;
+    const connection = new Constructor();
+    expect(Object.getPrototypeOf(Constructor)).toBe(Function.prototype);
+    expect(Constructor.prototype.constructor).toBe(Constructor);
+    expect(connection instanceof Constructor).toBe(true);
+    expect(() => {
+      delete Constructor.prototype.createOffer;
+    }).toThrow();
+    expect(() =>
+      Object.defineProperty(Constructor.prototype, 'createOffer', {
+        value: () => true,
+      }),
+    ).toThrow();
+    const pending =
+      Object.getPrototypeOf(connection).createOffer.call(connection);
+    decisions[0]!(false);
+    await expect(pending).rejects.toThrow();
+    expect(connection.operations).toEqual([]);
   });
 
-  it('the class [[Prototype]] is the native constructor', async () => {
-    const win = subclassGated();
-    const Native = Object.getPrototypeOf(win.RTCPeerConnection);
-    expect(await new Native().createOffer()).toMatchObject({ sdp: 'native' });
+  it('protects each vendor constructor and does not wrap shared aliases twice', async () => {
+    const { win, decisions } = gated();
+    expect(win.webkitRTCPeerConnection).toBe(win.RTCPeerConnection);
+    const connection = new win.webkitRTCPeerConnection();
+    const pending = connection.createOffer();
+    decisions[0]!(true);
+    await pending;
+    expect([decisions.length, connection.operations.length]).toEqual([1, 1]);
+    const separate = realm();
+    separate.webkitRTCPeerConnection = realm().RTCPeerConnection;
+    installWebRtcPolicy(separate, (decide) => {
+      decide(false);
+      return () => {};
+    });
+    await expect(
+      new separate.webkitRTCPeerConnection().createOffer(),
+    ).rejects.toThrow();
+
+    const shared = realm();
+    const Native = shared.RTCPeerConnection;
+    const Alias = function (...args: any[]) {
+      return Reflect.construct(Native, args);
+    };
+    Alias.prototype = Native.prototype;
+    shared.webkitRTCPeerConnection = Alias;
+    installWebRtcPolicy(shared, (decide) => {
+      decide(true);
+      return () => {};
+    });
+    expect(shared.webkitRTCPeerConnection).toBe(shared.RTCPeerConnection);
+    await expect(
+      new shared.webkitRTCPeerConnection().createOffer(),
+    ).resolves.toMatchObject({ sdp: 'native' });
+  });
+
+  it('does not expose pending state to replaced collection or Promise primitives', async () => {
+    const { win, decisions } = gated();
+    const original = {
+      mapSet: Map.prototype.set,
+      weakSet: WeakMap.prototype.set,
+      weakGet: WeakMap.prototype.get,
+      then: Promise.prototype.then,
+      apply: Reflect.apply,
+    };
+    const stolen: unknown[] = [];
+    let pending: Promise<unknown>;
+    let connection: any;
+    try {
+      Map.prototype.set = function (...args: any[]) {
+        stolen.push(args);
+        return this;
+      };
+      WeakMap.prototype.set = function (...args: any[]) {
+        stolen.push(args);
+        return this;
+      };
+      WeakMap.prototype.get = function (...args: any[]) {
+        stolen.push(args);
+        return { phase: 'allowed' };
+      };
+      Promise.prototype.then = function (...args: any[]): any {
+        stolen.push(args);
+        return this;
+      };
+      Reflect.apply = function (...args: any[]): any {
+        stolen.push(args);
+        return true;
+      };
+      connection = new win.RTCPeerConnection();
+      pending = connection.createOffer();
+    } finally {
+      Map.prototype.set = original.mapSet;
+      WeakMap.prototype.set = original.weakSet;
+      WeakMap.prototype.get = original.weakGet;
+      Promise.prototype.then = original.then;
+      Reflect.apply = original.apply;
+    }
+    expect([stolen, connection.operations, decisions.length]).toEqual([
+      [],
+      [],
+      1,
+    ]);
+    decisions[0]!(false);
+    await expect(pending!).rejects.toThrow();
+    expect(connection.operations).toEqual([]);
+  });
+});
+
+describe('an unsupported host stays disabled', () => {
+  it('removes standard and prefixed constructors', () => {
+    const win = denied();
+    expect([win.RTCPeerConnection, win.webkitRTCPeerConnection]).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('cannot be restored by assignment or redefining the property', () => {
+    const win = denied();
+    win.RTCPeerConnection = realm().RTCPeerConnection;
+    expect(win.RTCPeerConnection).toBeUndefined();
+    expect(() =>
+      Object.defineProperty(win, 'RTCPeerConnection', {
+        value: realm().RTCPeerConnection,
+      }),
+    ).toThrow();
   });
 });

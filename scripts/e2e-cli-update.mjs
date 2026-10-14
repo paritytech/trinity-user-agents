@@ -109,6 +109,19 @@ async function main() {
       existsSync(join(root, `versions/${version}/runner.js`)),
       true,
     );
+    check(
+      "the matching product-script types ship beside the runner",
+      readFileSync(join(root, `versions/${version}/script-types.d.ts`), "utf8"),
+      readFileSync(
+        join(repoRoot, "rust/crates/truapi-host-cli/js/script-types.d.ts"),
+        "utf8",
+      ),
+    );
+    check(
+      "the dev container ships beside the runner",
+      existsSync(join(root, `versions/${version}/sandbox-assets/container.js`)),
+      true,
+    );
     // The checkout's runner imports @parity/truapi by relative path. Running the
     // packaged one from an unrelated directory proves the client is bundled in,
     // so a downloaded install needs no source tree: it reaches its own env check
@@ -124,7 +137,10 @@ async function main() {
       true,
     );
     const script = join(home, "script.ts");
-    writeFileSync(script, 'console.log("installed runner reached");\n');
+    writeFileSync(
+      script,
+      'assert(typeof Bun !== "undefined"); assert(typeof process !== "undefined"); console.log("installed runner reached");\n',
+    );
     const scriptRun = await run(
       entrypoint,
       [
@@ -246,7 +262,7 @@ async function main() {
     check(
       "a local build shows how to get the prebuilt release",
       local.stderr.includes(
-        "curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash",
+        "curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash",
       ),
       true,
     );

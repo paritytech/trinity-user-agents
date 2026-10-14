@@ -1,0 +1,40 @@
+[package]
+name = "truapi-verifiable"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The ring-VRF operations truapi uses; the browser core loads it as a WASM module"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+    "-Oz",
+    "--one-caller-inline-max-function-size",
+    "0",
+    "--enable-bulk-memory",
+    "--enable-nontrapping-float-to-int",
+    "--enable-reference-types",
+    "--enable-sign-ext",
+    "--strip-debug",
+    "--strip-dwarf",
+    "--strip-producers",
+]
+
+[package.metadata.wasm-pack.profile.release.wasm-bindgen]
+debug-js-glue = false
+demangle-name-section = false
+dwarf-debug-info = false
+
+[dependencies]
+verifiable = { git = "https://github.com/paritytech/verifiable.git", rev = "19b03deb89b8dea484b143afc8bbe048a74bc1ff" }
+parity-scale-codec.workspace = true
+wasm-bindgen.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { workspace = true, features = ["js"] }
+
+[lints]
+workspace = true

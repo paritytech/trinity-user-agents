@@ -1,0 +1,229 @@
+name: Firebase Debug Distribution
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - truapi-dev
+  workflow_dispatch:
+
+env:
+  APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+  IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
+  APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
+  CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+  CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+  FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL }}
+  LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
+  PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
+  SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+  TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
+  VERSIONS_KT_PATH: build-logic/convention/src/main/kotlin/Versions.kt
+  # Firebase App Distribution tester groups, one per branch this workflow serves.
+  CI_FIREBASE_GROUP_MAIN: android-dev-testers
+  CI_FIREBASE_GROUP_TRUAPI_DEV: truapi-dev-testers
+
+jobs:
+  resolve:
+    name: Resolve distribution target
+    runs-on: ubuntu-latest
+    # Gates the whole workflow: every other job depends on this one. Closed but
+    # unmerged PRs stop here, and so do release-* PRs: those are built and
+    # distributed by firebase_release_distribution.yml while the PR is open, so
+    # merging one must not also ship a debug build.
+    # Held: this configuration ships from trinity-user-agents.
+    # The condition this replaces:
+    #   if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true && !startsWith(github.event.pull_request.head.ref, 'release-')) || github.event_name == 'workflow_dispatch'
+    if: false
+    outputs:
+      branch: ${{ steps.target.outputs.branch }}
+      firebase_group: ${{ steps.target.outputs.firebase_group }}
+      release_notes: ${{ steps.target.outputs.release_notes }}
+    steps:
+      - name: Resolve branch, Firebase group and release notes
+        id: target
+        # Values arrive through env rather than inline ${{ }} so that a PR title
+        # is never parsed by the shell.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # On pull_request, github.ref_name is the merge ref ("42/merge"), so
+          # the target is the PR base. On workflow_dispatch it is the ref the run
+          # was started from.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BRANCH="${BASE_REF:-}"
+            NOTES="[$BRANCH] $PR_TITLE $PR_SHA"
+          else
+            BRANCH="${REF_NAME:-}"
+            NOTES="[$BRANCH] manual build $DISPATCH_SHA"
+          fi
+
+          if [ -z "$BRANCH" ]; then
+            echo "::error::Could not resolve a target branch for event $EVENT_NAME"
+            exit 1
+          fi
+
+          case "$BRANCH" in
+            main)       GROUP="$CI_FIREBASE_GROUP_MAIN" ;;
+            truapi-dev) GROUP="$CI_FIREBASE_GROUP_TRUAPI_DEV" ;;
+            # workflow_dispatch can be started from any ref. Keep the previous
+            # default instead of failing, but make the surprise visible.
+            *)
+              GROUP="$CI_FIREBASE_GROUP_MAIN"
+              echo "::warning::No tester group mapped for '$BRANCH'; defaulting to $GROUP"
+              ;;
+          esac
+
+          echo "Branch: $BRANCH -> Firebase group: $GROUP"
+
+          # The notes carry an untrusted PR title into GITHUB_OUTPUT. Collapse it
+          # to a single line and close the heredoc with an unguessable delimiter,
+          # so a title can never forge additional outputs such as firebase_group.
+          NOTES="$(printf '%s' "$NOTES" | tr '\r\n' '  ')"
+          DELIMITER="RELEASE_NOTES_$(openssl rand -hex 16)"
+
+          {
+            echo "branch=$BRANCH"
+            echo "firebase_group=$GROUP"
+            echo "release_notes<<$DELIMITER"
+            echo "$NOTES"
+            echo "$DELIMITER"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build app
+    runs-on: ubuntu-latest
+    needs: resolve
+    outputs:
+      build_number: ${{ steps.build_number.outputs.build_number }}
+      marketing_version: ${{ steps.read_version.outputs.marketing_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install dependencies
+        uses: ./.github/actions/install/
+
+      - name: Calculate build number
+        id: build_number
+        run: |
+          BUILD_NUMBER=$((10000 + ${{ github.run_number }}))
+          echo "CI_BUILD_ID=${BUILD_NUMBER}" >> $GITHUB_ENV
+          echo "build_number=${BUILD_NUMBER}" >> $GITHUB_OUTPUT
+          echo "Calculated build number: ${BUILD_NUMBER}"
+
+      - name: Update build number in Versions.kt
+        run: |
+          set -euo pipefail
+
+          echo "Setting build number to ${{ env.CI_BUILD_ID }}..."
+          python3 .github/scripts/update_build_number.py \
+            --build-number ${{ env.CI_BUILD_ID }}
+
+      - name: Read marketing version
+        id: read_version
+        run: |
+          set -euo pipefail
+
+          echo "Reading marketing version from Versions.kt..."
+          python3 .github/scripts/read_versions.py \
+            --output-format env | grep "marketing_version=" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Android build files
+        uses: ./.github/actions/prepare-android-build
+        with:
+          google_services_json_base64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          keystore_file_base64: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
+          keystore_path: develop_key.jks
+
+      - name: Build Debug apk
+        env:
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: ./gradlew assembleGpDebug --no-daemon --stacktrace
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: apk
+          path: app/build/outputs/apk/gp/debug
+
+  upload-to-firebase:
+    name: Upload APK to Firebase
+    runs-on: ubuntu-latest
+    needs: [resolve, build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Download built artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: apk
+          path: app
+
+      - name: Upload to Firebase
+        uses: ./.github/actions/upload-to-firebase
+        with:
+          appId: ${{ secrets.ANDROID_FIREBASE_APP_ID }}
+          firebase-token: ${{ secrets.FIREBASE_GOOGLE_SERVICE_ACCOUNT }}
+          releaseNotes: ${{ needs.resolve.outputs.release_notes }}
+          test-groups: ${{ needs.resolve.outputs.firebase_group }}
+          upload-file: app/app-gp-debug.apk
+
+  upload-to-s3:
+    name: Upload APK to S3
+    runs-on: ubuntu-latest
+    needs: [resolve, build]
+    # S3 holds the canonical debug artefacts, including a static "latest"
+    # pointer. Only main publishes there so a branch build can never masquerade
+    # as the latest main build; branch builds are distributed via Firebase only.
+    if: needs.resolve.outputs.branch == 'main'
+    env:
+      S3_BUCKET: s3://polkadot-app-artefacts
+      S3_REGION: fr-par
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Download built artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: apk
+          path: apk
+
+      - name: Upload to S3
+        uses: novasamatech/github-actions/s3-upload@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          s3_region: ${{ env.S3_REGION }}
+          s3_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          s3_secret_key: ${{ secrets.SCW_SECRET_KEY }}
+          s3_bucket: ${{ env.S3_BUCKET }}
+          source_path: apk/app-gp-debug.apk
+          destination_path: /android/debug/polkadot-app-${{ needs.build.outputs.marketing_version }}-${{ needs.build.outputs.build_number }}.apk
+
+      - name: Upload to S3 (static path)
+        uses: novasamatech/github-actions/s3-upload@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          s3_region: ${{ env.S3_REGION }}
+          s3_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          s3_secret_key: ${{ secrets.SCW_SECRET_KEY }}
+          s3_bucket: ${{ env.S3_BUCKET }}
+          source_path: apk/app-gp-debug.apk
+          destination_path: /android/debug/polkadot-app.apk

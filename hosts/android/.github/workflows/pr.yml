@@ -1,0 +1,77 @@
+name: Pull request
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+  IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
+  APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
+  CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+  CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+  FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL }}
+  LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
+  PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
+  SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+  TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
+
+on:
+  pull_request:
+  merge_group:
+
+jobs:
+  lint-and-test:
+    name: Run linter and tests
+    if: github.event_name == 'merge_group' || ! startsWith(github.event.pull_request.head.ref, 'release-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: 🔧 Install dependencies
+        uses: ./.github/actions/install/
+
+      - name: Prepare Android build files
+        uses: ./.github/actions/prepare-android-build
+        with:
+          google_services_json_base64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+
+      - name: Run tests
+        env:
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+        run: ./gradlew testGpDebugUnitTest testGpReleaseUnitTest testDebugUnitTest testReleaseUnitTest --no-daemon --stacktrace
+
+  build:
+    name: Run build
+    if: github.event_name == 'merge_group' || ! startsWith(github.event.pull_request.head.ref, 'release-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: 🔧 Install dependencies
+        uses: ./.github/actions/install/
+
+      - name: Prepare Android build files
+        uses: ./.github/actions/prepare-android-build
+        with:
+          google_services_json_base64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          keystore_file_base64: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
+          keystore_path: develop_key.jks
+
+      - name: Build
+        env:
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+        run: ./gradlew assembleGpDebug --no-daemon --stacktrace

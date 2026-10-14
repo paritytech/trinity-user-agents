@@ -1,0 +1,332 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root_nav_graph"
+    app:startDestination="@id/splashFragment">
+
+    <fragment
+        android:id="@+id/splashFragment"
+        android:name="io.paritytech.polkadotapp.feature_splash_impl.presentation.SplashFragment"
+        android:label="SplashFragment" />
+
+    <fragment
+        android:id="@+id/chatFeedFragment"
+        android:name="io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.ChatFeedFragment"
+        android:label="ChatFeedFragment" />
+
+    <fragment
+        android:id="@+id/chatSearchFragment"
+        android:name="io.paritytech.polkadotapp.feature_chats_impl.presentation.chatSearch.ChatSearchFragment"
+        android:label="ChatSearchFragment" />
+
+    <fragment
+        android:id="@+id/CurrencyFragment"
+        android:name="io.paritytech.polkadotapp.feature_settings_impl.presentation.currency.CurrencyFragment"
+        android:label="CurrencyFragment" />
+
+    <fragment
+        android:id="@+id/blockedUsersFragment"
+        android:name="io.paritytech.polkadotapp.feature_settings_impl.presentation.blockedUsers.BlockedUsersFragment"
+        android:label="BlockedUsersFragment" />
+
+    <fragment
+        android:id="@+id/linkedDevicesFragment"
+        android:name="io.paritytech.polkadotapp.feature_settings_impl.presentation.linkedDevices.LinkedDevicesFragment"
+        android:label="LinkedDevicesFragment" />
+
+    <fragment
+        android:id="@+id/legalAndSupportFragment"
+        android:name="io.paritytech.polkadotapp.feature_settings_impl.presentation.legalAndSupport.LegalAndSupportFragment"
+        android:label="LegalAndSupportFragment" />
+
+    <fragment
+        android:id="@+id/deviceDetailsFragment"
+        android:name="io.paritytech.polkadotapp.feature_settings_impl.presentation.deviceDetails.DeviceDetailsFragment"
+        android:label="DeviceDetailsFragment" />
+
+
+    <fragment
+        android:id="@+id/ThemeFragment"
+        android:name="io.paritytech.polkadotapp.feature_settings_impl.presentation.theme.ThemeFragment"
+        android:label="ThemeFragment" />
+
+    <fragment
+        android:id="@+id/debugMenuFragment"
+        android:name="io.paritytech.polkadotapp.app.root.presentation.debug.DebugMenuFragment"
+        android:label="DebugMenuFragment" />
+
+    <dialog
+        android:id="@+id/reportIssueBottomSheet"
+        android:name="io.paritytech.polkadotapp.app.root.presentation.debug.reportIssue.ReportIssueBottomSheet"
+        android:label="ReportIssueBottomSheet" />
+
+    <fragment
+        android:id="@+id/productBotManagementFragment"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductBotManagementFragment"
+        android:label="ProductBotManagementFragment" />
+
+    <fragment
+        android:id="@+id/pocketFacePreviewFragment"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview.PocketFacePreviewFragment"
+        android:label="PocketFacePreviewFragment" />
+
+    <fragment
+        android:id="@+id/spaBrowserFragment"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserFragment"
+        android:label="SpaBrowserFragment" />
+
+    <dialog
+        android:id="@+id/spaSheetBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.spaSheet.SpaSheetBottomSheet"
+        android:label="SpaSheetBottomSheet" />
+
+    <dialog
+        android:id="@+id/pocketAddCardBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.pocketAddCard.PocketAddCardBottomSheet"
+        android:label="PocketAddCardBottomSheet" />
+
+    <dialog
+        android:id="@+id/pairRequestBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_sso_impl.presentation.pairRequest.PairRequestBottomSheet"
+        android:label="PairRequestBottomSheet" />
+
+    <dialog
+        android:id="@+id/transactionSignBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.signTransaction.TransactionSignBottomSheet"
+        android:label="TransactionSignBottomSheet" />
+
+    <dialog
+        android:id="@+id/permissionPromptBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.PermissionPromptBottomSheet"
+        android:label="PermissionPromptBottomSheet" />
+
+    <dialog
+        android:id="@+id/paymentRequestBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.paymentRequest.PaymentRequestBottomSheet"
+        android:label="PaymentRequestBottomSheet" />
+
+    <dialog
+        android:id="@+id/topUpRequestBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.topUpRequest.TopUpRequestBottomSheet"
+        android:label="TopUpRequestBottomSheet" />
+
+    <dialog
+        android:id="@+id/resourceAllocationRequestBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.resourceAllocationRequest.ResourceAllocationRequestBottomSheet"
+        android:label="ResourceAllocationRequestBottomSheet" />
+
+    <dialog
+        android:id="@+id/crossProductProofBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.crossProductProof.CrossProductProofBottomSheet"
+        android:label="CrossProductProofBottomSheet" />
+
+    <fragment
+        android:id="@+id/chatRequestsListFragment"
+        android:name="io.paritytech.polkadotapp.feature_chats_impl.presentation.chatRequestsList.ChatRequestsListFragment"
+        android:label="ChatRequestsListFragment" />
+
+
+    <fragment
+        android:id="@+id/themeSelectionOnboarding"
+        android:name="io.paritytech.polkadotapp.feature_settings_impl.presentation.theme.ThemeFragmentOnboarding"
+        android:label="ThemeFragmentOnboarding" />
+
+    <action
+        android:id="@+id/action_global_to_main_graph"
+        app:destination="@id/main_graph"
+        app:popUpTo="@id/root_nav_graph"
+        app:popUpToInclusive="true" />
+
+    <action
+        android:id="@+id/action_global_to_claim_username_graph"
+        app:destination="@id/claim_username_graph"
+        app:popUpTo="@id/root_nav_graph"
+        app:popUpToInclusive="true" />
+
+    <action
+        android:id="@+id/action_global_to_registration_queue"
+        app:destination="@id/claim_username_graph"
+        app:popUpTo="@id/root_nav_graph"
+        app:popUpToInclusive="true" />
+
+    <action
+        android:id="@+id/action_global_to_claim_unavailable"
+        app:destination="@id/claim_username_graph"
+        app:popUpTo="@id/root_nav_graph"
+        app:popUpToInclusive="true" />
+
+    <action
+        android:id="@+id/action_global_to_integrity_failed"
+        app:destination="@id/claim_username_graph"
+        app:popUpTo="@id/root_nav_graph"
+        app:popUpToInclusive="true" />
+
+    <action
+        android:id="@+id/action_global_to_chatFeedFragment"
+        app:destination="@id/chatFeedFragment"
+        app:popUpTo="@id/mainFragment" />
+
+    <action
+        android:id="@+id/action_global_to_chatSearchFragment"
+        app:destination="@id/chatSearchFragment" />
+
+    <action
+        android:id="@+id/action_global_to_chatRequestsListFragment"
+        app:destination="@id/chatRequestsListFragment" />
+
+    <action
+        android:id="@+id/action_global_to_send_contact_payment_graph"
+        app:destination="@id/send_contact_payment_graph" />
+
+    <action
+        android:id="@+id/action_global_to_send_enter_amount_graph"
+        app:destination="@id/send_enter_amount_graph" />
+
+    <action
+        android:id="@+id/action_global_to_theme_onboarding"
+        app:destination="@+id/themeSelectionOnboarding"
+        app:popUpTo="@id/root_nav_graph"
+        app:popUpToInclusive="true" />
+
+    <action
+        android:id="@+id/action_global_to_backup_graph"
+        app:destination="@id/backup_graph" />
+
+    <action
+        android:id="@+id/action_global_to_debug_menu"
+        app:destination="@id/debugMenuFragment"
+        app:launchSingleTop="true" />
+
+    <action
+        android:id="@+id/action_global_to_reportIssueBottomSheet"
+        app:destination="@id/reportIssueBottomSheet"
+        app:launchSingleTop="true" />
+
+    <action
+        android:id="@+id/action_global_to_product_bots_management"
+        app:destination="@id/productBotManagementFragment"
+        app:launchSingleTop="true" />
+
+    <action
+        android:id="@+id/action_global_to_pocket_face_preview"
+        app:destination="@id/pocketFacePreviewFragment"
+        app:launchSingleTop="true" />
+
+    <action
+        android:id="@+id/action_global_to_spaBrowserFragment"
+        app:destination="@id/spaBrowserFragment"
+        app:enterAnim="@anim/slide_in_bottom"
+        app:exitAnim="@anim/no_op"
+        app:popEnterAnim="@anim/no_op"
+        app:popExitAnim="@anim/slide_out_bottom" />
+
+    <action
+        android:id="@+id/action_global_to_change_currency"
+        app:destination="@id/CurrencyFragment"
+        app:launchSingleTop="true" />
+
+    <action
+        android:id="@+id/action_global_to_blockedUsersFragment"
+        app:destination="@id/blockedUsersFragment" />
+
+    <action
+        android:id="@+id/action_global_to_linkedDevicesFragment"
+        app:destination="@id/linkedDevicesFragment" />
+
+    <action
+        android:id="@+id/action_global_to_legalAndSupportFragment"
+        app:destination="@id/legalAndSupportFragment"
+        app:launchSingleTop="true" />
+
+    <action
+        android:id="@+id/action_global_to_deviceDetailsFragment"
+        app:destination="@id/deviceDetailsFragment" />
+
+
+    <action
+        android:id="@+id/action_global_to_change_theme"
+        app:destination="@id/ThemeFragment"
+        app:launchSingleTop="true" />
+
+    <action
+        android:id="@+id/action_global_to_fund_graph"
+        app:destination="@id/fund_graph" />
+
+    <action
+        android:id="@+id/action_global_to_scan_graph"
+        app:destination="@id/scan_graph" />
+
+    <action
+        android:id="@+id/action_global_to_spaSheetBottomSheet"
+        app:destination="@id/spaSheetBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_pocketAddCardBottomSheet"
+        app:destination="@id/pocketAddCardBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_pairRequestBottomSheet"
+        app:destination="@id/pairRequestBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_transactionSignBottomSheet"
+        app:destination="@id/transactionSignBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_permissionPromptBottomSheet"
+        app:destination="@id/permissionPromptBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_paymentRequestBottomSheet"
+        app:destination="@id/paymentRequestBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_topUpRequestBottomSheet"
+        app:destination="@id/topUpRequestBottomSheet" />
+
+    <dialog
+        android:id="@+id/truapiConfirmationBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.truapiConfirm.TrUAPIConfirmationBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_truapiConfirmationBottomSheet"
+        app:destination="@id/truapiConfirmationBottomSheet" />
+
+    <dialog
+        android:id="@+id/truapiContactPickBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.truapiContactPick.TrUAPIContactPickBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_truapiContactPickBottomSheet"
+        app:destination="@id/truapiContactPickBottomSheet" />
+
+    <dialog
+        android:id="@+id/truapiProductScanBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.truapiProductScan.TrUAPIProductScanBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_truapiProductScanBottomSheet"
+        app:destination="@id/truapiProductScanBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_resourceAllocationRequestBottomSheet"
+        app:destination="@id/resourceAllocationRequestBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_crossProductProofBottomSheet"
+        app:destination="@id/crossProductProofBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_product_settings_graph"
+        app:destination="@id/product_settings_graph" />
+
+    <include app:graph="@navigation/main_graph" />
+    <include app:graph="@navigation/username_graph" />
+    <include app:graph="@navigation/send_contact_payment_graph" />
+    <include app:graph="@navigation/send_enter_amount_graph" />
+    <include app:graph="@navigation/backup_graph" />
+    <include app:graph="@navigation/scan_graph" />
+    <include app:graph="@navigation/fund_graph" />
+    <include app:graph="@navigation/product_settings_graph" />
+
+</navigation>

@@ -1,0 +1,8 @@
+{
+  "name": "polkadotapp-workflows",
+  "description": "Architect, implement, and review workflows for Polkadot iOS app",
+  "version": "0.1.0",
+  "author": {
+    "name": "polkadotapp-team"
+  }
+}

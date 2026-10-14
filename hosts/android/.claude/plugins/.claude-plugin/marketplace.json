@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "polkadotapp-local",
+  "description": "Project-local marketplace for PolkadotApp workflow plugins.",
+  "owner": {
+    "name": "PolkadotApp"
+  },
+  "plugins": [
+    {
+      "name": "polkadotapp-workflows",
+      "description": "Architect / Implementer / Reviewer / Commit-message skills for the PolkadotApp codebase.",
+      "source": "./polkadotapp-workflows"
+    }
+  ]
+}

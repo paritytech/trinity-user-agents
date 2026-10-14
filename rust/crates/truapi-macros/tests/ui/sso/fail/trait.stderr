@@ -1,0 +1,5 @@
+error: sso_service requires an inherent implementation
+ --> tests/ui/sso/fail/trait.rs:2:1
+  |
+2 | trait Service {}
+  | ^^^^^^^^^^^^^^^^

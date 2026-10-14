@@ -1,0 +1,329 @@
+name: Nightly Releases
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+on:
+  schedule:
+    - cron: "0 17 * * *"
+  workflow_dispatch:
+
+env:
+  APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+  IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
+  APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
+  CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+  CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+  FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL }}
+  LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
+  PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
+  SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+  TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
+  CI_FIREBASE_GROUP: android-daily-tests
+  CI_FIREBASE_GROUP_VANILLA: android-daily-tests-vanilla
+  CI_FIREBASE_GROUP_SAFETYNET: android-safetynet-testers
+  # use it fot tests
+  #CI_FIREBASE_GROUP: nightly-ci-test
+  # comma-separated chat/room IDs for notifications
+  CI_MATRIX_ROOM_IDS: ${{ vars.CI_MATRIX_ROOM_IDS }}
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  nightly-release:
+    name: Build, upload to Firebase and create nightly GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Calculate build number
+        run: |
+          BUILD_NUMBER=$((1000 + ${{ github.run_number }}))
+          echo "CI_BUILD_ID=${BUILD_NUMBER}" >> $GITHUB_ENV
+
+      - name: Install dependencies
+        uses: ./.github/actions/install/
+
+      - name: Extract app version
+        run: |
+          echo "Reading version from Versions.kt..."
+          python3 .github/scripts/read_versions.py --output-format env > version_output.txt
+
+          # Extract marketing_version from script output
+          marketing_version=$(grep 'marketing_version=' version_output.txt | cut -d'=' -f2)
+
+          echo "APP_VERSION_NAME=$marketing_version" >> $GITHUB_ENV
+          echo "APP_VERSION_CODE=${CI_BUILD_ID}" >> $GITHUB_ENV
+
+          echo "::notice::App Version: $marketing_version (build $CI_BUILD_ID)"
+          echo "Extracted version: $marketing_version"
+          echo "Build number: $CI_BUILD_ID"
+
+      - name: Compute nightly release date
+        run: echo "RELEASE_DATE=$(date +'%d.%m.%Y')" >> $GITHUB_ENV
+
+      - name: Collect merged PRs — markdown
+        id: collect_prs
+        uses: novasamatech/github-actions/collect-prs@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          github_token: ${{ github.token }}
+          dst_ref: main
+          hours: "24"
+          release_notes_format: markdown
+
+      - name: Collect merged PRs — plain text
+        id: collect_prs_plain
+        if: steps.collect_prs.outputs.should_build == 'true'
+        uses: novasamatech/github-actions/collect-prs@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          github_token: ${{ github.token }}
+          dst_ref: main
+          hours: "24"
+          release_notes_format: plain
+
+      - name: Prepare Android build files
+        if: steps.collect_prs.outputs.should_build == 'true'
+        uses: ./.github/actions/prepare-android-build
+        with:
+          google_services_json_base64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          keystore_file_base64: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
+          keystore_path: develop_key.jks
+
+      - name: Build nightly APK
+        # Held: this configuration ships from trinity-user-agents.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        env:
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: ./gradlew assembleGpNightly --no-daemon --stacktrace
+
+      - name: Build vanilla nightly APK
+        # Held: this configuration ships from trinity-user-agents.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        env:
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: ./gradlew assembleVanillaNightly --no-daemon --stacktrace
+
+      - name: Build safetynet APK
+        if: steps.collect_prs.outputs.should_build == 'true'
+        env:
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: ./gradlew assembleGpSafetynet --no-daemon --stacktrace
+
+      - name: Build debug APK
+        # Held: this configuration ships from trinity-user-agents.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        env:
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: ./gradlew assembleGpDebug --no-daemon --stacktrace
+
+      - name: Build plain text release notes (for Firebase)
+        id: meta
+        if: steps.collect_prs.outputs.should_build == 'true'
+        shell: bash
+        env:
+          COLLECT_RELEASE_NOTES_PLAIN: ${{ steps.collect_prs_plain.outputs.release_notes }}
+        run: |
+          HEADER="Nightly ${RELEASE_DATE} (version ${APP_VERSION_NAME} code ${APP_VERSION_CODE})"
+          {
+            echo "release_notes_plain<<NOTES_PLAIN_EOF"
+            echo "$HEADER"
+            echo ""
+            echo "Merged pull requests:"
+            echo "${COLLECT_RELEASE_NOTES_PLAIN}"
+            echo "NOTES_PLAIN_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload nightly build to Firebase
+        # Held: this configuration ships from trinity-user-agents.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        uses: ./.github/actions/upload-to-firebase
+        with:
+          appId: ${{ secrets.ANDROID_FIREBASE_NIGHTLY_APP_ID }}
+          firebase-token: ${{ secrets.FIREBASE_GOOGLE_SERVICE_ACCOUNT }}
+          releaseNotes: ${{ steps.meta.outputs.release_notes_plain }}
+          test-groups: ${{ env.CI_FIREBASE_GROUP }}
+          upload-file: app/build/outputs/apk/gp/nightly/app-gp-nightly.apk
+
+      - name: Upload vanilla nightly build to Firebase
+        # Held: this configuration ships from trinity-user-agents.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        uses: ./.github/actions/upload-to-firebase
+        with:
+          appId: ${{ secrets.ANDROID_FIREBASE_NIGHTLY_APP_ID }}
+          firebase-token: ${{ secrets.FIREBASE_GOOGLE_SERVICE_ACCOUNT }}
+          releaseNotes: ${{ steps.meta.outputs.release_notes_plain }}
+          test-groups: ${{ env.CI_FIREBASE_GROUP_VANILLA }}
+          upload-file: app/build/outputs/apk/vanilla/nightly/app-vanilla-nightly.apk
+
+      - name: Upload safetynet build to Firebase
+        if: steps.collect_prs.outputs.should_build == 'true'
+        uses: ./.github/actions/upload-to-firebase
+        with:
+          appId: ${{ secrets.ANDROID_FIREBASE_SAFETYNET_APP_ID }}
+          firebase-token: ${{ secrets.FIREBASE_GOOGLE_SERVICE_ACCOUNT }}
+          releaseNotes: ${{ steps.meta.outputs.release_notes_plain }}
+          test-groups: ${{ env.CI_FIREBASE_GROUP_SAFETYNET }}
+          upload-file: app/build/outputs/apk/gp/safetynet/app-gp-safetynet.apk
+
+      - name: Upload to S3
+        # Held: this configuration ships from trinity-user-agents.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        uses: novasamatech/github-actions/s3-upload@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          s3_region: fr-par
+          s3_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          s3_secret_key: ${{ secrets.SCW_SECRET_KEY }}
+          s3_bucket: s3://polkadot-app-artefacts
+          source_path: app/build/outputs/apk/gp/nightly/app-gp-nightly.apk
+          destination_path: /android/nightly/polkadot-app-${{ env.APP_VERSION_NAME }}-${{ env.APP_VERSION_CODE }}.apk
+
+      - name: Upload to S3 (static path)
+        # Held: this configuration ships from trinity-user-agents.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        uses: novasamatech/github-actions/s3-upload@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          s3_region: fr-par
+          s3_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          s3_secret_key: ${{ secrets.SCW_SECRET_KEY }}
+          s3_bucket: s3://polkadot-app-artefacts
+          source_path: app/build/outputs/apk/gp/nightly/app-gp-nightly.apk
+          destination_path: /android/nightly/polkadot-app.apk
+
+      - name: Upload vanilla to S3
+        # Held: this configuration ships from trinity-user-agents.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        uses: novasamatech/github-actions/s3-upload@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          s3_region: fr-par
+          s3_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          s3_secret_key: ${{ secrets.SCW_SECRET_KEY }}
+          s3_bucket: s3://polkadot-app-artefacts
+          source_path: app/build/outputs/apk/vanilla/nightly/app-vanilla-nightly.apk
+          destination_path: /android/nightly/polkadot-app-vanilla-${{ env.APP_VERSION_NAME }}-${{ env.APP_VERSION_CODE }}.apk
+
+      - name: Upload vanilla to S3 (static path)
+        # Held: this configuration ships from trinity-user-agents.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        uses: novasamatech/github-actions/s3-upload@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          s3_region: fr-par
+          s3_access_key: ${{ secrets.SCW_ACCESS_KEY }}
+          s3_secret_key: ${{ secrets.SCW_SECRET_KEY }}
+          s3_bucket: s3://polkadot-app-artefacts
+          source_path: app/build/outputs/apk/vanilla/nightly/app-vanilla-nightly.apk
+          destination_path: /android/nightly/polkadot-app-vanilla.apk
+
+      - name: Trigger Allure TestOps tests
+        # Held: it reports on the nightly build, which is no longer
+        # produced here, so it would describe a frozen artifact.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        uses: novasamatech/github-actions/trigger-allure-testops@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          testplan_id: '733'
+          launch_name: 'Android Tests - Nightly ${{ env.RELEASE_DATE }}'
+          allure_token: ${{ secrets.ALLURE_TOKEN }}
+
+      - name: Create / update nightly GitHub release
+        if: steps.collect_prs.outputs.should_build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_LIST: ${{ steps.collect_prs.outputs.release_notes }}
+        run: |
+          TAG="v${{ env.APP_VERSION_NAME }}-${{ env.APP_VERSION_CODE }}"
+          RELEASE_NAME="Nightly ${{ env.RELEASE_DATE }}"
+          # Safetynet only. The nightly, vanilla and preview builds are held
+          # above, so attaching them would fail on a file that was never built.
+          SAFETYNET_APK_PATH="app/build/outputs/apk/gp/safetynet/app-gp-safetynet.apk"
+          RELEASE_NOTES="Nightly ${RELEASE_DATE} (version ${APP_VERSION_NAME} code ${APP_VERSION_CODE})
+
+          Merged pull requests:
+          ${PR_LIST}"
+
+          # Delete existing release if it exists (for update functionality)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Deleting existing release $TAG..."
+            gh release delete "$TAG" --yes --cleanup-tag
+          fi
+
+          # Create new nightly release
+          echo "Creating release $TAG..."
+          gh release create "$TAG" \
+            --title "$RELEASE_NAME" \
+            --notes "$RELEASE_NOTES" \
+            --target "${{ github.sha }}" \
+            "$SAFETYNET_APK_PATH"
+
+      - name: Send release notification
+        # Held: it reports on the nightly build, which is no longer
+        # produced here, so it would describe a frozen artifact.
+        # The condition this replaces:
+        #   if: steps.collect_prs.outputs.should_build == 'true'
+        if: false
+        uses: novasamatech/github-actions/send-release-notification@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5.4.0
+        with:
+          platform: Android
+          pr_list: ${{ steps.collect_prs.outputs.release_notes }}
+          release_info: |
+            Version: ${{ env.APP_VERSION_NAME }}
+            Build number: ${{ env.APP_VERSION_CODE }}
+          download_links_format: inline
+          download_links: ${{ vars.NIGHTLY_DOWNLOAD_LINKS }}
+          bot_url: ${{ secrets.NOTIFICATION_BOT_URL }}
+          bot_api_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
+          matrix_room_ids: ${{ env.CI_MATRIX_ROOM_IDS }}

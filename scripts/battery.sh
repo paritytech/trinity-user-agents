@@ -10,6 +10,7 @@
 #   scripts/battery.sh                    # both phases
 #   scripts/battery.sh --signing-host     # direct phase only
 #   scripts/battery.sh --pairing-host     # paired phase only
+#   scripts/battery.sh --pocket-host      # Pocket phase only
 #   scripts/battery.sh --release          # build and run the release binary
 #   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
 #
@@ -46,6 +47,7 @@ unset DYLD_LIBRARY_PATH
 
 SCRIPT="rust/crates/truapi-host-cli/js/scripts/battery.ts"
 CHAT_SCRIPT="rust/crates/truapi-host-cli/js/scripts/chat-battery.ts"
+POCKET_SCRIPT="rust/crates/truapi-host-cli/js/scripts/pocket-battery.ts"
 PRODUCT_ID="truapi-playground.dot"
 REPORTS="explorer/diagnosis-reports/spa"
 LOG_DIR="target/battery"
@@ -58,6 +60,7 @@ HOST_ARGS=()
 RUN_SIGNING=1
 RUN_PAIRING=1
 RUN_CHAT=0
+RUN_POCKET=0
 
 usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -70,6 +73,9 @@ while [ $# -gt 0 ]; do
     # Chat is its own phase: it needs a Chat-execution connection, which the
     # generated Spa battery cannot open, and it writes no diagnosis report.
     --chat-host) RUN_SIGNING=0; RUN_PAIRING=0; RUN_CHAT=1 ;;
+    # Pocket is its own phase for the same reason: it needs a Worker-execution
+    # connection with a seeded card set, which no other phase opens.
+    --pocket-host) RUN_SIGNING=0; RUN_PAIRING=0; RUN_POCKET=1 ;;
     --release) CARGO_ARGS+=(--release); PROFILE_DIR="release" ;;
     --product-id)
       [ $# -ge 2 ] || { echo "battery: --product-id needs a value" >&2; exit 2; }
@@ -92,9 +98,16 @@ fi
 # The battery imports the generated example manifest and the playground's
 # example runner, so both the codegen output and the playground's dependency
 # tree have to exist before a host starts.
+# The Rust dispatcher and wire table are ignored build outputs too, and the
+# host will not compile without them, so codegen is judged complete only when
+# every generated artifact exists rather than the TypeScript ones alone.
 generated=(
   "js/packages/truapi/src/generated/client.ts"
   "js/packages/truapi/src/playground/codegen/services.ts"
+  "rust/crates/truapi/src/generated/mod.rs"
+  "rust/crates/truapi/src/generated/dispatcher.rs"
+  "rust/crates/truapi/src/generated/wire_table.rs"
+  "rust/crates/truapi/src/wasm/generated_bridge.rs"
 )
 for path in "${generated[@]}"; do
   if [ ! -f "$path" ]; then
@@ -208,6 +221,27 @@ chat_phase() {
   return "$rc"
 }
 
+pocket_phase() {
+  local log="$LOG_DIR/pocket-host-cli.log"
+  echo "battery: pocket phase (host transcript $LOG_DIR/pocket-host-transcript.jsonl)"
+  # Removals as the host saw them. The cases read it so a pass cannot rest on
+  # the product's word alone.
+  export TRUAPI_POCKET_LOG="$ROOT/$LOG_DIR/pocket-host-transcript.jsonl"
+  export TRUAPI_POCKET_CARDS="loyalty,humanity:privileged"
+  rm -f "$TRUAPI_POCKET_LOG"
+  "$HOST" signing-host \
+    --product-id "$PRODUCT_ID" \
+    --execution-kind worker \
+    --script "$POCKET_SCRIPT" \
+    --auto-accept \
+    ${HOST_ARGS[@]+"${HOST_ARGS[@]}"} > >(tee "$log") 2>&1 &
+  local host_pid=$! rc=0
+  start_watchdog "$host_pid" "pocket phase"
+  wait "$host_pid" || rc=$?
+  stop_watchdog
+  return "$rc"
+}
+
 pairing_phase() {
   local log="$LOG_DIR/pairing-host-cli.log"
   local signer_log="$LOG_DIR/pairing-host-cli-signer.log"
@@ -281,6 +315,24 @@ pairing_phase() {
 SIGNING_RC="skipped"
 PAIRING_RC="skipped"
 CHAT_RC="skipped"
+POCKET_RC="skipped"
+
+# Each phase writes under the directory for the modality it exercises, so the
+# summary names the ones this run actually produced rather than always the App
+# directory.
+report_dirs() {
+  local dirs=""
+  if [ "$SIGNING_RC" != "skipped" ] || [ "$PAIRING_RC" != "skipped" ]; then
+    dirs="explorer/diagnosis-reports/spa/"
+  fi
+  if [ "$CHAT_RC" != "skipped" ]; then
+    dirs="${dirs:+$dirs, }explorer/diagnosis-reports/chat/"
+  fi
+  if [ "$POCKET_RC" != "skipped" ]; then
+    dirs="${dirs:+$dirs, }explorer/diagnosis-reports/pocket/"
+  fi
+  printf '%s' "${dirs:-explorer/diagnosis-reports/}"
+}
 
 if [ "$RUN_SIGNING" = 1 ]; then
   SIGNING_RC=0
@@ -297,9 +349,15 @@ if [ "$RUN_CHAT" = 1 ]; then
   chat_phase || CHAT_RC=$?
 fi
 
+if [ "$RUN_POCKET" = 1 ]; then
+  POCKET_RC=0
+  pocket_phase || POCKET_RC=$?
+fi
+
 echo
-echo "battery: signing-host exit=$SIGNING_RC · pairing-host exit=$PAIRING_RC · chat-host exit=$CHAT_RC"
-echo "battery: reports under $REPORTS/, logs under $LOG_DIR/"
+echo "battery: signing-host exit=$SIGNING_RC · pairing-host exit=$PAIRING_RC · chat-host exit=$CHAT_RC · pocket-host exit=$POCKET_RC"
+echo "battery: reports under $(report_dirs), logs under $LOG_DIR/"
 [ "$SIGNING_RC" = 0 ] || [ "$SIGNING_RC" = "skipped" ] || exit "$SIGNING_RC"
 [ "$PAIRING_RC" = 0 ] || [ "$PAIRING_RC" = "skipped" ] || exit "$PAIRING_RC"
 [ "$CHAT_RC" = 0 ] || [ "$CHAT_RC" = "skipped" ] || exit "$CHAT_RC"
+[ "$POCKET_RC" = 0 ] || [ "$POCKET_RC" = "skipped" ] || exit "$POCKET_RC"

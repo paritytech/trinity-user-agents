@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- Remote Config is the only Firebase service this flavor uses. FCM ships as a
+             transitive dependency but has no app-level handler and no GMS to deliver
+             messages, so its token registration must not start once the default
+             FirebaseApp exists. -->
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+    </application>
+
+</manifest>

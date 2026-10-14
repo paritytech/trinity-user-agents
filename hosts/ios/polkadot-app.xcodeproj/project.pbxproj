@@ -1,0 +1,1950 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0C06A1642EC6A51300E06744 /* MessageExchangeKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0C06A1632EC6A51300E06744 /* MessageExchangeKit */; };
+		0C0D0E1B2F90FE3E00D9D574 /* Individuality in Frameworks */ = {isa = PBXBuildFile; productRef = 0C0D0E1A2F90FE3E00D9D574 /* Individuality */; };
+		0C0DFC2F2F90983800D9D574 /* Individuality in Frameworks */ = {isa = PBXBuildFile; productRef = 0C0DFC2E2F90983800D9D574 /* Individuality */; };
+		0C148EEE2EAA61B9002497EC /* AssetExchange in Frameworks */ = {isa = PBXBuildFile; productRef = 0C148EED2EAA61B9002497EC /* AssetExchange */; };
+		0C148EF02EAA61DC002497EC /* HydrationSdk in Frameworks */ = {isa = PBXBuildFile; productRef = 0C148EEF2EAA61DC002497EC /* HydrationSdk */; };
+		0C148EF22EAA61E2002497EC /* XcmTransfer in Frameworks */ = {isa = PBXBuildFile; productRef = 0C148EF12EAA61E2002497EC /* XcmTransfer */; };
+		0C148EF42EAA61E8002497EC /* XcmDefinition in Frameworks */ = {isa = PBXBuildFile; productRef = 0C148EF32EAA61E8002497EC /* XcmDefinition */; };
+		0C2A9D532F868F4F00E753AE /* SubstrateSdkExt in Frameworks */ = {isa = PBXBuildFile; productRef = 0C2A9D522F868F4F00E753AE /* SubstrateSdkExt */; };
+		0C2A9D552F868F7400E753AE /* SubstrateSdkExt in Frameworks */ = {isa = PBXBuildFile; productRef = 0C2A9D542F868F7400E753AE /* SubstrateSdkExt */; };
+		0C4C2FB62FB056C60038B9C6 /* UIKitExt in Frameworks */ = {isa = PBXBuildFile; productRef = 0C4C2FB52FB056C60038B9C6 /* UIKitExt */; };
+		0C6058402FB598D70008050F /* AssetsManagement in Frameworks */ = {isa = PBXBuildFile; productRef = 0C60583F2FB598D70008050F /* AssetsManagement */; };
+		0C62514C2F50808100A92259 /* HandoffService in Frameworks */ = {isa = PBXBuildFile; productRef = 0C62514B2F50808100A92259 /* HandoffService */; };
+		0C6EC9602EC629FB00C9B292 /* NotificationServiceExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0C6EC9592EC629FB00C9B292 /* NotificationServiceExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0C6EC97F2EC635B500C9B292 /* AppDependencies in Frameworks */ = {isa = PBXBuildFile; productRef = 0C6EC97E2EC635B500C9B292 /* AppDependencies */; };
+		0CA3EA882EAA711100C43F10 /* AssetHubSdk in Frameworks */ = {isa = PBXBuildFile; productRef = 0CA3EA872EAA711100C43F10 /* AssetHubSdk */; };
+		0CA60CC22FB20D4D008817A9 /* BulletinChain in Frameworks */ = {isa = PBXBuildFile; productRef = 0CA60CC12FB20D4D008817A9 /* BulletinChain */; };
+		0CEC59AC2F08EBFC0009CC37 /* FoundationExt in Frameworks */ = {isa = PBXBuildFile; productRef = 0CEC59AB2F08EBFC0009CC37 /* FoundationExt */; };
+		2D0A51D72FFE94810095ECAE /* BackgroundExecution in Frameworks */ = {isa = PBXBuildFile; productRef = 2D0A51D62FFE94810095ECAE /* BackgroundExecution */; };
+		A526CB302EBBA06D00D2987B /* PolkadotUI in Frameworks */ = {isa = PBXBuildFile; productRef = A526CB2F2EBBA06D00D2987B /* PolkadotUI */; };
+		A57CAF662F45ECB70066D722 /* StructuredConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = A57CAF652F45ECB70066D722 /* StructuredConcurrency */; };
+		A57CAF682F45ED940066D722 /* StructuredConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = A57CAF672F45ED940066D722 /* StructuredConcurrency */; };
+		A5A948F02F4CA925001E514C /* Coinage in Frameworks */ = {isa = PBXBuildFile; productRef = A5A948EF2F4CA925001E514C /* Coinage */; };
+		A5A948F22F4CA925001E5150 /* ExtrinsicServiceExt in Frameworks */ = {isa = PBXBuildFile; productRef = A5A948F12F4CA925001E5150 /* ExtrinsicServiceExt */; };
+		A5B2502E2F47481900E46E09 /* KeyDerivation in Frameworks */ = {isa = PBXBuildFile; productRef = A5B2502D2F47481900E46E09 /* KeyDerivation */; };
+		A5B250302F47482000E46E09 /* KeyDerivation in Frameworks */ = {isa = PBXBuildFile; productRef = A5B2502F2F47482000E46E09 /* KeyDerivation */; };
+		A5B436FF2E96B82700CFF21D /* AppDependencies in Frameworks */ = {isa = PBXBuildFile; productRef = A5B436FE2E96B82700CFF21D /* AppDependencies */; };
+		A5B437012E96B82E00CFF21D /* MessageExchangeKit in Frameworks */ = {isa = PBXBuildFile; productRef = A5B437002E96B82E00CFF21D /* MessageExchangeKit */; };
+		A5B5899C2F5F0F4E00A9458D /* OperationExt in Frameworks */ = {isa = PBXBuildFile; productRef = A5B5899B2F5F0F4E00A9458D /* OperationExt */; };
+		A5C0DE022FDB2A5C00000002 /* Revive in Frameworks */ = {isa = PBXBuildFile; productRef = A5C0DE012FDB2A5C00000001 /* Revive */; };
+		A5F553C33066BB820077443B /* IssueMonitoring in Frameworks */ = {isa = PBXBuildFile; productRef = A5F553C23066BB820077443B /* IssueMonitoring */; };
+		A5FB979E2F855E9D001A2D6A /* FoundationExt in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB979D2F855E9D001A2D6A /* FoundationExt */; };
+		B10000022F7C000000000AAA /* Products in Frameworks */ = {isa = PBXBuildFile; productRef = B10000012F7C000000000AAA /* Products */; };
+		B10000042F7C000000000BBB /* BulletinChain in Frameworks */ = {isa = PBXBuildFile; productRef = B10000032F7C000000000BBB /* BulletinChain */; };
+		B1A2C3D42F8A000000000001 /* BlurHash in Frameworks */ = {isa = PBXBuildFile; productRef = B1A2C3D42F8A000000000002 /* BlurHash */; };
+		C5C7E5710000000000000001 /* StructuredConcurrencyTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */; };
+		CC0CC0102FBA000100CCAA01 /* ChainRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0202FBA000100CCAA02 /* ChainRegistry */; };
+		CC0CC0302FBA000100CCAA03 /* ChainRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0402FBA000100CCAA04 /* ChainRegistry */; };
+		CC0CC0502FBA000100CCAA05 /* EventCenter in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0602FBA000100CCAA06 /* EventCenter */; };
+		CC0CC0702FBA000100CCAA07 /* EventCenter in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0802FBA000100CCAA08 /* EventCenter */; };
+		D0D0D0022FDA0000000D0002 /* DurableTransactions in Frameworks */ = {isa = PBXBuildFile; productRef = D0D0D0012FDA0000000D0001 /* DurableTransactions */; };
+		EA11ACCE000000000000B001 /* ExternalAccessibility in Frameworks */ = {isa = PBXBuildFile; productRef = EA11ACCE000000000000B002 /* ExternalAccessibility */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		0C6EC95E2EC629FB00C9B292 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A5EDAACD2E93ECAF005DDA62 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0C6EC9582EC629FB00C9B292;
+			remoteInfo = NotificationServiceExtension;
+		};
+		65E2C5E72E971E33004FBA34 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A5EDAACD2E93ECAF005DDA62 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A5EDAAD42E93ECAF005DDA62;
+			remoteInfo = "polkadot-app";
+		};
+		A5EDAAE42E93ECB0005DDA62 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A5EDAACD2E93ECAF005DDA62 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A5EDAAD42E93ECAF005DDA62;
+			remoteInfo = "polkadot-app";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		0C6EC9662EC629FB00C9B292 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				0C6EC9602EC629FB00C9B292 /* NotificationServiceExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0C6EC9592EC629FB00C9B292 /* NotificationServiceExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationServiceExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		65E2C5D62E971DC0004FBA34 /* polkadot-appIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "polkadot-appIntegrationTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A5EDAAD52E93ECAF005DDA62 /* polkadot-app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "polkadot-app.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A5EDAAE32E93ECB0005DDA62 /* polkadot-appTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "polkadot-appTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		0C6EC9652EC629FB00C9B292 /* Exceptions for "NotificationServiceExtension" folder in "NotificationServiceExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 0C6EC9582EC629FB00C9B292 /* NotificationServiceExtension */;
+		};
+		0C6EC9762EC6333000C9B292 /* Exceptions for "polkadot-app" folder in "NotificationServiceExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppConfig/AppConfig.swift,
+				"AppConfig/AppConfig+Brand.swift",
+				AppConfig/AppConfigProvider.swift,
+				AppConfig/KnownChains.swift,
+				AppConfig/PaymentAssetConfig.swift,
+				AppConfig/RemoteAppConfig.swift,
+				Common/Crypto/Keychain.swift,
+				Common/Crypto/RootEntropyManaging.swift,
+				"Common/Logger/FileManager+Logging.swift",
+				Common/Logger/Logger.swift,
+				Common/Storage/CoreDataConcurrencyPolicy.swift,
+				Common/Storage/Migration/SubstrateStorageVersion.swift,
+				Common/Storage/Migration/UserStorageVersion.swift,
+				"Common/Storage/NSManagedObjectContext+Fetch.swift",
+				"Common/Storage/NSManagedObjectContext+Insert.swift",
+				Common/Storage/StorageFacadeProtocol.swift,
+				Common/Storage/SubstrateDataModel.xcdatamodeld,
+				Common/Storage/SubstrateDataStorageFacade.swift,
+				Common/Storage/UserDataModel.xcdatamodeld,
+				Common/Storage/UserDataStorageFacade.swift,
+				Common/SupportedAssets.swift,
+				Common/UserDefaults/InstallationKeyIdStore.swift,
+				Common/UserDefaults/SettingsExtension.swift,
+				"Common/Wallet/DynamicDerivedWallet+Init.swift",
+				Common/Wallet/LegacyWalletId.swift,
+				Common/Wallet/SelectedWallet.swift,
+				Common/Wallet/WalletDerivationPath.swift,
+				Configs/SharedContainerGroup.swift,
+				Inherited/BalanceFormatting/AssetBalanceDisplayInfo.swift,
+				"Inherited/BalanceFormatting/AssetBalanceDisplayInfo+Conversion.swift",
+				Inherited/BalanceFormatting/AssetBalanceFormatterFactory.swift,
+				"Inherited/BalanceFormatting/Balance+Decimal.swift",
+				Inherited/BalanceFormatting/BalanceViewModel.swift,
+				Inherited/BalanceFormatting/PrimitiveBalanceViewModelFactory.swift,
+				Inherited/BalanceFormatting/PrimitiveBalanceViewModelFactoryProtocol.swift,
+				Inherited/BalanceFormatting/TransferAmountViewModelFactoryProtocol.swift,
+				Inherited/Helpers/EnviromentVariables.swift,
+				"Inherited/Helpers/String+Processing.swift",
+				Inherited/Model/CoreDataMapperError.swift,
+				Inherited/Operation/OperationManagerFacade.swift,
+				Inherited/PriceProvider/PriceData.swift,
+				"Inherited/Storage/EntityToModel/ChainApi+Identifier.swift",
+				Inherited/Storage/EntityToModel/ChainModelMapper.swift,
+				"Inherited/Storage/EntityToModel/ChainModelMapper+Protocol.swift",
+				Modules/Chat/ChatExtension/ChatExtension.swift,
+				Modules/Chat/Helpers/ChatMessageBubbleAction.swift,
+				Modules/Chat/Model/Chat.swift,
+				"Modules/Chat/Model/Chat+LocalModel.swift",
+				"Modules/Chat/Model/Chat+PeerActions.swift",
+				"Modules/Chat/Model/Chat+PeerMetadata.swift",
+				"Modules/Chat/Model/Chat+PublicKey.swift",
+				"Modules/Chat/Model/Chat+RemoteContact.swift",
+				"Modules/Chat/Model/Chat+Request.swift",
+				Modules/Chat/Model/ChatContact.swift,
+				Modules/Chat/Model/ChatContactRepositoryFactory.swift,
+				Modules/Chat/Model/ChatMessage.swift,
+				"Modules/Chat/Model/ChatMessage+FileContent.swift",
+				"Modules/Chat/Model/ChatMessage+New.swift",
+				Modules/Chat/Model/ChatMessageReaction.swift,
+				Modules/Chat/Model/ChatMessageStatusUpdate.swift,
+				Modules/Chat/Model/ChatNotificationPayload.swift,
+				"Modules/Chat/Model/ChatNotificationPayload+Coding.swift",
+				Modules/Chat/Model/ChatRichRemoteContent.swift,
+				Modules/Chat/Model/ChatRoomMetadata.swift,
+				Modules/Chat/Model/ChatTokenRemoteContent.swift,
+				Modules/Chat/Model/ChatTransferState.swift,
+				Modules/Chat/Model/CoreData/AttachmentUploadingMapper.swift,
+				Modules/Chat/Model/CoreData/BlockContactMapper.swift,
+				"Modules/Chat/Model/CoreData/CDChatMessage+TouchParent.swift",
+				"Modules/Chat/Model/CoreData/CDChatMessage+Type.swift",
+				Modules/Chat/Model/CoreData/ChatContactMapper.swift,
+				Modules/Chat/Model/CoreData/ChatEntityMapper.swift,
+				"Modules/Chat/Model/CoreData/ChatId+Identifier.swift",
+				Modules/Chat/Model/CoreData/ChatMessageEntityMapper.swift,
+				"Modules/Chat/Model/CoreData/ChatMessageEntityMapper+ContactUpdate.swift",
+				"Modules/Chat/Model/CoreData/ChatMessageEntityMapper+Grouping.swift",
+				"Modules/Chat/Model/CoreData/ChatMessageEntityMapper+Invariant.swift",
+				"Modules/Chat/Model/CoreData/ChatMessageEntityMapper+TransferState.swift",
+				Modules/Chat/Model/CoreData/ChatMessageOrderAllocator.swift,
+				Modules/Chat/Model/CoreData/ChatMessageStatusUpdateMapper.swift,
+				Modules/Chat/Model/CoreData/ChatRoomMetadataEntityMapper.swift,
+				Modules/Chat/Model/CoreData/ContactDeviceSettingsMapper.swift,
+				Modules/Chat/Model/CoreData/ContactDevicesFanOutSettingsMapper.swift,
+				Modules/Chat/Model/CoreData/ContactIncomingSettingsMapper.swift,
+				Modules/Chat/Model/CoreData/ContactOutgoingSettingsMapper.swift,
+				Modules/Chat/Model/CoreData/LastSyncOfferIdMapper.swift,
+				Modules/Chat/Model/CoreData/LastSyncOfferIdRepositoryFactory.swift,
+				"Modules/Chat/Model/CoreData/MessageContent+Coding.swift",
+				"Modules/Chat/Model/CoreData/MessageOrigin+Raw.swift",
+				"Modules/Chat/Model/CoreData/NSPredicate+Chat.swift",
+				"Modules/Chat/Model/CoreData/NSPredicate+ChatRequest.swift",
+				"Modules/Chat/Model/CoreData/NSPredicate+Contact.swift",
+				"Modules/Chat/Model/CoreData/NSPredicate+Message.swift",
+				"Modules/Chat/Model/CoreData/NSPredicate+Sync.swift",
+				"Modules/Chat/Model/CoreData/NSPredicate+UnreadMessage.swift",
+				Modules/Chat/Model/CoreData/OutgoingUpdateTimeMapper.swift,
+				Modules/Chat/Model/CoreData/OutgoingUpdateTimeRepositoryFactory.swift,
+				Modules/Chat/Model/CoreData/VoIPContactIncomingSettings.swift,
+				Modules/Chat/Model/CoreData/VoIPContactOutgoingSettings.swift,
+				"Modules/Chat/Model/Date+Chat.swift",
+				"Modules/Chat/Model/LocalMessage+RichContent.swift",
+				Modules/Chat/Model/OpaqueMessageWrapper.swift,
+				Modules/Chat/Model/RemoteChatMessage.swift,
+				Modules/Chat/Service/ChatEncryptionManager.swift,
+				Modules/Chat/Service/ChatPrivateKeyFactory.swift,
+				Modules/Chat/Service/ChatPushMessageCoder.swift,
+				Modules/Chat/Service/ContactsLocalStorageServicing.swift,
+				Modules/Chat/Service/UnreadMessageCountService.swift,
+				Modules/ChatCall/Model/ChatCallType.swift,
+				Modules/Coinage/Model/TransferState.swift,
+				"Modules/IncomingChatRequest/Model/CDChatRequest+TouchParent.swift",
+				Modules/IncomingChatRequest/Model/ChatRequestMapper.swift,
+				Modules/IncomingChatRequest/Model/RemoteChatRequestMessage.swift,
+			);
+			target = 0C6EC9582EC629FB00C9B292 /* NotificationServiceExtension */;
+		};
+		658F61342E97172600F21269 /* Exceptions for "polkadot-app" folder in "polkadot-app" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Configs/polkadot-app.debug.xcconfig",
+				"Configs/polkadot-app.devci.xcconfig",
+				"Configs/polkadot-app.nightly.xcconfig",
+				"Configs/polkadot-app.release.xcconfig",
+				"env-vars.template.sh",
+				Info.plist,
+				"polkadot-app.xctestplan",
+			);
+			target = A5EDAAD42E93ECAF005DDA62 /* polkadot-app */;
+		};
+		65E2C5E52E971DE2004FBA34 /* Exceptions for "polkadot-appTests" folder in "polkadot-appIntegrationTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Chat/Mocks/MockChatParticipant.swift,
+				Chat/Mocks/MockStatement.swift,
+				Chat/Mocks/MockStatementStore.swift,
+				Chat/Mocks/StubChatMessageOrderAllocator.swift,
+				Coinage/CoinageCoreDataLedger.swift,
+				Coinage/TestInstallation.swift,
+				Helpers/Mocks/MockInstallationKeyIdStore.swift,
+				Helpers/Mocks/MockLogger.swift,
+				Helpers/Mocks/MockMnemonicBackupHelper.swift,
+				Helpers/SubstrateStorageTestFacade.swift,
+				Helpers/UserDataStorageTestFacade.swift,
+			);
+			target = 65E2C5D52E971DC0004FBA34 /* polkadot-appIntegrationTests */;
+		};
+		E98A05222EE1B88E004DABE9 /* Exceptions for "NotificationServiceExtension" folder in "polkadot-app" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Handler/PushNotificationChatMessageEntityMapper.swift,
+				SharedPushNotificationKeys.swift,
+			);
+			target = A5EDAAD42E93ECAF005DDA62 /* polkadot-app */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				E98A05222EE1B88E004DABE9 /* Exceptions for "NotificationServiceExtension" folder in "polkadot-app" target */,
+				0C6EC9652EC629FB00C9B292 /* Exceptions for "NotificationServiceExtension" folder in "NotificationServiceExtension" target */,
+			);
+			path = NotificationServiceExtension;
+			sourceTree = "<group>";
+		};
+		65E2C5D72E971DC0004FBA34 /* polkadot-appIntegrationTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "polkadot-appIntegrationTests";
+			sourceTree = "<group>";
+		};
+		A5C8A5B13020EE3A00A2D0D3 /* Configs */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Configs;
+			sourceTree = "<group>";
+		};
+		A5EDAAD72E93ECAF005DDA62 /* polkadot-app */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				658F61342E97172600F21269 /* Exceptions for "polkadot-app" folder in "polkadot-app" target */,
+				0C6EC9762EC6333000C9B292 /* Exceptions for "polkadot-app" folder in "NotificationServiceExtension" target */,
+			);
+			path = "polkadot-app";
+			sourceTree = "<group>";
+		};
+		A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				65E2C5E52E971DE2004FBA34 /* Exceptions for "polkadot-appTests" folder in "polkadot-appIntegrationTests" target */,
+			);
+			path = "polkadot-appTests";
+			sourceTree = "<group>";
+		};
+		A5F1EC872E9543A6009C1723 /* Packages */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		0C6EC9562EC629FB00C9B292 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0C06A1642EC6A51300E06744 /* MessageExchangeKit in Frameworks */,
+				A57CAF682F45ED940066D722 /* StructuredConcurrency in Frameworks */,
+				A5FB979E2F855E9D001A2D6A /* FoundationExt in Frameworks */,
+				0C0D0E1B2F90FE3E00D9D574 /* Individuality in Frameworks */,
+				0C6EC97F2EC635B500C9B292 /* AppDependencies in Frameworks */,
+				0C2A9D552F868F7400E753AE /* SubstrateSdkExt in Frameworks */,
+				A5B250302F47482000E46E09 /* KeyDerivation in Frameworks */,
+				0CA60CC22FB20D4D008817A9 /* BulletinChain in Frameworks */,
+				CC0CC0302FBA000100CCAA03 /* ChainRegistry in Frameworks */,
+				CC0CC0702FBA000100CCAA07 /* EventCenter in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		65E2C5D32E971DC0004FBA34 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A5EDAAD22E93ECAF005DDA62 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0C6058402FB598D70008050F /* AssetsManagement in Frameworks */,
+				0C148EF42EAA61E8002497EC /* XcmDefinition in Frameworks */,
+				0C148EF02EAA61DC002497EC /* HydrationSdk in Frameworks */,
+				0C0DFC2F2F90983800D9D574 /* Individuality in Frameworks */,
+				0CA3EA882EAA711100C43F10 /* AssetHubSdk in Frameworks */,
+				A5B437012E96B82E00CFF21D /* MessageExchangeKit in Frameworks */,
+				0C148EEE2EAA61B9002497EC /* AssetExchange in Frameworks */,
+				A5B5899C2F5F0F4E00A9458D /* OperationExt in Frameworks */,
+				A5B436FF2E96B82700CFF21D /* AppDependencies in Frameworks */,
+				A5A948F02F4CA925001E514C /* Coinage in Frameworks */,
+				A5C0DE022FDB2A5C00000002 /* Revive in Frameworks */,
+				D0D0D0022FDA0000000D0002 /* DurableTransactions in Frameworks */,
+				A5A948F22F4CA925001E5150 /* ExtrinsicServiceExt in Frameworks */,
+				0C2A9D532F868F4F00E753AE /* SubstrateSdkExt in Frameworks */,
+				A57CAF662F45ECB70066D722 /* StructuredConcurrency in Frameworks */,
+				A5F553C33066BB820077443B /* IssueMonitoring in Frameworks */,
+				0CEC59AC2F08EBFC0009CC37 /* FoundationExt in Frameworks */,
+				EA11ACCE000000000000B001 /* ExternalAccessibility in Frameworks */,
+				0C62514C2F50808100A92259 /* HandoffService in Frameworks */,
+				A526CB302EBBA06D00D2987B /* PolkadotUI in Frameworks */,
+				0C148EF22EAA61E2002497EC /* XcmTransfer in Frameworks */,
+				A5B2502E2F47481900E46E09 /* KeyDerivation in Frameworks */,
+				B10000022F7C000000000AAA /* Products in Frameworks */,
+				B10000042F7C000000000BBB /* BulletinChain in Frameworks */,
+				0C4C2FB62FB056C60038B9C6 /* UIKitExt in Frameworks */,
+				CC0CC0102FBA000100CCAA01 /* ChainRegistry in Frameworks */,
+				CC0CC0502FBA000100CCAA05 /* EventCenter in Frameworks */,
+				2D0A51D72FFE94810095ECAE /* BackgroundExecution in Frameworks */,
+				B1A2C3D42F8A000000000001 /* BlurHash in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A5EDAAE02E93ECB0005DDA62 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C5C7E5710000000000000001 /* StructuredConcurrencyTestSupport in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0CEC59AA2F08EBFC0009CC37 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		A5EDAACC2E93ECAF005DDA62 = {
+			isa = PBXGroup;
+			children = (
+				A5C8A5B13020EE3A00A2D0D3 /* Configs */,
+				A5F1EC872E9543A6009C1723 /* Packages */,
+				A5EDAAD72E93ECAF005DDA62 /* polkadot-app */,
+				A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */,
+				65E2C5D72E971DC0004FBA34 /* polkadot-appIntegrationTests */,
+				0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */,
+				0CEC59AA2F08EBFC0009CC37 /* Frameworks */,
+				A5EDAAD62E93ECAF005DDA62 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A5EDAAD62E93ECAF005DDA62 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A5EDAAD52E93ECAF005DDA62 /* polkadot-app.app */,
+				A5EDAAE32E93ECB0005DDA62 /* polkadot-appTests.xctest */,
+				65E2C5D62E971DC0004FBA34 /* polkadot-appIntegrationTests.xctest */,
+				0C6EC9592EC629FB00C9B292 /* NotificationServiceExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0C6EC9582EC629FB00C9B292 /* NotificationServiceExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0C6EC9612EC629FB00C9B292 /* Build configuration list for PBXNativeTarget "NotificationServiceExtension" */;
+			buildPhases = (
+				0C6EC9552EC629FB00C9B292 /* Sources */,
+				0C6EC9562EC629FB00C9B292 /* Frameworks */,
+				0C6EC9572EC629FB00C9B292 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */,
+			);
+			name = NotificationServiceExtension;
+			packageProductDependencies = (
+				0C6EC97E2EC635B500C9B292 /* AppDependencies */,
+				0C06A1632EC6A51300E06744 /* MessageExchangeKit */,
+				A57CAF672F45ED940066D722 /* StructuredConcurrency */,
+				A5B2502F2F47482000E46E09 /* KeyDerivation */,
+				0C2A9D542F868F7400E753AE /* SubstrateSdkExt */,
+				A5FB979D2F855E9D001A2D6A /* FoundationExt */,
+				0C0D0E1A2F90FE3E00D9D574 /* Individuality */,
+				0CA60CC12FB20D4D008817A9 /* BulletinChain */,
+				CC0CC0402FBA000100CCAA04 /* ChainRegistry */,
+				CC0CC0802FBA000100CCAA08 /* EventCenter */,
+			);
+			productName = NotificationServiceExtension;
+			productReference = 0C6EC9592EC629FB00C9B292 /* NotificationServiceExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		65E2C5D52E971DC0004FBA34 /* polkadot-appIntegrationTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 65E2C5DA2E971DC0004FBA34 /* Build configuration list for PBXNativeTarget "polkadot-appIntegrationTests" */;
+			buildPhases = (
+				65E2C5D22E971DC0004FBA34 /* Sources */,
+				65E2C5D32E971DC0004FBA34 /* Frameworks */,
+				65E2C5D42E971DC0004FBA34 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				65E2C5E82E971E33004FBA34 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				65E2C5D72E971DC0004FBA34 /* polkadot-appIntegrationTests */,
+			);
+			name = "polkadot-appIntegrationTests";
+			productName = "polkadot-appIntegrationTests";
+			productReference = 65E2C5D62E971DC0004FBA34 /* polkadot-appIntegrationTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A5EDAAD42E93ECAF005DDA62 /* polkadot-app */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A5EDAAF72E93ECB0005DDA62 /* Build configuration list for PBXNativeTarget "polkadot-app" */;
+			buildPhases = (
+				A5C0DE010000000000000001 /* Generate Secrets */,
+				A574D8672E93FF2100BA6060 /* Run Swiftformat */,
+				A574D8682E93FF3700BA6060 /* Run Swiftlint */,
+				A574D8662E93F8AE00BA6060 /* Google info */,
+				A5EDAAD12E93ECAF005DDA62 /* Sources */,
+				A5EDAAD22E93ECAF005DDA62 /* Frameworks */,
+				A5EDAAD32E93ECAF005DDA62 /* Resources */,
+				0C6EC9662EC629FB00C9B292 /* Embed Foundation Extensions */,
+				F06E600066544128849BC813 /* Upload Debug Symbols to Sentry */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0C6EC95F2EC629FB00C9B292 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A5EDAAD72E93ECAF005DDA62 /* polkadot-app */,
+				A5F1EC872E9543A6009C1723 /* Packages */,
+			);
+			name = "polkadot-app";
+			packageProductDependencies = (
+				A5B436FE2E96B82700CFF21D /* AppDependencies */,
+				A5B437002E96B82E00CFF21D /* MessageExchangeKit */,
+				0C148EED2EAA61B9002497EC /* AssetExchange */,
+				0C148EEF2EAA61DC002497EC /* HydrationSdk */,
+				0C148EF12EAA61E2002497EC /* XcmTransfer */,
+				0C148EF32EAA61E8002497EC /* XcmDefinition */,
+				0CA3EA872EAA711100C43F10 /* AssetHubSdk */,
+				A526CB2F2EBBA06D00D2987B /* PolkadotUI */,
+				0CEC59AB2F08EBFC0009CC37 /* FoundationExt */,
+				EA11ACCE000000000000B002 /* ExternalAccessibility */,
+				A57CAF652F45ECB70066D722 /* StructuredConcurrency */,
+				A5B2502D2F47481900E46E09 /* KeyDerivation */,
+				0C62514B2F50808100A92259 /* HandoffService */,
+				A5A948EF2F4CA925001E514C /* Coinage */,
+				A5C0DE012FDB2A5C00000001 /* Revive */,
+				D0D0D0012FDA0000000D0001 /* DurableTransactions */,
+				A5A948F12F4CA925001E5150 /* ExtrinsicServiceExt */,
+				A5B5899B2F5F0F4E00A9458D /* OperationExt */,
+				B10000012F7C000000000AAA /* Products */,
+				0C2A9D522F868F4F00E753AE /* SubstrateSdkExt */,
+				B10000032F7C000000000BBB /* BulletinChain */,
+				0C0DFC2E2F90983800D9D574 /* Individuality */,
+				0C4C2FB52FB056C60038B9C6 /* UIKitExt */,
+				0C60583F2FB598D70008050F /* AssetsManagement */,
+				CC0CC0202FBA000100CCAA02 /* ChainRegistry */,
+				CC0CC0602FBA000100CCAA06 /* EventCenter */,
+				2D0A51D62FFE94810095ECAE /* BackgroundExecution */,
+				B1A2C3D42F8A000000000002 /* BlurHash */,
+				A5F553C23066BB820077443B /* IssueMonitoring */,
+			);
+			productName = "polkadot-app";
+			productReference = A5EDAAD52E93ECAF005DDA62 /* polkadot-app.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A5EDAAE22E93ECB0005DDA62 /* polkadot-appTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A5EDAAFA2E93ECB0005DDA62 /* Build configuration list for PBXNativeTarget "polkadot-appTests" */;
+			buildPhases = (
+				A5EDAADF2E93ECB0005DDA62 /* Sources */,
+				A5EDAAE02E93ECB0005DDA62 /* Frameworks */,
+				A5EDAAE12E93ECB0005DDA62 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A5EDAAE52E93ECB0005DDA62 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */,
+			);
+			name = "polkadot-appTests";
+			packageProductDependencies = (
+				C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */,
+			);
+			productName = "polkadot-appTests";
+			productReference = A5EDAAE32E93ECB0005DDA62 /* polkadot-appTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A5EDAACD2E93ECAF005DDA62 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 1640;
+				TargetAttributes = {
+					0C6EC9582EC629FB00C9B292 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					65E2C5D52E971DC0004FBA34 = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = A5EDAAD42E93ECAF005DDA62;
+					};
+					A5EDAAD42E93ECAF005DDA62 = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					A5EDAAE22E93ECB0005DDA62 = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = A5EDAAD42E93ECAF005DDA62;
+					};
+				};
+			};
+			buildConfigurationList = A5EDAAD02E93ECAF005DDA62 /* Build configuration list for PBXProject "polkadot-app" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A5EDAACC2E93ECAF005DDA62;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A5EDAAD62E93ECAF005DDA62 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A5EDAAD42E93ECAF005DDA62 /* polkadot-app */,
+				A5EDAAE22E93ECB0005DDA62 /* polkadot-appTests */,
+				65E2C5D52E971DC0004FBA34 /* polkadot-appIntegrationTests */,
+				0C6EC9582EC629FB00C9B292 /* NotificationServiceExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		0C6EC9572EC629FB00C9B292 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		65E2C5D42E971DC0004FBA34 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A5EDAAD32E93ECAF005DDA62 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A5EDAAE12E93ECB0005DDA62 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A574D8662E93F8AE00BA6060 /* Google info */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Google info";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"$RUN_IN_CI\" = \"true\" ]; then\n    echo \"Skipping GoogleService-Info.plist copy in CI environment\"\n    exit 0\nfi\n\nPLIST_PATH=\"${PROJECT_DIR}/${TARGET_NAME}/GoogleService\"\nDEV_PLIST=\"${PLIST_PATH}/GoogleService-Info-Dev.plist\"\nPRODUCTION_PLIST=\"${PLIST_PATH}/GoogleService-Info-Release.plist\"\nSAFETY_PLIST=\"${PLIST_PATH}/GoogleService-Info-Safety.plist\"\nDESTINATION=\"${PROJECT_DIR}/${TARGET_NAME}/GoogleService-Info.plist\"\n\n# Copy appropriate plist based on build configuration\ncase \"${CONFIGURATION}\" in\n   \"Debug\" | \"Dev\" | \"DevCI\" )\n        if [ -f \"$DEV_PLIST\" ]; then\n            cp -r \"$DEV_PLIST\" \"$DESTINATION\"\n        else\n            echo \"Error: Development plist not found at $DEV_PLIST\"\n            exit 1\n        fi\n        ;;\n   \"Safetynet\" )\n        if [ -f \"$SAFETY_PLIST\" ]; then\n            cp -r \"$SAFETY_PLIST\" \"$DESTINATION\"\n        else\n            echo \"Error: Safetynet plist not found at $SAFETY_PLIST\"\n            exit 1\n        fi\n        ;;\n   \"Release\" | \"Nightly\" )\n        if [ -f \"$PRODUCTION_PLIST\" ]; then\n            cp -r \"$PRODUCTION_PLIST\" \"$DESTINATION\"\n        else\n            echo \"Error: Production plist not found at $PRODUCTION_PLIST\"\n            exit 1\n        fi\n        ;;\n    *)\n        echo \"Unknown configuration: ${CONFIGURATION}\"\n        exit 1\n        ;;\nesac\n\necho \"GoogleService-Info.plist copied successfully.\"\nexit 0\n\n";
+		};
+		A574D8672E93FF2100BA6060 /* Run Swiftformat */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Run Swiftformat";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"$RUN_IN_CI\" == \"true\" ] || [ \"${CONFIGURATION}\" == \"DevCI\" ]; then\n    echo \"Skipping Swiftformat in CI environment\"\n    exit 0\nfi\n\nsource \"${SRCROOT}/Runscripts/homebrew_run.sh\"\n\nsetup_environment\n# 1 - tool, 2 - arguments, 3 - fallback url  \nhandle_tool \"swiftformat\" \".\" \"https://github.com/nicklockwood/SwiftFormat\"\n";
+		};
+		A574D8682E93FF3700BA6060 /* Run Swiftlint */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Run Swiftlint";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "source \"${SRCROOT}/Runscripts/homebrew_run.sh\"\nsetup_environment\n\nARGS=\"\"\nif [ -f \"swiftlint-baseline.json\" ]; then\n    ARGS=\"--baseline swiftlint-baseline.json\"\nfi\n\n# 1 - tool, 2 - arguments, 3 - fallback url\nhandle_tool \"swiftlint\" \"$ARGS\" \"https://github.com/realm/swiftlint\"\n";
+		};
+		A5C0DE010000000000000001 /* Generate Secrets */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Generate Secrets";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/polkadot-app/Generated/Secrets.generated.swift",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"$RUN_IN_CI\" = \"true\" ]; then\n    echo \"Skipping secrets generation in CI\"\n    exit 0\nfi\n\n\"${SRCROOT}/Runscripts/generate_secrets.sh\"\n";
+		};
+		F06E600066544128849BC813 /* Upload Debug Symbols to Sentry */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}",
+			);
+			name = "Upload Debug Symbols to Sentry";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"${CONFIGURATION}\" == \"Debug\" || [ \"${CONFIGURATION}\" == \"Release\" ] ; then\necho \"Skip Sentry debug symbols upload for Debug\"\nexit 0\nfi\n\n# This script is responsible for uploading debug symbols and source context for Sentry.\nif which sentry-cli >/dev/null; then\n  export SENTRY_ORG=paritytech\n  export SENTRY_PROJECT=polkadot-ios\n  ERROR=$(sentry-cli debug-files upload --include-sources \"$DWARF_DSYM_FOLDER_PATH\" 2>&1 >/dev/null)\n  if [ ! $? -eq 0 ]; then\n    echo \"warning: sentry-cli - $ERROR\"\n  fi\nelse\n  echo \"warning: sentry-cli not installed, download from https://github.com/getsentry/sentry-cli/releases\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		0C6EC9552EC629FB00C9B292 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		65E2C5D22E971DC0004FBA34 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A5EDAAD12E93ECAF005DDA62 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A5EDAADF2E93ECB0005DDA62 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		0C6EC95F2EC629FB00C9B292 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0C6EC9582EC629FB00C9B292 /* NotificationServiceExtension */;
+			targetProxy = 0C6EC95E2EC629FB00C9B292 /* PBXContainerItemProxy */;
+		};
+		65E2C5E82E971E33004FBA34 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A5EDAAD42E93ECAF005DDA62 /* polkadot-app */;
+			targetProxy = 65E2C5E72E971E33004FBA34 /* PBXContainerItemProxy */;
+		};
+		A5EDAAE52E93ECB0005DDA62 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A5EDAAD42E93ECAF005DDA62 /* polkadot-app */;
+			targetProxy = A5EDAAE42E93ECB0005DDA62 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0C6EC9622EC629FB00C9B292 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */;
+			baseConfigurationReferenceRelativePath = "Configs/notification-ext.debug.xcconfig";
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		0C6EC9632EC629FB00C9B292 /* DevCI */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */;
+			baseConfigurationReferenceRelativePath = "Configs/notification-ext.devci.xcconfig";
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = DevCI;
+		};
+		0C6EC9642EC629FB00C9B292 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */;
+			baseConfigurationReferenceRelativePath = "Configs/notification-ext.release.xcconfig";
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		65E2C5DB2E971DC0004FBA34 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.parity.polkadotapp.polkadot-appIntegrationTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/polkadot-app.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/polkadot-app";
+			};
+			name = Debug;
+		};
+		65E2C5DC2E971DC0004FBA34 /* DevCI */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.parity.polkadotapp.polkadot-appIntegrationTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/polkadot-app.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/polkadot-app";
+			};
+			name = DevCI;
+		};
+		65E2C5DD2E971DC0004FBA34 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.parity.polkadotapp.polkadot-appIntegrationTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/polkadot-app.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/polkadot-app";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A53985492E93F1A600A5BB13 /* DevCI */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = DevCI;
+		};
+		A539854A2E93F1A600A5BB13 /* DevCI */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAD72E93ECAF005DDA62 /* polkadot-app */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-app.devci.xcconfig";
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon$(ICON_SUFFIX)";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "$(PROJECT_DIR)/$(TARGET_NAME)/polkadotAppDev.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "polkadot-app/Info.plist";
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 0.10.0;
+				OTHER_LDFLAGS = "-ObjC";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				XROS_DEPLOYMENT_TARGET = 2.5;
+			};
+			name = DevCI;
+		};
+		A539854B2E93F1A600A5BB13 /* DevCI */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.devci.xcconfig";
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.parity.polkadotapp.polkadot-appTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/polkadot-app.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/polkadot-app";
+				XROS_DEPLOYMENT_TARGET = 2.5;
+			};
+			name = DevCI;
+		};
+		A5EDAAF52E93ECB0005DDA62 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A5EDAAF62E93ECB0005DDA62 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+		A5EDAAF82E93ECB0005DDA62 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAD72E93ECAF005DDA62 /* polkadot-app */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-app.debug.xcconfig";
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon$(ICON_SUFFIX)";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "$(PROJECT_DIR)/$(TARGET_NAME)/polkadotAppDev.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "polkadot-app/Info.plist";
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 0.10.0;
+				OTHER_LDFLAGS = "-ObjC";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				XROS_DEPLOYMENT_TARGET = 2.5;
+			};
+			name = Debug;
+		};
+		A5EDAAF92E93ECB0005DDA62 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAD72E93ECAF005DDA62 /* polkadot-app */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-app.release.xcconfig";
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon$(ICON_SUFFIX)";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "$(PROJECT_DIR)/$(TARGET_NAME)/polkadotAppRelease.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "polkadot-app/Info.plist";
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 0.10.0;
+				OTHER_LDFLAGS = "-ObjC";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				XROS_DEPLOYMENT_TARGET = 2.5;
+			};
+			name = Release;
+		};
+		A5EDAAFB2E93ECB0005DDA62 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.debug.xcconfig";
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.parity.polkadotapp.polkadot-appTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/polkadot-app.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/polkadot-app";
+				XROS_DEPLOYMENT_TARGET = 2.5;
+			};
+			name = Debug;
+		};
+		A5EDAAFC2E93ECB0005DDA62 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.release.xcconfig";
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.parity.polkadotapp.polkadot-appTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/polkadot-app.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/polkadot-app";
+				XROS_DEPLOYMENT_TARGET = 2.5;
+			};
+			name = Release;
+		};
+		A6F1C0102F00A10000AA0001 /* Safetynet */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Safetynet;
+		};
+		A6F1C0102F00A10000AA0002 /* Safetynet */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAD72E93ECAF005DDA62 /* polkadot-app */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-app.safetynet.xcconfig";
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon$(ICON_SUFFIX)";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "$(PROJECT_DIR)/$(TARGET_NAME)/polkadotAppRelease.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "polkadot-app/Info.plist";
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 0.10.0;
+				OTHER_LDFLAGS = "-ObjC";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				XROS_DEPLOYMENT_TARGET = 2.5;
+			};
+			name = Safetynet;
+		};
+		A6F1C0102F00A10000AA0003 /* Safetynet */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.safetynet.xcconfig";
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.parity.polkadotapp.polkadot-appTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/polkadot-app.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/polkadot-app";
+				XROS_DEPLOYMENT_TARGET = 2.5;
+			};
+			name = Safetynet;
+		};
+		A6F1C0102F00A10000AA0004 /* Safetynet */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.parity.polkadotapp.polkadot-appIntegrationTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/polkadot-app.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/polkadot-app";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Safetynet;
+		};
+		A6F1C0102F00A10000AA0005 /* Safetynet */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */;
+			baseConfigurationReferenceRelativePath = "Configs/notification-ext.safetynet.xcconfig";
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Safetynet;
+		};
+		E97BAB562F7BDE6700ED9B80 /* Nightly */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Nightly;
+		};
+		E97BAB572F7BDE6700ED9B80 /* Nightly */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAD72E93ECAF005DDA62 /* polkadot-app */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-app.nightly.xcconfig";
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon$(ICON_SUFFIX)";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "$(PROJECT_DIR)/$(TARGET_NAME)/polkadotAppRelease.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "polkadot-app/Info.plist";
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
+				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 0.10.0;
+				OTHER_LDFLAGS = "-ObjC";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				XROS_DEPLOYMENT_TARGET = 2.5;
+			};
+			name = Nightly;
+		};
+		E97BAB582F7BDE6700ED9B80 /* Nightly */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.nightly.xcconfig";
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.parity.polkadotapp.polkadot-appTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/polkadot-app.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/polkadot-app";
+				XROS_DEPLOYMENT_TARGET = 2.5;
+			};
+			name = Nightly;
+		};
+		E97BAB592F7BDE6700ED9B80 /* Nightly */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.parity.polkadotapp.polkadot-appIntegrationTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/polkadot-app.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/polkadot-app";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Nightly;
+		};
+		E97BAB5A2F7BDE6700ED9B80 /* Nightly */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */;
+			baseConfigurationReferenceRelativePath = "Configs/notification-ext.nightly.xcconfig";
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationServiceExtension/NotificationServiceExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Nightly;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0C6EC9612EC629FB00C9B292 /* Build configuration list for PBXNativeTarget "NotificationServiceExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0C6EC9622EC629FB00C9B292 /* Debug */,
+				0C6EC9632EC629FB00C9B292 /* DevCI */,
+				0C6EC9642EC629FB00C9B292 /* Release */,
+				E97BAB5A2F7BDE6700ED9B80 /* Nightly */,
+				A6F1C0102F00A10000AA0005 /* Safetynet */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		65E2C5DA2E971DC0004FBA34 /* Build configuration list for PBXNativeTarget "polkadot-appIntegrationTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				65E2C5DB2E971DC0004FBA34 /* Debug */,
+				65E2C5DC2E971DC0004FBA34 /* DevCI */,
+				65E2C5DD2E971DC0004FBA34 /* Release */,
+				E97BAB592F7BDE6700ED9B80 /* Nightly */,
+				A6F1C0102F00A10000AA0004 /* Safetynet */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A5EDAAD02E93ECAF005DDA62 /* Build configuration list for PBXProject "polkadot-app" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A5EDAAF52E93ECB0005DDA62 /* Debug */,
+				A53985492E93F1A600A5BB13 /* DevCI */,
+				A5EDAAF62E93ECB0005DDA62 /* Release */,
+				E97BAB562F7BDE6700ED9B80 /* Nightly */,
+				A6F1C0102F00A10000AA0001 /* Safetynet */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A5EDAAF72E93ECB0005DDA62 /* Build configuration list for PBXNativeTarget "polkadot-app" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A5EDAAF82E93ECB0005DDA62 /* Debug */,
+				A539854A2E93F1A600A5BB13 /* DevCI */,
+				A5EDAAF92E93ECB0005DDA62 /* Release */,
+				E97BAB572F7BDE6700ED9B80 /* Nightly */,
+				A6F1C0102F00A10000AA0002 /* Safetynet */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A5EDAAFA2E93ECB0005DDA62 /* Build configuration list for PBXNativeTarget "polkadot-appTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A5EDAAFB2E93ECB0005DDA62 /* Debug */,
+				A539854B2E93F1A600A5BB13 /* DevCI */,
+				A5EDAAFC2E93ECB0005DDA62 /* Release */,
+				E97BAB582F7BDE6700ED9B80 /* Nightly */,
+				A6F1C0102F00A10000AA0003 /* Safetynet */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0C06A1632EC6A51300E06744 /* MessageExchangeKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MessageExchangeKit;
+		};
+		0C0D0E1A2F90FE3E00D9D574 /* Individuality */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Individuality;
+		};
+		0C0DFC2E2F90983800D9D574 /* Individuality */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Individuality;
+		};
+		0C148EED2EAA61B9002497EC /* AssetExchange */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AssetExchange;
+		};
+		0C148EEF2EAA61DC002497EC /* HydrationSdk */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HydrationSdk;
+		};
+		0C148EF12EAA61E2002497EC /* XcmTransfer */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = XcmTransfer;
+		};
+		0C148EF32EAA61E8002497EC /* XcmDefinition */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = XcmDefinition;
+		};
+		0C2A9D522F868F4F00E753AE /* SubstrateSdkExt */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SubstrateSdkExt;
+		};
+		0C2A9D542F868F7400E753AE /* SubstrateSdkExt */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SubstrateSdkExt;
+		};
+		0C4C2FB52FB056C60038B9C6 /* UIKitExt */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = UIKitExt;
+		};
+		0C60583F2FB598D70008050F /* AssetsManagement */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AssetsManagement;
+		};
+		0C62514B2F50808100A92259 /* HandoffService */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = HandoffService;
+		};
+		0C6EC97E2EC635B500C9B292 /* AppDependencies */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AppDependencies;
+		};
+		0CA3EA872EAA711100C43F10 /* AssetHubSdk */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AssetHubSdk;
+		};
+		0CA60CC12FB20D4D008817A9 /* BulletinChain */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BulletinChain;
+		};
+		0CEC59AB2F08EBFC0009CC37 /* FoundationExt */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = FoundationExt;
+		};
+		2D0A51D62FFE94810095ECAE /* BackgroundExecution */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BackgroundExecution;
+		};
+		A526CB2F2EBBA06D00D2987B /* PolkadotUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PolkadotUI;
+		};
+		A57CAF652F45ECB70066D722 /* StructuredConcurrency */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StructuredConcurrency;
+		};
+		A57CAF672F45ED940066D722 /* StructuredConcurrency */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StructuredConcurrency;
+		};
+		A5A948EF2F4CA925001E514C /* Coinage */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Coinage;
+		};
+		A5A948F12F4CA925001E5150 /* ExtrinsicServiceExt */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ExtrinsicServiceExt;
+		};
+		A5B2502D2F47481900E46E09 /* KeyDerivation */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KeyDerivation;
+		};
+		A5B2502F2F47482000E46E09 /* KeyDerivation */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KeyDerivation;
+		};
+		A5B436FE2E96B82700CFF21D /* AppDependencies */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AppDependencies;
+		};
+		A5B437002E96B82E00CFF21D /* MessageExchangeKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MessageExchangeKit;
+		};
+		A5B5899B2F5F0F4E00A9458D /* OperationExt */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OperationExt;
+		};
+		A5C0DE012FDB2A5C00000001 /* Revive */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Revive;
+		};
+		A5F553C23066BB820077443B /* IssueMonitoring */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = IssueMonitoring;
+		};
+		A5FB979D2F855E9D001A2D6A /* FoundationExt */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = FoundationExt;
+		};
+		B10000012F7C000000000AAA /* Products */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Products;
+		};
+		B10000032F7C000000000BBB /* BulletinChain */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BulletinChain;
+		};
+		B1A2C3D42F8A000000000002 /* BlurHash */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BlurHash;
+		};
+		C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StructuredConcurrencyTestSupport;
+		};
+		CC0CC0202FBA000100CCAA02 /* ChainRegistry */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ChainRegistry;
+		};
+		CC0CC0402FBA000100CCAA04 /* ChainRegistry */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ChainRegistry;
+		};
+		CC0CC0602FBA000100CCAA06 /* EventCenter */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = EventCenter;
+		};
+		CC0CC0802FBA000100CCAA08 /* EventCenter */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = EventCenter;
+		};
+		D0D0D0012FDA0000000D0001 /* DurableTransactions */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = DurableTransactions;
+		};
+		EA11ACCE000000000000B002 /* ExternalAccessibility */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ExternalAccessibility;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A5EDAACD2E93ECAF005DDA62 /* Project object */;
+}

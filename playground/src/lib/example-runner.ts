@@ -45,8 +45,8 @@ function exampleAssert(
 // rewritten by `TRUAPI_NAMED_IMPORT_RE` below.
 const IMPORT_RE =
   /^\s*import\s+(?!\{)[^;]*?from\s+["']@parity\/truapi["'];?\s*$/gm;
-// `import { PASEO_NEXT_V2_ASSET_HUB, ... } from "@parity/truapi"`
-//   → `const { PASEO_NEXT_V2_ASSET_HUB, ... } = __truapi;`
+// `import { scale, ... } from "@parity/truapi"`
+//   → `const { scale, ... } = __truapi;`
 const TRUAPI_NAMED_IMPORT_RE =
   /^\s*import\s*(\{[^}]*\})\s*from\s+["']@parity\/truapi["'];?\s*$/gm;
 // `import { from, take, ... } from "rxjs"` → `const { from, take, ... } = __rxjs;`

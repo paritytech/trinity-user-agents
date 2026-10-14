@@ -29,12 +29,11 @@ describe("servicesForExecution", () => {
     });
 
     test("generated metadata identifies host-initiated subscriptions", () => {
-        const chat = generatedServices.find(({ name }) => name === "Chat");
+        const renderer = generatedServices.find(({ name }) => name === "Renderer");
+        expect(renderer?.requiredExecution).toBe("Worker");
+        expect(renderer?.methods.find(({ name }) => name === "render")?.hostInitiated).toBe(true);
         expect(
-            chat?.methods.find(({ name }) => name === "custom_message_render")?.hostInitiated,
-        ).toBe(true);
-        expect(
-            chat?.methods.find(({ name }) => name === "action_subscribe")?.hostInitiated,
+            renderer?.methods.find(({ name }) => name === "action_subscribe")?.hostInitiated,
         ).toBeUndefined();
     });
 });

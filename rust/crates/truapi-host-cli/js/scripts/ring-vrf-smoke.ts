@@ -1,9 +1,12 @@
 /// <reference path="../runner.ts" />
-import { PASEO_NEXT_V2_INDIVIDUALITY } from "../../../../../js/packages/truapi/src/index.ts";
 
 const PEOPLE_COLLECTION_ID =
   "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465";
-const PEOPLE_GENESIS = PASEO_NEXT_V2_INDIVIDUALITY.genesis;
+const peopleInfo = await truapi.chain.getChainInfo({ chain: "People" });
+if (!peopleInfo.isOk()) {
+  throw new Error(`getChainInfo failed: ${JSON.stringify(peopleInfo.error)}`);
+}
+const PEOPLE_GENESIS = peopleInfo.value.genesisHash;
 const index = { tag: "Index" as const, value: 0 };
 const keyHandle = {
   dotNsIdentifier: host.productId,

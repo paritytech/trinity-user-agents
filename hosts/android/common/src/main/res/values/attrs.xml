@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="bg_surface_main" format="reference|color" />
+    <attr name="bg_surface_nested" format="reference|color" />
+    <attr name="stroke_primary" format="reference|color" />
+
+    <declare-styleable name="Button">
+        <attr name="type" format="enum">
+            <enum name="main" value="0" />
+            <enum name="empty" value="1" />
+            <enum name="accent" value="2" />
+            <enum name="transparent" value="3" />
+            <enum name="warning" value="4" />
+        </attr>
+
+        <attr name="size" format="enum">
+            <enum name="large" value="0" />
+            <enum name="medium" value="1" />
+        </attr>
+    </declare-styleable>
+
+    <declare-styleable name="Toolbar">
+        <attr name="homeButtonStyle" format="enum">
+            <enum name="hidden" value="0" />
+            <enum name="back" value="1" />
+            <enum name="close" value="2" />
+        </attr>
+
+        <attr name="titlePosition" format="enum">
+            <enum name="start" value="0" />
+            <enum name="center" value="1" />
+        </attr>
+
+        <attr name="title" format="string" />
+    </declare-styleable>
+</resources>

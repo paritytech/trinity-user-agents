@@ -16,10 +16,10 @@ The playground is an interactive reference for the App-compatible TrUAPI surface
 - **Wiring status**: methods that are not yet bound are flagged "Not supported" so you can see protocol coverage at a glance.
 - **Chat diagnosis**: the same build emits `out/worker/index.js`, a `Worker`
   executable that tests room creation and idempotency, bot registration and
-  idempotency, live room-list updates, text and custom messages, user actions,
-  and host-initiated custom-render streams. It
-  displays live results in Chat and posts a Chat-only Markdown report after
-  `!diagnose` completes the action check.
+  idempotency, live room-list updates, text and renderer-drawn messages, user
+  actions, and host-initiated `Renderer` streams. It displays live results in
+  Chat and posts a Chat-only Markdown report after `!diagnose` completes the
+  action check.
 
 ## Local development
 

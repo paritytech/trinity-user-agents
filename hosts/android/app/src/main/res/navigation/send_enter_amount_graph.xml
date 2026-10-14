@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/send_enter_amount_graph"
+    app:startDestination="@id/sendEnterAmountFragment">
+
+    <fragment
+        android:id="@+id/sendEnterAmountFragment"
+        android:name="io.paritytech.polkadotapp.feature_wallet_impl.presentation.enterAmount.SendEnterAmountFragment"
+        android:label="SendEnterAmountFragment">
+        <action
+            android:id="@+id/action_sendEnterAmountFragment_to_transactionSuccessFragment"
+            app:destination="@id/transactionSuccessFragment"
+            app:popUpTo="@id/send_enter_amount_graph"
+            app:popUpToInclusive="true" />
+        <action
+            android:id="@+id/action_sendEnterAmountFragment_to_transactionFailureFragment"
+            app:destination="@id/transactionFailureFragment"
+            app:popUpTo="@id/send_enter_amount_graph"
+            app:popUpToInclusive="true" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/transactionSuccessFragment"
+        android:name="io.paritytech.polkadotapp.feature_wallet_impl.presentation.transactionResult.TransactionSuccessFragment"
+        android:label="TransactionSuccessFragment" />
+
+    <fragment
+        android:id="@+id/transactionFailureFragment"
+        android:name="io.paritytech.polkadotapp.feature_wallet_impl.presentation.transactionResult.TransactionFailureFragment"
+        android:label="TransactionFailureFragment" />
+
+</navigation>

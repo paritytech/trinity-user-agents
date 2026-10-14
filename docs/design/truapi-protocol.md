@@ -49,71 +49,59 @@ struct Message {
 }
 ```
 
-`requestId` ties related messages together (see [Rules](#rules)); `payload` carries the action itself. `Payload` is an enum whose variants are the **actions** — the individual things a Host and Product can say to each other.
+`requestId` ties related messages together (see [Rules](#rules)); `payload` carries the action itself. On the wire the envelope is laid out as:
 
-Actions are not written by hand. They are derived mechanically from the TrUAPI methods, so the high-level method signature and the wire format can never drift apart. One method expands into several actions depending on its shape: a plain call becomes a request/response pair, while a subscription becomes a small lifecycle of start, stop, interrupt, and receive messages.
-
-Each action variant carries an explicit wire-protocol discriminant, its `request_id`, `response_id`, `start_id`, `stop_id`, `interrupt_id`, or `receive_id`. These ids are assigned per method in the `truapi` crate via the `#[wire(...)]` annotation. They are **append-only and never reused**: once an id ships it keeps its meaning forever, which is what lets a newer Host and an older Product still understand each other. The crate is the source of truth for their values. Discriminant 255 is permanently reserved for protocol errors and cannot be assigned to an API method.
-
-Payloads are versioned independently of the action id, so a single message can evolve without renumbering anything around it. The current version `V1` encodes as discriminant `0`:
-
-```rust
-enum Versioned<T> {
-  V1(T),
-  // ...
-}
+```text
+[requestId: SCALE str][trait: u8][method: u8][message_type: u8][payload bytes...]
 ```
 
-Actions are derived from the TrUAPI methods using the following algorithm:
+The three bytes after the `requestId` are the **`(trait, method, message_type)` triple**. The first byte identifies the API trait (`System`, `Account`, `Chain`, ...); the second identifies a method within it: exactly one id per method, regardless of that method's shape; the third, `message_type`, names which leg of that method's exchange this frame carries (see below). The payload bytes are the SCALE-encoded value for that leg's own already-versioned wrapper type, inlined without a length prefix; the receiver reads to the end of the transport frame.
 
-- For request functions, actions are derived as follows:
-  - Request
-    - Name: `method_name + '_request'`
-    - Argument: `Versioned<(arg1, arg2, ...)>`
-    - Discriminant: `request_id`
-  - Response
-    - Name: `method_name + '_response'`
-    - Argument: `Versioned<Result<ReturnValue, ReturnError>>`
-    - Discriminant: `response_id`
-- For subscriptions, there are four messages:
-  - Subscribe
-    - Name: `method_name + '_start'`
-    - Argument: tuple of all arguments except the callback `Versioned<(arg1, arg2, ...)>`
-    - Discriminant: `start_id`
-  - Unsubscribe
-    - Name: `method_name + '_stop'`
-    - Argument: none
-    - Discriminant: `stop_id`
-  - Interrupt
-    - Name: `method_name + '_interrupt'`
-    - Argument: none
-    - Discriminant: `interrupt_id`
-  - Receive
-    - Name: `method_name + '_receive'`
-    - Argument: the versioned callback argument `Versioned<CallbackArg>`
-    - Discriminant: `receive_id`
+Trait discriminants are assigned per trait in the `truapi` crate via the trait-level `#[wire_trait(id = N)]` annotation, with the `System` trait fixed at `1`, so a handshake request frame always starts `[requestId][0x01][0x00]`. Each method carries an explicit discriminant within its trait, assigned via the `#[wire(id = N)]` annotation and numbered from `0` independently inside every trait. Ids are **append-only per trait and never reused**: once a `(trait, method)` pair ships it keeps its meaning forever, which is what lets a newer Host and an older Product still understand each other, and adding methods to one trait never disturbs the ids of any other trait. The crate is the source of truth for all values. Trait discriminant `255` is permanently reserved for protocol errors and cannot be assigned to an API trait, so no method can ever be addressed there; a protocol error travels on the pair `(255, 255)`.
 
-Put together, a slice of `Payload` looks like this (the payload types are illustrative; see the `truapi` crate for the real ones):
+#### The message type byte
 
-```rust
-enum Payload {
-  host_handshake_request(Versioned::V1(HandshakeVersion)),
-  host_handshake_response(Versioned::V1(Result<(), GenericErr>)),
+A `(trait, method)` pair names a method, not a leg: request and response share it, and so do a subscription's four phases. Which leg a frame carries is `message_type`, a third byte in the outer envelope, not something nested inside the payload:
 
-  // ...
-  // imaginary subscription method
-
-  message_send_request(Versioned::V1((ChainId, str))),
-  message_send_response(Versioned::V1(Result<(), GenericErr>)),
-
-  message_subscribe_start(Versioned::V1(ChainId)),
-  message_subscribe_stop,
-  message_subscribe_interrupt,
-  message_subscribe_receive(Versioned::V1(str)),
-
-  // ...
-}
+```text
+MESSAGE_TYPE_REQUEST   = 0   MESSAGE_TYPE_START     = 0
+MESSAGE_TYPE_RESPONSE  = 1   MESSAGE_TYPE_RECEIVE   = 1
+                             MESSAGE_TYPE_INTERRUPT = 2
+                             MESSAGE_TYPE_STOP      = 3
 ```
+
+`Request` and `Start` share `0`, `Response` and `Receive` share `1`, in the same position: a subscription's first two legs occupy the same slots a plain request/response method's two legs would, so the byte alone plus the method's registered kind (never both a request/response method and a subscription) resolves unambiguously.
+
+The payload bytes that follow `message_type` are exactly that leg's own already-versioned wrapper type, SCALE-encoded as it would be if it were the only shape that method ever had — there is no further nesting and no separate version byte:
+
+- **Request**: `{Method}Request`'s own encoding; its `V1`/`V2`/... tag is the sole version signal for this leg.
+- **Response**: `Result<{Method}Response, CallError<{Method}Error>>`, both sides already-versioned wrappers.
+- **Start**: the request wrapper's own encoding. A subscription that carries no request data still sends one, whose `V1` holds no payload.
+- **Receive**: the item wrapper's own encoding.
+- **Interrupt**: `Result<(), CallError<{Method}Error>>`, from the provider — `Ok(())` is natural completion, `Err(err)` is the value the subscription ended with. A subscription with no domain-specific error uses a wrapper whose `V1` is `GenericError`, so the interrupt versions like every other leg.
+- **Stop**: zero bytes, unconditionally, from the consumer. Either side can be the one to end a stream, which is why both legs exist.
+
+Each leg therefore versions independently: a method's `Response` does not share a version number with its `Request`, nor do a subscription's four legs share one with each other.
+
+A method's shape is fixed for the life of its `(trait, method)` pair. Nothing in the envelope selects between shapes, and dispatch registers a pair as either a request or a subscription, accepting only that shape's inbound legs. A frame carrying a leg its registered shape cannot receive is logged and dropped, not answered: the pair is one this build implements, so a protocol error would misreport it as unsupported, and answering an inbound `Response` with a `Response` is how an error loop starts. A method that has to become the other shape takes a new method id; the old id keeps answering the old shape for as long as any peer still speaks it.
+
+For example, a `system_feature_supported` request/response pair (trait `1`, method `1`) is carried as:
+
+```text
+outbound (Request):  [0x01][0x01][0x00 REQUEST][0x00 V1][...request fields]
+inbound  (Response): [0x01][0x01][0x01 RESPONSE][0x00 Ok][0x00 V1][...response fields]
+```
+
+and a subscription's four legs all address the same `(trait, method)` pair, distinguished only by `message_type`:
+
+```text
+start:     [trait][method][0x00 START][0x00 V1][...start fields]
+receive:   [trait][method][0x01 RECEIVE][0x00 V1][...item fields]
+interrupt: [trait][method][0x02 INTERRUPT][...Result<(), CallError<Err>> bytes]
+stop:      [trait][method][0x03 STOP]
+```
+
+Request/response and subscription methods are both derived mechanically from the TrUAPI trait methods, so the high-level method signature and the wire format can never drift apart; nothing is written by hand.
 
 ### Rules
 
@@ -123,21 +111,21 @@ A single byte channel carries every call in both directions at once, so the two 
 
 Every request expects exactly one response. Each Host or Product MUST send a response message for every request it receives, and the request and its response MUST share the same `requestId` — so the caller can match a reply to the call it made even with many calls in flight.
 
-If a receiver has no handler for an incoming discriminant, it MUST send a protocol-error frame with discriminant 255 and the same `requestId`. The codec-version-1 payload is `V1(UnsupportedMessage { discriminant })`, encoded as the three bytes `[0, 0, unsupported_discriminant]`. The sender maps this method-independent response to its own pending request or subscription and reports a generic unsupported error.
+If a receiver has no handler for an incoming `(trait, method)` pair, it MUST send a protocol-error frame addressed to `(255, 255)` with the same `requestId`, `message_type` set to `MESSAGE_TYPE_RESPONSE`, and payload `V1(UnsupportedMessage { trait_id, method_id })` — encoded as the four bytes `[0, 0, unsupported_trait, unsupported_method]` — one byte cannot name a pair, so the error that describes the envelope grew with it. The sender maps this method-independent response to its own pending request or subscription and reports a generic unsupported error. A receiver MUST NOT answer a protocol-error frame with another protocol error.
 
-A protocol-error frame MUST NOT receive another protocol-error response. An unmatched error is ignored, while a malformed protocol-error payload is rejected as a wire violation. These rules prevent error loops without hiding malformed control messages.
+A protocol-error frame MUST NOT receive another protocol-error response. An unmatched error is ignored. A protocol-error payload whose variant index the receiver does not recognize MUST settle the correlated call and leave the frame and the connection intact: `(255, 255)` is the one address every peer answers on, so a receiver that rejected an unfamiliar payload here could never be told anything new without the connection dying, which would freeze this channel at whatever shape shipped first. A payload whose variant IS recognized stays strict, and a malformed one is rejected as a wire violation. These rules prevent error loops and keep the channel extensible without hiding corrupt control messages.
 
-Hosts and Products released before this control frame was introduced still silently drop unknown discriminants. They must be upgraded once before they can safely reject APIs introduced by later peers. Existing API frames and codec version 1 remain unchanged.
+Hosts and Products released before this control frame was introduced still silently drop unknown discriminants. They must be upgraded once before they can safely reject APIs introduced by later peers. Codec version 1 frames are not decodable under this envelope at all: the handshake itself rides the changed header, so a codec-1 peer cannot be negotiated with in band.
 
 #### Subscription
 
-A subscription is not a one-shot call but an ongoing stream: the consumer asks once and then receives updates until it stops listening. Its four messages — `start`, `stop`, `interrupt`, and `receive` — MUST all share the same `requestId`, so a subscription handler can route every update and teardown signal to the right place.
+A subscription is not a one-shot call but an ongoing stream: the consumer asks once and then receives updates until it stops listening. Its four messages (`start`, `stop`, `interrupt`, and `receive`) all address the same `(trait, method)` pair (distinguished by the `message_type` byte in the outer envelope) and MUST all share the same `requestId`, so a subscription handler can route every update and teardown signal to the right place.
 
 Each message has a defined role:
 
 - `start` — the consumer subscribes; it MUST send a `start` message to the provider.
 - `stop` — the consumer unsubscribes; it MUST send a `stop` message.
-- `interrupt` — if the provider can no longer supply data, it CAN send an `interrupt` message; the consumer MAY react by notifying the application layer.
+- `interrupt` — the provider MUST end a stream with an `interrupt` message, carrying `Ok(())` when it has no more data to supply and `Err(reason)` when it stopped for a reason the consumer can act on.
 - `receive` — the provider MUST deliver each update with a `receive` message.
 
 When a protocol error rejects a subscription's `start` frame, the consumer
@@ -159,6 +147,7 @@ Before either side trusts a single byte of payload, they have to agree on how th
 
 Handshake calls are bidirectional: both Host and Product can send a handshake request, and both MUST respond to one. An implementation CAN apply a timeout of 10 seconds, after which the connection is marked failed and the call returns a timeout error. The handshake result can be cached.
 
-The handshake request carries the protocol (codec) version as a `u8`. On receiving it, the peer switches its encoding/decoding mode to match; for SCALE codec, the version is `1`. A successful handshake MUST be the first request TrUAPI processes — any other request sent before a successful handshake response MUST fail.
+The handshake request carries the protocol (codec) version as a `u8`. On receiving it, the peer switches its encoding/decoding mode to match; for the SCALE codec with the `(trait, method)`-addressed envelope, the version is `2`. (Codec version `1` designates the retired single-byte-discriminant envelope; a peer speaking it fails the handshake.) A successful handshake MUST be the first request TrUAPI processes — any other request sent before a successful handshake response MUST fail.
 
 The concrete handshake request, response, and error types are defined in the `truapi` crate.
+

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BrandAppGroup</key>
+	<string>group.$(APP_MAIN_BUNDLE)</string>
+	<key>BrandBundleRoot</key>
+	<string>$(APP_MAIN_BUNDLE)</string>
+	<key>BrandCashSymbol</key>
+	<string>$(BRAND_CASH_SYMBOL)</string>
+	<key>BrandContactEmail</key>
+	<string>$(BRAND_CONTACT_EMAIL)</string>
+	<key>BrandDeeplinkBase</key>
+	<string>$(BRAND_DEEPLINK)</string>
+	<key>BrandDeeplinkScheme</key>
+	<string>$(DEEPLINK)</string>
+	<key>BrandDisplayName</key>
+	<string>$(BRAND_DISPLAY_NAME)</string>
+	<key>BrandFiatSymbol</key>
+	<string>$(BRAND_FIAT_SYMBOL)</string>
+	<key>BrandPrivacyHost</key>
+	<string>$(BRAND_PRIVACY_HOST)</string>
+	<key>BrandShareRoot</key>
+	<string>$(BRAND_SHARE_ROOT)</string>
+	<key>BrandTermsHost</key>
+	<string>$(BRAND_TERMS_HOST)</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.usernotifications.service</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).NotificationService</string>
+	</dict>
+</dict>
+</plist>

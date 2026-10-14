@@ -5,6 +5,329 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.25.0] - 2026-10-13
+
+### Added
+
+- show the truapi-host version beside the TrUAPI Runtime switch (#1375)
+- chat modality on the shared TrUAPI core, with a local e2e launcher (#989)
+- enable deeplinking to pocket collection or specific card (#1325)
+- let products scan codes with the app's scanner (#1319)
+- let products scan codes with the host's viewfinder (#1307)
+- let a Pocket card's page hide or show the face above it (#1321)
+- route an expanded card's face request to its native host (#1293)
+
+### Changed
+
+- port generic durability service to rust (#1301)
+- describe chat messages with alt, and show product icons in iOS chats (#1340)
+- let a product set what a chat room shows below its messages (#1341)
+- @parity/truapi 0.24.0, @parity/truapi-host 0.24.0, @parity/ios-host 0.24.0, @parity/android-host 0.24.0 (#1326)
+
+### Fixed
+
+- serve the host surface from a signing worker host (#1358)
+- draw renderer images in chat cards (#1339)
+- skip an undecodable peer message instead of failing the wait (#1055)
+- draw Pocket card faces in the default theme (#1343)
+
+## [0.24.0] - 2026-10-07
+
+### Added
+
+- add the Pocket modality (#938)
+- Jollity SPA integration (#990)
+- observe core store queries as streams (#1125)
+- add shared chain capabilities over subxt (#1121)
+- serve the control surface a product suite drives (#934)
+- answer a product account's address from the fixture (#1094)
+
+### Changed
+
+- @parity/truapi 0.24.0, @parity/truapi-host 0.24.0, @parity/truapi-debugger 0.1.11, @parity/ios-host 0.24.0, @parity/android-host 0.24.0 (#1323)
+- read, screen and store Pocket cards through the core (#1116)
+- disable the native DIM2 weekly game bot (#1211)
+- backport 6 commits into hosts/ios (#1188)
+- create and restore named sessions (#1124)
+- add a core-owned SQLite database for native hosts (#991)
+
+### Fixed
+
+- read immutable copies of the Pocket reconcile sets inside the lock (#1308)
+- keep preimage submissions local on a test host (#1291)
+- report the app version and build in the host info products see (#1236)
+- revert chain for nightly builds (#1192)
+- serve the statement-store allowance key from memory within a period (#1097)
+- stop the Pocket card flashing black when it opens (#1110)
+- look preimages up on the Bulletin node instead of an empty map (#1017)
+- read granted product storage from the owner on iOS and Android (#997)
+
+## [0.23.0] - 2026-09-29
+
+### Added
+
+- refresh the relay checkpoints, let the host choose peer connection types (#1046)
+
+### Changed
+
+- @parity/truapi 0.23.0, @parity/truapi-host 0.23.0, @parity/truapi-provider 0.3.1, @parity/ios-host 0.23.0, @parity/android-host 0.23.0 (#1059)
+- make storage callbacks and Pocket removal async (#1019)
+- run native core tasks on one Tokio runtime (#1018)
+
+### Fixed
+
+- read txExtVersion as the transaction extension version (#1003)
+- recover a product and its worker after the WebView renderer dies (#994)
+
+## [0.22.0] - 2026-09-28
+
+### Added
+
+- hold light-client requests until the chain syncs, expose its lifecycle (#1030)
+- draw the contact picker (#939)
+- draw the contact picker (#907)
+- pick a contact, contact them by an opaque handle (#17)
+- stop prompting first-party products for remote access (#971)
+
+### Changed
+
+- @parity/truapi 0.22.0, @parity/truapi-host 0.22.0, @parity/truapi-provider 0.3.0, @parity/ios-host 0.22.0, @parity/android-host 0.22.0 (#1045)
+- split native.rs into focused native/ submodules (#1027)
+- build the native bridge and debug sink without feature flags (#1024)
+- Adopt general AGENTS.md guidelines and refactor the Rust workspace to match (#1000)
+
+### Fixed
+
+- follow previewnet through its latest reset (#995)
+- prompt blessed products only for device access (#999)
+- rebind the port when the listener fails instead of spinning (#983)
+- reload a page whose MessagePorts died with WebKit's networking process (#976)
+- sign with a product account its owner granted context (#873)
+- recover products after the app returns from the background (#974)
+- protect permission checks without breaking libraries (#916)
+- give the Android preview the real backend identifiers (#975)
+
+## [0.21.0] - 2026-09-24
+
+### Added
+
+- load verifiable on demand in the browser (#922)
+- host-supplied wire-debugger dial, plus a make debugger target (#604)
+- let a withdrawal reach the paired host that is serving it (#933)
+- stop a withdrawn call before it prompts, acts or reaches another party (#927)
+- pass the requesting ProductContext to permission prompts (#936)
+- stream product frames to a wire debugger behind --debugger (#656)
+
+### Changed
+
+- @parity/truapi 0.21.0, @parity/truapi-host 0.21.0, @parity/truapi-provider 0.2.2, @parity/ios-host 0.21.0, @parity/android-host 0.21.0 (#973)
+- build smoldot's secp256k1 tables on first use in the browser (#928)
+
+### Fixed
+
+- mark the debugger private, since it is not published (#911)
+- initialize built-in personhood keys (#924)
+
+## [0.20.0] - 2026-09-23
+
+### Added
+
+- chat modality on the shared TrUAPI core (#840)
+
+### Changed
+
+- @parity/truapi 0.20.0, @parity/truapi-host 0.20.0, @parity/ios-host 0.20.0 (#920)
+
+### Fixed
+
+- repair source installs and gate rustdoc (#917)
+- stop freezing built-in prototypes (#915)
+
+## [0.19.0] - 2026-09-22
+
+### Added
+
+- add typed script projects (#549)
+- a TrUAPI-native test host (#294)
+- report a newly paired device to the host (#851)
+- let an Android preview name the commit it came from (#882)
+- distribute Android nightly and debug builds (#864)
+- build an installable Android APK on demand (#858)
+
+### Changed
+
+- @parity/truapi 0.19.0, @parity/truapi-host 0.19.0 (#904)
+- Sandbox CLI product scripts by default (#829)
+- @parity/truapi-provider 0.2.1 (#871)
+
+### Fixed
+
+- mask the signed download link the distributor prints (#906)
+- pass CONTACT_EMAIL to the Android builds (#903)
+- balance the delivery preflight, and shellcheck inline action shell (#902)
+- reconnect the localhost bridge after its socket dies (#872)
+- say why the delivery check refused (#894)
+- generate the bindings for every build type, not two (#884)
+- hand each reusable workflow the secrets it reads (#860)
+- use the application id the Google configuration is built for (#863)
+- re-apply deleted paths by removing them, not by patching (#859)
+- take the light client's full-node statement replay (#870)
+
+## [0.18.0] - 2026-09-21
+
+### RFCs
+
+- **Accepted:** Wire message type: an explicit byte for trait, method, and leg
+- **Withdrawn:** Wire message type: an explicit byte for trait, method, and leg
+
+### Added
+
+- report what a vendored tree owes its source (#824)
+- localStorage.subscribe and worker pending operations (#603)
+- cancel an in-flight one-shot request from the wire (#843)
+- expose the device statement account to host applications (#842)
+- resolve the Android core from this tree (#837)
+- extend AutoSigning to the product signing APIs and statement proofs (#751)
+- let hosts ask whether a product is trusted for remote access (#802)
+
+### Changed
+
+- @parity/truapi 0.18.0, @parity/truapi-host 0.18.0 (#869)
+- Authorize browser APIs through Rust permissions (#828)
+- Preserve permission decisions in the Rust core (#827)
+- Share one localhost WS listener across native product executions (#600)
+- route subscriptions through one state lock (#823)
+- Add screenshot-triggered issue reports to mobile hosts (#771)
+
+### Fixed
+
+- admit the granting product's own proof context (#850)
+- bound the pairing attempt with a deadline (#845)
+- stamp the generated client with the host's codec version (#848)
+- hand a product destination to the host as a polkadot URL (#832)
+- build the core before the distribution workflows build the app (#833)
+- record the revision hosts/ios is actually at (#822)
+
+## [0.17.0] - 2026-09-17
+
+### Added
+
+- cap the light client's live connections (#817)
+- a label-gated signed build that installs on a phone (#815)
+- refresh a vendored host tree from its source repository (#811)
+- read the statement renewal ledger, and untrack from a native host (#786)
+- serve the Pocket card collection (#706)
+- Pocket modality RFC and protocol spec (#609)
+
+### Changed
+
+- @parity/truapi 0.17.0, @parity/truapi-host 0.17.0, @parity/truapi-provider 0.2.0 (#819)
+- require versioned wrappers for empty wire payloads (#785)
+- restorable Rust cache, wire-table gate in the rust job (#779)
+- remove genesis constants (#753)
+- publish the iOS host and subscribe the app to its bumps (#758)
+- parallel iOS slices, one rustdoc call, deterministic type names (#773)
+- cut the Rust test suite from 2m12s to 21s (#767)
+
+### Fixed
+
+- install the Asset Hub genesis hash on the signing role (#729)
+- move the published fallback forward and stop it rotting silently (#812)
+- advertise the X25519 chat identity key on chain (#814)
+- keep one base path on one signer identity (#810)
+- keep a later push from cancelling a release commit's CI (#809)
+- give the CLI build matrix the generated Rust it cannot compile without (#780)
+
+## [0.16.0] - 2026-09-14
+
+### RFCs
+
+- **Accepted:** Wire message type: an explicit byte for trait, method, and leg
+
+### Added
+
+- Unified Renderer (#633)
+- Worker Lifecycle (#632)
+- Subscription interrupt (#631)
+- notify removed devices (#584)
+- add temporary deprecated unwrapped signing (#731)
+- address every frame with a (trait, method, message_type) envelope (#357)
+- generate typed dispatch and wire conversions (#651)
+- resolve the core from this tree for the iOS host (#725)
+- warm start on every client (#629)
+- wire trace engine, standalone inspector, and in-app panel (#536)
+- payload-blind wire-debug tap, sinks, and the codegen decode surface (#295)
+- persist /log level (#583)
+
+### Changed
+
+- @parity/truapi 0.16.0, @parity/truapi-host 0.16.0 (#744)
+- RFC: Scoped grants in trustedProducts (#454)
+- @parity/truapi 0.15.0, @parity/truapi-host 0.12.0 (#732)
+- serve inter-host requests through typed handlers (#628)
+- @parity/truapi 0.14.0, @parity/truapi-host 0.11.0, @parity/ios-host 0.14.0, @parity/android-host 0.1.0 (#722)
+- Clarify TrUAPI README and documentation paths (#721)
+- move the request id into the call context (#718)
+- @parity/truapi-provider 0.1.0 (#662)
+- consolidate Rust boilerplate and move runtime modules (#617)
+- speed up UniFFI binding generation (#590)
+
+### Fixed
+
+- bound iframe bootstrap and requests (#665)
+- run the bootnode health check when a dispatch asks for it (#691)
+- version the persisted session blob and decode the older layouts (#647)
+- read lite PoP names in both their dotted and flattened forms (#602)
+- derive the reserved person and identity keys under the network suffix (#627)
+- remove legacy compatibility fallbacks (#585)
+- adopt current People proof contexts (#587)
+- announce the boot auth state after the initial session restore (#571)
+
+## [0.13.1] - 2026-09-02
+
+### Changed
+
+- @parity/truapi 0.13.1, @parity/truapi-host 0.10.1, @parity/ios-host 0.13.1 (#581)
+
+### Fixed
+
+- strip the provider xcframework modulemaps (#553)
+- resolve the dotNS controller whether the gateway stores a dispatcher or the controller (#564)
+- follow previewnet and paseo-next-v2 through their wipes (#579)
+- read Resources parameters through view functions (#577)
+- clear the active UI slot only while it owns it (#567)
+- page dotNS pendingClaims through its (address,uint256,uint256) view (#574)
+
+## [0.13.0] - 2026-09-01
+
+### Added
+
+- rename PreviewNet dotNS TLD from .test to .testnet (#561)
+
+### Changed
+
+- @parity/truapi 0.13.0, @parity/truapi-host 0.10.0 (#568)
+- Paste pairing QR images in the host CLI (#552)
+
+## [0.12.0] - 2026-08-31
+
+### Added
+
+- `development_createAccountProof` for raw proof contexts to unblock Humanity as a Product (#457)
+- open bump issues on consumer repos when a package is released (#529)
+
+### Changed
+
+- @parity/truapi 0.12.0, @parity/truapi-host 0.9.0, @parity/ios-host 0.12.0 (#555)
+- RFC: Host locale subscription (#526)
+- fix prebuilt script runner lookup (#532)
+
+### Fixed
+
+- reject unknown wire messages (#547)
+- declare the chat worker in the product manifest (#541)
+- downgrade response and error payloads to the caller's version (#525)
+
 ## [0.11.0] - 2026-08-27
 
 ### Added
@@ -19,11 +342,13 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.11.0, @parity/truapi-host 0.8.0 (#530)
 - remove legacy single-execution core (#508)
 - RFC: Host Identity and Version via `System.host_info` (#177)
 
 ### Fixed
 
+- make the CLI release pipeline work end to end (#531)
 - clear the sandbox client when the pipe closes (#509)
 - persist and restore paired SSO hosts (#501)
 - gate tags on a confirmed npm publish (#505)

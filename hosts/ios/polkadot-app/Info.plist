@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>io.novatech.truapi.durable.recovery</string>
+	</array>
+	<key>BrandAppGroup</key>
+	<string>group.$(APP_MAIN_BUNDLE)</string>
+	<key>BrandBundleRoot</key>
+	<string>$(APP_MAIN_BUNDLE)</string>
+	<key>BrandCashSymbol</key>
+	<string>$(BRAND_CASH_SYMBOL)</string>
+	<key>BrandContactEmail</key>
+	<string>$(BRAND_CONTACT_EMAIL)</string>
+	<key>BrandDeeplinkBase</key>
+	<string>$(BRAND_DEEPLINK)</string>
+	<key>BrandDeeplinkScheme</key>
+	<string>$(DEEPLINK)</string>
+	<key>BrandDisplayName</key>
+	<string>$(BRAND_DISPLAY_NAME)</string>
+	<key>BrandFiatSymbol</key>
+	<string>$(BRAND_FIAT_SYMBOL)</string>
+	<key>BrandPrivacyHost</key>
+	<string>$(BRAND_PRIVACY_HOST)</string>
+	<key>BrandShareRoot</key>
+	<string>$(BRAND_SHARE_ROOT)</string>
+	<key>BrandTermsHost</key>
+	<string>$(BRAND_TERMS_HOST)</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>${APP_NAME}</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string></string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(DEEPLINK)</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>novawallet</string>
+	</array>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>Polkadot uses alarms to notify you when a scheduled event is about to start.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>Polkadot adds upcoming events to your calendar and reminds you before they start.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Please allow camera access to interact with features in the Polkadot app</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID is used to authorize in Polkadot App</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Polkadot uses your local network for peer-to-peer games and linked devices.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Please allow microphone access to interact with features in the Polkadot app</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>App needs access to save chat attachments to your photo library.</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+		<string>audio</string>
+		<string>fetch</string>
+		<string>voip</string>
+		<string>processing</string>
+	</array>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIStatusBarStyle</key>
+	<string>UIStatusBarStyleLightContent</string>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
+</dict>
+</plist>

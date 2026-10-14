@@ -1,0 +1,11 @@
+git_url("https://github.com/paritytech/fastlane-polkadotapp-develop.git")
+storage_mode("git")
+type("development")
+app_identifier([
+  "io.parity.polkadotapp",
+  "io.parity.polkadotapp.NotificationServiceExtension",
+  "io.parity.polkadotapp.safety",
+  "io.parity.polkadotapp.safety.NotificationServiceExtension",
+  "io.parity.polkadotapp.develop",
+  "io.parity.polkadotapp.develop.NotificationServiceExtension"
+])

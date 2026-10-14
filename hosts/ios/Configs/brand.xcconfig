@@ -1,0 +1,13 @@
+// Local brand identity.
+// Created from Configs/brand.template.xcconfig; see that file for the key contract.
+
+BRAND_DISPLAY_NAME = Polkadot
+BRAND_BUNDLE_ROOT = io.parity.polkadotapp
+BRAND_DEEPLINK = polkadotapp
+BRAND_SHARE_ROOT = dot.li
+BRAND_SHARE_ROOT_TEST = paseo.li
+BRAND_CASH_SYMBOL = CASH
+BRAND_FIAT_SYMBOL = $
+BRAND_TERMS_HOST = parity.io
+BRAND_PRIVACY_HOST = parity.io
+BRAND_CONTACT_EMAIL = info@parity.io

@@ -1,23 +1,199 @@
 [package]
 name = "truapi"
-version = "0.11.0"
+version = "0.25.0"
 edition.workspace = true
 license.workspace = true
-description = "TrUAPI trait and type definitions"
+description = "TrUAPI trait and type definitions, and the runtime hosts embed"
 
-[dependencies]
-async-trait = "0.1"
-derive_more = { version = "2", features = ["display"] }
-futures = "0.3"
-hex = "0.4"
-parity-scale-codec = { version = "3", features = ["derive"] }
-truapi-macros = { path = "../truapi-macros" }
-uniffi = { workspace = true, optional = true }
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+    "-Oz",
+    "--one-caller-inline-max-function-size",
+    "0",
+    "--enable-bulk-memory",
+    "--enable-nontrapping-float-to-int",
+    "--enable-reference-types",
+    "--enable-sign-ext",
+    "--strip-debug",
+    "--strip-dwarf",
+    "--strip-producers",
+]
+
+[package.metadata.wasm-pack.profile.release.wasm-bindgen]
+debug-js-glue = false
+demangle-name-section = false
+dwarf-debug-info = false
 
 [features]
-default = []
-# FFI derives on the protocol types consumed by native hosts.
-uniffi = ["dep:uniffi"]
+default = ["runtime", "wasm-signing-host"]
+# The host runtime: dispatcher, frames, host logic, native and WASM surfaces.
+# Without it the crate is the protocol definitions alone, which is what
+# codegen reads and builds against.
+runtime = [
+    # `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number
+    # only with codec's own serde support.
+    "parity-scale-codec/serde",
+    "dep:truapi-provider",
+    "dep:futures-timer",
+    "dep:scale-decode",
+    "dep:frame-metadata",
+    "dep:scale-info",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:thiserror",
+    "dep:unicode-normalization",
+    "dep:url",
+    "dep:nanoid",
+    "dep:blake2b_simd",
+    "dep:sp-crypto-hashing",
+    "dep:schnorrkel",
+    "dep:substrate-bip39",
+    "dep:zeroize",
+    "dep:getrandom",
+    "dep:hkdf",
+    "dep:chacha20poly1305",
+    "dep:x25519-dalek",
+    "dep:sha2",
+    "dep:merlin",
+    "dep:parking_lot",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:verifiable",
+    "dep:truapi-verifiable",
+    "dep:uniffi",
+    "dep:subxt",
+    "dep:subxt-rpcs",
+    "dep:js-sys",
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:console_error_panic_hook",
+    "dep:send_wrapper",
+    "dep:web-time",
+    "dep:web-sys",
+    "dep:tokio",
+    "dep:tokio-tungstenite",
+    "dep:base64",
+    "dep:rand",
+    "dep:libc",
+    "dep:rusqlite",
+    "dep:async-sqlite",
+    "dep:rusqlite_migration",
+    "dep:itertools",
+]
+wasm-signing-host = ["runtime"]
+# Test-host-only shortcuts a shipping host must not carry, such as answering
+# resource allocation as granted without allocating anything.
+test-host = ["runtime"]
+# In-memory `MockPlatform` for tests and host simulators.
+mock = ["runtime"]
+
+[dependencies]
+truapi-macros = { path = "../truapi-macros" }
+async-trait = { workspace = true }
+derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
+futures = { workspace = true }
+hex = { workspace = true }
+parity-scale-codec = { workspace = true, features = ["derive"] }
+
+truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }
+futures-timer = { workspace = true, optional = true }
+scale-decode = { workspace = true, features = ["derive"], optional = true }
+# Metadata decoding backs allowance registration, which both the native and the
+# wasm host perform, so these are not target-gated.
+frame-metadata = { workspace = true, features = ["std", "current", "decode"], optional = true }
+scale-info = { workspace = true, features = ["decode"], optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+serde_json = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+unicode-normalization = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+nanoid = { workspace = true, optional = true }
+blake2b_simd = { workspace = true, optional = true }
+sp-crypto-hashing = { workspace = true, optional = true }
+schnorrkel = { workspace = true, features = ["alloc", "getrandom"], optional = true }
+substrate-bip39 = { workspace = true, optional = true }
+zeroize = { workspace = true, features = ["alloc", "derive"], optional = true }
+getrandom = { workspace = true, features = ["js"], optional = true }
+hkdf = { workspace = true, optional = true }
+chacha20poly1305 = { workspace = true, features = ["alloc"], optional = true }
+x25519-dalek = { workspace = true, features = ["static_secrets"], optional = true }
+sha2 = { workspace = true, optional = true }
+merlin = { workspace = true, optional = true }
+parking_lot = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+# `registry` + `std` only: pulls the Registry + per-layer filter/reload, but
+# not `env-filter` (which drags in `regex`, heavy on wasm).
+tracing-subscriber = { workspace = true, features = ["registry", "std"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The browser core loads `truapi-verifiable` as a separate WASM module instead.
+verifiable = { git = "https://github.com/paritytech/verifiable.git", rev = "19b03deb89b8dea484b143afc8bbe048a74bc1ff", optional = true }
+truapi-verifiable = { path = "../truapi-verifiable", optional = true }
+rand = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "macros", "io-util", "time"], optional = true }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"], optional = true }
+uniffi = { workspace = true, optional = true }
+subxt = { workspace = true, features = ["native"], optional = true }
+subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"], optional = true }
+base64 = { workspace = true, optional = true }
+rusqlite = { workspace = true, features = ["bundled", "fallible_uint", "hooks"], optional = true }
+async-sqlite = { workspace = true, features = ["bundled"], optional = true }
+rusqlite_migration = { workspace = true, optional = true }
+itertools = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures-timer = { workspace = true, features = ["wasm-bindgen"], optional = true }
+js-sys = { workspace = true, optional = true }
+subxt = { workspace = true, features = ["web"], optional = true }
+subxt-rpcs = { workspace = true, features = ["web"], optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+console_error_panic_hook = { workspace = true, optional = true }
+send_wrapper = { workspace = true, features = ["futures"], optional = true }
+web-time = { workspace = true, optional = true }
+web-sys = { workspace = true, features = ["console"], optional = true }
+
+[dev-dependencies]
+scale-info = { workspace = true, features = ["std"] }
+
+[[test]]
+name = "device_permission_revalidation"
+required-features = ["runtime"]
+
+[[test]]
+name = "golden_frame"
+required-features = ["runtime"]
+
+[[test]]
+name = "platform_bounds"
+required-features = ["runtime"]
+
+[[test]]
+name = "wasm_crypto_vectors"
+required-features = ["runtime"]
+
+[[test]]
+name = "wire_result_shape"
+required-features = ["runtime"]
+
+[[test]]
+name = "signing_host_mock_platform"
+required-features = ["mock"]
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "macros", "io-util", "time"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }
+tempfile = { workspace = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
+socket2 = { workspace = true }
 
 [lints]
 workspace = true

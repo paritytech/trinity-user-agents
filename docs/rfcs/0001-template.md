@@ -1,34 +1,28 @@
 ---
-title: "RFC Title"
-owner: "@ownerhandle"
+title: "Title"
+owner: "@handle"
+status: draft
 ---
 
 # RFC — Title
 
 ## Summary
 
-One-paragraph explanation of the proposal.
+Two or three sentences: what changes, and for whom.
 
 ## Motivation
 
-Why are we doing this? What problem does it solve? What use cases does it support?
+The problem, concretely. What is broken or impossible today, and why it matters now.
 
-## Detailed Design
+## Approach
 
-Explain the design in enough detail that someone familiar with the codebase can implement it. Include:
+How it works, at the level a reviewer needs in order to agree or object.
+Not an implementation plan — the implementer owns the details.
 
-- API changes
-- Data model changes
-- Migration strategy (if applicable)
+## Trade-offs
 
-## Drawbacks
+What this costs, and what was considered and dropped. Bullets.
 
-Why should we _not_ do this? Consider impact on complexity, maintenance, and scope.
+## Open questions
 
-## Alternatives
-
-What other designs were considered? Why were they rejected?
-
-## Unresolved Questions
-
-What parts of the design are still open?
+Only genuine ones. Delete this section if there are none.

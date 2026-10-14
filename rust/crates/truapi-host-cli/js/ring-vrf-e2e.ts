@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import {
-  PASEO_NEXT_V2_INDIVIDUALITY,
   type ProductAccountId,
   type RegisteredRingVrfKey,
   type RingLocation,
@@ -20,18 +19,28 @@ const PEOPLE_LITE_COLLECTION_ID =
 const ACCOUNT_ACCESS_ACTION = "access another product account";
 const PROOF_ACTION = "create account proof";
 
-// These locate the real People collections while intentionally omitting the
+// Both rings locate a real People collection while intentionally omitting the
 // optional pallet junction. They therefore exercise ring operations without
 // registering the battery product as an exact-match internal People provider.
-const TEST_PEOPLE_LITE_RING: RingLocation = {
-  chainId: PASEO_NEXT_V2_INDIVIDUALITY.genesis,
-  junctions: [{ tag: "CollectionId", value: PEOPLE_LITE_COLLECTION_ID }],
-};
-
-const TEST_PEOPLE_RING: RingLocation = {
-  chainId: PASEO_NEXT_V2_INDIVIDUALITY.genesis,
-  junctions: [{ tag: "CollectionId", value: PEOPLE_COLLECTION_ID }],
-};
+async function resolvePeopleRings(
+  client: TrUApiClient,
+): Promise<{ people: RingLocation; peopleLite: RingLocation }> {
+  const info = await client.chain.getChainInfo({ chain: "People" });
+  if (!info.isOk()) {
+    throw new Error(`get_chain_info failed: ${stringify(info.error)}`);
+  }
+  const chainId = info.value.genesisHash;
+  return {
+    people: {
+      chainId,
+      junctions: [{ tag: "CollectionId", value: PEOPLE_COLLECTION_ID }],
+    },
+    peopleLite: {
+      chainId,
+      junctions: [{ tag: "CollectionId", value: PEOPLE_LITE_COLLECTION_ID }],
+    },
+  };
+}
 
 function stringify(value: unknown): string {
   try {
@@ -161,6 +170,9 @@ export async function runRingVrfRegistryE2e(
   };
 
   try {
+    const { people: peopleRing, peopleLite: peopleLiteRing } =
+      await resolvePeopleRings(client);
+
     const unregistered = await client.account.ringVrfSign({
       keyHandle: {
         dotNsIdentifier: productId,
@@ -177,7 +189,7 @@ export async function runRingVrfRegistryE2e(
     const registered = okValue<string>(
       await client.account.registerRingVrfKey({
         index,
-        ring: TEST_PEOPLE_LITE_RING,
+        ring: peopleLiteRing,
       }),
       "register_ring_vrf_key",
     );
@@ -185,7 +197,7 @@ export async function runRingVrfRegistryE2e(
     const repeated = okValue<string>(
       await client.account.registerRingVrfKey({
         index,
-        ring: TEST_PEOPLE_LITE_RING,
+        ring: peopleLiteRing,
       }),
       "idempotent register_ring_vrf_key",
     );
@@ -197,7 +209,7 @@ export async function runRingVrfRegistryE2e(
     const secondRing = okValue<string>(
       await client.account.registerRingVrfKey({
         index,
-        ring: TEST_PEOPLE_RING,
+        ring: peopleRing,
       }),
       "multi-ring register_ring_vrf_key",
     );
@@ -219,8 +231,8 @@ export async function runRingVrfRegistryE2e(
       throw new Error("owned public listing omitted the registered public key");
     }
     if (
-      !hasRing(publicEntry, TEST_PEOPLE_LITE_RING) ||
-      !hasRing(publicEntry, TEST_PEOPLE_RING)
+      !hasRing(publicEntry, peopleLiteRing) ||
+      !hasRing(publicEntry, peopleRing)
     ) {
       throw new Error(
         "multi-ring registration was not preserved by the registry",
@@ -245,7 +257,7 @@ export async function runRingVrfRegistryE2e(
       await client.account.getAccountAlias({
         keyHandle: handle,
         context,
-        ringLocation: TEST_PEOPLE_LITE_RING,
+        ringLocation: peopleLiteRing,
       }),
       "owned get_account_alias",
     );
@@ -259,23 +271,23 @@ export async function runRingVrfRegistryE2e(
     const proof = await client.account.createAccountProof({
       keyHandle: handle,
       context,
-      ringLocation: TEST_PEOPLE_LITE_RING,
+      ringLocation: peopleLiteRing,
       message: "0x7266633234",
     });
     expectDomainError(proof, "NotMember", "owned create_account_proof");
 
     const structurallyDifferentRing: RingLocation = {
-      chainId: TEST_PEOPLE_LITE_RING.chainId,
+      chainId: peopleLiteRing.chainId,
       junctions: [
         { tag: "PalletInstance", value: 67 },
-        ...TEST_PEOPLE_LITE_RING.junctions,
+        ...peopleLiteRing.junctions,
       ],
     };
     const wrongRingAlias = await client.account.getAccountAlias({
       keyHandle: handle,
       context,
       ringLocation: {
-        chainId: TEST_PEOPLE_LITE_RING.chainId,
+        chainId: peopleLiteRing.chainId,
         junctions: [],
       },
     });
@@ -352,7 +364,7 @@ export async function runRingVrfRegistryE2e(
     const foreignAlias = await client.account.getAccountAlias({
       keyHandle: foreignHandle,
       context,
-      ringLocation: TEST_PEOPLE_LITE_RING,
+      ringLocation: peopleLiteRing,
     });
     expectDomainError(
       foreignAlias,
@@ -364,7 +376,7 @@ export async function runRingVrfRegistryE2e(
     const foreignProof = await client.account.createAccountProof({
       keyHandle: foreignHandle,
       context,
-      ringLocation: TEST_PEOPLE_LITE_RING,
+      ringLocation: peopleLiteRing,
       message: "0x6e6f2070726f6d7074",
     });
     expectDomainError(
@@ -424,10 +436,12 @@ export async function runAutoSigningRingVrfE2e(
   };
 
   try {
+    const { peopleLite: peopleLiteRing } = await resolvePeopleRings(client);
+
     const publicKey = okValue<string>(
       await client.account.registerRingVrfKey({
         index,
-        ring: TEST_PEOPLE_LITE_RING,
+        ring: peopleLiteRing,
       }),
       "AutoSigning register_ring_vrf_key",
     );
@@ -443,7 +457,7 @@ export async function runAutoSigningRingVrfE2e(
     if (
       !entry ||
       entry.publicKey !== publicKey ||
-      !hasRing(entry, TEST_PEOPLE_LITE_RING)
+      !hasRing(entry, peopleLiteRing)
     ) {
       throw new Error(
         "AutoSigning registration was not immediately visible in the registry",

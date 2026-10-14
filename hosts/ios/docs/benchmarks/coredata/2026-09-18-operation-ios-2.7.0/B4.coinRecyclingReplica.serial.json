@@ -1,0 +1,86 @@
+{
+  "counters" : {
+    "assetMapperCalls" : 376760,
+    "chatMapperCalls" : 5300,
+    "coinDeliveries" : 1,
+    "deliveries" : 1513,
+    "voucherDeliveries" : 501
+  },
+  "date" : "2026-09-18T09:18:54Z",
+  "operationIOSVersion" : "2.7.0",
+  "scale" : {
+    "chats" : 200,
+    "fetchesPerReader" : 200,
+    "messagesPerChat" : 50,
+    "readYourWritesIterations" : 1000,
+    "readerTasks" : 8,
+    "recyclingChats" : 100,
+    "recyclingCoins" : 500,
+    "rowsPerBatch" : 100,
+    "spikeReaderFetches" : 200,
+    "spikeSeedRows" : 5000,
+    "spikeWriteRows" : 20000,
+    "subscriptionRows" : 2000,
+    "subscriptionSaves" : 100,
+    "writerBatches" : 50
+  },
+  "scenario" : "B4.coinRecyclingReplica",
+  "summaries" : [
+    {
+      "count" : 500,
+      "maxMs" : 48.866834,
+      "opsPerSecond" : 54.01455602966529,
+      "p50Ms" : 18.037,
+      "p95Ms" : 33.188875,
+      "p99Ms" : 35.733458,
+      "scenario" : "B4.voucherSave",
+      "variant" : "serial",
+      "wallMs" : 9256.764042
+    },
+    {
+      "count" : 1,
+      "maxMs" : 585.610042,
+      "opsPerSecond" : 1.707620990556716,
+      "p50Ms" : 585.610042,
+      "p95Ms" : 585.610042,
+      "p99Ms" : 585.610042,
+      "scenario" : "B4.registration",
+      "variant" : "serial",
+      "wallMs" : 585.610042
+    },
+    {
+      "count" : 1000,
+      "maxMs" : 9.646416,
+      "opsPerSecond" : 759.0880634215769,
+      "p50Ms" : 1.090542,
+      "p95Ms" : 2.7385,
+      "p99Ms" : 5.003542,
+      "scenario" : "B4.statusSave",
+      "variant" : "serial",
+      "wallMs" : 1317.370208
+    },
+    {
+      "count" : 367,
+      "maxMs" : 569.637333,
+      "opsPerSecond" : 32.88211871219475,
+      "p50Ms" : 6.744334,
+      "p95Ms" : 18.351417,
+      "p99Ms" : 23.423417,
+      "scenario" : "B4.read",
+      "variant" : "serial",
+      "wallMs" : 11161.081292
+    },
+    {
+      "count" : 1,
+      "maxMs" : 11164.080083,
+      "opsPerSecond" : 0.08957298698732381,
+      "p50Ms" : 11164.080083,
+      "p95Ms" : 11164.080083,
+      "p99Ms" : 11164.080083,
+      "scenario" : "B4.wall",
+      "variant" : "serial",
+      "wallMs" : 11164.080083
+    }
+  ],
+  "variant" : "serial"
+}

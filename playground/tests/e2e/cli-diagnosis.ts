@@ -70,7 +70,7 @@ async function inspectStack(): Promise<StackStatus> {
       portIsOpen(appPort),
       portIsOpen(hostPort),
       responseContains(appUrl, "TrUAPI Playground"),
-      responseContains(bridgeUrl, "window.__HOST_API_PORT__"),
+      responseContains(bridgeUrl, "window.__truapi_localhost"),
     ]);
   return { appPortOpen, bridgePortOpen, playgroundReady, bridgeReady };
 }

@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Pre-commit hook: Validates and auto-corrects code quality before allowing commits
+# Setup: ./developer-tools/setup.sh
+
+# Resolve via git so the hook respects the active worktree.
+# `${BASH_SOURCE[0]}/../..` would always point at the main checkout
+# (where the hook file physically lives under .git/hooks), causing
+# `git add -u` to stage spurious deletions from the worktree's index
+# when the main checkout is on a different branch.
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+cd "$PROJECT_ROOT"
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📋 Code Quality Check"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# Run quality analysis with auto-correct (--continue processes all modules)
+echo ""
+echo "🔍 Analyzing and auto-correcting code quality..."
+./gradlew detekt --continue --quiet 2>/dev/null || true
+
+# If detekt made changes, stage them
+if ! git diff --quiet; then
+    echo "🔧 Auto-corrected formatting issues. Staging changes..."
+    git add -u
+fi
+
+# Run detekt again to verify all issues are fixed
+echo "🔍 Verifying code quality..."
+if ! ./gradlew detekt --quiet; then
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "❌ Quality checks failed"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Issues found by detekt that require manual fix:"
+    echo "  • Check: build/reports/detekt/detekt.html"
+    echo "  • Or run: ./gradlew detekt"
+    echo ""
+    echo "To bypass (NOT recommended): git commit --no-verify"
+    echo ""
+    exit 1
+fi
+
+echo "✅ Quality checks passed"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "✨ Ready to commit"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+exit 0

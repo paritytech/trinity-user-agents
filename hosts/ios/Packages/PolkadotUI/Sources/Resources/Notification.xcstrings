@@ -1,0 +1,28 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "enableNotification.ignoreButton": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Don't Enable"
+          }
+        }
+      }
+    },
+    "enableNotification.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable Notifications to Receive Updates"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.1"
+}

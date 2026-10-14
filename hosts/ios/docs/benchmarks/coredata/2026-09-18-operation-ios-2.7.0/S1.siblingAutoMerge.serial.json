@@ -1,0 +1,49 @@
+{
+  "counters" : {
+
+  },
+  "date" : "2026-09-18T09:19:06Z",
+  "operationIOSVersion" : "2.7.0",
+  "scale" : {
+    "chats" : 200,
+    "fetchesPerReader" : 200,
+    "messagesPerChat" : 50,
+    "readYourWritesIterations" : 1000,
+    "readerTasks" : 8,
+    "recyclingChats" : 100,
+    "recyclingCoins" : 500,
+    "rowsPerBatch" : 100,
+    "spikeReaderFetches" : 200,
+    "spikeSeedRows" : 5000,
+    "spikeWriteRows" : 20000,
+    "subscriptionRows" : 2000,
+    "subscriptionSaves" : 100,
+    "writerBatches" : 50
+  },
+  "scenario" : "S1.siblingAutoMerge",
+  "summaries" : [
+    {
+      "count" : 200,
+      "maxMs" : 10.581,
+      "opsPerSecond" : 169.52072465024168,
+      "p50Ms" : 0.516,
+      "p95Ms" : 0.958417,
+      "p99Ms" : 4.711625,
+      "scenario" : "S1.siblingAutoMerge.read",
+      "variant" : "serial",
+      "wallMs" : 1179.79675
+    },
+    {
+      "count" : 1,
+      "maxMs" : 348.127792,
+      "opsPerSecond" : 2.87250838048575,
+      "p50Ms" : 348.127792,
+      "p95Ms" : 348.127792,
+      "p99Ms" : 348.127792,
+      "scenario" : "S1.siblingAutoMerge.write",
+      "variant" : "serial",
+      "wallMs" : 348.127792
+    }
+  ],
+  "variant" : "serial"
+}

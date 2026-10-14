@@ -20,11 +20,13 @@ jobs:
         run: npm run check-release-versions
 
       - name: Verify changesets were consumed
+        # Keep this title-based check for release PRs that do not bump npm
+        # versions, including retries and releases of native artifacts only.
         run: |
           set -euo pipefail
-          remaining_changesets="$(find .changeset -maxdepth 1 -type f -name '*.md' -print)"
+          remaining_changesets="$(find .changeset -maxdepth 1 -type f -name '*.md' ! -name README.md -print)"
           if [ -n "${remaining_changesets}" ]; then
-            echo "::error::Release PR still contains unconsumed changesets. Run npm run version-packages."
+            echo "::error::Release PR still contains unconsumed changesets. Rebuild the release commit from the default branch: reset to it, then rerun \`npm run version-packages\` and \`scripts/cut-version.sh\`. Rebasing and rerunning compounds the bump instead of replacing it."
             echo "${remaining_changesets}"
             exit 1
           fi

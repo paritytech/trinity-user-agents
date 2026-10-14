@@ -1,0 +1,200 @@
+# A signed build that installs on a phone, produced on demand rather than on
+# every commit.
+#
+# Its own workflow rather than a job in ios-pr.yml, because it exports ad-hoc,
+# signed by an Apple Distribution certificate against a profile naming
+# registered devices, and is asked for with a label of its own.
+#
+# It exports ad-hoc, which is signed by an Apple Distribution certificate
+# against a profile naming specific devices. It does not upload to Apple or to
+# any distribution service: the archive is attached to the run and nothing else.
+# Installing it needs the device's UDID in that profile, which is a separate
+# piece of Apple bookkeeping tracked on #681.
+name: iOS device preview
+
+on:
+  pull_request:
+    # `labeled` is what starts it. `synchronize` keeps it current once the
+    # label is on, so the archive follows the branch instead of pinning to the
+    # commit that happened to be the head when someone asked.
+    types: [labeled, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # The run links its archive from the pull request, so a reviewer does not
+  # have to find it in the Actions tab.
+  pull-requests: write
+
+env:
+  IOS_BUNDLE_ID: "io.parity.polkadotapp.develop"
+  IOS_EXTENSION_BUNDLE_ID: "io.parity.polkadotapp.develop.NotificationServiceExtension"
+  PROVISIONING_PROFILE_SPECIFIER: "match AdHoc io.parity.polkadotapp.develop"
+  EXTENSION_PROVISIONING_PROFILE_SPECIFIER: "match AdHoc io.parity.polkadotapp.develop.NotificationServiceExtension"
+  CODE_SIGN_IDENTITY: "Apple Distribution"
+  EXPORT_METHOD: "ad-hoc"
+  FASTLANE_CONFIGURATION: "DevCI"
+  RUN_IN_CI: true
+  # Never reaches App Store Connect, so this only has to be monotonic within a
+  # branch, not unique against an app record.
+  BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  build:
+    name: Signed device build
+    # Narrow on purpose. `labeled` fires for every label, so matching only on
+    # the label being present lets anything else being added, by a person or by
+    # labeler.yml, start a second run for the same commit that cancels the one
+    # already building.
+    if: >-
+      (github.event.action == 'labeled'
+       && github.event.label.name == 'ios-device-build')
+      || (github.event.action == 'synchronize'
+          && contains(github.event.pull_request.labels.*.name, 'ios-device-build'))
+    runs-on: macos-26-xlarge
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+        with:
+          match_auth_required: "true"
+          match_repository_pat: ${{ secrets.FASTLANE_RO_PAT }}
+
+      # The action's default cache key deliberately, not one of this workflow's
+      # own: rust-cache's key does not include the workflow or job, so sharing
+      # it restores what the core job writes on the default branch. A key only
+      # this workflow writes would never be seeded, because it only ever runs
+      # on a pull request.
+      - name: Bootstrap the in-tree core
+        uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Configure Google services
+        uses: ./hosts/ios/.github/actions/configure-google-services
+        with:
+          google_service_info_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
+          expected_bundle_id: ${{ env.IOS_BUNDLE_ID }}
+
+      - name: Configure secrets
+        uses: ./hosts/ios/.github/actions/configure-secrets
+        with:
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      # Before the build, so the stamp is inside what gets signed. Editing a
+      # signed bundle afterwards invalidates the signature and the archive then
+      # refuses to install, which is why this cannot be done the way the
+      # simulator preview does it.
+      - name: Stamp the app with its commit
+        working-directory: hosts/ios
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${COMMIT}" ]; then
+            echo "::error::No commit to stamp the build with; refusing to build it"
+            exit 1
+          fi
+
+          plist="polkadot-app/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :TrUAPICommit string ${COMMIT}" "$plist" \
+            || /usr/libexec/PlistBuddy -c "Set :TrUAPICommit ${COMMIT}" "$plist"
+          echo "stamped ${plist} with ${COMMIT}"
+
+      - name: Build the signed archive
+        working-directory: hosts/ios
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+        run: bundle exec fastlane build_app_ci
+
+      - name: Check the stamp survived, and that the signature still validates
+        id: package
+        working-directory: hosts/ios
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          archives=(*.ipa)
+          if [ ${#archives[@]} -ne 1 ]; then
+            echo "::error::Expected exactly one .ipa, found ${#archives[@]}"
+            exit 1
+          fi
+
+          work="$(mktemp -d)"
+          unzip -q "${archives[0]}" -d "$work"
+          apps=("$work"/Payload/*.app)
+          if [ ${#apps[@]} -ne 1 ]; then
+            echo "::error::Expected exactly one .app in the payload, found ${#apps[@]}"
+            exit 1
+          fi
+
+          stamped="$(/usr/libexec/PlistBuddy -c "Print :TrUAPICommit" "${apps[0]}/Info.plist" 2>/dev/null || true)"
+          if [ "${stamped}" != "${COMMIT}" ]; then
+            echo "::error::Signed app is not stamped with its commit, got '${stamped}'"
+            exit 1
+          fi
+
+          # --deep --strict, so this covers the nested extension and frameworks
+          # rather than only the outer seal, which the stamp order already
+          # guarantees. It says nothing about whether the profile covers a given
+          # device; that is what decides installability.
+          codesign --verify --deep --strict --verbose=1 "${apps[0]}"
+
+          short="${COMMIT:0:9}"
+          mv "${archives[0]}" "polkadot-app-${short}.ipa"
+          echo "short=${short}" >> "$GITHUB_OUTPUT"
+          echo "archive=hosts/ios/polkadot-app-${short}.ipa" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the device build
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: device-preview-${{ steps.package.outputs.short }}
+          path: ${{ steps.package.outputs.archive }}
+          retention-days: 14
+          if-no-files-found: error
+
+      # The stamp is inside the bundle, so the only way to read it before
+      # downloading is for the pull request to say which commit it came from.
+      - name: Write the preview comment
+        env:
+          SHORT: ${{ steps.package.outputs.short }}
+          URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+
+          # No URL means the upload failed, and that is the upload step's to
+          # report. Writing no body leaves the link step with nothing to post,
+          # which the action treats as nothing to say, so a build that
+          # succeeded is never failed by a comment that could not be composed.
+          if [ -z "${URL}" ]; then
+            echo "no artifact url, so no comment"
+            exit 0
+          fi
+
+          cat > "$RUNNER_TEMP/preview.md" <<EOF
+          ### iOS device preview
+
+          Built from \`${SHORT}\`, stamped with it in \`TrUAPICommit\`.
+
+          [Download it](${URL}). It arrives as a zip around the \`.ipa\`, so it
+          needs unzipping once before installing.
+
+          Installing needs your device registered in the ad hoc profile. If it
+          is not, run \`ios-register-device.yml\` with its UDID, then
+          \`ios-update-signing-data.yml\` to fold it into the profile, and
+          rebuild. Kept for 14 days.
+          EOF
+
+      - uses: ./.github/actions/upsert-pr-comment
+        with:
+          marker: "<!-- ios-device-preview -->"
+          body-file: ${{ runner.temp }}/preview.md

@@ -1,0 +1,29 @@
+[package]
+authors = ['Parity Technologies']
+edition = '2021'
+license = 'GPL-3.0-or-later'
+name = "hydra-dx-math-java"
+repository = 'https://github.com/paritytech/polkadot-android-community'
+version = "0.1.0"
+
+[dependencies]
+serde = { version = "1.0.169", features = ["derive"] }
+serde_json = "1.0.100"
+serde-aux = "4.2.0"
+sp-arithmetic = { git = "https://github.com/galacticcouncil/polkadot-sdk", branch = "stable2409-patch6", default-features = false }
+hydra-dx-math = { git = "https://github.com/galacticcouncil/HydraDX-node", version="10.3.0"}
+jni = { version = "0.17.0", default-features = false }
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "s"
+
+[lib]
+name = "hydra_dx_math_java"
+crate-type = ["cdylib"]
+
+[features]
+default = ["std"]
+std = ["sp-arithmetic/std"]
+stableswap = []

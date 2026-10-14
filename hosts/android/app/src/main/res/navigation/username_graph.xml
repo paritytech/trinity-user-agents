@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/claim_username_graph"
+    app:startDestination="@id/claimUsernameFragment">
+
+    <fragment
+        android:id="@+id/claimUsernameFragment"
+        android:name="io.paritytech.polkadotapp.feature_usernames_impl.presentation.claim.ClaimUsernameFragment"
+        android:label="UsernamesClaimFragment">
+
+        <action
+            android:id="@+id/action_claim_username_to_backupFoundBottomSheet"
+            app:destination="@id/backupFoundBottomSheet" />
+
+        <action
+            android:id="@+id/action_claim_username_to_recoverOptionsBottomSheet"
+            app:destination="@id/recoverOptionsBottomSheet" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/registrationQueueFragment"
+        android:name="io.paritytech.polkadotapp.feature_usernames_impl.presentation.registrationQueue.RegistrationQueueFragment"
+        android:label="RegistrationQueueFragment" />
+
+    <fragment
+        android:id="@+id/claimUnavailableFragment"
+        android:name="io.paritytech.polkadotapp.feature_usernames_impl.presentation.claimUnavailable.ClaimUnavailableFragment"
+        android:label="ClaimUnavailableFragment">
+
+        <action
+            android:id="@+id/action_claim_unavailable_to_recoverOptionsBottomSheet"
+            app:destination="@id/recoverOptionsBottomSheet" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/integrityFailedFragment"
+        android:name="io.paritytech.polkadotapp.feature_usernames_impl.presentation.integrityFailed.IntegrityFailedFragment"
+        android:label="IntegrityFailedFragment" />
+
+    <fragment
+        android:id="@+id/recoverMnemonicFragment"
+        android:name="io.paritytech.polkadotapp.feature_backup_impl.mnemonic.recover.RecoverMnemonicFragment"
+        android:label="RecoverMnemonicFragment" />
+
+    <dialog
+        android:id="@+id/recoverOptionsBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_backup_impl.recover.RecoverOptionsBottomSheet"
+        android:label="RecoverOptionsBottomSheet">
+
+        <action
+            android:id="@+id/action_recover_options_to_recoverMnemonicFragment"
+            app:destination="@id/recoverMnemonicFragment"
+            app:popUpTo="@id/recoverOptionsBottomSheet"
+            app:popUpToInclusive="true" />
+    </dialog>
+
+    <dialog
+        android:id="@+id/backupFoundBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_backup_impl.backupFound.compose.components.BackupFoundBottomSheet"
+        android:label="BackupFoundBottomSheet" />
+
+</navigation>

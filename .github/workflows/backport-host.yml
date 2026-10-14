@@ -1,0 +1,281 @@
+name: Backport a host tree
+
+# The trees under hosts/ are snapshots of the repositories they came from, and
+# those repositories keep moving. This watches for drift and opens the work as
+# a pull request carrying one file: BACKPORT-<host>.md, which says what is
+# behind and what has to be done to finish it.
+#
+# The pull request is deliberately empty of the work itself. A pull request
+# opened with the workflow token raises no pull_request event, so nothing this
+# repository gates on would run against it. With nothing to test that costs
+# nothing, and the push that carries the real refresh comes from whoever picks
+# the work up, which does start the full suite.
+#
+# Completing one means running scripts/refresh-host-import.sh, resolving any
+# conflict, and deleting the markdown file. The instructions are in the file so
+# they travel with the work.
+
+on:
+  schedule:
+    # Daily, both trees. A run that finds nothing costs a shallow clone and a
+    # handful of API calls, and a tree that is already carrying an open work
+    # order is left alone, so checking often is cheap and quiet.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      host:
+        description: "Which vendored tree to check"
+        required: false
+        type: choice
+        options:
+          - both
+          - android
+          - ios
+        default: both
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  open_work_order:
+    name: Backport work order (${{ matrix.host }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      # One tree's source being unreachable says nothing about the other's.
+      fail-fast: false
+      matrix:
+        host: ${{ (inputs.host == '' || inputs.host == 'both')
+          && fromJSON('["android","ios"]')
+          || fromJSON(format('["{0}"]', inputs.host)) }}
+    # Per tree, so a dispatch never races the schedule to the same branch, and
+    # the two trees never wait on each other. Not cancel-in-progress: a run that
+    # has already pushed a branch should finish opening its pull request.
+    concurrency:
+      group: backport-host-${{ matrix.host }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HOST: ${{ matrix.host }}
+      # The labels are named for the trees, so this needs no mapping.
+      HOST_LABEL: host-${{ matrix.host }}
+    steps:
+      # Depth 1. The range below is walked over commits fetched from the source
+      # repository, which this repository's own history plays no part in, and
+      # the only commit this job makes sits directly on the checked-out one.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # An open work order is someone's job in progress. A second one for the
+      # same tree would describe a range that overlaps it.
+      - name: Stop if a work order is already open
+        id: open_pr
+        run: |
+          set -euo pipefail
+          existing="$(gh pr list --state open --label backport-host --label "$HOST_LABEL" \
+            --json number --jq '.[0].number // ""')"
+          if [ -n "$existing" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Skipped"
+              echo
+              echo "[#${existing}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${existing}) is still open for \`hosts/${HOST}\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::#${existing} is still open for hosts/${HOST}."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Reads the manifest and the source's tip. No tree is touched: the work
+      # order describes the range, and whoever takes it produces the change.
+      - name: Measure the drift
+        id: drift
+        if: steps.open_pr.outputs.already == 'false'
+        run: |
+          set -euo pipefail
+          source="$(python3 -c 'import json,sys;print(json.load(open("hosts/imports.json"))[sys.argv[1]]["source"])' "$HOST")"
+          branch="$(python3 -c 'import json,sys;print(json.load(open("hosts/imports.json"))[sys.argv[1]]["branch"])' "$HOST")"
+          from="$(python3 -c 'import json,sys;print(json.load(open("hosts/imports.json"))[sys.argv[1]]["ref"])' "$HOST")"
+
+          # Not inline in the assignment: a failing ls-remote would abort the
+          # step under errexit and the message below would never print.
+          if ! remote="$(git ls-remote "$source" "refs/heads/${branch}")"; then
+            echo "::error::Cannot reach ${source}"
+            exit 1
+          fi
+          tip="$(cut -f1 <<<"$remote")"
+          if [ -z "$tip" ]; then
+            echo "::error::${source} has no branch ${branch}"
+            exit 1
+          fi
+
+          if [ "$tip" = "$from" ]; then
+            echo "behind=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::hosts/${HOST} is at the tip of ${branch}."
+            echo "### hosts/${HOST} is up to date" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # The branch refspec, not a bare fetch: a bare one takes the source's
+          # HEAD branch, which is not necessarily the branch being tracked, and
+          # the range below would then fail on an unknown revision.
+          git fetch --quiet --no-tags "$source" "+refs/heads/${branch}:refs/remotes/source/${branch}"
+          git fetch --quiet --no-tags "$source" "$from" 2>/dev/null \
+            || echo "::warning::${from} is no longer reachable by sha; relying on the branch fetch"
+
+          if ! git cat-file -e "${from}^{commit}" 2>/dev/null; then
+            echo "::error::The recorded ref ${from} is not in ${branch}. The source branch was rewritten; the manifest has to be corrected by hand."
+            exit 1
+          fi
+
+          count="$(git rev-list --count "${from}..${tip}")"
+          if [ "$count" -eq 0 ]; then
+            echo "behind=0" >> "$GITHUB_OUTPUT"
+            echo "::warning::${branch} has moved to ${tip} but carries nothing the recorded ref does not, so it was rewound rather than advanced. Nothing to backport, and the manifest is now behind a commit that is no longer the tip."
+            exit 0
+          fi
+          {
+            echo "behind=${count}"
+            echo "from=${from}"
+            echo "to=${tip}"
+            echo "source=${source}"
+            echo "source_branch=${branch}"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::hosts/${HOST} is ${count} commits behind ${branch}."
+
+      # The pull request numbers come from the commit subjects rather than from
+      # the source's API, so this stays one fetch rather than one call per
+      # commit. A commit that carries no number is still listed below.
+      - name: Write the work order
+        id: order
+        if: steps.drift.outputs.behind != '0' && steps.drift.outputs.behind != ''
+        env:
+          FROM: ${{ steps.drift.outputs.from }}
+          TO: ${{ steps.drift.outputs.to }}
+          COUNT: ${{ steps.drift.outputs.behind }}
+          SOURCE: ${{ steps.drift.outputs.source }}
+          SOURCE_BRANCH: ${{ steps.drift.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          repo_url="${SOURCE%.git}"
+          file="BACKPORT-${HOST}.md"
+          log="$(git log --reverse --format='%H%x09%s' "${FROM}..${TO}")"
+
+          {
+            echo "# Backport hosts/${HOST}"
+            echo
+            echo "Work order. Everything below describes what is missing from this repository; nothing here has been applied yet."
+            echo
+            echo "Changes move one way, from \`${repo_url}\` into \`hosts/${HOST}\`. Nothing in this repository is sent back the other way."
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| source | ${repo_url} (\`${SOURCE_BRANCH}\`) |"
+            echo "| from | \`${FROM}\` |"
+            echo "| to | \`${TO}\` |"
+            echo "| commits | ${COUNT} |"
+            echo
+            echo "## Pull requests in the range"
+            echo
+            echo "Taken from the commit subjects, so a commit that landed without a number is not listed here. The full list is below it."
+            echo
+            printf '%s\n' "$log" \
+              | sed -nE 's/^[0-9a-f]+\t.*\(#([0-9]+)\)$/\1/p; s/^[0-9a-f]+\tMerge pull request #([0-9]+) .*/\1/p' \
+              | sort -un \
+              | sed "s|^\\([0-9]*\\)$|- [#\\1](${repo_url}/pull/\\1)|" \
+              | grep . \
+              || echo "- none carried a pull request number"
+            echo
+            echo "<details>"
+            echo "<summary>All ${COUNT} commits</summary>"
+            echo
+            echo '```'
+            printf '%s\n' "$log" | cut -c1-9,41-
+            echo '```'
+            echo
+            echo "</details>"
+            echo
+            echo "## How to finish this"
+            echo
+            echo "You are completing this pull request. Work on its branch and push to it."
+            echo
+            echo "1. Run the refresh. Do not merge the trees by hand:"
+            echo
+            echo '   ```bash'
+            echo "   scripts/refresh-host-import.sh refresh ${HOST}"
+            echo '   ```'
+            echo
+            echo "   It replaces \`hosts/${HOST}\` with the source's tree, re-applies this repository's adaptations as a three-way patch, and compares every path against the source by blob hash in both directions. That comparison is the point: it is what catches upstream work silently dropped and adaptations that no longer apply. A hand-merge produces a plausible tree and none of those checks."
+            echo
+            echo "2. Read what it reports before committing."
+            echo
+            echo "   - A conflict is left unmerged on purpose, so git refuses to commit it. Resolve each one, keeping this repository's adaptation unless the source has clearly superseded it."
+            echo "   - \`adaptation left no difference\` means either the source adopted that change or it did not apply. Check which, and say so in the pull request."
+            echo "   - If the script refuses the result outright, do not force it. Recover with \`git reset --hard HEAD\` and say what happened."
+            echo
+            echo "3. Build what the change touches. An upstream change that adds a requirement to a protocol will not show up as a conflict, because the comparison reads content and not types; it shows up as a conformer in this repository that no longer compiles."
+            echo
+            echo "4. Decide whether this backport is a breaking change. Read the pull requests listed above against \`.claude/skills/semver-pr-title/SKILL.md\`. If any of them makes a tester lose data or a session, reinstall, or find a feature gone, or makes a product change its code, retitle this pull request with \`!\`, for example \`chore(hosts)!: backport ${COUNT} commits into hosts/${HOST}\`, and name what breaks in its description. The nightly announcement lists \`!\` titles first."
+            echo
+            echo "5. Delete this file. It is the work order, not part of the tree:"
+            echo
+            echo '   ```bash'
+            echo "   git rm ${file}"
+            echo '   ```'
+            echo
+            echo "6. Commit the refreshed tree, \`hosts/imports.json\` with its new ref, and the deletion together, then push. That push is what starts CI on this pull request."
+          } > "$file"
+
+          {
+            echo "file=${file}"
+            # The target commit is in the name, so each work order gets its own
+            # branch and nothing this job does can overwrite another one.
+            echo "branch=hosts/backport-${HOST}-${TO:0:9}"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Work order for hosts/${HOST}"
+            echo
+            echo "${COUNT} commits, \`${FROM}\` to \`${TO}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open the pull request
+        if: steps.order.outputs.file != ''
+        env:
+          BRANCH: ${{ steps.order.outputs.branch }}
+          FILE: ${{ steps.order.outputs.file }}
+          COUNT: ${{ steps.drift.outputs.behind }}
+          FROM: ${{ steps.drift.outputs.from }}
+          TO: ${{ steps.drift.outputs.to }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add "$FILE"
+          git commit --no-gpg-sign -q -m "chore(hosts): open a backport work order for ${HOST}" \
+            -m "hosts/${HOST} is ${COUNT} commits behind its source, ${FROM} to ${TO}. ${FILE} carries the range and what has to be done; it is deleted by whoever completes this."
+          # Not forced. The branch names the commit it targets, so a branch that
+          # already exists holds a work order for this same range, and whatever
+          # is on it is someone's work rather than a stale copy of this one.
+          git push origin "$BRANCH"
+
+          # A file rather than an inline string: the body carries blank lines,
+          # which cannot survive inside a run block's quoting.
+          {
+            echo "\`hosts/${HOST}\` is ${COUNT} commits behind its source. [\`${FILE}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${BRANCH}/${FILE}) carries the range, the pull requests in it, and what has to be done to finish this."
+            echo
+            echo "This pull request is empty on purpose. Complete it on this branch: run the refresh, resolve what it reports, delete the file, and push. That push is what starts CI."
+          } > "${RUNNER_TEMP}/pr-body.md"
+
+          url="$(gh pr create \
+            --base "${GITHUB_REF_NAME}" \
+            --head "$BRANCH" \
+            --title "chore(hosts): backport ${COUNT} commits into hosts/${HOST}" \
+            --label backport-host \
+            --label "$HOST_LABEL" \
+            --body-file "${RUNNER_TEMP}/pr-body.md")"
+          echo "::notice::${url}"
+          {
+            echo
+            echo "${url}"
+          } >> "$GITHUB_STEP_SUMMARY"

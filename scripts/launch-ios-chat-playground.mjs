@@ -7,11 +7,11 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createServer } from "node:http";
-import { dirname, extname, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
 import {
   CHAT_DIAGNOSIS_HEADING,
   decodeTextMessage,
@@ -21,15 +21,19 @@ import {
   DEFAULT_BUNDLE,
   appGroupId,
   bootAndInstallApp,
-  capture,
   defaultAppPath,
-  delay,
-  isLoopback,
   readPlistValue,
+  userDataDatabase,
+} from "./lib/ios-simulator.mjs";
+import {
+  capture,
+  captureOptional,
+  delay,
   run,
   runAsync,
   waitFor,
-} from "./lib/ios-simulator.mjs";
+} from "./lib/process.mjs";
+import { startProductServer } from "./lib/product-server.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const bundle = process.env.TRUAPI_IOS_E2E_BUNDLE ?? DEFAULT_BUNDLE;
@@ -104,17 +108,12 @@ const appData = capture("xcrun", [
   bundle,
   "data",
 ]).trim();
-const connectionMarkers = [
-  resolve(appData, "tmp/truapi-e2e", `connected-chat-${productHost}`),
-];
 const customRendererMarker = resolve(
   appData,
   "tmp/truapi-e2e/custom-renderer-update",
 );
-for (const marker of [...connectionMarkers, customRendererMarker]) {
-  if (existsSync(marker)) {
-    unlinkSync(marker);
-  }
+if (existsSync(customRendererMarker)) {
+  unlinkSync(customRendererMarker);
 }
 const workerDestination = resolve(
   appData,
@@ -157,15 +156,16 @@ const appGroup = capture("xcrun", [
   bundle,
   appGroupId(bundle),
 ]).trim();
-const userDataDatabase = resolve(appGroup, "CoreData/UserDataModel.sqlite");
 const chatIdentifier = `1:${productHost}:${roomId}`;
-const messageWatermark = existsSync(userDataDatabase)
-  ? latestMessageId(userDataDatabase, chatIdentifier)
+const initialDatabase = userDataDatabase(appGroup);
+let messageWatermark = existsSync(initialDatabase)
+  ? latestMessageId(initialDatabase, chatIdentifier)
   : 0;
 
 const productServer = await startProductServer(
   productUrl,
   resolve(productRoot, "out"),
+  productName,
 );
 try {
   const launchApp = () =>
@@ -191,11 +191,7 @@ try {
 
   launchApp();
 
-  await waitForFiles(
-    connectionMarkers,
-    60_000,
-    "Ensure the selected simulator has completed Polkadot onboarding.",
-  );
+  await waitForFirstActivity(appGroup, chatIdentifier, messageWatermark);
 
   const activeCachedWorkerDestination = currentCachedWorkerDestination();
   if (
@@ -207,20 +203,19 @@ try {
     if (!workerDestinations.includes(activeCachedWorkerDestination)) {
       workerDestinations.push(activeCachedWorkerDestination);
     }
-    for (const marker of [...connectionMarkers, customRendererMarker]) {
-      if (existsSync(marker)) unlinkSync(marker);
-    }
+    if (existsSync(customRendererMarker)) unlinkSync(customRendererMarker);
+    // Re-read: every wait below must ignore what the worker being replaced wrote.
+    const database = userDataDatabase(appGroup);
+    messageWatermark = existsSync(database)
+      ? latestMessageId(database, chatIdentifier)
+      : messageWatermark;
     launchApp();
-    await waitForFiles(
-      connectionMarkers,
-      60_000,
-      "Ensure the selected simulator has completed Polkadot onboarding.",
-    );
+    await waitForFirstActivity(appGroup, chatIdentifier, messageWatermark);
   }
 
   if (expectDiagnosis) {
     const report = await waitForTextPrefix(
-      userDataDatabase,
+      appGroup,
       chatIdentifier,
       messageWatermark,
       CHAT_DIAGNOSIS_HEADING,
@@ -231,14 +226,14 @@ try {
   } else {
     if (expectedStartupMessage) {
       await waitForTextPrefix(
-        userDataDatabase,
+        appGroup,
         chatIdentifier,
         messageWatermark,
         expectedStartupMessage,
       );
     }
     await waitForTextPrefix(
-      userDataDatabase,
+      appGroup,
       chatIdentifier,
       messageWatermark,
       expectedReply,
@@ -277,81 +272,41 @@ console.log(
   }),
 );
 
-async function startProductServer(urlString, root) {
-  const url = new URL(urlString);
-  if (!isLoopback(url)) {
-    throw new Error(
-      `Product URL must be loopback for this E2E test: ${urlString}`,
-    );
-  }
-
-  try {
-    const response = await fetch(urlString);
-    if (response.ok && (await response.text()).includes(productName)) {
-      return null;
-    }
-    throw new Error(`${urlString} is serving a different application`);
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes("different application")
-    ) {
-      throw error;
-    }
-  }
-
-  const server = createServer((request, response) => {
-    try {
-      const pathname = decodeURIComponent(
-        new URL(request.url ?? "/", urlString).pathname,
-      );
-      let file = resolve(root, `.${pathname}`);
-      if (file !== root && !file.startsWith(`${root}${sep}`)) {
-        response.writeHead(403).end();
-        return;
-      }
-      if (statSync(file).isDirectory()) {
-        file = resolve(file, "index.html");
-      }
-      response.setHeader("Content-Type", contentType(file));
-      const content = readFileSync(file);
-      response.end(content);
-    } catch {
-      response.writeHead(404).end();
-    }
-  });
-  await new Promise((resolveListen, reject) => {
-    server.once("error", reject);
-    server.listen(Number(url.port || 80), url.hostname, resolveListen);
-  });
-  return server;
-}
-
-function contentType(file) {
-  switch (extname(file)) {
-    case ".html":
-      return "text/html; charset=utf-8";
-    case ".js":
-      return "text/javascript; charset=utf-8";
-    case ".css":
-      return "text/css; charset=utf-8";
-    case ".json":
-      return "application/json";
-    case ".png":
-      return "image/png";
-    case ".svg":
-      return "image/svg+xml";
-    default:
-      return "application/octet-stream";
-  }
-}
-
 function waitForFiles(files, timeoutMs, hint) {
   return waitFor(() => files.every(existsSync), {
     timeoutMs,
     message: () =>
       `Timed out waiting for files: ${files.join(", ")}${hint ? `\n${hint}` : ""}`,
   });
+}
+
+/**
+ * Wait for a message the product posted in this run. Watermarked because the room and its
+ * messages survive the previous run, so an unqualified check passes at once and gates nothing.
+ */
+function waitForFirstActivity(appGroup, identifier, afterMessageId) {
+  return waitFor(
+    () => {
+      const database = userDataDatabase(appGroup);
+      if (!existsSync(database)) {
+        return undefined;
+      }
+      const query = `
+        SELECT m.Z_PK
+        FROM ZCDCHATMESSAGE AS m
+        JOIN ZCDCHAT AS chat ON chat.Z_PK = m.ZCHAT
+        WHERE chat.ZIDENTIFIER = ${sqlString(identifier)}
+          AND m.Z_PK > ${afterMessageId}
+        LIMIT 1;
+      `;
+      return captureOptional("sqlite3", [database, query]) || undefined;
+    },
+    {
+      timeoutMs: 60_000,
+      message: () =>
+        `Timed out waiting for the product to post in ${identifier}.\nEnsure the selected simulator has completed Polkadot onboarding and holds an identity.`,
+    },
+  );
 }
 
 function filesHaveEqualContents(first, second) {
@@ -373,9 +328,11 @@ function latestMessageId(database, identifier) {
   return Number.parseInt(value, 10) || 0;
 }
 
-function waitForTextPrefix(database, identifier, afterMessageId, prefix) {
+function waitForTextPrefix(appGroup, identifier, afterMessageId, prefix) {
   return waitFor(
     () => {
+      // Re-resolved per poll: the app may migrate to a new store on launch.
+      const database = userDataDatabase(appGroup);
       if (!existsSync(database)) {
         return undefined;
       }

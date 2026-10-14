@@ -10,4 +10,4 @@ mod helpers;
 mod platform;
 mod socket;
 
-pub(crate) use platform::SubxtPlatform;
+pub use platform::SubxtPlatform;

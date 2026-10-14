@@ -5,28 +5,45 @@
 // catalog — consumed as SPM git dependencies (the manifest must live at the repo
 // root for that). Package sources live under ios/truapi-host/ and
 // ios/truapi-provider/. The two products are independent and release on separate
-// tags. For both, the uniffi-generated bindings are committed build outputs
-// (regenerate with the package's scripts/rebuild.sh) while the xcframework is
-// gitignored and distributed as a GitHub release asset (scripts/publish.sh).
+// tags. For both, the uniffi-generated bindings, the container resource and the
+// xcframework are gitignored build outputs: regenerate them with the package's
+// scripts/rebuild.sh, and publish the xcframework as a GitHub release asset
+// with scripts/publish.sh.
 
 import Foundation
 import PackageDescription
 
-// Set TRUAPI_USE_LOCAL_BINARY=1 to build against the locally generated
-// ios/truapi-host/Binaries/truapi_server.xcframework (run rebuild.sh first).
-// The published release asset remains the default for remote consumers.
+// Which truapi_server.xcframework the package links.
+//
+// TRUAPI_USE_LOCAL_BINARY=1 forces the locally generated one, which is what CI
+// passes. It is also preferred whenever it is present, because a host building
+// against this tree needs it: the published asset comes from a release
+// commit (#723), so bindings generated from this tree would be paired with an
+// older binary, and the generated code checks that pairing at runtime. The
+// staged xcframework is a gitignored build output, so a remote consumer never
+// has one and keeps the published asset. Preferring it also covers Xcode opened
+// from Finder, which cannot be handed an environment variable and evaluates this
+// manifest before any build phase could run.
+//
+// The path comes from #filePath, not the working directory, which is not
+// guaranteed to be the package root while the manifest is evaluated.
+let stagedBinaryPath = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .appendingPathComponent("ios/truapi-host/Binaries/truapi_server.xcframework")
+    .path
 let useLocalBinary = ProcessInfo.processInfo.environment["TRUAPI_USE_LOCAL_BINARY"] == "1"
+    || FileManager.default.fileExists(atPath: stagedBinaryPath)
 
-let publishedBinaryURL = "https://github.com/paritytech/host-rust-core/releases/download/%40parity%2Fios-host%400.7.0/truapi_server.xcframework.zip"
-let publishedBinaryChecksum = "682149477072500511ae24bd3f631acb7614e52549ae01f87d8640304db6e5f2"
+let publishedBinaryURL = "https://github.com/paritytech/trinity-user-agents/releases/download/%40parity%2Fios-host%400.25.0/truapi_server.xcframework.zip"
+let publishedBinaryChecksum = "bb796a9bcea9198f40c1431a79542f366dfe2826344262e52ed4e594a74d55f8"
 
 let binaryTarget: Target = useLocalBinary
     ? .binaryTarget(
-        name: "truapi_serverFFI_binary",
+        name: "truapiFFI_binary",
         path: "ios/truapi-host/Binaries/truapi_server.xcframework"
     )
     : .binaryTarget(
-        name: "truapi_serverFFI_binary",
+        name: "truapiFFI_binary",
         url: publishedBinaryURL,
         checksum: publishedBinaryChecksum
     )
@@ -38,10 +55,8 @@ let binaryTarget: Target = useLocalBinary
 let useLocalProviderBinary =
     ProcessInfo.processInfo.environment["TRUAPI_PROVIDER_USE_LOCAL_BINARY"] == "1"
 
-// Set by ios/truapi-provider/scripts/publish.sh. No release exists yet, so remote
-// resolution fails on the checksum until the first publish.
-
-let providerBinaryURL = "https://github.com/paritytech/host-rust-core/releases/download/%40parity%2Fios-provider%400.7.0/truapi_provider.xcframework.zip"
+// Set by ios/truapi-provider/scripts/publish.sh.
+let providerBinaryURL = "https://github.com/paritytech/trinity-user-agents/releases/download/%40parity%2Fios-provider%400.7.0/truapi_provider.xcframework.zip"
 let providerBinaryChecksum = "04fd47522fad5b12048396efae5d34c40f049623678066215654a3c9166d2bb3"
 
 let providerBinaryTarget: Target = useLocalProviderBinary
@@ -69,23 +84,11 @@ let package = Package(
             pkgConfig: nil,
             providers: []
         ),
-        .systemLibrary(
-            name: "truapi_platformFFI",
-            path: "ios/truapi-host/Sources/truapi_platformFFI/include",
-            pkgConfig: nil,
-            providers: []
-        ),
-        .systemLibrary(
-            name: "truapi_serverFFI",
-            path: "ios/truapi-host/Sources/truapi_serverFFI/include",
-            pkgConfig: nil,
-            providers: []
-        ),
         binaryTarget,
         .target(
             name: "TrUAPIHost",
             dependencies: [
-                "truapiFFI", "truapi_platformFFI", "truapi_serverFFI", "truapi_serverFFI_binary",
+                "truapiFFI", "truapiFFI_binary",
             ],
             path: "ios/truapi-host/Sources/TrUAPIHost",
             resources: [.copy("Resources/truapi-container.js")]

@@ -1,0 +1,38 @@
+// Reference for Configs/brand.xcconfig — the real, GITIGNORED brand file.
+//
+// Copy this file to Configs/brand.xcconfig and replace every value below with the
+// real identity for the brand being built. The values here are PLACEHOLDERS: they
+// build, but they name nothing that exists — no provisioning profile, no associated
+// domain, no App Group. Brand identity is deliberately kept out of version control,
+// so this template is the only thing the repository knows about the key set.
+//
+// A missing Configs/brand.xcconfig is a hard build error at config parse:
+//     Configs/base.debug.xcconfig:7: error: could not find included file 'brand.xcconfig' in search paths
+//
+// An INCOMPLETE Configs/brand.xcconfig is not caught at build time. A key present
+// here but absent there expands to an empty string in Info.plist, and AppConfig.Brand
+// traps at launch naming the key. After adding a key here, tell the team to add it.
+//
+// URLs are stored as HOST (and path) ONLY, never a scheme. An xcconfig treats "//"
+// as a comment start anywhere on the line, so "https://example.com" would silently
+// resolve to "https:". Swift composes the scheme, matching
+// ProductUniversalLink.scheme = "https".
+//
+// Config-axis values (compiler flags, ICON_SUFFIX, the .develop suffix) live in
+// Configs/base.*.xcconfig, not here. Every key below must be present and non-empty.
+//
+// BRAND_DEEPLINK is the scheme base. Each configuration appends its own suffix to it
+// (Configs/base.*.xcconfig) so every installable app id owns a distinct scheme. The base
+// must not collide with any other installed brand's: iOS resolves a scheme collision
+// non-deterministically.
+
+BRAND_DISPLAY_NAME = Example
+BRAND_BUNDLE_ROOT = com.example.app
+BRAND_DEEPLINK = exampleapp
+BRAND_SHARE_ROOT = example.com
+BRAND_SHARE_ROOT_TEST = test.example.com
+BRAND_CASH_SYMBOL = CASH
+BRAND_FIAT_SYMBOL = $
+BRAND_TERMS_HOST = example.com/terms
+BRAND_PRIVACY_HOST = example.com/privacy
+BRAND_CONTACT_EMAIL = info@example.com

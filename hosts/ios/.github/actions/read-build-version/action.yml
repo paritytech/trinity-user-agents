@@ -1,0 +1,73 @@
+name: "Read Build Version"
+description: "Reads MARKETING_VERSION from the given config and computes the next TestFlight build number for the given bundle id. Requires the iOS environment (install action) to be set up by the caller."
+
+inputs:
+  pbxproj_path:
+    description: "Path to project.pbxproj"
+    required: false
+    default: "hosts/ios/polkadot-app.xcodeproj/project.pbxproj"
+  config_name:
+    description: "Xcode configuration to read MARKETING_VERSION from (Release, Nightly or Safetynet)"
+    required: false
+    default: "Release"
+  ios_bundle_id:
+    description: "Bundle id whose TestFlight build numbers are queried. Safetynet is a separate App Store Connect record; Release and Nightly share the production one."
+    required: false
+    default: "io.parity.polkadotapp"
+  increment_step:
+    description: "How much to add to the latest TestFlight build number (1 if empty)"
+    required: false
+    default: ""
+  asc_key_id:
+    description: "App Store Connect API key ID"
+    required: true
+  asc_issuer_id:
+    description: "App Store Connect API issuer ID"
+    required: true
+  asc_key_base64:
+    description: "Base64-encoded App Store Connect API private key"
+    required: true
+
+outputs:
+  marketing_version:
+    description: "MARKETING_VERSION from the requested configuration"
+    value: ${{ steps.read.outputs.marketing_version }}
+  build_number:
+    description: "Next TestFlight build number (latest + increment_step)"
+    value: ${{ steps.build_number.outputs.build_number }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Read marketing version
+      id: read
+      shell: bash
+      env:
+        PBXPROJ_PATH: ${{ inputs.pbxproj_path }}
+        CONFIG_NAME: ${{ inputs.config_name }}
+      run: |
+        set -euo pipefail
+        python3 hosts/ios/.github/scripts/read_versions.py "${PBXPROJ_PATH}" \
+          --config-name "${CONFIG_NAME}" \
+          --output-format env | grep "marketing_version=" >> "$GITHUB_OUTPUT"
+
+    - name: Get expected build number
+      id: build_number
+      shell: bash
+      env:
+        INCREMENT_STEP: ${{ inputs.increment_step }}
+        IOS_BUNDLE_ID: ${{ inputs.ios_bundle_id }}
+        ASC_KEY_ID: ${{ inputs.asc_key_id }}
+        ASC_ISSUER_ID: ${{ inputs.asc_issuer_id }}
+        ASC_KEY_BASE64: ${{ inputs.asc_key_base64 }}
+      working-directory: hosts/ios
+      run: |
+        set -euo pipefail
+        CURRENT=$(bundle exec fastlane get_testflight_build_number 2>&1 | grep -oE "Latest TestFlight build number: [0-9]+" | grep -oE "[0-9]+")
+        INCREMENT="${INCREMENT_STEP:-1}"
+        if ! [[ "${INCREMENT}" =~ ^[0-9]+$ ]]; then
+          echo "::error::increment_step must be a non-negative integer, got '${INCREMENT}'"; exit 1
+        fi
+        BUILD_NUMBER=$((CURRENT + INCREMENT))
+        echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+        echo "Current TestFlight build: ${CURRENT}, increment: ${INCREMENT}, expected new: ${BUILD_NUMBER}"

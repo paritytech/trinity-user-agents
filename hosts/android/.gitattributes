@@ -1,0 +1,3 @@
+database/schemas/**/*.json binary
+# `binary` is local only; this is what collapses the exported schema in a GitHub diff.
+database/schemas/**/*.json linguist-generated=true

@@ -1,0 +1,9 @@
+{
+  "productName": "peopl.paseo",
+  "displayName": "Personhood",
+  "description": "Stands in for the personhood product in the cross-product storage and ring-VRF e2es.",
+  "icon": "./icon.png",
+  "trustedProducts": {
+    "dim2": ["storage", "context"]
+  }
+}

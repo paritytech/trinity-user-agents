@@ -1,0 +1,11 @@
+package io.paritytech.polkadotapp.chains.multiNetwork.connection.autobalance.strategy
+
+import io.paritytech.polkadotapp.chains.multiNetwork.connection.NodeWithSaturatedUrl
+
+interface AutoBalanceStrategy {
+    fun generateNodeSequence(defaultNodes: List<NodeWithSaturatedUrl>): Sequence<NodeWithSaturatedUrl>
+}
+
+fun AutoBalanceStrategy.generateNodeIterator(defaultNodes: List<NodeWithSaturatedUrl>): Iterator<NodeWithSaturatedUrl> {
+    return generateNodeSequence(defaultNodes).iterator()
+}

@@ -1,6 +1,5 @@
 import { Observable } from "rxjs";
 import { err, ok, type Result } from "neverthrow";
-import { PASEO_NEXT_V2_ASSET_HUB } from "@parity/truapi";
 import {
   AccountId,
   Blake2128Concat,
@@ -16,6 +15,7 @@ import {
 import { fromHex, toHex } from "@polkadot-api/utils";
 import type {
   Client,
+  ContactHandle,
   HexString,
   ProductAccountId,
   ProductAccountTxPayload,
@@ -49,6 +49,11 @@ export type BuildCreateTransactionPayload = (opts: {
   signer: ProductAccountId;
   genesisHash: HexString;
   callData: HexString;
+  /**
+   * Contact handles `callData` names, which the host replaces with the
+   * accounts they resolve to. A call naming nobody leaves this out.
+   */
+  contacts?: ContactHandle[];
 }) => Promise<Result<ProductAccountTxPayload, Error>>;
 
 // Lite usernames are keyed by their dotted label ("alice.01") on the Asset
@@ -116,6 +121,12 @@ export function createAccountIdForDotNsUsername(
       return err(new Error("DotNS username is empty"));
     }
 
+    const assetHub = await truapi.chain.getChainInfo({ chain: "AssetHub" });
+    if (assetHub.isErr()) {
+      return err(toError(assetHub.error));
+    }
+    const genesisHash = assetHub.value.genesisHash;
+
     const key = liteLabelOwnerStorage.enc(
       new TextEncoder().encode(dotNsUsername),
     ) as HexString;
@@ -140,7 +151,7 @@ export function createAccountIdForDotNsUsername(
         switch (item.tag) {
           case "Initialized": {
             const result = await truapi.chain.getHeadStorage({
-              genesisHash: PASEO_NEXT_V2_ASSET_HUB.genesis,
+              genesisHash,
               followSubscriptionId: sub.subscriptionId,
               hash: item.value.finalizedBlockHashes[0],
               items: [{ key, queryType: "Value" }],
@@ -190,10 +201,7 @@ export function createAccountIdForDotNsUsername(
       };
       const sub = truapi.chain
         .followHeadSubscribe({
-          request: {
-            genesisHash: PASEO_NEXT_V2_ASSET_HUB.genesis,
-            withRuntime: false,
-          },
+          request: { genesisHash, withRuntime: false },
         })
         .subscribe({
           next: (item) => {
@@ -273,7 +281,8 @@ export function createBuildCreateTransactionPayload(
         builder,
         chainState,
       ),
-      txExtVersion: txExtVersionFromMetadata(unified),
+      txExtVersion: 0,
+      contacts: opts.contacts ?? [],
     });
   };
 }
@@ -531,25 +540,21 @@ function nonceFromRuntimeApiOutput(output: HexString): number {
   ).getUint32(0, true);
 }
 
-function txExtVersionFromMetadata(metadata: UnifiedMetadata): number {
-  const latestVersion = metadata.extrinsic.version.reduce(
-    (max, version) => Math.max(max, version),
-    0,
-  );
-  return latestVersion === 4 ? 0 : latestVersion;
-}
-
 function encodeSignedExtensions(
   metadata: UnifiedMetadata,
   lookupFn: LookupFn,
   builder: DynamicBuilder,
   chainState: ChainState,
 ): TxPayloadExtension[] {
-  const exts = metadata.extrinsic.signedExtensions[0] as Array<{
-    identifier: string;
-    type: number;
-    additionalSigned: number;
-  }>;
+  const exts = (
+    metadata.extrinsic.signedExtensions[0] as Array<{
+      identifier: string;
+      type: number;
+      additionalSigned: number;
+    }>
+  )
+    // Left out, VerifyMultiSignature is filled by the host with its signature.
+    .filter((ext) => ext.identifier !== "VerifyMultiSignature");
 
   return exts.map((ext) => {
     const values = signedExtensionValues(ext, lookupFn, chainState);
@@ -602,8 +607,6 @@ function signedExtensionValues(
         extra: { type: "Immortal" },
         additionalSigned: toHex(chainState.genesisHash),
       };
-    case "VerifyMultiSignature":
-      return { extra: { type: "Disabled" }, additionalSigned: undefined };
     case "ChargeAssetTxPayment":
       return {
         extra: { tip: 0, asset_id: undefined },

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/send_contact_payment_graph"
+    app:startDestination="@id/sendPaymentFragment">
+
+    <fragment
+        android:id="@+id/sendPaymentFragment"
+        android:name="io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.SendPaymentFragment"
+        android:label="SendPaymentFragment">
+        <action
+            android:id="@+id/action_sendPaymentFragment_to_send_enter_amount_graph"
+            app:destination="@id/send_enter_amount_graph"
+            app:popUpTo="@id/send_contact_payment_graph"
+            app:popUpToInclusive="true" />
+        <action
+            android:id="@+id/action_sendPaymentFragment_to_scanAddressQrFragment"
+            app:destination="@id/scanAddressQrFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/scanAddressQrFragment"
+        android:name="io.paritytech.polkadotapp.feature_wallet_impl.presentation.scanAddressQr.ScanAddressQrFragment"
+        android:label="ScanAddressQrFragment" />
+
+</navigation>

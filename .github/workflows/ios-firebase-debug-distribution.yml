@@ -1,0 +1,146 @@
+name: Firebase Develop Distribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      groups:
+        description: "Groups to distribute the app to"
+        required: true
+        default: "ios-external-team"
+      releaseNotes:
+        description: "Release notes for the distribution"
+        required: true
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+env:
+  IOS_BUNDLE_ID: "io.parity.polkadotapp.develop"
+  IOS_EXTENSION_BUNDLE_ID: "io.parity.polkadotapp.develop.NotificationServiceExtension"
+  PROVISIONING_PROFILE_SPECIFIER: "match AdHoc io.parity.polkadotapp.develop"
+  EXTENSION_PROVISIONING_PROFILE_SPECIFIER: "match AdHoc io.parity.polkadotapp.develop.NotificationServiceExtension"
+  CODE_SIGN_IDENTITY: "Apple Distribution"
+  EXPORT_METHOD: "ad-hoc"
+  FIREBASE_GROUPS: "polkadotapp-ios"
+  RELEASE_NOTES: ${{ github.event.pull_request.title || 'New build' }} ${{ github.event.pull_request.merge_commit_sha || github.event.head_commit.message}}
+  FASTLANE_CONFIGURATION: "DevCI"
+  RUN_IN_CI: true
+  SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+jobs:
+  build:
+    name: Build and distribute (${{ matrix.variant.name }})
+    runs-on: macos-26
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each variant runs as a separate parallel job
+        #
+        # extra_swift_flags: space-separated flags, each will be wrapped in quotes
+        #   Single flag:   "-DFLAG1"
+        #   Multiple flags: "-DFLAG1 -DFLAG2 -DFLAG3"
+        #
+        # WARNING: only ONE variant should have upload_to_firebase: true
+        # Multiple Firebase uploads will cause version conflicts
+        variant:
+          - name: "default"
+            extra_swift_flags: ""
+            artifact_suffix: ""
+            upload_to_firebase: true
+          - name: "no-auth"
+            extra_swift_flags: "-DDISABLE_AUTH"
+            artifact_suffix: "-no-auth"
+            upload_to_firebase: false
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+        with:
+          match_auth_required: "true"
+          match_repository_pat: ${{ secrets.FASTLANE_RO_PAT }}
+
+      # Package.swift resolves targets at generated paths that are gitignored,
+      # so xcodebuild cannot resolve dependencies until the core is built from
+      # this tree. The app repository got the core as a published package and
+      # needed none of this; here it has to be generated before any build.
+      - name: Bootstrap the in-tree core
+        uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Set Bundle ID and Profile if triggered by workflow_dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "FIREBASE_GROUPS=${{ inputs.groups }}" >> "$GITHUB_ENV"
+          echo "RELEASE_NOTES=${{ inputs.releaseNotes }}" >> "$GITHUB_ENV"
+
+      - name: Calculate build number
+        id: build_number
+        run: |
+          BUILD_NUMBER=$((10100 + ${{ github.run_number }}))
+          echo "BUILD_NUMBER=${BUILD_NUMBER}" >> "$GITHUB_ENV"
+          echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Calculated build number: ${BUILD_NUMBER}"
+
+      - name: Update build number
+        env:
+          PBXPROJ_PATH: polkadot-app.xcodeproj/project.pbxproj
+        working-directory: hosts/ios
+        run: |
+          set -euo pipefail
+
+          echo "Setting build number to ${{ env.BUILD_NUMBER }} in DevCI configuration..."
+          python3 .github/scripts/update_build_number.py "${PBXPROJ_PATH}" \
+            --config-name "DevCI" \
+            --build-number ${{ env.BUILD_NUMBER }}
+
+      - name: Add extra Swift flags to xcconfig
+        if: matrix.variant.extra_swift_flags != ''
+        working-directory: hosts/ios
+        run: |
+          python3 .github/scripts/add_swift_flags.py \
+            "polkadot-app/Configs/polkadot-app.devci.xcconfig" \
+            "${{ matrix.variant.extra_swift_flags }}"
+
+      - name: Configure Google services
+        uses: ./hosts/ios/.github/actions/configure-google-services
+        with:
+          google_service_info_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
+          expected_bundle_id: ${{ env.IOS_BUNDLE_ID }}
+
+      - name: Configure secrets
+        uses: ./hosts/ios/.github/actions/configure-secrets
+        with:
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      - name: Distribute to Firebase
+        if: matrix.variant.upload_to_firebase
+        env:
+          FL_RELEASE_NOTES: ${{ env.RELEASE_NOTES }}
+          CREDENTIAL_FILE_CONTENT: ${{ secrets.CREDENTIAL_FILE_CONTENT }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+        working-directory: hosts/ios
+        run: |
+          bundle exec fastlane distribute_app_to_firebase release_notes:"$FL_RELEASE_NOTES"
+
+      - name: Build without Firebase distribution
+        if: ${{ !matrix.variant.upload_to_firebase }}
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+        working-directory: hosts/ios
+        run: |
+          bundle exec fastlane build_app_ci
+
+      - name: Upload IPA as artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: polkadot-app-debug-ipa${{ matrix.variant.artifact_suffix }}
+          path: "hosts/ios/*.ipa"
+          retention-days: 7

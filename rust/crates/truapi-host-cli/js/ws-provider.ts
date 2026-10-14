@@ -1,27 +1,28 @@
 // WebSocket `WireProvider` for @parity/truapi: one binary WebSocket message
-// per SCALE protocol frame. TCP endpoints reuse `createWebSocketProvider` from
+// per SCALE protocol frame. TCP endpoints reuse the native provider factory from
 // the client package; Unix endpoints perform the same RFC 6455 protocol over a
 // filesystem socket, which no browser needs and only this CLI speaks.
 import { createHash, randomBytes } from "node:crypto";
-import { connect, type Socket } from "node:net";
+import { connect } from "node:net";
 import {
-  createWebSocketProvider,
-  type WireProvider,
-} from "../../../../js/packages/truapi/src/index.ts";
-
-type FrameProvider = WireProvider & { opened: Promise<void> };
+  createWebSocketProviderFactory,
+  type WebSocketWireProvider,
+} from "../../../../js/packages/truapi/src/transport.ts";
 
 const UNIX_WS_PREFIX = "ws+unix:";
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
 const MAX_HANDSHAKE_BYTES = 16 * 1024;
 
-export function wsProvider(url: string): FrameProvider {
-  if (url.startsWith(UNIX_WS_PREFIX)) {
-    return unixWsProvider(parseUnixSocketPath(url));
-  }
-  // The TCP path is plain WebSocket, so `@parity/truapi` owns it now.
-  return createWebSocketProvider(url);
+/** Capture native socket APIs before the runner installs network gates. */
+export function createFrameProviderFactory(): (
+  url: string,
+) => WebSocketWireProvider {
+  const createTcpProvider = createWebSocketProviderFactory();
+  return (url) =>
+    url.startsWith(UNIX_WS_PREFIX)
+      ? unixWsProvider(parseUnixSocketPath(url))
+      : createTcpProvider(url);
 }
 
 function parseUnixSocketPath(url: string): string {
@@ -32,7 +33,7 @@ function parseUnixSocketPath(url: string): string {
   return path;
 }
 
-function unixWsProvider(socketPath: string): FrameProvider {
+function unixWsProvider(socketPath: string): WebSocketWireProvider {
   const listeners = new Set<(message: Uint8Array) => void>();
   const closeListeners = new Set<(error: Error) => void>();
   const pending: Uint8Array[] = [];
@@ -42,7 +43,7 @@ function unixWsProvider(socketPath: string): FrameProvider {
     .digest("base64");
   const socket = connect(socketPath);
   let handshakeBuffer = Buffer.alloc(0);
-  let frameBuffer = Buffer.alloc(0);
+  let frameBuffer: Buffer = Buffer.alloc(0);
   let fragmentedOpcode: number | undefined;
   let fragmentedPayloads: Buffer[] = [];
   let fragmentedLength = 0;

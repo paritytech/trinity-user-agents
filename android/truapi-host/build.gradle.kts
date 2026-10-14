@@ -3,7 +3,7 @@
 // Publishes `io.parity:truapi-host-android` to Maven. Products running in a
 // `WebView` connect to the Rust core via its localhost WebSocket bridge
 // (`TrUAPIProductExecution.startWsBridge`); the Rust core (compiled to
-// `libtruapi_server.so`) handles wire decoding, routing, subscription
+// `libtruapi.so`) handles wire decoding, routing, subscription
 // lifecycle, and host capability dispatch.
 
 plugins {
@@ -57,10 +57,13 @@ dependencies {
     // UniFFI Kotlin bindings use JNA for FFI.
     api("net.java.dev.jna:jna:5.14.0@aar")
     // UniFFI async functions and callbacks use cancellable continuations and
-    // jobs, and `TrUAPIProductExecution.renderCustomMessage` returns a `Flow`,
-    // so consumers compile against this.
+    // jobs, and `TrUAPIProductExecution.render` returns a `Flow`, so consumers
+    // compile against this.
     api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
 }
+
+extra["truapiSourceDir"] = rootProject.projectDir
+apply(from = rootProject.file("android/truapi-container.gradle"))
 
 // Coordinates for the Maven publication. Releases are published to GitHub
 // Packages by .github/workflows/release-android.yml, which passes the real
@@ -88,20 +91,20 @@ publishing {
                 description.set(
                     "Kotlin wrapper around the TrUAPI Rust core (UniFFI). " +
                         "Hosts integrating a `WebView`-based product link the " +
-                        "`libtruapi_server` cdylib and route product traffic " +
+                        "`libtruapi` cdylib and route product traffic " +
                         "through the localhost WebSocket bridge."
                 )
-                url.set("https://github.com/paritytech/host-rust-core")
+                url.set("https://github.com/paritytech/trinity-user-agents")
                 licenses {
                     license {
                         name.set("MIT")
-                        url.set("https://github.com/paritytech/host-rust-core/blob/main/LICENSE")
+                        url.set("https://github.com/paritytech/trinity-user-agents/blob/main/LICENSE")
                     }
                 }
                 scm {
-                    connection.set("scm:git:https://github.com/paritytech/host-rust-core.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/paritytech/host-rust-core.git")
-                    url.set("https://github.com/paritytech/host-rust-core")
+                    connection.set("scm:git:https://github.com/paritytech/trinity-user-agents.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/paritytech/trinity-user-agents.git")
+                    url.set("https://github.com/paritytech/trinity-user-agents")
                 }
                 developers {
                     developer {
@@ -122,7 +125,7 @@ publishing {
         // the workflow's GITHUB_TOKEN.
         maven {
             name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/paritytech/host-rust-core")
+            url = uri("https://maven.pkg.github.com/paritytech/trinity-user-agents")
             credentials {
                 username = System.getenv("GITHUB_ACTOR")
                 password = System.getenv("GITHUB_TOKEN")

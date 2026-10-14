@@ -1,0 +1,49 @@
+def truapiSource = file(project.ext.truapiSourceDir)
+def containerBundle = new File(truapiSource, 'ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js')
+def containerAssets = layout.buildDirectory.dir('generated/truapi-assets')
+
+def installContainerDeps = tasks.register('installTrUAPIContainerDeps', Exec) {
+    dependsOn tasks.matching { it.name == 'generateCoreDispatcher' }
+    workingDir truapiSource
+    commandLine 'npm', 'ci', '--prefix', 'js/container', '--ignore-scripts'
+    inputs.files new File(truapiSource, 'js/container/package.json'),
+        new File(truapiSource, 'js/container/package-lock.json')
+    outputs.dir new File(truapiSource, 'js/container/node_modules')
+}
+
+def buildContainerSdk = tasks.register('buildTrUAPIContainerSdk', Exec) {
+    dependsOn installContainerDeps
+    workingDir truapiSource
+    commandLine 'npm', 'run', 'build', '--prefix', 'js/packages/truapi'
+    inputs.dir new File(truapiSource, 'js/packages/truapi/src')
+    inputs.files fileTree(new File(truapiSource, 'js/packages/truapi')) {
+        include 'package.json', 'tsconfig*.json'
+    }
+    outputs.dir new File(truapiSource, 'js/packages/truapi/dist')
+}
+
+def buildContainer = tasks.register('buildTrUAPIContainer', Exec) {
+    dependsOn buildContainerSdk
+    workingDir truapiSource
+    commandLine 'npm', 'run', 'build', '--prefix', 'js/container'
+    inputs.dir new File(truapiSource, 'js/container/src')
+    inputs.dir new File(truapiSource, 'js/packages/truapi/dist')
+    inputs.file new File(truapiSource, 'js/container/package.json')
+    inputs.file new File(truapiSource, 'js/container/package-lock.json')
+    inputs.file new File(truapiSource, 'package-lock.json')
+    outputs.file containerBundle
+}
+
+def copyContainer = tasks.register('copyTrUAPIContainer', Sync) {
+    dependsOn buildContainer
+    from containerBundle
+    into containerAssets
+}
+
+android.sourceSets.main.assets.srcDir(containerAssets)
+tasks.matching { it.name.endsWith('Assets') }.configureEach {
+    dependsOn copyContainer
+}
+tasks.matching { it.name.toLowerCase().contains('lint') }.configureEach {
+    dependsOn copyContainer
+}

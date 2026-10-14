@@ -1,0 +1,69 @@
+name: Prepare Nightly
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Source ref to create release branch from (existing branch name or commit SHA)"
+        type: string
+        required: false
+        default: main
+      increment_step:
+        description: "Build number increment step (1 if empty)"
+        type: string
+        required: false
+        default: ""
+  schedule:
+    # 20:00 UTC every day, four hours after the app repository builds
+    # Safetynet. Far enough apart that one finishes before the other starts,
+    # and late enough to carry the day's merges. Weekends included, since main
+    # takes merges then too; a night with nothing new is skipped below.
+    - cron: "0 20 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  # A build straight from main releases unconditionally, so a night on which
+  # nothing merged would still take a build number, upload to TestFlight and
+  # announce an empty changelog. The schedule only builds when main has moved
+  # past what the last successful nightly built; a dispatch always builds.
+  changed:
+    name: Changed since the last nightly
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: check
+        uses: ./.github/actions/changed-since-last-build
+        with:
+          github_token: ${{ github.token }}
+          workflow: ios-nightly-distribution.yml
+          title: Nightly Distribution (main)
+
+  prepare:
+    needs: changed
+    # !cancelled() so a failed check builds rather than skips, and != 'false'
+    # so an empty output does the same.
+    if: >-
+      !cancelled()
+      && (github.event_name != 'schedule' || needs.changed.outputs.changed != 'false')
+    uses: ./.github/workflows/ios-prepare-pipeline.yml
+    with:
+      is_nightly: true
+      bump_level: "no-bump"
+      source_ref: ${{ inputs.source_ref || 'main' }}
+      increment_step: ${{ inputs.increment_step || '' }}
+      distribution_workflow: ios-nightly-distribution.yml

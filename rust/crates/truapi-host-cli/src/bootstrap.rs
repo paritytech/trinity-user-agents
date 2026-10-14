@@ -1,96 +1,94 @@
 //! Browser bridge served to products during local development.
 
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+
 /// Path the bridge script is served from on the frame endpoint.
 pub const PATH: &str = "/bootstrap.js";
 
-/// JavaScript that connects a plain browser tab to this host's frame socket.
-///
-/// The page ends up with the same `window.__HOST_API_PORT__` a native webview
-/// host injects, so the SDK's sandbox bootstrap adopts it without knowing the
-/// transport underneath is a loopback WebSocket. Products reference this from
-/// a development-only `<script>` tag and need no other host-specific code.
-pub fn script(frame_url: &str) -> String {
-    let url = serde_json::to_string(frame_url).expect("a string always serializes");
-    format!(
-        r#"(function () {{
-  var url = {url};
-  if (window.__HOST_API_PORT__) return;
+/// Shared browser sandbox belonging to the selected runner installation.
+pub fn container_path() -> PathBuf {
+	container_path_for_runner(&crate::script_runner::runner_path())
+}
 
-  var channel = new MessageChannel();
-  var socket = new WebSocket(url);
-  socket.binaryType = "arraybuffer";
-  // Frames the product posts before the socket opens. The SDK queues nothing
-  // once it holds a port, so the queue has to live on this side.
-  var pending = [];
+fn container_path_for_runner(runner: &Path) -> PathBuf {
+	let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+	if runner == manifest.join("js/runner.ts") {
+		return manifest.join("../../../target/dist/sandbox-assets/container.js");
+	}
+	runner.with_file_name("sandbox-assets").join("container.js")
+}
 
-  channel.port2.onmessage = function (event) {{
-    if (socket.readyState === WebSocket.OPEN) socket.send(event.data);
-    else pending.push(event.data);
-  }};
-  channel.port2.start();
+/// Read the prebuilt sandbox without falling back to another installation.
+pub fn read_container(path: &Path) -> Result<String> {
+	std::fs::read_to_string(path).with_context(|| {
+        format!(
+            "cannot read browser sandbox {}; reinstall truapi-host, or run `make cli-runner` in a source checkout",
+            path.display()
+        )
+    })
+}
 
-  socket.onopen = function () {{
-    for (var i = 0; i < pending.length; i++) socket.send(pending[i]);
-    pending.length = 0;
-  }};
-  // The SDK's provider only accepts Uint8Array, never a bare ArrayBuffer.
-  socket.onmessage = function (event) {{
-    channel.port2.postMessage(new Uint8Array(event.data));
-  }};
-  // Nothing can be signalled down a MessagePort, so a closed socket looks like
-  // an app that has hung. Say so instead.
-  socket.onclose = function () {{
-    console.warn("[truapi-host] frame socket closed; reload once the host is back");
-  }};
-  socket.onerror = function () {{
-    console.error("[truapi-host] cannot reach " + url + " - is truapi-host running?");
-  }};
-
-  window.__HOST_API_PORT__ = channel.port1;
-  window.__HOST_WEBVIEW_MARK__ = true;
-  window.dispatchEvent(new Event("truapi-native-ready"));
-}})();
-"#
-    )
+/// Install the shared sandbox synchronously before the page's product code.
+pub fn script(frame_url: &str, container: &str) -> String {
+	let url = serde_json::to_string(frame_url).expect("a string always serializes");
+	format!("window.__truapi_localhost = {{ url: {url} }};\n{container}")
 }
 
 /// HTTP URL the bridge script is served from, for a frame endpoint that has
 /// one. A private Unix socket is reachable only by the CLI's own product
 /// runner, so it has no browser-facing address.
 pub fn bridge_url(frame_url: &str) -> Option<String> {
-    let authority = frame_url.strip_prefix("ws://")?;
-    Some(format!("http://{authority}{PATH}"))
+	let authority = frame_url.strip_prefix("ws://")?;
+	Some(format!("http://{authority}{PATH}"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+	use super::*;
 
-    #[test]
-    fn bridge_url_is_offered_only_for_tcp_endpoints() {
-        assert_eq!(
-            bridge_url("ws://127.0.0.1:9955").as_deref(),
-            Some("http://127.0.0.1:9955/bootstrap.js")
-        );
-        assert_eq!(bridge_url("ws+unix:/tmp/truapi/frames.sock"), None);
-    }
+	#[test]
+	fn bridge_url_is_offered_only_for_tcp_endpoints() {
+		assert_eq!(
+			bridge_url("ws://127.0.0.1:9955").as_deref(),
+			Some("http://127.0.0.1:9955/bootstrap.js")
+		);
+		assert_eq!(bridge_url("ws+unix:/tmp/truapi/frames.sock"), None);
+	}
 
-    #[test]
-    fn script_embeds_the_endpoint_as_a_string_literal() {
-        let script = script("ws://127.0.0.1:9955");
-        assert!(script.contains(r#"var url = "ws://127.0.0.1:9955";"#));
-    }
+	#[test]
+	fn script_installs_the_shared_container_after_its_escaped_endpoint() {
+		assert_eq!(
+			script(r#"ws://x";alert(1);//"#, "installSandbox();"),
+			"window.__truapi_localhost = { url: \"ws://x\\\";alert(1);//\" };\ninstallSandbox();",
+		);
+	}
 
-    /// The endpoint reaches this from a command-line flag, so a quote in it
-    /// must stay inside the literal rather than closing it and becoming code.
-    #[test]
-    fn script_escapes_an_endpoint_that_would_otherwise_break_out() {
-        let script = script(r#"ws://x";alert(1);//"#);
-        let declaration = script
-            .lines()
-            .find(|line| line.trim_start().starts_with("var url ="))
-            .expect("the script declares the endpoint");
+	#[test]
+	fn installed_assets_never_fall_back_to_another_runner_version() -> Result<()> {
+		let installation = tempfile::tempdir()?;
+		let runner = installation.path().join("versions/current/runner.js");
+		let container = container_path_for_runner(&runner);
+		assert_eq!(
+			container,
+			installation.path().join("versions/current/sandbox-assets/container.js")
+		);
+		let error = read_container(&container).unwrap_err().to_string();
+		assert!(error.contains("reinstall truapi-host"), "{error}");
+		std::fs::create_dir_all(container.parent().unwrap())?;
+		std::fs::write(&container, "matching sandbox")?;
+		assert_eq!(read_container(&container)?, "matching sandbox");
+		Ok(())
+	}
 
-        assert_eq!(declaration.trim(), r#"var url = "ws://x\";alert(1);//";"#);
-    }
+	#[test]
+	fn source_dev_uses_the_packaged_build_output() {
+		let runner = Path::new(env!("CARGO_MANIFEST_DIR")).join("js/runner.ts");
+		assert_eq!(
+			container_path_for_runner(&runner),
+			Path::new(env!("CARGO_MANIFEST_DIR"))
+				.join("../../../target/dist/sandbox-assets/container.js"),
+		);
+	}
 }

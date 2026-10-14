@@ -3,13 +3,11 @@ import { Link, useOutletContext } from "react-router-dom";
 import { Check, ChevronDown, Minus, X } from "lucide-react";
 import type { VersionEntry } from "../data/types";
 import { methodPath } from "../data/registry";
-import { chatCompatibility, compatibility } from "../data/compatibility";
-
-/**
- * Execution kinds that serve the Chat modality. `Chat` is the name protocol
- * versions up to 0.9.0 declared; `Worker` is the name that replaced it.
- */
-const CHAT_EXECUTIONS: ReadonlySet<string> = new Set(["Chat", "Worker"]);
+import {
+  chatCompatibility,
+  compatibility,
+  pocketCompatibility,
+} from "../data/compatibility";
 import type {
   CompatibilityMatrix,
   CompatStatus,
@@ -20,7 +18,10 @@ import { playgroundDiagnosisUrl } from "../data/playground";
 export default function CompatibilityPage() {
   const { version } = useOutletContext<{ version: VersionEntry }>();
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const hostCount = compatibility.hosts.length + chatCompatibility.hosts.length;
+  const hostCount =
+    compatibility.hosts.length +
+    chatCompatibility.hosts.length +
+    pocketCompatibility.hosts.length;
 
   if (hostCount === 0) {
     return (
@@ -94,7 +95,7 @@ export default function CompatibilityPage() {
         <CompatibilitySection
           title="App compatibility"
           description="API coverage measured from a visible App or Widget execution."
-          executions={null}
+          serviceName={null}
           matrix={compatibility}
           version={version}
           expandedId={expandedId}
@@ -103,8 +104,17 @@ export default function CompatibilityPage() {
         <CompatibilitySection
           title="Chat compatibility"
           description="Chat API coverage measured from the product's Worker execution."
-          executions={CHAT_EXECUTIONS}
+          serviceName="Chat"
           matrix={chatCompatibility}
+          version={version}
+          expandedId={expandedId}
+          onToggle={setExpandedId}
+        />
+        <CompatibilitySection
+          title="Pocket compatibility"
+          description="Pocket API coverage measured from the product's Worker execution."
+          serviceName="Pocket"
+          matrix={pocketCompatibility}
           version={version}
           expandedId={expandedId}
           onToggle={setExpandedId}
@@ -117,7 +127,7 @@ export default function CompatibilityPage() {
 function CompatibilitySection({
   title,
   description,
-  executions,
+  serviceName,
   matrix,
   version,
   expandedId,
@@ -126,11 +136,11 @@ function CompatibilitySection({
   title: string;
   description: string;
   /**
-   * Kinds whose gated services belong in this section, or `null` for the
-   * ungated ones. A set rather than one name because each archived version
-   * records the kind name that version declared.
+   * Name of the gated service this section measures, or `null` for the
+   * ungated ones. Chat and Pocket are both `Worker`-gated, so the execution
+   * kind cannot tell them apart.
    */
-  executions: ReadonlySet<string> | null;
+  serviceName: string | null;
   matrix: CompatibilityMatrix;
   version: VersionEntry;
   expandedId: string | null;
@@ -165,9 +175,8 @@ function CompatibilitySection({
           <tbody>
             {version.services
               .filter((service) =>
-                executions
-                  ? service.requiredExecution !== undefined &&
-                    executions.has(service.requiredExecution)
+                serviceName
+                  ? service.name === serviceName
                   : service.requiredExecution === undefined,
               )
               .map((service) => ({

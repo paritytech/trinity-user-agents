@@ -73,7 +73,7 @@ jobs:
             # Trim whitespace around comma-separated targets.
             target="${target#"${target%%[![:space:]]*}"}"
             target="${target%"${target##*[![:space:]]}"}"
-            if [[ ! "${target}" =~ ^(@parity/truapi|@parity/truapi-host|@parity/ios-host|@parity/android-host)[[:space:]]+([^[:space:]]+)$ ]]; then
+            if [[ ! "${target}" =~ ^(@parity/truapi|@parity/truapi-host|@parity/truapi-provider|@parity/truapi-debugger|@parity/ios-host|@parity/android-host)[[:space:]]+([^[:space:]]+)$ ]]; then
               echo "::error::Unsupported release target '${target}' in subject: ${subject}"
               exit 1
             fi
@@ -94,6 +94,8 @@ jobs:
                 cli_version="${declared_version}"
                 ;;
               @parity/truapi-host) path="js/packages/truapi-host" ;;
+              @parity/truapi-provider) path="js/packages/truapi-provider" ;;
+              @parity/truapi-debugger) path="js/packages/truapi-debugger" ;;
               @parity/ios-host)
                 if [[ ! "${declared_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
                   echo "::error::Invalid iOS host version '${declared_version}'."
@@ -130,6 +132,69 @@ jobs:
             fi
           done
 
+          # Every `@parity/*` range a publishing package depends on must be
+          # satisfiable from the registry - already published, or named in THIS
+          # release subject. Without this a package publishes green and is
+          # uninstallable: `@parity/truapi-debugger` needs `@parity/truapi
+          # ^0.10.0`, so releasing it before truapi 0.10.0 reaches npm gives every
+          # consumer `ETARGET, no matching version`. The version check above cannot
+          # see this - it compares the subject against the working tree.
+          while IFS='|' read -r dep_name dep_path _dep_version _dep_tag; do
+            [ -n "${dep_path}" ] || continue
+            # Extract BEFORE the loop so a jq failure trips errexit here. Inside a
+            # process substitution it would be invisible: zero iterations, exit 0.
+            dep_lines="$(jq -r '(.dependencies // {}) | to_entries[] | select(.key | startswith("@parity/")) | "\(.key)|\(.value)"' "${dep_path}/package.json" </dev/null)"
+            while IFS='|' read -r range_pkg range; do
+              [ -n "${range_pkg}" ] || continue
+              # Named in this subject? Then it must actually SATISFY the range.
+              # `|| true` is required: under `set -euo pipefail` a non-matching grep
+              # exits 1, pipefail promotes it, and errexit would kill the step here -
+              # on the ORDINARY path, where the dep is already on npm and simply not
+              # named in this subject.
+              shipped="$(grep -F "${range_pkg}|" <<< "${packages}" | head -n1 | cut -d'|' -f3 || true)"
+              if [ -n "${shipped}" ]; then
+                # Exact-match on purpose, and no semver library: every internal
+                # `@parity/*` range in this repo is kept at exactly `^<version>` by
+                # scripts/sync-release-versions.mjs, so that is the only shape that
+                # can legitimately appear. Matching the name alone would accept a
+                # subject shipping truapi 0.9.0 beside a debugger needing ^0.10.0,
+                # publishing the ETARGET this guard exists to stop.
+                if [ "${range}" = "^${shipped}" ] || [ "${range}" = "${shipped}" ]; then
+                  echo "${dep_name}: ${range_pkg}@${range} is satisfied by ${shipped} in this release."
+                  continue
+                fi
+                # Deliberately strict: a range like `*` or `>=0.10.0` that ${shipped}
+                # does satisfy is still refused, because this repo keeps every
+                # internal range at exactly `^<version>` and a looser one means the
+                # sync script was bypassed. Say that, rather than implying the range
+                # is incompatible.
+                echo "::error::${dep_name} depends on ${range_pkg}@${range}, which is not the exact \`^${shipped}\` this release publishes. Internal ranges are pinned by scripts/sync-release-versions.mjs; run it (or make the range exact) rather than loosening this check."
+                exit 1
+              fi
+              # Capture stderr and require a genuine 404, matching the tag check
+              # above: a transient registry failure must not read as "unpublished".
+              # `< /dev/null` is not decoration: this loop is fed by the process
+              # substitution below, and any command in the body that reads stdin
+              # swallows the remaining lines - silently skipping every dep after the
+              # first. Real `npm view` does not read stdin, so this is latent today.
+              if view_out="$(npm view "${range_pkg}@${range}" version \
+                  --registry=https://registry.npmjs.org </dev/null 2>&1)"; then
+                : # satisfiable from the registry
+              elif grep -Eq 'E404|404 Not Found|No matching version' <<< "${view_out}"; then
+                echo "::error::${dep_name} depends on ${range_pkg}@${range}, which is neither on npm nor in this release subject; publishing it would be uninstallable."
+                exit 1
+              else
+                echo "${view_out}" >&2
+                echo "::error::could not check ${range_pkg}@${range} against the registry."
+                exit 1
+              fi
+            # Read the deps into a variable FIRST. A `jq` failure inside a process
+            # substitution is invisible to `set -euo pipefail`: the loop simply runs
+            # zero times and the guard passes, so an unreadable manifest would read
+            # as "no internal deps to check".
+            done < <(printf '%s\n' "${dep_lines}")
+          done <<< "${packages}"
+
           echo "ios_version=${ios_version}" >> "$GITHUB_OUTPUT"
           echo "android_version=${android_version}" >> "$GITHUB_OUTPUT"
           echo "cli_version=${cli_version}" >> "$GITHUB_OUTPUT"
@@ -151,17 +216,16 @@ jobs:
         run: |
           set -euo pipefail
           npm run check-release-versions
-          remaining_changesets="$(find .changeset -maxdepth 1 -type f -name '*.md' -print)"
+          remaining_changesets="$(find .changeset -maxdepth 1 -type f -name '*.md' ! -name README.md -print)"
           if [ -n "${remaining_changesets}" ]; then
-            echo "::error::Release commit still contains unconsumed changesets. Run npm run version-packages."
+            echo "::error::Release commit still contains unconsumed changesets. Open a new release PR from the default branch, then run \`npm run version-packages\` and \`scripts/cut-version.sh\`. Do not reset the merged default branch or rerun versioning on top of an unmerged release bump."
             echo "${remaining_changesets}"
             exit 1
           fi
 
       - if: steps.version.outputs.proceed == 'true'
-        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+        uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
       - if: steps.version.outputs.proceed == 'true'
@@ -170,14 +234,16 @@ jobs:
           toolchain: stable
 
       - if: steps.version.outputs.proceed == 'true'
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: ./.github/actions/rust-cache
+        with:
+          save: "false"
 
       - name: Install dependencies
         if: steps.version.outputs.proceed == 'true'
         run: npm ci
 
       - name: Install wasm-pack
-        if: steps.version.outputs.proceed == 'true' && contains(steps.version.outputs.packages, '@parity/truapi-host|')
+        if: steps.version.outputs.proceed == 'true' && (contains(steps.version.outputs.packages, '@parity/truapi-host|') || contains(steps.version.outputs.packages, '@parity/truapi-provider|'))
         run: cargo install wasm-pack --version 0.14.0 --locked
 
       - name: Build packages
@@ -188,6 +254,17 @@ jobs:
           if grep -q '^@parity/truapi-host|' <<< "${STEPS_VERSION_OUTPUTS_PACKAGES}"; then
             npm run build --prefix js/packages/truapi-host
             npm run build:wasm --prefix js/packages/truapi-host
+          fi
+          # The debugger ships `files: ["dist"]`, and `dist/` is gitignored: without
+          # this the pack step would upload a tarball with no code in it and the
+          # publish would still report success.
+          if grep -q '^@parity/truapi-debugger|' <<< "${STEPS_VERSION_OUTPUTS_PACKAGES}"; then
+            npm run build --prefix js/packages/truapi-debugger
+          fi
+          # Same reason as the debugger above: the provider ships `files: ["dist"]`
+          # and `dist/` is the gitignored wasm-pack output.
+          if grep -q '^@parity/truapi-provider|' <<< "${STEPS_VERSION_OUTPUTS_PACKAGES}"; then
+            npm run build --prefix js/packages/truapi-provider
           fi
         env:
           STEPS_VERSION_OUTPUTS_PACKAGES: ${{ steps.version.outputs.packages }}
@@ -329,127 +406,12 @@ jobs:
     name: Publish iOS host
     needs: release
     if: needs.release.outputs.ios_version != ''
-    runs-on: macos-15
     permissions:
+      actions: write
       contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha }}
-          persist-credentials: false
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        with:
-          shared-key: ios-host-release
-
-      - name: Rebuild iOS host
-        run: |
-          set -euo pipefail
-          ./ios/truapi-host/scripts/rebuild.sh
-          if ! git diff --exit-code; then
-            echo "::error::The release commit has stale generated iOS host outputs. Run ios/truapi-host/scripts/rebuild.sh and commit them."
-            exit 1
-          fi
-
-      - name: Test local XCFramework in the simulator
-        env:
-          TRUAPI_USE_LOCAL_BINARY: "1"
-        run: |
-          set -euo pipefail
-          xcodebuild test \
-            -scheme TrUAPIHost \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
-            -derivedDataPath "$RUNNER_TEMP/TrUAPIHostDerivedData" \
-            CODE_SIGNING_ALLOWED=NO
-
-      - name: Publish XCFramework
-        id: ios_publish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IOS_RELEASE_TARGET: ${{ github.event.workflow_run.head_sha }}
-          IOS_VERSION: ${{ needs.release.outputs.ios_version }}
-        run: |
-          set -euo pipefail
-
-          read_manifest_value() {
-            sed -n -E "s/^let $1 = \"([^\"]+)\"$/\1/p" Package.swift
-          }
-
-          base_url="$(read_manifest_value publishedBinaryURL)"
-          base_checksum="$(read_manifest_value publishedBinaryChecksum)"
-          ./ios/truapi-host/scripts/publish.sh "${IOS_VERSION}"
-          published_url="$(read_manifest_value publishedBinaryURL)"
-          published_checksum="$(read_manifest_value publishedBinaryChecksum)"
-
-          {
-            echo "base_url=${base_url}"
-            echo "base_checksum=${base_checksum}"
-            echo "published_url=${published_url}"
-            echo "published_checksum=${published_checksum}"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Commit published manifest
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IOS_VERSION: ${{ needs.release.outputs.ios_version }}
-          RELEASE_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          BASE_URL: ${{ steps.ios_publish.outputs.base_url }}
-          BASE_CHECKSUM: ${{ steps.ios_publish.outputs.base_checksum }}
-          PUBLISHED_URL: ${{ steps.ios_publish.outputs.published_url }}
-          PUBLISHED_CHECKSUM: ${{ steps.ios_publish.outputs.published_checksum }}
-        run: |
-          set -euo pipefail
-
-          read_manifest_value() {
-            sed -n -E "s/^let $1 = \"([^\"]+)\"$/\1/p" Package.swift
-          }
-
-          git restore Package.swift
-          git fetch origin "${RELEASE_BRANCH}"
-          git switch --force-create ios-manifest-update "origin/${RELEASE_BRANCH}"
-
-          current_url="$(read_manifest_value publishedBinaryURL)"
-          current_checksum="$(read_manifest_value publishedBinaryChecksum)"
-          if [ "${current_url}" = "${PUBLISHED_URL}" ] && [ "${current_checksum}" = "${PUBLISHED_CHECKSUM}" ]; then
-            echo "Package.swift already references @parity/ios-host@${IOS_VERSION}."
-            exit 0
-          fi
-          if [ "${current_url}" != "${BASE_URL}" ] || [ "${current_checksum}" != "${BASE_CHECKSUM}" ]; then
-            echo "::error::Package.swift changed after the release commit; refusing to overwrite the newer manifest."
-            exit 1
-          fi
-
-          sed -i '' -E "s|^let publishedBinaryURL = .*|let publishedBinaryURL = \"${PUBLISHED_URL}\"|" Package.swift
-          sed -i '' -E "s|^let publishedBinaryChecksum = .*|let publishedBinaryChecksum = \"${PUBLISHED_CHECKSUM}\"|" Package.swift
-          grep -q '^let useLocalBinary = false$' Package.swift
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Package.swift
-          git commit -m "build(ios): publish host XCFramework ${IOS_VERSION}"
-
-          gh auth setup-git
-          attempt=1
-          until git push origin "HEAD:${RELEASE_BRANCH}"
-          do
-            if [ "${attempt}" -ge 3 ]; then
-              echo "::error::Could not push the Package.swift follow-up commit."
-              exit 1
-            fi
-            attempt=$((attempt + 1))
-            git fetch origin "${RELEASE_BRANCH}"
-            if ! git rebase "origin/${RELEASE_BRANCH}"; then
-              git rebase --abort
-              echo "::error::Package.swift changed while publishing; resolve the manifest update manually."
-              exit 1
-            fi
-          done
+      pull-requests: write
+    uses: ./.github/workflows/release-ios.yml
+    with:
+      version: ${{ needs.release.outputs.ios_version }}
+      ref: ${{ github.event.workflow_run.head_sha }}
+      manifest_branch: ${{ github.event.workflow_run.head_branch }}

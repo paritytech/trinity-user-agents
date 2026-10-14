@@ -1,20 +1,22 @@
-import type { CustomRendererNode } from "@parity/truapi";
+import type { RendererNode } from "@parity/truapi";
 import {
   renderDiagnosisMarkdown,
   type DiagnosisResult,
 } from "../shared/diagnosis";
 
 /** Pinned against the generated service metadata by `chat-diagnosis.test.ts`. */
-export const CHAT_DIAGNOSIS_METHODS = [
+export const WORKER_DIAGNOSIS_METHODS = [
   "Chat/create_room",
   "Chat/register_bot",
   "Chat/list_subscribe",
   "Chat/post_message",
+  "Chat/set_room_footer",
   "Chat/action_subscribe",
-  "Chat/custom_message_render",
+  "Renderer/render",
+  "Renderer/action_subscribe",
 ] as const;
 
-export type ChatDiagnosisMethod = (typeof CHAT_DIAGNOSIS_METHODS)[number];
+export type WorkerDiagnosisMethod = (typeof WORKER_DIAGNOSIS_METHODS)[number];
 
 export const CHAT_DIAGNOSIS_REFRESH_ACTION = "truapi-chat-diagnosis-refresh";
 export const CHAT_DIAGNOSIS_COPY_ACTION = "truapi-chat-diagnosis-copy";
@@ -34,31 +36,31 @@ const STATUS_ICON = {
 } as const;
 
 export class ChatDiagnosis {
-  readonly #results = new Map<ChatDiagnosisMethod, DiagnosisResult>();
+  readonly #results = new Map<WorkerDiagnosisMethod, DiagnosisResult>();
   readonly #onChange: () => void;
   #copyStatus: CopyStatus = "idle";
 
   constructor(onChange: () => void = () => {}) {
     this.#onChange = onChange;
-    for (const id of CHAT_DIAGNOSIS_METHODS) {
+    for (const id of WORKER_DIAGNOSIS_METHODS) {
       this.#results.set(id, { id, status: "running" });
     }
   }
 
-  pass(id: ChatDiagnosisMethod, details: string): void {
+  pass(id: WorkerDiagnosisMethod, details: string): void {
     if (this.#results.get(id)?.status === "fail") return;
     this.#results.set(id, { id, status: "pass", details });
     this.#onChange();
   }
 
-  fail(id: ChatDiagnosisMethod, error: unknown): void {
+  fail(id: WorkerDiagnosisMethod, error: unknown): void {
     this.#results.set(id, { id, status: "fail", details: errorDetails(error) });
     this.#onChange();
   }
 
   failPending(error: unknown): void {
     const details = errorDetails(error);
-    for (const id of CHAT_DIAGNOSIS_METHODS) {
+    for (const id of WORKER_DIAGNOSIS_METHODS) {
       if (this.#results.get(id)?.status === "running") {
         this.#results.set(id, { id, status: "fail", details });
       }
@@ -67,7 +69,7 @@ export class ChatDiagnosis {
   }
 
   results(): DiagnosisResult[] {
-    return CHAT_DIAGNOSIS_METHODS.map((id) => ({ ...this.#results.get(id)! }));
+    return WORKER_DIAGNOSIS_METHODS.map((id) => ({ ...this.#results.get(id)! }));
   }
 
   isComplete(): boolean {
@@ -92,7 +94,7 @@ export class ChatDiagnosis {
     this.#onChange();
   }
 
-  rendererNode(): CustomRendererNode {
+  rendererNode(): RendererNode {
     const results = this.results();
     const passed = results.filter(({ status }) => status === "pass").length;
     const failed = results.filter(({ status }) => status === "fail").length;
@@ -131,7 +133,7 @@ function errorDetails(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function column(children: CustomRendererNode[]): CustomRendererNode {
+function column(children: RendererNode[]): RendererNode {
   return {
     tag: "Column",
     value: {
@@ -145,7 +147,7 @@ function column(children: CustomRendererNode[]): CustomRendererNode {
 function text(
   value: string,
   style: "HeadlineLarge" | "BodyMediumRegular" | "BodySmallRegular",
-): CustomRendererNode {
+): RendererNode {
   return {
     tag: "Text",
     value: {
@@ -156,7 +158,7 @@ function text(
   };
 }
 
-function button(text: string, clickAction: string): CustomRendererNode {
+function button(text: string, clickAction: string): RendererNode {
   return {
     tag: "Button",
     value: {

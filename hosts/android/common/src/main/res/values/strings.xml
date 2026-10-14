@@ -1,0 +1,1011 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="send_gaining_privacy_title">This payment might reduce your privacy</string>
+    <string name="send_gaining_privacy_full_amount">In this payment you are using funds that have not yet been fully processed by the privacy system.</string>
+    <string name="send_gaining_privacy_send_anyway_button">Send %1$s anyway</string>
+
+    <string name="send_payment_failed">Failed to submit transaction</string>
+    <string name="common_intent_failed">Failed to find application to perform specified action</string>
+    <string name="add_contact_already_exists_error">You have already added this contact</string>
+
+    <string name="common_got_it">Got it</string>
+
+    <string name="login_title">Polkadot</string>
+    <string name="login_default_action">Get started</string>
+    <string name="login_restore_action">Other options</string>
+    <string name="login_restoring_account_progress">Restoring your account</string>
+
+    <string name="common_submit_report">Submit Report</string>
+
+    <string name="common_send">Send</string>
+    <string name="common_withdraw">Withdraw</string>
+    <string name="common_edit">Edit</string>
+    <string name="common_reply">Reply</string>
+
+    <string name="common_pdf_attachment">Pdf attachment</string>
+
+    <string name="common_duration_format_long_period_hours" translatable="false">%dH</string>
+    <string name="common_duration_format_long_period_days" translatable="false">%dD</string>
+    <string name="common_duration_format_long_period_weeks" translatable="false">%dW</string>
+
+    <string name="common_to">To</string>
+    <string name="common_username">Username</string>
+
+    <string name="common_permission_permissions_needed_title">Permissions needed</string>
+    <string name="common_permission_permissions_needed_message">Requested permissions are required to use this screen.</string>
+    <string name="common_ask_again">Ask again</string>
+
+    <string name="common_permission_permissions_denied_title">Permissions denied</string>
+    <string name="common_permission_permissions_denied_message">Requested permissions are required to use this screen. You should enable them in Settings.</string>
+    <string name="common_to_settings">Open Settings</string>
+
+    <string name="common_error_general_title" translatable="false">Error</string>
+    <string name="common_error_no_connection">No connection. Check your network and try again.</string>
+    <string name="common_error_server">Our servers are having trouble. Try again in a few minutes.</string>
+    <string name="common_error_signing_failed">Couldn\'t sign the transaction. Try again.</string>
+    <string name="common_error_integrity">Device integrity verification failed</string>
+
+    <string name="common_proceed">Proceed</string>
+    <string name="common_cancel">Cancel</string>
+    <string name="common_continue">Continue</string>
+    <string name="common_ok">OK</string>
+    <string name="common_retry">Retry</string>
+    <string name="common_done">Done</string>
+    <string name="common_close">Close</string>
+    <string name="common_quit">Quit</string>
+    <string name="common_save">Save</string>
+    <string name="common_paste">Paste</string>
+    <string name="common_copy">Copy</string>
+    <string name="common_back">Back</string>
+    <string name="common_you">You</string>
+    <string name="common_delete">Delete</string>
+    <string name="common_decline">Decline</string>
+
+    <string name="home_credentials_card_title">Add Credentials</string>
+    <string name="home_credentials_card_description">Link social media accounts to your citizenship</string>
+    <string name="home_credentials_card_action_add">Add Credentials</string>
+    <string name="home_credentials_card_action_edit">Edit Credentials</string>
+
+    <string name="home_title">Home</string>
+
+    <string name="home_username_banned_title">Your username has been banned</string>
+    <string name="home_username_banned_description">Your username was reported by users for containing hate speech, violent symbols, or harmful language.</string>
+    <string name="home_username_banned_action">Got it</string>
+
+    <string name="deposit_tokens_copy_cta">Copy Address</string>
+    <string name="deposit_tokens_section_to">To</string>
+    <string name="deposit_tokens_title">Deposit %1$s</string>
+
+    <string name="pick_username_title">Pick a username</string>
+    <string name="pick_username_description">Use this name to send and receive all types of payments instead of hard-to remember wallet address.</string>
+    <string name="pick_username_text_field_hint">Enter username</string>
+    <string name="pick_username_state_taken">Taken. Try another.</string>
+    <string name="pick_username_state_invalid">Try another.</string>
+    <string name="pick_username_state_available">It\'s yours!</string>
+    <string name="pick_username_digits_taken">Digits taken. Try again.</string>
+    <string name="pick_username_just_claimed_new_digit">This username was just claimed. We picked a new number for you.</string>
+    <string name="pick_username_just_claimed_taken">This username was just claimed. Try another.</string>
+
+    <string name="pick_username_action_too_short">Minimum %s characters</string>
+    <string name="pick_username_action_clear">Clear</string>
+    <string name="pick_username_action_claim">Get username</string>
+
+    <string name="username_error_verification_unavailable">Google Play services aren\'t available on this device, so it can\'t be verified. Contact support for a build that works without them.</string>
+    <string name="username_error_verification_rejected">We couldn\'t verify this device. Rooted devices and custom ROMs aren\'t supported.</string>
+    <string name="username_error_verification_busy">Device verification is temporarily unavailable. Try again in a moment.</string>
+    <string name="username_error_unknown">Couldn\'t check this username. Try again.</string>
+
+    <string name="backup_found_title">We found an existing backup</string>
+    <string name="backup_found_description">Restore from the existing backup or remove it and create a new one</string>
+    <string name="backup_found_date_created">Created</string>
+    <string name="backup_found_recover_action">Recover this backup</string>
+    <string name="backup_found_remove_action">Replace with a new backup</string>
+    <string name="backup_not_found_error">No backup was found in Google Drive. Recover with your recovery phrase instead.</string>
+    <string name="backup_corrupted_error">This backup is damaged and can\'t be read. Recover with your recovery phrase instead.</string>
+    <string name="backup_error_wrong_mnemonic">Those words don\'t match your recovery phrase. Try again.</string>
+    <string name="backup_error_authentication_failed">Couldn\'t confirm it\'s you. Try again.</string>
+
+    <string name="claim_username_creating_account">Creating new account</string>
+    <string name="claim_username_already_have_account">Already using Polkadot? %1$s</string>
+    <string name="claim_username_recover_here">Recover here</string>
+    <string name="claim_username_terms_privacy_consent">By continuing you agree to our %1$s and %2$s</string>
+    <string name="claim_username_terms">Terms</string>
+    <string name="claim_username_privacy_policy">Privacy Policy</string>
+    <string name="claim_username_welcome_header">Welcome to Polkadot</string>
+    <string name="claim_username_onboarding_description">Choose a username to get started.</string>
+    <string name="claim_username_recovered_header">Account restored</string>
+    <string name="claim_username_recovered_description">Claim a username - it\'s how people find, pay, and message you.</string>
+
+    <string name="registration_queue_title">You\'re almost there</string>
+    <string name="registration_queue_description">The queue helps us protect the service from bots and fake mass sign-ups. It keeps access safe and fair for everyone.</string>
+    <string name="registration_queue_position_caption">Your position</string>
+    <string name="registration_queue_why_waiting">Why am I waiting?</string>
+    <string name="registration_queue_why_title">Why is there a queue?</string>
+    <string name="registration_queue_why_description">We use a queue to protect the service from bots, scripts, and automated mass sign-ups</string>
+    <string name="registration_queue_why_point_secure">Keep the system secure</string>
+    <string name="registration_queue_why_point_fair">Make access fair for real users</string>
+    <string name="registration_queue_why_point_abuse">Prevent abuse and overload</string>
+
+    <string name="claim_unavailable_title">Device verification isn\'t available</string>
+    <string name="claim_unavailable_description">Free username claims require device verification, but this device doesn\'t support the required verification method.</string>
+
+    <string name="integrity_failed_title">App safety check failed</string>
+    <string name="integrity_failed_description">We couldn\'t confirm that this app is safe to use on this device</string>
+
+    <string name="backup_override_title">Replacing this backup is permanent.</string>
+    <string name="backup_override_description">The account, money, collectables and all information tied to this backup will be lost unless you\'ve already written down the recovery phrase.</string>
+    <string name="backup_override_confirmation">I\'ve written down the recovery phrase for the old account.</string>
+    <string name="backup_override_continue_action">Replace backup</string>
+
+    <string name="authentication_title">Verify it\'s you</string>
+    <string name="authentication_description">Use your device screen lock to verify it\'s you</string>
+
+    <string name="bottom_nav_menu_chats">Chats</string>
+    <string name="bottom_nav_menu_pocket">Pocket</string>
+    <string name="bottom_nav_menu_explore">Browse</string>
+    <string name="bottom_nav_menu_settings">Settings</string>
+    <string name="bottom_nav_scanner_tooltip_title">Scan a QR code</string>
+    <string name="bottom_nav_scanner_tooltip_message">Scan to pay or add a contact.</string>
+    <string name="tab_bar_no_open_products">No open products</string>
+    <string name="tab_bar_close_tab">Close tab</string>
+
+    <string name="create_or_recover_options_recover_title">Recover Account</string>
+    <string name="create_or_recover_options_create_title">Create New Account</string>
+    <string name="create_or_recover_options_recover_google_drive_action_title">Backup from Google Drive</string>
+    <string name="create_or_recover_options_recover_google_drive_action_description">Import your recovery phrase from a Google Drive backup</string>
+    <string name="create_or_recover_options_recover_phrase_action_title">Import recovery phrase</string>
+    <string name="create_or_recover_options_recover_phrase_action_description">Type in your recovery phrase</string>
+    <string name="create_or_recover_options_create_manually_action_title">Create Manually</string>
+    <string name="create_or_recover_options_create_manually_action_description">Write down your recovery phrase</string>
+
+    <string name="manual_backup_write_down_title">Write Down Your\nrecovery phrase</string>
+    <string name="manual_backup_write_down_description">Never share the recovery phrase.</string>
+    <string name="manual_backup_confirm_title">Confirm your\nrecovery phrase</string>
+    <string name="manual_backup_confirm_description">Tap on the words below</string>
+    <string name="manual_backup_confirm_reveal_action_title">Tap to reveal</string>
+    <string name="manual_backup_confirm_reveal_action_description">Make sure no one can see your screen and do not take a screenshot</string>
+    <string name="manual_backup_confirm_warning">Keep your recovery phrase stored in a safe place and never share it with anyone</string>
+
+    <string name="recover_mnemonic_title">Restore your account</string>
+    <string name="recover_mnemonic_description">Enter your 12 or 24-word recovery phrase</string>
+    <string name="recover_mnemonic_action">Restore account</string>
+    <string name="recover_mnemonic_invalid_mnemonic_title">Invalid recovery phrase</string>
+    <string name="recover_mnemonic_invalid_mnemonic_description">Please check your recovery phrase</string>
+    <string name="recover_mnemonic_invalid_mnemonic_action">Got it</string>
+
+    <string name="add_withdrawal_scan_invalid_code_error_title">Invalid QR code</string>
+    <string name="add_withdrawal_scan_invalid_code_error_message">Be sure you’re scanning a Polkadot account address</string>
+    <string name="add_withdrawal_scan_invalid_code_error_action">Got it</string>
+
+    <string name="coinage_recycling_worker_notification_title">Coin recycling</string>
+    <string name="coinage_recycling_worker_notification_message">Recycling aged coins to keep your wallet healthy</string>
+
+    <string name="coinage_recovery_worker_notification_title">Confirming payments</string>
+    <string name="coinage_recovery_worker_notification_message">Waiting for your recent payments to settle on chain</string>
+    <string name="core_recovery_worker_notification_title">Confirming transactions</string>
+    <string name="core_recovery_worker_notification_message">Waiting for your recent transactions to settle on chain</string>
+
+    <string name="revoke_payments_toolbar_title">Revoke Payments</string>
+    <string name="revoke_payments_title">Revoke pending payments?</string>
+    <string name="revoke_payments_description">This will cancel any payments that have not been completed yet. Payments that are still pending, processing, or waiting for confirmation will not go through. Completed payments will not be affected.</string>
+    <string name="revoke_payments_disclaimer">This action cannot be undone. To send these payments later, you\'ll need to create them again.</string>
+    <string name="revoke_payments_button">Revoke</string>
+    <string name="revoke_payments_success">Reclaimed %1$s</string>
+    <string name="revoke_payments_nothing">No pending payments to revoke</string>
+
+    <string name="external_payment_worker_notification_title">Processing payment…</string>
+    <string name="external_payment_worker_notification_message">Completing your payment</string>
+
+    <string name="chat_file_upload_worker_notification_title">Sending attachment…</string>
+    <string name="chat_file_upload_worker_notification_message">Your attachment is being uploaded</string>
+
+    <string name="chat_file_download_worker_notification_title">Downloading attachment…</string>
+    <string name="chat_file_download_worker_notification_message">An attachment is being downloaded</string>
+
+    <string name="tracked_extrinsic_worker_notification_title">Submitting transaction…</string>
+    <string name="tracked_extrinsic_worker_notification_message">Waiting for on-chain confirmation</string>
+
+    <string name="video_game_pill_waiting_countdown_label">Game starting in</string>
+    <string name="video_game_pill_in_progress_label">Game Live</string>
+    <string name="video_game_pill_round_template">Round %1$d / %2$d</string>
+    <string name="video_game_pill_review_label">Review</string>
+
+    <string name="video_game_start_reminder_title">Game starting now!</string>
+    <string name="video_game_start_reminder_message">The game is starting! Jump in!</string>
+    <string name="video_game_calendar_event_title">%1$s game</string>
+
+    <string name="workers_notification_channel_id" translatable="false">workers_notification_channel_id</string>
+    <string name="workers_notification_channel_name">Background service workers</string>
+
+    <string name="settings_backup_title">Backup</string>
+    <string name="settings_backup_no_backup_header">Backup your account</string>
+    <string name="settings_backup_no_backup_description">Securely back up your account to Google Drive so you can restore them if lose your device or get a new one.</string>
+    <string name="settings_backup_no_backup_action">Backup Your account</string>
+    <string name="settings_backup_in_progress_header">Backup your account</string>
+    <string name="settings_backup_in_progress_action">Creating backup</string>
+    <string name="settings_backup_exists_header">Account is backed up</string>
+    <string name="settings_backup_exists_description">Your account is backed up to Google Drive. If you lose your device or get a new one, you\'ll be able to restore the account.</string>
+    <string name="settings_backup_no_google_drive_permission_header">Enable Google Drive</string>
+    <string name="settings_backup_no_google_drive_permission_description">We need to access Google Drive to save your backup. Switch it on in your phone settings.</string>
+    <string name="settings_backup_no_google_drive_permission_allow_action">Enable Google Drive</string>
+    <string name="settings_backup_no_google_drive_permission_decline_action">Don\'t enable</string>
+    <string name="settings_backup_checking_for_backup_header">Checking for an existing backup</string>
+    <string name="settings_backup_secret_phrase_action">View recovery phrase</string>
+    <string name="settings_backup_exists_conflict_header">Backup conflict</string>
+    <string name="settings_backup_exists_conflict_description">You have another account backed up on Google Drive. You may want to override the existing backup.</string>
+    <string name="settings_backup_exists_conflict_action">Override existing backup</string>
+
+    <string name="settings_backup_conflict_title">Backup found</string>
+    <string name="settings_backup_conflict_description">You already have another account backed up. Remove it and create a new one or cancel.</string>
+    <string name="settings_backup_conflict_timestamp">Created</string>
+    <string name="settings_backup_conflict_action">Remove and create new backup</string>
+    <string name="settings_backup_override_title">Remove the existing backup and create a new one?</string>
+    <string name="settings_backup_override_description">If you haven\'t written down the recovery phrase for the account being replaced, you will no longer be able to access it.</string>
+    <string name="settings_backup_override_confirmation">I fully understand the risk</string>
+    <string name="settings_backup_override_continue_action">Create a new backup</string>
+
+    <string name="settings_backup_not_backed_up">Not backed up.\nSet up a backup to stay protected</string>
+
+    <string name="settings_backup_recovery_phrase_warning_title">View Private Key</string>
+    <string name="settings_backup_recovery_phrase_warning_recommendation_1">Never share your recovery phrase or enter it into other apps or websites.</string>
+    <string name="settings_backup_recovery_phrase_warning_recommendation_2">Anyone who has your recovery phrase can access your account.</string>
+    <string name="settings_backup_recovery_phrase_warning_recommendation_3">Make sure nobody can see your screen when viewing your recovery phrase.</string>
+    <string name="settings_backup_recovery_phrase_warning_proceed_action">Show recovery phrase</string>
+
+    <string name="debug_menu_title">Debug menu</string>
+    <string name="debug_menu_clear_backup">Clear backup</string>
+    <string name="debug_menu_share_logs">Share logs</string>
+    <string name="debug_menu_copy_deposit_account">Copy wallet account address</string>
+    <string name="debug_menu_copy_deposit_mnemonic">Copy wallet mnemonic</string>
+    <string name="debug_menu_product_bots">Product bots</string>
+    <string name="product_bot_management_title">Product bots</string>
+    <string name="product_bot_management_add">Add product</string>
+    <string name="product_bot_management_edit_title">Edit product</string>
+    <string name="product_bot_management_add_title">Add product</string>
+    <string name="product_bot_management_empty">No products added</string>
+    <string name="debug_menu_pocket_face_preview">Pocket face preview</string>
+    <string name="pocket_face_preview_title">Pocket face preview</string>
+    <string name="pocket_face_preview_url_hint">Face JSON URL</string>
+    <string name="pocket_face_preview_draw">Draw</string>
+    <string name="pocket_face_preview_empty">Serve a renderer tree over HTTP and enter its URL to see it drawn at card size.</string>
+    <string name="pocket_face_preview_failed">The face could not be drawn.</string>
+    <string name="product_bot_management_url_hint">Script URL</string>
+    <string name="product_bot_management_card_id_hint">Pocket card id (optional)</string>
+    <string name="product_bot_management_card_title_hint">Pocket card title</string>
+    <string name="product_bot_management_preview_url_hint">Pocket card face URL</string>
+    <string name="product_bot_management_app_url_hint">App URL</string>
+    <string name="product_bot_management_face_away_label">Open with the face away</string>
+    <string name="product_bot_management_name_hint">product%1$s</string>
+    <string name="product_bot_management_confirm">Save</string>
+    <string name="spa_browser_menu_open_chat">Open Chat</string>
+    <string name="spa_browser_menu_refresh">Refresh</string>
+    <string name="spa_browser_menu_share">Share</string>
+    <string name="spa_browser_page_no_app_surface">This product doesn\'t have an app on this device.</string>
+    <string name="product_resolution_error_malformed_manifest">This product published a manifest this app can\'t read. Contact the product\'s developer.</string>
+    <string name="product_resolution_error_unknown">Couldn\'t load this product.</string>
+    <string name="debug_menu_enable_retro_mode">Enable retro mode</string>
+    <string name="debug_menu_disable_retro_mode">Disable retro mode</string>
+    <string name="debug_menu_randomize_account">Randomize account (Test Dev Reset)</string>
+    <string name="debug_menu_dotns_browser">DotNS Browser</string>
+    <string name="debug_dotns_browser_title">DotNS Browser</string>
+    <string name="debug_dotns_browser_domain_hint">Enter .dot domain</string>
+    <string name="debug_dotns_browser_load">Load</string>
+    <string name="debug_menu_open_spa_browser">Open SPA browser</string>
+    <string name="debug_menu_clear_dotns_cache">Clear DotNs cache</string>
+    <string name="debug_menu_clear_jwt_token">Clear JWT token (none)</string>
+    <string name="debug_menu_clear_jwt_token_stored">Clear JWT token (stored)</string>
+    <string name="debug_menu_coinage_debug_widgets">Coinage debug overlays</string>
+    <string name="debug_menu_truapi_runtime">TrUAPI Runtime (%1$s)</string>
+    <string name="debug_menu_runtime_restart_title">Restart required</string>
+    <string name="debug_menu_runtime_restart_message">The product runtime changed. Restart the app to apply it — a running product keeps the runtime it started with, and the two do not share stored data.</string>
+    <string name="debug_menu_runtime_restart_confirm">Restart</string>
+    <string name="debug_spa_browser_title">Open SPA URL</string>
+    <string name="debug_spa_browser_url_hint">Enter SPA URL</string>
+    <string name="debug_spa_browser_open">Open</string>
+
+    <string name="settings_mnemonic_reveal_title">Recovery phrase</string>
+    <string name="settings_mnemonic_reveal_description">Never share the recovery phrase. Anyone with the recovery phrase has full access to your account, cash and collectables.</string>
+    <string name="settings_mnemonic_reveal_copy_action">Copy To Clipboard</string>
+
+    <plurals name="common_weeks_format">
+        <item quantity="one">%d week</item>
+        <item quantity="other">%d weeks</item>
+    </plurals>
+
+    <plurals name="common_days_format">
+        <item quantity="one">%d day</item>
+        <item quantity="other">%d days</item>
+    </plurals>
+    <plurals name="common_hours_format">
+        <item quantity="one">%d hour</item>
+        <item quantity="other">%d hours</item>
+    </plurals>
+    <plurals name="common_minutes_format">
+        <item quantity="one">%d minute</item>
+        <item quantity="other">%d minutes</item>
+    </plurals>
+    <plurals name="common_seconds_format">
+        <item quantity="one">%d second</item>
+        <item quantity="other">%d seconds</item>
+    </plurals>
+
+    <string name="common_no_results_for">No results for\n“%1$s”</string>
+
+
+    <string name="send_payment_toolbar_title">Send Payment</string>
+    <string name="send_payment_search_placeholder">Type username or wallet address</string>
+    <string name="send_payment_to">To:</string>
+    <string name="send_payment_open_chat_message">You need to first establish a chat before sending a payment</string>
+
+    <string name="send_enter_amount_placeholder">Enter Amount</string>
+    <string name="send_enter_amount_ready_to_send">Ready</string>
+    <string name="send_enter_amount_privacy_cost_hint">Extra %1$s is spendable, but at the risk of reducing your privacy</string>
+    <string name="send_enter_amount_not_enough_funds_error">You don’t have enough funds</string>
+    <string name="send_enter_amount_cash_title">%1$s</string>
+    <string name="send_enter_amount_send_button">Send %1$s %2$s</string>
+    <string name="send_enter_amount_submitting">Sending…</string>
+    <string name="send_enter_amount_settling">Waiting for seller confirmation…</string>
+    <string name="send_error_settlement_timeout">The recipient didn\'t confirm the payment in time. Your money is still yours \u2014 try again later.</string>
+    <string name="send_error_not_enough_funds">Amount exceeds your available balance. Enter a smaller amount.</string>
+    <string name="send_error_balance_unavailable">Couldn\'t check your balance. Try again.</string>
+
+    <string name="common_relative_time_now">Now</string>
+    <string name="common_relative_time_today">Today</string>
+    <string name="common_relative_time_yesterday">Yesterday</string>
+    <plurals name="common_relative_time_minutes_ago">
+        <item quantity="one">%dm</item>
+        <item quantity="other">%dm</item>
+    </plurals>
+    <plurals name="common_relative_time_hours_ago">
+        <item quantity="one">%dh</item>
+        <item quantity="other">%dh</item>
+    </plurals>
+
+    <string name="sso_pair_request_failed_title">Failed to load pairing request</string>
+    <string name="sso_pair_request_title">Polkadot sign in</string>
+    <string name="sso_pair_request_subtitle">Sign in to %1$s\nusing %2$s</string>
+    <string name="sso_pair_request_sign_in">Sign In</string>
+    <string name="pair_request_confirm_title">Link a new device?</string>
+    <string name="pair_request_connecting_title">Connecting device…</string>
+    <string name="pair_request_device_platform">(%1$s)</string>
+    <string name="pair_request_info_intro">This device will be connected to your account and synced securely:</string>
+    <string name="pair_request_info_chats">Chats and messages will be available</string>
+    <string name="pair_request_info_send_receive">Send and receive messages from this device</string>
+    <string name="pair_request_info_remove">Remove this device at any time in Settings</string>
+    <string name="pair_request_progress_verifying">Verifying device</string>
+    <string name="pair_request_progress_registering">Registering securely</string>
+    <string name="pair_request_progress_syncing">Syncing data</string>
+    <string name="stall_report_taking_longer">This is taking longer than usual</string>
+    <string name="stall_report_details">Details</string>
+    <string name="stall_report_details_title">What\'s happening</string>
+    <string name="stall_reading_chain_state">Reading chain state</string>
+    <string name="stall_submitting_transaction">Submitting transaction</string>
+    <string name="sso_stall_responding_to_device">Responding to device</string>
+    <string name="statement_store_stall_allocating_voucher">Allocating statement store usage voucher</string>
+    <string name="statement_store_stall_reading_slots">Reading claimed vouchers</string>
+    <string name="statement_store_stall_renewing_vouchers">Renewing statement store usage vouchers</string>
+    <string name="transaction_storage_stall_allocating">Allocating Bulletin allowance</string>
+    <string name="transaction_storage_stall_picking_slot">Looking for a free storage claim</string>
+    <string name="transaction_storage_stall_awaiting_bulletin">Waiting for the allowance to appear on Bulletin</string>
+    <string name="pgas_stall_claiming">Allocating smart contract allowance</string>
+    <string name="pgas_stall_picking_slot">Looking for a free gas claim</string>
+    <string name="chats_stall_broadcasting_device">Broadcasting to network</string>
+    <string name="coinage_stall_preparing_transfer">Preparing payment</string>
+    <string name="coinage_stall_picking_unload_token">Looking for a free transfer allowance</string>
+    <string name="coinage_stall_reading_anonymity_set">Reading the anonymity set</string>
+    <string name="coinage_stall_generating_proofs">Generating privacy proofs</string>
+    <string name="wallet_stall_sending">Sending your payment</string>
+    <string name="wallet_stall_delivering">Delivering payment to recipient</string>
+    <string name="wallet_stall_awaiting_claim">Waiting for the recipient to receive the payment</string>
+    <string name="pair_request_link_action">Link</string>
+    <string name="pair_request_cancel_action">Cancel</string>
+    <string name="pair_request_close_action">Close</string>
+    <string name="pair_request_limit_reached_title">Limit Reached</string>
+    <string name="pair_request_limit_reached_message">You can\'t add more than %1$d devices. Disconnect one of the devices to add a new one.</string>
+
+    <string name="device_connected_notification">Device connected</string>
+    <string name="generic_error_notification">That didn\'t work. Try again \u2014 if it keeps happening, contact support.</string>
+    <string name="device_details_toolbar_title">Device Details</string>
+    <string name="device_details_field_device">Device</string>
+    <string name="device_details_field_host">Host</string>
+    <string name="device_details_field_added">Added</string>
+    <string name="device_details_field_placeholder">—</string>
+    <string name="device_details_remove_action">Remove Device</string>
+    <string name="device_details_remove_confirm_title">Remove device?</string>
+    <string name="device_details_remove_confirm_message_format">%1$s will lose access to your chats.</string>
+    <string name="device_details_remove_confirm_subject_with_device">%1$s (%2$s)</string>
+    <string name="device_details_remove_confirm_subject_fallback">This device</string>
+    <string name="device_details_remove_confirm_positive">Remove Device</string>
+    <string name="device_details_remove_confirm_negative">Cancel</string>
+
+    <string name="sign_transaction_failed_title">Failed to load transaction</string>
+    <string name="sign_transaction_title">%s requests signature</string>
+    <string name="sign_transaction_view_details">View Details</string>
+    <string name="sign_transaction_reject">Reject</string>
+    <string name="sign_transaction_approve">Sign</string>
+    <string name="sign_transaction_details_title">Transaction details</string>
+    <string name="sign_raw_message_details_title">Message details</string>
+    <string name="sign_vrf_transcript_details_title">Transcript details</string>
+    <string name="sign_transaction_signing_account">Signing account</string>
+    <string name="sign_transaction_product_account">Product account %1$s #%2$s</string>
+    <string name="sign_transaction_identity_account">Identity Account</string>
+    <string name="sign_transaction_wallet_account">Root account</string>
+    <string name="sign_transaction_unknown_account">Unknown account</string>
+    <string name="sign_transaction_signed">Signed</string>
+
+    <!-- Product permission prompt -->
+    <string name="product_permission_allow_always">Allow always</string>
+    <string name="product_permission_allow_once">Allow once</string>
+    <string name="product_permission_deny">Don\'t allow</string>
+    <string name="product_permission_subtitle">You can manage this later in Settings.</string>
+    <string name="product_permission_network_title">%1$s would like to access %2$s</string>
+    <string name="product_permission_network_subtitle">Network access is required to communicate with external services. %1$s</string>
+    <string name="product_permission_account_title">%1$s would tike to access accounts of %2$s</string>
+    <string name="product_permission_account_subtitle">Account access is required to read account data. %1$s</string>
+    <string name="product_permission_balance_title">%1$s would Like to Access Your Balance</string>
+    <string name="product_permission_balance_subtitle">Balance access lets the product see funds available for spending. %1$s</string>
+    <string name="product_permission_user_identity_title">%1$s Would like to know your identity</string>
+    <string name="product_permission_user_identity_subtitle">This reveals your primary username to the product. %1$s</string>
+    <string name="product_payment_request_title">Product %1$s requests payment of %2$s</string>
+    <string name="product_payment_request_approve">Approve</string>
+    <string name="product_payment_request_reject">Reject</string>
+    <string name="product_top_up_failed_title">Failed to Accept Funds from %1$s</string>
+    <string name="product_top_up_failed_message">The funds could not be moved into your balance.</string>
+    <string name="product_top_up_accepted_title">Accepted funds from %1$s</string>
+    <string name="product_top_up_amount_mismatch_warning">The detected amount differs from the amount stated by the product.</string>
+    <string name="product_resource_allocation_title">Product %1$s requests resource allocation</string>
+    <string name="product_resource_allocation_in_progress">Allocating resources</string>
+    <string name="product_resource_allocation_approve">Approve</string>
+    <string name="product_resource_allocation_reject">Reject</string>
+    <string name="product_resource_allocation_bullet">• %1$s</string>
+    <string name="product_resource_allocation_bulletin">Bulletin allowance</string>
+    <string name="product_resource_allocation_statement_store">Statement store allowance</string>
+    <string name="product_resource_allocation_smart_contract">Smart contract allowance</string>
+    <string name="product_resource_allocation_auto_signing">Auto-signing</string>
+    <string name="product_cross_product_proof_title">%1$s wants to execute an anonymous action on behalf of %2$s</string>
+    <string name="product_cross_product_proof_on_behalf_of">On behalf of: %1$s</string>
+    <string name="product_cross_product_proof_suffix">Context: %1$s</string>
+    <string name="product_cross_product_proof_message">Message: %1$s</string>
+    <string name="product_cross_product_proof_approve">Approve</string>
+    <string name="product_cross_product_proof_reject">Reject</string>
+    <string name="product_permission_device_camera_title">%1$s would like to access the camera</string>
+    <string name="product_permission_device_camera_subtitle">Camera access is required to take photos. %1$s</string>
+    <string name="product_permission_device_bluetooth_title">%1$s Would like to use bluetooth</string>
+    <string name="product_permission_device_bluetooth_subtitle">Bluetooth access is required for nearby device communication. %1$s</string>
+    <string name="product_permission_device_microphone_title">%1$s would like to access the microphone</string>
+    <string name="product_permission_device_microphone_subtitle">Microphone access is required to record audio. %1$s</string>
+    <string name="product_permission_device_notifications_title">%1$s would like to send notifications</string>
+    <string name="product_permission_device_notifications_subtitle">Notification access is required to send you alerts. %1$s</string>
+    <string name="product_permission_device_nfc_title">%1$s would like to use NFC</string>
+    <string name="product_permission_device_nfc_subtitle">NFC access is required for tap interactions. %1$s</string>
+    <string name="product_permission_device_location_title">%1$s would like to access your location</string>
+    <string name="product_permission_device_location_subtitle">Location access is required to determine your position. %1$s</string>
+    <string name="product_permission_device_clipboard_title">%1$s would like to access the clipboard</string>
+    <string name="product_permission_device_clipboard_subtitle">Clipboard access is required to read or write copied data. %1$s</string>
+    <string name="product_permission_device_biometrics_title">%1$s would like to use biometrics</string>
+    <string name="product_permission_device_biometrics_subtitle">Biometric access is required for authentication. %1$s</string>
+    <string name="product_permission_device_open_url_title">%1$s would like to open external links</string>
+    <string name="product_permission_device_open_url_subtitle">The app will open links in your browser or other apps. %1$s</string>
+    <string name="product_permission_webrtc_title">%1$s would like to use WebRTC</string>
+    <string name="product_permission_webrtc_subtitle">WebRTC access can reveal your IP address to remote peers. %1$s</string>
+    <string name="product_permission_chain_submit_title">%1$s would like to submit transactions</string>
+    <string name="product_permission_chain_submit_subtitle">Signed transactions will be broadcast to the blockchain. %1$s</string>
+    <string name="product_permission_statement_submit_title">%1$s would like to submit statements</string>
+    <string name="product_permission_statement_submit_subtitle">Statements will be published to the statement store. %1$s</string>
+    <string name="product_permission_preimage_submit_title">%1$s would like to submit preimages</string>
+    <string name="product_permission_preimage_submit_subtitle">Preimages will be uploaded to the bulletin chain. %1$s</string>
+    <string name="product_permission_batched_title">%1$s Would Like Access to:</string>
+    <string name="product_permission_network_label">Access %1$s</string>
+    <string name="product_permission_webrtc_label">Use WebRTC</string>
+    <string name="product_permission_chain_submit_label">Submit transactions</string>
+    <string name="product_permission_statement_submit_label">Submit statements</string>
+    <string name="product_permission_preimage_submit_label">Submit preimages</string>
+    <string name="product_permission_allow_always_all">Allow always all</string>
+    <string name="product_permission_allow_once_all">Allow once all</string>
+    <string name="product_permission_deny_all">Deny all</string>
+
+    <string name="scan_invalid_code_error_title">Invalid QR code</string>
+    <string name="scan_invalid_code_error_message">The scanned QR code is not recognized</string>
+    <string name="scan_invalid_code_error_action">Got it</string>
+    <string name="scan_point_camera_at_qr_code">Scan the QR code to continue</string>
+    <string name="scan_panel_camera_permission_hint">Allow camera access to scan QR codes</string>
+
+    <string name="chat_message_unsupported">Unsupported message content. Please update the app.</string>
+    <string name="chat_message_compaction_unavailable">Some messages could not be retrieved and are permanently unavailable.</string>
+    <string name="chat_message_edited">Edited</string>
+    <string name="chat_message_edited_time">Edited %s</string>
+    <string name="chat_edit_history">Edit history</string>
+    <string name="chat_reply_to">Reply to %1$s</string>
+
+    <string name="chat_reactions_expand">Show more reactions</string>
+    <string name="chat_reactions_details_title">Reactions</string>
+    <plurals name="chat_reactions_details_total">
+        <item quantity="one">%1$d total</item>
+        <item quantity="other">%1$d total</item>
+    </plurals>
+    <string name="chat_emoji_category_smileys">Smileys</string>
+    <string name="chat_emoji_category_people">People</string>
+    <string name="chat_emoji_category_animals">Animals &amp; Nature</string>
+    <string name="chat_emoji_category_food">Food &amp; Drink</string>
+    <string name="chat_emoji_category_activities">Activity</string>
+    <string name="chat_emoji_category_travel">Travel &amp; Places</string>
+    <string name="chat_emoji_category_objects">Objects</string>
+    <string name="chat_emoji_category_symbols">Symbols</string>
+    <string name="chat_emoji_category_flags">Flags</string>
+
+    <string name="settings_sso_sessions">Connected apps</string>
+    <string name="sso_sessions_list_toolbar_title">Connected apps</string>
+    <string name="sso_sessions_list_empty">No connected apps</string>
+    <string name="sso_sessions_list_delete_confirmation_title">Disconnect app</string>
+    <string name="sso_sessions_list_delete_confirmation_message">Are you sure you want to disconnect %s?</string>
+    <string name="sso_sessions_list_delete_confirmation_positive">Disconnect</string>
+    <string name="sso_sessions_list_delete_confirmation_negative">Cancel</string>
+
+    <!-- Chat Requests -->
+    <string name="chat_request_new_requests">New requests</string>
+    <string name="chat_request_message_requests">Message requests</string>
+    <string name="chat_request_message_requests_subtitle">Message requests from people who aren\'t in your contact list appear here.</string>
+    <string name="chat_request_label">Message request</string>
+    <string name="chat_request_sent">Request sent</string>
+    <string name="chat_request_message_sent">Request message sent</string>
+    <string name="chat_request_approved">%s approved your request</string>
+    <string name="chat_request_approved_outgoing">You approved the request</string>
+    <string name="chat_request_accepted">Request accepted</string>
+    <string name="chat_request_declined">Request declined</string>
+    <string name="chat_request_accept">Accept</string>
+    <string name="chat_request_decline">Decline</string>
+    <string name="chat_request_cancel">Cancel</string>
+    <string name="chat_request_pending">Pending</string>
+    <string name="chat_request_welcome_message_hint">Add a welcome message (optional)</string>
+    <string name="chat_request_decline_dialog_title">Decline message request?</string>
+    <string name="chat_request_you_approved">You approved the request</string>
+    <string name="chat_request_accept_title">Accept chat request from %s</string>
+    <string name="chat_request_wait_accept_title">Wait for %s to accept your message request.</string>
+    <string name="chat_request_accept_description">Add %s to your contacts to accept the chat request. They won\'t know you\'ve seen their message until you accept.</string>
+    <string name="chat_request_invite_title">Invite %s to chat</string>
+    <string name="chat_request_invite_description">You can only send one message in this request.</string>
+    <string name="chat_request_waiting_description">Wait for %s to accept your request message before sending the next message.</string>
+
+    <string name="call_incoming">Incoming call</string>
+    <string name="call_initializing">Initializing\u2026</string>
+    <string name="call_requesting">Contacting\u2026</string>
+    <string name="call_ringing">Ringing\u2026</string>
+    <string name="call_connecting">Connecting\u2026</string>
+    <string name="call_ended">Call ended</string>
+    <string name="call_failed">Connection lost</string>
+    <string name="call_accept">accept</string>
+    <string name="call_end">end</string>
+    <string name="call_speaker">speaker</string>
+    <string name="call_video">video</string>
+    <string name="call_mute">mute</string>
+    <string name="call_audio_device_phone">Phone</string>
+    <string name="call_audio_device_speaker">Speaker</string>
+    <string name="call_audio_device_headphones">Headphones</string>
+    <string name="call_audio_device_bluetooth">Bluetooth</string>
+    <string name="call_self_mic_off">Your microphone is off</string>
+    <string name="call_remote_mic_off">%s microphone is off</string>
+    <string name="chat_last_message_call_started">Call</string>
+    <plurals name="chat_last_message_media_collection_photos">
+        <item quantity="one">%d photo</item>
+        <item quantity="other">%d photos</item>
+    </plurals>
+    <plurals name="chat_last_message_media_collection_videos">
+        <item quantity="one">%d video</item>
+        <item quantity="other">%d videos</item>
+    </plurals>
+    <plurals name="chat_last_message_media_collection_files">
+        <item quantity="one">%d file</item>
+        <item quantity="other">%d files</item>
+    </plurals>
+
+    <string name="chat_message_call_incoming_video">Incoming video call</string>
+    <string name="chat_message_call_incoming_voice">Incoming voice call</string>
+    <string name="chat_message_call_outgoing_video">Outgoing video call</string>
+    <string name="chat_message_call_outgoing_voice">Outgoing voice call</string>
+    <string name="chat_message_call_ongoing_video">Ongoing video call</string>
+    <string name="chat_message_call_ongoing_voice">Ongoing voice call</string>
+    <string name="chat_message_call_ended_video">Video call</string>
+    <string name="chat_message_call_ended_voice">Voice call</string>
+    <string name="chat_message_call_missed_video">Missed video call</string>
+    <string name="chat_message_call_missed_voice">Missed voice call</string>
+    <string name="chat_message_call_canceled">Canceled call</string>
+    <string name="chat_message_call_canceled_voice">Canceled voice call</string>
+    <string name="chat_message_call_canceled_video">Canceled video call</string>
+    <string name="chat_message_call_declined">Declined call</string>
+    <string name="chat_message_call_declined_voice">Declined voice call</string>
+    <string name="chat_message_call_declined_video">Declined video call</string>
+    <string name="chat_message_call_subtitle_calling">Calling</string>
+    <string name="chat_message_call_subtitle_tap_to_return">Tap to return</string>
+    <string name="chat_message_call_subtitle_tap_to_call_back">Tap to call back</string>
+    <string name="chat_message_call_subtitle_tap_to_call_again">Tap to call again</string>
+
+    <string name="dev_reset_title">The environment has been reset</string>
+    <string name="dev_reset_message">The environment was updated and your account no longer exists on-chain. You\'ll need to start fresh.\n\nThe app will close after tapping \"Start Over\" — please reopen it manually.</string>
+    <string name="dev_reset_start_over">Start Over</string>
+    <string name="dev_reset_dismiss">Dismiss</string>
+
+    <string name="common_search">Search</string>
+
+    <string name="app_not_found_error">No App found</string>
+
+    <string name="chats_toolbar_title" translatable="false">Chats</string>
+    <string name="chats_empty_state_title">Add your first contact</string>
+    <string name="chats_empty_state_message">Tap + below to find someone by username</string>
+
+    <string name="chat_search_empty_state_title">No results</string>
+    <string name="chat_search_empty_state_message">There is no result for “%1$s”. Try a new search</string>
+    <string name="chat_search_prompt_message">Search by username or in messages</string>
+    <string name="chat_search_section_apps">APPS</string>
+    <string name="chat_search_section_chats">CHATS AND CONTACTS</string>
+    <string name="chat_search_section_messages">MESSAGES</string>
+    <string name="chat_search_recents_header">RECENT</string>
+    <string name="chat_search_recents_clear">CLEAR</string>
+    <string name="chat_search_recent_menu_remove">Remove from Recents</string>
+    <string name="chat_search_error_message">Search failed. Please try again</string>
+
+    <string name="search_section_recent">RECENT</string>
+    <string name="search_section_contacts">CONTACTS</string>
+    <string name="search_section_all_users">ALL USERS</string>
+
+    <string name="add_contact_search_placeholder">Type username</string>
+    <string name="add_contact_no_recent_searches">No recent searches</string>
+    <string name="add_contact_bottom_sheet_message">Add a contact\nand start a chat with\n%1$s</string>
+    <string name="add_contact_bottom_sheet_description">After you enter the chat, make sure <b>%1$s</b> starts one with you as well, or your message may not be seen.</string>
+    <string name="add_contact_bottom_sheet_button_text">Add to Contacts</string>
+    <string name="add_contact_search_error">Couldn\'t load search results.\nPlease try again.</string>
+
+    <string name="chat_details_pay_button_text">Pay</string>
+    <string name="chat_details_input_field_placeholder">Write a message…</string>
+    <string name="chat_details_message_status_pending">Pending</string>
+    <string name="chat_details_message_status_sent">Message sent</string>
+    <string name="chat_details_message_status_read">Message read</string>
+    <string name="chat_details_wait_for_message_read_text">Wait for the player to read or reply to your\nmessage before sending the next message</string>
+    <string name="chat_contact_pending_info">You will be able to start chatting with this player once they also add you to their contacts.</string>
+
+    <string name="chat_message_contact_added_incoming">%1$s added you</string>
+    <string name="chat_message_contact_added_outgoing">You added %1$s</string>
+    <string name="chat_message_last_outgoing">You: %1$s</string>
+    <string name="chat_message_payment_incoming">%1$s sent you</string>
+    <string name="chat_message_payment_incoming_sending">%1$s is sending you</string>
+    <string name="chat_message_payment_outgoing">You sent</string>
+    <string name="chat_payment_status_detecting_sender">Sending…</string>
+    <string name="chat_payment_status_detecting_recipient">Receiving…</string>
+    <string name="chat_payment_status_detected_on_chain_sender">Sent</string>
+    <string name="chat_payment_status_detected_on_chain_recipient">Receiving…</string>
+    <string name="chat_payment_status_claimed">Received</string>
+    <string name="chat_payment_status_partially_claimed">Received %1$s, waiting for the rest…</string>
+    <string name="chat_payment_status_not_detected">Transaction failed</string>
+    <string name="chat_payment_status_failed">Invalid transaction</string>
+    <string name="chat_payment_amount_differs">Amount received differs from amount sent</string>
+    <string name="chat_last_message_payment_incoming">%1$s sent you %2$s</string>
+    <string name="chat_last_message_payment_incoming_sending">%1$s is sending you %2$s</string>
+    <string name="chat_last_message_payment_outgoing">You sent %1$s</string>
+    <string name="chat_reply_transfer_incoming">Sent you %1$s</string>
+    <string name="chat_reply_transfer_outgoing">You sent %1$s</string>
+    <string name="chat_last_message_token_incoming">%1$s shared a push token with you</string>
+    <string name="chat_last_message_token_outgoing">You shared a push token with %1$s</string>
+    <string name="chat_last_message_draft_prefix">Draft: %1$s</string>
+    <string name="chat_last_message_reacted_outgoing">You: reacted with %1$s</string>
+    <string name="chat_last_message_reacted_incoming">%1$s reacted with %2$s</string>
+    <string name="chat_last_message_reaction_removed_outgoing">You: removed reaction</string>
+    <string name="chat_last_message_reaction_removed_incoming">%1$s removed reaction</string>
+    <string name="chat_message_multimedia_uploading_progress">Uploading %1$d%%</string>
+    <string name="chat_message_multimedia_uploading_failed">Uploading failed · retry</string>
+    <string name="chat_message_multimedia_downloading_progress">Downloading %1$d%%</string>
+    <string name="chat_message_multimedia_downloading_failed">Downloading failed · retry</string>
+    <string name="chat_feed_new_messages">New messages</string>
+    <string name="chat_user_left_chat">%1$s left the chat</string>
+    <string name="chat_last_message_left_chat_incoming">%1$s left the chat</string>
+    <string name="chat_last_message_left_chat_outgoing">You left the chat</string>
+    <string name="chat_attachment_emoji_image">🖼️</string>
+    <string name="chat_attachment_emoji_video">🎥</string>
+    <string name="chat_attachment_emoji_file">📎</string>
+    <string name="chat_attachment_name_image">Photo</string>
+    <string name="chat_attachment_name_video">Video</string>
+    <string name="chat_reply_attachment">Attachment</string>
+    <string name="chat_attachment_name_file">File</string>
+
+    <string name="chat_call_busy_in_another_chat">You\'re already in a call in another chat. End it before starting a new one.</string>
+    <string name="chat_error_peer_not_available">Couldn\'t start a chat with this user. Ask them to open the app to finish setting up chats.</string>
+    <string name="chat_error_contact_not_found">This contact is no longer available. It may have been removed.</string>
+    <string name="chat_error_attachment_too_large">This file is too large to send. Choose one under %1$d MB.</string>
+
+    <string name="chat_faq_component_opened_title_base">Have more Questions or %1$s</string>
+    <string name="chat_faq_component_opened_title_action">Hide</string>
+    <string name="chat_faq_component_closed_title_base">Have more Questions? %1$s</string>
+    <string name="chat_faq_component_closed_title_action">Show More</string>
+
+    <string name="chat_notification_reaction_added">reacted with %1$s</string>
+
+    <string name="chat_notification_contact_added">added you</string>
+    <string name="chat_notification_payment">is sending you %1$s</string>
+    <string name="chat_notification_request_approved">approved the chat request</string>
+
+    <string name="pocket_toolbar_title">Pocket</string>
+    <string name="card_currency_title">Local currency</string>
+    <string name="card_balance_will_be_available_soon">Available soon</string>
+
+    <string name="asset_details_fund_button">Fund %1$s</string>
+    <string name="asset_details_fund_digital_dollar">Get %1$s</string>
+    <string name="asset_details_transfer_button">Transfer</string>
+    <string name="asset_details_actions_disabled">Actions will be available after you finish updating your balance</string>
+    <string name="asset_details_backup_in_progress">Updating balance</string>
+    <string name="pocket_digital_dollar_account_backup_pending">Account backup is still in progress…</string>
+    <string name="asset_details_backup_in_progress_subsequent">Continue updating balance</string>
+    <string name="asset_details_balance_restored">Balance restored</string>
+    <string name="asset_details_balance_restored_description">If it differs from the previous value, press Update until correct</string>
+    <string name="asset_details_balance_restored_why">Why update?</string>
+    <string name="asset_details_balance_why_update_title">Why is this required?</string>
+    <string name="asset_details_balance_why_update_description">Private accounts don\'t support automatic syncing. Manually updating your balance helps keep it accurate.</string>
+    <string name="asset_details_balance_close_confirm_title">Done updating your balance?</string>
+    <string name="asset_details_balance_close_confirm_description">Once you close this, manual update won\'t be available again</string>
+    <string name="asset_details_balance_close_confirm_confirm">Yes, I\'m done</string>
+    <string name="asset_details_balance_CTA_close">Close</string>
+    <string name="asset_details_balance_CTA_update">Update</string>
+
+    <string name="transaction_success_title">Your transaction was sent successfully</string>
+    <string name="transaction_success_finality_pending">The payment went through. You can wait here for the final confirmation report, it usually arrives in ~30 seconds</string>
+    <string name="transaction_success_finality_confirmed">The payment is confirmed</string>
+    <string name="send_transaction_failure_title">Payment failed</string>
+    <string name="send_transaction_failure_description">Please review the details of your transaction and try to send it again</string>
+
+    <string name="fund_done">Done</string>
+    <string name="fund_fund_from">Fund from</string>
+    <string name="fund_description">Send %s on the %s to your wallet address below.</string>
+    <string name="fund_minimal_amount">Send %s or more</string>
+    <string name="fund_to">To</string>
+    <string name="fund_network">Network</string>
+    <string name="fund_copy_address">Copy address</string>
+    <string name="fund_rate" translatable="false">Rate</string>
+    <string name="fund_fee" translatable="false">Fee</string>
+    <string name="fund_funding_pending_title">Funding in progress</string>
+    <string name="fund_funding_complete_title">Funding complete</string>
+    <string name="fund_funding_failed_title">Funding incomplete</string>
+    <string name="fund_funding_pending">Pending</string>
+    <string name="fund_funding_completed">Complete</string>
+    <string name="fund_funding_incomplete">Incomplete</string>
+    <string name="fund_funding_warning">Don’t close the app until the process is complete, or you may lose funds.</string>
+    <string name="fund_funding_success">Funding complete, check your balance, spend dollars in the Polkadot app.</string>
+    <string name="fund_funding_failure">Error text</string>
+    <string name="fund_exit_confirm_title">Are you done funding?</string>
+    <string name="fund_exit_confirm_description">If you have pending funds, closing the screen may result in the loss of those funds</string>
+    <string name="fund_exit_confirm_CTA_dismiss">Back</string>
+    <string name="fund_exit_confirm_CTA_confirm">Done</string>
+
+    <string name="settings_toolbar_title">Settings</string>
+
+    <string name="settings_section_general">General</string>
+    <string name="settings_section_connections">Connections</string>
+    <string name="settings_section_security">Security &amp; privacy</string>
+    <string name="settings_section_payments">Payments</string>
+    <string name="settings_section_debug">Debug</string>
+    <string name="settings_section_legal">Legal</string>
+    <string name="settings_section_support">Support</string>
+
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_claim_title">Claim your interface</string>
+    <string name="settings_theme_claim_subtitle">Pick a theme that feels like yours. You stay in control.</string>
+    <string name="settings_theme_preview_message_first">Hey, are you going to Web3Summit? 🎉</string>
+    <string name="settings_theme_preview_message_second">Of course! You?</string>
+    <string name="settings_theme_preview_message_third">Wouldn\'t miss it 👋 See you there!</string>
+    <string name="settings_connected_devices">Connected Devices</string>
+    <string name="settings_revoke_payments">Revoke Payments</string>
+
+    <string name="settings_backup">Backup</string>
+    <string name="settings_terms_of_use">Terms of use</string>
+    <string name="settings_privacy_policy">Privacy policy</string>
+    <string name="settings_products">Apps</string>
+    <string name="settings_blocked_contacts">Blocked contacts</string>
+    <string name="settings_legal_and_support">Legal &amp; Support</string>
+    <string name="settings_contact_us">Contact us</string>
+    <string name="settings_email_copied">Email copied to clipboard</string>
+    <string name="settings_currency">Currency</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_linked_devices">Linked Devices</string>
+    <string name="settings_app_version">App Version: %1$s (%2$d)</string>
+    <string name="linked_devices_link_new_title">Link a new device</string>
+    <string name="linked_devices_link_new_description">Scan the QR code on your\ncomputer or another device to sync</string>
+    <string name="linked_devices_scan_qr_action">Scan QR Code</string>
+    <string name="linked_devices_safety_note">Your phone approves all devices.\nNo one can access your account without your permission</string>
+    <string name="linked_devices_category_laptop_desktop">Laptop / Desktop</string>
+    <plurals name="linked_devices_count_format">
+        <item quantity="one">%d device</item>
+        <item quantity="other">%d devices</item>
+    </plurals>
+    <string name="settings_android_version">Android: %1$s (API %2$d)</string>
+    <string name="settings_device_model">Device: %s</string>
+    <string name="settings_debug_menu">Debug menu</string>
+
+    <string name="products_toolbar_title">Apps</string>
+    <string name="products_empty_state_message">No products found</string>
+    <string name="products_message_custom_preview">Custom message</string>
+    <string name="products_message_load_failed">Couldn\'t load this message.</string>
+    <string name="products_message_render_failed">Couldn\'t display this message.</string>
+    <string name="product_settings_version">version %1$s</string>
+    <string name="product_settings_created_by">created by %1$s</string>
+    <string name="product_settings_section_privacy">Privacy &amp; Security</string>
+    <string name="product_settings_permissions">Permissions</string>
+    <string name="product_permissions_toolbar_title">%1$s Permissions</string>
+    <string name="product_permission_type_device_capability">Device capability</string>
+    <string name="product_permission_type_network_access">Network access</string>
+    <string name="product_permission_type_account_access">Account access</string>
+    <string name="product_permission_type_balance_access">Balance</string>
+    <string name="product_permission_type_balance_access_description">Balance access</string>
+    <string name="product_permission_type_user_identity_access">Identity</string>
+    <string name="product_permission_type_user_identity_access_description">Primary username disclosure</string>
+    <string name="product_permission_capability_notifications">Notifications</string>
+    <string name="product_permission_capability_camera">Camera</string>
+    <string name="product_permission_capability_microphone">Microphone</string>
+    <string name="product_permission_capability_bluetooth">Bluetooth</string>
+    <string name="product_permission_capability_nfc">NFC</string>
+    <string name="product_permission_capability_location">Location</string>
+    <string name="product_permission_capability_clipboard">Clipboard</string>
+    <string name="product_permission_capability_biometrics">Biometrics</string>
+    <string name="product_permission_capability_open_url">External links</string>
+    <string name="product_permission_type_webrtc">WebRTC</string>
+    <string name="product_permission_type_chain_submit">Chain transactions</string>
+    <string name="product_permission_type_statement_submit">Statement submission</string>
+    <string name="product_permission_type_preimage_submit">Preimage submission</string>
+    <string name="product_permission_type_remote">Remote permission</string>
+
+    <string name="notification_channel_name_chat">Chat messages</string>
+    <string name="notification_channel_description_chat">Notifications for new chat messages</string>
+    <string name="chat_leave_chat">Leave chat</string>
+    <string name="chat_copy_username">Copy username</string>
+    <string name="chat_block_user">Block user</string>
+    <string name="blocked_users_unblock">Unblock</string>
+    <string name="chat_leave_chat_question">Leave chat?</string>
+    <string name="chat_leave_chat_confirmation">Are you sure you want to leave\nthe chat with %1$s?</string>
+    <string name="chat_block_user_question">Block %1$s?</string>
+    <string name="chat_block_user_confirmation">They won\'t be able to send you a message request or call you.</string>
+    <string name="common_block">Block</string>
+    <string name="chat_blocked_user_notice">You won\'t receive any messages and requests until you unblock %1$s</string>
+
+    <string name="notification_channel_name_video_game">Weekly game</string>
+    <string name="notification_channel_description_video_game">Notifications about upcoming weekly games</string>
+    <string name="notification_channel_name_video_game_alarm">Weekly game urgent</string>
+    <string name="notification_channel_description_video_game_alarm">Urgent notifications when games are about to start</string>
+
+    <string name="notification_channel_name_calls">Calls</string>
+    <string name="notification_channel_description_calls">Notifications about incoming calls</string>
+
+    <string name="notification_channel_name_products">Products</string>
+    <string name="notification_channel_description_products">Notifications from products</string>
+
+    <string name="product_chat_menu_open_app">Open %s app</string>
+    <string name="product_chat_menu_remove_chat">Remove chat</string>
+    <string name="product_chat_menu_remove_confirmation_text">Remove chat?</string>
+    <string name="product_chat_menu_remove_confirmation_positive">Remove</string>
+
+    <string name="chain_health_state_connected">Connected</string>
+    <string name="chain_health_state_not_producing">Not producing blocks</string>
+    <string name="chain_health_state_connecting">Connecting…</string>
+    <string name="chain_health_state_broken">Chain broken</string>
+    <string name="chain_health_state_disconnected">Disconnected</string>
+    <string name="chain_health_state_offline">No internet</string>
+    <string name="chain_health_connected_summary">%1$s · Live %2$s · Block %3$s</string>
+    <string name="chain_health_live_percent">%1$d%%</string>
+    <string name="chain_health_block_interval">~%1$s</string>
+    <string name="chain_health_value_unknown">—</string>
+    <string name="chain_health_panel_title">Network Status</string>
+    <string name="chain_health_duration_seconds">%1$ds</string>
+    <string name="chain_health_duration_minutes">%1$dm %2$ds</string>
+    <string name="chain_health_indicator_description">%1$s, %2$s</string>
+    <string name="chain_health_chain_people">People Chain</string>
+    <string name="chain_health_chain_hub">Hub Chain</string>
+    <string name="chain_health_chain_bulletin">Bulletin Chain</string>
+    <string name="chain_health_statement_store">Statement Store</string>
+    <string name="chain_health_tooltip_title">Network status</string>
+    <string name="chain_health_tooltip_message">These rings track your connection to each chain and to the statement store.</string>
+
+    <string name="splash_waiting_for_network_title">Waiting for network connection…</string>
+    <string name="splash_waiting_for_network_message">Turn off Airplane Mode or check your internet</string>
+
+    <string name="pocket_digital_dollar_title">%1$s Card</string>
+    <string name="pocket_digital_dollar_card_title">%1$s</string>
+    <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
+    <string name="pocket_error_get_cash_unavailable">Get %1$s isn\'t available right now. Try again later.</string>
+    <string name="pocket_error_withdraw_unavailable">Withdrawing %1$s isn\'t available right now. Try again later.</string>
+    <string name="pocket_error_auto_fund_failed">Couldn\'t add test funds to this account. Try again.</string>
+    <string name="pocket_error_share_coinage_logs_failed">Couldn\'t share the coinage logs. Try again.</string>
+    <string name="pocket_pinned_card_humanity">Humanity</string>
+    <string name="pocket_add_card_title">Add to Pocket</string>
+    <string name="pocket_add_card_subtitle">%1$s wants to add a card to your Pocket. This is how it will look.</string>
+    <string name="pocket_add_card_action">Add</string>
+    <string name="pocket_add_card_cancel">Not now</string>
+    <string name="pocket_add_card_failed">This card can\'t be added right now.</string>
+    <string name="pocket_remove_card_title">Remove %1$s?</string>
+    <string name="pocket_remove_card_message">You can add it again from the product later.</string>
+    <string name="pocket_remove_card_action">Remove</string>
+    <string name="pocket_remove_card_cancel">Cancel</string>
+    <string name="pocket_deeplink_unknown_card">This product doesn\'t publish that card.</string>
+    <string name="pocket_deeplink_no_pocket">This product has no Pocket cards.</string>
+    <string name="pocket_deeplink_malformed">That Pocket link is incomplete.</string>
+    <string name="pocket_coinage_balance_title">Total</string>
+    <string name="pocket_coinage_ready">Ready</string>
+    <string name="pocket_coinage_clearing">Clearing</string>
+    <string name="pocket_coinage_total_balance">Total</string>
+    <string name="pocket_coinage_share_logs">Share Coinage Logs</string>
+    <string name="pocket_debug_features_title">Debug features</string>
+    <string name="pocket_debug_features_subtitle">Not visible in production</string>
+    <string name="pocket_debug_breakdown_private">Private</string>
+    <string name="pocket_debug_breakdown_gaining_privacy">Gaining privacy</string>
+    <string name="pocket_debug_breakdown_pending">Pending</string>
+    <string name="pocket_debug_breakdown_can_spend_gaining">Can spend gaining privacy</string>
+    <string name="pocket_coinage_show_details">Show Details</string>
+
+    <string name="payment_privacy_mode_title">Payments Privacy Mode</string>
+    <string name="payment_privacy_mode_fastest_label">Fastest</string>
+    <string name="payment_privacy_mode_fastest_description">Fastest payments, lower privacy</string>
+    <string name="payment_privacy_mode_fastest_accessibility">Fastest. Fastest payments, lower privacy.</string>
+    <string name="payment_privacy_mode_balanced_label">Balanced</string>
+    <string name="payment_privacy_mode_balanced_description">Stronger privacy, moderate speed</string>
+    <string name="payment_privacy_mode_balanced_accessibility">Balanced. Stronger privacy, moderate speed.</string>
+    <string name="payment_privacy_mode_most_private_label">Most Private</string>
+    <string name="payment_privacy_mode_most_private_description">Maximum privacy, lowest speed</string>
+    <string name="payment_privacy_mode_most_private_accessibility">Most private. Maximum privacy, lowest speed.</string>
+    <string name="payment_privacy_mode_state_selected">Selected</string>
+    <string name="payment_privacy_mode_state_not_selected">Not selected</string>
+
+    <!-- Keys carried over from the branch, not yet present on master -->
+    <string name="sso_pair_request_connect_title">%s wants to connect</string>
+    <string name="sso_pair_request_share_info_message">Do you want to share \"%s\" info with them?</string>
+    <string name="sso_pair_request_reject">Reject</string>
+    <string name="sso_pair_request_approve">Approve</string>
+    <string name="chat_last_message_call_voice">📞 Voice call</string>
+    <string name="chat_last_message_call_video">📹 Video call</string>
+    <string name="chat_payment_status_detecting">Detecting…</string>
+    <string name="chat_payment_status_detected_best">Confirming…</string>
+    <string name="chat_payment_status_detected_finalized">Confirmed</string>
+    <string name="settings_blocked_users">Blocked users</string>
+    <string name="common_relative_time_just_now">Now</string>
+
+    <!-- Keys removed on master but retained intentionally -->
+
+    <!-- TrUAPI core confirmation prompts -->
+    <string name="truapi_confirm_title_signing">Approve signing?</string>
+    <string name="truapi_confirm_title_statement_sign">Sign statement payload?</string>
+    <string name="truapi_confirm_title_account_alias">Create account alias?</string>
+    <string name="truapi_confirm_title_create_proof">Create proof?</string>
+    <string name="truapi_confirm_title_identity_disclosure">Share your identity?</string>
+    <string name="truapi_confirm_title_resource_allocation">Allocate resources?</string>
+    <string name="truapi_confirm_title_account_access">Allow account access?</string>
+    <string name="truapi_confirm_title_product_subtree">Allow own-account access?</string>
+    <string name="truapi_confirm_label_request">Request</string>
+    <string name="truapi_confirm_label_call">Call</string>
+    <string name="truapi_confirm_label_call_data">Call data</string>
+    <string name="truapi_confirm_label_chain">Chain</string>
+    <string name="truapi_confirm_label_signer">Signing account</string>
+    <string name="truapi_confirm_label_message">Message</string>
+    <string name="truapi_confirm_label_transcript">Transcript</string>
+    <string name="truapi_confirm_label_transcript_items">Transcript items</string>
+    <string name="truapi_confirm_value_call_undecodable">Could not be decoded on this device</string>
+    <string name="truapi_confirm_value_chain_unknown">Unknown to this app</string>
+    <string name="truapi_confirm_label_context">Context</string>
+    <string name="truapi_confirm_label_ring">Ring</string>
+    <string name="truapi_confirm_label_message_size">Message size (bytes)</string>
+    <string name="truapi_confirm_label_payload_size">Payload size (bytes)</string>
+    <string name="truapi_confirm_label_resource">Resource</string>
+    <string name="truapi_confirm_label_target_product">Target product</string>
+    <string name="truapi_confirm_requested_by">Requested by %1$s</string>
+    <string name="truapi_confirm_approve">Approve</string>
+    <string name="truapi_confirm_reject">Reject</string>
+    <string name="truapi_contact_pick_title">Choose a contact</string>
+    <string name="truapi_contact_pick_body">%1$s learns only who you choose, and never your contact list.</string>
+    <string name="truapi_contact_pick_unnamed">Unnamed contact</string>
+    <string name="truapi_contact_pick_dismiss">Not now</string>
+    <string name="truapi_product_scan_title">Scan for %1$s</string>
+    <string name="truapi_product_scan_not_for_product">This code isn\'t for %1$s</string>
+    <string name="debug_report_title">Report app issue</string>
+    <string name="debug_report_what_happened">What happened?</string>
+    <string name="debug_report_placeholder">Tell us about the issue you encountered</string>
+    <string name="debug_report_character_count">%1$d / %2$d</string>
+    <string name="debug_report_attachments">Your report includes app logs and this screenshot.</string>
+    <string name="debug_report_screenshot">Screenshot included in the report</string>
+    <string name="debug_report_thanks">Thank you for your feedback!</string>
+    <string name="debug_report_failed">Could not confirm that your report was sent.</string>
+    <string name="debug_report_capture_failed">Could not capture the app screen. Please try another screenshot.</string>
+    <string name="debug_report_unavailable">Issue reporting is not configured for this build yet.</string>
+    <string name="debug_report_too_large">The screenshot or logs are too large to send.</string>
+</resources>

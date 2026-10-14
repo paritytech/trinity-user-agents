@@ -1,0 +1,46 @@
+name: Prepare Release
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_level:
+        description: "Which part of the version to bump"
+        type: choice
+        required: true
+        options:
+          - "no-bump"
+          - "patch"
+          - "minor"
+          - "major"
+        default: "no-bump"
+      source_ref:
+        description: >-
+          Source ref to create release branch from (existing branch name or commit SHA).
+          'main' builds directly from main without a release branch/PR (bump_level must be no-bump)
+        type: string
+        required: false
+        default: main
+      increment_step:
+        description: "Build number increment step (1 if empty)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  prepare:
+    uses: ./.github/workflows/ios-prepare-pipeline.yml
+    with:
+      is_nightly: false
+      bump_level: ${{ inputs.bump_level }}
+      source_ref: ${{ inputs.source_ref }}
+      increment_step: ${{ inputs.increment_step }}
+      distribution_workflow: ios-release-distribution.yml

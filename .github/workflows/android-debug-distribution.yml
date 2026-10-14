@@ -1,0 +1,219 @@
+# The debug build of whatever just landed, delivered to Firebase App
+# Distribution.
+#
+# Distinct from the nightly, which is scheduled and ships the nightly build
+# type to its own Firebase app, and from the on demand preview in
+# android-device-preview.yml, which attaches an artifact to a pull request.
+# This one answers "what does main do right now".
+#
+# Authentication is federated. The job proves its identity with the run's OIDC
+# token and receives a short lived credential, so no long lived key for this
+# project is stored anywhere. The identity is bound to main, so the run starts
+# from a push to main: a pull request event's token names the pull request
+# rather than the branch, and the binding never accepts it.
+name: Android debug distribution
+
+on:
+  push:
+    branches: [main]
+    # A merge that changes no code still ships an APK to testers otherwise.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  workflow_dispatch:
+
+concurrency:
+  # Keyed on the commit, not the workflow. One pending run is kept per group,
+  # so a shared key would have each merge cancel the one queued behind it and
+  # that merge would never be distributed, reported only as cancelled.
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # Checks what can be checked before an hour of building. It confirms the
+  # delivery target is real; it cannot confirm we may write to it, because
+  # every read-only call is available to a role that cannot upload.
+  preflight:
+    name: Check delivery is possible
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: ./.github/actions/check-android-delivery
+        with:
+          app_id: ${{ secrets.ANDROID_FIREBASE_APP_ID }}
+          groups: ${{ vars.ANDROID_FIREBASE_DEBUG_GROUP }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+
+  distribute:
+    name: Build and distribute
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # The pushed commit, which is what landed on main.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up the Android build
+        id: setup
+        uses: ./.github/actions/setup-android-build
+        with:
+          require_inputs: "true"
+          google_services_json_base64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          keystore_base64: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
+          keystore_pass: ${{ secrets.CI_KEYSTORE_PASS }}
+          keystore_alias: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          keystore_key_pass: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+
+      - name: Build the debug APK
+        working-directory: hosts/android
+        env:
+          CI_BUILD_ID: ${{ steps.setup.outputs.build_id }}
+          APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+          IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'io.parity.polkadotapp' }}
+          APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
+          CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+          FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL || '$' }}
+          CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+          LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
+          PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
+          TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          GAME_RESULTS_FALLBACK_URL: ${{ vars.GAME_RESULTS_FALLBACK_URL }}
+          REFERRAL_WEB_HOST: ${{ vars.REFERRAL_WEB_HOST }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+        run: ./gradlew assembleGpDebug --no-daemon
+
+      - name: Check the APK is signed by the expected key
+        id: package
+        working-directory: hosts/android
+        env:
+          BUILD_ID: ${{ steps.setup.outputs.build_id }}
+          EXPECTED_SIGNER: a25eb8df5e015651d6d52849f79b8450b9b36353921600c22e454d4f00372fc6
+        run: |
+          set -euo pipefail
+
+          # nullglob stays off here: a non-matching glob would otherwise vanish,
+          # ls would print the working directory, and the guard would not fire.
+          # || true so pipefail does not abort before the message explains it.
+          apksigner="$(ls -d "${ANDROID_HOME:-}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n1 || true)"
+          if [ -z "${apksigner}" ]; then
+            echo "::error::No apksigner under ${ANDROID_HOME:-<unset>}/build-tools"
+            exit 1
+          fi
+
+          shopt -s nullglob
+          found=("app/build/outputs/apk/gp/debug"/*.apk)
+          shopt -u nullglob
+          if [ ${#found[@]} -ne 1 ]; then
+            echo "::error::Expected one APK, found ${#found[@]}"
+            exit 1
+          fi
+
+          # verify alone passes for an APK signed by any key, so a rotated or
+          # wrong keystore would ship a build that every tester's device
+          # rejects on install. Compare the certificate instead.
+          signer="$("${apksigner}" verify --print-certs "${found[0]}" \
+            | sed -n 's/.*SHA-256 digest: //p' | head -n1)"
+          if [ "${signer}" != "${EXPECTED_SIGNER}" ]; then
+            echo "::error::APK is signed by ${signer}, expected ${EXPECTED_SIGNER}"
+            exit 1
+          fi
+
+          short="${GITHUB_SHA:0:9}"
+          mv "${found[0]}" "polkadot-app-debug-${BUILD_ID}-${short}.apk"
+
+          # Signing is done, so neither the key nor the configuration is
+          # reachable by anything that runs later in this job.
+          rm -f develop_key.jks app/google-services.json
+
+          echo "short=${short}" >> "$GITHUB_OUTPUT"
+
+      # Exchanges the run's OIDC assertion for a short lived credential and
+      # writes it where Application Default Credentials will find it.
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # The CLI rather than a wrapper action, because the credential written
+      # above is an external account rather than a service account key, and the
+      # CLI resolves it through the standard credential chain instead of
+      # parsing the file itself.
+      - name: Distribute to testers
+        working-directory: hosts/android
+        env:
+          APP_ID: ${{ secrets.ANDROID_FIREBASE_APP_ID }}
+          GROUP: ${{ vars.ANDROID_FIREBASE_DEBUG_GROUP }}
+          SHORT: ${{ steps.package.outputs.short }}
+          BUILD_ID: ${{ steps.setup.outputs.build_id }}
+        run: |
+          set -euo pipefail
+
+          # A group of only separators is parsed to an empty list, and an upload
+          # with no recipients succeeds and reaches nobody, which is worse than
+          # failing. Check what survives parsing, not just the empty string.
+          if [ -z "${GROUP//[[:space:],]/}" ]; then
+            echo "::error::ANDROID_FIREBASE_DEBUG_GROUP names no group, so this build would reach no testers"
+            exit 1
+          fi
+
+          # Installed under its own prefix. This directory has no package.json,
+          # so npm would otherwise walk up and install into the repository root,
+          # leaving nothing to run here.
+          # --ignore-scripts because this job holds a cloud credential and can
+          # mint its own identity assertions, so nothing fetched should run at
+          # install time. The CLI is fully functional without them.
+          cli="${RUNNER_TEMP}/firebase-cli"
+          npm install --prefix "${cli}" --no-save --no-audit --no-fund \
+            --ignore-scripts firebase-tools@14.11.1
+
+          # On success the CLI prints a signed URL that downloads the APK with
+          # no credential of its own. This repository is public and its build
+          # log is too, and the binary carries configuration that must not be,
+          # so the output is held back until every token in it is registered as
+          # a secret. Registering one only affects what is written afterwards,
+          # which is why none of this is streamed. The line itself is dropped:
+          # a one hour download link serves no purpose in a log that outlives
+          # it by years.
+          out="${RUNNER_TEMP}/distribute.log"
+          status=0
+          "${cli}/node_modules/.bin/firebase" appdistribution:distribute \
+            "polkadot-app-debug-${BUILD_ID}-${SHORT}.apk" \
+            --app "${APP_ID}" \
+            --groups "${GROUP}" \
+            --release-notes "Debug build ${BUILD_ID}, from ${GITHUB_SHA}." > "${out}" 2>&1 || status=$?
+
+          tokens="$(grep -oE 'token=[^&"[:space:]]+' "${out}" \
+            | cut -d= -f2- | sort -u || true)"
+          if [ -n "${tokens}" ]; then
+            while IFS= read -r token; do
+              [ -n "${token}" ] && echo "::add-mask::${token}"
+            done <<< "${tokens}"
+          fi
+
+          grep -v 'Download the release binary' "${out}" || true
+          exit "${status}"

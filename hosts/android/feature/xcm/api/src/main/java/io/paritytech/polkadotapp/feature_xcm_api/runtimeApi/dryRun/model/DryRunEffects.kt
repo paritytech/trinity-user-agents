@@ -1,0 +1,16 @@
+package io.paritytech.polkadotapp.feature_xcm_api.runtimeApi.dryRun.model
+
+import io.novasama.substrate_sdk_android.runtime.definitions.types.generics.GenericEvent
+import io.paritytech.polkadotapp.feature_xcm_api.versions.XcmVersion
+
+interface DryRunEffects {
+    val emittedEvents: List<GenericEvent.Instance>
+
+    val forwardedXcms: ForwardedXcms
+}
+
+fun DryRunEffects.senderXcmVersion(): XcmVersion {
+    // For referencing destination, dry run uses sender's xcm version
+    val (destination) = forwardedXcms.first()
+    return destination.version
+}

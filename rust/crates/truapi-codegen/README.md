@@ -52,27 +52,23 @@ The generator runs in three stages:
 2. **Normalize**: extract the API model, including each method's `#[wire(id = N)]`.
 3. **Emit**: generators write TypeScript output.
 
-Missing or duplicate wire ids fail generation. Subscription methods reserve four consecutive ids for `_start`, `_stop`, `_interrupt`, and `_receive`.
+Missing or duplicate wire ids fail generation. One id addresses a method whatever its shape: which leg a frame carries is the envelope's own `message_type` byte.
 
 ## CLI
 
 ```bash
 cargo run -p truapi-codegen -- \
   --input target/doc/truapi.json \
-  --output js/packages/truapi/src/generated \
-  --version V2 \
-  --codec-version 1
+  --output js/packages/truapi/src/generated
 ```
 
 ## Typical workflow
 
 ```bash
-cargo +nightly rustdoc -p truapi -- -Z unstable-options --output-format json
+cargo +$(cat nightly-toolchain) rustdoc -p truapi -- -Z unstable-options --output-format json
 cargo run -p truapi-codegen -- \
   --input target/doc/truapi.json \
-  --output js/packages/truapi/src/generated \
-  --version V2 \
-  --codec-version 1
+  --output js/packages/truapi/src/generated
 ```
 
 The repo wraps both steps in [`scripts/codegen.sh`](../../../scripts/codegen.sh), which is what you should run from the repo root.

@@ -1,0 +1,270 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_level:
+        description: "Which part of the version to bump"
+        type: choice
+        required: true
+        options:
+          - no
+          - patch
+          - minor
+          - major
+        default: no
+      source_ref:
+        description: "Source ref to create release branch from (existing branch name or commit SHA)"
+        type: string
+        required: false
+        default: main
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+env:
+  VERSIONS_KT_PATH: build-logic/convention/src/main/kotlin/Versions.kt
+  SOURCE_REF: ${{ inputs.source_ref || github.ref_name }}
+
+jobs:
+  prepare_release:
+    name: Bump version, create PR, and trigger distributions
+    runs-on: ubuntu-latest
+    # Held: this configuration ships from trinity-user-agents.
+    if: false
+    #    if: contains('["ERussel","stepanLav", "kogeler"]', github.actor)
+    outputs:
+      release_branch: ${{ steps.bump_version.outputs.branch_name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Read and validate versions from Versions.kt
+        id: read_version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Read versions from Versions.kt
+          python3 .github/scripts/read_versions.py --output-format env > version_info.txt
+
+          # Source the variables
+          source version_info.txt
+
+          echo "Found current version: ${marketing_version}"
+
+          # Write to GitHub output
+          {
+            echo "current_version=${marketing_version}"
+            echo "major=${major}"
+            echo "minor=${minor}"
+            echo "patch=${patch}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Calculate new version
+        id: bump_version
+        env:
+          BUMP_LEVEL: ${{ inputs.bump_level || 'no' }}
+          CURRENT_VERSION: ${{ steps.read_version.outputs.current_version }}
+          CUR_MAJOR: ${{ steps.read_version.outputs.major }}
+          CUR_MINOR: ${{ steps.read_version.outputs.minor }}
+          CUR_PATCH: ${{ steps.read_version.outputs.patch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAJOR="${CUR_MAJOR:-0}"
+          MINOR="${CUR_MINOR:-0}"
+          PATCH="${CUR_PATCH:-0}"
+
+          if [[ "${BUMP_LEVEL}" == "major" ]]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif [[ "${BUMP_LEVEL}" == "minor" ]]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          elif [[ "${BUMP_LEVEL}" == "patch" ]]; then
+            PATCH=$((PATCH + 1))
+          fi
+          # If BUMP_LEVEL == "no", version stays the same
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          BRANCH_NAME="release-${NEW_VERSION}"
+
+          {
+            echo "new_version=${NEW_VERSION}"
+            echo "branch_name=${BRANCH_NAME}"
+            echo "version_changed=$([[ "${BUMP_LEVEL}" != "no" ]] && echo "true" || echo "false")"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Calculated new version: ${NEW_VERSION}"
+          echo "Branch to create: ${BRANCH_NAME}"
+          [[ "${BUMP_LEVEL}" == "no" ]] && echo "Version will not be changed" || echo "Version will be bumped"
+
+      - name: Create release branch from source ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="${SOURCE_REF:-main}"
+
+          # Fetch remote branches to resolve the branch ref if provided
+          git fetch --no-tags --prune --depth=1 origin "+refs/heads/*:refs/remotes/origin/*"
+
+          # Fail fast if the release branch already exists (remote or local)
+          RB="${{ steps.bump_version.outputs.branch_name }}"
+          if git rev-parse --verify --quiet "refs/remotes/origin/${RB}" >/dev/null; then
+            echo "Release branch '${RB}' already exists on origin"; exit 1
+          fi
+          if git rev-parse --verify --quiet "${RB}" >/dev/null; then
+            echo "Release branch '${RB}' already exists locally"; exit 1
+          fi
+
+          # Resolve to branch in origin or commit SHA
+          if git rev-parse --verify --quiet "refs/remotes/origin/${SRC}" >/dev/null; then
+            REF="refs/remotes/origin/${SRC}"
+          elif git rev-parse --verify --quiet "${SRC}^{commit}" >/dev/null; then
+            REF="${SRC}"
+          else
+            echo "Invalid source_ref '${SRC}': must be an existing branch name or commit SHA"; exit 1
+          fi
+
+          echo "Creating branch ${RB} from ${REF}"
+          git checkout -b "${RB}" "${REF}"
+          git status --porcelain
+
+      - name: Update version in Versions.kt
+        id: update_version
+        if: steps.bump_version.outputs.version_changed == 'true'
+        shell: bash
+        env:
+          NEW_VERSION: ${{ steps.bump_version.outputs.new_version }}
+        run: |
+          set -euo pipefail
+
+          echo "Updating version to ${NEW_VERSION}..."
+          python3 .github/scripts/update_marketing_version.py "${NEW_VERSION}"
+
+          echo "file_changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit changes and push branch
+        env:
+          BRANCH_NAME: ${{ steps.bump_version.outputs.branch_name }}
+          NEW_VERSION: ${{ steps.bump_version.outputs.new_version }}
+          VERSION_CHANGED: ${{ steps.bump_version.outputs.version_changed }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Commit version changes if any
+          if [[ "${VERSION_CHANGED}" == "true" ]]; then
+            git add "${VERSIONS_KT_PATH}"
+
+            if git diff --cached --quiet; then
+              echo "No changes to commit (version file unchanged)."
+            else
+              git commit -m "chore(release): bump version to ${NEW_VERSION}"
+              echo "Committed version bump"
+            fi
+          else
+            echo "Version not changed (bump_level: no), skipping version commit"
+          fi
+
+          # Always push the branch (even if no version changes)
+          git push --set-upstream origin "${BRANCH_NAME}"
+          echo "Pushed branch ${BRANCH_NAME}"
+
+      - name: Create Pull Request to main
+        id: create_pr
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          SOURCE_REF: ${{ env.SOURCE_REF }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const branchName = '${{ steps.bump_version.outputs.branch_name }}';
+            const newVersion = '${{ steps.bump_version.outputs.new_version }}';
+            const sourceRef = process.env.SOURCE_REF;
+
+            console.log(`Creating PR for branch: ${branchName}`);
+            console.log(`Source ref: ${sourceRef}`);
+
+            // Wait a bit to ensure the branch is fully synced
+            console.log('Waiting 3 seconds for branch to sync...');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            // Verify branch exists
+            try {
+              await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: branchName
+              });
+              console.log(`Branch ${branchName} exists`);
+            } catch (error) {
+              core.setFailed(`Branch ${branchName} not found: ${error.message}`);
+              return;
+            }
+
+            // Create PR body with metadata for backport automation
+            const prBody = `This PR prepares release ${newVersion}.
+
+            ---
+            <!-- DO NOT EDIT THE METADATA BELOW - Used for automated backport -->
+            <!-- RELEASE_METADATA: source_ref=${sourceRef} -->`;
+
+            // Create PR
+            try {
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Release ${newVersion}`,
+                head: branchName,
+                base: 'main',
+                body: prBody
+              });
+
+              console.log(`Created PR: ${pr.html_url}`);
+              core.setOutput('pull_request_url', pr.html_url);
+              core.setOutput('pull_request_number', pr.number);
+            } catch (error) {
+              core.setFailed(`Failed to create PR: ${error.message}`);
+            }
+
+      - name: Trigger Firebase Release workflow
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const branchName = '${{ steps.bump_version.outputs.branch_name }}';
+            const workflowRef = '${{ github.ref_name }}';
+
+            console.log(`Triggering Firebase Release workflow for branch ${branchName}...`);
+            console.log(`Using workflow from ref: ${workflowRef}`);
+
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'firebase_release_distribution.yml',
+                ref: workflowRef,
+                inputs: {
+                  release_branch: branchName
+                }
+              });
+
+              console.log('Firebase Release workflow triggered successfully');
+            } catch (error) {
+              if (error.status === 404) {
+                console.log('Warning: firebase_release_distribution.yml not found in ref ' + workflowRef);
+                console.log('This can happen when triggering from a feature branch. It will work after merging.');
+              } else {
+                throw error;
+              }
+            }

@@ -1,0 +1,167 @@
+{
+  "configurations" : [
+    {
+      "id" : "E22A14AD-DE47-48B3-93EB-891D0F30B2AE",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:polkadot-app.xcodeproj",
+        "identifier" : "A5EDAAE22E93ECB0005DDA62",
+        "name" : "polkadot-appTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/Products",
+        "identifier" : "ProductsTests",
+        "name" : "ProductsTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/Revive",
+        "identifier" : "ReviveTests",
+        "name" : "ReviveTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/CarParser",
+        "identifier" : "CarParserTests",
+        "name" : "CarParserTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/MessageExchangeKit",
+        "identifier" : "MessageExchangeKitTests",
+        "name" : "MessageExchangeKitTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/BlurHash",
+        "identifier" : "BlurHashTests",
+        "name" : "BlurHashTests"
+      }
+    },
+    {
+      "skippedTests" : {
+        "suites" : [
+          {
+            "name" : "AsyncTaskOperationTests"
+          },
+          {
+            "name" : "OperationsConcurrencyTests"
+          }
+        ]
+      },
+      "target" : {
+        "containerPath" : "container:Packages\/StructuredConcurrency",
+        "identifier" : "StructuredConcurrencyTests",
+        "name" : "StructuredConcurrencyTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/Coinage",
+        "identifier" : "CoinageTests",
+        "name" : "CoinageTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/DurableTransactions",
+        "identifier" : "DurableTransactionsTests",
+        "name" : "DurableTransactionsTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/FoundationExt",
+        "identifier" : "FoundationExtTests",
+        "name" : "FoundationExtTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/BackgroundExecution",
+        "identifier" : "BackgroundExecutionTests",
+        "name" : "BackgroundExecutionTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/HandoffService",
+        "identifier" : "HandoffServiceTests",
+        "name" : "HandoffServiceTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/Individuality",
+        "identifier" : "IndividualityTests",
+        "name" : "IndividualityTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/PolkadotUI",
+        "identifier" : "PolkadotUITests",
+        "name" : "PolkadotUITests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/StatementStore",
+        "identifier" : "StatementStoreTests",
+        "name" : "StatementStoreTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/ChainRegistry",
+        "identifier" : "ChainRegistryTests",
+        "name" : "ChainRegistryTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/StateMachine",
+        "identifier" : "StateMachineTests",
+        "name" : "StateMachineTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/KeyDerivation",
+        "identifier" : "KeyDerivationTests",
+        "name" : "KeyDerivationTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/CommonService",
+        "identifier" : "CommonServiceTests",
+        "name" : "CommonServiceTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/ExtrinsicServiceExt",
+        "identifier" : "ExtrinsicServiceExtTests",
+        "name" : "ExtrinsicServiceExtTests"
+      }
+    }
+  ],
+  "version" : 2
+}

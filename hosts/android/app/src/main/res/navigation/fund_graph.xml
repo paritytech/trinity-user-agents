@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    app:startDestination="@id/selectFundAssetFragment"
+    android:id="@+id/fund_graph">
+
+    <fragment
+        android:id="@+id/selectFundAssetFragment"
+        android:name="io.paritytech.polkadotapp.feature_fund_impl.presentation.fund.selectAsset.SelectAssetFragment"
+        android:label="SelectAssetFragment">
+
+        <action
+            android:id="@+id/action_selectAssetFragment_to_fundFragment"
+            app:destination="@id/fundFragment"
+            app:popUpTo="@id/fund_graph" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/fundFragment"
+        android:name="io.paritytech.polkadotapp.feature_fund_impl.presentation.fund.terms.FundFragment"
+        android:label="FundFragment">
+
+        <action
+            android:id="@+id/action_fundFragment_to_confirmExitBottomSheetFragment"
+            app:destination="@id/confirmExitBottomSheetFragment" />
+    </fragment>
+
+    <dialog
+        android:id="@+id/confirmExitBottomSheetFragment"
+        android:name="io.paritytech.polkadotapp.feature_fund_impl.presentation.confirmexit.ConfirmExitBottomSheetFragment"
+        android:label="ConfirmExitBottomSheetFragment" />
+
+    <action
+        android:id="@+id/action_finish_funding_flow"
+        app:popUpToInclusive="true"
+        app:popUpTo="@id/fund_graph" />
+
+</navigation>

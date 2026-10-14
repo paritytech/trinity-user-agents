@@ -80,7 +80,7 @@ uses the iframe `postMessage` provider.
 - Connection chip stays on **Handshaking** → handshake is failing.
   Check:
   - The dotli console for `Unknown wire tag` /
-    `Unknown wire discriminant` — wire-table mismatch between dotli's
+    `unknown wire discriminant pair` — wire-table mismatch between dotli's
     vendored `@parity/truapi` and the just-built one.
   - The playground console for `decodeWireMessage` errors — the
     inbound frame's discriminant is unknown (the playground's

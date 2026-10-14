@@ -1,0 +1,31 @@
+[package]
+authors = ['Parity Technologies']
+edition = '2021'
+license = 'GPL-3.0-or-later'
+name = "sr25519-vrf"
+repository = 'https://github.com/paritytech/polkadot-android-community'
+version = "0.1.0"
+
+[dependencies]
+jni = { version = "0.17.0", default-features = false }
+# schnorrkel 0.11 (modern curve25519-dalek 4.x, builds on current rustc) is what polkadot-sdk/sp-core
+# use; the sr25519 VRF wire format is unchanged from the 0.9.1 the iOS crate pinned.
+schnorrkel = { version = "0.11", default-features = false, features = ["std"] }
+merlin = { version = "3", default-features = false }
+
+[dev-dependencies]
+# Oracle for the transcript-equivalence test: proves our merlin transcript + signature match
+# sp-core's `VrfTranscript` byte-for-byte, which is what consuming runtimes build.
+sp-core = { version = "34.0.0", default-features = false, features = ["std", "full_crypto"] }
+# Decodes our 96-byte output as sp-core's VrfSignature in the equivalence test (iOS parity).
+parity-scale-codec = "3"
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "s"
+
+[lib]
+name = "sr25519_vrf_java"
+# cdylib for the JNI .so; rlib so `cargo test` can build the unit-test harness.
+crate-type = ["cdylib", "rlib"]

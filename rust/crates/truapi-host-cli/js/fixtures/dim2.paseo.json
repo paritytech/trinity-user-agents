@@ -1,0 +1,6 @@
+{
+  "productName": "dim2.paseo",
+  "displayName": "Jollity",
+  "description": "Stands in for the game product in the cross-product storage e2e. Grants nothing: a grant points inward, so reading peopl.paseo needs only peopl.paseo's config.",
+  "icon": "./icon.png"
+}

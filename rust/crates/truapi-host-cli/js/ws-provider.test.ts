@@ -5,7 +5,9 @@ import { createServer, type Server as NetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "bun";
-import { wsProvider } from "./ws-provider.ts";
+import { createFrameProviderFactory } from "./ws-provider.ts";
+
+const wsProvider = createFrameProviderFactory();
 
 const servers: Server<undefined>[] = [];
 const netServers: NetServer[] = [];
@@ -236,6 +238,50 @@ describe("wsProvider Unix-domain WebSockets", () => {
 });
 
 describe("wsProvider TCP WebSockets", () => {
+  test("a captured factory bypasses later WebSocket gates on every connection", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request, server) {
+        if (server.upgrade(request)) return;
+        return new Response("websocket upgrade required", { status: 426 });
+      },
+      websocket: {
+        message(websocket, message) {
+          websocket.send(message);
+        },
+      },
+    });
+    servers.push(server);
+    const createProvider = createFrameProviderFactory();
+    const NativeWebSocket = globalThis.WebSocket;
+    globalThis.WebSocket = new Proxy(NativeWebSocket, {
+      construct() {
+        throw new Error("host transport entered the product WebSocket gate");
+      },
+    });
+    try {
+      for (const payload of [
+        [5, 6, 7],
+        [8, 9],
+      ]) {
+        const provider = createProvider(`ws://127.0.0.1:${server.port}`);
+        try {
+          const received = new Promise<Uint8Array>((resolve) =>
+            provider.subscribe(resolve),
+          );
+          await provider.opened;
+          provider.postMessage(Uint8Array.from(payload));
+          expect(Array.from(await received)).toEqual(payload);
+        } finally {
+          provider.dispose();
+        }
+      }
+    } finally {
+      globalThis.WebSocket = NativeWebSocket;
+    }
+  });
+
   test("keeps using the native WebSocket transport", async () => {
     const server = Bun.serve({
       hostname: "127.0.0.1",

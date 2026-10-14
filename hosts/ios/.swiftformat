@@ -1,0 +1,52 @@
+--swiftversion 5.10
+
+# excludes
+  --exclude **/checkouts
+
+# format options
+  --allman false
+  --indent 4
+  --maxwidth 120
+  --commas inline
+  --decimalgrouping 3
+  --wraparguments before-first
+  --wrapparameters before-first
+
+  # rules
+  --enable blankLineAfterImports
+  --enable blockComments
+  --enable isEmpty
+  --enable wrapAttributes
+  --enable wrapEnumCases
+  --enable wrapLoopBodies
+  --enable wrapSwitchCases
+  --enable wrapMultilineConditionalAssignment
+  --enable leadingDelimiters
+  --enable modifierOrder
+  --disable preferForLoop
+  --disable wrapMultilineStatementBraces
+  --disable sortImports
+  --disable sortSwitchCases
+  --disable trailingCommas
+  --disable redundantProperty
+  --disable blankLinesBetweenImports
+  --disable docComments
+  --disable emptyExtensions
+  --disable environmentEntry
+  --disable noForceTryInTests
+  --disable noForceUnwrapInTests
+  --disable redundantAsync
+  --disable redundantEquatable
+  --disable redundantMemberwiseInit
+  --disable redundantProperty
+  --disable redundantVariable
+  --disable redundantThrows
+  --disable wrapPropertyBodies
+  --disable simplifyGenericConstraints
+  --disable validateTestCases
+  --disable testSuiteAccessControl
+  --disable wrapPropertyBodies
+  --disable wrapFunctionBodies
+  --disable wrapIfStatementBodies
+  --disable wrapIfExpressionBodies
+  --disable redundantViewBuilder

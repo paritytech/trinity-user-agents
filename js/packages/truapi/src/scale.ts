@@ -16,6 +16,7 @@ import {
   u8,
   _void,
   type Codec,
+  type ResultPayload,
 } from "scale-ts";
 import {
   bytesToHex as encodeHex,
@@ -24,6 +25,14 @@ import {
 
 export type { Codec };
 export type { ResultPayload } from "scale-ts";
+
+/**
+ * Bare-named type alias matching generated codegen's naming convention for
+ * generic wire types: `Result<Ok, Err>` is used as both a value (the codec
+ * builder re-exported below) and a type (this alias for scale-ts's own
+ * `ResultPayload`) in generated `types.ts`.
+ */
+export type Result<Ok, Err> = ResultPayload<Ok, Err>;
 
 export {
   Bytes,
@@ -34,7 +43,6 @@ export {
   Tuple,
   Vector,
   _void,
-  bool,
   compact,
   i8,
   i16,
@@ -48,6 +56,16 @@ export {
   u64,
   u128,
 } from "scale-ts";
+
+/** SCALE boolean, rejecting byte values Rust cannot decode. */
+export const bool: Codec<boolean> = enhanceCodec(
+  u8,
+  (value: boolean) => (value ? 1 : 0),
+  (byte: number) => {
+    if (byte > 1) throw new Error("Invalid SCALE boolean");
+    return byte === 1;
+  },
+);
 
 /**
  * Substrate `OptionBool`: a one-byte `Option<bool>`.
@@ -129,7 +147,8 @@ export type CallErrorValue<D> =
   | { tag: "Denied"; value?: undefined }
   | { tag: "Unsupported"; value?: undefined }
   | { tag: "MalformedFrame"; value: { reason: string } }
-  | { tag: "HostFailure"; value: { reason: string } };
+  | { tag: "HostFailure"; value: { reason: string } }
+  | { tag: "Cancelled"; value?: undefined };
 
 /** SCALE codec for Rust's derived `CallError<D>` enum. */
 export function CallError<D>(domain: Codec<D>): Codec<CallErrorValue<D>> {
@@ -139,6 +158,9 @@ export function CallError<D>(domain: Codec<D>): Codec<CallErrorValue<D>> {
     Unsupported: _void,
     MalformedFrame: Struct({ reason: str }),
     HostFailure: Struct({ reason: str }),
+    // Appended last, mirroring the Rust enum: the variants above keep their
+    // SCALE indices.
+    Cancelled: _void,
   }) as Codec<CallErrorValue<D>>;
 }
 

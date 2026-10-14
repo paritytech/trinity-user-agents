@@ -1,0 +1,3 @@
+package io.paritytech.polkadotapp.feature_splash_impl.presentation
+
+interface SplashContract

@@ -37,6 +37,22 @@ if [ ! -d "$XCFRAMEWORK" ]; then
     exit 66
 fi
 
+# Both slices are required for anything that ships. A framework missing either
+# cannot be linked by half its consumers, and Binaries/ is gitignored, so a
+# partial tree from an earlier build reaches this point.
+for slice in ios-arm64 ios-arm64-simulator; do
+    if [ ! -d "$XCFRAMEWORK/$slice" ]; then
+        echo "error: $XCFRAMEWORK has no $slice slice; rebuild with both slices before publishing" >&2
+        exit 66
+    fi
+done
+
+# Staging strips these, but Binaries/ is gitignored so an older tree gets here.
+if find "$XCFRAMEWORK" -path '*/Headers/module.modulemap' | grep -q .; then
+    echo "error: $XCFRAMEWORK still carries per-slice modulemaps, run scripts/rebuild.sh" >&2
+    exit 66
+fi
+
 if ! git -C "$TRUAPI_ROOT" diff --quiet -- Package.swift; then
     echo "error: Package.swift has uncommitted changes — commit or revert them first" >&2
     exit 65
@@ -49,11 +65,11 @@ trap 'rm -rf "$STAGING"' EXIT
 ditto -c -k --keepParent "$XCFRAMEWORK" "$ZIP"
 CHECKSUM="$(cd "$TRUAPI_ROOT" && swift package compute-checksum "$ZIP")"
 
-if gh release view "$TAG" --repo paritytech/host-rust-core >/dev/null 2>&1; then
-    gh release upload "$TAG" "$ZIP" --repo paritytech/host-rust-core --clobber
+if gh release view "$TAG" --repo paritytech/trinity-user-agents >/dev/null 2>&1; then
+    gh release upload "$TAG" "$ZIP" --repo paritytech/trinity-user-agents --clobber
 else
     gh release create "$TAG" "$ZIP" \
-        --repo paritytech/host-rust-core \
+        --repo paritytech/trinity-user-agents \
         --target "$RELEASE_TARGET" \
         --title "$TITLE" \
         --latest=false \
@@ -62,7 +78,7 @@ fi
 
 # The tag contains "@" and "/" — percent-encode it for the asset URL.
 ENCODED_TAG="$(printf %s "$TAG" | sed 's/@/%40/g; s,/,%2F,g')"
-URL="https://github.com/paritytech/host-rust-core/releases/download/${ENCODED_TAG}/truapi_server.xcframework.zip"
+URL="https://github.com/paritytech/trinity-user-agents/releases/download/${ENCODED_TAG}/truapi_server.xcframework.zip"
 MANIFEST="$TRUAPI_ROOT/Package.swift"
 sed -i '' -E "s|^let publishedBinaryURL = .*|let publishedBinaryURL = \"$URL\"|" "$MANIFEST"
 sed -i '' -E "s|^let publishedBinaryChecksum = .*|let publishedBinaryChecksum = \"$CHECKSUM\"|" "$MANIFEST"

@@ -1,0 +1,17 @@
+{
+  // Typechecks the shared test harnesses, which `tsconfig.json` excludes so they
+  // stay out of `dist`. Nothing else checks them: `tsc -b` skips them by that
+  // exclude and `bun test` does not typecheck, so a harness with a genuine type
+  // error reports "pass". Wired into CI as `typecheck:harness`.
+  //
+  // The `.test.ts` files are not in here yet: several carry type errors that
+  // predate this config, so adding them would land a red gate.
+  "extends": "./tsconfig.json",
+  "include": ["src/test-support.ts", "src/web/worker-test-harness.ts"],
+  "exclude": [],
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false
+  }
+}

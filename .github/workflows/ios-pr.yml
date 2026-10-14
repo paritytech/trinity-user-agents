@@ -1,0 +1,534 @@
+name: iOS CI
+
+# Adding any label starts a run, and one for a label other than
+# ios-simulator-build has nothing to do. It gets a group of its own, so it
+# cannot cancel the run already in progress for the same branch. Its skipped
+# jobs share names with the real ones, so the checks list can show one of them
+# over an earlier result for the same commit; iOS CI is not a required check,
+# so this affects only what the list shows.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'ios-simulator-build' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
+
+on:
+  # Only what the iOS app is built from. The app itself, the crates its bindings
+  # are generated from, the manifests pinning the toolchain, and this workflow
+  # with the action it calls. A change to docs, TypeScript or an unrelated crate
+  # cannot affect the app, and three macOS jobs is too much to spend finding
+  # that out.
+  #
+  # The core crates are here because neither binding set is committed, so a
+  # UniFFI surface change leaves no hosts/ios diff to key on. That is the same
+  # reasoning as the sdk_swift gate in ci.yml, which is the list to keep this in
+  # step with.
+  pull_request:
+    # `labeled` so adding ios-simulator-build starts the jobs without a push.
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - "hosts/ios/**"
+      - "ios/**"
+      - "Package.swift"
+      - "Makefile"
+      - "nightly-toolchain"
+      - ".github/actions/rust-nightly/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "js/container/**"
+      # The bootstrap runs npm ci before codegen, and codegen shells out to
+      # scripts beyond codegen.sh itself, regen-explorer-versions.mjs and
+      # bundle-truapi-dts.mjs, so the whole directory and both npm manifests
+      # are inputs to this job.
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "rust/crates/truapi/**"
+      - "rust/crates/truapi-codegen/**"
+      - "rust/crates/truapi-macros/**"
+      - "rust/crates/truapi-provider/**"
+      - "rust/crates/uniffi-bindgen-cli/**"
+      - ".github/workflows/ios-pr.yml"
+      - ".github/actions/bootstrap-ios-core/**"
+      - ".github/actions/upsert-pr-comment/**"
+  # Also on the default branch, which is the only run that saves the in-tree
+  # core's Rust cache. A cache written during a pull request is scoped to that
+  # pull request's ref, so nothing else can read it, and one written on main is
+  # what every later pull request restores.
+  push:
+    branches: [main]
+    paths:
+      - "hosts/ios/**"
+      - "ios/**"
+      - "Package.swift"
+      - "Makefile"
+      - "nightly-toolchain"
+      - ".github/actions/rust-nightly/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "js/container/**"
+      # The bootstrap runs npm ci before codegen, and codegen shells out to
+      # scripts beyond codegen.sh itself, regen-explorer-versions.mjs and
+      # bundle-truapi-dts.mjs, so the whole directory and both npm manifests
+      # are inputs to this job.
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "rust/crates/truapi/**"
+      - "rust/crates/truapi-codegen/**"
+      - "rust/crates/truapi-macros/**"
+      - "rust/crates/truapi-provider/**"
+      - "rust/crates/uniffi-bindgen-cli/**"
+      - ".github/workflows/ios-pr.yml"
+      - ".github/actions/bootstrap-ios-core/**"
+      - ".github/actions/upsert-pr-comment/**"
+  # Kept alongside pull_request so a build can be reproduced on demand without
+  # pushing a commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+env:
+  IOS_BUNDLE_ID: "io.parity.polkadotapp.develop"
+  IOS_EXTENSION_BUNDLE_ID: "io.parity.polkadotapp.develop.NotificationServiceExtension"
+  PROVISIONING_PROFILE_SPECIFIER: "match Development io.parity.polkadotapp.develop"
+  EXTENSION_PROVISIONING_PROFILE_SPECIFIER: "match Development io.parity.polkadotapp.develop.NotificationServiceExtension"
+  CODE_SIGN_IDENTITY: "Apple Development"
+  EXPORT_METHOD: "development"
+  BUILD_NUMBER: ${{ github.run_number }}
+  RUN_IN_CI: true
+  # DEBUG MODE: Set to 'true' to enable enhanced debugging for build failures
+  # What it does:
+  #   - Enables verbose xcodebuild logging
+  #   - Collects and uploads build artifacts (logs, test results)
+  #   - Continues build even on failures to gather maximum information
+  DEBUG_CI: false
+
+jobs:
+  # Whether this run builds the app. Every job below is macOS time, so on a
+  # pull request they run only when the ios-simulator-build label asks for
+  # them, the same way ios-device-build and android-device-build ask for their
+  # builds. CI's `iOS package (Swift + WebKit)` job still compiles the
+  # TrUAPIHost package against the core on a pull request touching `ios/` or
+  # the core crates. Nothing compiles the app itself on a pull request without
+  # the label, so a change that breaks it is caught by the push to main, where
+  # these jobs and manual runs build everything.
+  #
+  # The labels are read from the API rather than the event, so re-running a
+  # push's run sees a label added since. A run started by another label stays
+  # skipped on a re-run, because building there would duplicate the run the
+  # ios-simulator-build label starts on its own.
+  check-skip-label:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check_skip.outputs.skip }}
+      app: ${{ steps.check_skip.outputs.app }}
+    steps:
+      - name: Decide which jobs this run needs
+        id: check_skip
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.setOutput('skip', 'false');
+              core.setOutput('app', 'true');
+              return;
+            }
+            const label = 'ios-simulator-build';
+            // Started by some other label being added, which changes nothing
+            // this run would build.
+            if (context.payload.action === 'labeled' && context.payload.label.name !== label) {
+              core.info(`Label ${context.payload.label.name} does not ask for a build.`);
+              core.setOutput('skip', 'false');
+              core.setOutput('app', 'false');
+              return;
+            }
+            const labels = (await github.paginate(github.rest.issues.listLabelsOnIssue, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: pr.number, per_page: 100,
+            })).map(l => l.name);
+            const app = labels.includes(label);
+            core.info(app
+              ? `Building the app: the ${label} label is set.`
+              : `No ${label} label; the app jobs are skipped.`);
+            core.setOutput('skip', labels.includes('skip-ci').toString());
+            core.setOutput('app', app.toString());
+
+  # The app jobs all need the core generated from this commit, and it is the
+  # same output for each of them, so it is built once here and carried across.
+  # Built on the larger runner because it is Rust compilation and CPU bound:
+  # the same work measured 11m13s on macos-26 and 5m44s on macos-26-xlarge.
+  # The `release/` test on this job and the three below it is deliberately every
+  # release branch, app and package alike, behind the label check that already
+  # gates them. A release branch is a version bump on top of main, which app PR CI
+  # has already covered. It is not the narrower app-only prefix the distribution
+  # and lifecycle workflows use.
+  core:
+    name: Build the in-tree core
+    needs: check-skip-label
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
+    runs-on: macos-26-xlarge
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # The xcframework targets iOS, so this needs the SDK.
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+
+      - name: Bootstrap the in-tree core
+        uses: ./.github/actions/bootstrap-ios-core
+        with:
+          save: "true"
+
+      # Through tar rather than the raw paths, so the xcframework keeps its
+      # layout and executable bits, which upload-artifact does not preserve.
+      #
+      # The provider has no Binaries here on purpose: ios-bootstrap generates its
+      # Swift bindings but not its xcframework, and the root manifest resolves
+      # that binary from the published release unless
+      # TRUAPI_PROVIDER_USE_LOCAL_BINARY is set. Each path is checked, so a
+      # bootstrap that quietly stops producing one fails here rather than in
+      # three app jobs.
+      - name: Package the generated core
+        run: |
+          set -euo pipefail
+          paths=(
+            ios/truapi-host/Sources
+            ios/truapi-host/Binaries
+            ios/truapi-provider/Sources
+          )
+          for path in "${paths[@]}"; do
+            if [ ! -e "$path" ]; then
+              echo "::error::$path was not generated, so the core is incomplete"
+              exit 1
+            fi
+          done
+          tar -czf "$RUNNER_TEMP/ios-core.tgz" "${paths[@]}"
+          ls -lh "$RUNNER_TEMP/ios-core.tgz"
+
+      # github.run_id is stable across attempts, so a rerun uploads the same
+      # name. Overwriting rather than adding the attempt to the name, because
+      # "re-run failed jobs" does not rerun core, and the app jobs would then
+      # look for a name that was never uploaded.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: ios-core-${{ github.run_id }}
+          path: ${{ runner.temp }}/ios-core.tgz
+          retention-days: 1
+          if-no-files-found: error
+          overwrite: true
+
+  build:
+    needs: [check-skip-label, core]
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
+    timeout-minutes: 30
+    runs-on: macos-26-xlarge
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+        with:
+          match_auth_required: "true"
+          match_repository_pat: ${{ secrets.FASTLANE_RO_PAT }}
+
+      - name: Restore the in-tree core
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ios-core-${{ github.run_id }}
+          path: ${{ runner.temp }}
+
+      - name: Unpack the generated core
+        run: |
+          set -euo pipefail
+          tar -xzf "$RUNNER_TEMP/ios-core.tgz"
+          test -d ios/truapi-host/Binaries/truapi_server.xcframework
+          test -d ios/truapi-host/Sources/truapiFFI/include
+
+      - name: Configure Google services
+        uses: ./hosts/ios/.github/actions/configure-google-services
+        with:
+          google_service_info_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
+          expected_bundle_id: ${{ env.IOS_BUNDLE_ID }}
+
+      - name: Configure secrets
+        uses: ./hosts/ios/.github/actions/configure-secrets
+        with:
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      - name: Build app
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+        working-directory: hosts/ios
+        run: |
+          # Pass debug flag to fastlane if DEBUG_CI is enabled
+          if [ "${{ env.DEBUG_CI }}" = "true" ]; then
+            echo "🔍 Building app in debug mode..."
+            bundle exec fastlane build_app_ci debug:true
+          else
+            bundle exec fastlane build_app_ci
+          fi
+
+      # Warning ratchet: extract warnings from the .xcresult and compare against
+      # the committed baseline. Fails the PR on any newly-introduced warning.
+      - name: Warning ratchet
+        id: ratchet
+        continue-on-error: true
+        working-directory: hosts/ios
+        run: |
+          Runscripts/extract_xcresult.sh \
+            --out current_warnings.json \
+            --baseline build-logs/warnings.json \
+            --rdjson warnings.rdjson
+
+      - name: Setup reviewdog
+        if: always()
+        uses: reviewdog/action-setup@d8a7baabd7f3e8544ee4dbde3ee41d0011c3a93f # v1.5.0
+
+      - name: Annotate new warnings (reviewdog)
+        if: always() && hashFiles('warnings.rdjson') != ''
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          reviewdog -f=rdjson -name="warning-ratchet" \
+            -reporter=github-pr-review -fail-level=none < warnings.rdjson
+
+      - name: Annotate out-of-diff warnings (reviewdog)
+        if: always() && hashFiles('warnings.rdjson') != ''
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          reviewdog -f=rdjson -name="warning-ratchet-out-of-diff" \
+            -reporter=github-check -filter-mode=nofilter -fail-level=none < warnings.rdjson
+
+      - name: Fail on new warnings
+        if: always() && steps.ratchet.outcome == 'failure'
+        run: |
+          echo "New build warnings introduced. See the annotations above."
+          echo "Fix them, or regenerate & commit build-logs/warnings.json if intentional."
+          exit 1
+
+      # Upload build artifacts for debugging - only when DEBUG_CI is enabled
+      - name: Upload build artifacts
+        if: env.DEBUG_CI == 'true' && (failure() || success())
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-artifacts-${{ github.run_number }}
+          path: |
+            hosts/ios/fastlane/build_logs/
+          retention-days: 3
+
+  # An installable build for every commit on the pull request. The simulator
+  # slice needs no provisioning profile and no signing identity, so it needs
+  # nothing the build job does not already have, and a reviewer can run the
+  # change rather than read it.
+  #
+  # The commit is written into the bundle rather than only into the artifact
+  # name, so a build that has been downloaded and unzipped still says what it
+  # came from. A build that cannot say is a failure, not something to publish.
+  preview:
+    name: Simulator preview build
+    needs: [check-skip-label, core]
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
+    # This job produces an artifact for someone to install; it validates
+    # nothing that build and test do not already cover, so it has nothing to
+    # gain from finishing first. It runs alongside them, so a slower job here
+    # does not hold up the result.
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+
+      - name: Restore the in-tree core
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ios-core-${{ github.run_id }}
+          path: ${{ runner.temp }}
+
+      - name: Unpack the generated core
+        run: |
+          set -euo pipefail
+          tar -xzf "$RUNNER_TEMP/ios-core.tgz"
+          test -d ios/truapi-host/Binaries/truapi_server.xcframework
+          test -d ios/truapi-host/Sources/truapiFFI/include
+
+      - name: Configure Google services
+        uses: ./hosts/ios/.github/actions/configure-google-services
+        with:
+          google_service_info_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
+          expected_bundle_id: io.parity.polkadotapp.develop
+
+      - name: Configure secrets
+        uses: ./hosts/ios/.github/actions/configure-secrets
+        with:
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      # DevCI to match the build job, so the preview exercises the same chains
+      # and configuration the checks do.
+      - name: Build the simulator app
+        working-directory: hosts/ios
+        run: bundle exec fastlane build_app_simulator configuration:'DevCI'
+
+      - name: Stamp the bundle with its commit and package it
+        id: package
+        working-directory: hosts/ios
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${COMMIT}" ]; then
+            echo "::error::No commit to stamp the build with; refusing to publish it"
+            exit 1
+          fi
+
+          cd build_simulator
+          shopt -s nullglob
+          apps=(*.app)
+          if [ ${#apps[@]} -ne 1 ]; then
+            echo "::error::Expected exactly one .app under build_simulator, found ${#apps[@]}"
+            exit 1
+          fi
+          app="${apps[0]}"
+
+          plist="${app}/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :TrUAPICommit string ${COMMIT}" "$plist"             || /usr/libexec/PlistBuddy -c "Set :TrUAPICommit ${COMMIT}" "$plist"
+
+          # Read it back. A stamp that did not take is the case this guards.
+          stamped="$(/usr/libexec/PlistBuddy -c "Print :TrUAPICommit" "$plist" 2>/dev/null || true)"
+          if [ "${stamped}" != "${COMMIT}" ]; then
+            echo "::error::Bundle is not stamped with its commit, got '${stamped}'"
+            exit 1
+          fi
+          echo "Stamped ${app} with ${COMMIT}"
+
+          archive="polkadot-app-${COMMIT:0:9}.app.zip"
+          zip -qry "${archive}" "${app}"
+          echo "archive=hosts/ios/build_simulator/${archive}" >> "$GITHUB_OUTPUT"
+          echo "short=${COMMIT:0:9}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the preview build
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: simulator-preview-${{ steps.package.outputs.short }}
+          path: ${{ steps.package.outputs.archive }}
+          retention-days: 14
+          if-no-files-found: error
+
+      # The stamp is inside the bundle, so the only way to read it before
+      # downloading is for the pull request to say which commit the build came
+      # from.
+      - name: Write the preview comment
+        if: github.event_name == 'pull_request'
+        env:
+          SHORT: ${{ steps.package.outputs.short }}
+          URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+
+          # No URL means the upload failed, and that is the upload step's to
+          # report. Writing no body leaves the link step with nothing to post,
+          # which the action treats as nothing to say, so a build that
+          # succeeded is never failed by a comment that could not be composed.
+          if [ -z "${URL}" ]; then
+            echo "::warning::The preview build produced no URL, so no comment will be posted"
+            exit 0
+          fi
+
+          cat > "$RUNNER_TEMP/preview.md" <<EOF
+          ### iOS simulator preview
+
+          Built from \`${SHORT}\`, stamped with it in \`TrUAPICommit\`.
+
+          \`\`\`bash
+          gh run download ${GITHUB_RUN_ID} --name simulator-preview-${SHORT}
+          unzip polkadot-app-*.app.zip
+          xcrun simctl install booted polkadot-app.app
+          xcrun simctl launch booted io.parity.polkadotapp.develop
+          \`\`\`
+
+          Or [download it](${URL}) in a browser, which arrives as a zip wrapping
+          the \`.app.zip\`, so it needs unzipping twice.
+
+          An arm64 simulator slice, so it needs an Apple Silicon Mac and does not
+          install on a device. Kept for 14 days, after which the link stops
+          resolving and a new push rebuilds it while \`ios-simulator-build\` is
+          set.
+          EOF
+
+      - name: Link the preview build from the pull request
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          marker: "<!-- ios-preview-build -->"
+          body-file: ${{ runner.temp }}/preview.md
+
+  test:
+    needs: [check-skip-label, core]
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
+    timeout-minutes: 30
+    runs-on: macos-26-xlarge
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+
+      - name: Restore the in-tree core
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ios-core-${{ github.run_id }}
+          path: ${{ runner.temp }}
+
+      - name: Unpack the generated core
+        run: |
+          set -euo pipefail
+          tar -xzf "$RUNNER_TEMP/ios-core.tgz"
+          test -d ios/truapi-host/Binaries/truapi_server.xcframework
+          test -d ios/truapi-host/Sources/truapiFFI/include
+
+      - name: Configure Google services
+        uses: ./hosts/ios/.github/actions/configure-google-services
+        with:
+          google_service_info_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
+          expected_bundle_id: ${{ env.IOS_BUNDLE_ID }}
+
+      - name: Configure secrets
+        uses: ./hosts/ios/.github/actions/configure-secrets
+        with:
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      - name: Run tests
+        working-directory: hosts/ios
+        run: |
+          # Pass debug flag to fastlane if DEBUG_CI is enabled
+          if [ "${{ env.DEBUG_CI }}" = "true" ]; then
+            echo "🔍 Running tests in debug mode..."
+            bundle exec fastlane run_unit_tests debug:true
+          else
+            bundle exec fastlane run_unit_tests
+          fi
+
+      # Upload test artifacts for debugging - only when DEBUG_CI is enabled
+      - name: Upload test artifacts
+        if: env.DEBUG_CI == 'true' && (failure() || success())
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-artifacts-${{ github.run_number }}
+          path: |
+            hosts/ios/fastlane/test_output/
+            hosts/ios/fastlane/build_logs/
+          retention-days: 3

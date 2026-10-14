@@ -1,26 +1,20 @@
-// Host-script runner: the Rust CLI spawns this to drive a headless host from a
-// user-provided JavaScript/TypeScript file.
-//
-// The pairing host serves the product frame protocol on a WebSocket; this
-// runner connects the real `@parity/truapi` client to it, injects it as the
-// global `truapi` (scoped to the host's product id), and evaluates the user
-// script. The script is the product: it calls `truapi.account.requestLogin()`,
-// `truapi.signing.*`, `truapi.localStorage.*`, etc. A thrown error or rejected
-// promise exits non-zero, so `truapi-host pairing-host --script …` is the test.
-//
-// Env (set by the Rust CLI):
-//   TRUAPI_FRAME_URL   ws+unix: or ws:// endpoint of the host frame server
-//   TRUAPI_PRODUCT_ID  product id the host serves (scopes storage etc.)
-//   TRUAPI_SCRIPT      absolute path to the user script
 import { pathToFileURL } from "node:url";
 import { inspect } from "node:util";
 import {
-  createClient,
-  createTransport,
   type ProductAccountId,
   type TrUApiClient,
 } from "../../../../js/packages/truapi/src/index.ts";
-import { wsProvider } from "./ws-provider.ts";
+import { createHostConnection } from "../../../../js/packages/truapi/src/internal.ts";
+import { createPermissionAuthorization } from "../../../../js/container/src/network-transport.ts";
+import { freezePermissionRuntime } from "../../../../js/container/src/permission-runtime.ts";
+import { installFetchGate } from "../../../../js/container/src/network.ts";
+import { installWebSocketGate } from "../../../../js/container/src/websocket.ts";
+import { installXhrGate } from "../../../../js/container/src/xhr.ts";
+import {
+  freezeValue,
+  reportLockdownFailures,
+} from "../../../../js/container/src/freeze.ts";
+import { createFrameProviderFactory } from "./ws-provider.ts";
 
 /// The host context injected alongside `truapi`. It only exposes what a script
 /// can't get from `truapi` alone: the product id the host serves, so product
@@ -44,8 +38,6 @@ declare global {
   var assert: (condition: unknown, ...message: unknown[]) => asserts condition;
 }
 
-const OPEN_TIMEOUT_MS = 15_000;
-
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} must be set`);
@@ -56,10 +48,10 @@ async function main() {
   const frameUrl = requireEnv("TRUAPI_FRAME_URL");
   const productId = requireEnv("TRUAPI_PRODUCT_ID");
   const scriptPath = requireEnv("TRUAPI_SCRIPT");
-
-  const provider = wsProvider(frameUrl);
-  const client = createClient(createTransport(provider));
-
+  const connection = createHostConnection(
+    frameUrl,
+    createFrameProviderFactory(),
+  );
   const context: HostContext = {
     productId,
     productAccount: (index = 0) => ({
@@ -67,7 +59,7 @@ async function main() {
       derivationIndex: { tag: "Index", value: index },
     }),
   };
-  globalThis.truapi = client;
+  globalThis.truapi = connection.client;
   globalThis.host = context;
   globalThis.assert = (condition: unknown, ...message: unknown[]) => {
     if (condition) return;
@@ -81,28 +73,61 @@ async function main() {
     throw new Error(detail || "assertion failed");
   };
 
+  freezePermissionRuntime();
+  freezeValue(globalThis, "window", globalThis);
+  freezeValue(globalThis, "top", globalThis);
+  freezeValue(globalThis, "__HOST_WEBVIEW_MARK__", true);
+  freezeValue(
+    globalThis,
+    "__HOST_API_CLIENT__",
+    Object.freeze({
+      get client() {
+        return connection.client;
+      },
+      subscribeConnectionStatus: connection.subscribeConnectionStatus,
+    }),
+  );
+  Object.defineProperty(globalThis, "__HOST_API_PORT__", {
+    get: () => connection.legacyPort,
+    set() {},
+    configurable: false,
+  });
+
+  const authorization = createPermissionAuthorization(
+    globalThis as Window & typeof globalThis,
+    connection.internal,
+  );
+  installFetchGate(globalThis, authorization.network);
+  installWebSocketGate(globalThis, authorization.network);
+  installXhrGate(globalThis, authorization.network);
+  reportLockdownFailures();
+
   const timer = setTimeout(() => {
     console.error(`[runner] timed out connecting to ${frameUrl}`);
     process.exit(2);
-  }, OPEN_TIMEOUT_MS);
-  await provider.opened;
-  clearTimeout(timer);
-
+  }, 15_000);
   try {
+    const handshake = await connection.client.system.handshake();
+    if (handshake.isErr())
+      throw new Error("Host connection failed", { cause: handshake.error });
+    clearTimeout(timer);
+    if (process.env.TRUAPI_SCRIPT_CWD)
+      process.chdir(process.env.TRUAPI_SCRIPT_CWD);
     const module = await import(pathToFileURL(scriptPath).href);
-    if (typeof module.default === "function") {
-      await module.default(context);
-    }
+    if (typeof module.default === "function") await module.default(context);
   } finally {
-    provider.dispose();
+    clearTimeout(timer);
+    connection.dispose();
   }
 }
 
 main().then(
   () => process.exit(0),
   (error) => {
+    const message = String(error);
+    const detail = inspect(error, { colors: false, depth: 5 });
     console.error(
-      `[script error] ${error instanceof Error ? error.stack : String(error)}`,
+      `[script error] ${detail.includes(message) ? detail : `${message}\n${detail}`}`,
     );
     process.exit(1);
   },

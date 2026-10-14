@@ -1,0 +1,87 @@
+name: Changed since the last build
+description: >
+  Whether the commit being built differs from the one the last successful run
+  of a workflow built.
+
+# A nightly that builds main directly releases unconditionally, so a day on
+# which nothing merged would still take a build number, upload, and announce an
+# empty changelog. This answers the one question that decides whether to start.
+#
+# It fails open. Any error reading run history reports a change, because a
+# redundant build costs a build number and a missed one costs testers a day.
+
+inputs:
+  github_token:
+    description: Token used to read workflow runs.
+    required: true
+  workflow:
+    description: File name of the workflow whose last success is the anchor.
+    required: true
+  title:
+    description: >
+      Only anchor on runs with exactly this title. For a workflow whose runs all
+      record the same branch whatever they built, the title is what says which
+      ref a run actually built.
+    required: false
+    default: ""
+  head_sha:
+    description: The commit about to be built. Defaults to the commit this run is for.
+    required: false
+    default: ""
+
+outputs:
+  changed:
+    description: "'true' unless the last successful run built this same commit."
+    value: ${{ steps.check.outputs.changed }}
+  base_sha:
+    description: The commit the last successful run built, empty when there was none.
+    value: ${{ steps.check.outputs.base_sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compare against the last successful build
+      id: check
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      env:
+        INPUT_WORKFLOW: ${{ inputs.workflow }}
+        INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+        INPUT_TITLE: ${{ inputs.title }}
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const { owner, repo } = context.repo;
+          const head = process.env.INPUT_HEAD_SHA || context.sha;
+          const workflow = process.env.INPUT_WORKFLOW;
+          const title = process.env.INPUT_TITLE || '';
+          try {
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner, repo,
+              workflow_id: workflow,
+              branch: 'main',
+              status: 'success',
+              per_page: 30,
+            });
+            const previous = data.workflow_runs
+              .filter((run) => run.id !== context.runId)
+              .filter((run) => !title || run.display_title === title)
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+            if (!previous) {
+              core.info(`No earlier successful run of ${workflow}; building.`);
+              core.setOutput('base_sha', '');
+              core.setOutput('changed', 'true');
+              return;
+            }
+            core.setOutput('base_sha', previous.head_sha);
+            const changed = previous.head_sha !== head;
+            core.setOutput('changed', String(changed));
+            if (changed) {
+              core.info(`${workflow} last built ${previous.head_sha}; ${head} is new.`);
+            } else {
+              core.notice(`${workflow} already built ${head} in run ${previous.id}; nothing new to build.`);
+            }
+          } catch (error) {
+            core.warning(`Could not read the run history, building anyway: ${error.message}`);
+            core.setOutput('base_sha', '');
+            core.setOutput('changed', 'true');
+          }
