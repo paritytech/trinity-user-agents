@@ -17,6 +17,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatCustomMessage
+import uniffi.truapi.ChatInputConfig
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatReaction
 import uniffi.truapi.ChatRoomFooter
@@ -57,7 +58,7 @@ class ProductChatHostBridgeTest {
 
         val posted = runCatching { bridge.postMessage("", ChatMessageContent.Text("hi"), alt = null) }.exceptionOrNull()
         val created = runCatching { bridge.createRoom("", "Jollity", "icon") }.exceptionOrNull()
-        val footed = runCatching { bridge.setRoomFooter("", ChatRoomFooter.EMPTY) }.exceptionOrNull()
+        val footed = runCatching { bridge.setRoomFooter("", ChatRoomFooter.Empty) }.exceptionOrNull()
 
         assertTrue(posted is HostRejection)
         assertTrue(posted!!.message!!.contains("a chat message needs a room"))
@@ -134,8 +135,8 @@ class ProductChatHostBridgeTest {
         val api = FakeChatMessaging()
         val bridge = bridge(api)
 
-        bridge.setRoomFooter(ROOM, ChatRoomFooter.EMPTY)
-        bridge.setRoomFooter(ROOM, ChatRoomFooter.TEXT_INPUT)
+        bridge.setRoomFooter(ROOM, ChatRoomFooter.Empty)
+        bridge.setRoomFooter(ROOM, ChatRoomFooter.Input(ChatInputConfig(null, true, true, false, null)))
 
         assertEquals(
             listOf(ProductChatIdParameter(ROOM) to false, ProductChatIdParameter(ROOM) to true),
