@@ -57,16 +57,15 @@ class RealAddContactInteractor @Inject constructor(
     }
 
     private suspend fun mergedResult(foundUsers: List<FoundUser>): Result<List<ContactSearchResult>> {
-        return resourcesRepository.consumersInfo(knownChains.assetHub, foundUsers.map { it.accountId })
+        return resourcesRepository.resolveConsumers(knownChains.assetHub, foundUsers.map { it.accountId })
             .map {
-                it.values.filterNotNull()
-                    .mapNotNull { onChainUser ->
-                        val username = foundUsers.find { it.accountId == onChainUser.accountId }?.username ?: return@mapNotNull null
-                        ContactSearchResult(
-                            accountId = onChainUser.accountId,
-                            username = username
-                        )
-                    }
+                it.values.mapNotNull { onChainUser ->
+                    val username = foundUsers.find { it.accountId == onChainUser.accountId }?.username ?: return@mapNotNull null
+                    ContactSearchResult(
+                        accountId = onChainUser.accountId,
+                        username = username
+                    )
+                }
             }
     }
 

@@ -15,11 +15,6 @@ interface ResourcesRepository {
         accountId: AccountId,
     ): Result<ConsumerInfo?>
 
-    suspend fun consumersInfo(
-        chainId: ChainId,
-        accountIds: List<AccountId>,
-    ): Result<Map<AccountId, ConsumerInfo?>>
-
     fun consumerInfoFlow(
         chainId: ChainId,
         accountId: AccountId,
