@@ -14,6 +14,8 @@ extension ChatProductRoomPresenter {
             return nil
         }
 
+        mark("footer", policy.footer.e2eDescription)
+
         switch policy.footer {
         case let .input(input):
             return ChatProductInputConfiguration(
@@ -63,6 +65,18 @@ extension ChatProductRoomPresenter {
             },
             resolveImage: footerImageResolver
         )
+    }
+}
+
+private extension ChatRoomPolicy.Footer {
+    var e2eDescription: String {
+        switch self {
+        case let .input(input):
+            "kind=input placeholder=\(input.placeholder ?? "-") attach="
+                + input.attachmentKinds.map { "\($0)" }.joined(separator: ",")
+        case .empty: "kind=empty"
+        case .custom: "kind=custom"
+        }
     }
 }
 

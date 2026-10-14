@@ -42,6 +42,11 @@ protocol ChatProductRoomWireframing: AnyObject {
 
 extension ChatWireframe: ChatProductRoomWireframing {
     func confirmProductLink(_ url: URL, from view: ControllerBackedProtocol?, onOpen: @escaping () -> Void) {
+        #if targetEnvironment(simulator)
+            TrUAPIE2EPendingConfirmation.onOpen = onOpen
+            logger.debug("[e2e:ui] confirm \(url.absoluteString)")
+        #endif
+
         let openAction = AlertPresentableAction(title: String(localized: .ChatExtension.linkOpenAction)) {
             onOpen()
         }
@@ -117,6 +122,7 @@ extension ChatWireframe: ChatProductRoomWireframing {
     }
 
     func openProductLink(_ url: URL, from view: ControllerBackedProtocol?) {
+        logger.debug("Product link opens: \(url.absoluteString)")
         ChatProductLinkOpener(linkHandler: DeferredLinkHandler.shared).open(url) { [weak self, weak view] webURL in
             guard let view else { return }
             self?.showWeb(url: webURL, from: view, style: WebPresentableStyle(mode: .modal(.fullScreen)))

@@ -302,9 +302,10 @@ extension ProductBot: ChatExtensionBotProtocol {
                     // Sends the command list of `make ios-chat-v2-run`, one file at a time,
                     // until `dispose` stops this task.
                     if TrUAPIE2ECommandFeed.isEnabled(for: product.id) {
-                        await TrUAPIE2ECommandFeed.run(logger: logger) { [runtime] text, roomId in
-                            try await runtime.onUserMessage(text: text, roomId: roomId)
-                        }
+                        await TrUAPIE2ECommandFeed
+                            .run(productId: product.id, logger: logger) { [runtime] text, roomId in
+                                try await runtime.onUserMessage(text: text, roomId: roomId)
+                            }
                     }
                 #endif
             } catch is CancellationError {

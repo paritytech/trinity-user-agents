@@ -38,8 +38,13 @@ extension ChatProductRoomPresenter {
                     messageId: productMessageId(messageId)
                 ))
                 let viewModel = await reactionDetails(item.reactions, messageId: messageId)
+                let groups = viewModel.reactions.map { group in
+                    group.emoji + ":" + group.reactors.map(\.username).joined(separator: "+")
+                }
+                mark("reactions", groups.joined(separator: ","))
                 view?.showReactionDetails(viewModel: viewModel)
             } catch ChatQueryError.refused(.notAvailable) {
+                mark("reactions", "unavailable")
                 reactionDetailsUnavailable = true
                 onChange?()
             } catch {

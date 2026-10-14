@@ -41,6 +41,7 @@ extension ChatProductRoomPresenter {
             attachment = try Self.encode(picked)
         } catch let ProductAttachmentError.tooLarge(bytes) {
             logger.debug("Attachment of \(bytes) bytes refused in room \(roomId)")
+            mark("failure", "attachment too large \(bytes)")
             view?.showActionFailure(String(localized: .ChatExtension.attachmentTooLarge))
             return
         } catch {

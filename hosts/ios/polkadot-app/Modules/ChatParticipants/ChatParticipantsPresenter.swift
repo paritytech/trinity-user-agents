@@ -80,6 +80,12 @@ private extension ChatParticipantsPresenter {
             )
         }
 
+        #if targetEnvironment(simulator)
+            if TrUAPIE2EMarkers.isEnabled {
+                Logger.shared
+                    .debug("[e2e:ui] participants-list rows=\(rows.count) loading=\(isLoading) failed=\(failed)")
+            }
+        #endif
         view?.didReceive(ChatParticipantsViewModel(rows: rows, isLoading: isLoading, failed: failed))
     }
 }

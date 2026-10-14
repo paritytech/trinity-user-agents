@@ -10,6 +10,8 @@ protocol ChatProductRoomViewProtocol: ControllerBackedProtocol {
     func showReactionDetails(viewModel: ReactionDetailsViewModel)
     /// Shows why an action of the user did not happen.
     func showActionFailure(_ message: String)
+    /// Scrolls to the message now, or when it arrives in the window.
+    func scrollToMessage(_ messageId: String)
 }
 
 extension ChatViewController: ChatProductRoomViewProtocol {

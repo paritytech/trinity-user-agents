@@ -229,6 +229,8 @@ final class RecordingProductRoomView: ChatProductRoomViewProtocol {
     func showActionFailure(_ message: String) {
         failures.append(message)
     }
+
+    func scrollToMessage(_: String) {}
 }
 
 extension RecordingProductRoomWireframe {

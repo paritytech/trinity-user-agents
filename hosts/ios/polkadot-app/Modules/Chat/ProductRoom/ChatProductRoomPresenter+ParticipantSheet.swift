@@ -40,6 +40,7 @@ extension ChatProductRoomPresenter {
             guard let self else { return }
             let entries = await participantSheetEntries(for: participant)
             let appearance = appearanceFactory.appearance(of: participant)
+            mark("sheet-shown", "\(participant.participantId) \(appearance.name)")
             wireframe.showParticipantSheet(
                 ChatParticipantSheetViewModel(title: appearance.name, detail: appearance.detail, entries: entries),
                 from: view

@@ -117,6 +117,31 @@ struct ChatProductParticipantsTests {
         #expect(presenter.headerSubtitle(default: "A room") == "9 participants")
     }
 
+    /// `/participants <n>` declares the participants again, so a new configuration asks the count again.
+    @Test func aNewConfigurationAsksTheCountAgain() async throws {
+        var count: UInt32 = 4
+        room.participantsAnswer = { _ in .success(.count(count: count)) }
+        let presenter = try makePresenter(participants: true)
+        try await waitUntil { presenter.participants.count == 4 }
+
+        count = 10
+        let declarations = Chat.RoomDeclarations(
+            description: nil,
+            avatar: nil,
+            config: Data.config(participants: true, participantActions: true),
+            configGeneration: 2,
+            preview: .hostDefault,
+            toolbar: nil,
+            suggestions: nil,
+            commands: nil,
+            footerConfig: nil
+        )
+        presenter.update(policy: ChatRoomPolicy(footer: nil, declarations: declarations), messages: [])
+        try await waitUntil { presenter.participants.count == 10 }
+
+        #expect(presenter.headerSubtitle(default: nil) == "10 participants")
+    }
+
     @Test func aRoomWithoutParticipantsAsksNothingAndKeepsTheDescription() async throws {
         let presenter = try makePresenter(participants: false)
         var message = Data.message("m1")

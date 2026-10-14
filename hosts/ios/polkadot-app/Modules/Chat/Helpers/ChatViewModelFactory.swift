@@ -115,7 +115,7 @@ extension ChatViewModelFactory: ChatViewModelMaking {
             scrollToReactionConfiguration: scrollToReactionConfiguration,
             sections: sections,
             footerConfiguration: footerConfiguration,
-            placeholderText: model.showsPlaceholder ? placeholderText(for: metadata.chatMetadata) : nil
+            placeholderText: productRoomPlaceholder(model: model, metadata: metadata, sections: sections)
         )
     }
 

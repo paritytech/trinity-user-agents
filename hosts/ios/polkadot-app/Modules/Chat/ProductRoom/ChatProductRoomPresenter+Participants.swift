@@ -18,7 +18,9 @@ extension ChatProductRoomPresenter {
             return subtitle
         }
 
-        return String(localized: .ChatExtension.participantsCount(count))
+        let line = String(localized: .ChatExtension.participantsCount(count))
+        mark("header", line)
+        return line
     }
 
     /// The author of a message from another participant than the user and the product, with the name that the
@@ -32,6 +34,7 @@ extension ChatProductRoomPresenter {
 
         let appearance = participants.participant(participantId).map { appearanceFactory.appearance(of: $0) }
             ?? appearanceFactory.unresolved(participantId)
+        mark("author-" + participantId, appearance.name)
 
         return ChatMessageAuthor(
             participantId: participantId,

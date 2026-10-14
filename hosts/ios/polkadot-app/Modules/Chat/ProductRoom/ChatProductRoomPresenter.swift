@@ -34,6 +34,9 @@ final class ChatProductRoomPresenter {
     private(set) var messages: [Chat.MessageId: Chat.LocalMessage] = [:]
     private var icons: [ChatResource: UIImage] = [:]
     private var activityTask: Task<Void, Never>?
+    /// The last console marker of each key, for the E2E harness.
+    var e2eMarks: [String: String] = [:]
+    private var e2eObserver: NSObjectProtocol?
     /// The product answered `NotAvailable` to `reactions_query`, so the room hides who reacted.
     var reactionDetailsUnavailable = false
     /// The live parts of the footer: the activity line, the quick replies and the slash commands.
@@ -46,6 +49,8 @@ final class ChatProductRoomPresenter {
     var sendContent: ((Chat.LocalMessage.Content) async throws -> Void)?
     /// Closes the room while the app is in the background, and opens it again after (P6.9).
     var backgroundObserver: ChatRoomBackgroundObserver?
+    /// The interactor of the room screen, for the actions that the E2E harness asks for.
+    weak var interactor: ChatInteractorInputProtocol?
 
     init?(
         chatId: Chat.Id,
@@ -79,6 +84,9 @@ final class ChatProductRoomPresenter {
         participants.onChange = { [weak self] in self?.onChange?() }
         accessory.onSuggestion = { [weak self] suggestion in self?.selectSuggestion(suggestion.suggestionId) }
         activityTask = followActivity(activityStore)
+        #if targetEnvironment(simulator)
+            e2eObserver = observeE2EActions()
+        #endif
     }
 
     deinit {
@@ -87,6 +95,7 @@ final class ChatProductRoomPresenter {
 
     /// The view model factory gives the room that it draws. The call never asks to draw again.
     func update(listModel: MessageListModel, metadata: MessageListMetadata) {
+        mark("readiness", "\(listModel.readiness) older=\(listModel.paging.older) newer=\(listModel.paging.newer)")
         appearanceFactory = ChatParticipantAppearanceFactory(
             myUsername: metadata.myUsername,
             productName: metadata.peerName,
@@ -98,6 +107,11 @@ final class ChatProductRoomPresenter {
     func update(policy: ChatRoomPolicy?, messages: [Chat.LocalMessage]) {
         let previous = self.policy
         self.policy = policy
+
+        // A new configuration can change the participants that the product declares (`/participants`).
+        if let previous, previous.configGeneration != policy?.configGeneration {
+            participants.reset()
+        }
         self.messages = Dictionary(messages.map { ($0.messageId, $0) }, uniquingKeysWith: { _, newest in newest })
 
         let participantsChanged = previous?.productQueries.contains(.participants)
@@ -109,6 +123,8 @@ final class ChatProductRoomPresenter {
 
         loadParticipantsIfDeclared()
         updateAccessory()
+        markWindow()
+        mark("allowed", policy?.messageMenu.allowedReactions?.joined() ?? "all")
     }
 
     /// The id under which the product knows a message of the room.

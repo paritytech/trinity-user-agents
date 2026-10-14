@@ -120,6 +120,7 @@ enum ChatViewFactory {
                 wireframe: wireframe
             )
             productRoom?.view = view
+            productRoom?.interactor = interactor
             productRoom?.sendText = { [weak presenter] text in
                 presenter?.send(text: text, replyToMessageId: nil)
             }

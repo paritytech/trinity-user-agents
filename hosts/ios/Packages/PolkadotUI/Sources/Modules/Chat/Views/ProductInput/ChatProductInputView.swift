@@ -33,7 +33,28 @@ final class ChatProductInputView: UIView {
             self?.refresh(notify: true)
         }
         refresh(notify: false)
+        observeE2EText()
     }
+
+    deinit {
+        textObserver.map(NotificationCenter.default.removeObserver)
+    }
+
+    private var lastHeight: CGFloat = 0
+
+    /// The tree of a custom footer and the activity line change the height of the footer after it binds, so the
+    /// room screen measures it again.
+    override func layoutSubviews() {
+        super.layoutSubviews()
+
+        guard abs(bounds.height - lastHeight) > 0.5 else { return }
+        lastHeight = bounds.height
+        DispatchQueue.main.async { [weak self] in
+            self?.handler?.chatInputDidChange()
+        }
+    }
+
+    private var textObserver: NSObjectProtocol?
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
@@ -85,24 +106,26 @@ private extension ChatProductInputView {
         }
     }
 
+    /// The tree of the product on the background of the screen, at most 40 % of the screen high. A taller tree
+    /// is cut at the bottom.
     func makeCustomFooter(_ footer: ProductWidgetChatView) -> UIView {
         let content = SwiftUIContentConfiguration(
             view: footer,
-            margins: EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16)
+            margins: EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
         ).makeContentView()
-        let scrollView = UIScrollView()
-        scrollView.addSubview(content)
+
+        let container = UIView()
+        container.backgroundColor = .bgSurfaceMain
+        container.clipsToBounds = true
+        container.addSubview(content)
         content.snp.makeConstraints {
-            $0.edges.equalTo(scrollView.contentLayoutGuide)
-            $0.width.equalTo(scrollView.frameLayoutGuide)
+            $0.top.leading.trailing.equalToSuperview()
+            $0.bottom.equalToSuperview().priority(.high)
         }
 
-        let maxHeight = (window?.windowScene?.screen.bounds.height ?? 800) * Self.customFooterHeightRatio
-        scrollView.snp.makeConstraints {
-            $0.height.equalTo(content).priority(.high)
-            $0.height.lessThanOrEqualTo(maxHeight)
-        }
-        return scrollView
+        let maxHeight = UIScreen.main.bounds.height * Self.customFooterHeightRatio
+        container.snp.makeConstraints { $0.height.lessThanOrEqualTo(maxHeight) }
+        return container
     }
 
     func refresh(notify: Bool) {
@@ -118,6 +141,23 @@ private extension ChatProductInputView {
         if notify {
             handler?.chatInputDidChange()
         }
+    }
+
+    /// The truapi E2E harness types into the input of a simulator build, as the user does.
+    func observeE2EText() {
+        #if targetEnvironment(simulator)
+            textObserver = NotificationCenter.default.addObserver(
+                forName: Notification.Name("TrUAPIE2ESetInputText"),
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                MainActor.assumeIsolated {
+                    guard let self, let input = self.input, let text = notification.object as? String else { return }
+                    input.textView.text = text
+                    input.textViewDidChange(input.textView)
+                }
+            }
+        #endif
     }
 
     func complete(_ command: ChatRoomAccessoryModel.Command) {

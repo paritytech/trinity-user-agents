@@ -40,6 +40,15 @@ final class ChatParticipantDirectory {
         ChatRoomParticipant.reserved(participantId) ?? resolved[participantId]
     }
 
+    /// Forgets the count and the participants, because the product configured the room again.
+    func reset() {
+        countTask?.cancel()
+        countTask = nil
+        count = nil
+        resolved = [:]
+        asked = []
+    }
+
     /// Asks the product for the number of participants once. A refusal leaves the count unknown.
     func loadCount() {
         guard countTask == nil else { return }

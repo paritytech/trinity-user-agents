@@ -13,6 +13,8 @@ extension ChatProductRoomPresenter {
         accessory.commands = (policy?.roomCommands ?? []).map {
             ChatRoomAccessoryModel.Command(name: $0.name, description: $0.description, argumentHint: $0.argumentHint)
         }
+        mark("suggestions", accessory.suggestions.map(\.suggestionId).joined(separator: ","))
+        mark("commands", "count=\(accessory.commands.count)")
     }
 
     /// A quick reply with `sends_text` sends its text as a message of the user. Another one sends
@@ -35,6 +37,7 @@ extension ChatProductRoomPresenter {
             for await activity in store.activityUpdates(for: chatId) {
                 guard let self else { return }
                 accessory.activityText = activity?.text
+                mark("activity", activity?.text ?? "none")
             }
         }
     }
