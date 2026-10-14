@@ -70,10 +70,6 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw HostRejection.Rejected(reason: "a chat room needs an id")
         }
 
-        // A footer that the product draws waits for P6.6.
-        if case .custom = footer {
-            throw HostRejection.Rejected(reason: "this host does not draw a custom chat footer")
-        }
         try await chatMessaging.setRoomFooterConfig(roomId: roomId, footer: Chat.RoomFooterConfig(footer))
     }
 

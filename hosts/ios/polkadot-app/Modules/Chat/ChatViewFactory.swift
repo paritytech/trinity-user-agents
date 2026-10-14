@@ -111,12 +111,18 @@ enum ChatViewFactory {
         interactor.presenter = presenter
 
         if case let .chatExtension(extensionId, _) = chatId {
+            let room = RegistryProductRoom(extensionId: extensionId, registry: flowState.extensionsRegistry)
             let productRoom = ChatProductRoomPresenter(
                 chatId: chatId,
-                room: RegistryProductRoom(extensionId: extensionId, registry: flowState.extensionsRegistry),
+                room: room,
+                footerRenderer: room,
+                footerImageResolver: room.widgetImageResolver,
                 wireframe: wireframe
             )
             productRoom?.view = view
+            productRoom?.sendText = { [weak presenter] text in
+                presenter?.send(text: text, replyToMessageId: nil)
+            }
             presenter.productRoom = productRoom
             viewModelFactory.productRoom = productRoom
         }

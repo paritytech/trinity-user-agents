@@ -198,28 +198,42 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
         do {
             guard let roomId else { throw ChatSeamError.roomlessChat }
-            let nodes = try await renderNodesWhenConnected(
-                deadline: ContinuousClock.now + renderStartupWindow,
-                roomId: roomId,
-                messageId: productMessageId(messageId, roomId: roomId),
-                messageType: messageType,
-                messageData: messageData
+            let request = ProductRendererRenderRequest(
+                context: .chatMessage(
+                    roomId: roomId,
+                    messageId: productMessageId(messageId, roomId: roomId),
+                    messageType: messageType
+                ),
+                payload: messageData
             )
-            return AsyncThrowingStream { continuation in
-                let task = Task {
-                    do {
-                        for try await node in nodes {
-                            continuation.yield(.native(node))
-                        }
-                        continuation.finish()
-                    } catch {
-                        continuation.finish(throwing: error)
-                    }
-                }
-                continuation.onTermination = { _ in task.cancel() }
-            }
+            return try await renderOutputs(request, name: messageId)
         } catch {
             return AsyncThrowingStream { $0.finish(throwing: error) }
+        }
+    }
+
+    /// The tree of the custom footer of a room (`ChatRoomFooter::Custom`), drawn through the renderer with a
+    /// `ChatFooter` context and an empty payload (02-DESIGN §6.4, §13 item 14).
+    func renderFooter(roomId: String) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+        do {
+            let request = ProductRendererRenderRequest(context: .chatFooter(roomId: roomId), payload: Data())
+            return try await renderOutputs(request, name: "footer of \(roomId)")
+        } catch {
+            return AsyncThrowingStream { $0.finish(throwing: error) }
+        }
+    }
+
+    /// A press inside the custom footer reaches `Renderer::action_subscribe` with the `ChatFooter` context.
+    func dispatchFooterAction(roomId: String, actionId: String, payload: String?) async {
+        do {
+            try checkNotDisposed()
+            try requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
+                context: .chatFooter(roomId: roomId),
+                actionId: actionId,
+                payload: payload.map { Data($0.utf8) } ?? Data()
+            ))
+        } catch {
+            logger.error("Rust chat runtime failed to dispatch footer action \(actionId): \(error)")
         }
     }
 
@@ -365,22 +379,35 @@ private extension TrUAPIChatHandler {
 
     /// A persisted message can decode before the product attaches. `ProductMessageDecoder`
     /// never evicts, so failing once breaks that cell for the session.
-    func renderNodesWhenConnected(
-        deadline: ContinuousClock.Instant,
-        roomId: String,
-        messageId: String,
-        messageType: String,
-        messageData: Data
-    ) async throws -> AsyncThrowingStream<RendererNode, Error> {
-        let request = ProductRendererRenderRequest(
-            context: .chatMessage(
-                roomId: roomId,
-                messageId: messageId,
-                messageType: messageType
-            ),
-            payload: messageData
+    func renderOutputs(
+        _ request: ProductRendererRenderRequest,
+        name: String
+    ) async throws -> AsyncThrowingStream<ChatRendererOutput, Error> {
+        let nodes = try await renderNodesWhenConnected(
+            request,
+            deadline: ContinuousClock.now + renderStartupWindow,
+            name: name
         )
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await node in nodes {
+                        continuation.yield(.native(node))
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 
+    func renderNodesWhenConnected(
+        _ request: ProductRendererRenderRequest,
+        deadline: ContinuousClock.Instant,
+        name: String
+    ) async throws -> AsyncThrowingStream<RendererNode, Error> {
         while true {
             try checkNotDisposed()
             do {
@@ -391,7 +418,7 @@ private extension TrUAPIChatHandler {
                 )
             } catch let error where (error as? ChatSeamError) == .notStarted {
                 guard ContinuousClock.now < deadline else {
-                    logger.error("Custom render gave up waiting for the product: \(messageId)")
+                    logger.error("Custom render gave up waiting for the product: \(name)")
                     throw error
                 }
                 try await Task.sleep(for: Self.renderRetryInterval)

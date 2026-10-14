@@ -214,6 +214,28 @@ extension ProductBot: ProductRoomInteracting {
     }
 }
 
+extension ProductBot: ProductRoomFooterRendering {
+    func renderFooter(roomId: String) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+        guard let renderer = runtime as? ProductRoomFooterRendering else {
+            return AsyncThrowingStream { $0.finish(throwing: UnservedProductRoom.NotServed()) }
+        }
+        return await renderer.renderFooter(roomId: roomId)
+    }
+
+    func dispatchFooterAction(roomId: String, actionId: String, payload: String?) async {
+        await (runtime as? ProductRoomFooterRendering)?.dispatchFooterAction(
+            roomId: roomId,
+            actionId: actionId,
+            payload: payload
+        )
+    }
+
+    /// Loads the images of the trees that the product draws, with the cache of its bodies.
+    var widgetImageResolver: WidgetImageResolver {
+        resolveImage
+    }
+}
+
 private extension ProductBot {
     var roomInteracting: ProductRoomInteracting {
         (runtime as? ProductRoomInteracting) ?? UnservedProductRoom()

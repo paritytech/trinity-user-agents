@@ -32,3 +32,5 @@ extension TrUAPIChatHandler: ProductRoomInteracting {
         }
     }
 }
+
+extension TrUAPIChatHandler: ProductRoomFooterRendering {}

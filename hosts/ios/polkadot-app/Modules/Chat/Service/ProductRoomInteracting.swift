@@ -48,3 +48,21 @@ struct UnservedProductRoom: ProductRoomInteracting {
         throw NotServed()
     }
 }
+
+/// The custom footer of a product room (`ChatRoomFooter::Custom`, P6.6).
+protocol ProductRoomFooterRendering: Sendable {
+    /// The tree that the product draws for the footer of the room.
+    func renderFooter(roomId: String) async -> AsyncThrowingStream<ChatRendererOutput, Error>
+
+    /// Sends a press inside the footer to `Renderer::action_subscribe`.
+    func dispatchFooterAction(roomId: String, actionId: String, payload: String?) async
+}
+
+/// The product of the room draws no footer.
+struct UnservedProductRoomFooter: ProductRoomFooterRendering {
+    func renderFooter(roomId _: String) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+        AsyncThrowingStream { $0.finish(throwing: UnservedProductRoom.NotServed()) }
+    }
+
+    func dispatchFooterAction(roomId _: String, actionId _: String, payload _: String?) async {}
+}

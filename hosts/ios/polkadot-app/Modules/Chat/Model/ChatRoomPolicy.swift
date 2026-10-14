@@ -73,6 +73,8 @@ struct ChatRoomPolicy: Equatable {
     enum Footer: Equatable {
         case input(Input)
         case empty
+        /// The product draws the footer through the renderer (P6.6).
+        case custom
     }
 
     /// Only a declared command name after `/` is a command. Any other `/text` is a message
@@ -198,7 +200,8 @@ extension ChatRoomPolicy {
     /// show no attachment button.
     var peerInput: Chat.PeerMetadataInput {
         switch footer {
-        case .empty:
+        case .empty,
+             .custom:
             .empty
         case let .input(input):
             .inputField(.init(canPay: input.allowsPayment, canAttachFile: false))
@@ -230,8 +233,7 @@ extension ChatRoomPolicy {
 }
 
 private extension ChatRoomPolicy.Footer {
-    /// The declared footer wins over the footer of the first version. A product draws no custom footer on this
-    /// host yet (P6.6), so the bridge refuses one and a stored one reads as no declaration.
+    /// The declared footer wins over the footer of the first version.
     init?(declared: Chat.RoomFooterConfig?, legacy: Chat.RoomFooter?) {
         switch declared {
         case let .input(input):
@@ -244,8 +246,9 @@ private extension ChatRoomPolicy.Footer {
             ))
         case .empty:
             self = .empty
-        case .custom,
-             nil:
+        case .custom:
+            self = .custom
+        case nil:
             guard legacy == .empty else { return nil }
             self = .empty
         }
@@ -294,5 +297,12 @@ extension Chat.LocalModel {
         case .chatExtension:
             ChatRoomPolicy(footer: roomFooter, declarations: roomDeclarations)
         }
+    }
+}
+
+extension ChatRoomPolicy.Footer {
+    /// True when the footer is the host input, so the user can reply and react.
+    var showsInput: Bool {
+        if case .input = self { true } else { false }
     }
 }

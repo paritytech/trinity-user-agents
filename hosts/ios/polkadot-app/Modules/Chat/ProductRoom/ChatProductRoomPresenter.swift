@@ -1,4 +1,5 @@
 import Foundation
+import PolkadotUI
 import TrUAPIHost
 import UIKit
 
@@ -19,6 +20,8 @@ final class ChatProductRoomPresenter {
     let roomId: String
 
     let room: ProductRoomInteracting
+    let footerRenderer: ProductRoomFooterRendering
+    let footerImageResolver: WidgetImageResolver
     let wireframe: ChatProductRoomWireframing
     let resolver: ChatResourceResolving
     let logger: LoggerProtocol
@@ -32,10 +35,18 @@ final class ChatProductRoomPresenter {
     private var icons: [ChatResource: UIImage] = [:]
     /// The product answered `NotAvailable` to `reactions_query`, so the room hides who reacted.
     var reactionDetailsUnavailable = false
+    /// The live parts of the footer: the activity line, the quick replies and the slash commands.
+    let accessory = ChatRoomAccessoryModel()
+    /// The tree of the custom footer, while the room has one.
+    var footerWidget: ProductFooterWidgetViewModel?
+    /// Sends a text as a message of the user, as the input sends it.
+    var sendText: ((String) -> Void)?
 
     init?(
         chatId: Chat.Id,
         room: ProductRoomInteracting,
+        footerRenderer: ProductRoomFooterRendering = UnservedProductRoomFooter(),
+        footerImageResolver: WidgetImageResolver = WidgetImageResolver { _ in nil },
         wireframe: ChatProductRoomWireframing,
         resolver: ChatResourceResolving = ChatResourceResolver.shared,
         logger: LoggerProtocol = Logger.shared
@@ -47,6 +58,8 @@ final class ChatProductRoomPresenter {
         self.chatId = chatId
         self.roomId = roomId
         self.room = room
+        self.footerRenderer = footerRenderer
+        self.footerImageResolver = footerImageResolver
         self.wireframe = wireframe
         self.resolver = resolver
         self.logger = logger
