@@ -64,7 +64,7 @@ pub trait System: Send + Sync {
 
 	/// Request the host to open a URL.
 	///
-	/// External URLs, including `polkadotapp://pay` and other allowed application
+	/// External URLs, including `polkadotapp://...` and other allowed application
 	/// schemes, require `DevicePermission::OpenUrl`. A one-use grant covers one
 	/// handoff. dotNS names, `localhost`, and host-handled Pocket links consume
 	/// no external-navigation grant. Use `polkadot://<product>.<tld>/<path>` for
