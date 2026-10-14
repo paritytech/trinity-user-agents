@@ -19,11 +19,12 @@ use super::{
 	HostSession,
 	allowances::{self, AllowanceCacheKey, AllowanceResource},
 	authority::{
-		AuthorityError, AuthoritySession, AutoSigningGrant, AutoSigningKey, BulletinAllowanceKey,
-		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-		SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session,
-		require_current_session,
+		AccountCaller, AuthorityError, AuthoritySession, AutoSigningGrant, AutoSigningKey,
+		BulletinAllowanceKey, CreateTransactionAuthorityRequest, ProductAuthority,
+		SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+		authority_session, require_current_session,
 	},
+	product_consent::ProductConsent,
 	product_subtree,
 	services::RuntimeServices,
 	sso_remote::{SsoSessionKey, sso_message_id},
@@ -50,8 +51,8 @@ use crate::{
 };
 
 use crate::platform::{
-	CoreStorageKey, PairingHostConfig, Platform, SignVrfReview, UserConfirmationReview,
-	normalize_product_identifier,
+	CoreStorageKey, PairingHostConfig, Platform, ProductContext, SignVrfReview,
+	UserConfirmationReview, normalize_product_identifier,
 };
 use tracing::warn;
 use truapi::{CallContext, latest};
@@ -143,6 +144,8 @@ pub struct PairingHost {
 	session: Arc<SsoRequestService>,
 	/// Active inter-host session with a signing host.
 	session_state: Arc<SessionState>,
+	/// Account-access decisions and reviews for this runtime's products.
+	consent: ProductConsent,
 	statement_store_allowances: Mutex<HashMap<AllowanceCacheKey, StatementStoreAllowanceKey>>,
 	bulletin_allowances: Mutex<HashMap<AllowanceCacheKey, BulletinAllowanceKey>>,
 	product_subtrees: Mutex<HashMap<(SsoSessionKey, String), [u8; 32]>>,
@@ -196,6 +199,7 @@ impl PairingHost {
 				chain: services.chain.clone(),
 				session_state: session.session_state(),
 				session,
+				consent: ProductConsent::new(services.platform.clone()),
 				statement_store_allowances: Mutex::new(HashMap::new()),
 				bulletin_allowances: Mutex::new(HashMap::new()),
 				product_subtrees: Mutex::new(HashMap::new()),
@@ -272,6 +276,7 @@ impl PairingHost {
 	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
 		let product_id =
 			normalize_product_identifier(product_id).map_err(|error| error.to_string())?;
+		self.consent.forget_allowed_once_for(&product_id);
 		let session = self.session.advance_session_lifecycle_preserving_source();
 		let _storage_guard = self.session_secret_storage.lock().await;
 
@@ -1330,26 +1335,15 @@ impl PairingHost {
 			);
 			return Ok(latest::VrfSignature { pre_output, proof });
 		}
-		if !super::authority::is_blessed_owner(
-			&calling_product_id,
-			&request.account.dot_ns_identifier,
-		) {
-			let confirmed = super::until_cancelled(
-				cx,
-				self.platform
-					.confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
-						calling_product_id: calling_product_id.clone(),
-						request: request.clone(),
-					})),
-			)
-			.await?
-			.map_err(|err| AuthorityError::Unknown {
-				reason: format!("VRF signing confirmation failed: {err:?}"),
-			})?;
-			if !confirmed {
-				return Err(AuthorityError::Rejected);
-			}
-		}
+		let product = ProductContext::new(calling_product_id.clone())
+			.map_err(|error| AuthorityError::Unknown { reason: error.to_string() })?;
+		let review = UserConfirmationReview::SignVrf(SignVrfReview {
+			calling_product_id: calling_product_id.clone(),
+			request: request.clone(),
+		});
+		self.consent
+			.review(cx, AccountCaller::Local { product: &product }, review)
+			.await?;
 		self.remote_sign_vrf(cx, &session, calling_product_id, request).await
 	}
 
@@ -1719,6 +1713,7 @@ impl PairingHost {
 #[async_trait::async_trait]
 impl PairedSessionOwner for PairingHost {
 	fn session_ended(&self, previous: Option<&SessionInfo>) {
+		self.consent.forget_allowed_once();
 		self.clear_statement_store_allowance_keys(previous);
 		self.clear_bulletin_allowance_keys(previous);
 		self.clear_product_subtrees(previous);
@@ -1781,6 +1776,10 @@ impl PairedSessionOwner for PairingHost {
 impl ProductAuthority for PairingHost {
 	fn current_session(&self) -> Option<AuthoritySession> {
 		PairingHost::current_session(self)
+	}
+
+	fn consent(&self) -> &ProductConsent {
+		&self.consent
 	}
 
 	#[cfg(feature = "test-host")]

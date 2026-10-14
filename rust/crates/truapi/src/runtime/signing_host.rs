@@ -25,11 +25,12 @@ pub use sso_service::SigningHostSsoService;
 use super::{
 	HostSession, RuntimeServices,
 	authority::{
-		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
+		AccountCaller, AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
 		SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session_validation_id,
 	},
 	connected_session_ui_info,
+	product_consent::ProductConsent,
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure},
 	validate_vrf_transcript,
 };
@@ -155,6 +156,8 @@ pub struct SigningHost {
 	network_suffix: String,
 	session_state: Arc<SessionState>,
 	auth_state: AuthStateMachine,
+	/// Account-access decisions and reviews for local and paired callers.
+	consent: ProductConsent,
 	ring_resolver: Arc<dyn RingResolver>,
 	/// Unchecked grants and withheld resources for test-host suites. Compiled
 	/// only into a build carrying `test-host`, which is off by default and which
@@ -194,6 +197,7 @@ impl SigningHost {
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
 			session_state: SessionState::new(),
 			auth_state: AuthStateMachine::new(platform.clone()),
+			consent: ProductConsent::new(platform.clone()),
 			ring_resolver,
 			root_entropy: Mutex::new(None),
 			local_grants: Mutex::new(LocalGrantState::default()),
@@ -274,6 +278,7 @@ impl SigningHost {
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
 			session_state: SessionState::new(),
 			auth_state: AuthStateMachine::new(platform.clone()),
+			consent: ProductConsent::new(platform.clone()),
 			ring_resolver,
 			root_entropy: Mutex::new(None),
 			local_grants: Mutex::new(LocalGrantState::default()),
@@ -398,6 +403,7 @@ impl SigningHost {
 	pub fn clear_product_state(&self, product_id: &str) -> Result<(), AuthorityError> {
 		let product_id = normalize_product_identifier(product_id)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })?;
+		self.consent.forget_allowed_once_for(&product_id);
 		self.local_grants
 			.lock()
 			.expect("local AutoSigning grant mutex poisoned")
@@ -460,6 +466,7 @@ impl SigningHost {
 	fn install_local_session(&self, secret: Zeroizing<Vec<u8>>, session: SessionInfo) {
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		state.advance_activation();
+		self.consent.forget_allowed_once();
 		*self.root_entropy.lock().expect("signing host entropy mutex poisoned") = Some(secret);
 		self.session_state.set_session(session);
 	}
@@ -467,6 +474,7 @@ impl SigningHost {
 	fn clear_local_session(&self) {
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		state.advance_activation();
+		self.consent.forget_allowed_once();
 		self.root_entropy.lock().expect("signing host entropy mutex poisoned").take();
 		self.session_state.clear_session();
 	}
@@ -688,6 +696,22 @@ impl SigningHost {
 		))
 	}
 
+	async fn require_account_access(
+		&self,
+		cx: &CallContext,
+		requester: &str,
+		owner: &str,
+	) -> Result<(), RingVrfError> {
+		let status = super::until_cancelled(cx, self.consent.account_access(requester, owner))
+			.await?
+			.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?;
+		if status == PermissionAuthorizationStatus::Authorized {
+			Ok(())
+		} else {
+			Err(RingVrfError::Rejected)
+		}
+	}
+
 	pub async fn ring_vrf_providers(
 		&self,
 		ring: &v01::RingLocation,
@@ -723,39 +747,27 @@ impl SigningHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: String,
+		caller: AccountCaller<'_>,
 		request: v01::HostAccountSignVrfRequest,
-		authenticated_caller: bool,
 	) -> Result<v01::VrfSignature, AuthorityError> {
 		self.require_current_session(session)?;
 		validate_vrf_transcript(&request).map_err(|reason| AuthorityError::Unknown { reason })?;
 		let keypair = self.product_keypair(&request.account)?;
 		let (current, activation_generation) = self.require_current_session(session)?;
-		let granted = authenticated_caller &&
-			(super::authority::is_blessed_owner(
-				&calling_product_id,
-				&request.account.dot_ns_identifier,
-			) || self.has_auto_signing_grant(
+		let calling_product_id = caller.product_id().unwrap_or_default();
+		let auto_signing = matches!(caller, AccountCaller::Local { .. }) &&
+			self.has_auto_signing_grant(
 				activation_generation,
 				current.public_key,
-				&calling_product_id,
+				calling_product_id,
 				&request.account.dot_ns_identifier,
-			));
-		if !granted {
-			let confirmed =
-				super::until_cancelled(
-					cx,
-					self.platform.confirm_user_action(UserConfirmationReview::SignVrf(
-						SignVrfReview { calling_product_id, request: request.clone() },
-					)),
-				)
-				.await?
-				.map_err(|err| AuthorityError::Unknown {
-					reason: format!("VRF signing confirmation failed: {err:?}"),
-				})?;
-			if !confirmed {
-				return Err(AuthorityError::Rejected);
-			}
+			);
+		if !auto_signing {
+			let review = UserConfirmationReview::SignVrf(SignVrfReview {
+				calling_product_id: calling_product_id.to_string(),
+				request: request.clone(),
+			});
+			self.consent.review(cx, caller, review).await?;
 		}
 		let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
 			&keypair,
@@ -855,6 +867,10 @@ impl ProductAuthority for SigningHost {
 		self.current_local_session()
 	}
 
+	fn consent(&self) -> &ProductConsent {
+		&self.consent
+	}
+
 	async fn product_subtree_public_key(
 		&self,
 		_cx: &CallContext,
@@ -913,7 +929,10 @@ impl ProductAuthority for SigningHost {
 		calling_product_id: String,
 		request: v01::HostAccountSignVrfRequest,
 	) -> Result<v01::VrfSignature, AuthorityError> {
-		self.sign_vrf_request(cx, session, calling_product_id, request, true).await
+		let product = ProductContext::new(calling_product_id)
+			.map_err(|error| AuthorityError::Unknown { reason: error.to_string() })?;
+		self.sign_vrf_request(cx, session, AccountCaller::Local { product: &product }, request)
+			.await
 	}
 
 	async fn sign_payload(
@@ -1040,7 +1059,7 @@ impl ProductAuthority for SigningHost {
 
 	async fn account_alias(
 		&self,
-		_cx: &CallContext,
+		cx: &CallContext,
 		session: &AuthoritySession,
 		request: ProductRequest<HostAccountGetAliasRequest>,
 	) -> Result<v01::ContextualAlias, RingVrfError> {
@@ -1074,22 +1093,7 @@ impl ProductAuthority for SigningHost {
 				let owner =
 					normalize_product_identifier(&request.payload.key_handle.dot_ns_identifier)
 						.map_err(|_| RingVrfError::NotAllowlisted)?;
-				match super::account_access_authorization(
-					self.services.platform.as_ref(),
-					&requester,
-					&owner,
-				)
-				.await
-				{
-					Ok(PermissionAuthorizationStatus::Authorized) => {},
-					Ok(
-						PermissionAuthorizationStatus::Denied |
-						PermissionAuthorizationStatus::NotDetermined,
-					) => return Err(RingVrfError::Rejected),
-					Err(err) => {
-						return Err(RingVrfError::Unknown { reason: err.to_string() });
-					},
-				}
+				self.require_account_access(cx, &requester, &owner).await?;
 				v01::ProductAccountId {
 					dot_ns_identifier: owner,
 					derivation_index: request.payload.key_handle.derivation_index.clone(),
@@ -1179,7 +1183,7 @@ impl ProductAuthority for SigningHost {
 
 	async fn list_ring_vrf_keys(
 		&self,
-		_cx: &CallContext,
+		cx: &CallContext,
 		session: &AuthoritySession,
 		request: ProductRequest<HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
@@ -1190,22 +1194,7 @@ impl ProductAuthority for SigningHost {
 		let caller = normalize_product_identifier(&request.calling_product_id)
 			.map_err(|_| RingVrfError::NotAllowlisted)?;
 		if caller != owner {
-			match super::account_access_authorization(
-				self.services.platform.as_ref(),
-				&caller,
-				&owner,
-			)
-			.await
-			{
-				Ok(PermissionAuthorizationStatus::Authorized) => {},
-				Ok(
-					PermissionAuthorizationStatus::Denied |
-					PermissionAuthorizationStatus::NotDetermined,
-				) => return Err(RingVrfError::Rejected),
-				Err(err) => {
-					return Err(RingVrfError::Unknown { reason: err.to_string() });
-				},
-			}
+			self.require_account_access(cx, &caller, &owner).await?;
 		}
 
 		self.register_builtin_personhood_keys_if_needed(session, &owner).await?;
@@ -1459,12 +1448,14 @@ fn product_authority_error(err: ProductAccountError) -> AuthorityError {
 
 #[cfg(test)]
 mod tests {
+	mod activation;
 	mod allowance_keys;
 	mod auto_signing;
 	mod cross_product_account;
 	#[cfg(feature = "test-host")]
 	mod local_preimages;
 	mod raw_signing;
+	mod remote_consent;
 	#[cfg(feature = "test-host")]
 	mod withheld_resources;
 
@@ -2362,16 +2353,15 @@ mod tests {
 		let platform = Arc::new(StubPlatform {
 			// The user declines, so the refusal is written by the production
 			// path rather than by a test helper: this has to pin where
-			// `account_access_authorization` files it, not where a fixture does.
+			// `ProductConsent::account_access` files it, not where a fixture does.
 			account_access_confirmed: false,
 			..StubPlatform::default()
 		});
 		cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
-		futures::executor::block_on(crate::runtime::account_access_authorization(
-			platform.as_ref(),
-			"ordinary.dot",
-			"peopl.dot",
-		))
+		futures::executor::block_on(
+			crate::runtime::product_consent::ProductConsent::new(platform.clone())
+				.account_access("ordinary.dot", "peopl.dot"),
+		)
 		.expect("the stub records the declined decision");
 		let (services, _authority) =
 			signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());

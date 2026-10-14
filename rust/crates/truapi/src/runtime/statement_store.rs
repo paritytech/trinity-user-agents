@@ -335,26 +335,21 @@ impl ProductRuntimeHost {
 		let payload = unsigned_statement_signing_payload(fields)
 			.map_err(StatementProofFailure::UnableToSign)?;
 		if product_account_id.dot_ns_identifier != self.connection.product_id() {
-			let confirmed = self
-				.connection
-				.confirm_signature(
-					CrossProductSignatureKind::StatementProof,
-					&product_account_id,
-					|| {
-						UserConfirmationReview::StatementStoreProductSign(
-							StatementStoreProductSignReview {
-								calling_product_id: Some(self.connection.product_id()),
-								account: product_account_id.clone(),
-								payload: payload.clone(),
-							},
-						)
-					},
-				)
-				.await
-				.map_err(|err| StatementProofFailure::UnableToSign(err.reason))?;
-			if !confirmed {
-				return Err(StatementProofFailure::Refused);
-			}
+			let review = UserConfirmationReview::StatementStoreProductSign(
+				StatementStoreProductSignReview {
+					calling_product_id: Some(self.connection.product_id()),
+					account: product_account_id.clone(),
+					payload: payload.clone(),
+				},
+			);
+			self.confirm_signature(
+				cx,
+				CrossProductSignatureKind::StatementProof,
+				&product_account_id,
+				review,
+			)
+			.await
+			.map_err(statement_authority_failure)?;
 		}
 		let cx = remote_authority_context(cx);
 		let signature = remote_authority_call(
@@ -416,6 +411,10 @@ enum StatementProofFailure {
 fn statement_authority_failure(err: AuthorityError) -> StatementProofFailure {
 	match err {
 		AuthorityError::Disconnected => StatementProofFailure::NoSession,
+		AuthorityError::Rejected => StatementProofFailure::Refused,
+		AuthorityError::ConfirmationFailed(error) => {
+			StatementProofFailure::UnableToSign(error.reason)
+		},
 		err => StatementProofFailure::UnableToSign(err.to_string()),
 	}
 }

@@ -22,10 +22,13 @@ use crate::{
 	platform::ProductContext,
 };
 
-use super::authority::{
-	AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
-	CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-	SignRawAuthorityRequest, StatementStoreAllowanceKey,
+use super::{
+	authority::{
+		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
+		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
+		SignRawAuthorityRequest, StatementStoreAllowanceKey,
+	},
+	product_consent::ProductConsent,
 };
 
 /// The host's account authority as one product connection sees it: every call
@@ -65,6 +68,11 @@ impl ProductAccounts {
 		product_id: String,
 	) -> Result<[u8; 32], AuthorityError> {
 		self.authority.product_subtree_public_key(cx, session, product_id).await
+	}
+
+	/// The host's account-access decisions and review prompts.
+	pub fn consent(&self) -> &ProductConsent {
+		self.authority.consent()
 	}
 
 	/// Whether resolving `product_id`'s subtree needs SSO and host consent.
