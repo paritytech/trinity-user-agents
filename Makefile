@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-v2-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -199,8 +199,8 @@ ios-bootstrap: ## Generate everything hosts/ios needs before Xcode can load its 
 	@echo "hosts/ios can now be opened in Xcode."
 
 ios-build: ## Rebuild the local Rust package and the TestFlight-configured iOS simulator app.
-	@test -d "$(IOS_HOST)/.git" || { \
-		echo "Missing iOS checkout at $(IOS_HOST); set IOS_HOST to polkadot-app-ios-v2"; \
+	@test -d "$(IOS_HOST)/polkadot-app.xcodeproj" || { \
+		echo "Missing iOS app at $(IOS_HOST); set IOS_HOST to polkadot-app-ios-v2 or hosts/ios"; \
 		exit 1; \
 	}
 	./ios/truapi-host/scripts/rebuild.sh
@@ -238,6 +238,12 @@ ios-chat-run: ios-build ## Run the TrUAPI Playground Chat diagnosis in an iPhone
 	TRUAPI_IOS_E2E_CHAT_PRODUCT_URL="$(IOS_CHAT_PRODUCT_URL)" \
 	node scripts/launch-ios-chat-playground.mjs
 
+ios-chat-v2-run: ios-build ## Run the Chat Extension v2 sample product (playground/chat-v2) in an iPhone simulator and write its diagnosis rows.
+	TRUAPI_IOS_E2E_DEVICE="$(IOS_SIMULATOR_DEVICE)" \
+	TRUAPI_IOS_E2E_APP="$(IOS_APP)" \
+	TRUAPI_IOS_E2E_BUNDLE="$(IOS_BUNDLE)" \
+	node scripts/launch-ios-chat-v2.mjs
+
 ios-chat-host-playground-run: ios-build ## Verify Host Playground Chat through the workspace-linked TrUAPI client.
 	TRUAPI_IOS_E2E_DEVICE="$(IOS_SIMULATOR_DEVICE)" \
 	TRUAPI_IOS_E2E_APP="$(IOS_APP)" \
@@ -256,7 +262,7 @@ ios-chat-host-playground-run: ios-build ## Verify Host Playground Chat through t
 	TRUAPI_IOS_E2E_CHAT_TRUAPI_DIR="$(abspath js/packages/truapi)" \
 	node scripts/launch-ios-chat-playground.mjs
 
-ios-chat-all: ios-chat-run ios-chat-host-playground-run ## Run both local iOS Chat playground integrations.
+ios-chat-all: ios-chat-run ios-chat-v2-run ios-chat-host-playground-run ## Run the local iOS Chat playground integrations.
 
 TRUAPI_ANDROID_E2E_APK ?= hosts/android/app/build/outputs/apk/vanilla/debug/app-vanilla-debug.apk
 
