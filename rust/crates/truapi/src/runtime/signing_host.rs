@@ -1,8 +1,5 @@
 //! Wallet-local signing authority and incoming SSO handling.
 
-// Allocation uses `track`; the renewal loop around it is driven by native
-// entry points only, so on wasm the rest of the module is not reached yet.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod allowance_renewal;
 mod local_activation;
 pub mod ring_vrf;

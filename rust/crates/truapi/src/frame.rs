@@ -88,16 +88,7 @@ pub fn downgrade_call_error<E>(error: CallError<E>, version: u8) -> CallError<E>
 where
 	E: Versioned + IntoLatest + FromLatest,
 {
-	match error {
-		CallError::Domain(domain) => {
-			CallError::Domain(E::from_latest(domain.into_latest(), version))
-		},
-		CallError::Denied => CallError::Denied,
-		CallError::Unsupported => CallError::Unsupported,
-		CallError::MalformedFrame { reason } => CallError::MalformedFrame { reason },
-		CallError::HostFailure { reason } => CallError::HostFailure { reason },
-		CallError::Cancelled => CallError::Cancelled,
-	}
+	error.map_domain(|domain| E::from_latest(domain.into_latest(), version))
 }
 
 /// Which leg of a method's exchange a frame carries: `Request`/`Response` for
