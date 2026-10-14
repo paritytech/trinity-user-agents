@@ -8,6 +8,8 @@ enum ChatMessageBubbleAction: Equatable {
     case edited
     /// Sends a failed message again.
     case retry
+    /// Deletes the message after the user confirms. It is the last entry of the menu.
+    case delete
 }
 
 extension ChatMessageBubbleAction {
@@ -15,7 +17,8 @@ extension ChatMessageBubbleAction {
         for status: Chat.LocalMessage.Status,
         input: Chat.PeerMetadataInput,
         isEdited: Bool,
-        offersRetry: Bool = false
+        offersRetry: Bool = false,
+        offersDelete: Bool = false
     ) -> [ChatMessageBubbleAction] {
         var actions: [ChatMessageBubbleAction] = []
 
@@ -36,6 +39,10 @@ extension ChatMessageBubbleAction {
 
         if offersRetry, status == .outgoing(.failed) {
             actions.append(.retry)
+        }
+
+        if offersDelete {
+            actions.append(.delete)
         }
 
         return actions

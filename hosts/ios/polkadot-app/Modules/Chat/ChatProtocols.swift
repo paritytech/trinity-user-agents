@@ -58,6 +58,7 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func isMicrophoneDenied() -> Bool
     /// Sends a failed message of a product-source room again through `user_action` (P5.5).
     func retrySend(messageId: Chat.MessageId)
+    func deleteMessage(messageId: Chat.MessageId)
 }
 
 @MainActor
@@ -106,6 +107,9 @@ protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
     )
 
     func dismissChat(from view: ControllerBackedProtocol?)
+
+    /// Asks the user to confirm the delete of a message.
+    func confirmDeleteMessage(from view: ControllerBackedProtocol?, onConfirm: @escaping () -> Void)
 
     func showDocument(at url: URL)
 

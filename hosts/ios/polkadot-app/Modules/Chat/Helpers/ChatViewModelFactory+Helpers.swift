@@ -108,6 +108,16 @@ extension UIAction {
         }
     }
 
+    static func chatDelete(_ action: @escaping () -> Void) -> UIAction {
+        UIAction(
+            title: String(localized: .ChatExtension.messageDelete),
+            image: UIImage(systemName: "trash"),
+            attributes: .destructive
+        ) { _ in
+            action()
+        }
+    }
+
     static func chatRetry(_ action: @escaping () -> Void) -> UIAction {
         UIAction(
             title: String(localized: .Common.retry),

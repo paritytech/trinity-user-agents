@@ -168,6 +168,11 @@ extension ChatRoomPolicy {
         messageStore == .product && messageMenu.builtIns.contains(.retry)
     }
 
+    /// The built-in Delete. A product menu can hide it when message menus exist (P6.1).
+    var offersDelete: Bool {
+        messageMenu.builtIns.contains(.delete)
+    }
+
     /// The number that the chat list shows on the row of the room.
     func listBadgeCount(hostUnreadCount: Int) -> Int {
         switch listBadge {

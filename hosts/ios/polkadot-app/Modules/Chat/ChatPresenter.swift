@@ -229,6 +229,9 @@ private extension ChatPresenter {
             },
             retry: { [weak self] messageId in
                 self?.interactor.retrySend(messageId: messageId)
+            },
+            delete: { [weak self] messageId in
+                self?.handleDeleteAction(for: messageId)
             }
         )
 
@@ -405,6 +408,14 @@ private extension ChatPresenter {
                 from: view,
                 messageId: messageId
             )
+        }
+    }
+
+    func handleDeleteAction(for messageId: String) {
+        MainActor.assumeIsolated {
+            wireframe.confirmDeleteMessage(from: view) { [weak self] in
+                self?.interactor.deleteMessage(messageId: messageId)
+            }
         }
     }
 

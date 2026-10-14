@@ -145,6 +145,23 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
         view?.controller.navigationController?.popViewController(animated: true)
     }
 
+    func confirmDeleteMessage(from view: ControllerBackedProtocol?, onConfirm: @escaping () -> Void) {
+        let deleteAction = AlertPresentableAction(
+            title: String(localized: .ChatExtension.messageDelete),
+            style: .destructive,
+            handler: onConfirm
+        )
+
+        let viewModel = AlertPresentableViewModel(
+            title: String(localized: .ChatExtension.messageDeleteTitle),
+            message: nil,
+            actions: [deleteAction],
+            closeActionTitle: String(localized: .Common.cancel)
+        )
+
+        present(viewModel: viewModel, style: .alert, from: view)
+    }
+
     func showDocument(at url: URL) {
         documentAdapter.previewDocument(at: url) { [logger] result in
             switch result {

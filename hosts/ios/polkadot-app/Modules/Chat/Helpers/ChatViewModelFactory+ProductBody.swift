@@ -10,6 +10,7 @@ struct ProductBodyRenderContext {
     let deliveryDate: Date?
     let layoutContext: MessageLayoutContext
     let actions: ChatViewModelActions?
+    let offersDelete: Bool
 }
 
 extension ChatViewModelFactory {
@@ -34,11 +35,7 @@ extension ChatViewModelFactory {
             identifier: ChatMediaStackView.reuseIdentifier
         )
 
-        if let text, let actions = context.actions {
-            configuration.setActions { [actions] in
-                [UIAction.chatCopy { actions.copy(text) }]
-            }
-        }
+        setProductMenu(on: &configuration, text: text, context: context)
 
         return .init(context.messageId, configuration)
     }
@@ -70,11 +67,7 @@ extension ChatViewModelFactory {
             identifier: ChatActionsMessageView.reuseIdentifier
         )
 
-        if let text, let actions = context.actions {
-            configuration.setActions { [actions] in
-                [UIAction.chatCopy { actions.copy(text) }]
-            }
-        }
+        setProductMenu(on: &configuration, text: text, context: context)
 
         return .init(messageId, configuration)
     }
@@ -105,12 +98,38 @@ extension ChatViewModelFactory {
             layoutType: context.layoutContext.layoutType
         )
 
-        if let text = file.text?.nilIfEmpty, let actions = context.actions {
-            configuration.setActions { [actions] in
-                [UIAction.chatCopy { actions.copy(text) }]
-            }
-        }
+        setProductMenu(on: &configuration, text: file.text?.nilIfEmpty, context: context)
 
         return .init(context.messageId, configuration)
+    }
+}
+
+private extension ChatViewModelFactory {
+    /// Copy for a body with text, then Delete when the room offers it. Delete is the last entry.
+    func setProductMenu(
+        on configuration: inout ChatMessageContainerConfiguration,
+        text: String?,
+        context: ProductBodyRenderContext
+    ) {
+        guard let actions = context.actions, text != nil || context.offersDelete else {
+            return
+        }
+
+        let messageId = context.messageId
+        let offersDelete = context.offersDelete
+
+        configuration.setActions { [actions] in
+            var elements: [UIMenuElement] = []
+
+            if let text {
+                elements.append(UIAction.chatCopy { actions.copy(text) })
+            }
+
+            if offersDelete {
+                elements.append(UIAction.chatDelete { actions.delete(messageId) })
+            }
+
+            return elements
+        }
     }
 }

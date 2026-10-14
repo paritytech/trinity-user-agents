@@ -302,7 +302,8 @@ private extension ChatViewModelFactory {
                         for: status,
                         input: metadata.peerMetadata.input,
                         isEdited: isEdited,
-                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false
+                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false,
+                        offersDelete: metadata.chatMetadata.roomPolicy?.offersDelete ?? false
                     ),
                     status: status,
                     deliveryDate: deliveryDate,
@@ -322,7 +323,8 @@ private extension ChatViewModelFactory {
                         for: status,
                         input: metadata.peerMetadata.input,
                         isEdited: isEdited,
-                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false
+                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false,
+                        offersDelete: metadata.chatMetadata.roomPolicy?.offersDelete ?? false
                     ),
                     status: status,
                     deliveryDate: deliveryDate,
@@ -414,7 +416,8 @@ private extension ChatViewModelFactory {
                         for: status,
                         input: metadata.peerMetadata.input,
                         isEdited: isEdited,
-                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false
+                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false,
+                        offersDelete: metadata.chatMetadata.roomPolicy?.offersDelete ?? false
                     ),
                     status: status,
                     deliveryDate: deliveryDate,
@@ -531,7 +534,8 @@ private extension ChatViewModelFactory {
                 status: status,
                 deliveryDate: deliveryDate,
                 layoutContext: layoutContext,
-                actions: actions
+                actions: actions,
+                offersDelete: metadata.chatMetadata.roomPolicy?.offersDelete ?? false
             )
             return [productBodyConfiguration(body, context: context, metadata: metadata, reactions: reactions)]
         }
@@ -557,7 +561,8 @@ private extension ChatViewModelFactory {
                 messageActions: ChatMessageBubbleAction.textMessageActions(
                     for: context.status,
                     input: metadata.peerMetadata.input,
-                    isEdited: false
+                    isEdited: false,
+                    offersDelete: context.offersDelete
                 ),
                 status: context.status,
                 deliveryDate: context.deliveryDate,
@@ -761,6 +766,7 @@ private extension ChatViewModelFactory {
                 case .reaction: nil
                 case .edited: UIAction.chatEditHistory { actions.showEditHistory(messageId) }
                 case .retry: UIAction.chatRetry { actions.retry(messageId) }
+                case .delete: UIAction.chatDelete { actions.delete(messageId) }
                 }
             }
         }

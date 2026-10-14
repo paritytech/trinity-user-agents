@@ -9,6 +9,7 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
     enum Call: Equatable {
         case sendUserMessage(Chat.LocalMessage.Content)
         case sendCommand(Chat.Command)
+        case deleteMessage(Chat.MessageId)
     }
 
     var takesCommands = true
@@ -56,4 +57,8 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
     }
 
     func processAction(_: Chat.Action) async {}
+
+    func deleteMessage(_ messageId: Chat.MessageId) async throws {
+        continuation.yield(.deleteMessage(messageId))
+    }
 }

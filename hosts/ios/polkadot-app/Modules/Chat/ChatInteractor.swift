@@ -360,6 +360,16 @@ extension ChatInteractor: ChatInteractorInputProtocol {
         }
     }
 
+    func deleteMessage(messageId: Chat.MessageId) {
+        Task { [engine, logger] in
+            do {
+                try await engine.deleteMessage(messageId)
+            } catch {
+                logger.error("Can't delete message \(messageId): \(error)")
+            }
+        }
+    }
+
     func retrySend(messageId: Chat.MessageId) {
         // Seam for P5.5: a product-source room sends again through `user_action`, and no room has that
         // store until the room configuration decodes (P2.10).

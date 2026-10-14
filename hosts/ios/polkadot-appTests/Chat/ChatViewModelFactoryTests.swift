@@ -100,6 +100,33 @@ struct ChatViewModelFactoryTests {
         #expect(!menuTitles(of: bubble).contains(String(localized: .Common.retry)))
     }
 
+    @Test func anOwnMessageOfAProductRoomEndsItsMenuWithDelete() async throws {
+        let bubble = try await bubble(for: own(status: .delivered))
+
+        #expect(menuTitles(of: bubble).last == String(localized: .ChatExtension.messageDelete))
+    }
+
+    @Test func aProductMessageOffersDeleteToo() async throws {
+        let body = Chat.LocalMessage.Content.ProductBody.actions(.init(
+            text: "Pick one",
+            buttons: [.init(actionId: "a", title: "A")],
+            layout: .grid
+        ))
+
+        let bubble = try await bubble(for: product(body))
+
+        #expect(menuTitles(of: bubble) == [
+            String(localized: .chatCopy),
+            String(localized: .ChatExtension.messageDelete)
+        ])
+    }
+
+    @Test func aPersonChatOffersNoDelete() async throws {
+        let bubble = try await bubble(for: own(status: .delivered), policy: nil)
+
+        #expect(!menuTitles(of: bubble).contains(String(localized: .ChatExtension.messageDelete)))
+    }
+
     @Test func anEmptyProductRoomShowsTheHostText() async throws {
         let viewModel = try await viewModel(for: [], policy: .defaults)
 
@@ -249,7 +276,8 @@ extension ChatViewModelActions {
             unblockUser: {},
             startCall: { _ in },
             openProduct: { _ in },
-            retry: { _ in }
+            retry: { _ in },
+            delete: { _ in }
         )
     }
 }

@@ -88,6 +88,14 @@ extension ProductBot: ChatCommandHandling {
     }
 }
 
+// MARK: - ChatUserDeletionHandling
+
+extension ProductBot: ChatUserDeletionHandling {
+    func userDeleted(messageId: Chat.MessageId, roomId _: String?) async {
+        logger.debug("UserDeleted for \(messageId) waits for the V2 chat event binding (P2.10)")
+    }
+}
+
 // MARK: - ChatExtensionBotProtocol
 
 extension ProductBot: ChatExtensionBotProtocol {
