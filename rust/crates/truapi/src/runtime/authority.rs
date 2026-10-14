@@ -308,38 +308,11 @@ impl StatementStoreAllowanceKey {
 	}
 }
 
-/// Host account authority used by product runtimes.
+/// Wallet account operations bound to a selected session.
 #[async_trait]
-pub trait ProductAuthority: Send + Sync {
+pub trait AccountHolder: Send + Sync + 'static {
 	/// Current account-authority session, if connected.
 	fn current_session(&self) -> Option<AuthoritySession>;
-
-	/// Session state shared with this authority.
-	fn session_state(&self) -> Arc<SessionState>;
-
-	/// Seed a product subtree for authority tests.
-	#[cfg(test)]
-	fn cache_product_subtree_for_test(
-		&self,
-		_session: &SessionInfo,
-		_product_id: &str,
-		_public_key: [u8; 32],
-	) {
-	}
-
-	/// Request account connection for the calling product.
-	async fn request_login(
-		&self,
-		product: &ProductContext,
-	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>>;
-
-	/// Disconnect the current account-authority session.
-	async fn disconnect(&self);
-
-	/// Refresh session identity without user interaction.
-	async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
-		self.current_session()
-	}
 
 	/// Resolve the public key for a product's hard subtree.
 	async fn product_subtree_public_key(
@@ -348,21 +321,6 @@ pub trait ProductAuthority: Send + Sync {
 		session: &AuthoritySession,
 		product_id: String,
 	) -> Result<[u8; 32], AuthorityError>;
-
-	/// Whether subtree resolution needs SSO and host consent.
-	async fn subtree_resolution_reaches_account_holder(
-		&self,
-		session: &AuthoritySession,
-		product_id: &str,
-	) -> bool;
-
-	/// Whether this product account can sign without confirmation.
-	async fn auto_signing_status(
-		&self,
-		session: &AuthoritySession,
-		calling_product_id: &str,
-		account: &ProductAccountId,
-	) -> Result<AutoSigningGrant, AuthorityError>;
 
 	/// Sign an RFC-0023 Merlin transcript with a product account.
 	async fn sign_vrf(
@@ -453,6 +411,58 @@ pub trait ProductAuthority: Send + Sync {
 		request: ProductRequest<HostAccountRingVrfSignRequest>,
 	) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
 
+	/// Sign exact statement-store proof bytes with a product-derived account.
+	async fn sign_statement_store_product_payload(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		calling_product_id: Option<&str>,
+		account: ProductAccountId,
+		payload: Vec<u8>,
+	) -> Result<[u8; 64], AuthorityError>;
+
+	/// Derive product-scoped entropy for a connected session.
+	fn derive_entropy(
+		&self,
+		session: &AuthoritySession,
+		product_id: &str,
+		context: &[u8],
+	) -> Result<[u8; 32], AuthorityError>;
+}
+
+/// Host account authority used by product runtimes.
+#[async_trait]
+pub trait ProductAuthority: Send + Sync {
+	/// Seed a product subtree for authority tests.
+	#[cfg(test)]
+	fn cache_product_subtree_for_test(
+		&self,
+		_session: &SessionInfo,
+		_product_id: &str,
+		_public_key: [u8; 32],
+	) {
+	}
+
+	/// Refresh session identity without user interaction.
+	async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
+		self.current_session()
+	}
+
+	/// Whether subtree resolution needs SSO and host consent.
+	async fn subtree_resolution_reaches_account_holder(
+		&self,
+		session: &AuthoritySession,
+		product_id: &str,
+	) -> bool;
+
+	/// Whether this product account can sign without confirmation.
+	async fn auto_signing_status(
+		&self,
+		session: &AuthoritySession,
+		calling_product_id: &str,
+		account: &ProductAccountId,
+	) -> Result<AutoSigningGrant, AuthorityError>;
+
 	/// Ask the account authority to allocate product-scoped resources.
 	async fn allocate_resources(
 		&self,
@@ -501,24 +511,6 @@ pub trait ProductAuthority: Send + Sync {
 		session: &AuthoritySession,
 		product_id: String,
 	) -> Result<BulletinAllowanceKey, AuthorityError>;
-
-	/// Sign exact statement-store proof bytes with a product-derived account.
-	async fn sign_statement_store_product_payload(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
-		account: ProductAccountId,
-		payload: Vec<u8>,
-	) -> Result<[u8; 64], AuthorityError>;
-
-	/// Derive product-scoped entropy for a connected session.
-	fn derive_entropy(
-		&self,
-		session: &AuthoritySession,
-		product_id: &str,
-		context: &[u8],
-	) -> Result<[u8; 32], AuthorityError>;
 
 	/// Core-only root-derived key for stable contact handles across products.
 	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;

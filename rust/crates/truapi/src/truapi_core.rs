@@ -26,6 +26,19 @@ pub struct TrUApiCore {
 	session_state: Arc<SessionState>,
 }
 
+/// Build a dispatcher core around an already-created product runtime.
+#[instrument(skip_all, fields(runtime.method = "core.from_product_runtime"))]
+pub fn from_product_runtime(
+	runtime: Arc<ProductRuntimeHost>,
+	spawner: Spawner,
+	session_state: Arc<SessionState>,
+) -> Self {
+	let execution_kind = runtime.execution_kind();
+	let mut dispatcher = Dispatcher::for_execution(spawner, execution_kind);
+	dispatcher::register(&mut dispatcher, runtime);
+	Self { dispatcher, session_state }
+}
+
 impl TrUApiCore {
 	/// Build a core around a direct `TrUApi` implementation. The session
 	/// state holder is unused on this path (no platform pushes updates),
@@ -81,19 +94,6 @@ impl TrUApiCore {
 			product,
 		));
 		Self::from_product_runtime(runtime, services.spawner.clone(), authority.session_state())
-	}
-
-	/// Build a dispatcher core around an already-created product runtime.
-	#[instrument(skip_all, fields(runtime.method = "core.from_product_runtime"))]
-	pub fn from_product_runtime(
-		runtime: Arc<ProductRuntimeHost>,
-		spawner: Spawner,
-		session_state: Arc<SessionState>,
-	) -> Self {
-		let execution_kind = runtime.execution_kind();
-		let mut dispatcher = Dispatcher::for_execution(spawner, execution_kind);
-		dispatcher::register(&mut dispatcher, runtime);
-		Self { dispatcher, session_state }
 	}
 
 	/// Handle to the shared session-state holder used by subscriptions and

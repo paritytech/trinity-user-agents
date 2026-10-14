@@ -24,7 +24,7 @@ use crate::runtime::{
 };
 
 #[truapi::async_trait]
-impl ResourceAllocation for ProductRuntimeHost {
+impl<H: AccountHolder> ResourceAllocation for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "resource_allocation.request"))]
 	async fn request(
 		&self,
@@ -89,7 +89,7 @@ impl ResourceAllocation for ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Entropy for ProductRuntimeHost {
+impl<H: AccountHolder> Entropy for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "entropy.derive"))]
 	async fn derive(
 		&self,

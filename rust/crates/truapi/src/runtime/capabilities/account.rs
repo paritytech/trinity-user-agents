@@ -41,7 +41,7 @@ use crate::{
 };
 
 #[truapi::async_trait]
-impl Account for ProductRuntimeHost {
+impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "account.get_account"))]
 	async fn get_account(
 		&self,

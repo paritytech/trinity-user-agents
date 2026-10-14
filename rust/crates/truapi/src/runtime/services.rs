@@ -19,7 +19,7 @@ use crate::{
 	host_logic::worker::WorkerLedger,
 	platform::{HostInfo, JsonRpcConnection, PermissionStatusHost, Platform},
 	runtime::{
-		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
+		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
 	},
 	subscription::Spawner,

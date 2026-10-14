@@ -59,93 +59,86 @@ impl Drop for SsoDisconnectMonitor {
 	}
 }
 
-impl PairingHost {
-	fn stop_disconnect_monitor(&self) {
-		self.disconnect_monitor
-			.lock()
-			.expect("SSO disconnect monitor mutex poisoned")
-			.take();
-	}
+/// Watch the session's topics for a peer disconnect statement, replacing
+/// any monitor for a different session. No-op when one is already running
+/// for this session.
+pub fn start_disconnect_monitor(&self, session: &SessionInfo) {
+	let Some(sso) = session.sso.clone() else {
+		self.stop_disconnect_monitor();
+		return;
+	};
+	let key = SsoSessionKey::from_session(&sso);
 
-	/// Watch the session's topics for a peer disconnect statement, replacing
-	/// any monitor for a different session. No-op when one is already running
-	/// for this session.
-	pub fn start_disconnect_monitor(&self, session: &SessionInfo) {
-		let Some(sso) = session.sso.clone() else {
-			self.stop_disconnect_monitor();
+	let (registration, spawner) = {
+		let mut current =
+			self.disconnect_monitor.lock().expect("SSO disconnect monitor mutex poisoned");
+		if current.as_ref().is_some_and(|active| active.key == key) {
+			return;
+		}
+		let (abort, registration) = AbortHandle::new_pair();
+		*current = Some(SsoDisconnectMonitor { key, abort });
+		(registration, self.spawner.clone())
+	};
+
+	let statement_store = self.statement_store.clone();
+	let pairing_host = self.weak_self.clone();
+	let future = async move {
+		let result = wait_for_sso_peer_disconnect(statement_store, sso).await;
+		let Some(pairing_host) = pairing_host.upgrade() else {
 			return;
 		};
-		let key = SsoSessionKey::from_session(&sso);
-
-		let (registration, spawner) = {
-			let mut current =
-				self.disconnect_monitor.lock().expect("SSO disconnect monitor mutex poisoned");
-			if current.as_ref().is_some_and(|active| active.key == key) {
-				return;
+		{
+			let mut active = pairing_host
+				.disconnect_monitor
+				.lock()
+				.expect("SSO disconnect monitor mutex poisoned");
+			if active.as_ref().is_some_and(|active| active.key == key) {
+				*active = None;
 			}
-			let (abort, registration) = AbortHandle::new_pair();
-			*current = Some(SsoDisconnectMonitor { key, abort });
-			(registration, self.spawner.clone())
-		};
-
-		let statement_store = self.statement_store.clone();
-		let pairing_host = self.weak_self.clone();
-		let future = async move {
-			let result = wait_for_sso_peer_disconnect(statement_store, sso).await;
-			let Some(pairing_host) = pairing_host.upgrade() else {
-				return;
-			};
-			{
-				let mut active = pairing_host
-					.disconnect_monitor
-					.lock()
-					.expect("SSO disconnect monitor mutex poisoned");
-				if active.as_ref().is_some_and(|active| active.key == key) {
-					*active = None;
-				}
-			}
-			match result {
-				Ok(()) => {
-					pairing_host.handle_signing_host_disconnected(key).await;
-				},
-				Err(reason) => {
-					warn!(%reason, "SSO peer disconnect monitor stopped");
-				},
-			}
-		};
-		spawner(Box::pin(Abortable::new(future, registration).map(|_| ())));
-	}
-
-	/// Stop channel work for a cleared session: wake its in-flight waiters
-	/// with a local disconnect, then drop the peer-disconnect monitor.
-	pub fn stop_session_channel(&self, session: Option<&SessionInfo>) {
-		if let Some(sso) = session.and_then(|session| session.sso.as_ref()) {
-			self.session_disconnects.notify(sso, SSO_LOCAL_DISCONNECT_REASON);
 		}
-		*self.newest_request.lock().expect("newest request mutex poisoned") = None;
-		self.clear_statement_store_allowance_keys(session);
-		self.clear_bulletin_allowance_keys(session);
-		self.stop_disconnect_monitor();
-		self.clear_product_subtrees(session);
-	}
+		match result {
+			Ok(()) => {
+				pairing_host.handle_signing_host_disconnected(key).await;
+			},
+			Err(reason) => {
+				warn!(%reason, "SSO peer disconnect monitor stopped");
+			},
+		}
+	};
+	spawner(Box::pin(Abortable::new(future, registration).map(|_| ())));
+}
 
-	/// Best-effort `Disconnected` notification to the SSO peer.
-	#[instrument(skip_all, fields(runtime.method = "sso.disconnect.submit"))]
-	pub async fn submit_disconnected_message(&self, session: &SessionInfo) -> Result<(), String> {
-		let sso = session.sso.as_ref().ok_or_else(|| "No SSO session state".to_string())?;
-		let message_id = sso_message_id();
-		let message = RemoteMessage {
-			message_id: message_id.clone(),
-			data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-		};
-		let statement = self.build_request_channel_statement(sso, message_id, message, None)?;
-		self.statement_store
-			.submit_fire_and_forget(statement, "SSO statement-store")
-			.await
-			.map_err(|err| format!("SSO statement submit failed: {err}"))?;
-		Ok(())
+/// Stop channel work for a cleared session: wake its in-flight waiters
+/// with a local disconnect, then drop the peer-disconnect monitor.
+pub fn stop_session_channel(&self, session: Option<&SessionInfo>) {
+	if let Some(sso) = session.and_then(|session| session.sso.as_ref()) {
+		self.session_disconnects.notify(sso, SSO_LOCAL_DISCONNECT_REASON);
 	}
+	*self.newest_request.lock().expect("newest request mutex poisoned") = None;
+	self.clear_statement_store_allowance_keys(session);
+	self.clear_bulletin_allowance_keys(session);
+	self.stop_disconnect_monitor();
+	self.clear_product_subtrees(session);
+}
 
+/// Best-effort `Disconnected` notification to the SSO peer.
+#[instrument(skip_all, fields(runtime.method = "sso.disconnect.submit"))]
+pub async fn submit_disconnected_message(&self, session: &SessionInfo) -> Result<(), String> {
+	let sso = session.sso.as_ref().ok_or_else(|| "No SSO session state".to_string())?;
+	let message_id = sso_message_id();
+	let message = RemoteMessage {
+		message_id: message_id.clone(),
+		data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
+	};
+	let statement = self.build_request_channel_statement(sso, message_id, message, None)?;
+	self.statement_store
+		.submit_fire_and_forget(statement, "SSO statement-store")
+		.await
+		.map_err(|err| format!("SSO statement submit failed: {err}"))?;
+	Ok(())
+}
+
+impl SsoRequestService {
 	/// Build a statement on the session's request channel, recording
 	/// `newest` as the request the channel now carries.
 	///
@@ -316,6 +309,15 @@ impl PairingHost {
 			self.handle_signing_host_disconnected(key).await;
 		}
 		result.map(|response| response.payload)
+	}
+}
+
+impl PairingHost {
+	fn stop_disconnect_monitor(&self) {
+		self.disconnect_monitor
+			.lock()
+			.expect("SSO disconnect monitor mutex poisoned")
+			.take();
 	}
 
 	/// Resolve a product's hard-subtree public key, asking the Account Holder
@@ -695,37 +697,6 @@ impl PairingHost {
 		.await
 	}
 
-	async fn allocate_bulletin_allowance_key(
-		&self,
-		cx: &CallContext,
-		session: &SessionInfo,
-		lifecycle_epoch: u64,
-		product_id: String,
-		on_existing: OnExistingAllowancePolicy,
-	) -> Result<BulletinAllowanceKey, AuthorityError> {
-		match self
-			.remote_allowance_slot(
-				cx,
-				session,
-				&product_id,
-				latest::AllocatableResource::BulletinAllowance,
-				on_existing,
-			)
-			.await?
-		{
-			SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
-				self.cache_bulletin_allowance_key(
-					session,
-					lifecycle_epoch,
-					&product_id,
-					slot_account_key,
-				)
-				.await
-			},
-			other => Err(unexpected_resource("bulletin allowance", &other)),
-		}
-	}
-
 	async fn cache_allowance_outcomes(
 		&self,
 		cx: &CallContext,
@@ -796,32 +767,6 @@ fn allowance_name(resource: &latest::AllocatableResource) -> &'static str {
 		latest::AllocatableResource::StatementStoreAllowance => "statement-store allowance",
 		latest::AllocatableResource::BulletinAllowance => "bulletin allowance",
 		_ => "resource",
-	}
-}
-
-/// Reason for an allocation that came back as a different resource kind; names
-/// only the kind so no key material reaches logs.
-fn unexpected_resource(label: &str, resource: &SsoAllocatedResource) -> AuthorityError {
-	AuthorityError::Unknown {
-		reason: format!("Unexpected {label} response resource: {}", resource.kind()),
-	}
-}
-
-fn remote_authority_error(reason: impl Into<SsoRemoteResponseError>) -> AuthorityError {
-	match reason.into() {
-		SsoRemoteResponseError::Cancelled(err) => AuthorityError::Cancelled(
-			AuthorityCancelError::new(err.remote_message_id(), err.reason()),
-		),
-		SsoRemoteResponseError::LocalDisconnected | SsoRemoteResponseError::PeerDisconnected => {
-			AuthorityError::Disconnected
-		},
-		SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
-			"Rejected" | "User rejected" => AuthorityError::Rejected,
-			SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => {
-				AuthorityError::Disconnected
-			},
-			_ => AuthorityError::Unknown { reason },
-		},
 	}
 }
 

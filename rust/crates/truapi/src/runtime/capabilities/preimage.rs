@@ -33,7 +33,7 @@ use crate::{
 };
 
 #[truapi::async_trait]
-impl Preimage for ProductRuntimeHost {
+impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "preimage.lookup_subscribe"))]
 	async fn lookup_subscribe(
 		&self,
@@ -55,7 +55,7 @@ impl Preimage for ProductRuntimeHost {
 			// Emit the value once, then keep the subscription open until the
 			// caller unsubscribes, since there is nothing left to report.
 			if let Ok(key_bytes) = <[u8; 32]>::try_from(key.as_slice()) &&
-				let Some(value) = self.services.cached_preimage(&key_bytes)
+				let Some(value) = self.connection.services.cached_preimage(&key_bytes)
 			{
 				let item = latest::RemotePreimageLookupSubscribeItem { value: Some(value) };
 				let stream = futures::stream::once(async move { Ok(item) })
@@ -68,7 +68,7 @@ impl Preimage for ProductRuntimeHost {
 			// cannot feed products forged content. A mismatch is reported as a
 			// miss, so the product still gets its initial current-value/miss
 			// emission.
-			let stream = self.platform.lookup_preimage(key.clone()).map(move |item| {
+			let stream = self.connection.platform.lookup_preimage(key.clone()).map(move |item| {
 				let value = match item {
 					Ok(value) => value,
 					Err(error) => {

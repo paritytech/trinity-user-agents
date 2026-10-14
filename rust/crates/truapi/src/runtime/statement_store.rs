@@ -50,7 +50,7 @@ impl StatementStore for ProductRuntimeHost {
 		RemoteStatementStoreSubscribeItem,
 		CallError<RemoteStatementStoreSubscribeError>,
 	> {
-		match self.open_statement_subscription(request).await {
+		match self.connection.open_statement_subscription(request).await {
 			Ok(subscription) => subscription,
 			Err(error) => Subscription::interrupted(error),
 		}
@@ -236,7 +236,7 @@ impl futures::Stream for StatementStoreSubscriptionStream {
 	}
 }
 
-impl ProductRuntimeHost {
+impl ProductConnection {
 	/// Open the remote statement-store subscription, reporting a failure
 	/// before its first item as the interrupt the subscription ends with.
 	async fn open_statement_subscription(
@@ -315,7 +315,9 @@ impl ProductRuntimeHost {
 	pub fn statement_store_rpc(&self) -> StatementStoreRpc {
 		self.services.statement_store.clone()
 	}
+}
 
+impl ProductRuntimeHost {
 	async fn create_product_statement_proof(
 		&self,
 		cx: &CallContext,

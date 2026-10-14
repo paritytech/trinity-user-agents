@@ -15,7 +15,7 @@ use super::from_latest_error;
 use crate::{
 	host_logic::scanner::{accepts, validate_request},
 	platform::{HostScan, ProductExecutionKind},
-	runtime::{ProductRuntimeHost, until_cancelled},
+	runtime::{AccountHolder, ProductRuntimeHost, until_cancelled},
 };
 
 fn unknown(reason: impl ToString) -> CallError<latest::HostScannerScanError> {
@@ -23,7 +23,7 @@ fn unknown(reason: impl ToString) -> CallError<latest::HostScannerScanError> {
 }
 
 #[truapi::async_trait]
-impl Scanner for ProductRuntimeHost {
+impl<H: AccountHolder> Scanner for ProductRuntimeHost<H> {
 	/// Checked in this order so a host without a scanner, or a request the
 	/// product could not make, never opens a viewfinder.
 	#[instrument(skip_all, fields(runtime.method = "scanner.scan"))]
@@ -35,22 +35,27 @@ impl Scanner for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			let platform = self.services.scanner_platform().ok_or(CallError::Unsupported)?;
+			let platform =
+				self.connection.services.scanner_platform().ok_or(CallError::Unsupported)?;
 			validate_request(&request).map_err(|reason| {
 				CallError::Domain(latest::HostScannerScanError::InvalidRequest { reason })
 			})?;
-			if self.execution_kind() == ProductExecutionKind::Worker && !self.recently_tapped() {
+			if self.connection.execution_kind() == ProductExecutionKind::Worker &&
+				!self.connection.recently_tapped()
+			{
 				return Err(CallError::Domain(latest::HostScannerScanError::NotVisible));
 			}
 			let _claim = self
+				.connection
 				.services
 				.claim_scan()
 				.ok_or_else(|| CallError::Domain(latest::HostScannerScanError::Busy))?;
 
-			let answer = until_cancelled(cx, platform.scan_code(&self.product, &request))
-				.await
-				.map_err(unknown)?
-				.map_err(|error| unknown(error.reason))?;
+			let answer =
+				until_cancelled(cx, platform.scan_code(&self.connection.product, &request))
+					.await
+					.map_err(unknown)?
+					.map_err(|error| unknown(error.reason))?;
 
 			let outcome = match answer {
 				HostScan::Scanned { text, format } if accepts(&request, format, &text) => {

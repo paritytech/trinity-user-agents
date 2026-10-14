@@ -290,6 +290,44 @@ fn resolve_target(
 	}
 }
 
+impl WalletAccountHolder {
+	/// The ledger targets `owner` promised, dropping any it did not.
+	///
+	/// An entry promised by a different identity would consume this one's slots for
+	/// an account it never promised, so it is removed rather than skipped — the cost
+	/// is paid once per identity change instead of on every tick. The ledger is only
+	/// rewritten when something was actually dropped.
+	///
+	/// The lock covers the read as well as the write, because this is a
+	/// read-modify-write of the whole ledger: reading outside it lets a
+	/// [`track_targets`] call land in the gap and be overwritten by a view that
+	/// predates it, leaving that account tracked nowhere and never renewed again.
+	///
+	/// The labels are logged here rather than only returned. Every step between this
+	/// and the report can fail, and `run_tick` does not read the report at all, so
+	/// the log is the one place a prune is recorded unconditionally.
+	async fn owned_targets(
+		storage: &(impl CoreStorage + ?Sized),
+		ledger_lock: &Mutex<()>,
+		owner: [u8; 32],
+	) -> Result<(Vec<StatementRenewalTarget>, Vec<String>), String> {
+		let _guard = ledger_lock.lock().await;
+		let (owned, foreign): (Vec<_>, Vec<_>) = read_entries(storage)
+			.await?
+			.into_iter()
+			.partition(|entry| entry.is_owned_by(owner));
+		let pruned: Vec<String> = foreign.iter().map(|entry| target_label(&entry.target)).collect();
+		if !foreign.is_empty() {
+			warn!(
+				dropped = ?pruned,
+				"pruning renewal targets promised by a previous identity"
+			);
+			write_entries(storage, &owned).await?;
+		}
+		Ok((owned.into_iter().map(|entry| entry.target).collect(), pruned))
+	}
+}
+
 /// Record `targets` in the ledger under the active identity.
 pub async fn track(
 	signing_host: &SigningHost,
@@ -353,42 +391,6 @@ fn resolve_targets(
 			},
 		})
 		.collect()
-}
-
-/// The ledger targets `owner` promised, dropping any it did not.
-///
-/// An entry promised by a different identity would consume this one's slots for
-/// an account it never promised, so it is removed rather than skipped — the cost
-/// is paid once per identity change instead of on every tick. The ledger is only
-/// rewritten when something was actually dropped.
-///
-/// The lock covers the read as well as the write, because this is a
-/// read-modify-write of the whole ledger: reading outside it lets a
-/// [`track_targets`] call land in the gap and be overwritten by a view that
-/// predates it, leaving that account tracked nowhere and never renewed again.
-///
-/// The labels are logged here rather than only returned. Every step between this
-/// and the report can fail, and `run_tick` does not read the report at all, so
-/// the log is the one place a prune is recorded unconditionally.
-async fn owned_targets(
-	storage: &(impl CoreStorage + ?Sized),
-	ledger_lock: &Mutex<()>,
-	owner: [u8; 32],
-) -> Result<(Vec<StatementRenewalTarget>, Vec<String>), String> {
-	let _guard = ledger_lock.lock().await;
-	let (owned, foreign): (Vec<_>, Vec<_>) = read_entries(storage)
-		.await?
-		.into_iter()
-		.partition(|entry| entry.is_owned_by(owner));
-	let pruned: Vec<String> = foreign.iter().map(|entry| target_label(&entry.target)).collect();
-	if !foreign.is_empty() {
-		warn!(
-			dropped = ?pruned,
-			"pruning renewal targets promised by a previous identity"
-		);
-		write_entries(storage, &owned).await?;
-	}
-	Ok((owned.into_iter().map(|entry| entry.target).collect(), pruned))
 }
 
 /// One renewal pass: resolve the ledger against the active session and renew

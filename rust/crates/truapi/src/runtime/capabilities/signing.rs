@@ -35,7 +35,7 @@ use crate::runtime::{
 };
 
 #[truapi::async_trait]
-impl Signing for ProductRuntimeHost {
+impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "signing.sign_payload"))]
 	async fn sign_payload(
 		&self,
@@ -403,7 +403,7 @@ impl Signing for ProductRuntimeHost {
 	}
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// Whether the local authority can sign without confirmation.
 	async fn auto_signing_status(
 		&self,

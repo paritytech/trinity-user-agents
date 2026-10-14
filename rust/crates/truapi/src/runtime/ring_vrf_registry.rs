@@ -33,60 +33,7 @@ pub struct RingVrfRegistryStore {
 	storage_guard: futures::lock::Mutex<()>,
 }
 
-impl RingVrfRegistryStore {
-	pub fn new(platform: Arc<dyn Platform>) -> Arc<Self> {
-		Arc::new(Self {
-			platform,
-			cache: Mutex::new(HashMap::new()),
-			storage_guard: futures::lock::Mutex::new(()),
-		})
-	}
-
-	pub async fn entry(
-		&self,
-		root_public_key: [u8; 32],
-		handle: &ProductAccountId,
-	) -> Result<Option<RegisteredRingVrfKey>, RingVrfError> {
-		Ok(self
-			.snapshot(root_public_key)
-			.await?
-			.entries
-			.into_iter()
-			.find(|entry| entry.handle == *handle))
-	}
-
-	pub async fn complete_owner_entries(
-		&self,
-		root_public_key: [u8; 32],
-		owner: &str,
-	) -> Result<Option<Vec<RegisteredRingVrfKey>>, RingVrfError> {
-		let snapshot = self.snapshot(root_public_key).await?;
-		if !snapshot.complete_owners.iter().any(|item| item == owner) {
-			return Ok(None);
-		}
-		Ok(Some(
-			snapshot
-				.entries
-				.into_iter()
-				.filter(|entry| entry.handle.dot_ns_identifier == owner)
-				.collect(),
-		))
-	}
-
-	pub async fn owner_entries(
-		&self,
-		root_public_key: [u8; 32],
-		owner: &str,
-	) -> Result<Vec<RegisteredRingVrfKey>, RingVrfError> {
-		Ok(self
-			.snapshot(root_public_key)
-			.await?
-			.entries
-			.into_iter()
-			.filter(|entry| entry.handle.dot_ns_identifier == owner)
-			.collect())
-	}
-
+impl RegistryUpdate<'_> {
 	/// Persist a registration without replacing an existing key.
 	pub async fn register(
 		&self,
@@ -114,6 +61,27 @@ impl RingVrfRegistryStore {
 		if !snapshot.selected_providers.iter().any(|provider| provider.ring == ring) {
 			snapshot.selected_providers.push(SelectedProvider { ring, handle });
 		}
+		self.persist_under_guard(root_public_key, snapshot).await
+	}
+
+	/// Persist a user-selected provider after validating its registration.
+	pub async fn select_provider(
+		&self,
+		root_public_key: [u8; 32],
+		ring: RingLocation,
+		handle: ProductAccountId,
+	) -> Result<(), RingVrfError> {
+		let _guard = self.storage_guard.lock().await;
+		let mut snapshot = self.load_under_guard(root_public_key).await?;
+		let registered = snapshot
+			.entries
+			.iter()
+			.any(|entry| entry.handle == handle && entry.rings.contains(&ring));
+		if !registered {
+			return Err(RingVrfError::KeyNotInRing);
+		}
+		snapshot.selected_providers.retain(|provider| provider.ring != ring);
+		snapshot.selected_providers.push(SelectedProvider { ring, handle });
 		self.persist_under_guard(root_public_key, snapshot).await
 	}
 
@@ -179,6 +147,61 @@ impl RingVrfRegistryStore {
 		self.persist_under_guard(root_public_key, snapshot).await?;
 		Ok(owner_entries)
 	}
+}
+
+impl RingVrfRegistryStore {
+	pub fn new(platform: Arc<dyn Platform>) -> Arc<Self> {
+		Arc::new(Self {
+			platform,
+			cache: Mutex::new(HashMap::new()),
+			storage_guard: futures::lock::Mutex::new(()),
+		})
+	}
+
+	pub async fn entry(
+		&self,
+		root_public_key: [u8; 32],
+		handle: &ProductAccountId,
+	) -> Result<Option<RegisteredRingVrfKey>, RingVrfError> {
+		Ok(self
+			.snapshot(root_public_key)
+			.await?
+			.entries
+			.into_iter()
+			.find(|entry| entry.handle == *handle))
+	}
+
+	pub async fn complete_owner_entries(
+		&self,
+		root_public_key: [u8; 32],
+		owner: &str,
+	) -> Result<Option<Vec<RegisteredRingVrfKey>>, RingVrfError> {
+		let snapshot = self.snapshot(root_public_key).await?;
+		if !snapshot.complete_owners.iter().any(|item| item == owner) {
+			return Ok(None);
+		}
+		Ok(Some(
+			snapshot
+				.entries
+				.into_iter()
+				.filter(|entry| entry.handle.dot_ns_identifier == owner)
+				.collect(),
+		))
+	}
+
+	pub async fn owner_entries(
+		&self,
+		root_public_key: [u8; 32],
+		owner: &str,
+	) -> Result<Vec<RegisteredRingVrfKey>, RingVrfError> {
+		Ok(self
+			.snapshot(root_public_key)
+			.await?
+			.entries
+			.into_iter()
+			.filter(|entry| entry.handle.dot_ns_identifier == owner)
+			.collect())
+	}
 
 	pub async fn selected_provider(
 		&self,
@@ -207,27 +230,6 @@ impl RingVrfRegistryStore {
 			.filter(|entry| entry.rings.contains(ring))
 			.map(|entry| entry.handle)
 			.collect())
-	}
-
-	/// Persist a user-selected provider after validating its registration.
-	pub async fn select_provider(
-		&self,
-		root_public_key: [u8; 32],
-		ring: RingLocation,
-		handle: ProductAccountId,
-	) -> Result<(), RingVrfError> {
-		let _guard = self.storage_guard.lock().await;
-		let mut snapshot = self.load_under_guard(root_public_key).await?;
-		let registered = snapshot
-			.entries
-			.iter()
-			.any(|entry| entry.handle == handle && entry.rings.contains(&ring));
-		if !registered {
-			return Err(RingVrfError::KeyNotInRing);
-		}
-		snapshot.selected_providers.retain(|provider| provider.ring != ring);
-		snapshot.selected_providers.push(SelectedProvider { ring, handle });
-		self.persist_under_guard(root_public_key, snapshot).await
 	}
 
 	async fn snapshot(&self, root_public_key: [u8; 32]) -> Result<RegistrySnapshot, RingVrfError> {
@@ -355,6 +357,17 @@ fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
 		}
 	}
 	Ok(())
+}
+
+fn apply_ring_vrf_disclosure(
+	entries: &mut [latest::RegisteredRingVrfKey],
+	disclosure: latest::RingVrfKeyDisclosure,
+) {
+	if disclosure == latest::RingVrfKeyDisclosure::Anonymized {
+		for entry in entries {
+			entry.public_key = None;
+		}
+	}
 }
 
 pub fn validate_owner_listing(

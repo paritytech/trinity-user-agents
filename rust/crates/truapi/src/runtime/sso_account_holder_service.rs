@@ -41,26 +41,7 @@ use crate::{
 	},
 };
 
-/// Handler error once the pairing host has withdrawn the request; never
-/// posted, because a withdrawn request has no response.
-const WITHDRAWN: &str = "Withdrawn";
-
-/// SSO handlers served by a locally activated [`SigningHost`].
-pub struct SigningHostSsoService {
-	signing_host: Arc<SigningHost>,
-}
-
-impl SigningHostSsoService {
-	/// Serve requests and prompt through the signing host's platform.
-	pub fn new(signing_host: Arc<SigningHost>) -> Self {
-		Self { signing_host }
-	}
-
-	/// The signing session captured before dispatching one request.
-	pub fn current_session(&self) -> Option<AuthoritySession> {
-		self.signing_host.current_session()
-	}
-
+impl SsoAccountHolderService {
 	/// Answer `message`, unless the pairing host withdraws it first.
 	///
 	/// A `Cancel` withdraws the request it names and is itself not answered.
@@ -80,37 +61,6 @@ impl SigningHostSsoService {
 			},
 			Dispatch::Response(_) if request.cancel.is_cancelled() => Dispatch::Withdrawn,
 			dispatch => dispatch,
-		}
-	}
-
-	/// The person's answer to `review`, or `None` once the pairing host has
-	/// withdrawn the request, which leaves nothing authorized.
-	async fn prompt(
-		&self,
-		cx: &SsoRequestContext,
-		review: UserConfirmationReview,
-	) -> Option<Result<bool, api::GenericError>> {
-		let answer = self.signing_host.platform.confirm_user_action(review).fuse();
-		let withdrawn = cx.call.cancel().cancelled().fuse();
-		pin_mut!(answer, withdrawn);
-		futures::select_biased! {
-			_ = withdrawn => None,
-			answer = answer => Some(answer),
-		}
-	}
-
-	/// Run the platform confirmation seam; rejection and failure both refuse
-	/// the operation with an opaque reason (host-spec B.7).
-	async fn confirm(
-		&self,
-		cx: &SsoRequestContext,
-		review: UserConfirmationReview,
-	) -> Result<(), String> {
-		match self.prompt(cx, review).await {
-			Some(Ok(true)) => Ok(()),
-			Some(Ok(false)) => Err("Rejected".to_string()),
-			Some(Err(err)) => Err(format!("confirmation failed: {}", err.reason)),
-			None => Err(WITHDRAWN.to_string()),
 		}
 	}
 
@@ -225,6 +175,53 @@ impl SigningHostSsoService {
 			.await
 			.map(|response| response.transaction)
 			.map_err(|err| err.to_string())
+	}
+}
+
+/// Handler error once the pairing host has withdrawn the request; never
+/// posted, because a withdrawn request has no response.
+const WITHDRAWN: &str = "Withdrawn";
+
+/// SSO handlers served by a locally activated [`SigningHost`].
+pub struct SigningHostSsoService {
+	signing_host: Arc<SigningHost>,
+}
+
+impl SigningHostSsoService {
+	/// Serve requests and prompt through the signing host's platform.
+	pub fn new(signing_host: Arc<SigningHost>) -> Self {
+		Self { signing_host }
+	}
+
+	/// The person's answer to `review`, or `None` once the pairing host has
+	/// withdrawn the request, which leaves nothing authorized.
+	async fn prompt(
+		&self,
+		cx: &SsoRequestContext,
+		review: UserConfirmationReview,
+	) -> Option<Result<bool, api::GenericError>> {
+		let answer = self.signing_host.platform.confirm_user_action(review).fuse();
+		let withdrawn = cx.call.cancel().cancelled().fuse();
+		pin_mut!(answer, withdrawn);
+		futures::select_biased! {
+			_ = withdrawn => None,
+			answer = answer => Some(answer),
+		}
+	}
+
+	/// Run the platform confirmation seam; rejection and failure both refuse
+	/// the operation with an opaque reason (host-spec B.7).
+	async fn confirm(
+		&self,
+		cx: &SsoRequestContext,
+		review: UserConfirmationReview,
+	) -> Result<(), String> {
+		match self.prompt(cx, review).await {
+			Some(Ok(true)) => Ok(()),
+			Some(Ok(false)) => Err("Rejected".to_string()),
+			Some(Err(err)) => Err(format!("confirmation failed: {}", err.reason)),
+			None => Err(WITHDRAWN.to_string()),
+		}
 	}
 
 	async fn allocate(
@@ -367,7 +364,7 @@ fn resource_allocation_outcome(
 }
 
 #[truapi_macros::sso_service]
-impl SigningHostSsoService {
+impl SsoAccountHolderService {
 	/// Sign a payload or raw bytes with a product account.
 	async fn sign(&self, cx: &SsoRequestContext, request: SignRequest) -> SignResponse {
 		let payload = self.serve_sign(cx, request).await;
