@@ -28,15 +28,48 @@ package io.parity.truapi
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
+import uniffi.truapi.ChatActivity
+import uniffi.truapi.ChatCommandSpec
+import uniffi.truapi.ChatEvent
+import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
+import uniffi.truapi.ChatRoomMetadata
+import uniffi.truapi.ChatRoomPreview
+import uniffi.truapi.ChatSuggestion
+import uniffi.truapi.ChatToolbarAction
+import uniffi.truapi.ChatUserAction
 import uniffi.truapi.HostChatActionSubscribeItem
+import uniffi.truapi.NativeChatFeedRejection
+import uniffi.truapi.NativeChatQuery
+import uniffi.truapi.NativeChatQueryAnswer
+import uniffi.truapi.NativeChatQueryObserver
+import uniffi.truapi.NativeChatQueryRefusal
+import uniffi.truapi.ProductChatMessageActionsQueryItem
+import uniffi.truapi.ProductChatMessageActionsQueryRequest
+import uniffi.truapi.ProductChatMessagesQueryItem
+import uniffi.truapi.ProductChatMessagesQueryRequest
+import uniffi.truapi.ProductChatParticipantActionsQueryItem
+import uniffi.truapi.ProductChatParticipantActionsQueryRequest
+import uniffi.truapi.ProductChatParticipantsQueryItem
+import uniffi.truapi.ProductChatParticipantsQueryRequest
+import uniffi.truapi.ProductChatQueryError
+import uniffi.truapi.ProductChatReactionsQueryItem
+import uniffi.truapi.ProductChatReactionsQueryRequest
+import uniffi.truapi.ProductChatUserActionError
+import uniffi.truapi.ProductChatUserActionItem
+import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocaleSubscribeItem
@@ -417,7 +450,8 @@ interface ChatHostBridge {
 
     /**
      * Set what a product's native Chat room shows below its messages, and keep
-     * it until the product sets another.
+     * it until the product sets another. A room without a footer shows the
+     * input with photo and video on.
      */
     @Throws(HostRejection::class)
     suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
@@ -425,7 +459,101 @@ interface ChatHostBridge {
     /** Return the current product-scoped native Chat rooms. */
     @Throws(HostRejection::class)
     suspend fun listRooms(): List<ChatRoom>
+
+    // The members below have defaults for a host that does not serve the Chat
+    // Extension v2 requests yet. The product receives a rejection for each
+    // request, except for the declarations that a new room always carries:
+    // the host keeps the name and icon of `createRoom`, and the configuration
+    // that the host serves anyway.
+
+    /**
+     * Return the configuration the product last declared for a room, or
+     * [HOST_DEFAULT_CHAT_ROOM_CONFIG] when it declared none. The core reads it
+     * before each feed update, posted message and query of the room.
+     */
+    @Throws(HostRejection::class)
+    suspend fun roomConfig(roomId: String): ChatRoomConfig = HOST_DEFAULT_CHAT_ROOM_CONFIG
+
+    /**
+     * Replace the configuration of a room whole, and keep it across restarts.
+     * A change of `productSource` discards the stored messages or the cached
+     * pages of the room.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) {
+        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) throw unservedChatRequest("setRoomConfig")
+    }
+
+    /** Replace the name, avatar and description of a room. */
+    @Throws(HostRejection::class)
+    suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {}
+
+    /** Replace how a room shows in the chat list. */
+    @Throws(HostRejection::class)
+    suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): Unit =
+        throw unservedChatRequest("setRoomPreview")
+
+    /**
+     * Delete a room with its messages, cache and declarations, and close its
+     * screen. A room that does not exist is not an error.
+     */
+    @Throws(HostRejection::class)
+    suspend fun deleteRoom(roomId: String): Unit = throw unservedChatRequest("deleteRoom")
+
+    /**
+     * Apply one change to the messages of a room. With [persist] the host
+     * stores the change. Without it the host applies the change only to an
+     * open room screen and to the chat list preview.
+     *
+     * Throw [NativeChatFeedRejection] to refuse the change. The product
+     * receives each case as its own error, and any other exception as
+     * [NativeChatFeedRejection.Rejected].
+     */
+    @Throws(NativeChatFeedRejection::class)
+    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): Unit =
+        throw NativeChatFeedRejection.Rejected(unservedChatRequestReason("updateFeed"))
+
+    /** Replace the toolbar buttons of a room. */
+    @Throws(HostRejection::class)
+    suspend fun setRoomToolbar(roomId: String, actions: List<ChatToolbarAction>): Unit =
+        throw unservedChatRequest("setRoomToolbar")
+
+    /** Replace the quick replies of a room. */
+    @Throws(HostRejection::class)
+    suspend fun setRoomSuggestions(roomId: String, suggestions: List<ChatSuggestion>): Unit =
+        throw unservedChatRequest("setRoomSuggestions")
+
+    /** Replace the slash commands of a room. */
+    @Throws(HostRejection::class)
+    suspend fun setRoomCommands(roomId: String, commands: List<ChatCommandSpec>): Unit =
+        throw unservedChatRequest("setRoomCommands")
+
+    /** Show the activity line of a room, or remove it with `null`. */
+    @Throws(HostRejection::class)
+    suspend fun setRoomActivity(roomId: String, activity: ChatActivity?): Unit =
+        throw unservedChatRequest("setRoomActivity")
 }
+
+/**
+ * The configuration of a room that declares nothing: the host stores the
+ * messages and serves every part of the room itself.
+ */
+val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig =
+    ChatRoomConfig(
+        productSource = false,
+        reactionDetails = false,
+        participants = false,
+        messageActions = false,
+        participantActions = false,
+        allowedReactions = null,
+        placeholder = null,
+        reportSeen = false,
+    )
+
+private fun unservedChatRequestReason(request: String): String = "this host does not serve chat $request"
+
+private fun unservedChatRequest(request: String): HostRejection =
+    HostRejection.Rejected(unservedChatRequestReason(request))
 
 /**
  * Native Pocket collection surface. Implement and pass to
@@ -678,6 +806,43 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         withHostRejection { bridge.setRoomFooter(roomId, footer) }
 
     override suspend fun listRooms(): List<ChatRoom> = withHostRejection { bridge.listRooms() }
+
+    override suspend fun roomConfig(roomId: String): ChatRoomConfig =
+        withHostRejection { bridge.roomConfig(roomId) }
+
+    override suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) =
+        withHostRejection { bridge.setRoomConfig(roomId, config) }
+
+    override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) =
+        withHostRejection { bridge.setRoomMetadata(roomId, metadata) }
+
+    override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview) =
+        withHostRejection { bridge.setRoomPreview(roomId, preview) }
+
+    override suspend fun deleteRoom(roomId: String) = withHostRejection { bridge.deleteRoom(roomId) }
+
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) =
+        try {
+            bridge.updateFeed(roomId, update, persist)
+        } catch (rejection: NativeChatFeedRejection) {
+            throw rejection
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw NativeChatFeedRejection.Rejected(hostRejectionReason(error)).apply { initCause(error) }
+        }
+
+    override suspend fun setRoomToolbar(roomId: String, actions: List<ChatToolbarAction>) =
+        withHostRejection { bridge.setRoomToolbar(roomId, actions) }
+
+    override suspend fun setRoomSuggestions(roomId: String, suggestions: List<ChatSuggestion>) =
+        withHostRejection { bridge.setRoomSuggestions(roomId, suggestions) }
+
+    override suspend fun setRoomCommands(roomId: String, commands: List<ChatCommandSpec>) =
+        withHostRejection { bridge.setRoomCommands(roomId, commands) }
+
+    override suspend fun setRoomActivity(roomId: String, activity: ChatActivity?) =
+        withHostRejection { bridge.setRoomActivity(roomId, activity) }
 }
 
 /**
@@ -1049,6 +1214,104 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 }
 
+/**
+ * How long the host waits for the answer to a chat query. After the timeout
+ * the host shows its failure state for that query.
+ */
+object ChatQueryTimeout {
+    /** A page of messages. */
+    val MESSAGES: Duration = 10.seconds
+
+    /** A message that the user sent. */
+    val SENT_MESSAGE: Duration = 30.seconds
+
+    /** A user action that is not a sent message. */
+    val USER_ACTION: Duration = 10.seconds
+
+    /** Reactions, participants, a message menu or a participant menu. */
+    val LOOKUP: Duration = 5.seconds
+
+    /** The timeout of one user action. */
+    fun forUserAction(action: ChatUserAction): Duration =
+        if (action is ChatUserAction.NewMessage) SENT_MESSAGE else USER_ACTION
+}
+
+/** Why a chat query has no answer. */
+sealed class ChatQueryException(message: String) : Exception(message) {
+    /**
+     * The product, or the core for a room that does not declare the handler,
+     * refused the query. [ProductChatQueryError.NotAvailable] asks the host to
+     * apply its default.
+     */
+    class Refused(val error: ProductChatQueryError) : ChatQueryException("chat query refused: $error")
+
+    /**
+     * The product, or the core for a room that the host stores, refused the
+     * user action. The host reverts the action, and shows the reason of
+     * [ProductChatUserActionError.Rejected] to the user.
+     */
+    class ActionRefused(val error: ProductChatUserActionError) :
+        ChatQueryException("chat user action refused: $error")
+
+    /** The query failed on its way, for example because the worker stopped. */
+    class Failed(val reason: String) : ChatQueryException(reason)
+
+    /** The product ended the query without an answer. */
+    class NoAnswer : ChatQueryException("the product ended the chat query without an answer")
+
+    /** No answer came before the timeout. */
+    class TimedOut(val timeout: Duration) : ChatQueryException("no answer to the chat query in $timeout")
+}
+
+/**
+ * The first result of one chat query: the answer of the product or its
+ * refusal. Later results have no effect.
+ */
+internal class ChatQueryOutcome : NativeChatQueryObserver {
+    val answer = CompletableDeferred<NativeChatQueryAnswer>()
+
+    // The core declares all three infallible, so uniffi has no error type to
+    // convert a throw into and panics, which aborts under `panic = "abort"`.
+    override fun onAnswer(answer: NativeChatQueryAnswer) {
+        runCatching { this.answer.complete(answer) }
+    }
+
+    override fun onRefusal(refusal: NativeChatQueryRefusal) {
+        val error =
+            when (refusal) {
+                is NativeChatQueryRefusal.Query -> ChatQueryException.Refused(refusal.error)
+                is NativeChatQueryRefusal.UserAction -> ChatQueryException.ActionRefused(refusal.error)
+                is NativeChatQueryRefusal.Failed -> ChatQueryException.Failed(refusal.reason)
+            }
+        runCatching { answer.completeExceptionally(error) }
+    }
+
+    override fun onComplete() {
+        runCatching { answer.completeExceptionally(ChatQueryException.NoAnswer()) }
+    }
+}
+
+/**
+ * Start one chat query, and wait for its answer. A timeout or a cancelled
+ * coroutine stops the query in the product.
+ */
+internal suspend fun <T> chatQuery(
+    timeout: Duration,
+    start: (NativeChatQueryObserver) -> NativeChatQuery,
+    extract: (NativeChatQueryAnswer) -> T?,
+): T {
+    val outcome = ChatQueryOutcome()
+    val query = start(outcome)
+    try {
+        val answer = withTimeoutOrNull(timeout) { outcome.answer.await() }
+            ?: throw ChatQueryException.TimedOut(timeout)
+        return extract(answer) ?: throw ChatQueryException.Failed("the product answered another query")
+    } finally {
+        query.cancel()
+        query.close()
+    }
+}
+
 /** A render the product declined or could not encode. */
 class RendererStreamException(
     /** Why the product ended the render. */
@@ -1089,6 +1352,77 @@ class TrUAPIProductExecution internal constructor(
     fun publishChatAction(action: HostChatActionSubscribeItem) {
         inner.publishChatAction(action)
     }
+
+    /**
+     * Publish one chat event, and keep it until the product connection
+     * subscribes. A subscriber at the first protocol version receives only the
+     * events that its version carries. The product receives at most one `Seen`
+     * event for each room each second.
+     */
+    @Throws(ProductRuntimeException::class)
+    fun publishChatEvent(roomId: String, peer: String, event: ChatEvent) {
+        inner.publishChatEvent(roomId, peer, event)
+    }
+
+    /** Ask the product for one page of messages of a room that it keeps. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatMessagesQuery(
+        request: ProductChatMessagesQueryRequest,
+        timeout: Duration = ChatQueryTimeout.MESSAGES,
+    ): ProductChatMessagesQueryItem =
+        chatQuery(timeout, { inner.chatMessagesQuery(request, it) }) {
+            (it as? NativeChatQueryAnswer.Messages)?.page
+        }
+
+    /** Tell the product what the user did in a room that it keeps. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatUserAction(
+        request: ProductChatUserActionRequest,
+        timeout: Duration = ChatQueryTimeout.forUserAction(request.action),
+    ): ProductChatUserActionItem =
+        chatQuery(timeout, { inner.chatUserAction(request, it) }) {
+            (it as? NativeChatQueryAnswer.UserAction)?.answer
+        }
+
+    /** Ask the product who reacted to one message. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatReactionsQuery(
+        request: ProductChatReactionsQueryRequest,
+        timeout: Duration = ChatQueryTimeout.LOOKUP,
+    ): ProductChatReactionsQueryItem =
+        chatQuery(timeout, { inner.chatReactionsQuery(request, it) }) {
+            (it as? NativeChatQueryAnswer.Reactions)?.reactions
+        }
+
+    /** Ask the product about the participants of a room. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatParticipantsQuery(
+        request: ProductChatParticipantsQueryRequest,
+        timeout: Duration = ChatQueryTimeout.LOOKUP,
+    ): ProductChatParticipantsQueryItem =
+        chatQuery(timeout, { inner.chatParticipantsQuery(request, it) }) {
+            (it as? NativeChatQueryAnswer.Participants)?.answer
+        }
+
+    /** Ask the product for the menu of one message. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatMessageActionsQuery(
+        request: ProductChatMessageActionsQueryRequest,
+        timeout: Duration = ChatQueryTimeout.LOOKUP,
+    ): ProductChatMessageActionsQueryItem =
+        chatQuery(timeout, { inner.chatMessageActionsQuery(request, it) }) {
+            (it as? NativeChatQueryAnswer.MessageMenu)?.menu
+        }
+
+    /** Ask the product for the menu of one participant. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatParticipantActionsQuery(
+        request: ProductChatParticipantActionsQueryRequest,
+        timeout: Duration = ChatQueryTimeout.LOOKUP,
+    ): ProductChatParticipantActionsQueryItem =
+        chatQuery(timeout, { inner.chatParticipantActionsQuery(request, it) }) {
+            (it as? NativeChatQueryAnswer.ParticipantMenu)?.menu
+        }
 
     /**
      * Republish the product-scoped native Chat room list. Call it whenever the
