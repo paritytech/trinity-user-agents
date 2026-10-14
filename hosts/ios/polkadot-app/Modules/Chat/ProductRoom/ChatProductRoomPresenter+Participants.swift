@@ -37,7 +37,7 @@ extension ChatProductRoomPresenter {
             participantId: participantId,
             name: appearance.name,
             avatar: .colored(text: appearance.initials, colorSeed: participantId),
-            onTap: nil
+            onTap: { [weak self] in self?.showParticipant(participantId) }
         )
     }
 
@@ -64,10 +64,5 @@ extension ChatProductRoomPresenter {
 
     func showParticipants() {
         wireframe.showParticipants(of: self, from: view)
-    }
-
-    /// The user picked a participant in the list. The sheet of the participant comes with P6.4.
-    func didSelectParticipant(_ participant: ChatRoomParticipant) {
-        logger.debug("Participant \(participant.participantId) of room \(roomId) selected")
     }
 }

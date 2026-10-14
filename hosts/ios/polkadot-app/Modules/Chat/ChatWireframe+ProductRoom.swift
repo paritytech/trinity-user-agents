@@ -14,6 +14,16 @@ protocol ChatProductRoomWireframing: AnyObject {
 
     /// Shows the participant list of a product room (P6.3).
     func showParticipants(of productRoom: ChatProductRoomPresenter, from view: ControllerBackedProtocol?)
+
+    /// Shows the sheet of a participant with its entries (P6.4).
+    func showParticipantSheet(
+        _ viewModel: ChatParticipantSheetViewModel,
+        from view: ControllerBackedProtocol?,
+        onSelect: @escaping (ChatParticipantSheetEntry) -> Void
+    )
+
+    /// Opens the App of a product.
+    func openProduct(_ productId: String)
 }
 
 extension ChatWireframe: ChatProductRoomWireframing {
@@ -38,6 +48,36 @@ extension ChatWireframe: ChatProductRoomWireframing {
             iconViewModelFactory: flowState.flowState.iconViewModelFactory
         )
         view?.controller.navigationController?.pushViewController(participantsView.controller, animated: true)
+    }
+
+    func showParticipantSheet(
+        _ viewModel: ChatParticipantSheetViewModel,
+        from view: ControllerBackedProtocol?,
+        onSelect: @escaping (ChatParticipantSheetEntry) -> Void
+    ) {
+        let sheet = UIAlertController(
+            title: viewModel.title,
+            message: viewModel.detail.isEmpty ? nil : viewModel.detail,
+            preferredStyle: .actionSheet
+        )
+
+        for entry in viewModel.entries {
+            sheet
+                .addAction(UIAlertAction(
+                    title: entry.title,
+                    style: entry.isDestructive ? .destructive : .default
+                ) { _ in
+                    onSelect(entry)
+                })
+        }
+        sheet.addAction(UIAlertAction(title: String(localized: .Common.cancel), style: .cancel))
+
+        let presenter = view?.controller.presentedViewController ?? view?.controller
+        presenter?.present(sheet, animated: true)
+    }
+
+    func openProduct(_ productId: String) {
+        ProductOpener().open(productId: productId)
     }
 
     func openProductLink(_ url: URL, from view: ControllerBackedProtocol?) {
@@ -78,5 +118,19 @@ struct ChatProductLinkOpener {
         case .system:
             UIApplication.shared.open(url)
         }
+    }
+}
+
+private extension ChatParticipantSheetEntry {
+    var title: String {
+        switch self {
+        case .copyAddress: String(localized: .ChatExtension.participantCopyAddress)
+        case .openProduct: String(localized: .ChatExtension.participantOpenProduct)
+        case let .product(action): action.label
+        }
+    }
+
+    var isDestructive: Bool {
+        if case let .product(action) = self { action.destructive } else { false }
     }
 }

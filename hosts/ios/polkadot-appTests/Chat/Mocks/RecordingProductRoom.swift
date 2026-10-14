@@ -93,6 +93,28 @@ final class RecordingProductRoomWireframe: ChatProductRoomWireframing {
     func openProductLink(_ url: URL, from _: ControllerBackedProtocol?) {
         opened.append(url)
     }
+
+    private(set) var participantListsShown = 0
+    private(set) var sheets: [ChatParticipantSheetViewModel] = []
+    private(set) var openedProducts: [String] = []
+    private(set) var selectSheetEntry: ((ChatParticipantSheetEntry) -> Void)?
+
+    func showParticipants(of _: ChatProductRoomPresenter, from _: ControllerBackedProtocol?) {
+        participantListsShown += 1
+    }
+
+    func showParticipantSheet(
+        _ viewModel: ChatParticipantSheetViewModel,
+        from _: ControllerBackedProtocol?,
+        onSelect: @escaping (ChatParticipantSheetEntry) -> Void
+    ) {
+        sheets.append(viewModel)
+        selectSheetEntry = onSelect
+    }
+
+    func openProduct(_ productId: String) {
+        openedProducts.append(productId)
+    }
 }
 
 /// A resolver that has no image.
@@ -207,8 +229,4 @@ final class RecordingProductRoomView: ChatProductRoomViewProtocol {
     func showActionFailure(_ message: String) {
         failures.append(message)
     }
-}
-
-extension RecordingProductRoomWireframe {
-    func showParticipants(of _: ChatProductRoomPresenter, from _: ControllerBackedProtocol?) {}
 }

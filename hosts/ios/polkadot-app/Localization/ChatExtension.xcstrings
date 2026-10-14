@@ -286,6 +286,28 @@
           }
         }
       }
+    },
+    "participant.copy.address": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy address"
+          }
+        }
+      }
+    },
+    "participant.open.product": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open the product"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
