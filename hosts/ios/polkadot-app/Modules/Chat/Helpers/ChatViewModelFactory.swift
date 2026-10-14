@@ -290,6 +290,7 @@ private extension ChatViewModelFactory {
             : nil
 
         let inboxBubbleStyle: InboxBubbleStyle? = nil
+        let reactionChoice = ChatReactionChoice.make(for: metadata.chatMetadata.roomPolicy)
 
         switch message.content {
         case let .text(text),
@@ -310,7 +311,8 @@ private extension ChatViewModelFactory {
                     layoutContext: layoutContext,
                     reactions: reactions,
                     actions: actions,
-                    inboxBubbleStyle: inboxBubbleStyle
+                    inboxBubbleStyle: inboxBubbleStyle,
+                    reactionChoice: reactionChoice
                 )
             ]
 
@@ -332,7 +334,8 @@ private extension ChatViewModelFactory {
                     attachments: richText.attachments,
                     reactions: reactions,
                     actions: actions,
-                    inboxBubbleStyle: inboxBubbleStyle
+                    inboxBubbleStyle: inboxBubbleStyle,
+                    reactionChoice: reactionChoice
                 )
             ]
 
@@ -425,7 +428,8 @@ private extension ChatViewModelFactory {
                     replyInfo: replyInfo,
                     reactions: reactions,
                     actions: actions,
-                    inboxBubbleStyle: inboxBubbleStyle
+                    inboxBubbleStyle: inboxBubbleStyle,
+                    reactionChoice: reactionChoice
                 )
             ]
 
@@ -535,7 +539,10 @@ private extension ChatViewModelFactory {
                 deliveryDate: deliveryDate,
                 layoutContext: layoutContext,
                 actions: actions,
-                offersDelete: metadata.chatMetadata.roomPolicy?.offersDelete ?? false
+                offersDelete: metadata.chatMetadata.roomPolicy?.offersDelete ?? false,
+                canReply: metadata.peerMetadata.input.isInputField,
+                reactions: reactions,
+                reactionChoice: reactionChoice
             )
             return [productBodyConfiguration(body, context: context, metadata: metadata, reactions: reactions)]
         }
@@ -569,7 +576,8 @@ private extension ChatViewModelFactory {
                 layoutContext: context.layoutContext,
                 reactions: reactions,
                 actions: context.actions,
-                markdown: .init(openLink: context.actions?.openLink)
+                markdown: .init(openLink: context.actions?.openLink),
+                reactionChoice: context.reactionChoice
             )
         }
     }
@@ -614,6 +622,8 @@ private extension ChatViewModelFactory {
                 originalText = content.welcomeMessage?.text ?? ""
             case let .versionedChatRequest(content):
                 originalText = content.ensureV1().welcomeMessage?.text ?? ""
+            case let .productBody(body):
+                originalText = body.replyPreview
             default:
                 return nil
             }
@@ -651,7 +661,8 @@ private extension ChatViewModelFactory {
         reactions: [ReactionViewModel] = [],
         actions: ChatViewModelActions? = nil,
         inboxBubbleStyle: InboxBubbleStyle? = nil,
-        markdown: ChatMessageContainerConfiguration.MarkdownBody? = nil
+        markdown: ChatMessageContainerConfiguration.MarkdownBody? = nil,
+        reactionChoice: ChatReactionChoice? = .all
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
         let (textAfterStrip, productLinkPreview) = resolveProductLinkPreview(
             text: text,
@@ -687,30 +698,11 @@ private extension ChatViewModelFactory {
                 nil
             }
 
-        let addReaction: ChatMessageContainerConfiguration.AddReactionViewModel? = canReact
-            ? .init(
-                quickEmojis: Chat.quickReactions,
-                allSections: Chat.allReactions.map { EmojiPickerInline.Section(title: $0.category, emojis: $0.emojis) },
-                onReactionTap: actions
-                    .map { action in
-                        { [messageId] emoji in action.toggleReaction(messageId, emoji) }
-                    }
-            )
+        let addReaction = canReact
+            ? addReactionViewModel(messageId: messageId, choice: reactionChoice, actions: actions)
             : nil
 
-        let messageReaction: ChatMessageContainerConfiguration.MessageReactionViewModel? = reactions.isEmpty
-            ? nil
-            : .init(
-                reactions: reactions,
-                onReactionTap: actions.map { action in { [messageId] emoji in
-                    action.toggleReaction(messageId, emoji)
-                }
-                },
-                onReactionLongPress: actions.map { action in { [messageId] in
-                    action.showReactionDetails(messageId)
-                }
-                }
-            )
+        let messageReaction = messageReactionViewModel(messageId: messageId, reactions: reactions, actions: actions)
 
         let context = TextMessageContext(
             text: resolvedText,

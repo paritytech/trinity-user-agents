@@ -116,6 +116,7 @@ struct ChatViewModelFactoryTests {
         let bubble = try await bubble(for: product(body))
 
         #expect(menuTitles(of: bubble) == [
+            String(localized: .chatReply),
             String(localized: .chatCopy),
             String(localized: .ChatExtension.messageDelete)
         ])
@@ -125,6 +126,74 @@ struct ChatViewModelFactoryTests {
         let bubble = try await bubble(for: own(status: .delivered), policy: nil)
 
         #expect(!menuTitles(of: bubble).contains(String(localized: .ChatExtension.messageDelete)))
+    }
+
+    @Test(arguments: ChatViewModelFactoryTests.productBodies)
+    func aProductBubbleOffersReplyAndReactions(body: Chat.LocalMessage.Content.ProductBody) async throws {
+        let bubble = try await bubble(for: product(body))
+
+        #expect(bubble.canReply)
+        #expect(bubble.addReaction?.quickEmojis == Chat.quickReactions)
+        #expect(menuTitles(of: bubble).first == String(localized: .chatReply))
+    }
+
+    @Test func theReactionsOnAProductBubbleShow() async throws {
+        let message = product(Self.productBodies[1])
+        let reacted = Chat.LocalMessage(
+            messageId: message.messageId,
+            chatId: message.chatId,
+            origin: message.origin,
+            creationSource: message.creationSource,
+            status: message.status,
+            timestamp: message.timestamp,
+            content: message.content,
+            reactions: [.init(messageId: message.messageId, emoji: "🎉", origin: .user, chatId: roomId, timestamp: 1)],
+            compactionId: nil,
+            relatedMessages: []
+        )
+
+        let bubble = try await bubble(for: reacted)
+
+        #expect(bubble.messageReaction?.reactions.map(\.emoji) == ["🎉"])
+    }
+
+    @Test func thePickerOffersOnlyTheEmojiThatTheProductAllows() async throws {
+        let allowed = ["👍", "🎉"]
+
+        let own = try await bubble(
+            for: own(status: .delivered),
+            policy: policy(store: .host, allowedReactions: allowed)
+        )
+        let product = try await bubble(
+            for: product(Self.productBodies[0]),
+            policy: policy(store: .host, allowedReactions: allowed)
+        )
+
+        for bubble in [own, product] {
+            #expect(bubble.addReaction?.quickEmojis == allowed)
+            #expect(bubble.addReaction?.allSections.flatMap(\.emojis) == allowed)
+        }
+    }
+
+    @Test func aRoomThatAllowsNoEmojiShowsNoPicker() async throws {
+        let bubble = try await bubble(for: own(status: .delivered), policy: policy(store: .host, allowedReactions: []))
+
+        #expect(bubble.addReaction == nil)
+    }
+
+    @Test func aReplyQuotesTheProductBody() async throws {
+        let target = product(Self.productBodies[1])
+        let reply = Chat.LocalMessage.newMessage(to: roomId, content: .reply(.init(
+            messageId: target.messageId,
+            ownContent: ChatRemoteMessageContent.RichText(text: "ok", attachments: nil)
+        )))
+        .replacingStatus(.outgoing(.delivered))
+
+        let viewModel = try await viewModel(for: [target, reply])
+        let item = try #require(viewModel.sections.flatMap(\.messages).first { $0.id == reply.messageId })
+        let bubble = try #require(item.configuration as? ChatMessageContainerConfiguration)
+
+        #expect(bubble.replyInfo?.preview == "Pick one")
     }
 
     @Test func anEmptyProductRoomShowsTheHostText() async throws {
@@ -146,6 +215,20 @@ struct ChatViewModelFactoryTests {
     }
 }
 
+extension ChatViewModelFactoryTests {
+    static let productBodies: [Chat.LocalMessage.Content.ProductBody] = [
+        .richText(.init(text: "Look", media: ["https://example.com/a.png"])),
+        .actions(.init(text: "Pick one", buttons: [.init(actionId: "a", title: "A")], layout: .column)),
+        .file(.init(
+            url: "https://example.com/r.pdf",
+            fileName: "r.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 4_096,
+            text: nil
+        ))
+    ]
+}
+
 private extension ChatViewModelFactoryTests {
     /// A product message with the body, or a tombstone for nil.
     func product(_ body: Chat.LocalMessage.Content.ProductBody?) -> Chat.LocalMessage {
@@ -160,7 +243,11 @@ private extension ChatViewModelFactoryTests {
         Chat.LocalMessage.newMessage(to: roomId, content: .text("mine")).replacingStatus(.outgoing(status))
     }
 
-    func policy(store: ChatRoomPolicy.MessageStore, placeholder: String? = nil) -> ChatRoomPolicy {
+    func policy(
+        store: ChatRoomPolicy.MessageStore,
+        placeholder: String? = nil,
+        allowedReactions: [String]? = nil
+    ) -> ChatRoomPolicy {
         let defaults = ChatRoomPolicy.defaults
         return ChatRoomPolicy(
             messageStore: store,
@@ -168,7 +255,7 @@ private extension ChatViewModelFactoryTests {
             listBadge: defaults.listBadge,
             listOrder: defaults.listOrder,
             reportsSeen: defaults.reportsSeen,
-            messageMenu: defaults.messageMenu,
+            messageMenu: .init(builtIns: defaults.messageMenu.builtIns, allowedReactions: allowedReactions),
             participants: defaults.participants,
             offersReactionDetails: defaults.offersReactionDetails,
             toolbar: defaults.toolbar,

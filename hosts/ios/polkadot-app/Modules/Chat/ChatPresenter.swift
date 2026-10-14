@@ -322,7 +322,7 @@ private extension ChatPresenter {
                 case let .versionedChatRequest(content):
                     content.ensureV1().welcomeMessage?.text ?? String(localized: .chatReplyPlaceholder)
                 default:
-                    String(localized: .chatReplyPlaceholder)
+                    message.content.productReplyPreview ?? String(localized: .chatReplyPlaceholder)
                 }
             }
 

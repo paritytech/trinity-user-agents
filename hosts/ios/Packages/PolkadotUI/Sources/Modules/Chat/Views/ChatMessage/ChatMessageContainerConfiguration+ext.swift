@@ -174,14 +174,22 @@ public extension ChatMessageContainerConfiguration {
         )
     }
 
-    static func file(viewModel: ChatMessageFileCell.ViewModel, layoutType: LayoutType = .plain) -> Self {
+    static func file(
+        viewModel: ChatMessageFileCell.ViewModel,
+        layoutType: LayoutType = .plain,
+        canReply: Bool = false,
+        addReaction: AddReactionViewModel? = nil,
+        messageReaction: MessageReactionViewModel? = nil
+    ) -> Self {
         let view = ChatMessageFileCell(viewModel: viewModel)
         let configuration = SwiftUIContentConfiguration(view: view)
         return ChatMessageContainerConfiguration(
             innerContent: configuration,
             side: .leading,
             bubbleColor: .bgSurfaceContainer,
-            canReply: false,
+            canReply: canReply,
+            addReaction: addReaction,
+            messageReaction: messageReaction,
             contentInsets: .zero,
             layoutType: layoutType,
             identifier: ChatMessageFileCell.reuseIdentifier
