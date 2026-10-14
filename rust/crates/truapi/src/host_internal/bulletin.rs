@@ -521,9 +521,7 @@ mod tests {
 
 	#[test]
 	fn rejects_secret_of_wrong_shape() {
-		let error =
-			allowance_signer(&BulletinAllowanceKey::from_secret_bytes(vec![0xff; 64]).unwrap())
-				.unwrap_err();
-		assert!(error.contains("invalid bulletin allowance key"), "{error}");
+		let error = BulletinAllowanceKey::from_secret_bytes(vec![0xff; 64]).unwrap_err();
+		assert!(error.to_string().contains("invalid bulletin allowance key"), "{error}");
 	}
 }
