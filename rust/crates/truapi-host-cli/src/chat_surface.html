@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>truapi-host chat</title>
+<script>
+// Runs before the worker bootstrap: the product sandbox later gates WebSocket in this page.
+const NativeWebSocket = window.WebSocket;
+const surface = { socket: null, queue: [], onFrame: null, onState: null, delay: 500 };
+function surfaceConnect() {
+  const socket = new NativeWebSocket(`ws://${location.host}/chat/ws`);
+  surface.socket = socket;
+  socket.onopen = () => { surface.delay = 500; if (surface.onState) surface.onState(true); };
+  socket.onmessage = (event) => {
+    let frame;
+    try { frame = JSON.parse(event.data); } catch (_) { return; }
+    if (surface.onFrame) surface.onFrame(frame); else surface.queue.push(frame);
+  };
+  socket.onclose = () => {
+    if (surface.onState) surface.onState(false);
+    setTimeout(surfaceConnect, surface.delay);
+    surface.delay = Math.min(surface.delay * 2, 8000);
+  };
+}
+surfaceConnect();
+
+// The worker bundle runs as a module script in this page, so its console is
+// this console. Captured here, ahead of the boot, so the first lines of a
+// starting worker are not lost; the pane below draws from this buffer.
+const workerLog = { entries: [], dropped: 0, limit: 2000, onEntry: null };
+function recordLog(level, args) {
+  const text = args.map((arg) => {
+    if (typeof arg === "string") return arg;
+    if (arg instanceof Error) return arg.stack || arg.message;
+    try { return JSON.stringify(arg); } catch (_) { return String(arg); }
+  }).join(" ").replace(/^\d{2}:\d{2}:\d{2}\.\d{3} /, "");
+  const tagged = /^\[(TRC|DBG|INF|WRN|ERR|FTL)\]/.exec(text);
+  const entry = { level: tagged ? tagged[1] : level, text, at: new Date() };
+  workerLog.entries.push(entry);
+  if (workerLog.entries.length > workerLog.limit) { workerLog.entries.shift(); workerLog.dropped += 1; }
+  if (workerLog.onEntry) workerLog.onEntry(entry);
+}
+for (const [method, level] of [["log", "DBG"], ["debug", "DBG"], ["info", "INF"], ["warn", "WRN"], ["error", "ERR"]]) {
+  const original = console[method].bind(console);
+  console[method] = (...args) => { original(...args); recordLog(level, args); };
+}
+window.addEventListener("error", (event) => recordLog("ERR", [event.message || String(event.error)]));
+window.addEventListener("unhandledrejection", (event) => recordLog("ERR", ["unhandled rejection:", event.reason]));
+</script>
+<style>
+:root {
+  --bg: #0e1012;
+  --rail: #14171a;
+  --panel: #191d21;
+  --line: #262b31;
+  --ink: #e6e2d8;
+  --muted: #8a8f96;
+  --faint: #5a6068;
+  --accent: #d6ff5c;
+  --accent-ink: #151a05;
+  --warn: #ffb547;
+  --ok: #5ce0a0;
+  --err: #ff6b6b;
+  --product: #20252b;
+  --person: #d6ff5c;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --ui: -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: radial-gradient(1200px 600px at 80% -10%, #1b2410 0%, transparent 60%), var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 var(--ui);
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+header {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(14, 16, 18, 0.85);
+}
+.brand { font: 600 13px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.brand b { color: var(--accent); font-weight: 600; }
+#product { font: 15px var(--mono); color: var(--ink); }
+.spacer { flex: 1; }
+.pill {
+  font: 12px var(--mono); padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.pill::before { content: "\25CF  "; }
+.pill.warn { color: var(--warn); border-color: rgba(255, 181, 71, 0.4); }
+.pill.ok { color: var(--ok); border-color: rgba(92, 224, 160, 0.4); }
+.pill.off { color: var(--err); border-color: rgba(255, 107, 107, 0.4); }
+button {
+  font: 12px var(--mono); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+button.on { border-color: var(--accent); color: var(--accent); }
+.panes { display: flex; gap: 2px; }
+.panes button { border-radius: 0; margin-left: -1px; }
+.panes button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.panes button:last-child { border-radius: 0 6px 6px 0; }
+main { display: grid; min-height: 0; }
+main.dragging { cursor: col-resize; user-select: none; }
+main.dragging * { pointer-events: none; }
+.gutter { position: relative; z-index: 1; }
+.gutter::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: -4px; width: 8px;
+  cursor: col-resize; background: transparent; transition: background 120ms;
+}
+.gutter:hover::after, .gutter.active::after { background: var(--accent); }
+.gutter[hidden] { display: none; }
+nav { background: var(--rail); border-right: 1px solid var(--line); overflow-y: auto; padding: 10px 0; }
+nav[hidden] { display: none; }
+nav h2 { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 6px 18px 10px; }
+.room {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 18px; border: 0; border-left: 3px solid transparent; border-radius: 0;
+  background: none; text-align: left; font: 14px var(--ui);
+}
+.room:hover { background: var(--panel); color: var(--ink); }
+.room.active { background: var(--panel); border-left-color: var(--accent); }
+.room small { display: block; font: 11px var(--mono); color: var(--faint); }
+.avatar {
+  flex: none; width: 34px; height: 34px; border-radius: 10px; overflow: hidden;
+  display: grid; place-items: center; background: #2a3037; color: var(--accent);
+  font: 600 15px var(--mono);
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar.sm { width: 28px; height: 28px; border-radius: 8px; font-size: 12px; }
+.bots { margin-top: 18px; }
+.bot { display: flex; align-items: center; gap: 10px; padding: 6px 18px; color: var(--muted); font-size: 13px; }
+section { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
+.roomhead { padding: 12px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
+.roomhead h1 { font: 500 19px var(--sans); margin: 0; }
+.roomhead code { font: 11px var(--mono); color: var(--faint); }
+#thread { overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 12px; }
+.empty { margin: auto; text-align: center; color: var(--muted); max-width: 360px; }
+.empty p { font: italic 18px var(--sans); color: var(--ink); margin: 0 0 8px; }
+.empty code { font: 12px var(--mono); color: var(--warn); }
+.msg { display: flex; gap: 10px; align-items: flex-end; max-width: 72%; animation: rise 0.18s ease-out; }
+.msg.person { align-self: flex-end; flex-direction: row-reverse; }
+@keyframes rise { from { opacity: 0; transform: translateY(4px); } }
+.bubble {
+  background: var(--product); border: 1px solid var(--line);
+  border-radius: 14px 14px 14px 4px; padding: 9px 13px; min-width: 60px; overflow-wrap: anywhere;
+}
+.person .bubble { background: var(--person); color: var(--accent-ink); border-color: transparent; border-radius: 14px 14px 4px 14px; }
+.person .bubble a { color: var(--accent-ink); }
+.text { white-space: pre-wrap; }
+.mid { display: block; margin-top: 4px; font: 10px var(--mono); color: var(--faint); text-align: right; }
+.person .mid { color: rgba(21, 26, 5, 0.55); }
+a { color: var(--accent); }
+.media { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.media img { max-width: 220px; max-height: 180px; border-radius: 8px; display: block; }
+.actions { display: flex; flex-direction: column; gap: 6px; margin-top: 9px; }
+.actions.grid { flex-direction: row; flex-wrap: wrap; }
+.actions button { font: 13px var(--ui); border-color: #3a424b; }
+.file { display: flex; gap: 10px; align-items: center; }
+.file .glyph { font: 600 10px var(--mono); padding: 8px 6px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); }
+.file small { display: block; font: 11px var(--mono); color: var(--muted); }
+.note { align-self: center; font: 12px var(--mono); color: var(--faint); }
+.custom small { font: 11px var(--mono); color: var(--muted); }
+.hex { font: 11px var(--mono); word-break: break-all; margin: 4px 0 0; }
+details summary { cursor: pointer; font: 11px var(--mono); color: var(--muted); }
+footer { border-top: 1px solid var(--line); padding: 12px 22px 10px; background: rgba(20, 23, 26, 0.6); }
+.compose { display: flex; gap: 10px; align-items: flex-end; }
+textarea {
+  flex: 1; resize: none; min-height: 42px; max-height: 160px;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; font: 14px var(--ui);
+}
+textarea:focus { outline: none; border-color: var(--accent); }
+textarea:disabled { opacity: 0.5; }
+#send { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); height: 42px; font-weight: 600; }
+#send:disabled { opacity: 0.4; cursor: default; }
+.hint { display: flex; justify-content: space-between; margin-top: 6px; font: 11px var(--mono); color: var(--faint); min-height: 16px; }
+#status.ok { color: var(--ok); }
+#status.warn { color: var(--warn); }
+#status.err { color: var(--err); }
+aside {
+  display: grid; min-height: 0; border-left: 1px solid var(--line); background: var(--rail);
+  grid-template-rows: auto 1fr auto;
+}
+aside[hidden], section[hidden] { display: none; }
+.loghead { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.loghead h2 { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 0; flex: 1; }
+.loghead input {
+  width: 150px; font: 12px var(--mono); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px;
+}
+.loghead input:focus { outline: none; border-color: var(--accent); }
+.loghead button { padding: 4px 9px; }
+.loghead button.on { border-color: var(--accent); color: var(--accent); }
+#loglines { overflow-y: auto; padding: 8px 0; font: 12px/1.5 var(--mono); }
+.logline { display: flex; gap: 10px; padding: 1px 14px; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+.logline time { flex: none; color: var(--faint); }
+.logline.INF { color: var(--ink); }
+.logline.WRN { color: var(--warn); }
+.logline.ERR, .logline.FTL { color: var(--err); }
+.logfoot { padding: 6px 14px; border-top: 1px solid var(--line); font: 11px var(--mono); color: var(--faint); display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand"><b>truapi</b> chat</span>
+  <span id="product">connecting</span>
+  <span class="spacer"></span>
+  <span id="link" class="pill off">socket closed</span>
+  <span id="worker" class="pill">worker: unknown</span>
+  <span class="panes">
+    <button id="toggle-rooms" type="button">Rooms</button>
+    <button id="toggle-chat" type="button">Chat</button>
+    <button id="toggle-log" type="button">Logs</button>
+  </span>
+  <button id="restart" type="button">Restart worker</button>
+</header>
+<main id="main">
+  <nav id="rooms-pane">
+    <h2>Rooms</h2>
+    <div id="rooms"></div>
+    <div class="bots" id="botsBox" hidden><h2>Bots</h2><div id="bots"></div></div>
+  </nav>
+  <div class="gutter" id="gutter-rooms" title="Drag to resize"></div>
+  <section id="chat-pane">
+    <div class="roomhead" id="roomhead"></div>
+    <div id="thread"></div>
+    <footer>
+      <form class="compose" id="compose">
+        <textarea id="input" rows="1" placeholder="Message, or /command payload" disabled></textarea>
+        <button id="send" type="submit" disabled>Send</button>
+      </form>
+      <div class="hint"><span id="status"></span><span>Enter to send, Shift+Enter for newline</span></div>
+    </footer>
+  </section>
+  <div class="gutter" id="gutter-log" title="Drag to resize"></div>
+  <aside id="logpane">
+    <div class="loghead">
+      <h2>Worker log</h2>
+      <input id="logfilter" type="search" placeholder="filter" spellcheck="false">
+      <button id="logpause" type="button" title="Stop following new lines">Pause</button>
+      <button id="logclear" type="button">Clear</button>
+    </div>
+    <div id="loglines"></div>
+    <div class="logfoot"><span id="logcount"></span><span>console of the worker in this page</span></div>
+  </aside>
+</main>
+<script>
+const state = { productId: "", worker: { configured: true, connected: 0 }, rooms: [], bots: [], messages: [], selected: null };
+const $ = (id) => document.getElementById(id);
+let statusTimer = null;
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text != null) node.textContent = String(text);
+  return node;
+}
+
+function safeUrl(url) {
+  return /^(https?:|data:|blob:)/i.test(String(url || "")) ? String(url) : null;
+}
+
+function avatar(icon, name, small) {
+  const box = el("span", small ? "avatar sm" : "avatar", (String(name || "?").trim()[0] || "?").toUpperCase());
+  const src = safeUrl(icon);
+  if (src) {
+    const img = el("img");
+    img.alt = "";
+    img.onload = () => { box.textContent = ""; box.appendChild(img); };
+    img.src = src;
+  }
+  return box;
+}
+
+function link(url, label) {
+  const href = safeUrl(url);
+  if (!href) return el("span", null, label);
+  const a = el("a", null, label);
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  return a;
+}
+
+function humanSize(bytes) {
+  const n = Number(bytes) || 0;
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return (i === 0 ? v : v.toFixed(1)) + " " + units[i];
+}
+
+function send(op) {
+  if (!surface.socket || surface.socket.readyState !== 1) { setStatus("socket not connected", "err"); return false; }
+  surface.socket.send(JSON.stringify(op));
+  return true;
+}
+
+function setStatus(text, tone) {
+  const node = $("status");
+  node.textContent = text;
+  node.className = tone || "";
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { node.textContent = ""; node.className = ""; }, 4000);
+}
+
+function renderContent(msg) {
+  const c = msg.content || {};
+  const box = el("div");
+  if (c.type === "Text") {
+    box.appendChild(el("div", "text", c.text));
+  } else if (c.type === "RichText") {
+    if (c.text != null) box.appendChild(el("div", "text", c.text));
+    const media = el("div", "media");
+    for (const item of c.media || []) {
+      const src = safeUrl(item.url);
+      if (src && /^data:image\/|\.(png|jpe?g|gif|webp|svg|avif)(\?|#|$)/i.test(src)) {
+        const a = link(src, "");
+        const img = el("img");
+        img.alt = "";
+        img.src = src;
+        a.appendChild(img);
+        media.appendChild(a);
+      } else {
+        media.appendChild(link(item.url, item.url));
+      }
+    }
+    if (media.childNodes.length) box.appendChild(media);
+  } else if (c.type === "Actions") {
+    if (c.text != null) box.appendChild(el("div", "text", c.text));
+    const row = el("div", c.layout === "Grid" ? "actions grid" : "actions");
+    for (const action of c.actions || []) {
+      const button = el("button", null, action.title);
+      button.type = "button";
+      button.onclick = () => send({ op: "trigger", roomId: msg.roomId, messageId: msg.messageId, actionId: action.actionId });
+      row.appendChild(button);
+    }
+    box.appendChild(row);
+  } else if (c.type === "File") {
+    const file = el("div", "file");
+    file.appendChild(el("span", "glyph", "FILE"));
+    const info = el("div");
+    info.appendChild(link(c.url, c.fileName || "file"));
+    info.appendChild(el("small", null, `${c.mimeType || "unknown"} \u00b7 ${humanSize(c.sizeBytes)}`));
+    file.appendChild(info);
+    box.appendChild(file);
+    if (c.text != null) box.appendChild(el("div", "text", c.text));
+  } else if (c.type === "Custom") {
+    box.className = "custom";
+    box.appendChild(el("small", null, `custom: ${c.messageType}`));
+    const hex = String(c.payloadHex || "");
+    if (hex.length > 96) {
+      const details = el("details");
+      details.appendChild(el("summary", null, `${hex.length / 2 | 0} bytes`));
+      details.appendChild(el("pre", "hex", hex));
+      box.appendChild(details);
+    } else {
+      box.appendChild(el("pre", "hex", hex || "(empty)"));
+    }
+  } else {
+    box.appendChild(el("div", "text", `unsupported content: ${JSON.stringify(c)}`));
+  }
+  return box;
+}
+
+function renderMessage(msg) {
+  const c = msg.content || {};
+  if (c.type === "Reaction" || c.type === "ReactionRemoved") {
+    const verb = c.type === "Reaction" ? "reacted" : "removed reaction";
+    return el("div", "note", `${msg.author} ${verb} ${c.emoji} on ${c.messageId} \u00b7 ${msg.messageId}`);
+  }
+  const person = msg.author === "person";
+  const row = el("div", person ? "msg person" : "msg product");
+  if (!person) {
+    const room = state.rooms.find((r) => r.roomId === msg.roomId);
+    row.appendChild(avatar(room && room.icon, room ? room.name : "?", true));
+  }
+  const bubble = el("div", "bubble");
+  bubble.appendChild(renderContent(msg));
+  bubble.appendChild(el("span", "mid", msg.messageId));
+  row.appendChild(bubble);
+  return row;
+}
+
+function emptyState(title, hint) {
+  const box = el("div", "empty");
+  box.appendChild(el("p", null, title));
+  if (hint) box.appendChild(el("code", null, hint));
+  return box;
+}
+
+function renderHeader() {
+  $("product").textContent = state.productId || "unknown product";
+  const w = $("worker");
+  if (!state.worker.configured) { w.textContent = "worker: not configured"; w.className = "pill"; }
+  else if (!state.worker.connected) { w.textContent = "worker: 0 connected"; w.className = "pill warn"; }
+  else { w.textContent = `worker: ${state.worker.connected} connected`; w.className = "pill ok"; }
+}
+
+function renderRooms() {
+  const list = $("rooms");
+  list.textContent = "";
+  for (const room of state.rooms) {
+    const button = el("button", room.roomId === state.selected ? "room active" : "room");
+    button.type = "button";
+    button.appendChild(avatar(room.icon, room.name));
+    const label = el("span", null, room.name);
+    label.appendChild(el("small", null, room.participatingAs === "Bot" ? `${room.roomId} \u00b7 bot` : room.roomId));
+    button.appendChild(label);
+    button.onclick = () => { state.selected = room.roomId; renderRooms(); renderThread(true); };
+    list.appendChild(button);
+  }
+  const bots = $("bots");
+  bots.textContent = "";
+  $("botsBox").hidden = !state.bots.length;
+  for (const bot of state.bots) {
+    const row = el("div", "bot");
+    row.appendChild(avatar(bot.icon, bot.name, true));
+    row.appendChild(el("span", null, bot.name));
+    bots.appendChild(row);
+  }
+}
+
+function renderThread(forceBottom) {
+  const thread = $("thread");
+  const pinned = forceBottom || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 40;
+  thread.textContent = "";
+  const head = $("roomhead");
+  head.textContent = "";
+  const room = state.rooms.find((r) => r.roomId === state.selected);
+  $("input").disabled = !room;
+  $("send").disabled = !room;
+  if (!room) {
+    head.appendChild(el("h1", null, "No room"));
+    thread.appendChild(emptyState("Waiting for the worker to register a room",
+      state.worker.configured ? null : "pass --worker-bundle to truapi-host dev"));
+    return;
+  }
+  head.appendChild(avatar(room.icon, room.name, true));
+  head.appendChild(el("h1", null, room.name));
+  head.appendChild(el("code", null, `${room.roomId} \u00b7 as ${room.participatingAs}`));
+  const messages = state.messages.filter((m) => m.roomId === room.roomId);
+  if (!messages.length) thread.appendChild(emptyState("No messages yet"));
+  for (const msg of messages) thread.appendChild(renderMessage(msg));
+  if (pinned) thread.scrollTop = thread.scrollHeight;
+}
+
+function upsert(list, key, item) {
+  const i = list.findIndex((x) => x[key] === item[key]);
+  if (i >= 0) list[i] = item; else list.push(item);
+}
+
+function strip(frame) {
+  const copy = Object.assign({}, frame);
+  delete copy.kind;
+  return copy;
+}
+
+function ensureSelection() {
+  if (!state.rooms.some((r) => r.roomId === state.selected)) state.selected = state.rooms.length ? state.rooms[0].roomId : null;
+}
+
+function handle(frame) {
+  switch (frame.kind) {
+    case "snapshot":
+      state.productId = frame.productId || "";
+      state.worker = frame.worker || { configured: false, connected: 0 };
+      state.rooms = frame.rooms || [];
+      state.bots = frame.bots || [];
+      state.messages = frame.messages || [];
+      ensureSelection();
+      renderHeader(); renderRooms(); renderThread(true);
+      break;
+    case "room":
+      upsert(state.rooms, "roomId", strip(frame));
+      ensureSelection();
+      renderRooms(); renderThread(false);
+      break;
+    case "bot":
+      upsert(state.bots, "botId", strip(frame));
+      renderRooms();
+      break;
+    case "message":
+      upsert(state.messages, "messageId", strip(frame));
+      if (frame.roomId === state.selected) renderThread(frame.author === "person");
+      break;
+    case "workers":
+      state.worker.connected = frame.connected;
+      renderHeader();
+      break;
+    case "delivered":
+      if (frame.workers > 0) setStatus(`${frame.op}: delivered to ${frame.workers} worker(s)`, "ok");
+      else setStatus(`${frame.op}: no worker connected`, "warn");
+      break;
+    case "error":
+      setStatus(`error: ${frame.message}`, "err");
+      break;
+  }
+}
+
+function submit() {
+  const input = $("input");
+  const text = input.value;
+  if (!state.selected || !text.trim()) return;
+  let op;
+  if (text.startsWith("/")) {
+    const match = /^\/(\S*)(?:\s([\s\S]*))?$/.exec(text);
+    op = { op: "command", roomId: state.selected, command: match[1], payload: match[2] || "" };
+  } else {
+    op = { op: "post", roomId: state.selected, text };
+  }
+  if (send(op)) input.value = "";
+}
+
+$("compose").onsubmit = (event) => { event.preventDefault(); submit(); };
+$("input").onkeydown = (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); submit(); }
+};
+$("restart").onclick = () => location.reload();
+
+// Three panes, each shown or hidden and the two side ones sized by drag,
+// remembered across reloads. The chat pane takes the slack; with it hidden
+// the log does. The last visible pane cannot be hidden: a page with nothing
+// on it has no button left to bring anything back.
+const LAYOUT_KEY = "chat.layout";
+const LAYOUT_DEFAULT = { rooms: true, chat: true, log: false, roomsWidth: 260, logWidth: 420 };
+const layout = (() => {
+  try { return { ...LAYOUT_DEFAULT, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") }; }
+  catch (_) { return { ...LAYOUT_DEFAULT }; }
+})();
+const PANE_MIN = { rooms: 160, log: 280 };
+
+function saveLayout() { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); }
+
+// Five grid children in order: rooms, gutter, chat, gutter, log. A gutter
+// takes a 0px track and overhangs it with negative margins, so it costs no
+// width; a hidden child leaves its track empty at 0px.
+function renderLayout() {
+  const roomsGutter = layout.rooms && (layout.chat || layout.log);
+  const logGutter = layout.log && (layout.chat || layout.rooms);
+  $("rooms-pane").hidden = !layout.rooms;
+  $("chat-pane").hidden = !layout.chat;
+  $("logpane").hidden = !layout.log;
+  $("gutter-rooms").hidden = !roomsGutter;
+  $("gutter-log").hidden = !logGutter;
+  const columns = [
+    !layout.rooms ? "0px" : layout.chat || layout.log ? `${layout.roomsWidth}px` : "1fr",
+    "0px",
+    layout.chat ? "minmax(320px, 1fr)" : "0px",
+    "0px",
+    !layout.log ? "0px" : layout.chat ? `${layout.logWidth}px` : "1fr",
+  ];
+  $("main").style.gridTemplateColumns = columns.join(" ");
+  for (const pane of ["rooms", "chat", "log"]) $(`toggle-${pane}`).classList.toggle("on", layout[pane]);
+}
+
+function togglePane(pane) {
+  const visible = ["rooms", "chat", "log"].filter((p) => layout[p]);
+  if (layout[pane] && visible.length === 1) return;
+  layout[pane] = !layout[pane];
+  saveLayout();
+  renderLayout();
+  if (pane === "log" && layout.log) renderLog();
+}
+
+function dragGutter(gutter, pane, sign) {
+  gutter.onpointerdown = (event) => {
+    const startX = event.clientX;
+    const startWidth = layout[`${pane}Width`];
+    const main = $("main");
+    const max = main.clientWidth - 320 - (pane === "rooms" && layout.log ? layout.logWidth : 0) - (pane === "log" && layout.rooms ? layout.roomsWidth : 0);
+    gutter.setPointerCapture(event.pointerId);
+    gutter.classList.add("active");
+    main.classList.add("dragging");
+    gutter.onpointermove = (move) => {
+      const width = startWidth + sign * (move.clientX - startX);
+      layout[`${pane}Width`] = Math.round(Math.min(Math.max(width, PANE_MIN[pane]), Math.max(max, PANE_MIN[pane])));
+      renderLayout();
+    };
+    gutter.onpointerup = gutter.onpointercancel = () => {
+      gutter.onpointermove = null;
+      gutter.classList.remove("active");
+      main.classList.remove("dragging");
+      saveLayout();
+    };
+  };
+}
+
+for (const pane of ["rooms", "chat", "log"]) $(`toggle-${pane}`).onclick = () => togglePane(pane);
+dragGutter($("gutter-rooms"), "rooms", 1);
+dragGutter($("gutter-log"), "log", -1);
+
+// The log pane: every captured line, filtered by substring, following the
+// tail unless paused. Redrawn wholesale on filter and clear, appended to
+// otherwise, so a busy worker does not rebuild the list on every line.
+const logView = { paused: false, filter: "", shown: 0 };
+const LOG_TIME = { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" };
+
+function logMatches(entry) {
+  return !logView.filter || entry.text.toLowerCase().includes(logView.filter);
+}
+
+function logNode(entry) {
+  const line = el("div", `logline ${entry.level}`);
+  line.appendChild(el("time", null, entry.at.toLocaleTimeString([], LOG_TIME)));
+  line.appendChild(el("span", null, entry.text));
+  return line;
+}
+
+function renderLogCount() {
+  const total = workerLog.entries.length;
+  const dropped = workerLog.dropped ? `, ${workerLog.dropped} dropped` : "";
+  $("logcount").textContent = logView.filter
+    ? `${logView.shown} of ${total} lines${dropped}`
+    : `${total} lines${dropped}`;
+}
+
+function renderLog() {
+  const box = $("loglines");
+  box.replaceChildren();
+  logView.shown = 0;
+  for (const entry of workerLog.entries) {
+    if (!logMatches(entry)) continue;
+    box.appendChild(logNode(entry));
+    logView.shown += 1;
+  }
+  renderLogCount();
+  if (!logView.paused) box.scrollTop = box.scrollHeight;
+}
+
+workerLog.onEntry = (entry) => {
+  if (!layout.log) return;
+  renderLogCount();
+  if (!logMatches(entry)) return;
+  const box = $("loglines");
+  const following = !logView.paused && box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.appendChild(logNode(entry));
+  logView.shown += 1;
+  while (box.childElementCount > workerLog.limit) { box.firstElementChild.remove(); logView.shown -= 1; }
+  if (following) box.scrollTop = box.scrollHeight;
+};
+$("logfilter").oninput = (event) => { logView.filter = event.target.value.trim().toLowerCase(); renderLog(); };
+$("logpause").onclick = () => {
+  logView.paused = !logView.paused;
+  $("logpause").textContent = logView.paused ? "Follow" : "Pause";
+  $("logpause").classList.toggle("on", logView.paused);
+  if (!logView.paused) $("loglines").scrollTop = $("loglines").scrollHeight;
+};
+$("logclear").onclick = () => { workerLog.entries.length = 0; workerLog.dropped = 0; renderLog(); };
+renderLayout();
+if (layout.log) renderLog();
+
+surface.onState = (open) => {
+  const link = $("link");
+  link.textContent = open ? "socket open" : "reconnecting";
+  link.className = open ? "pill ok" : "pill off";
+};
+if (surface.socket && surface.socket.readyState === 1) surface.onState(true);
+surface.onFrame = handle;
+renderHeader(); renderRooms(); renderThread(true);
+for (const frame of surface.queue.splice(0)) handle(frame);
+</script>
+<!--WORKER_BOOT-->
+</body>
+</html>

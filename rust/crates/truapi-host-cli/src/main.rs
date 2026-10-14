@@ -17,6 +17,7 @@ mod bootstrap;
 mod bulletin_lookup;
 mod chain;
 mod chat;
+mod chat_surface;
 mod contacts;
 mod dotns_read;
 mod frame_server;
@@ -415,6 +416,13 @@ struct DevArgs {
 	/// applied for this run only and never reach a chain.
 	#[arg(long = "product-config")]
 	product_config: Vec<PathBuf>,
+	/// Built worker bundle (one ESM file) to boot from the chat page at
+	/// `/chat`. It is served at `/worker/index.js`, read from disk on every
+	/// request so a watch build can rewrite it, and connects to `/worker` as
+	/// a `Worker` of the same product. Without it the page shows the chat but
+	/// boots no worker.
+	#[arg(long = "worker-bundle")]
+	worker_bundle: Option<PathBuf>,
 	/// Development command to run once the host is ready, after `--`.
 	#[arg(last = true)]
 	command: Vec<String>,
@@ -481,6 +489,11 @@ struct SigningHostArgs {
 	/// Execute one slash command without starting the terminal UI.
 	#[command(subcommand)]
 	action: Option<SigningHostAction>,
+	/// Development chat surface set by `dev`. It carries the chat host this
+	/// signing host installs whatever the default execution kind, and adds
+	/// the worker and chat routes to the frame endpoint.
+	#[arg(skip)]
+	dev_surface: Option<Arc<chat_surface::ChatSurface>>,
 }
 
 #[derive(Subcommand)]
@@ -1238,23 +1251,24 @@ async fn run_pairing_host(
 	if let Some(script) = args.script {
 		let script_product_id = product_id.clone();
 		let script_frame_url = frame_url.clone();
-		let status = with_frame_server(runtime_for_frames, product, frame_server, async move {
-			script_runner::run(
-				&script_frame_url,
-				&script_product_id,
-				&script,
-				script_runner::ScriptHostRole::PairingHost,
-			)
-			.await
-		})
-		.await?;
+		let status =
+			with_frame_server(runtime_for_frames, product, frame_server, None, async move {
+				script_runner::run(
+					&script_frame_url,
+					&script_product_id,
+					&script,
+					script_runner::ScriptHostRole::PairingHost,
+				)
+				.await
+			})
+			.await?;
 		let code = status.code().unwrap_or(1);
 		terminal_ui::output_event(SystemEvent::ScriptExit { code });
 		std::process::exit(code);
 	}
 
 	let terminal_ui = terminal_ui.context("interactive terminal was not initialized")?;
-	with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
+	with_frame_server(runtime_for_frames, product.clone(), frame_server, None, async move {
 		pairing_interactive_loop(
 			frame_url,
 			product,
@@ -1331,6 +1345,20 @@ async fn run_signing_host(
 	if let Some(url) = bootstrap::bridge_url(&frame_url) {
 		terminal_ui::output_event(SystemEvent::BridgeReady { url });
 	}
+	let dev_surface = args.dev_surface.clone();
+	if let Some(surface) = &dev_surface &&
+		let Some(url) = chat_surface::page_url(&frame_url)
+	{
+		let worker_bundle = surface.worker_bundle_path().map(Path::to_path_buf);
+		// Not an error: a watch build started beside the host may not have
+		// written it yet, and the bundle is read afresh on every request.
+		let worker_bundle_built = worker_bundle.as_deref().is_some_and(Path::exists);
+		terminal_ui::output_event(SystemEvent::ChatSurfaceReady {
+			url,
+			worker_bundle,
+			worker_bundle_built,
+		});
+	}
 	report_debugger(debugger.as_ref());
 	let runtime_for_frames =
 		tap_for_debugger(session.runtime_factory.clone(), debugger.map(|d| d.sink));
@@ -1340,22 +1368,23 @@ async fn run_signing_host(
 		let script_product_id = product_id.clone();
 		let script_frame_url = frame_url.clone();
 		let initial_deeplink = args.deeplink.clone();
-		let status = with_frame_server(runtime_for_frames, product, frame_server, async move {
-			if let Some(deeplink) = initial_deeplink {
-				start_deeplink_responder(&mut session, deeplink).await?;
-			}
-			ensure_signer(&mut session).await?;
-			let status = script_runner::run(
-				&script_frame_url,
-				&script_product_id,
-				&script,
-				script_runner::ScriptHostRole::SigningHost,
-			)
+		let status =
+			with_frame_server(runtime_for_frames, product, frame_server, dev_surface, async move {
+				if let Some(deeplink) = initial_deeplink {
+					start_deeplink_responder(&mut session, deeplink).await?;
+				}
+				ensure_signer(&mut session).await?;
+				let status = script_runner::run(
+					&script_frame_url,
+					&script_product_id,
+					&script,
+					script_runner::ScriptHostRole::SigningHost,
+				)
+				.await?;
+				session.responders.stop_all();
+				Ok::<ExitStatus, anyhow::Error>(status)
+			})
 			.await?;
-			session.responders.stop_all();
-			Ok::<ExitStatus, anyhow::Error>(status)
-		})
-		.await?;
 		let code = status.code().unwrap_or(1);
 		terminal_ui::output_event(SystemEvent::ScriptExit { code });
 		std::process::exit(code);
@@ -1365,26 +1394,32 @@ async fn run_signing_host(
 		let serve_deeplink = args.deeplink.clone();
 		let serve_frame_url = frame_url.clone();
 		let auto_accept = args.auto_accept;
-		return with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
-			ensure_signer(&mut session).await?;
-			restore_paired_responders(&mut session).await;
-			if let Some(deeplink) = serve_deeplink {
-				start_deeplink_responder(&mut session, deeplink).await?;
-			}
-			terminal_ui::output_event(SystemEvent::ServeReady {
-				url: serve_frame_url,
-				auto_accept,
-			});
-			let code = match dev_command {
-				Some(command) => run_dev_command(command).await?,
-				None => {
-					wait_for_shutdown().await;
-					0
-				},
-			};
-			session.responders.stop_all();
-			Ok(code)
-		})
+		return with_frame_server(
+			runtime_for_frames,
+			product.clone(),
+			frame_server,
+			dev_surface.clone(),
+			async move {
+				ensure_signer(&mut session).await?;
+				restore_paired_responders(&mut session).await;
+				if let Some(deeplink) = serve_deeplink {
+					start_deeplink_responder(&mut session, deeplink).await?;
+				}
+				terminal_ui::output_event(SystemEvent::ServeReady {
+					url: serve_frame_url,
+					auto_accept,
+				});
+				let code = match dev_command {
+					Some(command) => run_dev_command(command).await?,
+					None => {
+						wait_for_shutdown().await;
+						0
+					},
+				};
+				session.responders.stop_all();
+				Ok(code)
+			},
+		)
 		.await
 		.map(|code| std::process::exit(code));
 	}
@@ -1392,8 +1427,12 @@ async fn run_signing_host(
 	let initial_deeplink = args.deeplink.clone();
 	if let Some(command) = exec_command {
 		let cleanup_catalog = session.catalog.clone();
-		let clear_target =
-			with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
+		let clear_target = with_frame_server(
+			runtime_for_frames,
+			product.clone(),
+			frame_server,
+			dev_surface.clone(),
+			async move {
 				if let Some(deeplink) = initial_deeplink {
 					start_deeplink_responder(&mut session, deeplink).await?;
 				}
@@ -1407,8 +1446,9 @@ async fn run_signing_host(
 				.await;
 				session.responders.stop_all();
 				result
-			})
-			.await?;
+			},
+		)
+		.await?;
 		if let Some(target) = clear_target {
 			clear_sessions_after_shutdown(&cleanup_catalog, &target)?;
 		}
@@ -1425,8 +1465,12 @@ async fn run_signing_host(
 	};
 	restore_paired_responders(&mut session).await;
 	let cleanup_catalog = session.catalog.clone();
-	let clear_target =
-		with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
+	let clear_target = with_frame_server(
+		runtime_for_frames,
+		product.clone(),
+		frame_server,
+		dev_surface,
+		async move {
 			signing_interactive_loop(
 				&mut session,
 				frame_url,
@@ -1436,8 +1480,9 @@ async fn run_signing_host(
 				log_controller,
 			)
 			.await
-		})
-		.await?;
+		},
+	)
+	.await?;
 	if let Some(target) = clear_target {
 		clear_sessions_after_shutdown(&cleanup_catalog, &target)?;
 	}
@@ -1624,8 +1669,12 @@ async fn start_signing_host(
 		signer = Some(explicit_signer);
 	}
 	let approval = approval_policy(args.auto_accept);
-	let chat = args.execution_kind.chat_host();
-	let pocket = args.execution_kind.pocket_host();
+	// A dev surface serves its worker beside the default-kind app, so Chat and
+	// Pocket are installed for it; the core still denies both to an `App`.
+	let (chat, pocket) = match &args.dev_surface {
+		Some(surface) => (Some(surface.chat().clone()), pocket::CliPocketHost::from_env()),
+		None => (args.execution_kind.chat_host(), args.execution_kind.pocket_host()),
+	};
 	let (runtime, platform) = build_signing_runtime(
 		network,
 		storage_profile.path,
@@ -1825,12 +1874,13 @@ async fn with_frame_server<T, Fut>(
 	runtime: Arc<dyn frame_server::ProductRuntimeFactory>,
 	product: Arc<frame_server::ProductSelection>,
 	frame_server: frame_server::BoundFrameServer,
+	surface: Option<Arc<chat_surface::ChatSurface>>,
 	body: Fut,
 ) -> Result<T>
 where
 	Fut: Future<Output = Result<T>>,
 {
-	let server = tokio::spawn(frame_server::accept_loop(runtime, product, frame_server));
+	let server = tokio::spawn(frame_server::accept_loop(runtime, product, frame_server, surface));
 	let result = body.await;
 	server.abort();
 	let _ = server.await;
@@ -2019,6 +2069,13 @@ async fn run_dev(
 ) -> Result<()> {
 	bootstrap::read_container(&bootstrap::container_path())?;
 	let product_id = args.product_id.unwrap_or_else(|| format!("localhost:{}", args.app_port));
+	let surface = chat_surface::ChatSurface::new(
+		chat::CliChatHost::from_env(),
+		args.worker_bundle,
+		truapi::platform::ProductContext::new(product_id.clone())
+			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?
+			.product_id,
+	);
 	let signing = SigningHostArgs {
 		product_id,
 		network: args.network,
@@ -2031,6 +2088,7 @@ async fn run_dev(
 		// with a testnet-only network preset.
 		serve: true,
 		auto_accept: true,
+		dev_surface: Some(surface),
 		..Default::default()
 	};
 	let command = (!args.command.is_empty()).then_some(args.command);
@@ -4482,6 +4540,7 @@ mod cli_tests {
 				Arc::new(UnusedRuntimeFactory),
 				product,
 				frame_server,
+				None,
 				async move {
 					anyhow::ensure!(!script_failed, "script failed");
 					Ok(())
