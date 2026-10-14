@@ -18,14 +18,21 @@ struct WalletView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     VStack(spacing: -cardOverlap) {
-                        ZStack(alignment: .top) {
+                        // Builds with product cards show humanity as the
+                        // Humanity card the Pocket pins, so only the others
+                        // draw the ID card.
+                        #if FEATURE_PRODUCTS
                             assetCard
-                            identityCard
-                        }
-                        // The identity card is drawn offset down by the peek, which
-                        // the stack's own height does not account for, so without
-                        // this the product cards would start a peek too high.
-                        .padding(.bottom, viewModel.expandedSection == .none ? peekHeight : 0)
+                        #else
+                            ZStack(alignment: .top) {
+                                assetCard
+                                identityCard
+                            }
+                            // The identity card is drawn offset down by the peek, which
+                            // the stack's own height does not account for, so without
+                            // this the product cards would start a peek too high.
+                            .padding(.bottom, viewModel.expandedSection == .none ? peekHeight : 0)
+                        #endif
                         pocketCards
                     }
                     .padding(.horizontal, 24)
