@@ -988,6 +988,14 @@ impl PreimageReadHost for CliPlatform {
 			reason: "this host does not read torrents".to_string(),
 		})
 	}
+
+	/// The account of the cache payer of this host, from the ledger of a cache node.
+	async fn cache_account(
+		&self,
+		request: api::RemotePreimageCacheAccountRequest,
+	) -> Result<api::RemotePreimageCacheAccountResponse, api::PreimageReadError> {
+		self.bulletin.source().cache_account(request.provider).await
+	}
 }
 
 #[derive(Serialize, Deserialize)]

@@ -100,6 +100,9 @@ pub enum PreimageReadSource {
 		/// The trace of the steps of the provider, as JSON. The host does not
 		/// read it and gives it to the product as it is.
 		trace: Option<String>,
+		/// The price of the read that the provider gave, in the units of its
+		/// ledger. The host pays it with the receipt for this read.
+		price: Option<u64>,
 	},
 	/// Bulletin, through the host's own Bulletin client.
 	Bulletin {
@@ -296,4 +299,38 @@ pub enum PreimageReadError {
 		/// Human-readable failure reason.
 		reason: String,
 	},
+}
+
+/// Request for the cache account of the payer that the host uses for this product.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageCacheAccountRequest {
+	/// The cache provider to ask. `None` lets the host pick one from its order
+	/// for reads.
+	pub provider: Option<[u8; 32]>,
+}
+
+/// The cache account of the payer of this product, as the ledger of a cache
+/// provider gives it, and the prices of that ledger. The units are those of the
+/// ledger.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageCacheAccountResponse {
+	/// The public key (sr25519) with which the host pays cache providers for
+	/// this product.
+	pub payer: [u8; 32],
+	/// Endpoint id of the cache provider that answered.
+	pub provider: [u8; 32],
+	/// What is left today of the free allowance of the payer.
+	pub allowance: u64,
+	/// The part of `allowance` that retention can still use today.
+	pub allowance_retention: u64,
+	/// The paid credits of the payer.
+	pub paid: u64,
+	/// The allowance of each new day.
+	pub allowance_per_day: u64,
+	/// The part of the daily allowance that retention can use.
+	pub retention_allowance_per_day: u64,
+	/// The price of one read.
+	pub read_price: u64,
+	/// The price of retention for each started MiB and each started hour.
+	pub retention_price: u64,
 }

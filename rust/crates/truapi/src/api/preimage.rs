@@ -3,6 +3,7 @@
 use crate::{
 	CallContext, CallError, Subscription,
 	versioned::preimage::{
+		RemotePreimageCacheAccountRequest, RemotePreimageCacheAccountResponse,
 		RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
 		RemotePreimageLookupSubscribeRequest, RemotePreimageReadError, RemotePreimageReadRequest,
 		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
@@ -127,6 +128,27 @@ pub trait Preimage: Send + Sync {
 		_cx: &CallContext,
 		_request: RemotePreimageReadTorrentRequest,
 	) -> Result<RemotePreimageReadTorrentResponse, CallError<RemotePreimageReadError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// The cache account of the payer with which the host pays cache providers
+	/// for this product: what is left of its free allowance today, its paid
+	/// credits, and the prices of reads and of retention. The host asks a cache
+	/// provider, which asks its ledger. A host without cache providers answers
+	/// `Unsupported`.
+	///
+	/// ```ts
+	/// const account = await truapi.preimage.cacheAccount({ provider: undefined });
+	/// if (account.isOk()) {
+	///   console.log("allowance left:", account.value.allowance, "paid:", account.value.paid);
+	/// }
+	/// ```
+	#[wire(id = 5)]
+	async fn cache_account(
+		&self,
+		_cx: &CallContext,
+		_request: RemotePreimageCacheAccountRequest,
+	) -> Result<RemotePreimageCacheAccountResponse, CallError<RemotePreimageReadError>> {
 		Err(CallError::unavailable())
 	}
 }

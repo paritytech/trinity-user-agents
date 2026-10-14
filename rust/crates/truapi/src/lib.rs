@@ -227,6 +227,12 @@ pub mod latest {
 	/// Torrent read result: the file, its preimage key and the read report.
 	pub type RemotePreimageReadTorrentResponse =
 		LatestOf<versioned::preimage::RemotePreimageReadTorrentResponse>;
+	/// Cache account request: the provider to ask, or none.
+	pub type RemotePreimageCacheAccountRequest =
+		LatestOf<versioned::preimage::RemotePreimageCacheAccountRequest>;
+	/// Cache account of the payer of a product, and the prices of the ledger.
+	pub type RemotePreimageCacheAccountResponse =
+		LatestOf<versioned::preimage::RemotePreimageCacheAccountResponse>;
 	/// Preimage read failure.
 	pub type PreimageReadError = LatestOf<versioned::preimage::RemotePreimageReadError>;
 	/// Login request error.

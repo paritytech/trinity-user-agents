@@ -48,7 +48,7 @@ use truapi::{
 	v01::{
 		BulletinReadVia, CacheOrigin, PreimageReadAttempt, PreimageReadAttemptSource,
 		PreimageReadError, PreimageReadOutcome, PreimageReadReport, PreimageReadRoute,
-		PreimageReadSource, RemotePreimageReadResponse,
+		PreimageReadSource, RemotePreimageCacheAccountResponse, RemotePreimageReadResponse,
 	},
 };
 use zeroize::Zeroizing;
@@ -158,6 +158,27 @@ struct Answer {
 	provider_ms: Option<u32>,
 	/// The `x-cache-trace` header: the node's steps, as JSON.
 	trace: Option<String>,
+	/// The `x-cache-price` header: the price of the read in the node's ledger.
+	price: Option<u64>,
+}
+
+/// The account of a payer that a cache node gives at `GET /account/<payer>`: the quote of its
+/// ledger. A ledger without allowances leaves the allowance fields out.
+#[derive(Deserialize)]
+struct Quote {
+	price: u64,
+	retention_price: u64,
+	#[serde(default)]
+	allowance: u64,
+	#[serde(default)]
+	allowance_retention: u64,
+	#[serde(default)]
+	paid: Option<u64>,
+	balance: u64,
+	#[serde(default)]
+	allowance_per_day: u64,
+	#[serde(default)]
+	retention_allowance_per_day: u64,
 }
 
 /// One read through the cache nodes: the value, the provider that served it, and each provider that
@@ -523,6 +544,7 @@ impl CacheNodes {
 							home,
 							provider_ms: answer.provider_ms,
 							trace: answer.trace,
+							price: answer.price,
 						}),
 						value: Some(answer.value),
 						attempts,
@@ -651,11 +673,63 @@ impl CacheNodes {
 		let origin = header("x-cache-origin").unwrap_or_else(|| "unknown".to_string());
 		let provider_ms = header("x-cache-elapsed-ms").and_then(|ms| ms.parse().ok());
 		let trace = header("x-cache-trace");
+		let price = header("x-cache-price").and_then(|price| price.parse().ok());
 		let body = response.bytes().await.map_err(|error| error.to_string())?;
 		if !status.is_success() {
 			return Err(format!("{status}: {}", String::from_utf8_lossy(&body)));
 		}
-		Ok(Some(Answer { value: body.to_vec(), origin, provider_ms, trace }))
+		Ok(Some(Answer { value: body.to_vec(), origin, provider_ms, trace, price }))
+	}
+
+	/// The account of the payer at the provider `only`, or at the first provider in quality order:
+	/// the quote of the provider's ledger. Without a payer or a provider, there is no account.
+	async fn account(
+		&self,
+		only: Option<[u8; 32]>,
+	) -> Result<RemotePreimageCacheAccountResponse, PreimageReadError> {
+		let Some(payer) = self.payer() else {
+			return Err(PreimageReadError::Unknown {
+				reason: format!("no cache payer yet: sign in, or set {PAYER_SEED_ENV}"),
+			});
+		};
+		let (_, providers) = self.load_providers();
+		let ordered = {
+			let quality = self.quality.lock().expect("cache quality mutex poisoned");
+			order(&providers, &[], &quality, false, Instant::now())
+		};
+		let provider = match only {
+			Some(id) => ordered
+				.into_iter()
+				.find(|provider| provider.id == id)
+				.ok_or(PreimageReadError::UnknownProvider)?,
+			None => ordered.into_iter().next().ok_or(PreimageReadError::NoCacheProviders)?,
+		};
+		let payer_id = payer.public.to_bytes();
+		let unknown = |reason: String| PreimageReadError::Unknown { reason };
+		let response = self
+			.http
+			.get(format!("{}/account/{}", provider.url, hex::encode(payer_id)))
+			.send()
+			.await
+			.map_err(|error| unknown(error.to_string()))?;
+		let status = response.status();
+		if !status.is_success() {
+			let body = response.text().await.unwrap_or_default();
+			return Err(unknown(format!("{status}: {body}")));
+		}
+		let quote: Quote = response.json().await.map_err(|error| unknown(error.to_string()))?;
+		Ok(RemotePreimageCacheAccountResponse {
+			payer: payer_id,
+			provider: provider.id,
+			allowance: quote.allowance,
+			allowance_retention: quote.allowance_retention,
+			// A ledger without allowances gives only the balance, which is all paid.
+			paid: quote.paid.unwrap_or(quote.balance),
+			allowance_per_day: quote.allowance_per_day,
+			retention_allowance_per_day: quote.retention_allowance_per_day,
+			read_price: quote.price,
+			retention_price: quote.retention_price,
+		})
 	}
 
 	/// Sign the receipt for a verified delivery and send it to the provider that served it. The
@@ -722,6 +796,20 @@ impl<S> CacheFirst<S> {
 	/// Ask `cache` before `fallback`. Without cache nodes, `fallback` answers alone.
 	pub fn new(cache: Option<Arc<CacheNodes>>, fallback: S) -> Self {
 		Self { cache, fallback }
+	}
+}
+
+impl<S> CacheFirst<S> {
+	/// The cache account of the payer at the provider `only`, or at the first provider of the
+	/// order.
+	pub async fn cache_account(
+		&self,
+		only: Option<[u8; 32]>,
+	) -> Result<RemotePreimageCacheAccountResponse, PreimageReadError> {
+		match &self.cache {
+			Some(cache) => cache.account(only).await,
+			None => Err(PreimageReadError::NoCacheProviders),
+		}
 	}
 }
 
@@ -879,7 +967,7 @@ mod tests {
 				seen.lock().unwrap().push((path, serde_json::from_slice(&request).unwrap()));
 				let head = format!(
 					"HTTP/1.1 {status} Fake\r\ncontent-length: {}\r\nx-cache-origin: local\r\nx-cache-elapsed-ms: 3\r\n\
-                     x-cache-trace: [\"local\"]\r\nconnection: close\r\n\r\n",
+                     x-cache-trace: [\"local\"]\r\nx-cache-price: 10\r\nconnection: close\r\n\r\n",
 					body.len()
 				);
 				stream.write_all(head.as_bytes()).await.unwrap();
@@ -1049,6 +1137,7 @@ mod tests {
 			home: true,
 			provider_ms: Some(3),
 			trace: Some("[\"local\"]".to_string()),
+			price: Some(10),
 		}
 	}
 

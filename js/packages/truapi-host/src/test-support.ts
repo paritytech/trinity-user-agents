@@ -129,6 +129,17 @@ export function makeHostCallbacks(
               file: 0,
               report: { attempts: [], hostMs: 0 },
             }),
+            cacheAccount: async () => ({
+              payer: `0x${"00".repeat(32)}`,
+              provider: `0x${"00".repeat(32)}`,
+              allowance: 0n,
+              allowanceRetention: 0n,
+              paid: 0n,
+              allowancePerDay: 0n,
+              retentionAllowancePerDay: 0n,
+              readPrice: 0n,
+              retentionPrice: 0n,
+            }),
             ...overrides.preimageRead,
           },
         }

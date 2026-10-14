@@ -47,6 +47,8 @@ import type {
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
   PreimageReadRoute,
+  RemotePreimageCacheAccountRequest,
+  RemotePreimageCacheAccountResponse,
   RemotePreimageReadResponse,
   RemotePreimageReadTorrentRequest,
   RemotePreimageReadTorrentResponse,
@@ -1688,6 +1690,14 @@ export interface PreimageReadHost {
   readTorrent(
     request: RemotePreimageReadTorrentRequest,
   ): Promise<RemotePreimageReadTorrentResponse>;
+
+  /**
+   * The cache account of the payer of this product at the cache provider
+   * `request.provider`, or at the first provider of the host's order.
+   */
+  cacheAccount(
+    request: RemotePreimageCacheAccountRequest,
+  ): Promise<RemotePreimageCacheAccountResponse>;
 }
 
 /**

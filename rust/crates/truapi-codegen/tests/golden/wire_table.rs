@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "b32635f6e6dfaf23";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "f33f7a47b89a5c10";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -426,6 +426,12 @@ pub const PREIMAGE_READ: MethodIds = MethodIds {
 pub const PREIMAGE_READ_TORRENT: MethodIds = MethodIds {
     trait_id: 11,
     method_id: 4,
+};
+
+/// Wire discriminants for `preimage_cache_account`.
+pub const PREIMAGE_CACHE_ACCOUNT: MethodIds = MethodIds {
+    trait_id: 11,
+    method_id: 5,
 };
 
 /// Wire discriminants for `resource_allocation_request`.
@@ -843,6 +849,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "preimage_read_torrent",
         kind: WireKind::Request(PREIMAGE_READ_TORRENT),
+    },
+    WireEntry {
+        method: "preimage_cache_account",
+        kind: WireKind::Request(PREIMAGE_CACHE_ACCOUNT),
     },
     WireEntry {
         method: "resource_allocation_request",

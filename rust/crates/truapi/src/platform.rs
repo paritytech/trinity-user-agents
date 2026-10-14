@@ -43,8 +43,10 @@ use truapi::{
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		PreimageReadError, PreimageReadRoute, ProductAccountId, ProductAccountTxPayload,
-		ProductProofContext, RemotePermission, RemotePermissionRequest, RemotePreimageReadResponse,
-		RemotePreimageReadTorrentRequest, RemotePreimageReadTorrentResponse, RingLocation,
+		ProductProofContext, RemotePermission, RemotePermissionRequest,
+		RemotePreimageCacheAccountRequest, RemotePreimageCacheAccountResponse,
+		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
+		RemotePreimageReadTorrentResponse, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -3074,6 +3076,13 @@ pub trait PreimageReadHost: Send + Sync {
 		&self,
 		request: RemotePreimageReadTorrentRequest,
 	) -> Result<RemotePreimageReadTorrentResponse, PreimageReadError>;
+
+	/// The cache account of the payer of this product at the cache provider
+	/// `request.provider`, or at the first provider of the host's order.
+	async fn cache_account(
+		&self,
+		request: RemotePreimageCacheAccountRequest,
+	) -> Result<RemotePreimageCacheAccountResponse, PreimageReadError>;
 }
 
 /// Host-implemented adapter through which product Chat calls reach host

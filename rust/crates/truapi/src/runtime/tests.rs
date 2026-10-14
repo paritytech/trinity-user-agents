@@ -49,6 +49,7 @@ use truapi::{
 		},
 		permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
 		preimage::{
+			RemotePreimageCacheAccountRequest, RemotePreimageCacheAccountResponse,
 			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
 			RemotePreimageReadError, RemotePreimageReadRequest, RemotePreimageReadResponse,
 			RemotePreimageReadTorrentRequest, RemotePreimageReadTorrentResponse,
@@ -4569,6 +4570,51 @@ impl crate::platform::PreimageReadHost for FixedPreimageRead {
 			size: None,
 		})
 	}
+
+	/// The account of the payer [3; 32] at the provider of the request, or [7; 32].
+	async fn cache_account(
+		&self,
+		request: v01::RemotePreimageCacheAccountRequest,
+	) -> Result<v01::RemotePreimageCacheAccountResponse, v01::PreimageReadError> {
+		Ok(v01::RemotePreimageCacheAccountResponse {
+			payer: [3; 32],
+			provider: request.provider.unwrap_or([7; 32]),
+			allowance: 480,
+			allowance_retention: 48,
+			paid: 0,
+			allowance_per_day: 500,
+			retention_allowance_per_day: 48,
+			read_price: 10,
+			retention_price: 1,
+		})
+	}
+}
+
+// The cache account comes from the read host of the platform as it is. A host without one does not
+// have the method.
+#[test]
+fn preimage_cache_account_comes_from_the_read_host() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+	let account = |host: &ProductRuntimeHost, provider| {
+		let request =
+			RemotePreimageCacheAccountRequest::V1(v01::RemotePreimageCacheAccountRequest {
+				provider,
+			});
+		futures::executor::block_on(Preimage::cache_account(host, &CallContext::default(), request))
+			.map(|response| {
+				let RemotePreimageCacheAccountResponse::V1(response) = response;
+				(response.provider, response.allowance, response.read_price)
+			})
+	};
+	assert_eq!(account(&host, None), Err(CallError::Unsupported));
+	let report = v01::PreimageReadReport { served_by: None, attempts: Vec::new(), host_ms: 0 };
+	host.services.install_preimage_read_host(Arc::new(FixedPreimageRead(
+		v01::RemotePreimageReadResponse { value: None, report },
+	)));
+	assert_eq!(
+		(account(&host, None), account(&host, Some([5; 32]))),
+		(Ok(([7; 32], 480, 10)), Ok(([5; 32], 480, 10)))
+	);
 }
 
 fn torrent_read(
@@ -4708,6 +4754,7 @@ fn preimage_read_checks_the_host_value_against_the_key() {
 				home: true,
 				provider_ms: None,
 				trace: None,
+				price: None,
 			}),
 			attempts: vec![v01::PreimageReadAttempt {
 				source: provider.clone(),
@@ -4764,6 +4811,7 @@ fn preimage_read_wire_vectors() {
 				home: true,
 				provider_ms: Some(3),
 				trace: None,
+				price: Some(10),
 			}),
 			attempts: vec![v01::PreimageReadAttempt {
 				source: v01::PreimageReadAttemptSource::CacheProvider { id: [7; 32] },
@@ -4780,8 +4828,9 @@ fn preimage_read_wire_vectors() {
              070707070707070707070707070707070701"
                 .to_string(),
             "0001086869010107070707070707070707070707070707070707070707070707070707070707070104410001050505050505\
-             0505050505050505050505050505050505050505050505050505010000000101030000000004010707070707070707070707\
-             070707070707070707070707070707070707070707000400000009000000"
+             05050505050505050505050505050505050505050505050505050100000001010300000000010a0000000000000004010707\
+             070707070707070707070707070707070707070707070707070707070707000400000009000000"
+
                 .to_string(),
         )
     );

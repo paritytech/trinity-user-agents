@@ -10,6 +10,7 @@ use truapi::{
 	api::Preimage,
 	v01,
 	versioned::preimage::{
+		RemotePreimageCacheAccountRequest, RemotePreimageCacheAccountResponse,
 		RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
 		RemotePreimageLookupSubscribeRequest, RemotePreimageReadError, RemotePreimageReadRequest,
 		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
@@ -252,6 +253,22 @@ impl Preimage for ProductRuntimeHost {
 		}
 		response.report.host_ms = elapsed_ms(started);
 		Ok(RemotePreimageReadTorrentResponse::V1(response))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "preimage.cache_account"))]
+	async fn cache_account(
+		&self,
+		_cx: &CallContext,
+		request: RemotePreimageCacheAccountRequest,
+	) -> Result<RemotePreimageCacheAccountResponse, CallError<RemotePreimageReadError>> {
+		let RemotePreimageCacheAccountRequest::V1(request) = request;
+		let Some(host) = self.services.preimage_read_host() else {
+			return Err(CallError::Unsupported);
+		};
+		host.cache_account(request)
+			.await
+			.map(RemotePreimageCacheAccountResponse::V1)
+			.map_err(|error| CallError::Domain(RemotePreimageReadError::V1(error)))
 	}
 }
 

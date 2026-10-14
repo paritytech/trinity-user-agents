@@ -54,6 +54,7 @@ pub struct JsBridge {
     pub lookup_preimage: Function,
     pub read_preimage: Function,
     pub read_torrent: Function,
+    pub cache_account: Function,
     pub begin_operation: Function,
     pub end_operation: Function,
     pub read: Function,
@@ -118,6 +119,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("readPreimage")),
             read_torrent: get_optional_function(callbacks, "readTorrent")?
                 .unwrap_or_else(|| missing_callback("readTorrent")),
+            cache_account: get_optional_function(callbacks, "cacheAccount")?
+                .unwrap_or_else(|| missing_callback("cacheAccount")),
             begin_operation: get_function(callbacks, "beginOperation")?,
             end_operation: get_function(callbacks, "endOperation")?,
             read: get_function(callbacks, "read")?,
@@ -143,7 +146,8 @@ impl JsBridge {
             pocket_present: get_optional_function(callbacks, "subscribePocketCards")?.is_some()
                 && get_optional_function(callbacks, "removePocketCard")?.is_some(),
             preimage_read_present: get_optional_function(callbacks, "readPreimage")?.is_some()
-                && get_optional_function(callbacks, "readTorrent")?.is_some(),
+                && get_optional_function(callbacks, "readTorrent")?.is_some()
+                && get_optional_function(callbacks, "cacheAccount")?.is_some(),
             scanner_present: get_optional_function(callbacks, "scanCode")?.is_some(),
         })
     }
@@ -629,6 +633,23 @@ impl crate::platform::PreimageReadHost for WasmPlatform {
         decode_bytes::<latest::RemotePreimageReadTorrentResponse>(
             bytes,
             "readTorrent response did not decode",
+        )
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })
+    }
+
+    async fn cache_account(
+        &self,
+        request: latest::RemotePreimageCacheAccountRequest,
+    ) -> Result<latest::RemotePreimageCacheAccountResponse, latest::PreimageReadError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.cache_account,
+            vec![Uint8Array::from(request.encode().as_slice()).into()],
+        )
+        .await
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })?;
+        decode_bytes::<latest::RemotePreimageCacheAccountResponse>(
+            bytes,
+            "cacheAccount response did not decode",
         )
         .map_err(|reason| latest::PreimageReadError::Unknown { reason })
     }

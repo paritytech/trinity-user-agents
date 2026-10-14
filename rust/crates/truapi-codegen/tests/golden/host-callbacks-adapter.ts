@@ -28,6 +28,8 @@ import {
   HostWorkerBeginOperationResponse,
   PreimageReadRoute,
   RemotePermissionRequest,
+  RemotePreimageCacheAccountRequest,
+  RemotePreimageCacheAccountResponse,
   RemotePreimageReadResponse,
   RemotePreimageReadTorrentRequest,
   RemotePreimageReadTorrentResponse,
@@ -119,6 +121,7 @@ export interface RawCallbacks {
     skipHostCaches: boolean,
   ): Promise<Uint8Array>;
   readTorrent?(request: Uint8Array): Promise<Uint8Array>;
+  cacheAccount?(request: Uint8Array): Promise<Uint8Array>;
   beginOperation(product: Uint8Array, label: string): Promise<Uint8Array>;
   endOperation(product: Uint8Array, id: number): Promise<void>;
   read(key: string): Promise<Uint8Array | null | undefined>;
@@ -303,6 +306,12 @@ export function createWasmRawCallbacks(
             RemotePreimageReadTorrentResponse.enc(
               await preimageRead.readTorrent(
                 RemotePreimageReadTorrentRequest.dec(request),
+              ),
+            ),
+          cacheAccount: async (request) =>
+            RemotePreimageCacheAccountResponse.enc(
+              await preimageRead.cacheAccount(
+                RemotePreimageCacheAccountRequest.dec(request),
               ),
             ),
         }
