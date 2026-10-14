@@ -20,6 +20,10 @@ use crate::{
 
 type Responder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 
+/// One connection's response sender. Shared rather than cloned, so dropping it
+/// through any handle ends that connection's stream.
+type SenderSlot = Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>;
+
 /// Provider that echoes a canned response for every request it sees,
 /// driven by a `respond` closure. The closure receives each json-rpc
 /// request string and returns the response frames the test wants the
@@ -33,11 +37,11 @@ pub struct ScriptedProvider {
 	/// First connection's response sender; dropping it ends that connection's
 	/// responses. Later connections get their own, reachable via
 	/// [`notification_sender_nth`].
-	pub sender: Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>,
+	pub sender: SenderSlot,
 	receiver: Arc<Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>>,
 	/// Every connection's sender slot, in connect order. Slot 0 is `sender`
 	/// itself, so taking that still ends the first connection's stream.
-	pub senders: Arc<Mutex<Vec<Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>>>>,
+	pub senders: Arc<Mutex<Vec<SenderSlot>>>,
 	/// How many times the core asked for a connection.
 	pub connect_calls: Arc<AtomicUsize>,
 }
@@ -59,7 +63,7 @@ impl ScriptedProvider {
 		F: Fn(&str) -> Vec<String> + Send + Sync + 'static,
 	{
 		let (tx, rx) = fut_mpsc::unbounded();
-		let first = Arc::new(Mutex::new(Some(tx)));
+		let first: SenderSlot = Arc::new(Mutex::new(Some(tx)));
 		Self {
 			respond: Arc::new(respond),
 			sent: Arc::new(Mutex::new(Vec::new())),
@@ -76,7 +80,7 @@ struct ScriptedConnection {
 	sent: Arc<Mutex<Vec<String>>>,
 	/// This connection's own sender, so an answer goes back on the socket that
 	/// asked rather than on whichever one connected first.
-	sender: Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>,
+	sender: SenderSlot,
 	receiver: Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>,
 }
 
@@ -122,7 +126,7 @@ impl RuntimeChainProvider for ScriptedProvider {
 			})),
 			None => {
 				let (tx, rx) = fut_mpsc::unbounded();
-				let slot = Arc::new(Mutex::new(Some(tx)));
+				let slot: SenderSlot = Arc::new(Mutex::new(Some(tx)));
 				self.senders.lock().unwrap().push(slot.clone());
 				Ok(Arc::new(ScriptedConnection {
 					respond: self.respond.clone(),
@@ -168,17 +172,4 @@ pub fn wait_for_sent(
 		std::thread::sleep(std::time::Duration::from_millis(10));
 	}
 	provider.sent.lock().unwrap().clone()
-}
-
-/// Sender for the `n`th connection this provider handed out, in connect order.
-pub fn notification_sender_nth(
-	provider: &ScriptedProvider,
-	n: usize,
-) -> fut_mpsc::UnboundedSender<String> {
-	provider.senders.lock().unwrap()[n]
-		.lock()
-		.unwrap()
-		.as_ref()
-		.expect("connection sender available")
-		.clone()
 }
