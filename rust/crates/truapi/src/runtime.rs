@@ -24,6 +24,7 @@ pub use funding::OpenFundingError;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
+mod payment_id;
 pub mod product_manifest;
 mod product_subtree;
 mod renderer;
@@ -1027,8 +1028,6 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 		},
 	})
 }
-
-const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
 
 impl ProductRuntimeHost {
 	/// Chat access policy for this connection; see [`chat_platform_for`].
