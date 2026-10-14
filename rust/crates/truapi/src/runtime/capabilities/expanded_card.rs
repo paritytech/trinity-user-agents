@@ -33,10 +33,10 @@ impl ExpandedCard for ProductRuntimeHost {
 		let request = request.into_latest();
 		let result = async {
 			// Admin connections call the trait without the dispatcher's kind filter.
-			if self.product.execution_kind != ProductExecutionKind::Widget {
+			if self.connection.product.execution_kind != ProductExecutionKind::Widget {
 				return Err(CallError::Denied);
 			}
-			let Some(card) = &self.expanded_card else {
+			let Some(card) = &self.connection.expanded_card else {
 				return Err(CallError::Unsupported);
 			};
 			match card.set_expanded_card_face_shown(request.shown).await {

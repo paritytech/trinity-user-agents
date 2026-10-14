@@ -84,9 +84,12 @@ stage in the frame path; the host's `Platform` impl is the syscall floor.
 `ProductRuntimeHost` handles everything role-neutral (id normalization,
 permission gating, confirmation, soft product-key derivation), then delegates
 the wallet-authority tail (`sign_*`, `create_transaction`, `account_alias`,
-`create_proof`, `allocate_resources`, `derive_entropy`) through an
-`Arc<dyn ProductAuthority>` handle with an `AuthoritySession` snapshot the
-role revalidates before touching key material.
+`create_proof`, `allocate_resources`, `derive_entropy`) through a
+`ProductAccounts` handle bound to its product, with an `AuthoritySession`
+snapshot the role revalidates before touching key material. Its
+per-connection state (adapters, permissions, action channels, open operations)
+lives in a `ProductConnection`, and login, logout and connection state go
+through the role's `HostSession`.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures

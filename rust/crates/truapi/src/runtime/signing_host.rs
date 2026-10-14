@@ -30,7 +30,7 @@ pub use sso_responder::{
 pub use sso_service::SigningHostSsoService;
 
 use super::{
-	RuntimeServices,
+	HostSession, RuntimeServices,
 	authority::{
 		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
@@ -79,10 +79,7 @@ use crate::platform::{
 	PermissionAuthorizationStatus, Platform, ProductContext, SignVrfReview, UserConfirmationReview,
 	normalize_product_identifier,
 };
-use truapi::{
-	CallContext, CallError, v01,
-	versioned::account::{HostRequestLoginError, HostRequestLoginResponse},
-};
+use truapi::{CallContext, CallError, latest, v01};
 use zeroize::Zeroizing;
 
 #[derive(Default)]
@@ -882,11 +879,8 @@ impl SigningHost {
 }
 
 #[async_trait::async_trait]
-impl ProductAuthority for SigningHost {
-	fn current_session(&self) -> Option<AuthoritySession> {
-		self.current_local_session()
-	}
-
+impl HostSession for SigningHost {
+	/// Shared session holder for connection-status subscriptions.
 	fn session_state(&self) -> Arc<SessionState> {
 		SigningHost::session_state(self)
 	}
@@ -894,19 +888,30 @@ impl ProductAuthority for SigningHost {
 	async fn request_login(
 		&self,
 		_product: &ProductContext,
-	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
+	) -> Result<latest::HostRequestLoginResponse, CallError<latest::HostRequestLoginError>> {
 		if let Some(session) = self.session_state.current() {
 			self.auth_state.connected(&connected_session_ui_info(&session));
-			Ok(HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::AlreadyConnected))
+			Ok(latest::HostRequestLoginResponse::AlreadyConnected)
 		} else {
 			// Wallet unlock and session activation are platform-owned.
-			Ok(HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected))
+			Ok(latest::HostRequestLoginResponse::Rejected)
 		}
 	}
 
 	async fn disconnect(&self) {
 		self.clear_local_session();
 		self.auth_state.store_disconnected();
+	}
+
+	async fn primary_username(&self) -> Option<String> {
+		self.current_local_session()?.primary_username().map(str::to_string)
+	}
+}
+
+#[async_trait::async_trait]
+impl ProductAuthority for SigningHost {
+	fn current_session(&self) -> Option<AuthoritySession> {
+		self.current_local_session()
 	}
 
 	async fn product_subtree_public_key(
@@ -1527,7 +1532,7 @@ mod tests {
 
 	use super::{
 		super::{
-			ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole,
+			HostSession, ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole,
 			authority::{
 				AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
 				SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
@@ -1682,11 +1687,12 @@ mod tests {
 
 	fn product_runtime(
 		services: Arc<RuntimeServices>,
-		authority: Arc<dyn ProductAuthority>,
+		authority: Arc<SigningHostRole>,
 	) -> ProductRuntimeHost {
 		ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
+			authority.clone(),
 			authority,
 			ProductContext::new("myapp.dot".to_string()).expect("valid product id"),
 		)
@@ -1694,12 +1700,13 @@ mod tests {
 
 	fn product_runtime_for(
 		services: Arc<RuntimeServices>,
-		authority: Arc<dyn ProductAuthority>,
+		authority: Arc<SigningHostRole>,
 		product_id: &str,
 	) -> ProductRuntimeHost {
 		ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
+			authority.clone(),
 			authority,
 			ProductContext::new(product_id.to_string()).expect("valid product id"),
 		)

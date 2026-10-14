@@ -55,7 +55,7 @@ impl Preimage for ProductRuntimeHost {
 			// Emit the value once, then keep the subscription open until the
 			// caller unsubscribes, since there is nothing left to report.
 			if let Ok(key_bytes) = <[u8; 32]>::try_from(key.as_slice()) &&
-				let Some(value) = self.services.cached_preimage(&key_bytes)
+				let Some(value) = self.connection.services.cached_preimage(&key_bytes)
 			{
 				let item = latest::RemotePreimageLookupSubscribeItem { value: Some(value) };
 				let stream = futures::stream::once(async move { Ok(item) })
@@ -68,7 +68,7 @@ impl Preimage for ProductRuntimeHost {
 			// cannot feed products forged content. A mismatch is reported as a
 			// miss, so the product still gets its initial current-value/miss
 			// emission.
-			let stream = self.platform.lookup_preimage(key.clone()).map(move |item| {
+			let stream = self.connection.platform.lookup_preimage(key.clone()).map(move |item| {
 				let value = match item {
 					Ok(value) => value,
 					Err(error) => {
@@ -110,17 +110,18 @@ impl Preimage for ProductRuntimeHost {
 		let version = request.version();
 		let value = request.into_latest();
 		let result = async {
-			let Some(session) = self.authority.current_session() else {
+			let Some(session) = self.accounts.current_session() else {
 				return Err(preimage_submit_error("No active session".to_string()));
 			};
-			let bulletin = &self.services.bulletin;
-			self.require_remote_permission(
-				latest::RemotePermission::PreimageSubmit,
-				latest::PreimageSubmitError::Unknown {
-					reason: PERMISSION_DENIED_REASON.to_string(),
-				},
-			)
-			.await?;
+			let bulletin = &self.connection.services.bulletin;
+			self.connection
+				.require_remote_permission(
+					latest::RemotePermission::PreimageSubmit,
+					latest::PreimageSubmitError::Unknown {
+						reason: PERMISSION_DENIED_REASON.to_string(),
+					},
+				)
+				.await?;
 			let submission_deadline = Instant::now() + PREIMAGE_SUBMIT_TIMEOUT;
 			let authority_cx = remote_authority_context_until(
 				cx,
@@ -129,16 +130,15 @@ impl Preimage for ProductRuntimeHost {
 			);
 			let allowance = remote_authority_call(
 				&authority_cx,
-				self.authority
-					.bulletin_allowance_key(&authority_cx, &session, self.product_id()),
+				self.accounts.bulletin_allowance_key(&authority_cx, &session),
 			)
 			.await
 			.map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
 
 			#[cfg(feature = "test-host")]
-			if self.authority.submits_preimages_locally() {
+			if self.accounts.submits_preimages_locally() {
 				let key = preimage_key(&value);
-				self.services.keep_local_preimage(key, value);
+				self.connection.services.keep_local_preimage(key, value);
 				return Ok(key.to_vec());
 			}
 
@@ -155,11 +155,7 @@ impl Preimage for ProductRuntimeHost {
 					);
 					let allowance = remote_authority_call(
 						&authority_cx,
-						self.authority.refresh_bulletin_allowance_key(
-							&authority_cx,
-							&session,
-							self.product_id(),
-						),
+						self.accounts.refresh_bulletin_allowance_key(&authority_cx, &session),
 					)
 					.await
 					.map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
