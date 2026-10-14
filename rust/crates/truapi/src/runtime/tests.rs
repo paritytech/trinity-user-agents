@@ -8975,6 +8975,25 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 		})
 	};
 	let before_restart = (serves_card_eur(&services), us_unsupported(&services));
+	// What the answers showed is saved in the background, and a restart reads
+	// the saved records only once, so both have to be stored before it.
+	for _ in 0..200 {
+		let stored = futures::executor::block_on(
+			storage.read_core_storage(CoreStorageKey::FundingSupport),
+		)
+		.ok()
+		.flatten()
+		.and_then(|bytes| {
+			<Vec<crate::host_logic::funding_providers::LearnedSupport> as parity_scale_codec::Decode>::decode(
+				&mut bytes.as_slice(),
+			)
+			.ok()
+		});
+		if stored.is_some_and(|records| records.len() == 2) {
+			break;
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
 	let restarted = start();
 	let mut after_restart = (false, false);
 	for _ in 0..200 {
