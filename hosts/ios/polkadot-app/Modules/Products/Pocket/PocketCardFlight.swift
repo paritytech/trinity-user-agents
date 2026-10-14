@@ -8,7 +8,6 @@ protocol PocketCardOrigin: AnyObject {
     /// show the card where the user would see it land.
     func frame(of key: PocketCardKey) -> CGRect?
 
-    /// Hides the card `key` names, or none.
     func setOpenCard(_ key: PocketCardKey?)
 }
 
@@ -27,14 +26,13 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
     private static let landingFade: TimeInterval = 0.12
 
     private let screen: PocketCardScreenViewController
-    private let origin: PocketCardOrigin
-    private let key: PocketCardKey
+    /// In window coordinates.
+    private let slot: CGRect
     private let opening: Bool
 
-    init(screen: PocketCardScreenViewController, origin: PocketCardOrigin, key: PocketCardKey, opening: Bool) {
+    init(screen: PocketCardScreenViewController, slot: CGRect, opening: Bool) {
         self.screen = screen
-        self.origin = origin
-        self.key = key
+        self.slot = slot
         self.opening = opening
     }
 
@@ -43,14 +41,47 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
     }
 
     func animateTransition(using context: UIViewControllerContextTransitioning) {
-        guard
-            let presented = context.viewController(forKey: opening ? .to : .from),
-            let underneath = context.viewController(forKey: opening ? .from : .to)
-        else {
-            context.completeTransition(!context.transitionWasCancelled)
-            return
+        let container = context.containerView
+        let backdrop = addViews(for: context)
+
+        screen.beginFlight()
+        container.layoutIfNeeded()
+
+        let card = screen.cardFrame(in: container)
+        let landing = container.convert(slot, from: nil)
+        let toSlot = CGPoint(x: landing.minX - card.minX, y: landing.minY - card.minY)
+        let surroundingsAlpha: CGFloat = opening ? 1 : 0
+
+        if opening {
+            screen.moveCard(by: toSlot)
+            screen.setSurroundingsAlpha(0)
+            backdrop.alpha = 0
         }
 
+        let animator = UIViewPropertyAnimator(duration: Self.duration, timingParameters: Self.timing)
+        animator.addAnimations { [self] in
+            screen.moveCard(by: opening ? .zero : toSlot)
+            screen.setSurroundingsAlpha(surroundingsAlpha)
+            backdrop.alpha = surroundingsAlpha
+        }
+        animator.addCompletion { [self] _ in
+            if opening {
+                finish(context, removing: backdrop)
+            } else {
+                land(context, removing: backdrop)
+            }
+        }
+        animator.startAnimation()
+    }
+}
+
+private extension PocketCardFlight {
+    var presented: UIViewController {
+        screen.navigationController ?? screen
+    }
+
+    /// The backdrop fades in for the Pocket to fade out behind the card.
+    func addViews(for context: UIViewControllerContextTransitioning) -> UIView {
         let container = context.containerView
         let backdrop = UIView(frame: container.bounds)
         backdrop.backgroundColor = .bgSurfaceMain
@@ -60,48 +91,28 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
             container.addSubview(backdrop)
             container.addSubview(presented.view)
         } else {
-            underneath.view.frame = context.finalFrame(for: underneath)
-            container.insertSubview(underneath.view, at: 0)
-            container.insertSubview(backdrop, aboveSubview: underneath.view)
-        }
-
-        screen.beginFlight()
-        container.layoutIfNeeded()
-
-        let card = screen.cardFrame(in: container)
-        let slot = origin.frame(of: key).map { container.convert($0, from: nil) } ?? card
-        let toSlot = CGPoint(x: slot.minX - card.minX, y: slot.minY - card.minY)
-        let shown: CGFloat = opening ? 1 : 0
-
-        if opening {
-            origin.setOpenCard(key)
-            screen.moveCard(by: toSlot)
-            screen.setSurroundingsAlpha(0)
-            backdrop.alpha = 0
-        }
-
-        let animator = UIViewPropertyAnimator(duration: Self.duration, timingParameters: Self.timing)
-        animator.addAnimations { [self] in
-            screen.moveCard(by: opening ? .zero : toSlot)
-            screen.setSurroundingsAlpha(shown)
-            backdrop.alpha = shown
-        }
-        animator.addCompletion { [self] _ in
-            let finish = {
-                backdrop.removeFromSuperview()
-                self.screen.endFlight()
-                context.completeTransition(!context.transitionWasCancelled)
+            container.insertSubview(backdrop, at: 0)
+            if let pocket = context.view(forKey: .to) {
+                pocket.frame = container.bounds
+                container.insertSubview(pocket, at: 0)
             }
-
-            guard !opening else { return finish() }
-
-            origin.setOpenCard(nil)
-            UIView.animate(
-                withDuration: Self.landingFade,
-                animations: { presented.view.alpha = 0 },
-                completion: { _ in finish() }
-            )
         }
-        animator.startAnimation()
+
+        return backdrop
+    }
+
+    func land(_ context: UIViewControllerContextTransitioning, removing backdrop: UIView) {
+        screen.showCardInPocket()
+        UIView.animate(
+            withDuration: Self.landingFade,
+            animations: { self.presented.view.alpha = 0 },
+            completion: { _ in self.finish(context, removing: backdrop) }
+        )
+    }
+
+    func finish(_ context: UIViewControllerContextTransitioning, removing backdrop: UIView) {
+        backdrop.removeFromSuperview()
+        screen.endFlight()
+        context.completeTransition(!context.transitionWasCancelled)
     }
 }

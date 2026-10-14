@@ -66,13 +66,21 @@ final class PocketCardScreenViewController: UIViewController {
         applyPendingFace(animated: false)
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        guard (navigationController ?? self).isBeingPresented else { return }
+
+        origin?.setOpenCard(card.key)
+    }
+
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
 
         guard (navigationController ?? self).isBeingDismissed else { return }
 
         handBackProduct()
-        origin?.setOpenCard(nil)
+        showCardInPocket()
     }
 
     /// Gives the product back unattached. It outlives the screen that opened
@@ -113,8 +121,6 @@ final class PocketCardScreenViewController: UIViewController {
 
 // MARK: - UIViewControllerTransitioningDelegate
 
-/// A card the Pocket can place flies between its place there and the top of
-/// this screen. Any other is presented as a screen is.
 extension PocketCardScreenViewController: UIViewControllerTransitioningDelegate {
     func animationController(
         forPresented _: UIViewController,
@@ -129,24 +135,19 @@ extension PocketCardScreenViewController: UIViewControllerTransitioningDelegate 
     }
 
     private func flight(opening: Bool) -> PocketCardFlight? {
-        guard
-            let origin,
-            !UIAccessibility.isReduceMotionEnabled,
-            origin.frame(of: card.key) != nil
-        else { return nil }
+        guard !UIAccessibility.isReduceMotionEnabled, let slot = origin?.frame(of: card.key) else { return nil }
 
         // From here on, not from when the flight starts: a face moved in
         // between would fly in already folded away.
         isInFlight = true
-        return PocketCardFlight(screen: self, origin: origin, key: card.key, opening: opening)
+        return PocketCardFlight(screen: self, slot: slot, opening: opening)
     }
 }
 
 // MARK: - Card flight
 
 extension PocketCardScreenViewController {
-    /// The card's frame in `view`'s coordinates, without the margins the
-    /// screen draws around it.
+    /// Without the margins the screen draws around the card.
     func cardFrame(in view: UIView) -> CGRect {
         let card = face.view.bounds.insetBy(
             dx: PocketOpenedCardView.horizontalInset,
@@ -155,8 +156,7 @@ extension PocketCardScreenViewController {
         return face.view.convert(card, to: view)
     }
 
-    /// Readies the screen for its card to fly: everything but the card can be
-    /// faded, so the Pocket shows behind it.
+    /// Lets the Pocket show behind the card, and stops the face where it is.
     func beginFlight() {
         scrollView.setContentOffset(scrollView.contentOffset, animated: false)
         scrollView.clipsToBounds = false
@@ -168,15 +168,13 @@ extension PocketCardScreenViewController {
         face.view.transform = CGAffineTransform(translationX: offset.x, y: offset.y)
     }
 
-    /// Fades the navigation bar and the product, which is all the screen draws
-    /// besides the card once its background is cleared.
+    /// All the screen draws besides the card once its backgrounds are cleared.
     func setSurroundingsAlpha(_ alpha: CGFloat) {
         navigationController?.navigationBar.alpha = alpha
         product.controller.view.alpha = alpha
     }
 
-    /// Restores everything the flight changed, since the product is reused by
-    /// the next open, then makes the face move asked for during the flight.
+    /// Restores all the flight changed, since the next open reuses the product.
     func endFlight() {
         isInFlight = false
         scrollView.clipsToBounds = true
@@ -184,6 +182,10 @@ extension PocketCardScreenViewController {
         navigationController?.view.backgroundColor = .bgSurfaceMain
         setSurroundingsAlpha(1)
         applyPendingFace(animated: true)
+    }
+
+    func showCardInPocket() {
+        origin?.setOpenCard(nil)
     }
 }
 

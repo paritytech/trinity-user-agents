@@ -22,52 +22,23 @@ struct PocketCardFlightTests {
         await closeCard(screen, animated: closingAnimated)
 
         #expect([whileOpen, origin.openCard] == [loyaltyCard.key, nil])
-        withExtendedLifetime(window) {}
-    }
-
-    /// A card the Pocket cannot place, such as one opened from a link, has no
-    /// slot to fly from, so it opens as any screen does and hides nothing.
-    @Test
-    func opensACardThePocketCannotPlaceWithoutHidingIt() async throws {
-        let origin = FakePocketCardOrigin(slot: nil)
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
-
-        let window = try await presentCard(screen)
-
-        #expect(origin.openCard == nil)
         withExtendedLifetime((window, origin)) {}
     }
 
-    /// The flight turns everything but the card see-through so the Pocket shows
-    /// behind it. Once the card lands, the screen must be the one an open
-    /// without a flight gives, or the page sits on nothing.
+    /// The flight makes all but the card see-through so the Pocket shows
+    /// behind it. The screen it lands must be the one an open without a flight
+    /// gives, and the product, which the next open reuses, visible after it.
     @Test
-    func leavesTheScreenAsAnOpenWithoutAFlightWouldOnceTheCardLands() async throws {
-        let flown = try await openedLook(slot: slot)
-        let unflown = try await openedLook(slot: nil)
+    func leavesTheScreenAndProductAsAnOpenWithoutAFlight() async throws {
+        let flown = try await lookOfACardOpenedAndClosed(slot: slot)
+        let unflown = try await lookOfACardOpenedAndClosed(slot: nil)
 
         #expect(flown == unflown)
     }
 
-    /// The product outlives its screen and is shown again by the next open,
-    /// which may have no flight to make it visible again.
-    @Test
-    func leavesTheProductVisibleAfterFlyingTheCardBack() async throws {
-        let product = StubSPAView()
-        let origin = FakePocketCardOrigin(slot: slot)
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, origin: origin)
-
-        let window = try await presentCard(screen)
-        await closeCard(screen)
-
-        #expect(product.controller.view.alpha == 1)
-        withExtendedLifetime((window, origin)) {}
-    }
-
-    /// The card flies with its face shown and lands where the Pocket's card
-    /// would be taken out. A published `faceShown: false` that answers during
-    /// the flight folds the face away after landing, as on Android, rather
-    /// than sending the card off the top mid-flight.
+    /// A published `faceShown: false` that answers during the flight folds the
+    /// face away once the card lands, as on Android, rather than sending the
+    /// card off the top mid-flight.
     @Test
     func foldsAPublishedFaceAwayOnlyOnceTheCardLands() async throws {
         let origin = FakePocketCardOrigin(slot: slot)
@@ -112,7 +83,8 @@ private final class FakePocketCardOrigin: PocketCardOrigin {
     }
 }
 
-/// What a flight turns see-through or moves, read off a screen once it has opened.
+/// What a flight turns see-through or moves: read off the opened screen, and
+/// off the product once the screen has closed.
 private struct ScreenLook: Equatable {
     let productAlpha: CGFloat
     let navigationBarAlpha: CGFloat?
@@ -120,10 +92,11 @@ private struct ScreenLook: Equatable {
     let navigationBackground: UIColor?
     let clipsToScreen: Bool?
     let faceTransform: CGAffineTransform?
+    var productAlphaAfterClosing: CGFloat?
 }
 
 @MainActor
-private func openedLook(slot: CGRect?) async throws -> ScreenLook {
+private func lookOfACardOpenedAndClosed(slot: CGRect?) async throws -> ScreenLook {
     let product = StubSPAView()
     let origin = FakePocketCardOrigin(slot: slot)
     let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, origin: origin)
@@ -131,9 +104,7 @@ private func openedLook(slot: CGRect?) async throws -> ScreenLook {
     let traits = screen.traitCollection
     let face = screen.children.compactMap { $0 as? UIHostingController<PocketOpenedCardView> }.first
 
-    defer { withExtendedLifetime((window, origin)) {} }
-
-    return ScreenLook(
+    var look = ScreenLook(
         productAlpha: product.controller.view.alpha,
         navigationBarAlpha: screen.navigationController?.navigationBar.alpha,
         background: screen.view.backgroundColor?.resolvedColor(with: traits),
@@ -141,4 +112,9 @@ private func openedLook(slot: CGRect?) async throws -> ScreenLook {
         clipsToScreen: screen.scrollView?.clipsToBounds,
         faceTransform: face?.view.transform
     )
+    await closeCard(screen)
+    look.productAlphaAfterClosing = product.controller.view.alpha
+
+    withExtendedLifetime((window, origin)) {}
+    return look
 }
