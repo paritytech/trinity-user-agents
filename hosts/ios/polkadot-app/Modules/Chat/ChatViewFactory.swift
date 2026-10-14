@@ -126,6 +126,10 @@ enum ChatViewFactory {
             productRoom?.sendContent = { [engine = interactor.engine] content in
                 try await engine.sendUserMessage(with: content)
             }
+            productRoom?.backgroundObserver = ChatRoomBackgroundObserver(
+                openRoom: { [weak interactor] in interactor?.openRoom() },
+                closeRoom: { [weak interactor] in interactor?.closeRoom() }
+            )
             presenter.productRoom = productRoom
             viewModelFactory.productRoom = productRoom
         }

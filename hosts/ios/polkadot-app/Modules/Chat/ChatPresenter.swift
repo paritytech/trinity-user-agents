@@ -55,11 +55,13 @@ extension ChatPresenter: ChatPresenterProtocol {
     func viewWillAppear() {
         interactor.notifyViewAppeared()
         interactor.openRoom()
+        productRoom?.backgroundObserver?.screenDidAppear()
     }
 
     func viewWillDisappear() {
         interactor.notifyViewDisappeared()
         interactor.closeRoom()
+        productRoom?.backgroundObserver?.screenDidDisappear()
     }
 
     func send(text: String, replyToMessageId: String? = nil) {

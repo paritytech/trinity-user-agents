@@ -44,6 +44,8 @@ final class ChatProductRoomPresenter {
     var sendText: ((String) -> Void)?
     /// Sends a content as a message of the user through the message source of the room (P6.7).
     var sendContent: ((Chat.LocalMessage.Content) async throws -> Void)?
+    /// Closes the room while the app is in the background, and opens it again after (P6.9).
+    var backgroundObserver: ChatRoomBackgroundObserver?
 
     init?(
         chatId: Chat.Id,
