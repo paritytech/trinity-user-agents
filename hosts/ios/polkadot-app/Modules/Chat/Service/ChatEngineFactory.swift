@@ -63,6 +63,14 @@ final class ChatEngineFactory: ChatEngineFactoryProtocol {
             storageFacade: storageFacade
         )
 
+        let productRoomServices: ProductRoomServices? =
+            switch chatId {
+            case .person:
+                nil
+            case let .chatExtension(extensionId, _):
+                ProductRoomServices(bot: flowState.extensionsRegistry.getChatExtensionBot(for: extensionId))
+            }
+
         return ChatEngine(
             chatId: chatId,
             chatRequestContext: requestContext,
@@ -71,7 +79,8 @@ final class ChatEngineFactory: ChatEngineFactoryProtocol {
             chatProvider: ChatContactDataProviderFactory(),
             settings: SettingsManager.shared,
             leaveChatService: leaveChatService,
-            blockUserService: blockUserService
+            blockUserService: blockUserService,
+            productRoomServices: productRoomServices
         )
     }
 }

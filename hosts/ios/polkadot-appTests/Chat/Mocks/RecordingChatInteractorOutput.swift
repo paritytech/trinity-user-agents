@@ -13,7 +13,12 @@ final class RecordingChatInteractorOutput: ChatInteractorOutputProtocol {
         case blockedUser
         case declinedChatRequest
         case removedChat
+        case jumped(Chat.MessageId, found: Bool)
+        case refused(reason: String?)
     }
+
+    /// The last list model that the interactor gave.
+    private(set) var listModel: MessageListModel?
 
     nonisolated let events: AsyncStream<Event>
     private let continuation: AsyncStream<Event>.Continuation
@@ -26,8 +31,17 @@ final class RecordingChatInteractorOutput: ChatInteractorOutputProtocol {
         continuation.yield(.metadata(metadata.chatMetadata.chatId))
     }
 
-    func didReceive(listModel _: MessageListModel) {
+    func didReceive(listModel: MessageListModel) {
+        self.listModel = listModel
         continuation.yield(.listModel)
+    }
+
+    func didRefuseUserAction(reason: String?) {
+        continuation.yield(.refused(reason: reason))
+    }
+
+    func didJump(to messageId: Chat.MessageId, found: Bool) {
+        continuation.yield(.jumped(messageId, found: found))
     }
 
     func didReceiveFooter(_: (any HashableContentConfiguration)?) {

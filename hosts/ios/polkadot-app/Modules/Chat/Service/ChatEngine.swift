@@ -8,6 +8,8 @@ import Foundation_iOS
 
 protocol ChatEngineProtocol {
     func subscribe() async throws -> AsyncExtensions.AnyAsyncSequence<[Chat.LocalMessage]>
+    /// The window of messages with its paging state. The default wraps `subscribe()` as a complete window.
+    func messageSnapshots() async throws -> AnyAsyncSequence<MessageListSnapshot>
     func sendUserMessage(with content: Chat.LocalMessage.Content) async throws
     func markAsSeen(messageIds: Set<Chat.MessageId>) async throws
     func leaveChat() async throws
@@ -22,6 +24,55 @@ protocol ChatEngineProtocol {
     func sendCommand(_ command: Chat.Command) async -> Bool
     /// Replaces a message with the deleted tombstone and tells the extension of a product room.
     func deleteMessage(_ messageId: Chat.MessageId) async throws
+    /// Where the messages of the room live. The default is the host database.
+    func messageStore() async -> ChatRoomPolicy.MessageStore
+    /// Asks for the page before the window. The default window holds the whole room.
+    func loadOlder() async -> ChatPageOutcome
+    /// Asks for the page after the window. The default window holds the whole room.
+    func loadNewer() async -> ChatPageOutcome
+    /// Asks for pages until the message is in the window. Gives false when the message is not in the room.
+    func jump(to messageId: Chat.MessageId) async -> Bool
+    /// Writes an action of the user to the message source of the room.
+    func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome
+    /// The room screen shows the room. A product room holds its product until `closeRoom`.
+    func openRoom() async
+    func closeRoom() async
+    /// Opens the room again and asks for the newest page, after the room became unavailable.
+    func retryRoom() async
+}
+
+extension ChatEngineProtocol {
+    func messageSnapshots() async throws -> AnyAsyncSequence<MessageListSnapshot> {
+        try await subscribe()
+            .map { MessageListSnapshot(messages: $0) }
+            .eraseToAnyAsyncSequence()
+    }
+
+    func messageStore() async -> ChatRoomPolicy.MessageStore {
+        .host
+    }
+
+    func loadOlder() async -> ChatPageOutcome {
+        .end
+    }
+
+    func loadNewer() async -> ChatPageOutcome {
+        .end
+    }
+
+    func jump(to _: Chat.MessageId) async -> Bool {
+        false
+    }
+
+    func perform(_: ChatSourceAction) async throws -> ChatSourceActionOutcome {
+        throw ChatMessageSourceError.unsupported
+    }
+
+    func openRoom() async {}
+
+    func closeRoom() async {}
+
+    func retryRoom() async {}
 }
 
 enum ChatEngineError: Error {
@@ -29,12 +80,8 @@ enum ChatEngineError: Error {
 }
 
 final class ChatEngine {
-    let historyRepository: AnyDataProviderRepository<ChatExtension.ProcessingHistory>
-    let messageProviderFactory: ChatMessageDataProviderMaking
     let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
-    let messageStatusUpdateRepository: AnyDataProviderRepository<Chat.ChatMessageStatusUpdate>
-    let messageDeletionRepository: AnyDataProviderRepository<Chat.MessageDeletion>
-    let attachmentsUpdateRepository: AnyDataProviderRepository<Chat.AttachmentUploadingUpdate>
+    let sourceContext: ChatRoomSourceContext
     let chatProvider: ChatContactDataProviderMaking
     let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
     let chatExtensionRegistry: ChatExtensionsRegistering
@@ -55,19 +102,19 @@ final class ChatEngine {
         settings: SettingsManagerProtocol & ChatExtensionBotSettings,
         leaveChatService: LeaveChatServicing,
         blockUserService: BlockUserServicing,
+        productRoomServices: ProductRoomServices? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
         self.chatRequestContext = chatRequestContext
         self.chatExtensionRegistry = chatExtensionRegistry
-        self.messageProviderFactory = messageProviderFactory
         self.settings = settings
         self.leaveChatService = leaveChatService
         self.blockUserService = blockUserService
         self.chatProvider = chatProvider
         self.logger = logger
 
-        historyRepository = AnyDataProviderRepository(
+        let historyRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 filter: .chatExtensionHistoryForChat(chatId),
                 sortDescriptors: [],
@@ -83,7 +130,7 @@ final class ChatEngine {
             )
         )
 
-        attachmentsUpdateRepository = AnyDataProviderRepository(
+        let attachmentsUpdateRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 filter: nil,
                 sortDescriptors: [],
@@ -91,7 +138,7 @@ final class ChatEngine {
             )
         )
 
-        messageStatusUpdateRepository = AnyDataProviderRepository(
+        let messageStatusUpdateRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 filter: nil,
                 sortDescriptors: [],
@@ -99,7 +146,7 @@ final class ChatEngine {
             )
         )
 
-        messageDeletionRepository = AnyDataProviderRepository(
+        let messageDeletionRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 filter: nil,
                 sortDescriptors: [],
@@ -114,64 +161,75 @@ final class ChatEngine {
                 mapper: AnyCoreDataMapper(ChatModelMapper())
             )
         )
+
+        let coreDataSource = CoreDataMessageSource(
+            chatId: chatId,
+            chatExtensionRegistry: chatExtensionRegistry,
+            messageProviderFactory: messageProviderFactory,
+            historyRepository: historyRepository,
+            messageRepository: messageRepository,
+            messageStatusUpdateRepository: messageStatusUpdateRepository,
+            messageDeletionRepository: messageDeletionRepository,
+            attachmentsUpdateRepository: attachmentsUpdateRepository,
+            logger: logger
+        )
+
+        sourceContext = ChatRoomSourceContext(
+            chatId: chatId,
+            coreDataSource: coreDataSource,
+            services: productRoomServices,
+            policy: { [chatRepository] in
+                let chat = try? await chatRepository
+                    .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
+                    .asyncExecute()
+                return chat?.roomPolicy
+            },
+            logger: logger
+        )
     }
 }
 
 extension ChatEngine: ChatEngineProtocol {
     func subscribe() async throws -> AsyncExtensions.AnyAsyncSequence<[Chat.LocalMessage]> {
-        let chatProcessingHistory = try await historyRepository.fetchAllOperation(
-            with: RepositoryFetchOptions()
-        )
-        .asyncExecute()
+        try await messageSnapshots()
+            .map(\.messages)
+            .eraseToAnyAsyncSequence()
+    }
 
-        let processingContext = ChatExtensionProcessingContext(
-            chatId: chatId,
-            initialHistory: chatProcessingHistory,
-            messageRepository: messageRepository,
-            attachmentsUpdateRepository: attachmentsUpdateRepository,
-            processingHistoryRepository: historyRepository,
-            logger: logger
-        )
+    func messageSnapshots() async throws -> AnyAsyncSequence<MessageListSnapshot> {
+        try await sourceContext.source().snapshots()
+    }
 
-        let messageSequence = messageProviderFactory
-            .subscribeChatMessages(chatId)
-            .handleEvents(onElement: { messages in
-                let extensions = self.chatExtensionRegistry.getExtensions(for: self.chatId)
+    func messageStore() async -> ChatRoomPolicy.MessageStore {
+        await sourceContext.messageStore()
+    }
 
-                for message in messages {
-                    await processingContext.processOncePerSession(message) { message in
-                        for chatExtension in extensions {
-                            let isProcessed = await processingContext.hasProcessed(
-                                messageId: message.messageId,
-                                extensionId: chatExtension.identifier
-                            )
+    func loadOlder() async -> ChatPageOutcome {
+        await sourceContext.source().loadOlder()
+    }
 
-                            let result = await chatExtension.process(
-                                message: message,
-                                lastProcessingOutcome: isProcessed ? .previouslyProcessed : .firstEncounter,
-                                context: processingContext
-                            )
+    func loadNewer() async -> ChatPageOutcome {
+        await sourceContext.source().loadNewer()
+    }
 
-                            await processingContext.noteProcessingResult(
-                                messageId: message.messageId,
-                                extensionId: chatExtension.identifier,
-                                result: result
-                            )
-                        }
-                    }
-                }
+    func jump(to messageId: Chat.MessageId) async -> Bool {
+        await sourceContext.source().jump(to: messageId)
+    }
 
-                await processingContext.flushChatExtensionHistory()
-            })
+    func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome {
+        try await sourceContext.source().perform(action)
+    }
 
-        return await combineLatest(
-            messageSequence,
-            processingContext.messageOverridesSequence
-        )
-        .map { messages, overrides in
-            messages.map { overrides.applyOverrides(to: $0) }
-        }
-        .eraseToAnyAsyncSequence()
+    func openRoom() async {
+        await sourceContext.open()
+    }
+
+    func closeRoom() async {
+        await sourceContext.close()
+    }
+
+    func retryRoom() async {
+        await sourceContext.retry()
     }
 
     func sendUserMessage(with content: Chat.LocalMessage.Content) async throws {
@@ -183,14 +241,12 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func markAsSeen(messageIds: Set<Chat.MessageId>) async throws {
-        let updates = messageIds.map { Chat.ChatMessageStatusUpdate(messageId: $0, status: .incoming(.seen)) }
+        _ = try await sourceContext.source().perform(.markSeen(messageIds))
 
-        guard !updates.isEmpty else {
-            return
+        // A product-source room reports `Seen` through `user_action` from its source (02-DESIGN §13 item 11).
+        if await messageStore() == .host {
+            await reportSeen(messageIds)
         }
-
-        try await messageStatusUpdateRepository.saveOperation({ updates }, { [] }).asyncExecute()
-        await reportSeen(messageIds)
     }
 
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?> {
@@ -278,10 +334,10 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func deleteMessage(_ messageId: Chat.MessageId) async throws {
-        let deletion = Chat.MessageDeletion(messageId: messageId)
-        try await messageDeletionRepository.saveOperation({ [deletion] }, { [] }).asyncExecute()
+        try await performRefusable(.delete(messageId))
 
-        guard case let .chatExtension(extensionId, roomId) = chatId else {
+        // A product-source room tells its product through `user_action` (02-DESIGN §13 item 11).
+        guard await messageStore() == .host, case let .chatExtension(extensionId, roomId) = chatId else {
             return
         }
 
@@ -292,20 +348,13 @@ extension ChatEngine: ChatEngineProtocol {
 
 private extension ChatEngine {
     func sendUserMessageToExistingChat(with content: Chat.LocalMessage.Content) async throws {
-        let status = determineInitialMessageStatus(chatId: chatId)
-        let newMessage = Chat.LocalMessage
-            .newMessage(to: chatId, content: content)
-            .replacingStatus(status)
-
-        try await messageRepository.saveOperation({ [newMessage] }, { [] }).asyncExecute()
+        try await performRefusable(.send(content))
     }
 
-    func determineInitialMessageStatus(chatId: Chat.Id) -> Chat.LocalMessage.Status {
-        switch chatId {
-        case .chatExtension:
-            .outgoing(.delivered)
-        case .person:
-            .outgoing(.new)
+    /// Throws ``ChatUserActionRefusal`` when the product refuses the action, so the room screen shows why.
+    func performRefusable(_ action: ChatSourceAction) async throws {
+        if case let .refused(reason) = try await sourceContext.source().perform(action) {
+            throw ChatUserActionRefusal(reason: reason)
         }
     }
 }

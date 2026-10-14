@@ -589,7 +589,15 @@ private extension ChatViewModelFactory {
         peerMetadata: Chat.PeerMetadata
     ) -> ChatMessageContainerConfiguration.ReplyInfo? {
         guard let originalMessage = listModel.getMessage(by: replyContent.messageId) else {
-            return nil
+            // The quoted message can be outside the window of a product-source room. A tap on the quote pages
+            // to it (P5.3).
+            return listModel.holdsMessagesOutsideWindow
+                ? ChatMessageContainerConfiguration.ReplyInfo(
+                    username: peerMetadata.name,
+                    preview: String(localized: .chatReplyPlaceholder),
+                    messageId: replyContent.messageId
+                )
+                : nil
         }
 
         let originalText: String

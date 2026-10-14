@@ -51,10 +51,12 @@ extension ChatPresenter: ChatPresenterProtocol {
 
     func viewWillAppear() {
         interactor.notifyViewAppeared()
+        interactor.openRoom()
     }
 
     func viewWillDisappear() {
         interactor.notifyViewDisappeared()
+        interactor.closeRoom()
     }
 
     func send(text: String, replyToMessageId: String? = nil) {
@@ -235,12 +237,14 @@ private extension ChatPresenter {
             }
         )
 
-        let viewModel = viewModelFactory.viewModel(
+        var viewModel = viewModelFactory.viewModel(
             model: listModel,
             metadata: metadata,
             actions: contextActions,
             footerConfiguration: footer
         )
+        viewModel.paging = ChatViewLayout.ViewModel.Paging(paging: listModel.paging)
+        viewModel.roomStatus = ChatViewLayout.ViewModel.RoomStatus(readiness: listModel.readiness)
         view?.didReceive(viewModel: viewModel)
     }
 
@@ -479,21 +483,5 @@ private extension ChatPresenter {
                 )
             }
         }
-    }
-}
-
-extension ChatPresenter: ChatMoreActionsDelegate {
-    func didConfirmLeaveChat() {
-        interactor.leaveChat()
-    }
-
-    func didConfirmBlockUser() {
-        interactor.blockUser()
-    }
-}
-
-extension ChatPresenter: ChatAttachmentPreviewDelegate {
-    func attachmentPreview(didComplete text: String, attachment: ProcessedAttachment) {
-        interactor.send(text: text, attachments: [attachment], replyToMessageId: nil)
     }
 }

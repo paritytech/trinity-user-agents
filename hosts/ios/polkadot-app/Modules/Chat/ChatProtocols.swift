@@ -13,6 +13,10 @@ protocol ChatViewProtocol: ControllerBackedProtocol {
     func showReply(messageId: String, username: String, text: String)
     func showEdit(messageId: String, currentText: String)
     func showReactionDetails(viewModel: ReactionDetailsViewModel)
+    /// Scrolls to the message now, or when it arrives in the window.
+    func scrollToMessage(_ messageId: String)
+    /// Shows why an action of the user did not happen.
+    func showActionFailure(_ message: String)
 }
 
 @MainActor
@@ -32,6 +36,14 @@ protocol ChatPresenterProtocol: AnyObject {
     func onReply(for messageId: String)
     func onScrollToBottom()
     func onScrollToReaction()
+    /// The user scrolled near the oldest message of the window.
+    func loadOlderMessages()
+    /// The user scrolled near the newest message of the window.
+    func loadNewerMessages()
+    /// The user tapped a reply quote whose message is not in the window.
+    func jumpToMessage(_ messageId: String)
+    /// The user asked the product of the room again after it did not answer.
+    func retryRoom()
 }
 
 protocol ChatInteractorInputProtocol: AnyObject {
@@ -59,6 +71,18 @@ protocol ChatInteractorInputProtocol: AnyObject {
     /// Sends a failed message of a product-source room again through `user_action` (P5.5).
     func retrySend(messageId: Chat.MessageId)
     func deleteMessage(messageId: Chat.MessageId)
+    /// Asks the message source for the page before the window.
+    func loadOlderMessages()
+    /// Asks the message source for the page after the window.
+    func loadNewerMessages()
+    /// Asks the message source for pages until the message is in the window.
+    func jump(to messageId: Chat.MessageId)
+    /// The room screen shows the room: a product room holds its product (02-DESIGN §5.2).
+    func openRoom()
+    /// The room screen does not show the room anymore: a product room releases its product.
+    func closeRoom()
+    /// Opens the room again and asks for the newest page, after the product did not answer (P5.7).
+    func retryRoom()
 }
 
 @MainActor
@@ -77,6 +101,18 @@ protocol ChatInteractorOutputProtocol: AnyObject {
 
     /// The chat of the screen went away, for example because its product deleted the room.
     func didRemoveChat()
+
+    /// A jump ended. `found` is false when the room does not hold the message.
+    func didJump(to messageId: Chat.MessageId, found: Bool)
+
+    /// The product refused an action of the user. The reason is for the user, when the product gave one.
+    func didRefuseUserAction(reason: String?)
+}
+
+extension ChatInteractorOutputProtocol {
+    func didJump(to _: Chat.MessageId, found _: Bool) {}
+
+    func didRefuseUserAction(reason _: String?) {}
 }
 
 @MainActor

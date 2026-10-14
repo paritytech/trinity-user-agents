@@ -16,7 +16,9 @@ final class ChatInteractor {
     private var messagesTask: Task<Void, Never>?
     private var metadataTask: Task<Void, Never>?
     private var footerTask: Task<Void, Never>?
-    private let state = ChatInteractorState()
+    /// The last open, close or retry of the room. Each one waits for the one before it.
+    var roomTask: Task<Void, Never>?
+    let state = ChatInteractorState()
 
     private let notificationsCleaner: any PushNotificationsCleaning
 
@@ -97,12 +99,12 @@ private extension ChatInteractor {
     func subscribeMessages() {
         messagesTask = Task { [weak self] in
             do {
-                guard let messageSeq = try await self?.engine.subscribe() else {
+                guard let snapshots = try await self?.engine.messageSnapshots() else {
                     return
                 }
 
-                for try await messages in messageSeq {
-                    guard let model = await self?.state.onMessagesUpdate(messages) else {
+                for try await snapshot in snapshots {
+                    guard let model = await self?.state.onSnapshot(snapshot) else {
                         return
                     }
 
@@ -169,7 +171,7 @@ extension ChatInteractor: ChatInteractorInputProtocol {
 
                 try await self.engine.sendUserMessage(with: content)
             } catch {
-                self.logger.error("\(error)")
+                await self.report(error)
             }
         }
     }
@@ -189,6 +191,12 @@ extension ChatInteractor: ChatInteractorInputProtocol {
     func readMessages(_ identifiers: [Chat.MessageId]) {
         Task { [engine, notificationsCleaner] in
             do {
+                // A product-source room knows which message the user saw last, and tells the product (P5.6).
+                if await engine.messageStore() == .product {
+                    try await engine.markAsSeen(messageIds: Set(identifiers))
+                    return
+                }
+
                 let messageIdsToMark = await self.state.markAsSeen(messageIds: identifiers)
 
                 guard !messageIdsToMark.isEmpty else {
@@ -211,6 +219,11 @@ extension ChatInteractor: ChatInteractorInputProtocol {
     func toggleReaction(messageId: String, emoji: String) {
         Task {
             do {
+                if await engine.messageStore() == .product {
+                    try await perform(.toggleReaction(messageId: messageId, emoji: emoji))
+                    return
+                }
+
                 let userOrigin = Chat.LocalMessage.Origin.user
 
                 let ownReactions = try await reactionRepository
@@ -296,7 +309,7 @@ extension ChatInteractor: ChatInteractorInputProtocol {
                 // Send to peer
                 try await engine.sendUserMessage(with: .edited(editedContent))
             } catch {
-                logger.error("\(error)")
+                await report(error)
             }
         }
     }
@@ -366,18 +379,40 @@ extension ChatInteractor: ChatInteractorInputProtocol {
                 try await engine.deleteMessage(messageId)
             } catch {
                 logger.error("Can't delete message \(messageId): \(error)")
+                await self.report(error)
             }
         }
     }
 
     func retrySend(messageId: Chat.MessageId) {
-        // Seam for P5.5: a product-source room sends again through `user_action`, and no room has that
-        // store until the room configuration decodes (P2.10).
-        logger.warning("Retry of message \(messageId) waits for product-source rooms (P5.5)")
+        // Only a product-source room offers Retry (02-DESIGN §13 item 9). It sends again through `user_action`.
+        Task {
+            do {
+                try await perform(.retry(messageId))
+            } catch {
+                logger.error("Can't retry message \(messageId): \(error)")
+            }
+        }
     }
 }
 
 private extension ChatInteractor {
+    /// Sends the action to the message source. A refusal goes to the presenter, so the user sees the reason.
+    func perform(_ action: ChatSourceAction) async throws {
+        if case let .refused(reason) = try await engine.perform(action) {
+            await presenter?.didRefuseUserAction(reason: reason)
+        }
+    }
+
+    /// Logs the error. A refusal of the product also goes to the presenter.
+    func report(_ error: Error) async {
+        logger.error("\(error)")
+
+        if let refusal = error as? ChatUserActionRefusal {
+            await presenter?.didRefuseUserAction(reason: refusal.reason)
+        }
+    }
+
     /// A leave or a block of a person chat dismisses the screen on its own path.
     var isProductRoom: Bool {
         chatId.roomId != nil

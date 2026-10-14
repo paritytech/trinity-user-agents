@@ -88,6 +88,61 @@
           }
         }
       }
+    },
+    "page.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not load messages. Tap to try again."
+          }
+        }
+      }
+    },
+    "action.refused": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The product did not accept this. Try again later."
+          }
+        }
+      }
+    },
+    "room.loading": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loading messages…"
+          }
+        }
+      }
+    },
+    "room.unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Product unavailable"
+          }
+        }
+      }
+    },
+    "room.retry": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retry"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
