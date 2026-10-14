@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | `Chat/create_room` | ✅ |  |
 | `Chat/post_message` | ✅ |  |
-| `Chat/create_room_refuses_an_icon_that_resolves_past_its_budget` | ✅ |  |
+| `Chat/create_room_refuses_an_avatar_past_its_budget` | ✅ |  |
 | `Chat/post_message_refuses_a_url_the_host_would_fetch_or_open` | ✅ |  |
 | `Chat/post_message_refuses_a_file_name_that_addresses_a_path` | ✅ |  |
 | `Chat/post_message_refuses_a_url_that_carries_credentials` | ✅ |  |

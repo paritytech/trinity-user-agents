@@ -38,7 +38,7 @@ use tracing::{debug, warn};
 
 use crate::{
 	bootstrap,
-	chat_surface::{self, ChatActionSink, ChatSurface},
+	chat_surface::{self, ChatSurface, ChatWorker},
 };
 use truapi::{
 	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
@@ -722,7 +722,7 @@ where
 	let sink = Arc::new(WsFrameSink { outbound: outbound_tx.clone() });
 	let product_runtime = Arc::new(runtime.product_runtime(product, sink));
 	let _attachment = worker_surface.map(|surface| {
-		let worker: Arc<dyn ChatActionSink> = product_runtime.clone();
+		let worker: Arc<dyn ChatWorker> = product_runtime.clone();
 		surface.attach_worker(&worker)
 	});
 
@@ -730,7 +730,7 @@ where
 }
 
 /// Serve the chat surface protocol on one page connection.
-async fn serve_surface<S>(surface: &ChatSurface, stream: S, peer: ConnectionPeer) -> Result<()>
+async fn serve_surface<S>(surface: &Arc<ChatSurface>, stream: S, peer: ConnectionPeer) -> Result<()>
 where
 	S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -1621,6 +1621,7 @@ mod tests {
 				"productId": "localhost:3000",
 				"peer": "native",
 				"worker": {"configured": false, "connected": 0},
+				"timeouts": {"page": 10000, "send": 30000, "action": 10000, "query": 5000},
 				"rooms": [],
 				"bots": [],
 				"messages": [],

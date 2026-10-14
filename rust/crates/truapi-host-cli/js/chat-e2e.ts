@@ -12,6 +12,7 @@ import type { TrUApiClient } from "../../../../js/packages/truapi/src/index.ts";
 import { ChatMessageContent } from "../../../../js/packages/truapi/src/generated/types.ts";
 import type {
   ChatMessageContent as ChatMessageContentValue,
+  ChatRoomConfig,
   HostChatPostMessageRequest,
 } from "../../../../js/packages/truapi/src/generated/types.ts";
 import type { DiagnosisRow } from "./diagnosis.ts";
@@ -19,10 +20,25 @@ import type { DiagnosisRow } from "./diagnosis.ts";
 /** Room every case posts into, created by the first case. */
 const ROOM_ID = "support";
 
+/** A room the host keeps, which declares nothing beyond its name. */
+const HOST_STORE_CONFIG: ChatRoomConfig = {
+  productSource: false,
+  reactionDetails: false,
+  participants: false,
+  messageActions: false,
+  participantActions: false,
+  reportSeen: false,
+};
+
 /** Published limits, mirrored from `truapi::platform` so a case can cross one. */
 const BODY_MAX_BYTES = 16 * 1024;
 const URL_MAX_BYTES = 2048;
 const ICON_MAX_BYTES = 64 * 1024;
+
+/** A raster avatar one byte past the inline icon budget. */
+function avatarPast(limit: number): `0x${string}` {
+  return `0x${"89".repeat(limit + 1)}`;
+}
 
 /**
  * A path that arrives inside `limit` and resolves past it.
@@ -186,8 +202,8 @@ export async function runChatScreeningE2e(
   let startedAt = performance.now();
   const created = await client.chat.createRoom({
     roomId: ROOM_ID,
-    name: "Support",
-    icon: "https://rooms.invalid/support.png",
+    metadata: { name: "Support" },
+    config: HOST_STORE_CONFIG,
   });
   rows.push(
     created.isOk()
@@ -231,34 +247,42 @@ export async function runChatScreeningE2e(
         ),
   );
 
-  // The icon path is where the budget was measured on the arriving string
-  // rather than the resolved one, so it gets a case of its own: the room must
-  // not reach the host at all.
+  // An avatar is the one room field with a byte budget, so it gets a case of
+  // its own: the room must not reach the host at all. (The TS client sends
+  // the newest request, whose avatar is a resource; the `https` icon of the
+  // first version is screened by the core's own tests.)
   startedAt = performance.now();
   const roomsBefore = registrations(chatLogPath);
   const oversizedIcon = await client.chat.createRoom({
     roomId: "oversized-icon",
-    name: "Oversized",
-    icon: `https://icons.invalid/${pathThatGrowsPast(ICON_MAX_BYTES)}`,
+    metadata: {
+      name: "Oversized",
+      avatar: {
+        tag: "Inline",
+        value: { mimeType: "image/png", bytes: avatarPast(ICON_MAX_BYTES) },
+      },
+    },
+    config: HOST_STORE_CONFIG,
   });
   const roomsAfter = registrations(chatLogPath);
+  const iconCase = "create_room_refuses_an_avatar_past_its_budget";
   rows.push(
     oversizedIcon.isOk()
       ? row(
-          "create_room_refuses_an_icon_that_resolves_past_its_budget",
+          iconCase,
           "fail",
           `accepted: ${JSON.stringify(oversizedIcon.value)}`,
           startedAt,
         )
       : roomsAfter === roomsBefore
         ? row(
-            "create_room_refuses_an_icon_that_resolves_past_its_budget",
+            iconCase,
             "pass",
             `${JSON.stringify(oversizedIcon.error)}; host registered no room`,
             startedAt,
           )
         : row(
-            "create_room_refuses_an_icon_that_resolves_past_its_budget",
+            iconCase,
             "fail",
             "rejected the product, but the host registered the room",
             startedAt,
