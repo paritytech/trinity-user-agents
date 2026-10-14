@@ -1,0 +1,233 @@
+import Foundation
+import StructuredConcurrency
+import TrUAPIHost
+
+// MARK: - Window changes
+
+extension ProductMessageSource {
+    func insertLive(_ message: ChatMessage) {
+        if contains(message.messageId) {
+            messages[message.messageId] = message
+            return
+        }
+
+        // The newest pages are out of the window. The message comes back with them.
+        guard isAtNewestEnd else {
+            return
+        }
+
+        if pages.isEmpty {
+            pages = [Page(anchor: .before(cursor: nil), next: nil, ids: [])]
+        }
+
+        var page = pages[pages.count - 1]
+        let lastEarlier = page.ids.lastIndex { id in
+            (messages[id]?.timestamp ?? 0) <= message.timestamp
+        }
+        let index = lastEarlier.map { $0 + 1 } ?? 0
+        page.ids.insert(message.messageId, at: index)
+        pages[pages.count - 1] = page
+        messages[message.messageId] = message
+
+        dropOlderPagesIfNeeded()
+    }
+
+    func modify(_ messageId: String, change: (inout ChatMessage) -> Void) {
+        guard var message = messages[messageId] else {
+            return
+        }
+
+        change(&message)
+        messages[messageId] = message
+    }
+
+    /// A message that the window dropped for an action of the user, with its place.
+    struct RemovedMessage {
+        enum Place {
+            case pending(Int)
+            case page(ChatPageAnchor, Int)
+        }
+
+        let message: ChatMessage
+        let place: Place
+    }
+
+    /// Takes the message out of the window. The result can put it back.
+    @discardableResult
+    func remove(_ messageId: String) -> RemovedMessage? {
+        guard let message = messages[messageId] else {
+            return nil
+        }
+
+        messages[messageId] = nil
+
+        if let index = pending.firstIndex(of: messageId) {
+            pending.remove(at: index)
+            return RemovedMessage(message: message, place: .pending(index))
+        }
+
+        for (pageIndex, page) in pages.enumerated() {
+            guard let position = page.ids.firstIndex(of: messageId) else {
+                continue
+            }
+
+            pages[pageIndex].ids.remove(at: position)
+            return RemovedMessage(message: message, place: .page(page.anchor, position))
+        }
+
+        return nil
+    }
+
+    func putBack(_ removed: RemovedMessage) {
+        let message = removed.message
+
+        switch removed.place {
+        case let .pending(index):
+            messages[message.messageId] = message
+            pending.insert(message.messageId, at: min(index, pending.count))
+        case let .page(anchor, position):
+            guard let pageIndex = pages.firstIndex(where: { $0.anchor == anchor }) else {
+                return
+            }
+
+            messages[message.messageId] = message
+            pages[pageIndex].ids.insert(message.messageId, at: min(position, pages[pageIndex].ids.count))
+        }
+    }
+
+    func restore(from entry: ProductRoomCacheEntry) {
+        for message in entry.messages {
+            messages[message.messageId] = message
+        }
+
+        pages = [Page(anchor: .before(cursor: nil), next: entry.next, ids: entry.messages.map(\.messageId))]
+        seenMessageId = entry.seenMessageId
+        seenTimestamp = entry.seenTimestamp
+        reportedSeenMessageId = entry.reportedSeenMessageId
+    }
+
+    func storeCache() async {
+        guard hasFirstPage, isAtNewestEnd, let newest = pages.last else {
+            return
+        }
+
+        let entry = ProductRoomCacheEntry(
+            messages: newest.ids.suffix(Int(settings.pageSize)).compactMap { messages[$0] },
+            next: newest.ids.count > Int(settings.pageSize) ? nil : newest.next,
+            seenMessageId: seenMessageId,
+            seenTimestamp: seenTimestamp,
+            reportedSeenMessageId: reportedSeenMessageId
+        )
+        await cache.store(entry, productId: productId, roomId: roomId)
+    }
+
+    func startFeed() {
+        let updates = feedUpdates
+        feedTask = Task { [weak self] in
+            for await update in updates {
+                await self?.apply(update)
+            }
+        }
+    }
+}
+
+// MARK: - Snapshot
+
+extension ProductMessageSource {
+    func emit() {
+        let ids = orderedIds
+        let seenIndex = seenMessageId.flatMap { ids.firstIndex(of: $0) }
+        var editedAt: [Chat.MessageId: Chat.Timestamp] = [:]
+
+        let localMessages = ids.enumerated().compactMap { index, id -> Chat.LocalMessage? in
+            guard let message = messages[id] else {
+                return nil
+            }
+
+            if let edit = message.editedAt {
+                editedAt[id] = edit
+            }
+
+            let isUnread: Bool =
+                if let seenIndex {
+                    index > seenIndex
+                } else if let seenTimestamp {
+                    message.timestamp > seenTimestamp
+                } else {
+                    false
+                }
+
+            return message.localMessage(chatId: chatId, extensionId: productId, isUnread: isUnread)
+        }
+
+        subject.send(MessageListSnapshot(
+            messages: localMessages,
+            paging: paging,
+            readiness: readiness,
+            editedAt: editedAt
+        ))
+    }
+
+    var paging: ChatPagingState {
+        let older: ChatPagingState.Edge =
+            if olderTask != nil || (!hasFirstPage && readiness == .loading) {
+                .loading
+            } else if olderFailed {
+                .failed
+            } else if olderAnchor != nil {
+                .more
+            } else {
+                .end
+            }
+
+        let newer: ChatPagingState.Edge =
+            if newerTask != nil {
+                .loading
+            } else if newerFailed {
+                .failed
+            } else if !droppedNewer.isEmpty {
+                .more
+            } else {
+                .end
+            }
+
+        return ChatPagingState(older: older, newer: newer)
+    }
+}
+
+extension ChatMessage {
+    /// Counts a reaction once for each participant. The user reaction sets `reactedByUser`.
+    mutating func adjustReaction(_ emoji: String, by participantId: String, placed: Bool) {
+        let isUser = participantId == productUserParticipantId
+        var summaries = reactions
+
+        if let index = summaries.firstIndex(where: { $0.emoji == emoji }) {
+            var summary = summaries[index]
+
+            // The product can repeat the reaction of the user that the window shows already.
+            if isUser, summary.reactedByUser == placed {
+                return
+            }
+
+            if placed {
+                summary.count += 1
+            } else {
+                summary.count = max(summary.count, 1) - 1
+            }
+
+            if isUser {
+                summary.reactedByUser = placed
+            }
+
+            if summary.count == .zero {
+                summaries.remove(at: index)
+            } else {
+                summaries[index] = summary
+            }
+        } else if placed {
+            summaries.append(ChatReactionSummary(emoji: emoji, count: 1, reactedByUser: isUser))
+        }
+
+        reactions = summaries
+    }
+}
