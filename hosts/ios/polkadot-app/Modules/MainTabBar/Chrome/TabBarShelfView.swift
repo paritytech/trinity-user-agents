@@ -81,7 +81,7 @@ private extension TabBarShelfView {
                 .resizable()
                 .scaledToFit()
                 .frame(width: Self.iconSize, height: Self.iconSize)
-                .foregroundStyle(Color.fgPrimary)
+                .foregroundStyle(Color.fgSecondary)
                 .frame(width: Self.touchSize, height: Self.touchSize)
                 .contentShape(Rectangle())
         }
