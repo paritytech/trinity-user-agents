@@ -52,7 +52,7 @@ final class ChatViewModelFactory {
         attachmentViewModelFactory: ChatAttachmentViewModelMaking,
         productRepository: AnyDataProviderRepository<Product>,
         productNameCache: ProductNameCaching,
-        productMediaLoader: ChatImageLoader = .productMedia(),
+        productMediaLoader: ChatImageLoader = .resources(),
         flowState: SPAFlowState,
         logger: LoggerProtocol = Logger.shared
     ) {

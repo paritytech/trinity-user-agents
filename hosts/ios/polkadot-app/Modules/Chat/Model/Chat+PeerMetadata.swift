@@ -53,5 +53,7 @@ extension Chat.PeerMetadata {
         case bot
         /// The icon the product's manifest declares, loaded on demand.
         case product(domain: String)
+        /// A room icon that the product gives as an `https` URL, loaded on demand.
+        case resource(String)
     }
 }

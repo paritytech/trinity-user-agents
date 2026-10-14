@@ -133,6 +133,10 @@ private final class RecordingProductIconViewModelFactory: ProductIconViewModelMa
         requestedDomains.append(domain)
         return StaticImageViewModel(image: nil)
     }
+
+    func createViewModel(forResource _: String) -> (any ImageViewModelProtocol)? {
+        nil
+    }
 }
 
 private final class IdleChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {

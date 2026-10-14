@@ -11,7 +11,7 @@ extension Chat.LocalModel {
 
             return Chat.PeerMetadata(
                 name: roomMetadata?.name ?? extMetadata.name,
-                icon: roomMetadata?.inlineIcon ?? extMetadata.icon,
+                icon: roomMetadata?.roomIcon ?? extMetadata.icon,
                 input: policy.footer == .empty ? .empty : extMetadata.input,
                 moreActions: extMetadata.moreActions
             )
@@ -32,12 +32,15 @@ extension Chat.LocalModel {
 }
 
 private extension Chat.RoomMetadata {
-    /// Only an inline image can be drawn as it is, so an `https` room icon leaves the bot's in place.
-    var inlineIcon: Chat.PeerMetadata.Icon? {
-        guard let icon, icon.hasPrefix("data:"), let payloadStart = icon.range(of: ";base64,") else {
-            return nil
-        }
+    /// An inline image draws at once. An `https` icon loads through the chat resource resolver.
+    var roomIcon: Chat.PeerMetadata.Icon? {
+        guard let icon else { return nil }
 
-        return Data(base64Encoded: String(icon[payloadStart.upperBound...])).map { .image($0) }
+        switch ChatResource(source: icon) {
+        case let .inline(_, data): return .image(data)
+        case .address: return .resource(icon)
+        case .preimage,
+             nil: return nil
+        }
     }
 }
