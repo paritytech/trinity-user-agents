@@ -202,6 +202,11 @@ pub enum SystemEvent {
 	BridgeReady {
 		url: String,
 	},
+	ChatSurfaceReady {
+		url: String,
+		worker_bundle: Option<std::path::PathBuf>,
+		worker_bundle_built: bool,
+	},
 	SigningHostReady,
 	SigningHostProvisioning,
 	SigningHostNeedsSession,
@@ -1587,6 +1592,29 @@ impl App {
                 "Browser bridge".to_string(),
                 Some(format!(
                     "{url}\nLoad it from a development-only <script> tag to run a product in a plain browser tab"
+                )),
+            ),
+            SystemEvent::ChatSurfaceReady {
+                url,
+                worker_bundle,
+                worker_bundle_built,
+            } => self.notice(
+                NoticeTone::Info,
+                "Chat surface".to_string(),
+                Some(format!(
+                    "{url}\n{}",
+                    match worker_bundle {
+                        None => "The page will not boot a worker until --worker-bundle is given"
+                            .to_string(),
+                        Some(path) if !worker_bundle_built => format!(
+                            "{} does not exist yet; the page boots the worker once it is built",
+                            path.display()
+                        ),
+                        Some(path) => format!(
+                            "Open it to boot the worker from {} and chat with it as a person",
+                            path.display()
+                        ),
+                    }
                 )),
             ),
             SystemEvent::SigningHostReady => self.activity(
