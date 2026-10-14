@@ -434,17 +434,10 @@ so `make dev` leaves the board empty with no error.
 
 ## How it works
 
-1. The protocol is defined as Rust traits in [`rust/crates/truapi/`](rust/crates/truapi/), with each trait tagged
-   `#[wire_trait(id = N)]` and each method tagged `#[wire(id = N)]` for a stable byte-level `(trait, method)` dispatch
-   table. Every method's doc comment must carry a ` ```ts ` example, which codegen extracts into the playground's
-   EXAMPLE tab; the build fails if any method is missing one.
-2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in
-   `js/packages/truapi/`, the Rust host dispatcher, and the transport-neutral `no_std` Rust client. The Rust client
-   exports typed method markers plus complete App, Widget, Worker, and Worker-only catalogs from the same wire schema.
-3. Higher-level SDKs wrap the generated client; each runtime provides only its native frame transport. Browser products
-   use `MessagePort` (or `postMessage` in iframe mode), while sandboxed runtimes such as PolkaVM supply explicit host
-   imports.
-4. The host decodes the frame, dispatches to the matching trait method, encodes the response, and ships it back.
+1. The protocol is defined as Rust traits in [`rust/crates/truapi/`](rust/crates/truapi/), with each trait tagged `#[wire_trait(id = N)]` and each method tagged `#[wire(id = N)]` for a stable byte-level `(trait, method)` dispatch table. Every method's doc comment must carry a ` ```ts ` example, which codegen extracts into the playground's EXAMPLE tab; the build fails if any method is missing one.
+2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in `js/packages/truapi/`.
+3. Higher-level SDKs wrap the typed client; the transport encodes SCALE frames and ships them over WebSocket, `MessagePort`, or `postMessage` in iframe mode to the host.
+4. The host decodes the frame and dispatches to the matching trait method. Capability handlers use `latest` payloads internally and convert responses, subscription items, and domain errors to the request version before the host encodes and sends them.
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within
 its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in

@@ -110,7 +110,7 @@ pub use signing_host::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnaps
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
-	api::{Chat, Contacts, Funding, Pocket, Renderer},
+	api::{Chat, Contacts, Pocket, Renderer},
 	latest, v01,
 	versioned::{
 		IntoLatest,
@@ -649,12 +649,42 @@ impl ProductRuntimeHost {
 		}
 	}
 
+	/// Return the canonical target if this product has the requested access.
+	pub async fn cross_product_scope_target(&self, target: &str, scope: Granted) -> Option<String> {
+		let normalized = normalize_product_identifier(target).ok()?;
+		if normalized == self.product_id() {
+			return Some(normalized);
+		}
+		product_manifest::grants_scope(
+			&self.services,
+			&*self.platform,
+			&self.product_id(),
+			&normalized,
+			scope,
+		)
+		.await
+		.then_some(normalized)
+	}
+
+	fn normalize_product_account_id(
+		product_account_id: latest::ProductAccountId,
+	) -> Result<latest::ProductAccountId, ()> {
+		Ok(latest::ProductAccountId {
+			dot_ns_identifier: normalize_product_identifier(&product_account_id.dot_ns_identifier)
+				.map_err(|_| ())?,
+			derivation_index: product_account_id.derivation_index,
+		})
+	}
+
+	fn product_id(&self) -> String {
+		self.product.product_id.as_str().to_string()
+	}
+
 	async fn product_account_public_key(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		owner: &ProductId,
-		derivation_index: &latest::DerivationIndex,
+		product_account_id: &latest::ProductAccountId,
 	) -> Result<[u8; 32], AuthorityError> {
 		let cx = remote_authority_context(cx);
 		let subtree = remote_authority_call(
@@ -710,6 +740,349 @@ impl ProductRuntimeHost {
 			return Ok(LegacySigner::Product);
 		}
 		Err(LegacySignerError::Unavailable)
+	}
+}
+
+async fn account_access_authorization(
+	platform: &dyn Platform,
+	requesting_product_id: &str,
+	target_product_id: &str,
+) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
+	if requesting_product_id == target_product_id ||
+		crate::platform::normalizes_to_trusted_remote_permissions(requesting_product_id)
+	{
+		return Ok(PermissionAuthorizationStatus::Authorized);
+	}
+
+	let target = crate::host_internal::product_manifest::bare_product_label(target_product_id);
+	let caller = crate::host_internal::product_manifest::bare_product_label(requesting_product_id);
+	let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
+		.await
+		.map_err(AccountAccessAuthorizationError::PermissionStorage)?;
+	if cached != PermissionAuthorizationStatus::NotDetermined {
+		return Ok(cached);
+	}
+
+	let decision = platform
+		.confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
+			requesting_product_id: requesting_product_id.to_string(),
+			target_product_id: target_product_id.to_string(),
+		}))
+		.await
+		.map_err(AccountAccessAuthorizationError::Confirmation)?;
+	let status = match decision {
+		PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
+		PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
+		PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
+	};
+	crate::host_internal::permissions::set_account_access_status(platform, caller, target, status)
+		.await
+		.map_err(AccountAccessAuthorizationError::PermissionStorage)?;
+	Ok(status)
+}
+
+#[derive(Debug, thiserror::Error)]
+enum AccountAccessAuthorizationError {
+	#[error("permission storage failed: {0:?}")]
+	PermissionStorage(v01::GenericError),
+	#[error("account access confirmation failed: {0:?}")]
+	Confirmation(v01::GenericError),
+}
+
+fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {
+	let raw = signer
+		.strip_prefix("0x")
+		.or_else(|| signer.strip_prefix("0X"))
+		.unwrap_or(signer);
+	if raw.len() != 64 {
+		return None;
+	}
+	hex::decode(raw).ok()?.try_into().ok()
+}
+
+fn runtime_failure_to_call_error<E>(failure: RuntimeFailure) -> CallError<E> {
+	CallError::HostFailure { reason: failure.reason() }
+}
+
+/// Host-UI projection of an active session for `AuthState::Connected`.
+fn connected_session_ui_info(session: &SessionInfo) -> SessionUiInfo {
+	SessionUiInfo {
+		public_key: session.public_key,
+		identity_account_id: session.identity_account_id,
+		chat_public_key: session.identity_chat_private_key.map(x25519_public_key),
+		device_enc_public_key: session.device_enc_public_key,
+		peer_statement_account_id: session.sso.as_ref().map(|sso| sso.identity_account_id),
+		device_statement_account_id: session.sso.as_ref().map(|sso| sso.ss_public_key),
+		lite_username: session.lite_username.clone(),
+		full_username: session.full_username.clone(),
+	}
+}
+
+const MAX_VRF_TRANSCRIPT_ITEMS: usize = 32;
+const MAX_VRF_TRANSCRIPT_BYTES: usize = 8 * 1024;
+
+fn validate_vrf_transcript(request: &latest::HostAccountSignVrfRequest) -> Result<(), String> {
+	if request.items.len() > MAX_VRF_TRANSCRIPT_ITEMS {
+		return Err(format!(
+			"VRF transcript has {} items, at most {MAX_VRF_TRANSCRIPT_ITEMS} are allowed",
+			request.items.len()
+		));
+	}
+	let total_bytes =
+		request.items.iter().try_fold(request.transcript_label.len(), |total, item| {
+			total
+				.checked_add(item.label.len())
+				.and_then(|total| total.checked_add(item.value.len()))
+		});
+	if total_bytes.is_none_or(|total| total > MAX_VRF_TRANSCRIPT_BYTES) {
+		return Err(format!("VRF transcript exceeds the {MAX_VRF_TRANSCRIPT_BYTES}-byte limit"));
+	}
+	Ok(())
+}
+
+fn vrf_call_error(err: AuthorityError) -> CallError<latest::HostAccountSignVrfError> {
+	CallError::Domain(err.into())
+}
+fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAccountGetError> {
+	let error = match err {
+		AuthorityError::Disconnected => latest::HostAccountGetError::NotConnected,
+		AuthorityError::Rejected => latest::HostAccountGetError::Rejected,
+		AuthorityError::Cancelled(err) => {
+			latest::HostAccountGetError::Unknown { reason: err.to_string() }
+		},
+		AuthorityError::Unavailable { reason } |
+		AuthorityError::NotSupported { reason } |
+		AuthorityError::Unknown { reason } => latest::HostAccountGetError::Unknown { reason },
+	};
+	CallError::Domain(error)
+}
+
+fn ring_vrf_alias_error(err: RingVrfError) -> latest::HostAccountGetAliasError {
+	match err {
+		RingVrfError::RingNotFound => latest::HostAccountGetAliasError::RingNotFound,
+		RingVrfError::NotMember => latest::HostAccountGetAliasError::NotMember,
+		RingVrfError::KeyNotRegistered => latest::HostAccountGetAliasError::KeyNotRegistered,
+		RingVrfError::KeyNotInRing => latest::HostAccountGetAliasError::KeyNotInRing,
+		RingVrfError::NotAllowlisted => latest::HostAccountGetAliasError::Rejected,
+		RingVrfError::Rejected => latest::HostAccountGetAliasError::Rejected,
+		RingVrfError::Unknown { reason } => latest::HostAccountGetAliasError::Unknown { reason },
+	}
+}
+
+fn ring_vrf_proof_error(err: RingVrfError) -> latest::HostAccountCreateProofError {
+	match err {
+		RingVrfError::RingNotFound => latest::HostAccountCreateProofError::RingNotFound,
+		RingVrfError::NotMember => latest::HostAccountCreateProofError::NotMember,
+		RingVrfError::KeyNotRegistered => latest::HostAccountCreateProofError::KeyNotRegistered,
+		RingVrfError::KeyNotInRing => latest::HostAccountCreateProofError::KeyNotInRing,
+		RingVrfError::NotAllowlisted => latest::HostAccountCreateProofError::NotAllowlisted,
+		RingVrfError::Rejected => latest::HostAccountCreateProofError::Rejected,
+		RingVrfError::Unknown { reason } => latest::HostAccountCreateProofError::Unknown { reason },
+	}
+}
+
+fn ring_vrf_register_error(err: RingVrfError) -> latest::HostAccountRegisterRingVrfKeyError {
+	match err {
+		RingVrfError::RingNotFound => latest::HostAccountRegisterRingVrfKeyError::RingNotFound,
+		RingVrfError::Rejected => latest::HostAccountRegisterRingVrfKeyError::Rejected,
+		RingVrfError::NotMember |
+		RingVrfError::KeyNotRegistered |
+		RingVrfError::KeyNotInRing |
+		RingVrfError::NotAllowlisted => {
+			latest::HostAccountRegisterRingVrfKeyError::Unknown { reason: format!("{err:?}") }
+		},
+		RingVrfError::Unknown { reason } => {
+			latest::HostAccountRegisterRingVrfKeyError::Unknown { reason }
+		},
+	}
+}
+
+fn ring_vrf_list_error(err: RingVrfError) -> latest::HostAccountListRingVrfKeysError {
+	match err {
+		RingVrfError::Rejected => latest::HostAccountListRingVrfKeysError::Rejected,
+		RingVrfError::RingNotFound |
+		RingVrfError::NotMember |
+		RingVrfError::KeyNotRegistered |
+		RingVrfError::KeyNotInRing |
+		RingVrfError::NotAllowlisted => {
+			latest::HostAccountListRingVrfKeysError::Unknown { reason: format!("{err:?}") }
+		},
+		RingVrfError::Unknown { reason } => {
+			latest::HostAccountListRingVrfKeysError::Unknown { reason }
+		},
+	}
+}
+
+fn ring_vrf_sign_error(err: RingVrfError) -> latest::HostAccountRingVrfSignError {
+	match err {
+		RingVrfError::KeyNotRegistered => latest::HostAccountRingVrfSignError::KeyNotRegistered,
+		RingVrfError::NotAllowlisted => latest::HostAccountRingVrfSignError::NotAllowlisted,
+		RingVrfError::Rejected => latest::HostAccountRingVrfSignError::Rejected,
+		RingVrfError::RingNotFound | RingVrfError::NotMember | RingVrfError::KeyNotInRing => {
+			latest::HostAccountRingVrfSignError::Unknown { reason: format!("{err:?}") }
+		},
+		RingVrfError::Unknown { reason } => latest::HostAccountRingVrfSignError::Unknown { reason },
+	}
+}
+
+fn signing_call_error(err: AuthorityError) -> CallError<latest::HostSignPayloadError> {
+	CallError::Domain(match err {
+		AuthorityError::Rejected | AuthorityError::Disconnected => {
+			latest::HostSignPayloadError::Rejected
+		},
+		AuthorityError::Cancelled(err) => {
+			latest::HostSignPayloadError::Unknown { reason: err.to_string() }
+		},
+		AuthorityError::Unavailable { reason } |
+		AuthorityError::NotSupported { reason } |
+		AuthorityError::Unknown { reason } => latest::HostSignPayloadError::Unknown { reason },
+	})
+}
+
+fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTransactionError> {
+	CallError::Domain(match err {
+		AuthorityError::Rejected | AuthorityError::Disconnected => {
+			latest::HostCreateTransactionError::Rejected
+		},
+		AuthorityError::Cancelled(err) => {
+			latest::HostCreateTransactionError::Unknown { reason: err.to_string() }
+		},
+		AuthorityError::NotSupported { reason } => {
+			latest::HostCreateTransactionError::NotSupported { reason }
+		},
+		AuthorityError::Unavailable { reason } | AuthorityError::Unknown { reason } => {
+			latest::HostCreateTransactionError::Unknown { reason }
+		},
+	})
+}
+
+const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
+
+impl ProductRuntimeHost {
+	/// Chat access policy for this connection; see [`chat_platform_for`].
+	pub fn native_chat_platform(
+		&self,
+	) -> Result<Arc<dyn crate::platform::ChatPlatform>, crate::host_core::ProductRuntimeError> {
+		chat_platform_for(
+			self.product.execution_kind,
+			self.authority.session_state().current().is_some(),
+			self.chat_platform.as_ref(),
+		)
+	}
+
+	fn chat_platform<E>(&self) -> Result<Arc<dyn crate::platform::ChatPlatform>, CallError<E>> {
+		self.native_chat_platform().map_err(|error| match error {
+			crate::host_core::ProductRuntimeError::Denied => CallError::Denied,
+			_ => CallError::Unsupported,
+		})
+	}
+
+	/// End this connection's Chat action stream.
+	pub fn detach_chat(&self) {
+		self.chat.detach();
+	}
+
+	/// Buffer one host-authored Chat action for this connection's product,
+	/// behind the same access policy as every other Chat entry point.
+	pub fn publish_chat_action(
+		&self,
+		action: truapi::versioned::chat::HostChatActionSubscribeItem,
+	) -> Result<(), crate::host_core::ProductRuntimeError> {
+		self.native_chat_platform()?;
+		self.chat.publish(action)
+	}
+
+	/// Renderer access policy for this connection; see [`renderer_access_for`].
+	pub fn renderer_access(&self) -> Result<(), crate::host_core::ProductRuntimeError> {
+		renderer_access_for(self.product.execution_kind)
+	}
+
+	/// Hold worker demand until the matching [`Self::release_worker_reference`].
+	pub fn acquire_worker_reference(&self) {
+		self.services.worker_ledger.acquire(&self.product.product_id);
+	}
+
+	/// Release one core-held reference on this connection's product worker.
+	pub fn release_worker_reference(&self) {
+		self.services.worker_ledger.release(&self.product.product_id);
+	}
+
+	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
+	pub async fn begin_operation_with_host(
+		&self,
+		label: String,
+	) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
+		let (tx, rx) = futures::channel::oneshot::channel();
+		let platform = self.platform.clone();
+		let product = self.product.clone();
+		(self.services.spawner)(Box::pin(async move {
+			let begun = platform.begin_operation(&product, label).await;
+			if let Err(Ok(response)) = tx.send(begun) {
+				let _ = platform.end_operation(&product, response.id).await;
+			}
+		}));
+		rx.await.unwrap_or_else(|_| {
+			Err(v01::HostWorkerOperationError::Unknown {
+				reason: "the host did not answer".to_string(),
+			})
+		})
+	}
+
+	/// Hold worker demand until this operation ends or the connection closes.
+	pub fn hold_worker_for_operation(&self, id: u32) {
+		if self.open_operations.lock().expect("open operations mutex poisoned").insert(id) {
+			self.acquire_worker_reference();
+		}
+	}
+
+	/// Release operation references and ask the host to end those operations.
+	pub fn release_open_operations(&self) {
+		let open = core::mem::take(
+			&mut *self.open_operations.lock().expect("open operations mutex poisoned"),
+		);
+		if open.is_empty() {
+			return;
+		}
+		for _ in &open {
+			self.release_worker_reference();
+		}
+		let platform = self.platform.clone();
+		let product = self.product.clone();
+		(self.services.spawner)(Box::pin(async move {
+			for id in open {
+				let _ = platform.end_operation(&product, id).await;
+			}
+		}));
+	}
+
+	/// Release one open operation's demand; unknown ids leave demand unchanged.
+	pub fn release_worker_for_operation(&self, id: u32) {
+		if self.open_operations.lock().expect("open operations mutex poisoned").remove(&id) {
+			self.release_worker_reference();
+		}
+	}
+
+	/// End the renderer action stream this connection's product is reading.
+	pub fn detach_renderer(&self) {
+		self.renderer.detach();
+	}
+
+	/// Buffer one renderer action for this connection's product.
+	pub fn publish_renderer_action(
+		&self,
+		item: HostRendererActionSubscribeItem,
+	) -> Result<(), crate::host_core::ProductRuntimeError> {
+		self.renderer_access()?;
+		self.renderer.publish(item)
+	}
+
+	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
+		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
+			self.authority.session_state().current().is_none()
+		{
+			return Err(CallError::Denied);
+		}
+		self.pocket_platform.clone().ok_or(CallError::Unsupported)
 	}
 
 	/// Replace declared contact handles with their accounts before review or signing.

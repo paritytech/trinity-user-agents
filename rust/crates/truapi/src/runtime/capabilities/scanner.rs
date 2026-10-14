@@ -5,9 +5,13 @@ use truapi::{
 	CallContext, CallError,
 	api::Scanner,
 	latest,
-	versioned::scanner::{HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse},
+	versioned::{
+		FromLatest, IntoLatest, Versioned,
+		scanner::{HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse},
+	},
 };
 
+use super::from_latest_error;
 use crate::{
 	host_logic::scanner::{accepts, validate_request},
 	platform::{HostScan, ProductExecutionKind},
@@ -28,51 +32,46 @@ impl Scanner for ProductRuntimeHost {
 		cx: &CallContext,
 		request: HostScannerScanRequest,
 	) -> Result<HostScannerScanResponse, CallError<HostScannerScanError>> {
-		version(request)
-			.exec(|request| async move {
-				let platform =
-					self.connection.services.scanner_platform().ok_or(CallError::Unsupported)?;
-				validate_request(&request).map_err(|reason| {
-					CallError::Domain(latest::HostScannerScanError::InvalidRequest { reason })
-				})?;
-				if self.connection.execution_kind() == ProductExecutionKind::Worker &&
-					!self.connection.recently_tapped()
-				{
+		let version = request.version();
+		let request = request.into_latest();
+		let result = async {
+			let platform = self.services.scanner_platform().ok_or(CallError::Unsupported)?;
+			validate_request(&request).map_err(|reason| {
+				CallError::Domain(latest::HostScannerScanError::InvalidRequest { reason })
+			})?;
+			if self.execution_kind() == ProductExecutionKind::Worker && !self.recently_tapped() {
+				return Err(CallError::Domain(latest::HostScannerScanError::NotVisible));
+			}
+			let _claim = self
+				.services
+				.claim_scan()
+				.ok_or_else(|| CallError::Domain(latest::HostScannerScanError::Busy))?;
+
+			let answer = until_cancelled(cx, platform.scan_code(&self.product, &request))
+				.await
+				.map_err(unknown)?
+				.map_err(|error| unknown(error.reason))?;
+
+			let outcome = match answer {
+				HostScan::Scanned { text, format } if accepts(&request, format, &text) => {
+					latest::ScanOutcome::Scanned { text, format }
+				},
+				HostScan::Scanned { .. } => {
+					return Err(unknown("the host returned a code the request does not accept"));
+				},
+				HostScan::Dismissed => latest::ScanOutcome::Dismissed,
+				HostScan::CameraUnavailable => {
+					return Err(CallError::Domain(latest::HostScannerScanError::CameraUnavailable));
+				},
+				HostScan::NotVisible => {
 					return Err(CallError::Domain(latest::HostScannerScanError::NotVisible));
-				}
-				let _claim = self
-					.connection
-					.services
-					.claim_scan()
-					.ok_or_else(|| CallError::Domain(latest::HostScannerScanError::Busy))?;
-
-				let answer =
-					until_cancelled(cx, platform.scan_code(&self.connection.product, &request))
-						.await
-						.map_err(unknown)?
-						.map_err(|error| unknown(error.reason))?;
-
-				let outcome = match answer {
-					HostScan::Scanned { text, format } if accepts(&request, format, &text) => {
-						latest::ScanOutcome::Scanned { text, format }
-					},
-					HostScan::Scanned { .. } => {
-						return Err(unknown(
-							"the host returned a code the request does not accept",
-						));
-					},
-					HostScan::Dismissed => latest::ScanOutcome::Dismissed,
-					HostScan::CameraUnavailable => {
-						return Err(CallError::Domain(
-							latest::HostScannerScanError::CameraUnavailable,
-						));
-					},
-					HostScan::NotVisible => {
-						return Err(CallError::Domain(latest::HostScannerScanError::NotVisible));
-					},
-				};
-				Ok(latest::HostScannerScanResponse { outcome })
-			})
-			.await
+				},
+			};
+			Ok(latest::HostScannerScanResponse { outcome })
+		}
+		.await;
+		result
+			.map(|response| HostScannerScanResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error(error, version))
 	}
 }

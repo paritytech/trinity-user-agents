@@ -163,310 +163,283 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
-		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-		HostAccountGetError, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
-		ProductAccount, ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
-		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
-		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
-		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
-		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
-		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature,
+		Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
+		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
+		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
+		OperationStartedResult, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
+		RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
+		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
+		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
+		StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
+		TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
+		VrfSignature,
 	};
 
-    /// Ring VRF proof creation result.
-    pub type HostAccountCreateProofResponse =
-        LatestOf<versioned::account::HostAccountCreateProofResponse>;
-    /// Chat action delivered from the native host to a product worker.
-    pub type HostChatActionSubscribeItem = LatestOf<versioned::chat::HostChatActionSubscribeItem>;
-    /// Native chat room creation request.
-    pub type HostChatCreateRoomRequest = LatestOf<versioned::chat::HostChatCreateRoomRequest>;
-    /// Native chat room creation result.
-    pub type HostChatCreateRoomResponse = LatestOf<versioned::chat::HostChatCreateRoomResponse>;
-    /// Native chat room creation failure.
-    pub type HostChatCreateRoomError = LatestOf<versioned::chat::HostChatCreateRoomError>;
-    /// Native chat bot registration request.
-    pub type HostChatRegisterBotRequest = LatestOf<versioned::chat::HostChatRegisterBotRequest>;
-    /// Native chat bot registration result.
-    pub type HostChatRegisterBotResponse = LatestOf<versioned::chat::HostChatRegisterBotResponse>;
-    /// Native chat bot registration failure.
-    pub type HostChatRegisterBotError = LatestOf<versioned::chat::HostChatRegisterBotError>;
-    /// Current native room list for a product.
-    pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
-    /// Native chat message posting request.
-    pub type HostChatPostMessageRequest = LatestOf<versioned::chat::HostChatPostMessageRequest>;
-    /// Native chat message posting result.
-    pub type HostChatPostMessageResponse = LatestOf<versioned::chat::HostChatPostMessageResponse>;
-    /// Native chat message posting failure.
-    pub type HostChatPostMessageError = LatestOf<versioned::chat::HostChatPostMessageError>;
-    /// Action triggered inside a product-rendered body, delivered to the worker.
-    pub type HostRendererActionSubscribeItem =
-        LatestOf<versioned::renderer::HostRendererActionSubscribeItem>;
-    /// Host-to-product render request for one body.
-    pub type ProductRendererRenderRequest =
-        LatestOf<versioned::renderer::ProductRendererRenderRequest>;
-    /// Product-to-host renderer tree.
-    pub type ProductRendererRenderItem = LatestOf<versioned::renderer::ProductRendererRenderItem>;
-    /// Contact picker request.
-    pub type HostContactsPickRequest = LatestOf<versioned::contacts::HostContactsPickRequest>;
-    /// Contact picker outcome.
-    pub type HostContactsPickResponse = LatestOf<versioned::contacts::HostContactsPickResponse>;
-    /// Contact picker failure.
-    pub type HostContactsPickError = LatestOf<versioned::contacts::HostContactsPickError>;
-    /// Multi-contact picker request.
-    pub type HostContactsPickManyRequest =
-        LatestOf<versioned::contacts::HostContactsPickManyRequest>;
-    /// Multi-contact picker result.
-    pub type HostContactsPickManyResponse =
-        LatestOf<versioned::contacts::HostContactsPickManyResponse>;
-    /// Multi-contact picker failure.
-    pub type HostContactsPickManyError = LatestOf<versioned::contacts::HostContactsPickManyError>;
-    /// Host-owned contact name placement.
-    pub type HostContactsPlaceLabelsRequest =
-        LatestOf<versioned::contacts::HostContactsPlaceLabelsRequest>;
-    /// Contact label placement acknowledgment.
-    pub type HostContactsPlaceLabelsResponse =
-        LatestOf<versioned::contacts::HostContactsPlaceLabelsResponse>;
-    /// Contact label placement failure.
-    pub type HostContactsPlaceLabelsError =
-        LatestOf<versioned::contacts::HostContactsPlaceLabelsError>;
-    pub use crate::v01::{ContactLabelSlot, ContactPickManyOutcome};
-    /// Contextual alias derivation result.
-    pub type HostAccountGetAliasResponse =
-        LatestOf<versioned::account::HostAccountGetAliasResponse>;
-    /// Ring-VRF key registration result.
-    pub type HostAccountRegisterRingVrfKeyResponse =
-        LatestOf<versioned::account::HostAccountRegisterRingVrfKeyResponse>;
-    /// Ring-VRF registry listing result.
-    pub type HostAccountListRingVrfKeysResponse =
-        LatestOf<versioned::account::HostAccountListRingVrfKeysResponse>;
-    /// Direct ring-VRF key signing result.
-    pub type HostAccountRingVrfSignResponse =
-        LatestOf<versioned::account::HostAccountRingVrfSignResponse>;
-    /// Legacy account listing result.
-    pub type HostGetLegacyAccountsResponse =
-        LatestOf<versioned::account::HostGetLegacyAccountsResponse>;
-    /// Transaction creation result.
-    pub type HostCreateTransactionResponse =
-        LatestOf<versioned::signing::HostCreateTransactionResponse>;
-    /// Device-capability permission request.
-    pub type HostDevicePermissionRequest =
-        LatestOf<versioned::permissions::HostDevicePermissionRequest>;
-    /// Device-capability permission outcome.
-    pub type HostDevicePermissionResponse =
-        LatestOf<versioned::permissions::HostDevicePermissionResponse>;
-    /// Feature-support query.
-    pub type HostFeatureSupportedRequest = LatestOf<versioned::system::HostFeatureSupportedRequest>;
-    /// Feature-support query result.
-    pub type HostFeatureSupportedResponse =
-        LatestOf<versioned::system::HostFeatureSupportedResponse>;
-    /// Product context bound to the current host runtime.
-    pub type HostGetProductContextResponse =
-        LatestOf<versioned::system::HostGetProductContextResponse>;
-    /// Local storage operation error.
-    pub type HostLocalStorageReadError =
-        LatestOf<versioned::local_storage::HostLocalStorageReadError>;
-    /// Sanitized shared Media domain error.
-    pub type HostMediaError = LatestOf<versioned::media::HostMediaError>;
-    /// Media discovery request.
-    pub type HostMediaGetCapabilitiesRequest =
-        LatestOf<versioned::media::HostMediaGetCapabilitiesRequest>;
-    /// Complete Media service capabilities.
-    pub type HostMediaGetCapabilitiesResponse =
-        LatestOf<versioned::media::HostMediaGetCapabilitiesResponse>;
-    /// Media discovery failure.
-    pub type HostMediaGetCapabilitiesError =
-        LatestOf<versioned::media::HostMediaGetCapabilitiesError>;
-    /// Passive runtime-wide Media subscription request.
-    pub type HostMediaSessionSubscribeRequest =
-        LatestOf<versioned::media::HostMediaSessionSubscribeRequest>;
-    /// Authoritative runtime-wide Media event.
-    pub type HostMediaSessionSubscribeItem =
-        LatestOf<versioned::media::HostMediaSessionSubscribeItem>;
-    /// Media subscription interruption.
-    pub type HostMediaSessionSubscribeError =
-        LatestOf<versioned::media::HostMediaSessionSubscribeError>;
-    /// Correlated Media session creation request.
-    pub type HostMediaCreateSessionRequest =
-        LatestOf<versioned::media::HostMediaCreateSessionRequest>;
-    /// Media session creation result.
-    pub type HostMediaCreateSessionResponse =
-        LatestOf<versioned::media::HostMediaCreateSessionResponse>;
-    /// Media session creation failure.
-    pub type HostMediaCreateSessionError = LatestOf<versioned::media::HostMediaCreateSessionError>;
-    /// Correlated remote endpoint invitation request.
-    pub type HostMediaAddParticipantRequest =
-        LatestOf<versioned::media::HostMediaAddParticipantRequest>;
-    /// Admitted Media participant.
-    pub type HostMediaAddParticipantResponse =
-        LatestOf<versioned::media::HostMediaAddParticipantResponse>;
-    /// Media participant admission failure.
-    pub type HostMediaAddParticipantError =
-        LatestOf<versioned::media::HostMediaAddParticipantError>;
-    /// Incoming Media offer decision.
-    pub type HostMediaRespondIncomingRequest =
-        LatestOf<versioned::media::HostMediaRespondIncomingRequest>;
-    /// Incoming Media decision result.
-    pub type HostMediaRespondIncomingResponse =
-        LatestOf<versioned::media::HostMediaRespondIncomingResponse>;
-    /// Incoming Media decision failure.
-    pub type HostMediaRespondIncomingError =
-        LatestOf<versioned::media::HostMediaRespondIncomingError>;
-    /// Idempotent Media participant removal request.
-    pub type HostMediaRemoveParticipantRequest =
-        LatestOf<versioned::media::HostMediaRemoveParticipantRequest>;
-    /// Media participant removal result.
-    pub type HostMediaRemoveParticipantResponse =
-        LatestOf<versioned::media::HostMediaRemoveParticipantResponse>;
-    /// Media participant removal failure.
-    pub type HostMediaRemoveParticipantError =
-        LatestOf<versioned::media::HostMediaRemoveParticipantError>;
-    /// Correlated complete capture-intent replacement request.
-    pub type HostMediaSetLocalTracksRequest =
-        LatestOf<versioned::media::HostMediaSetLocalTracksRequest>;
-    /// Authoritative session after capture-intent commitment.
-    pub type HostMediaSetLocalTracksResponse =
-        LatestOf<versioned::media::HostMediaSetLocalTracksResponse>;
-    /// Capture-intent replacement failure.
-    pub type HostMediaSetLocalTracksError =
-        LatestOf<versioned::media::HostMediaSetLocalTracksError>;
-    /// Atomic host-owned Media layout replacement request.
-    pub type HostMediaSetSurfacesRequest = LatestOf<versioned::media::HostMediaSetSurfacesRequest>;
-    /// Accepted Media layout revision.
-    pub type HostMediaSetSurfacesResponse =
-        LatestOf<versioned::media::HostMediaSetSurfacesResponse>;
-    /// Media layout replacement failure.
-    pub type HostMediaSetSurfacesError = LatestOf<versioned::media::HostMediaSetSurfacesError>;
-    /// Idempotent Media session teardown request.
-    pub type HostMediaEndSessionRequest = LatestOf<versioned::media::HostMediaEndSessionRequest>;
-    /// Media session teardown result.
-    pub type HostMediaEndSessionResponse = LatestOf<versioned::media::HostMediaEndSessionResponse>;
-    /// Media session teardown failure.
-    pub type HostMediaEndSessionError = LatestOf<versioned::media::HostMediaEndSessionError>;
-    /// Exact Media operation outcome query.
-    pub type HostMediaGetOperationRequest =
-        LatestOf<versioned::media::HostMediaGetOperationRequest>;
-    /// Authoritative Media operation outcome.
-    pub type HostMediaGetOperationResponse =
-        LatestOf<versioned::media::HostMediaGetOperationResponse>;
-    /// Media operation query failure.
-    pub type HostMediaGetOperationError = LatestOf<versioned::media::HostMediaGetOperationError>;
-    /// Authoritative cancellation or pre-admission tombstone request.
-    pub type HostMediaCancelOperationRequest =
-        LatestOf<versioned::media::HostMediaCancelOperationRequest>;
-    /// Media operation state after cancellation linearizes against commitment.
-    pub type HostMediaCancelOperationResponse =
-        LatestOf<versioned::media::HostMediaCancelOperationResponse>;
-    /// Media operation cancellation failure.
-    pub type HostMediaCancelOperationError =
-        LatestOf<versioned::media::HostMediaCancelOperationError>;
-    /// Locale the host currently presents its interface in.
-    pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
-    /// Batched host-local calendar conversion request.
-    pub type HostLocaleLocalizeTimestampsRequest =
-        LatestOf<versioned::locale::HostLocaleLocalizeTimestampsRequest>;
-    /// Batched host-local calendar conversion result.
-    pub type HostLocaleLocalizeTimestampsResponse =
-        LatestOf<versioned::locale::HostLocaleLocalizeTimestampsResponse>;
-    pub use crate::v02::HostLocaleLocalizedTimestamp;
-    /// Navigation request error.
-    pub type HostNavigateToError = LatestOf<versioned::system::HostNavigateToError>;
-    /// The calling product's Pocket cards.
-    pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
-    /// Pocket card removal request.
-    pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
-    /// Pocket card removal failure.
-    pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
-    /// Profile presentation request.
-    pub type HostProfilePresentRequest = LatestOf<versioned::profile::HostProfilePresentRequest>;
-    /// Profile presentation failure.
-    pub type HostProfilePresentError = LatestOf<versioned::profile::HostProfilePresentError>;
-    /// Contact avatar placement failure.
-    pub type HostProfilePlaceContactAvatarsError =
-        LatestOf<versioned::profile::HostProfilePlaceContactAvatarsError>;
-    /// Profile disclosure request with explicit audiences.
-    pub type HostProfileDiscloseRequest = LatestOf<versioned::profile::HostProfileDiscloseRequest>;
-    /// Contact profile presentation selector.
-    pub type HostProfilePresentContactRequest =
-        LatestOf<versioned::profile::HostProfilePresentContactRequest>;
-    /// Contact and own avatar geometry.
-    pub type HostProfilePlaceContactAvatarsRequest =
-        LatestOf<versioned::profile::HostProfilePlaceContactAvatarsRequest>;
-    /// Push notification scheduling request.
-    pub type HostPushNotificationRequest =
-        LatestOf<versioned::notifications::HostPushNotificationRequest>;
-    /// Push notification scheduling result.
-    pub type HostPushNotificationResponse =
-        LatestOf<versioned::notifications::HostPushNotificationResponse>;
-    /// Login request error.
-    pub type HostRequestLoginError = LatestOf<versioned::account::HostRequestLoginError>;
-    /// Login request result.
-    pub type HostRequestLoginResponse = LatestOf<versioned::account::HostRequestLoginResponse>;
-    /// Batched resource pre-allocation request.
-    pub type HostRequestResourceAllocationRequest =
-        LatestOf<versioned::resource_allocation::HostRequestResourceAllocationRequest>;
-    /// Per-resource allocation outcomes.
-    pub type HostRequestResourceAllocationResponse =
-        LatestOf<versioned::resource_allocation::HostRequestResourceAllocationResponse>;
-    /// Native Chat cryptographic request using non-exportable Host keys.
-    pub type HostProductDeviceChatRequest =
-        LatestOf<versioned::account::HostProductDeviceChatRequest>;
-    /// Authenticated native plaintext, prepared ciphertext, and custody metadata.
-    pub type HostProductDeviceChatResponse =
-        LatestOf<versioned::account::HostProductDeviceChatResponse>;
-    /// Host-owned native Chat operation error.
-    pub type HostProductDeviceChatError = LatestOf<versioned::account::HostProductDeviceChatError>;
-    /// Extrinsic payload signing request for a product account.
-    pub type HostSignPayloadRequest = LatestOf<versioned::signing::HostSignPayloadRequest>;
-    /// Signing operation result.
-    pub type HostSignPayloadResponse = LatestOf<versioned::signing::HostSignPayloadResponse>;
-    /// Extrinsic payload signing request for a legacy account.
-    pub type HostSignPayloadWithLegacyAccountRequest =
-        LatestOf<versioned::signing::HostSignPayloadWithLegacyAccountRequest>;
-    /// Raw-bytes signing request for a product account.
-    pub type HostSignRawRequest = LatestOf<versioned::signing::HostSignRawRequest>;
-    /// Raw-bytes signing request for a legacy account.
-    pub type HostSignRawWithLegacyAccountRequest =
-        LatestOf<versioned::signing::HostSignRawWithLegacyAccountRequest>;
-    /// Current host theme pushed to subscribers.
-    pub type HostThemeSubscribeItem = LatestOf<versioned::theme::HostThemeSubscribeItem>;
-    /// Transaction creation payload for a legacy account.
-    pub type LegacyAccountTxPayload =
-        LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountRequest>;
-    /// Preimage submission error.
-    pub type PreimageSubmitError = LatestOf<versioned::preimage::RemotePreimageSubmitError>;
-    /// Transaction creation payload for a product account.
-    pub type ProductAccountTxPayload = LatestOf<versioned::signing::HostCreateTransactionRequest>;
-    /// Chain-head runtime-API call request.
-    pub type RemoteChainHeadCallRequest = LatestOf<versioned::chain::RemoteChainHeadCallRequest>;
-    /// Chain-head subscription item.
-    pub type RemoteChainHeadFollowItem = LatestOf<versioned::chain::RemoteChainHeadFollowItem>;
-    /// Chain-identifier resolution error.
-    pub type RemoteChainInfoError = LatestOf<versioned::chain::RemoteChainInfoError>;
-    /// Chain-identifier resolution request.
-    pub type RemoteChainInfoRequest = LatestOf<versioned::chain::RemoteChainInfoRequest>;
-    /// Chain-identifier resolution result.
-    pub type RemoteChainInfoResponse = LatestOf<versioned::chain::RemoteChainInfoResponse>;
-    /// Chain-head subscription request.
-    pub type RemoteChainHeadFollowRequest =
-        LatestOf<versioned::chain::RemoteChainHeadFollowRequest>;
-    /// Chain-head storage query request.
-    pub type RemoteChainHeadStorageRequest =
-        LatestOf<versioned::chain::RemoteChainHeadStorageRequest>;
-    /// Chain-head storage query result.
-    pub type RemoteChainHeadStorageResponse =
-        LatestOf<versioned::chain::RemoteChainHeadStorageResponse>;
-    /// Remote-operation permission request.
-    pub type RemotePermissionRequest = LatestOf<versioned::permissions::RemotePermissionRequest>;
-    /// Remote-operation permission outcome.
-    pub type RemotePermissionResponse = LatestOf<versioned::permissions::RemotePermissionResponse>;
+	/// Latest payload type of a versioned envelope.
+	pub type LatestOf<T> = <T as Versioned>::Latest;
+
+	/// Account proof creation failure.
+	pub type HostAccountCreateProofError =
+		LatestOf<versioned::account::HostAccountCreateProofError>;
+	/// Contextual alias derivation failure.
+	pub type HostAccountGetAliasError = LatestOf<versioned::account::HostAccountGetAliasError>;
+	/// Account lookup request.
+	pub type HostAccountGetRequest = LatestOf<versioned::account::HostAccountGetRequest>;
+	/// Account lookup result.
+	pub type HostAccountGetResponse = LatestOf<versioned::account::HostAccountGetResponse>;
+	/// Ring-VRF registry listing failure.
+	pub type HostAccountListRingVrfKeysError =
+		LatestOf<versioned::account::HostAccountListRingVrfKeysError>;
+	/// Ring-VRF key registration failure.
+	pub type HostAccountRegisterRingVrfKeyError =
+		LatestOf<versioned::account::HostAccountRegisterRingVrfKeyError>;
+	/// Ring-VRF signing failure.
+	pub type HostAccountRingVrfSignError =
+		LatestOf<versioned::account::HostAccountRingVrfSignError>;
+	/// User identifier lookup failure.
+	pub type HostGetUserIdError = LatestOf<versioned::account::HostGetUserIdError>;
+	/// User identifier lookup result.
+	pub type HostGetUserIdResponse = LatestOf<versioned::account::HostGetUserIdResponse>;
+	/// Transaction creation failure.
+	pub type HostCreateTransactionError = LatestOf<versioned::signing::HostCreateTransactionError>;
+	/// Transaction created for a legacy account.
+	pub type HostCreateTransactionWithLegacyAccountResponse =
+		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountResponse>;
+	/// Payload signing failure.
+	pub type HostSignPayloadError = LatestOf<versioned::signing::HostSignPayloadError>;
+	/// Product entropy derivation failure.
+	pub type HostDeriveEntropyError = LatestOf<versioned::entropy::HostDeriveEntropyError>;
+	/// Product entropy derivation request.
+	pub type HostDeriveEntropyRequest = LatestOf<versioned::entropy::HostDeriveEntropyRequest>;
+	/// Product entropy derivation result.
+	pub type HostDeriveEntropyResponse = LatestOf<versioned::entropy::HostDeriveEntropyResponse>;
+	/// Host information exposed to a product.
+	pub type HostInfoResponse = LatestOf<versioned::system::HostInfoResponse>;
+	/// Product navigation request.
+	pub type HostNavigateToRequest = LatestOf<versioned::system::HostNavigateToRequest>;
+	/// Storage read request, optionally naming another product.
+	pub type HostLocalStorageReadRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageReadRequest>;
+	/// Value read from product storage.
+	pub type HostLocalStorageReadResponse =
+		LatestOf<versioned::local_storage::HostLocalStorageReadResponse>;
+	/// Product storage write request.
+	pub type HostLocalStorageWriteRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageWriteRequest>;
+	/// Product storage removal request.
+	pub type HostLocalStorageClearRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageClearRequest>;
+	/// Product storage change subscription request.
+	pub type HostLocalStorageSubscribeRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageSubscribeRequest>;
+	/// Worker pending operation completion request.
+	pub type HostWorkerEndOperationRequest =
+		LatestOf<versioned::worker::HostWorkerEndOperationRequest>;
+	/// Push notification scheduling failure.
+	pub type HostPushNotificationError =
+		LatestOf<versioned::notifications::HostPushNotificationError>;
+	/// Push notification cancellation request.
+	pub type HostPushNotificationCancelRequest =
+		LatestOf<versioned::notifications::HostPushNotificationCancelRequest>;
+	/// Content-addressed preimage lookup request.
+	pub type RemotePreimageLookupSubscribeRequest =
+		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeRequest>;
+	/// Current preimage lookup result.
+	pub type RemotePreimageLookupSubscribeItem =
+		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeItem>;
+	/// Payment balance subscription failure.
+	pub type HostPaymentBalanceSubscribeError =
+		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+	/// Payment request failure.
+	pub type HostPaymentError = LatestOf<versioned::payment::HostPaymentError>;
+	/// Payment status subscription failure.
+	pub type HostPaymentStatusSubscribeError =
+		LatestOf<versioned::payment::HostPaymentStatusSubscribeError>;
+	/// Payment top-up failure.
+	pub type HostPaymentTopUpError = LatestOf<versioned::payment::HostPaymentTopUpError>;
+	/// Ring VRF proof creation result.
+	pub type HostAccountCreateProofResponse =
+		LatestOf<versioned::account::HostAccountCreateProofResponse>;
+	/// Chat action delivered from the native host to a product worker.
+	pub type HostChatActionSubscribeItem = LatestOf<versioned::chat::HostChatActionSubscribeItem>;
+	/// Native chat room creation request.
+	pub type HostChatCreateRoomRequest = LatestOf<versioned::chat::HostChatCreateRoomRequest>;
+	/// Native chat room creation result.
+	pub type HostChatCreateRoomResponse = LatestOf<versioned::chat::HostChatCreateRoomResponse>;
+	/// Native chat room creation failure.
+	pub type HostChatCreateRoomError = LatestOf<versioned::chat::HostChatCreateRoomError>;
+	/// Native chat bot registration request.
+	pub type HostChatRegisterBotRequest = LatestOf<versioned::chat::HostChatRegisterBotRequest>;
+	/// Native chat bot registration result.
+	pub type HostChatRegisterBotResponse = LatestOf<versioned::chat::HostChatRegisterBotResponse>;
+	/// Native chat bot registration failure.
+	pub type HostChatRegisterBotError = LatestOf<versioned::chat::HostChatRegisterBotError>;
+	/// Request to set what a native chat room shows below its messages.
+	pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
+	/// Failure to set what a native chat room shows below its messages.
+	pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
+	/// Current native room list for a product.
+	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
+	/// Native chat message posting request.
+	pub type HostChatPostMessageRequest = LatestOf<versioned::chat::HostChatPostMessageRequest>;
+	/// Native chat message posting result.
+	pub type HostChatPostMessageResponse = LatestOf<versioned::chat::HostChatPostMessageResponse>;
+	/// Native chat message posting failure.
+	pub type HostChatPostMessageError = LatestOf<versioned::chat::HostChatPostMessageError>;
+	/// Action triggered inside a product-rendered body, delivered to the worker.
+	pub type HostRendererActionSubscribeItem =
+		LatestOf<versioned::renderer::HostRendererActionSubscribeItem>;
+	/// Host-to-product render request for one body.
+	pub type ProductRendererRenderRequest =
+		LatestOf<versioned::renderer::ProductRendererRenderRequest>;
+	/// Product-to-host renderer tree.
+	pub type ProductRendererRenderItem = LatestOf<versioned::renderer::ProductRendererRenderItem>;
+	/// Contact picker request.
+	pub type HostContactsPickRequest = LatestOf<versioned::contacts::HostContactsPickRequest>;
+	/// Contact picker outcome.
+	pub type HostContactsPickResponse = LatestOf<versioned::contacts::HostContactsPickResponse>;
+	/// Contact picker failure.
+	pub type HostContactsPickError = LatestOf<versioned::contacts::HostContactsPickError>;
+	/// Scanner request.
+	pub type HostScannerScanRequest = LatestOf<versioned::scanner::HostScannerScanRequest>;
+	/// Scanner outcome.
+	pub type HostScannerScanResponse = LatestOf<versioned::scanner::HostScannerScanResponse>;
+	/// Scanner failure.
+	pub type HostScannerScanError = LatestOf<versioned::scanner::HostScannerScanError>;
+	/// Contextual alias derivation result.
+	pub type HostAccountGetAliasResponse =
+		LatestOf<versioned::account::HostAccountGetAliasResponse>;
+	/// Ring-VRF key registration result.
+	pub type HostAccountRegisterRingVrfKeyResponse =
+		LatestOf<versioned::account::HostAccountRegisterRingVrfKeyResponse>;
+	/// Ring-VRF registry listing result.
+	pub type HostAccountListRingVrfKeysResponse =
+		LatestOf<versioned::account::HostAccountListRingVrfKeysResponse>;
+	/// Direct ring-VRF key signing result.
+	pub type HostAccountRingVrfSignResponse =
+		LatestOf<versioned::account::HostAccountRingVrfSignResponse>;
+	/// Legacy account listing result.
+	pub type HostGetLegacyAccountsResponse =
+		LatestOf<versioned::account::HostGetLegacyAccountsResponse>;
+	/// Transaction creation result.
+	pub type HostCreateTransactionResponse =
+		LatestOf<versioned::signing::HostCreateTransactionResponse>;
+	/// Device-capability permission request.
+	pub type HostDevicePermissionRequest =
+		LatestOf<versioned::permissions::HostDevicePermissionRequest>;
+	/// Device-capability permission outcome.
+	pub type HostDevicePermissionResponse =
+		LatestOf<versioned::permissions::HostDevicePermissionResponse>;
+	/// Feature-support query.
+	pub type HostFeatureSupportedRequest = LatestOf<versioned::system::HostFeatureSupportedRequest>;
+	/// Feature-support query result.
+	pub type HostFeatureSupportedResponse =
+		LatestOf<versioned::system::HostFeatureSupportedResponse>;
+	/// Product context bound to the current host runtime.
+	pub type HostGetProductContextResponse =
+		LatestOf<versioned::system::HostGetProductContextResponse>;
+	/// Request to drop the calling product's game reminder.
+	pub type HostCancelNextGameRequest = LatestOf<versioned::game::HostCancelNextGameRequest>;
+	/// Request to remind the user when the calling product's next game starts.
+	pub type HostRemindNextGameRequest = LatestOf<versioned::game::HostRemindNextGameRequest>;
+	/// Why a game reminder was not taken.
+	pub type HostRemindNextGameError = LatestOf<versioned::game::HostRemindNextGameError>;
+	/// Storage key change pushed to a subscriber.
+	pub type HostLocalStorageChangeItem =
+		LatestOf<versioned::local_storage::HostLocalStorageChangeItem>;
+	/// Local storage operation error.
+	pub type HostLocalStorageReadError =
+		LatestOf<versioned::local_storage::HostLocalStorageReadError>;
+	/// Locale the host currently presents its interface in.
+	pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
+	/// Navigation request error.
+	pub type HostNavigateToError = LatestOf<versioned::system::HostNavigateToError>;
+	/// The calling product's Pocket cards.
+	pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
+	/// Pocket card removal request.
+	pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
+	/// Pocket card removal failure.
+	pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
+	/// Request to show or hide the face above the calling Widget.
+	pub type HostExpandedCardSetFaceShownRequest =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
+	/// Face visibility change failure.
+	pub type HostExpandedCardSetFaceShownError =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
+	/// Push notification scheduling request.
+	pub type HostPushNotificationRequest =
+		LatestOf<versioned::notifications::HostPushNotificationRequest>;
+	/// Push notification scheduling result.
+	pub type HostPushNotificationResponse =
+		LatestOf<versioned::notifications::HostPushNotificationResponse>;
+	/// Login request.
+	pub type HostRequestLoginRequest = LatestOf<versioned::account::HostRequestLoginRequest>;
+	/// Connection state reported to account subscribers.
+	pub type HostAccountConnectionStatusSubscribeItem =
+		LatestOf<versioned::account::HostAccountConnectionStatusSubscribeItem>;
+	/// Login request error.
+	pub type HostRequestLoginError = LatestOf<versioned::account::HostRequestLoginError>;
+	/// Login request result.
+	pub type HostRequestLoginResponse = LatestOf<versioned::account::HostRequestLoginResponse>;
+	/// Batched resource pre-allocation request.
+	pub type HostRequestResourceAllocationRequest =
+		LatestOf<versioned::resource_allocation::HostRequestResourceAllocationRequest>;
+	/// Per-resource allocation outcomes.
+	pub type HostRequestResourceAllocationResponse =
+		LatestOf<versioned::resource_allocation::HostRequestResourceAllocationResponse>;
+	/// Extrinsic payload signing request for a product account.
+	pub type HostSignPayloadRequest = LatestOf<versioned::signing::HostSignPayloadRequest>;
+	/// Signing operation result.
+	pub type HostSignPayloadResponse = LatestOf<versioned::signing::HostSignPayloadResponse>;
+	/// Extrinsic payload signing request for a legacy account.
+	pub type HostSignPayloadWithLegacyAccountRequest =
+		LatestOf<versioned::signing::HostSignPayloadWithLegacyAccountRequest>;
+	/// Raw-bytes signing request for a product account.
+	pub type HostSignRawRequest = LatestOf<versioned::signing::HostSignRawRequest>;
+	/// Raw-bytes signing request for a legacy account.
+	pub type HostSignRawWithLegacyAccountRequest =
+		LatestOf<versioned::signing::HostSignRawWithLegacyAccountRequest>;
+	/// Current host theme pushed to subscribers.
+	pub type HostThemeSubscribeItem = LatestOf<versioned::theme::HostThemeSubscribeItem>;
+	/// Result of beginning a worker pending operation.
+	pub type HostWorkerBeginOperationResponse =
+		LatestOf<versioned::worker::HostWorkerBeginOperationResponse>;
+	/// Transaction creation payload for a legacy account.
+	pub type LegacyAccountTxPayload =
+		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountRequest>;
+	/// Preimage submission error.
+	pub type PreimageSubmitError = LatestOf<versioned::preimage::RemotePreimageSubmitError>;
+	/// Transaction creation payload for a product account.
+	pub type ProductAccountTxPayload = LatestOf<versioned::signing::HostCreateTransactionRequest>;
+	/// Chain-head runtime-API call request.
+	pub type RemoteChainHeadCallRequest = LatestOf<versioned::chain::RemoteChainHeadCallRequest>;
+	/// Chain-head subscription item.
+	pub type RemoteChainHeadFollowItem = LatestOf<versioned::chain::RemoteChainHeadFollowItem>;
+	/// Chain-identifier resolution error.
+	pub type RemoteChainInfoError = LatestOf<versioned::chain::RemoteChainInfoError>;
+	/// Chain-identifier resolution request.
+	pub type RemoteChainInfoRequest = LatestOf<versioned::chain::RemoteChainInfoRequest>;
+	/// Chain-identifier resolution result.
+	pub type RemoteChainInfoResponse = LatestOf<versioned::chain::RemoteChainInfoResponse>;
+	/// Chain-head subscription request.
+	pub type RemoteChainHeadFollowRequest =
+		LatestOf<versioned::chain::RemoteChainHeadFollowRequest>;
+	/// Chain-head storage query request.
+	pub type RemoteChainHeadStorageRequest =
+		LatestOf<versioned::chain::RemoteChainHeadStorageRequest>;
+	/// Chain-head storage query result.
+	pub type RemoteChainHeadStorageResponse =
+		LatestOf<versioned::chain::RemoteChainHeadStorageResponse>;
+	/// Remote-operation permission request.
+	pub type RemotePermissionRequest = LatestOf<versioned::permissions::RemotePermissionRequest>;
+	/// Remote-operation permission outcome.
+	pub type RemotePermissionResponse = LatestOf<versioned::permissions::RemotePermissionResponse>;
 }
 
 pub use truapi_macros::{service, wire, wire_trait};

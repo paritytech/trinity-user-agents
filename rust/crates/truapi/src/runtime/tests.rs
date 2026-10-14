@@ -11,66 +11,78 @@ use crate::platform::{
 };
 use crate::runtime::signing_host::LocalActivation;
 use parity_scale_codec::Encode;
-use truapi::api::{
-    Account, Chain, Entropy, LocalStorage, Notifications, Permissions, Preimage,
-    ResourceAllocation, Signing, StatementStore, System, Theme, Worker,
-};
-use truapi::v02;
-use truapi::versioned::account::{
-    HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
-    HostAccountCreateProofResponse, HostAccountGetAliasError, HostAccountGetAliasResponse,
-    HostAccountGetRequest, HostAccountGetResponse, HostAccountRingVrfSignError,
-    HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfRequest,
-    HostAccountSignVrfResponse, HostGetLegacyAccountsRequest, HostGetLegacyAccountsResponse,
-    HostGetUserIdError, HostGetUserIdRequest, HostGetUserIdResponse,
-};
-use truapi::versioned::chain::{
-    RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
-    RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
-    RemoteChainTransactionBroadcastResponse,
-};
-use truapi::versioned::entropy::{
-    HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse,
-};
-use truapi::versioned::local_storage::{
-    HostLocalStorageChangeItem, HostLocalStorageClearRequest, HostLocalStorageReadError,
-    HostLocalStorageReadRequest, HostLocalStorageReadResponse, HostLocalStorageSubscribeError,
-    HostLocalStorageSubscribeRequest, HostLocalStorageWriteRequest,
-};
-use truapi::versioned::notifications::{
-    HostPushNotificationCancelRequest, HostPushNotificationCancelResponse,
-    HostPushNotificationError, HostPushNotificationRequest, HostPushNotificationResponse,
-};
-use truapi::versioned::permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse};
-use truapi::versioned::preimage::{
-    RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
-    RemotePreimageSubmitRequest,
-};
-use truapi::versioned::resource_allocation::{
-    HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
-    HostRequestResourceAllocationResponse,
-};
-use truapi::versioned::signing::{
-    HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
-    HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
-    HostCreateTransactionWithLegacyAccountResponse, HostSignPayloadError, HostSignPayloadRequest,
-    HostSignPayloadResponse, HostSignPayloadWithLegacyAccountError,
-    HostSignPayloadWithLegacyAccountRequest, HostSignRawError, HostSignRawRequest,
-    HostSignRawResponse, HostSignRawWithLegacyAccountError, HostSignRawWithLegacyAccountRequest,
-    HostSignRawWithLegacyAccountResponse,
-};
-use truapi::versioned::statement_store::{
-    RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-};
-use truapi::versioned::system::{
-    HostFeatureSupportedRequest, HostFeatureSupportedResponse, HostGetProductContextRequest,
-    HostGetProductContextResponse, HostNavigateToError, HostNavigateToRequest,
-    HostNavigateToResponse,
-};
-use truapi::versioned::theme::HostThemeSubscribeItem;
-use truapi::versioned::worker::{
-    HostWorkerBeginOperationRequest, HostWorkerBeginOperationResponse,
-    HostWorkerEndOperationRequest,
+use truapi::{
+	api::{
+		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
+		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
+	},
+	v02,
+	versioned::{
+		account::{
+			HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
+			HostAccountCreateProofResponse, HostAccountGetAliasError, HostAccountGetAliasResponse,
+			HostAccountGetError, HostAccountGetRequest, HostAccountGetResponse,
+			HostAccountRingVrfSignError, HostAccountRingVrfSignRequest,
+			HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
+			HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
+			HostGetLegacyAccountsResponse, HostGetUserIdError, HostGetUserIdRequest,
+			HostGetUserIdResponse,
+		},
+		chain::{
+			RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
+			RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
+			RemoteChainTransactionBroadcastResponse,
+		},
+		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
+		expanded_card::HostExpandedCardSetFaceShownRequest,
+		game::{
+			HostCancelNextGameError, HostCancelNextGameRequest, HostCancelNextGameResponse,
+			HostRemindNextGameError, HostRemindNextGameRequest, HostRemindNextGameResponse,
+		},
+		local_storage::{
+			HostLocalStorageChangeItem, HostLocalStorageClearRequest, HostLocalStorageReadError,
+			HostLocalStorageReadRequest, HostLocalStorageReadResponse,
+			HostLocalStorageSubscribeError, HostLocalStorageSubscribeRequest,
+			HostLocalStorageWriteRequest,
+		},
+		notifications::{
+			HostPushNotificationCancelRequest, HostPushNotificationCancelResponse,
+			HostPushNotificationError, HostPushNotificationRequest, HostPushNotificationResponse,
+		},
+		permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
+		preimage::{
+			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
+			RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+		},
+		resource_allocation::{
+			HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
+			HostRequestResourceAllocationResponse,
+		},
+		scanner::{HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse},
+		signing::{
+			HostCreateTransactionError, HostCreateTransactionRequest,
+			HostCreateTransactionResponse, HostCreateTransactionWithLegacyAccountError,
+			HostCreateTransactionWithLegacyAccountRequest,
+			HostCreateTransactionWithLegacyAccountResponse, HostSignPayloadError,
+			HostSignPayloadRequest, HostSignPayloadResponse, HostSignPayloadWithLegacyAccountError,
+			HostSignPayloadWithLegacyAccountRequest, HostSignRawError, HostSignRawRequest,
+			HostSignRawResponse, HostSignRawWithLegacyAccountError,
+			HostSignRawWithLegacyAccountRequest, HostSignRawWithLegacyAccountResponse,
+		},
+		statement_store::{
+			RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
+		},
+		system::{
+			HostFeatureSupportedRequest, HostFeatureSupportedResponse,
+			HostGetProductContextRequest, HostGetProductContextResponse, HostNavigateToError,
+			HostNavigateToRequest, HostNavigateToResponse,
+		},
+		theme::HostThemeSubscribeItem,
+		worker::{
+			HostWorkerBeginOperationRequest, HostWorkerBeginOperationResponse,
+			HostWorkerEndOperationRequest,
+		},
+	},
 };
 
 use super::{
@@ -208,11 +220,11 @@ fn get_chain_info_round_trips_through_runtime() {
 fn local_storage_read_success_preserves_the_request_version() {
 	let platform = stub_platform();
 	let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
-	platform.local_storage.lock().expect("mutex").insert(
-		host.connection
-			.product_storage_key(host.connection.product_id(), "k".to_string()),
-		b"value".to_vec(),
-	);
+	platform
+		.local_storage
+		.lock()
+		.expect("mutex")
+		.insert(host.product_storage_key(&host.product_id(), "k".to_string()), b"value".to_vec());
 	let response = v01::HostLocalStorageReadResponse { value: Some(b"value".to_vec()) };
 	for (request, expected) in [
 		(

@@ -15,6 +15,9 @@ use truapi::{
 	},
 };
 
+use super::from_latest_error;
+use truapi::versioned::{FromLatest, IntoLatest, Versioned};
+
 use crate::runtime::{
 	ProductRuntimeHost, RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 	remote_authority_call, remote_authority_context_with_default, until_cancelled,
@@ -152,142 +155,60 @@ impl ResourceAllocation for ProductRuntimeHost {
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, CallError<HostRequestResourceAllocationError>>
 	{
-		version(request)
-			.exec(|inner| async move {
-				let session = self.accounts.current_session().ok_or_else(|| {
-					CallError::Domain(latest::ResourceAllocationError::Unknown {
-						reason: "No active session".to_string(),
-					})
-				})?;
+		let version = request.version();
+		let inner = request.into_latest();
+		let result = async {
+			let Some(session) = self.authority.current_session() else {
+				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
+					reason: "No active session".to_string(),
+				}));
+			};
 
-        let product_id = self.product_id();
-        let require_session = || {
-            if self
-                .authority
-                .session_is_current(&session, Some(&product_id))
-            {
-                Ok(())
-            } else {
-                Err(CallError::HostFailure {
-                    reason: "Resource allocation session changed".to_string(),
-                })
-            }
-        };
-        let service = self.permissions_service();
-        let mut grants = Vec::new();
-        for resource in &inner.resources {
-            let derivation_index = match resource {
-                v01::AllocatableResource::StatementStoreAllowance => None,
-                v01::AllocatableResource::ProductStatementStoreAllowance(index) => {
-                    Some(index.clone())
-                }
-                _ => continue,
-            };
-            let request =
-                PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index };
-            if grants.iter().any(|(existing, _)| existing == &request) {
-                continue;
-            }
-            let status = service
-                .authorization_status(&request)
-                .await
-                .map_err(|err| CallError::HostFailure { reason: err.reason })?;
-            require_session()?;
-            if status == PermissionAuthorizationStatus::Denied {
-                return Err(CallError::Denied);
-            }
-            grants.push((request, status));
-        }
-
-        // An explicit request means additional quota, not merely ensure. Always
-        // confirm it, even when implicit provisioning has a durable grant. The
-        // same review establishes any missing grants without a second prompt.
-        // A withdrawn call stops waiting on the review and authorizes nothing.
-        let confirmed = until_cancelled(
-            cx,
-            self.platform
-                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
-                    ResourceAllocationReview {
-                        calling_product_id: product_id.clone(),
-                        resources: inner.resources.clone(),
-                    },
-                )),
-        )
-        .await
-        .map_err(|err| {
-            CallError::Domain(HostRequestResourceAllocationError::V1(
-                v01::ResourceAllocationError::Unknown {
-                    reason: err.to_string(),
-                },
-            ))
-        })?
-        .map_err(|err| CallError::HostFailure {
-            reason: format!("resource allocation confirmation failed: {err:?}"),
-        })?;
-        require_session()?;
-        for (request, before) in &grants {
-            let current = service
-                .authorization_status(request)
-                .await
-                .map_err(|err| CallError::HostFailure { reason: err.reason })?;
-            require_session()?;
-            // Never overwrite a decision changed by administration during the
-            // review, including Authorized -> NotDetermined resets.
-            if current != *before {
-                return Err(CallError::Denied);
-            }
-        }
-        for (request, before) in &grants {
-            if *before == PermissionAuthorizationStatus::NotDetermined {
-                let decision = if confirmed {
-                    PermissionAuthorizationStatus::Authorized
-                } else {
-                    PermissionAuthorizationStatus::Denied
-                };
-                service
-                    .set_authorization_status(request, decision)
-                    .await
-                    .map_err(|err| CallError::HostFailure { reason: err.reason })?;
-                require_session()?;
-            }
-        }
-        if !confirmed {
-            // Declining an increase does not revoke an existing durable grant.
-            return Err(CallError::Domain(HostRequestResourceAllocationError::V1(
-                v01::ResourceAllocationError::Unknown {
-                    reason: "User rejected resource allocation".to_string(),
-                },
-            )));
-        }
-        for (request, _) in &grants {
-            let status = service
-                .authorization_status(request)
-                .await
-                .map_err(|err| CallError::HostFailure { reason: err.reason })?;
-            require_session()?;
-            if status != PermissionAuthorizationStatus::Authorized {
-                return Err(CallError::Denied);
-            }
-        }
-        let cx = remote_authority_context_with_default(
-            cx,
-            RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-        );
-        remote_authority_call(
-            &cx,
-            self.authority
-                .allocate_resources(&cx, &session, product_id, inner),
-        )
-        .await
-        .map(HostRequestResourceAllocationResponse::V1)
-        .map_err(|err| {
-            CallError::Domain(HostRequestResourceAllocationError::V1(
-                v01::ResourceAllocationError::Unknown {
-                    reason: err.to_string(),
-                },
-            ))
-        })
-    }
+			let confirmed = until_cancelled(
+				cx,
+				self.confirm_product_action(UserConfirmationReview::ResourceAllocation(
+					ResourceAllocationReview {
+						calling_product_id: self.product_id(),
+						resources: inner.resources.clone(),
+					},
+				)),
+			)
+			.await
+			.map_err(|err| {
+				CallError::Domain(latest::ResourceAllocationError::Unknown {
+					reason: err.to_string(),
+				})
+			})?
+			.map_err(|err| CallError::HostFailure {
+				reason: format!("resource allocation confirmation failed: {err:?}"),
+			})?;
+			if !confirmed {
+				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
+					reason: "User rejected resource allocation".to_string(),
+				}));
+			}
+			let cx = remote_authority_context_with_default(
+				cx,
+				RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+			);
+			remote_authority_call(
+				&cx,
+				self.authority.allocate_resources(&cx, &session, self.product_id(), inner),
+			)
+			.await
+			.map_err(|err| {
+				CallError::Domain(latest::ResourceAllocationError::Unknown {
+					reason: err.to_string(),
+				})
+			})
+		}
+		.await;
+		result
+			.map(|response| HostRequestResourceAllocationResponse::from_latest(response, version))
+			.map_err(|error| {
+				from_latest_error::<HostRequestResourceAllocationError>(error, version)
+			})
+	}
 }
 
 #[truapi::async_trait]
@@ -298,21 +219,28 @@ impl Entropy for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostDeriveEntropyRequest,
 	) -> Result<HostDeriveEntropyResponse, CallError<HostDeriveEntropyError>> {
-		version(request)
-			.exec(|latest::HostDeriveEntropyRequest { context }| async move {
-				let session = self.accounts.current_session().ok_or_else(|| {
-					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
-						reason: "Not connected".to_string(),
-					})
-				})?;
-				let entropy = self.accounts.derive_entropy(&session, &context).map_err(|err| {
+		let version = request.version();
+		let latest::HostDeriveEntropyRequest { context } = request.into_latest();
+		let result = async {
+			let Some(session) = self.authority.current_session() else {
+				return Err(CallError::Domain(latest::HostDeriveEntropyError::Unknown {
+					reason: "Not connected".to_string(),
+				}));
+			};
+			let entropy = self
+				.authority
+				.derive_entropy(&session, &self.product_id(), &context)
+				.map_err(|err| {
 					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
 						reason: err.to_string(),
 					})
 				})?;
 
-				Ok(latest::HostDeriveEntropyResponse { entropy })
-			})
-			.await
+			Ok(latest::HostDeriveEntropyResponse { entropy })
+		}
+		.await;
+		result
+			.map(|response| HostDeriveEntropyResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error::<HostDeriveEntropyError>(error, version))
 	}
 }
