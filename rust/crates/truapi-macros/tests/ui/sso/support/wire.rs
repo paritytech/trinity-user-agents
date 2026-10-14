@@ -31,7 +31,6 @@ mod host_internal {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct BarRequest;
 
-        #[derive(Debug, PartialEq, Eq)]
         pub struct Response<P> {
             pub responding_to: String,
             pub payload: P,

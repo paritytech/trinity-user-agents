@@ -13,7 +13,7 @@ mod runtime {
             Withdraw(String),
         }
 
-        pub struct Answer(pub v1::RemoteMessage);
+        pub struct Answer;
 
         pub struct SsoReply<P>(P);
 
@@ -32,13 +32,10 @@ mod runtime {
         impl<T, E: core::fmt::Display> SsoReply<Result<T, E>> {
             pub fn finish(
                 self,
-                message_id: &str,
-                into_message: impl FnOnce(Response<Result<T, E>>) -> v1::RemoteMessage,
+                _: &str,
+                _: impl FnOnce(Response<Result<T, E>>) -> v1::RemoteMessage,
             ) -> Answer {
-                Answer(into_message(Response {
-                    responding_to: message_id.into(),
-                    payload: self.0,
-                }))
+                Answer
             }
         }
     }
