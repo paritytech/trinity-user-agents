@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.tools_push_notifications_api
 
+import io.paritytech.polkadotapp.common.data.os.OperatingSystem
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import kotlinx.coroutines.flow.Flow
@@ -7,7 +8,13 @@ import kotlinx.coroutines.flow.Flow
 interface PushNotificationsHelper {
     fun subscribeTokenChanges(): Flow<String?>
     suspend fun getCurrentToken(): String?
-    suspend fun sendNotify(platformToken: String, pushId: ByteArray, encryptedMessage: ByteArray, isVoIP: Boolean = false): Result<Unit>
+    suspend fun sendNotify(
+        platformToken: String,
+        operatingSystem: OperatingSystem,
+        pushId: ByteArray,
+        encryptedMessage: ByteArray,
+        isVoIP: Boolean = false
+    ): Result<Unit>
 
     suspend fun registerSubscription(token: String): Result<SubscriptionSnapshot>
     suspend fun deleteSubscription(): Result<Unit>

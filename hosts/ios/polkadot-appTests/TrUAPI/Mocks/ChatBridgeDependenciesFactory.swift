@@ -15,6 +15,8 @@ func makeChatBridgeDependencies(
         permissionGuard: MockPermissionGuard(),
         osPermissionAsker: MockOSPermissionAsker(),
         notificationScheduler: MockNotificationScheduler(),
+        gameReminders: MockGameReminderScheduler(),
+        reminderPermissionAsker: MockReminderPermissionAsker(),
         navigationRouter: MockNavigationRouter(),
         chainRegistry: MockChainRegistry(),
         chainConnections: TrUAPIChainConnectionPool(
@@ -29,6 +31,7 @@ func makeChatBridgeDependencies(
         confirmationPresenter: MockConfirmationPresenter(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),
+        themeManager: MockThemeManager(),
         logger: Logger.shared
     )
 }

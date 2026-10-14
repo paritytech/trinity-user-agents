@@ -28,6 +28,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepo
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.FileDownloadRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ProcessedChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
+import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessagePlacement
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessageSaveConflictStrategy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.FileDownload
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.EncodedMessage
@@ -45,7 +46,11 @@ class IncomingChatMessageProcessor @Inject constructor(
     private val compactionExpansionStarter: CompactionExpansionStarter,
     private val fallbackUsernameGenerator: FallbackUsernameGenerator
 ) {
-    suspend fun processRaw(contactAccountId: AccountId, rawMessages: List<EncodedMessage>) {
+    suspend fun processRaw(
+        contactAccountId: AccountId,
+        rawMessages: List<EncodedMessage>,
+        placement: ChatMessagePlacement,
+    ) {
         val contact = contactsRepository.getContact(contactAccountId)
         if (contact == null) {
             Timber.w("Dropping ${rawMessages.size} incoming messages: no contact for $contactAccountId")
@@ -64,7 +69,7 @@ class IncomingChatMessageProcessor @Inject constructor(
 
         val messageIds = parsedMessages.map { it.id }
 
-        chatEngine.saveMessages(parsedMessages, ChatMessageSaveConflictStrategy.IGNORE)
+        chatEngine.saveMessages(parsedMessages, ChatMessageSaveConflictStrategy.IGNORE, placement)
 
         if (parsedMessages.any { it.content is ChatMessage.Content.CompactionCommit }) {
             compactionExpansionStarter.startExpansion()

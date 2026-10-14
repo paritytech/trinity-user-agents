@@ -57,12 +57,12 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
             self?.collapseExpandedSection()
         }
 
-        rootView.viewModel.onCollectibles = { [weak self] in
-            self?.showCollectiblesOverlay()
+        rootView.viewModel.onOpenPocketCard = { [weak presenter] card in
+            presenter?.showPocketCard(card)
         }
 
-        rootView.viewModel.onViewCollectibles = { [weak presenter] in
-            presenter?.showCollectibles()
+        rootView.viewModel.onRemovePocketCard = { [weak presenter] card in
+            presenter?.removePocketCard(card)
         }
     }
 
@@ -97,8 +97,8 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
 }
 
 extension WalletMainViewController: WalletMainViewProtocol {
-    func didReceive(isCollectiblesAvailable: Bool) {
-        rootView.viewModel.isCollectiblesAvailable = isCollectiblesAvailable
+    func didReceive(pocketCards: [PocketCardViewModel]) {
+        rootView.viewModel.pocketCards = pocketCards
     }
 
     @objc
@@ -126,13 +126,6 @@ extension WalletMainViewController: WalletMainViewProtocol {
         setOverlayCloseButton()
         setShareButton()
         setTitleCenter(String(localized: .walletMainIdCard))
-    }
-
-    private func showCollectiblesOverlay() {
-        rootView.viewModel.expandedSection = .collectiblesDetails
-        setOverlayCloseButton()
-        resetRightButton()
-        setTitleCenter(nil)
     }
 
     func setMainTitle() {

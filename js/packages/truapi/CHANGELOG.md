@@ -1,5 +1,72 @@
 # @parity/truapi
 
+## 0.25.0
+
+### Minor Changes
+
+- c75de1b: `chat.postMessage` takes an optional `alt`, one line describing the message that a host shows where it lists
+  the message without drawing it, such as the chat list preview of a custom card.
+- fd7926a: Add `chat.setRoomFooter`, which sets what a room the product created shows below its messages: the text
+  input, or nothing for a room the product drives through actions alone. A host keeps the footer until the product sets
+  another. A room the product did not create answers `UnknownRoom`, and a host that predates the method answers
+  `Unsupported`. A host serving chat now implements `setChatRoomFooter`, and native hosts implement
+  `ChatHostBridge.setRoomFooter`. Neither needs to check the room, because the core answers `UnknownRoom` before asking
+  the host.
+- 9fece5c: Native signing hosts follow presigned transactions to a verdict in the core. The core database gains a
+  `durable_tx` ledger: a domain registers presigned mortal extrinsics, the core broadcasts them once committed, watches
+  them, and decides every one it no longer watches from the chain, including those a previous process left live.
+  `HostCallbacks` gains the required `durable_work_changed(pending)`, which the Swift and Kotlin `HostBridge` default to
+  a no-op; while it reports `true` the host keeps a background task running that awaits `runDurableRecovery()`. No
+  domain registers transactions yet.
+- 1c4a63e: Adds the `expandedCard` service. `setFaceShown` lets a Pocket card's widget move the face above it out of the
+  way and back. Only a Widget execution may call it, and a host without expanded cards answers `Unsupported`.
+- 84282d0: Serve `scanner.scan`. A host supplies the optional `scanner` callbacks to draw its viewfinder, and the core
+  checks each request and each answer. The mock test host serves a scanner when created with a `scanner` answer, and
+  `setScanAnswer` changes the next one. `contacts.pick` now stops waiting when the product cancels.
+
+## 0.24.0
+
+### Minor Changes
+
+- 711d030: Restore or provision explicitly selected CLI sessions, retry unfinished setup, preserve imported account
+  identity when switching sessions, and reject derived username bases with fewer than six lowercase ASCII letters before
+  onboarding. Use `--session` to select the newest local session for a username base or an exact session by full
+  username. The separate username-prefix option is removed.
+- 96c002c: Give native signing hosts a core-owned SQLite database. `HostRuntimeConfig.database_directory`
+  (`databaseDirectory` in Swift and Kotlin) is required and names an existing, writable directory kept out of backups.
+  The runtime opens `core.sqlite3` there at startup and refuses to start when it cannot. `coreDatabaseStatus()` reports
+  the SQLite version, schema version and path.
+- 2c7efee: Add the `game` service: `remindNextGame` holds one reminder for the calling product's next game, and
+  `cancelNextGame` drops it. Only the game product, `dim2`, is served; any other product gets `Unsupported`. A host that
+  fails to hold the reminder answers with a host failure carrying its reason. The game product needs no per-product
+  consent: the host asks the OS for what the reminder needs, ringing an alarm where it can and delivering a notification
+  otherwise.
+- d8c83f5: Add the `scanner` service. `scan` asks the host to open its own QR and barcode viewfinder and returns the
+  scanned code's text and format. No host serves it yet, so the runtime answers `Unsupported`.
+
+### Patch Changes
+
+- 1481c42: The core has shared chain capabilities for host services: `ChainHeads` (finalized and best heads, head
+  events), `BlockBackend` (block hash by number, block number, extrinsic hashes, dispatch outcome), `TxValidator` and
+  `TxSubmitter`, implemented directly by the runtime's chain connections (`ChainRuntime`). Block reads and validation go
+  through a subxt client on the legacy JSON-RPC methods, so they reach blocks a chainHead follow no longer pins, and
+  validation runs against the best block as the transaction pool does. Submission goes through the existing chainHead
+  client. A node answer that cannot prove absence, such as a pruned body, is an error rather than "not found", and a
+  closed connection is reported as unavailable. Both clients on a connection share one chain config, so runtime metadata
+  is downloaded once per spec version.
+- aa6ae62: The CLI host looks preimages up on the network's Bulletin node by CID (`bitswap_v1_get`) instead of an
+  in-process map that nothing wrote to, so a product can retrieve a blob another host submitted. A miss is polled until
+  the blob lands, a request the node can never answer ends the lookup with an error, and every value is checked against
+  its key.
+- 3281e17: The local signing host caches a product's statement-store allowance key for the current allowance period,
+  including a key allocated by an explicit resource allocation request, so proofs after it in a period skip the on-chain
+  slot scan. The key is looked up again when the period changes, the local session is cleared or replaced, the product's
+  state is cleared, or the statement store still rejects a statement signed with it for having no allowance after the
+  submit retries. Statement submissions retry a `noAllowance` rejection up to 10 times, 2 seconds apart, as the native
+  iOS and Android hosts do.
+- 3281e17: Statement-store allowance lookups read a period's slot row in one request per collection, and read the People
+  and LitePeople rows at the same time, instead of one request per slot.
+
 ## 0.23.0
 
 ### Patch Changes

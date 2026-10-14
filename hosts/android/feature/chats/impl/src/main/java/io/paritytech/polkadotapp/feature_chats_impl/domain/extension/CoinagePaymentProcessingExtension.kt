@@ -36,14 +36,14 @@ import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
-import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.days
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 private const val COINAGE_LOG_TAG = "CoinageTransfer"
 
-/** How long after a payment was sent its coins are still worth trying to claim. */
-private val CLAIM_RETRY_WINDOW = 6.hours
+/** How long after a payment was sent its coins are still worth waiting for. */
+private val CLAIM_RETRY_WINDOW = 7.days
 
 /**
  * Keeps a payment message's status in step with the ledger, in both directions.
@@ -106,9 +106,9 @@ class CoinagePaymentProcessingExtension @Inject constructor(
     /**
      * Ours to claim: submit under the message's own group, then report what the ledger makes of it.
      *
-     * The claim may retry until [CLAIM_RETRY_WINDOW] after the payment was sent. It is measured from the
-     * message rather than from now so that closing and reopening the app cannot extend it, and it is
-     * generous because the alternative to retrying is coins nothing in the app will ever collect.
+     * Coins that have not appeared are waited for until [CLAIM_RETRY_WINDOW] after the payment was sent. It is
+     * measured from the message rather than from now so that reopening the app cannot extend it, and it only
+     * closes once the chain has answered. Coins that are on chain are claimed whenever they are seen.
      */
     private fun claimStatuses(
         message: ChatMessage,
@@ -116,6 +116,8 @@ class CoinagePaymentProcessingExtension @Inject constructor(
         coinKeys: List<CoinPrivateKey>,
     ): Flow<Status> {
         val groupId = claimGroupOf(message.id)
+        // TODO: this deadline is persisted in every durable claim's submission params. If it is ever changed,
+        //  add a migration that updates the stored deadlines too
         val retryUntil = Instant.fromEpochMilliseconds(message.timestamp) + CLAIM_RETRY_WINDOW
 
         Timber.tag(COINAGE_LOG_TAG)

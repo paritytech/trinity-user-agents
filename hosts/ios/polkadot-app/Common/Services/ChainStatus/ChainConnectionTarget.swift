@@ -23,11 +23,11 @@ enum ChainConnectionTarget: CaseIterable {
     var title: String {
         switch self {
         case .chat:
-            "Individuality"
+            "People Chain"
         case .bulletin:
-            "Bulletin"
+            "Bulletin Chain"
         case .assethub:
-            "Hub"
+            "Hub Chain"
         }
     }
 

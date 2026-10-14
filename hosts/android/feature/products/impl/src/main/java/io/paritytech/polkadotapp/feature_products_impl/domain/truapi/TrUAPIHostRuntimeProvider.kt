@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
 import kotlinx.coroutines.CoroutineScope
@@ -73,6 +74,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val contactsBridge: AppContactsHostBridge,
+    private val scannerBridge: TrUAPIProductScans,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -121,6 +123,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts.
         runtime.setContacts(contactsBridge)
+        runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
             onResponse = runtime::notifyChainResponse,
@@ -151,6 +154,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         return HostRuntimeConfig(
             hostName = HOST_NAME,
+            hostVersion = hostVersion(),
             peopleChainGenesisHash = peopleGenesis,
             bulletinChainGenesisHash = bulletinGenesis,
             assetHubChainGenesisHash = assetHubGenesis,
@@ -159,6 +163,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
         )
+    }
+
+    private fun hostVersion(): String {
+        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        return "${packageInfo.versionName.orEmpty()} (${packageInfo.longVersionCode})"
     }
 
     // The core caches the contact handles it resolves; a removed or blocked
@@ -217,6 +226,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
                 WorkerTransition.STOP -> WorkerDemand.STOP
             }
             workerSupervisor.get().onDemandChanged(ProductId.fromStoredValue(productId), demand)
+        }
+
+        // A run returns by itself once nothing is live, so `false` needs no action.
+        override fun durableWorkChanged(pending: Boolean) {
+            if (pending) CoreDurableRecoveryWorker.enqueue(context)
         }
 
         override suspend fun navigateTo(url: String) {

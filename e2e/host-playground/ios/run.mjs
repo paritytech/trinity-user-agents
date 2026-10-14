@@ -25,13 +25,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import {
-  captureOptional,
-  delay,
-  readPlistValue,
-  run,
-  selectSimulator,
-} from "../../../scripts/lib/ios-simulator.mjs";
+import { readPlistValue, selectSimulator } from "../../../scripts/lib/ios-simulator.mjs";
+import { captureOptional, delay, run } from "../../../scripts/lib/process.mjs";
 import { classify } from "../report.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));

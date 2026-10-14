@@ -43,6 +43,7 @@ public final class StatementStoreSlotInfoProvider: StatementStoreSlotInfoProvidi
     private let chainId: ChainId
     private let chainRegistry: ChainResourceProtocol
     private let storageRequestFactory: StorageRequestFactoryProtocol
+    private let networkSuffixProvider: NetworkSuffixProviding
     private let resourcesParameters: ResourcesParametersProviding
     private let chainTimeProvider: ChainTimeProviding
     private let originPersonProvider: OriginPersonProviding
@@ -53,6 +54,7 @@ public final class StatementStoreSlotInfoProvider: StatementStoreSlotInfoProvidi
         chainId: ChainId,
         chainRegistry: ChainResourceProtocol,
         storageRequestFactory: StorageRequestFactoryProtocol,
+        networkSuffixProvider: NetworkSuffixProviding,
         resourcesParameters: ResourcesParametersProviding,
         chainTimeProvider: ChainTimeProviding,
         originPersonProvider: OriginPersonProviding,
@@ -62,6 +64,7 @@ public final class StatementStoreSlotInfoProvider: StatementStoreSlotInfoProvidi
         self.chainId = chainId
         self.chainRegistry = chainRegistry
         self.storageRequestFactory = storageRequestFactory
+        self.networkSuffixProvider = networkSuffixProvider
         self.resourcesParameters = resourcesParameters
         self.chainTimeProvider = chainTimeProvider
         self.originPersonProvider = originPersonProvider
@@ -198,10 +201,7 @@ private extension StatementStoreSlotInfoProvider {
         let maxSlots = try await fetchMaxSlots(origin: personOrigin)
         guard maxSlots > 0 else { return [] }
 
-        let networkSuffix = try await storageRequestFactory.readNetworkSuffix(
-            connection: connection,
-            codingFactory: codingFactory
-        )
+        let networkSuffix = try await networkSuffixProvider.networkSuffix()
 
         let activeVrfManager = personOrigin.keyManager
         let aliases = try (0 ..< maxSlots).map { [networkSuffix] seq in

@@ -30,6 +30,7 @@ final class MainTabBarViewController: UIViewController {
     private var badges: [TabBarItem: TabBarBadge] = [:]
     private var controllerByItem: [TabBarItem: UIViewController] = [:]
     var spaChipViewModels: [SPATabChipViewModel] = []
+    var productGamePill: ProductGamePillViewModel?
 
     init(
         presenter: MainTabBarPresenterProtocol,
@@ -72,11 +73,7 @@ final class MainTabBarViewController: UIViewController {
         }
 
         chromeController.onChipTapped = { [weak self] id in
-            guard let self, let tab = browserCoordinator.tabs.first(where: { $0.id == id }) else {
-                return
-            }
-            chromeController.setPanel(nil, animated: true)
-            mountSPA(for: tab)
+            _ = self?.mountExistingTab { $0.id == id }
         }
 
         chromeController.onChipCloseRequested = { [weak self] id in
@@ -373,6 +370,11 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
         statusBarHost.rootView = ChainConnectionStatusBarView(models: models)
         let width = max(1, ChainConnectionStatusBarView.ringsWidth(count: models.count))
         chainStatusAnchorWidth?.update(offset: width)
+    }
+
+    func showProductGamePill(_ viewModel: ProductGamePillViewModel?) {
+        productGamePill = viewModel
+        applyProductGamePill()
     }
 }
 
