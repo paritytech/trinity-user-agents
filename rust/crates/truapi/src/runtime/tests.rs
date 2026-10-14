@@ -2875,6 +2875,46 @@ impl HeldTasks {
 	}
 }
 
+// A host remembers whether a provider still works on a session so its next
+// launch starts funding at once. It reads that when a session is announced,
+// so a session in flight is announced on resume, once it is loaded.
+#[test]
+fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
+	let storage = stub_platform();
+	let start = |storage: &Arc<crate::test_support::StubPlatform>| {
+		let services = funding_services_over(storage.clone());
+		let platform =
+			RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+		assert!(services.funding().install_platform(platform.clone()));
+		services.resume_funding();
+		(services, platform)
+	};
+	let (before, _) = start(&storage);
+	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(before.open_funding(
+		None,
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot", None))
+			.expect("selected")
+	);
+
+	let (after, platform) = start(&storage);
+	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
+	for _ in 0..200 {
+		if !announced().is_empty() {
+			break;
+		}
+		std::thread::sleep(core::time::Duration::from_millis(5));
+	}
+
+	assert_eq!((announced(), after.funding().in_progress()), (vec![intent], true));
+}
+
 // A host's history writes one row per outcome, so an ended session it has
 // not recorded is announced again each time funding resumes, until the host
 // acknowledges it.
