@@ -5,9 +5,11 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.AllowedMessageMenuAction
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.isIncoming
+import io.paritytech.polkadotapp.feature_chats_api.presentation.model.isOutgoing
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.canSendMessage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.isPeerLeft
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatToolbarAction
 import kotlinx.collections.immutable.ImmutableList
@@ -36,8 +38,17 @@ class ChatMenuActionsProvider @Inject constructor() {
         }.toPersistentList()
     }
 
-    fun getMessageActions(message: ChatMessageUiModel, userInputState: ChatUserInputState): List<AllowedMessageMenuAction> {
+    /** [roomPolicy] is null for a person chat. */
+    fun getMessageActions(
+        message: ChatMessageUiModel,
+        userInputState: ChatUserInputState,
+        roomPolicy: ChatRoomPolicy?,
+    ): List<AllowedMessageMenuAction> {
         return buildList {
+            if (roomPolicy?.offersRetry == true && message.status == ChatMessageUiModel.Status.FAILED && message.isOutgoing()) {
+                add(AllowedMessageMenuAction.Retry)
+            }
+
             userInputState.doWhenCanSendMessage {
                 add(AllowedMessageMenuAction.Reply)
             }
@@ -49,11 +60,17 @@ class ChatMenuActionsProvider @Inject constructor() {
             }
 
             tryAddEditHistory(message)
+
+            // A product room offers Delete on every message, a person chat never does (02-DESIGN §19 item 4).
+            if (roomPolicy?.offersDelete == true) {
+                add(AllowedMessageMenuAction.Delete)
+            }
         }
     }
 
-    fun canLeaveMenuReactions(userInputState: ChatUserInputState): Boolean {
-        return userInputState.canSendMessage()
+    fun canLeaveMenuReactions(userInputState: ChatUserInputState, roomPolicy: ChatRoomPolicy?): Boolean {
+        val allowedReactions = roomPolicy?.messageMenu?.allowedReactions
+        return userInputState.canSendMessage() && allowedReactions?.isEmpty() != true
     }
 
     private fun MutableList<AllowedMessageMenuAction>.tryAddCopy(message: ChatMessageUiModel) {
@@ -81,6 +98,8 @@ class ChatMenuActionsProvider @Inject constructor() {
             is ChatMessageUiModel.Multimedia -> message.text
             is ChatMessageUiModel.File -> message.text
             is ChatMessageUiModel.ChatRequest -> message.welcomeText
+            is ChatMessageUiModel.Actions -> message.text
+            is ChatMessageUiModel.ProductMedia -> message.text
 
             is ChatMessageUiModel.ChatAccepted,
             is ChatMessageUiModel.ContactAdded,
@@ -96,9 +115,11 @@ class ChatMenuActionsProvider @Inject constructor() {
         if (message.isIncoming()) return null
 
         return when (message) {
-            is ChatMessageUiModel.Text -> message.text
+            is ChatMessageUiModel.Text -> message.text.takeUnless { message.isMarkdown }
             is ChatMessageUiModel.Multimedia -> message.text
 
+            is ChatMessageUiModel.Actions,
+            is ChatMessageUiModel.ProductMedia,
             is ChatMessageUiModel.ChatRequest,
             is ChatMessageUiModel.File,
             is ChatMessageUiModel.ChatAccepted,

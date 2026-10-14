@@ -26,6 +26,13 @@ sealed class AvatarUiModel {
 
     data class Image(val url: String) : AvatarUiModel()
 
+    /** An image that the app has as bytes, for example an inline icon of a product. */
+    class Inline(val bytes: ByteArray) : AvatarUiModel() {
+        override fun equals(other: Any?): Boolean = other is Inline && bytes.contentEquals(other.bytes)
+
+        override fun hashCode(): Int = bytes.contentHashCode()
+    }
+
     data class Name(val name: String, val colorScheme: AvatarColorScheme) : AvatarUiModel()
 }
 
@@ -38,7 +45,13 @@ fun PolkadotAvatar(
     when (model) {
         is AvatarUiModel.Image -> ImageAvatar(
             modifier = modifier,
-            url = model.url,
+            model = model.url,
+            onClick = onClick
+        )
+
+        is AvatarUiModel.Inline -> ImageAvatar(
+            modifier = modifier,
+            model = model.bytes,
             onClick = onClick
         )
 
@@ -54,7 +67,7 @@ fun PolkadotAvatar(
 @Composable
 private fun ImageAvatar(
     modifier: Modifier,
-    url: String,
+    model: Any,
     onClick: (() -> Unit)? = null
 ) {
     PolkadotSurface(
@@ -64,7 +77,7 @@ private fun ImageAvatar(
         onClick = onClick
     ) {
         NovaAsyncImage(
-            model = url,
+            model = model,
             contentScale = ContentScale.Crop
         )
     }

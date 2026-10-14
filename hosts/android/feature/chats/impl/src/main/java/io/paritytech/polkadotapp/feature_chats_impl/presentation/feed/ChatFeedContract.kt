@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatInputUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatToolbarAction
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
@@ -39,6 +40,7 @@ interface ChatFeedContract {
     val revealingMessageId: StateFlow<ChatMessageId?>
     val scrollToPosition: SharedFlow<Int>
     val toolbarActions: StateFlow<ImmutableList<ChatToolbarAction>>
+    val roomState: StateFlow<ChatRoomUiState>
 
     val highlightEvents: Flow<HighlightedMessage>
 
@@ -61,6 +63,7 @@ interface ChatFeedContract {
     fun onUnblockUserClick()
     fun onStartCallClick(withVideo: Boolean)
     fun onCloseMenu()
+    fun onDeleteMessageConfirm(messageId: ChatMessageId)
 
     fun onClearEdit()
 

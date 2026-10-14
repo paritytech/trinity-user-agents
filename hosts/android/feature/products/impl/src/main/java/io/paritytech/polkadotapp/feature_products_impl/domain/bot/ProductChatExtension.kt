@@ -213,8 +213,22 @@ class ProductChatExtension(
 
             override suspend fun userAction(chatId: ChatId, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
                 val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
-                return runningWorker.userAction(room, action)
+                return runningWorker.userAction(room, action.withProductIds(chatId))
             }
+        }
+    }
+
+    // The room screen may name a message by its store id; the product knows it by its own id.
+    private fun ChatUserActionModel.withProductIds(chatId: ChatId): ChatUserActionModel {
+        fun productId(id: String) = ProductMessageIds.product(id, chatId)
+        return when (this) {
+            is ChatUserActionModel.NewMessage -> copy(replyTo = replyTo?.let(::productId))
+            is ChatUserActionModel.EditMessage -> copy(messageId = productId(messageId))
+            is ChatUserActionModel.DeleteMessage -> copy(messageId = productId(messageId))
+            is ChatUserActionModel.ReactionPlaced -> copy(messageId = productId(messageId))
+            is ChatUserActionModel.ReactionRemoved -> copy(messageId = productId(messageId))
+            is ChatUserActionModel.Seen -> copy(messageId = productId(messageId))
+            is ChatUserActionModel.Retry -> copy(messageId = productId(messageId))
         }
     }
 

@@ -66,6 +66,9 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallRe
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageEditHistoryItem
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ProductRoomUserActions
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -99,6 +102,8 @@ class ChatFeedInteractor @Inject internal constructor(
     private val attachmentMetaBuilder: AttachmentMetaBuilder,
     private val attachmentFileStorage: AttachmentFileStorage,
     private val hopNodeUrlProvider: HopNodeUrlProvider,
+    private val roomPolicyProvider: ChatRoomPolicyProvider,
+    private val productRoomUserActions: ProductRoomUserActions,
 ) {
     fun initiateCall(chatId: ChatId, callerName: String, withVideo: Boolean): InitiateCallResult {
         val activeCall = callStateTracker.getActiveCall()
@@ -256,15 +261,6 @@ class ChatFeedInteractor @Inject internal constructor(
         chatEngine.reportSeen(chatId, timestamp)
     }
 
-    /** Deletes a message for the user. Only a product room allows it. */
-    suspend fun deleteMessage(chatId: ChatId, messageId: ChatMessageId): Result<Unit> =
-        chatEngine.deleteMessageForUser(chatId, messageId)
-
-    /** A press on a button of an Actions message. */
-    suspend fun triggerMessageAction(chatId: ChatId, messageId: ChatMessageId, actionId: String) {
-        chatEngine.dispatchUserEvent(chatId, ChatRoomUserEvent.ActionTriggered(messageId, actionId))
-    }
-
     /**
      * Holds the worker of a product room while the room screen shows it, and tells the product. Call
      * [closeRoom] once for each [openRoom] that succeeds. A person chat holds nothing.
@@ -277,9 +273,8 @@ class ChatFeedInteractor @Inject internal constructor(
     suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? = chatEngine.roomQuerying(chatId)
 
     /** A product action of a menu, the toolbar or a suggestion that the user selected. */
-    suspend fun sendUserEvent(chatId: ChatId, event: ChatRoomUserEvent) {
-        chatEngine.dispatchUserEvent(chatId, event)
-    }
+    suspend fun sendUserEvent(chatId: ChatId, event: ChatRoomUserEvent): Result<Unit> =
+        productRoomUserActions.sendEvent(chatId, event)
 
     // Workaround: messages like reactions and edits exist in DB but not in UI models,
     // causing the unread counter to be wrong. Mark them as read directly.
@@ -459,6 +454,17 @@ class ChatFeedInteractor @Inject internal constructor(
             removeContactUseCase.removeContact(contactChat.contactAccountId)
         }
     }
+
+    fun observeRoomPolicy(chatId: ChatId): Flow<ChatRoomPolicy?> = roomPolicyProvider.observePolicy(chatId)
+
+    suspend fun triggerMessageAction(chatId: ChatId, messageId: ChatMessageId, actionId: String): Result<Unit> =
+        productRoomUserActions.sendEvent(chatId, ChatRoomUserEvent.ActionTriggered(messageId, actionId))
+
+    suspend fun deleteProductRoomMessage(chatId: ChatId, messageId: ChatMessageId, policy: ChatRoomPolicy): Result<Unit> =
+        productRoomUserActions.deleteMessage(chatId, messageId, policy)
+
+    suspend fun retryProductRoomMessage(chatId: ChatId, messageId: ChatMessageId): Result<Unit> =
+        productRoomUserActions.retry(chatId, messageId)
 
     companion object {
         private val LEFT_CHAT_SENT_TIMEOUT = 15.seconds

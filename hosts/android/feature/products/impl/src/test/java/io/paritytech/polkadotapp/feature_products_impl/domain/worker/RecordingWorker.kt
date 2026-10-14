@@ -2,6 +2,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -15,6 +17,12 @@ class RecordingWorker : ProductWorker {
     val roomEvents = mutableListOf<Pair<ProductChatIdParameter, ProductRoomEvent>>()
     val roomCalls = mutableListOf<Pair<String, ProductChatIdParameter>>()
     var briefHolds = 0
+    val userActions = mutableListOf<ChatUserActionModel>()
+
+    override suspend fun userAction(roomId: ProductChatIdParameter, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
+        userActions += action
+        return Result.success(ChatUserActionOutcome.Acknowledged)
+    }
 
     override suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> {
         roomCalls += "open" to roomId

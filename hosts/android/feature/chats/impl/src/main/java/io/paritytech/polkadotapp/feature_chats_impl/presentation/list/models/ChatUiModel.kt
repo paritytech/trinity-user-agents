@@ -5,6 +5,7 @@ import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatPreviewUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ResolvedChatImage
 import kotlinx.collections.immutable.ImmutableList
 
 @Immutable
@@ -21,6 +22,8 @@ data class ChatListUiState(
         val preview: ChatPreviewUiModel?,
         val isMuted: Boolean,
         val hasReaction: Boolean,
+        /** The preview is an activity that continues, for example "Bot is typing". */
+        val isOngoing: Boolean,
     ) {
         val uniqueKey: String = chatId.value.value.toHexString()
     }
@@ -29,6 +32,8 @@ data class ChatListUiState(
         data class Unread(
             val count: Int
         ) : Badge
+
+        data class Image(val image: ResolvedChatImage) : Badge
 
         object None : Badge
     }

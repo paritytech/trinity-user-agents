@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarat
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
@@ -66,6 +67,9 @@ class ProductChatExtensionTest {
 
     private fun placedByHost(refCounter: ProductWorkerRefCounter) =
         ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, ProductChatExtensionOrigin.PlacedByHost)
+
+    private fun placedByHost(refCounter: ProductWorkerRefCounter) =
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, ProductChatExtensionOrigin.PlacedByHost)
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
@@ -367,5 +371,17 @@ class ProductChatExtensionTest {
         val extension = extension(FakeRefCounter(RecordingWorker()))
 
         assertEquals(null to true, extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, ROOM)))
+    }
+
+    @Test
+    fun `a user action names its message by the product id`() = runTest {
+        val worker = RecordingWorker()
+        val extension = extension(FakeRefCounter(worker))
+        withChatHost(ownRooms = flowOf(listOf(room))) { extension.startGlobalWork() }
+
+        requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.Retry(ProductMessageIds.stored("m1", room)))
+        requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.DeleteMessage("m2"))
+
+        assertEquals(listOf<ChatUserActionModel>(ChatUserActionModel.Retry("m1"), ChatUserActionModel.DeleteMessage("m2")), worker.userActions)
     }
 }

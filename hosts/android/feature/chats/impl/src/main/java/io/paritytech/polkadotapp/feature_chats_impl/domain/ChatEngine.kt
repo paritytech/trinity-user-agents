@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.common.utils.flowOfAll
 import io.paritytech.polkadotapp.common.utils.inBackground
 import io.paritytech.polkadotapp.common.utils.mapToSet
 import io.paritytech.polkadotapp.common.utils.requireNotNull
-import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.common.utils.withFlowScope
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.getAccountByIdOrThrow
@@ -634,20 +633,6 @@ class ChatEngine @Inject constructor(
             is ChatVariant.Extension -> ChatMessage.Status.IS_READ
             is ChatVariant.Contact -> ChatMessage.Status.NEW
         }
-    }
-
-    /**
-     * Deletes a message for the user in a product room: the room keeps a hidden tombstone, and the extension
-     * gets the event. A person chat has no delete.
-     */
-    suspend fun deleteMessageForUser(chatId: ChatId, messageId: ChatMessageId): Result<Unit> = runCancellableCatching {
-        require(chatId.isExtensionChat()) { "Only a product room deletes a message" }
-        val message = chatMessageRepository.getMessageById(chatId, messageId, getCustomContentDecoder(chatId))
-        require(message != null && message.chatId == chatId) { "No message $messageId in the room" }
-
-        chatMessageRepository.markMessageDeleted(messageId)
-        messagesChangedFlow.tryEmit(Unit)
-        dispatchUserEvent(chatId, ChatRoomUserEvent.MessageDeleted(messageId))
     }
 
     /** Gives an action of the user that is not a saved message to the extension of the room. */

@@ -38,8 +38,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatListInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDraft
-import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatSummaryBadge
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.models.ChatListUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.CallResolutionContext
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.buildCallResolutionContext
@@ -59,6 +58,7 @@ class ChatListViewModel @Inject constructor(
     private val interactor: ChatListInteractor,
     private val router: ChatsRouter,
     private val messageMappingHelper: ChatMessageMappingHelper,
+    private val roomPolicyMapper: ChatListRoomPolicyMapper,
 ) : BaseViewModel() {
     val state = combine(
         combineToPair(
@@ -110,10 +110,11 @@ class ChatListViewModel @Inject constructor(
         callContext: CallResolutionContext,
     ): ChatListUiState.ChatItem {
         val draftText = drafts[id]?.text?.takeIf { it.isNotBlank() }
-        val previewModel = if (draftText != null) {
-            DraftPreviewUiModel(timestamp = timestamp, text = draftText)
-        } else {
-            preview.toUi(
+        val productPreview = roomPolicyMapper.productPreview(this)
+        val previewModel = when {
+            draftText != null -> DraftPreviewUiModel(timestamp = timestamp, text = draftText)
+            productPreview != null -> productPreview
+            else -> preview.toUi(
                 timestamp = timestamp,
                 customMessageRenderers = customMessageRenderers,
                 customPreviewDelegate = customPreviewRenderer,
@@ -123,21 +124,14 @@ class ChatListViewModel @Inject constructor(
 
         return ChatListUiState.ChatItem(
             chatId = id,
-            display = display.toUi(),
-            badge = unreadBadge.toUi(),
+            display = ChatDisplayUiModel(username = display.name, avatarModel = roomPolicyMapper.avatar(this)),
+            badge = roomPolicyMapper.badge(unreadBadge),
             preview = previewModel,
             // TODO: wire mute state from domain Chat once the field exists.
             isMuted = false,
             hasReaction = hasUnseenReaction,
+            isOngoing = draftText == null && roomPolicyMapper.isOngoing(this),
         )
-    }
-
-    private fun ChatSummaryBadge.toUi(): ChatListUiState.Badge {
-        return when (this) {
-            is ChatSummaryBadge.Notification,
-            is ChatSummaryBadge.None -> ChatListUiState.Badge.None
-            is ChatSummaryBadge.Unread -> ChatListUiState.Badge.Unread(count)
-        }
     }
 
     private suspend fun ChatPreview.toUi(
