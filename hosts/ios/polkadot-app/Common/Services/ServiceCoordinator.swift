@@ -327,6 +327,12 @@ extension ServiceCoordinator {
             }
         #endif
 
+        // The core resumes funding when it starts; start it now if a provider
+        // was still working on a session when the app last ran.
+        if FundingResumeMarker.inProgress {
+            Task.detached { _ = try? truapiRuntimeProvider.sharedRuntime() }
+        }
+
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
                 factory: chatCoordinatorFactory,

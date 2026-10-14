@@ -51,6 +51,9 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
     }
 
     func fundingSessionChanged(intent: String, status _: HostFundingStatusSubscribeItem) {
+        if let runtime {
+            Task.detached { FundingResumeMarker.record(runtime) }
+        }
         Task { @MainActor in coordinator?.sessionChanged(intent: intent) }
     }
 

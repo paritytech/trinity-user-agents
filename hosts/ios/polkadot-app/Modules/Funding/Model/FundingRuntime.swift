@@ -7,6 +7,7 @@ protocol FundingRuntime: AnyObject, Sendable {
     func fundingSession(intent: String) -> FundingSession?
     func fundingProgress(intent: String) -> FundingProgress?
     func fundingSessions() -> [FundingSession]
+    func fundingInProgress() -> Bool
     func fundingCandidates(intent: String) -> [FundingCandidate]
     func getFundingQuote(intent: String, ask: FundingQuoteAsk)
     func stopFundingQuotes(intent: String)

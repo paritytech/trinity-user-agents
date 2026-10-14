@@ -956,6 +956,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingProgress(intent: intent)
     }
 
+    /// Whether a provider still works on any funding session. A host that
+    /// remembers it starts funding at its next launch.
+    public func fundingInProgress() -> Bool {
+        inner.fundingInProgress()
+    }
+
     /// Every session the core keeps: in flight first, then ended ones the
     /// host has not acknowledged, each newest first.
     public func fundingSessions() -> [FundingSession] {
