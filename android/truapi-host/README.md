@@ -524,6 +524,8 @@ the cdylib's exported metadata symbols, which the `release` profile strips — a
 plain `--release` build produces a stripped library and no bindings. (`make
 uniffi` regenerates the Swift bindings; use `make uniffi-kotlin` for Android.)
 
-No CI job compiles this package. After changing `TrUAPIHost.kt` or the UniFFI
-surface it wraps, run `make android-check` locally — it regenerates the Kotlin
-bindings and compiles the module against them.
+The `android-bindings` CI job compiles this package against freshly generated
+bindings whenever this directory or the core surface it wraps changes. After
+changing `TrUAPIHost.kt` or that surface, run `make android-check` locally for
+the same check before you push: it regenerates the Kotlin bindings and compiles
+the module against them.

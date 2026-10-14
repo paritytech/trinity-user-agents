@@ -346,7 +346,7 @@ scripts/battery.sh --signing-host   # direct phase only
 scripts/battery.sh --pairing-host   # paired phase only
 make e2e-signing-cli                # same direct signing-host phase
 make e2e-pairing-cli                # same paired pairing-host phase
-make e2e-chat-cli                   # chat content screening against a chat signing-host
+make e2e-chat-cli                   # chat content screening, then the Chat Extension v2 sample on the CLI chat page
 make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
 ```
 
@@ -721,7 +721,19 @@ make ios-chat-v2-run
 
 Run every integration with one iOS build using `make ios-chat-all`.
 
-The Android twin of that launcher runs the same TrUAPI Playground worker
+The Android emulator runs the same sample product with its own launcher and
+writes the Android rows. See
+[docs/chat-android-emulator.md](docs/chat-android-emulator.md):
+
+```bash
+make android-chat-v2-run
+```
+
+Every host that runs the sample product, and the order to run them in, is
+listed in the Chat Extension v2 section of
+[docs/local-e2e-testing.md](docs/local-e2e-testing.md#8-chat-extension-v2).
+
+The Android twin of `make ios-chat-run` runs the TrUAPI Playground worker
 against the shared core inside a headless emulator, and writes its report to
 `playground/test-results/android-chat/diagnosis-report.md`:
 

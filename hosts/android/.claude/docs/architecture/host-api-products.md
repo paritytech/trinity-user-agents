@@ -30,7 +30,7 @@ per session by `ProductRuntimeSettings` (debug toggle, default TrUAPI).
 | Lifecycle | Per-WebView session | Per `HostApiSession` / per `ProductTrUAPIHostBridge` (scoped to a WebView lifetime) | Hilt singleton |
 | Composition | Selected by navigation; loaded from DotNs | `HostCallHandlerGroup`s in `HostApiEnvironment` (native); Rust core dispatches, Kotlin implements `HostBridge` callbacks (TrUAPI) | `@IntoSet` Dagger multibinding |
 
-A product can *integrate* with chat (see `chat-extension.md § Products and chat`). That integration produces a `ProductChatExtension` — a single `ChatExtension` that hosts the product's JS in a hidden WebView and forwards `ChatHostCalls`. Chat products run the **native runtime only**; the core has no chat host yet.
+A product can *integrate* with chat (see `chat-extension.md § Products and chat`). That integration produces a `ProductChatExtension`, a single `ChatExtension` that drives the product's worker in a hidden WebView. On the TrUAPI runtime the core serves Chat, including Chat Extension v2 ([RFC](../../../../../docs/rfcs/chat-extension-v2.md)), and the worker reaches the app through `ProductChatHostBridge`. On the native runtime the worker forwards `ChatHostCalls`, which serve none of Chat Extension v2.
 
 ---
 
@@ -59,9 +59,9 @@ Three environments where products run:
 |---|---|---|---|---|
 | **SPA Browser** | Full-screen WebView | Visible | Inline (same .dot and cross-.dot stays in WebView) | native / TrUAPI |
 | **Explore** | Catalog → product list | Visible | Same .dot in WebView; cross-.dot opens a new SPA browser | native / TrUAPI |
-| **Chat** | Hidden WebView under a `ProductChatExtension` | Invisible | Disabled (rejects all navigation) | native only |
+| **Chat** | Hidden WebView under a `ProductChatExtension` | Invisible | Disabled (rejects all navigation) | native / TrUAPI |
 
-On the native runtime each environment composes a different `HostApiEnvironment`; on TrUAPI each builds a `ProductTrUAPIHostBridge` via `TrUAPISessionStarter`.
+On the native runtime each environment composes a different `HostApiEnvironment`; on TrUAPI each builds a `ProductTrUAPIHostBridge`, via `TrUAPISessionStarter` for the visible environments and via `TrUAPIWorkerSupervisor` for the Chat worker (see the core side of § Pocket).
 
 ### ProductRepository / installation
 
@@ -353,7 +353,9 @@ Core side (`feature/products/impl/.../domain/truapi/`):
 - `TrUAPIWorkerSupervisor` starts a product's worker on the core's `Start` transition (runtime bridge
   `workerDemandChanged`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER, pocket = ...)` through
   `ProductTrUAPIHostBridge.attach(kind = WORKER)`, bootstrap at document start, entry module by URL. `Stop` tears it
-  down. Chat is not served on this path; chat products keep the native worker, so a product with both runs two.
+  down. The same execution serves Chat: when the worker manifest `includes` chat, `attach` also gets a
+  `ProductChatHostBridge`, and `TrUAPIChatWorker` holds the worker for each open room, so a product with chat and
+  Pocket runs one worker. With the native runtime selected, chat keeps the native worker beside it.
 - `TrUAPIPocketFaceStreams` takes one `acquireWorker` reference per collected face, opens `render` on
   `RenderContext.PocketCard`, retries the first `render` while the worker's client is still connecting, and publishes
   renderer actions. Both callbacks of `ProductPocketHostBridge` run on the core's dispatcher thread: the list is a

@@ -265,6 +265,28 @@ The wire-table generator has property tests (sorted, no duplicates,
 well-formed for empty input) plus targeted regression tests for the
 `detect_versioned_wrapper` heuristic.
 
+## 8. Chat Extension v2
+
+The dotli flow above does not reach Chat, a Worker service that dotli does
+not serve. A change to the `Chat` trait, its core capability or a host's
+chat is verified with the sample product in `playground/chat-v2`, which every
+chat host runs with the same command list. Its
+[README](../playground/chat-v2/README.md) is the specification: the rooms, the
+commands, what each host must show, the event log, and how to build it. Each
+host below has its own runbook; follow it rather than this summary.
+
+| Host | Command | Runbook |
+|---|---|---|
+| Test host (the core as WASM over the mock host) | `REQUIRE_WASM=1 yarn test` in `playground/chat-v2` | [Running it](../playground/chat-v2/README.md#running-it); the tests are in [`playground/chat-v2/tests/e2e`](../playground/chat-v2/tests/e2e) |
+| CLI dev chat page | `truapi-host dev --worker-bundle out/worker/index.js -- yarn dev`, then the `/chat` URL; headless: `make e2e-chat-cli` | [Chat workers](../rust/crates/truapi-host-cli/README.md#chat-workers) |
+| iOS simulator | `make ios-chat-v2-run` | [chat-ios-simulator.md](chat-ios-simulator.md) |
+| Android emulator | `make android-chat-v2-run` | [chat-android-emulator.md](chat-android-emulator.md) |
+
+Run the test host first: it needs no device and checks the core and the
+product together. Each launcher writes one diagnosis row per scenario it
+drove, and a row passes when the host's screen matches the command table and
+its event log matches the test host's log for the same commands.
+
 ## Gotchas
 
 ### yarn 1.x `file:` dep stale snapshot
