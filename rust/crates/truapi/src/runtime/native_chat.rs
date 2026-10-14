@@ -98,6 +98,9 @@ struct SessionCache {
 struct RegistryState {
     cache: parking_lot::Mutex<Arc<SessionCache>>,
     recoveries: parking_lot::Mutex<HashMap<WalletKey, background::Recovery>>,
+    /// One host-channel receiver per wallet and network, for the session it
+    /// was started in.
+    host_channels: parking_lot::Mutex<HashMap<WalletKey, crate::runtime::host_channel::Receiver>>,
     // Nonsecret uncertainty must survive session cache eviction.
     products: Mutex<HashSet<WalletKey>>,
 }
@@ -276,6 +279,8 @@ impl NativeChatRegistry {
     /// and the call that changed it never waits for it. A Chat that is not
     /// open relays when its product next initializes.
     pub(crate) fn relay_profile_disclosure(&self, context: NativeChatContext) {
+        self.ensure_host_channel(context.clone());
+        self.publish_host_channel(context.clone(), None);
         let registry = self.clone();
         let spawner = context.services.spawner.clone();
         spawner(Box::pin(async move {
@@ -291,6 +296,36 @@ impl NativeChatRegistry {
                 .collect();
             for chat in chats {
                 chat.relay_profile_reference(&context).await;
+            }
+        }));
+    }
+
+    /// Keep a host-channel receiver running for `context`'s wallet and
+    /// session (seity `doc/HOST_CHANNEL_PLAN.md`, step 6). Idempotent.
+    pub(crate) fn ensure_host_channel(&self, context: NativeChatContext) {
+        if context.require_current().is_err() {
+            return;
+        }
+        let key = (context.session.public_key, context.genesis_hash);
+        let mut receivers = self.state.host_channels.lock();
+        if receivers
+            .get(&key)
+            .is_some_and(|receiver| receiver.serves(&context))
+        {
+            return;
+        }
+        receivers.insert(key, crate::runtime::host_channel::Receiver::start(context));
+    }
+
+    /// Post the current disclosure on the host channel to every bootstrapped
+    /// peer, or to `only` (step 5). Returns at once; the send runs on its own
+    /// task and failures are logged, retried on the next change.
+    pub(crate) fn publish_host_channel(&self, context: NativeChatContext, only: Option<[u8; 32]>) {
+        let spawner = context.services.spawner.clone();
+        spawner(Box::pin(async move {
+            match crate::runtime::host_channel::publish(&context, only).await {
+                Ok(sent) => tracing::debug!(sent, "host channel published"),
+                Err(error) => tracing::debug!(%error, "host channel publish deferred"),
             }
         }));
     }

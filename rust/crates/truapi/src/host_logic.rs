@@ -13,6 +13,7 @@ pub mod dotns;
 pub mod dotns_gateway;
 pub mod entropy;
 pub mod features;
+pub mod host_channel;
 pub mod product_account;
 pub mod raw_signing;
 pub mod session;
