@@ -27,7 +27,7 @@ import javax.inject.Inject
  */
 class AppContactsHostBridge @Inject constructor(
     private val directory: ContactDirectory,
-    private val pickLauncher: TrUAPIContactPickLauncher,
+    private val picks: TrUAPIContactPicks,
 ) : ContactsHostBridge {
     private class HandleIndex(val handleKey: ByteArray, val accountsByHandle: Map<DataByteArray, ByteArray>)
 
@@ -87,7 +87,7 @@ class AppContactsHostBridge @Inject constructor(
 
         if (options.isEmpty()) return HostContactPick.NoContacts
 
-        val picked = pickLauncher.awaitPick(productId, options)
+        val picked = picks.ask(ContactPickRequest(productId, options))
             ?: return HostContactPick.Dismissed
 
         return HostContactPick.Picked(picked.account)

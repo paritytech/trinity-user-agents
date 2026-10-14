@@ -4,7 +4,6 @@ import PolkadotUI
 struct WalletView: View {
     @State var viewModel: WalletViewModelProtocol = WalletViewModel()
     @State private var viewHeight: CGFloat = 0
-    private let collectiblesPeekHeight: CGFloat = 90
     @State private var scrollAtTop: Bool = true
     @Namespace private var cardNamespace
     private let peekHeight: CGFloat = 64
@@ -19,14 +18,21 @@ struct WalletView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     VStack(spacing: -cardOverlap) {
-                        ZStack(alignment: .top) {
+                        // Builds with product cards show humanity as the
+                        // Humanity card the Pocket pins, so only the others
+                        // draw the ID card.
+                        #if FEATURE_PRODUCTS
                             assetCard
-                            identityCard
-                        }
-                        // The identity card is drawn offset down by the peek, which
-                        // the stack's own height does not account for, so without
-                        // this the product cards would start a peek too high.
-                        .padding(.bottom, viewModel.expandedSection == .none ? peekHeight : 0)
+                        #else
+                            ZStack(alignment: .top) {
+                                assetCard
+                                identityCard
+                            }
+                            // The identity card is drawn offset down by the peek, which
+                            // the stack's own height does not account for, so without
+                            // this the product cards would start a peek too high.
+                            .padding(.bottom, viewModel.expandedSection == .none ? peekHeight : 0)
+                        #endif
                         pocketCards
                     }
                     .padding(.horizontal, 24)
@@ -47,12 +53,6 @@ struct WalletView: View {
                 }
             }
         }
-        .modifier(
-            ConditionalOverlayModifier(
-                available: viewModel.isCollectiblesAvailable,
-                overlay: { collectiblesCard }
-            )
-        )
         .animation(.spring(duration: 0.45, bounce: 0.15), value: viewModel.expandedSection)
     }
 
@@ -82,52 +82,6 @@ struct WalletView: View {
                 }
             }
         #endif
-    }
-
-    @ViewBuilder
-    private var collectiblesCard: some View {
-        CollectiblesCardView(
-            isExpanded: viewModel.expandedSection == .collectiblesDetails,
-            onViewCollectibles: { viewModel.onViewCollectibles?() }
-        )
-        .padding(.horizontal, 24)
-        .frame(maxHeight: viewModel.expandedSection == .collectiblesDetails ? .infinity : nil)
-        .alignmentGuide(.bottom) { dimensions in
-            switch viewModel.expandedSection {
-            case .none:
-                dimensions[.top] + collectiblesPeekHeight
-            case .collectiblesDetails:
-                dimensions[.bottom]
-            case .assetDetails,
-                 .identityDetails:
-                dimensions[.top] - offScreenOffset
-            }
-        }
-        .opacity(collectiblesOpacity)
-        .onTapGesture { viewModel.onCollectibles?() }
-        .allowsHitTesting(collectiblesHitTest)
-    }
-
-    private var collectiblesOpacity: Double {
-        switch viewModel.expandedSection {
-        case .none,
-             .collectiblesDetails:
-            1
-        case .assetDetails,
-             .identityDetails:
-            0
-        }
-    }
-
-    private var collectiblesHitTest: Bool {
-        switch viewModel.expandedSection {
-        case .none,
-             .collectiblesDetails:
-            true
-        case .assetDetails,
-             .identityDetails:
-            false
-        }
     }
 
     @ViewBuilder
@@ -179,8 +133,7 @@ struct WalletView: View {
         case .none,
              .identityDetails:
             1
-        case .assetDetails,
-             .collectiblesDetails:
+        case .assetDetails:
             0
         }
     }
@@ -193,8 +146,6 @@ struct WalletView: View {
             0
         case .assetDetails:
             offScreenOffset
-        case .collectiblesDetails:
-            -offScreenOffset
         }
     }
 
@@ -203,8 +154,7 @@ struct WalletView: View {
         case .none,
              .identityDetails:
             1
-        case .assetDetails,
-             .collectiblesDetails:
+        case .assetDetails:
             0
         }
     }
@@ -214,8 +164,7 @@ struct WalletView: View {
         case .none,
              .identityDetails:
             true
-        case .assetDetails,
-             .collectiblesDetails:
+        case .assetDetails:
             false
         }
     }
@@ -225,8 +174,7 @@ struct WalletView: View {
         case .none,
              .assetDetails:
             1.0
-        case .identityDetails,
-             .collectiblesDetails:
+        case .identityDetails:
             0.95
         }
     }
@@ -236,8 +184,7 @@ struct WalletView: View {
         case .none,
              .assetDetails:
             1
-        case .identityDetails,
-             .collectiblesDetails:
+        case .identityDetails:
             0
         }
     }
@@ -248,8 +195,6 @@ struct WalletView: View {
              .assetDetails,
              .identityDetails:
             0
-        case .collectiblesDetails:
-            -offScreenOffset
         }
     }
 
@@ -259,8 +204,7 @@ struct WalletView: View {
             0
         case .assetDetails:
             2
-        case .identityDetails,
-             .collectiblesDetails:
+        case .identityDetails:
             0
         }
     }
@@ -270,8 +214,7 @@ struct WalletView: View {
         case .none,
              .assetDetails:
             true
-        case .identityDetails,
-             .collectiblesDetails:
+        case .identityDetails:
             false
         }
     }
@@ -289,22 +232,6 @@ private struct OverscrollReader: ViewModifier {
                     max(0, -(geometry.contentOffset.y + geometry.contentInsets.top))
                 } action: { _, newValue in
                     overscroll = newValue
-                }
-        } else {
-            content
-        }
-    }
-}
-
-private struct ConditionalOverlayModifier<V: View>: ViewModifier {
-    let available: Bool
-    let overlay: () -> V
-
-    func body(content: Content) -> some View {
-        if available {
-            content
-                .overlay(alignment: .bottom) {
-                    overlay()
                 }
         } else {
             content

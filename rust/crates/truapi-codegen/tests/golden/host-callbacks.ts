@@ -10,6 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   ChainIdentifier,
+  CodeFormat,
   FundingDirection,
   FundingQuote,
   FundingQuoteRefusal,
@@ -29,6 +30,7 @@ import {
 
 import type {
   FundingFrameOutcome,
+  FundingFrameTarget,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -37,6 +39,7 @@ import type {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomFooterRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
   HostFundingStatusSubscribeItem,
@@ -54,6 +57,7 @@ import type {
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
+  HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
   Result,
@@ -293,6 +297,15 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
+ * What the host did with a request to show or hide the expanded card face.
+ */
+export type ExpandedCardFaceOutcome =
+  | "Applied"
+  | "NotPresented"
+  | "UserMoving"
+  | "Unsupported";
+
+/**
  * How the user left the funding overlay.
  */
 export type FundingPresentOutcome = "Started" | "Dismissed";
@@ -315,6 +328,29 @@ export interface FundingPresentation {
    * Amount the caller asked for, or ``undefined`` to let the user choose.
    */
   amount?: bigint;
+}
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export interface FundingQuoteList {
+  /**
+   * One row per provider asked, in the host's provider order.
+   */
+  rows: Array<FundingQuoteRow>;
+
+  /**
+   * The provider whose quote is best for the user, which the host selects
+   * until the user picks another: the least to pay inbound, the most to
+   * receive outbound. ``undefined`` until one quotes.
+   */
+  best?: string;
+
+  /**
+   * When the core asks every provider again, in Unix milliseconds. The
+   * rows go back to `Pending` then.
+   */
+  refreshAtMs: bigint;
 }
 
 /**
@@ -457,6 +493,30 @@ export type HostContactPick =
   | { tag: "Unsupported"; value?: undefined };
 
 /**
+ * How the host's scanner ended.
+ */
+export type HostScan =
+  /**
+   * The user scanned a code the request accepts.
+   */
+  | { tag: "Scanned"; value: { text: string; format: CodeFormat } }
+  /**
+   * The user closed the viewfinder without scanning.
+   */
+  | { tag: "Dismissed"; value?: undefined }
+  /**
+   * The device has no camera, or the user refused the host application one.
+   * The host has already told the user how to turn it on.
+   */
+  | { tag: "CameraUnavailable"; value?: undefined }
+  /**
+   * The requesting App or Widget is not the screen the user sees, so the
+   * host opened nothing. A Worker's request was already checked by the core
+   * and is never answered this way.
+   */
+  | { tag: "NotVisible"; value?: undefined };
+
+/**
  * Review shown before a product learns the user's primary identity.
  */
 export interface IdentityDisclosureReview {
@@ -509,16 +569,6 @@ export type PermissionAuthorizationStatus =
  * User decision including how long an authorization should last.
  */
 export type PermissionDecision = "AllowOnce" | "AllowAlways" | "Deny";
-
-/**
- * Review shown before a preimage is submitted.
- */
-export interface PreimageSubmitReview {
-  /**
-   * Size of the preimage in bytes.
-   */
-  size: bigint;
-}
 
 /**
  * Product identity attached to one product-facing TrUAPI connection.
@@ -755,10 +805,6 @@ export type UserConfirmationReview =
    */
   | { tag: "ResourceAllocation"; value: ResourceAllocationReview }
   /**
-   * Submit a preimage to the host-selected backend.
-   */
-  | { tag: "PreimageSubmit"; value: PreimageSubmitReview }
-  /**
    * Allow a product to access another product account.
    */
   | { tag: "AccountAccess"; value: AccountAccessReview }
@@ -914,6 +960,14 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
+ * What the host did with a request to show or hide the expanded card face.
+ */
+export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
+  (): S.Codec<ExpandedCardFaceOutcome> =>
+    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
+);
+
+/**
  * How the user left the funding overlay.
  */
 export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
@@ -930,6 +984,18 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
       direction: FundingDirection,
       amount: S.Option(S.u128),
     }) as S.Codec<FundingPresentation>,
+);
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
+  (): S.Codec<FundingQuoteList> =>
+    S.Struct({
+      rows: S.Vector(FundingQuoteRow),
+      best: S.Option(S.str),
+      refreshAtMs: S.u64,
+    }) as S.Codec<FundingQuoteList>,
 );
 
 /**
@@ -1038,6 +1104,22 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
 );
 
 /**
+ * How the host's scanner ended.
+ */
+export const HostScan: S.Codec<HostScan> = S.lazy(
+  (): S.Codec<HostScan> =>
+    S.TaggedUnion({
+      Scanned: S.Struct({ text: S.str, format: CodeFormat }) as S.Codec<{
+        text: string;
+        format: CodeFormat;
+      }>,
+      Dismissed: S._void,
+      CameraUnavailable: S._void,
+      NotVisible: S._void,
+    }),
+);
+
+/**
  * Review shown before a product learns the user's primary identity.
  */
 export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
@@ -1089,14 +1171,6 @@ export const PermissionAuthorizationStatus: S.Codec<PermissionAuthorizationStatu
 export const PermissionDecision: S.Codec<PermissionDecision> = S.lazy(
   (): S.Codec<PermissionDecision> =>
     S.Status("AllowOnce", "AllowAlways", "Deny"),
-);
-
-/**
- * Review shown before a preimage is submitted.
- */
-export const PreimageSubmitReview: S.Codec<PreimageSubmitReview> = S.lazy(
-  (): S.Codec<PreimageSubmitReview> =>
-    S.Struct({ size: S.u64 }) as S.Codec<PreimageSubmitReview>,
 );
 
 /**
@@ -1243,19 +1317,18 @@ export const StatementStoreProductSignReview: S.Codec<StatementStoreProductSignR
  */
 export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
   (): S.Codec<UserConfirmationReview> =>
-    S.TaggedUnion({
-      SignPayload: SignPayloadReview,
-      SignRaw: SignRawReview,
-      StatementStoreProductSign: StatementStoreProductSignReview,
-      CreateTransaction: CreateTransactionReview,
-      AccountAlias: AccountAliasReview,
-      CreateProof: CreateProofReview,
-      IdentityDisclosure: IdentityDisclosureReview,
-      ResourceAllocation: ResourceAllocationReview,
-      PreimageSubmit: PreimageSubmitReview,
-      AccountAccess: AccountAccessReview,
-      SignVrf: SignVrfReview,
-      ProductSubtree: ProductSubtreeReview,
+    S.indexedTaggedUnion({
+      SignPayload: [0, SignPayloadReview] as const,
+      SignRaw: [1, SignRawReview] as const,
+      StatementStoreProductSign: [2, StatementStoreProductSignReview] as const,
+      CreateTransaction: [3, CreateTransactionReview] as const,
+      AccountAlias: [4, AccountAliasReview] as const,
+      CreateProof: [5, CreateProofReview] as const,
+      IdentityDisclosure: [6, IdentityDisclosureReview] as const,
+      ResourceAllocation: [7, ResourceAllocationReview] as const,
+      AccountAccess: [9, AccountAccessReview] as const,
+      SignVrf: [10, SignVrfReview] as const,
+      ProductSubtree: [11, ProductSubtreeReview] as const,
     }),
 );
 
@@ -1316,9 +1389,9 @@ export interface ChainProvider {
  * answered `Unsupported`. See `OptionalPlatform`.
  *
  * The core bounds and screens the product-supplied fields it forwards. Ids,
- * names and icons on `create_chat_room`, `register_chat_bot` and
- * `post_chat_message` are NFC-normalized and rejected for control and bidi
- * characters. Message bodies are bounded and screened but pass through
+ * names and icons on `create_chat_room`, `register_chat_bot`,
+ * `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and
+ * bidi characters. Message bodies are bounded and screened but pass through
  * byte-for-byte, keeping line breaks and tabs, so a product reads back the
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
  * fetch or open is restricted to `https` or an inline raster image and
@@ -1362,6 +1435,17 @@ export interface ChatPlatform {
     product: ProductContext,
     request: HostChatPostMessageRequest,
   ): Promise<HostChatPostMessageResponse>;
+
+  /**
+   * Set what a product-scoped room shows below its messages, for the room
+   * as it is now and every later time it is shown. The core has already
+   * checked the product created the room. A room the product never set a
+   * footer on shows the text input.
+   */
+  setChatRoomFooter(
+    product: ProductContext,
+    request: HostChatSetRoomFooterRequest,
+  ): Promise<void>;
 
   /**
    * Emit the current product-scoped room list and later replacements.
@@ -1559,6 +1643,20 @@ export interface CoreStorage {
 }
 
 /**
+ * Host control of the card face drawn above an opened card's Widget.
+ *
+ * Carried per connection on `ConnectionAdapters`, because the host owns one
+ * drawer per product execution. A connection without one tells products
+ * `Unsupported`.
+ */
+export interface ExpandedCardHost {
+  /**
+   * Show (`true`) or hide (`false`) the face above the calling Widget.
+   */
+  setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
+}
+
+/**
  * Feature-support probing. The host answers whether it can service a given
  * capability (currently scoped to per-chain support).
  */
@@ -1593,14 +1691,25 @@ export interface FundingPlatform {
   ): Promise<FundingPresentOutcome>;
 
   /**
-   * Show `provider`'s screen at `route` for session `intent`, such as its
-   * KYC or card entry, in a frame the host owns, and answer once it closes.
+   * Show `target` for `provider`'s session `intent` in a frame the host
+   * owns, and answer once it closes. A page is an https URL the core has
+   * checked: the host shows its origin, and closes the frame with
+   * `Returned` when the page reaches its return URL.
    */
   presentProviderFrame(
     provider: ProductContext,
     intent: string,
-    route: string,
+    target: FundingFrameTarget,
   ): Promise<FundingFrameOutcome>;
+
+  /**
+   * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
+   * the quotes the core asks before the user picks one. Best effort,
+   * without asking for any permission: the device's coarse location when
+   * already permitted, then its SIM or network country, then its locale's
+   * region. ``undefined`` when nothing says.
+   */
+  detectedCountry?(): Promise<string | undefined>;
 
   /**
    * Observe a session's status change, for host UI such as the in-flight
@@ -1612,11 +1721,11 @@ export interface FundingPlatform {
   ): void;
 
   /**
-   * Observe one provider's row of a quote list the host requested, for the
-   * provider list. Each provider's row arrives `Pending`, then once more
-   * with its quote or why it is unavailable.
+   * Observe the quote list the host requested, for the provider list:
+   * again whenever a provider answers, and each time the core asks every
+   * provider again.
    */
-  fundingQuoteChanged?(intent: string, row: FundingQuoteRow): void;
+  fundingQuotesChanged?(intent: string, quotes: FundingQuoteList): void;
 }
 
 /**
@@ -1760,7 +1869,7 @@ export interface PaymentPlatform {
    */
   subscribePaymentStatus(
     product: ProductContext,
-    id: Uint8Array,
+    id: Bytes32,
   ): AsyncIterable<
     Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>
   >;
@@ -1930,6 +2039,28 @@ export interface ProductStorage {
 }
 
 /**
+ * Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
+ * Kotlin bridges and the JS `scanner` callbacks follow the same rules.
+ *
+ * - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
+ * - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
+ *   scanned link.
+ * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen. A Worker reaching
+ *   the host already passed the core's tap check.
+ * - Close the viewfinder when the core drops the future, and close any still open before opening
+ *   another. A JS host is not told about a drop.
+ */
+export interface ScannerPlatform {
+  /**
+   * Open the viewfinder on behalf of `product` and wait for the user.
+   */
+  scanCode(
+    product: ProductContext,
+    request: HostScannerScanRequest,
+  ): Promise<HostScan>;
+}
+
+/**
  * Host theme source.
  */
 export interface ThemeHost {
@@ -1964,7 +2095,7 @@ export interface TopUpPlatform {
    */
   subscribeTopUpStatus(
     product: ProductContext,
-    id: Uint8Array,
+    id: Bytes32,
   ): AsyncIterable<
     Result<
       HostPaymentTopUpStatusSubscribeItem,
@@ -2018,6 +2149,7 @@ export interface HostCallbacks {
   game?: GamePlatform;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
+  scanner?: ScannerPlatform;
 }
 
 export interface RequiredHostCallbacks {
@@ -2039,4 +2171,5 @@ export interface RequiredHostCallbacks {
   game?: Required<GamePlatform>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
+  scanner?: Required<ScannerPlatform>;
 }

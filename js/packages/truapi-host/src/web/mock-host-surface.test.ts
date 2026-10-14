@@ -104,7 +104,7 @@ function rustControlSurface(): string[] {
   expect(end).toBeGreaterThan(start);
   const block = source.slice(start, end);
 
-  return [...block.matchAll(/\n    pub (?:async )?fn ([a-z0-9_]+)/g)]
+  return [...block.matchAll(/\n[\t ]+pub (?:async )?fn ([a-z0-9_]+)/g)]
     .map((match) => match[1]!)
     .filter((name) => name !== "new" && name !== "with_config");
 }
@@ -208,7 +208,7 @@ describe("mock host surface agreement", () => {
     ].map(([, variant, key]) => ({ variant, key }));
 
     // A regex that matched nothing would make this pass forever.
-    expect(arms.length).toBe(14);
+    expect(arms.length).toBe(15);
     expect(arms.filter(({ variant, key }) => variant !== key)).toEqual([]);
   });
 

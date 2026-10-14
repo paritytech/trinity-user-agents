@@ -291,9 +291,11 @@ final class StubChatHostBridge: ChatHostBridge {
         icon _: String
     ) async throws -> ChatBotRegistrationStatus { .new }
 
-    func postMessage(roomId _: String, content _: ChatMessageContent) async throws -> String {
+    func postMessage(roomId _: String, content _: ChatMessageContent, alt _: String?) async throws -> String {
         "message-id"
     }
+
+    func setRoomFooter(roomId _: String, footer _: ChatRoomFooter) async throws {}
 
     func listRooms() async throws -> [ChatRoom] { [] }
 }

@@ -21,12 +21,13 @@ enum AssetDetailsViewFactory {
         context: WalletFlowContextProtocol,
         chainAsset: ChainAsset
     ) -> AssetDetailsScene {
+        let fundingDomainProvider = FundingDomainProvider(hostProvider: context.flowState.hostProvider)
         let interactor = AssetDetailsInteractor(
             priceLocalSubscriptionFactory: PriceProviderFactory.shared,
             chainAsset: chainAsset,
             coinageService: context.coinageService,
             coinageBackupSyncService: context.coinageBackupSyncService,
-            fundingDomainProvider: FundingDomainProvider(hostProvider: context.flowState.hostProvider)
+            fundingDomainProvider: fundingDomainProvider
         )
 
         #if TESTNET_FEATURE
@@ -36,7 +37,7 @@ enum AssetDetailsViewFactory {
             interactor.topupService = TopUpService.create(for: chainAsset.chainAssetId)
         #endif
 
-        let wireframe = AssetDetailsWireframe(context: context)
+        let wireframe = AssetDetailsWireframe(context: context, fundingDomainProvider: fundingDomainProvider)
         let presenter = AssetDetailsPresenter(
             interactor: interactor,
             wireframe: wireframe,
