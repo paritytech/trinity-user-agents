@@ -182,7 +182,7 @@ impl CliPlatform {
 
 		let cache_quality =
 			storage.as_ref().map(|paths| paths.state_dir.join("cache-quality.json"));
-		let cache = CacheNodes::from_env(cache_quality).map(Arc::new);
+		let cache = CacheNodes::from_env(cache_quality, network.asset_hub_ws).map(Arc::new);
 		Arc::new(Self {
 			chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
 			chains: network.host_chain_set(),

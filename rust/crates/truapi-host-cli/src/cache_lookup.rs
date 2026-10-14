@@ -23,6 +23,10 @@
 //! payer or does not have the blob costs one request. The Bulletin node then answers as it does
 //! without cache nodes.
 //!
+//! `TRUAPI_CACHE_REGISTRY` gives the provider set from the provider registry contract on Asset
+//! Hub instead of a file: the address of the contract, read through the Asset Hub of the network,
+//! or `TRUAPI_CACHE_REGISTRY_RPC` (see `registry`). The two variables cannot be used together.
+//!
 //! The host keeps its measurements in `cache-quality.json` in its state directory, so a restart
 //! does not lose them. `/cache` shows the payer and the measurements.
 
@@ -59,7 +63,11 @@ use crate::{
 	frame_server::ProductSelection,
 };
 
+mod registry;
+
 const PROVIDERS_ENV: &str = "TRUAPI_CACHE_PROVIDERS";
+const REGISTRY_ENV: &str = "TRUAPI_CACHE_REGISTRY";
+const REGISTRY_RPC_ENV: &str = "TRUAPI_CACHE_REGISTRY_RPC";
 const PAYER_SEED_ENV: &str = "TRUAPI_CACHE_PAYER_SEED";
 /// The time limit of one request to one cache node. A node that does not have the blob reads it
 /// from Bulletin first, so the limit is long.
@@ -385,6 +393,7 @@ enum PayerSource {
 /// The source of the provider set.
 enum ProviderSet {
 	File(PathBuf),
+	Registry(Arc<registry::Registry>),
 	#[cfg(test)]
 	Fixed(Vec<[u8; 32]>, Vec<Provider>),
 }
@@ -402,12 +411,45 @@ pub struct CacheNodes {
 }
 
 impl CacheNodes {
-	/// The cache nodes of the provider set that `TRUAPI_CACHE_PROVIDERS` names. The answer is
-	/// `None` when the variable is not set or the HTTP client fails. A payer seed in
-	/// `TRUAPI_CACHE_PAYER_SEED` pays for every read. Without a seed, the signed-in account pays
-	/// when there is one. The host keeps the measurements in `quality_path` when it is set.
-	pub fn from_env(quality_path: Option<PathBuf>) -> Option<Self> {
-		let path = std::env::var_os(PROVIDERS_ENV).filter(|path| !path.is_empty())?;
+	/// The cache nodes of the provider set that `TRUAPI_CACHE_PROVIDERS` names, or of the registry
+	/// that `TRUAPI_CACHE_REGISTRY` names, read through `asset_hub_rpc` unless
+	/// `TRUAPI_CACHE_REGISTRY_RPC` is set. The answer is `None` when neither variable is set, both
+	/// are set, or the HTTP client fails. A payer seed in `TRUAPI_CACHE_PAYER_SEED` pays for every
+	/// read. Without a seed, the signed-in account pays when there is one. The host keeps the
+	/// measurements in `quality_path` when it is set.
+	pub fn from_env(quality_path: Option<PathBuf>, asset_hub_rpc: &str) -> Option<Self> {
+		let set = |name: &str| std::env::var(name).ok().filter(|value| !value.trim().is_empty());
+		let providers = match (set(PROVIDERS_ENV), set(REGISTRY_ENV)) {
+			(None, None) => return None,
+			(Some(_), Some(_)) => {
+				warn!(
+					"set {PROVIDERS_ENV} or {REGISTRY_ENV}, not both, so lookups go to Bulletin only"
+				);
+				return None;
+			},
+			(Some(path), None) => {
+				info!(providers = path, "preimage lookups ask cache nodes before Bulletin");
+				ProviderSet::File(path.into())
+			},
+			(None, Some(contract)) => {
+				let rpc = set(REGISTRY_RPC_ENV).unwrap_or_else(|| asset_hub_rpc.to_string());
+				match registry::Registry::new(&contract, &rpc) {
+					Ok(registry) => {
+						let registry = Arc::new(registry);
+						info!(
+							"preimage lookups ask the cache nodes of the {}",
+							registry.describe()
+						);
+						registry.start();
+						ProviderSet::Registry(registry)
+					},
+					Err(error) => {
+						warn!(%error, "{REGISTRY_ENV}: lookups go to Bulletin only");
+						return None;
+					},
+				}
+			},
+		};
 		let seed = std::env::var(PAYER_SEED_ENV).ok().filter(|seed| !seed.trim().is_empty());
 		let payer = match seed.map(|seed| payer_from_seed(&seed)) {
 			Some(Ok(payer)) => {
@@ -423,8 +465,7 @@ impl CacheNodes {
 			},
 			None => None,
 		};
-		info!(providers = ?path, "preimage lookups ask cache nodes before Bulletin");
-		Self::new(ProviderSet::File(path.into()), payer, quality_path)
+		Self::new(providers, payer, quality_path)
 	}
 
 	fn new(
@@ -484,6 +525,10 @@ impl CacheNodes {
 					warn!(path = %path.display(), %error, "cannot read the provider set");
 					(Vec::new(), Vec::new())
 				},
+			},
+			ProviderSet::Registry(registry) => {
+				let state = registry.state();
+				(state.ids, state.providers)
 			},
 			#[cfg(test)]
 			ProviderSet::Fixed(ids, callable) => (ids.clone(), callable.clone()),
@@ -635,6 +680,20 @@ impl CacheNodes {
 		let quality = self.quality.lock().expect("cache quality mutex poisoned");
 		let now = Instant::now();
 		let mut status = format!("cache payer {payer}\n");
+		if let ProviderSet::Registry(registry) = &self.providers {
+			let state = registry.state();
+			let block = state
+				.block
+				.map_or_else(|| "no read yet".to_string(), |block| format!("block {block}"));
+			status.push_str(&format!(
+				"{}: {block}, {} records\n",
+				registry.describe(),
+				state.records
+			));
+			if let Some(error) = state.error {
+				status.push_str(&format!("last read failed: {error}\n"));
+			}
+		}
 		if providers.is_empty() {
 			status.push_str("no provider with an API URL in the provider set\n");
 		}

@@ -1832,8 +1832,10 @@ successful no-op.
 
 A preimage lookup the core cannot answer from its own cache goes to the
 network's Bulletin node, by CID over `bitswap_v1_get`. When
-`TRUAPI_CACHE_PROVIDERS` names a provider set file, each read first asks the
-providers in it that have an API URL, with `POST /acquire` for
+`TRUAPI_CACHE_PROVIDERS` names a provider set file, or `TRUAPI_CACHE_REGISTRY`
+names a provider registry contract on Asset Hub (read every 60 s at the newest
+finalized block, the active records with protocol 1 and an `https://` API URL),
+each read first asks the providers in it that have an API URL, with `POST /acquire` for
 `bulletin:<cid>` and a 15 s bound per provider. Each request carries a read
 request signed by the payer key for that provider, the CID, a new transfer id
 and the time in Unix seconds; a provider rejects a request with a transfer id

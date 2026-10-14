@@ -987,6 +987,20 @@ can take reads in the payer's name, and a provider serves each request once.
 TRUAPI_CACHE_PROVIDERS=providers.txt truapi-host signing-host --frame-listen 127.0.0.1:9955
 ```
 
+The provider set can come from the provider registry contract on Asset Hub
+instead of a file. Set `TRUAPI_CACHE_REGISTRY` to the address of the contract.
+The host reads `list()` at the newest finalized block through the runtime API
+`ReviveApi_call`, at start and then every 60 s, from the Asset Hub of the
+network, or from `TRUAPI_CACHE_REGISTRY_RPC`. It uses the active records with
+protocol 1 and an `https://` API URL (`http://` only on the loopback), the rules
+of the cache nodes, so the host and the nodes rank the same home nodes. A failed
+read keeps the set that the host has, and `/cache` shows the contract, the block
+and the last error. The two variables cannot be used together.
+
+```bash
+TRUAPI_CACHE_REGISTRY=0x… truapi-host signing-host --frame-listen 127.0.0.1:9955
+```
+
 For each read the host orders the providers. Providers that failed in the last
 30 s go last. The others go by the latency the host measured (a moving
 average, 50 ms for a provider without measurements). The content's home nodes,
