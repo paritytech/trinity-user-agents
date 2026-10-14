@@ -33,8 +33,73 @@ sealed interface ChatMessageUiModel {
         val text: String,
         val replyPreview: ReplyPreview?,
         val reactions: ImmutableList<Reaction>,
-        val isEdited: Boolean
+        val isEdited: Boolean,
+        /** True for the rich text of a product. The message draws the Markdown subset of Chat Extension v2. */
+        val isMarkdown: Boolean,
     ) : ChatMessageUiModel
+
+    /** Host-drawn buttons of a product under an optional text (Chat Extension v2). */
+    data class Actions(
+        override val id: ChatMessageId,
+        override val timestamp: Timestamp,
+        override val direction: Direction,
+        override val status: Status,
+        override val origin: ChatMessageOrigin,
+        val text: String?,
+        val buttons: ImmutableList<ActionButton>,
+        val layout: ActionsLayout,
+        val reactions: ImmutableList<Reaction>,
+    ) : ChatMessageUiModel {
+        data class ActionButton(val actionId: String, val title: String)
+
+        enum class ActionsLayout { COLUMN, GRID }
+    }
+
+    /** Rich text of a product with media items above the text (Chat Extension v2). */
+    data class ProductMedia(
+        override val id: ChatMessageId,
+        override val timestamp: Timestamp,
+        override val direction: Direction,
+        override val status: Status,
+        override val origin: ChatMessageOrigin,
+        /** Markdown. */
+        val text: String?,
+        val media: ImmutableList<MediaItem>,
+        val replyPreview: ReplyPreview?,
+        val reactions: ImmutableList<Reaction>,
+        val isEdited: Boolean,
+    ) : ChatMessageUiModel {
+        @Immutable
+        sealed interface MediaItem {
+            /** The text for accessibility. */
+            val alt: String?
+
+            /** [model] is what the image loader draws. Null while the host cannot resolve the image. */
+            data class Image(
+                val model: Any?,
+                val width: Int?,
+                val height: Int?,
+                val blurHash: String?,
+                override val alt: String?,
+            ) : MediaItem
+
+            /** [url] is null for inline bytes, which the player cannot stream, so the item shows its poster only. */
+            data class Video(
+                val url: String?,
+                val width: Int?,
+                val height: Int?,
+                val blurHash: String?,
+                override val alt: String?,
+            ) : MediaItem
+
+            data class File(
+                val fileName: String,
+                val size: InformationSize?,
+                val mimeType: String,
+                override val alt: String?,
+            ) : MediaItem
+        }
+    }
 
     data class ContactAdded(
         override val id: ChatMessageId,
@@ -194,7 +259,7 @@ sealed interface ChatMessageUiModel {
         val chatId: ChatId,
     ) : ChatMessageUiModel
 
-    enum class Status { PENDING, SENT, READ, FAILED }
+    enum class Status { PENDING, SENT, DELIVERED, READ, FAILED }
     enum class Direction { INCOMING, OUTGOING }
 
     data class Reaction(val count: Int, val emoji: String, val reactedByUser: Boolean)
@@ -244,7 +309,9 @@ sealed class MessagePopUpUiState {
         val message: ChatMessageUiModel,
         val userReactedEmojis: ImmutableSet<String>,
         val canLeaveReactions: Boolean,
-        val allowedMenuActions: ImmutableList<AllowedMessageMenuAction>
+        val allowedMenuActions: ImmutableList<AllowedMessageMenuAction>,
+        /** The emoji that the picker offers. Null offers all emoji. */
+        val allowedReactions: ImmutableList<String>?,
     ) : MessagePopUpUiState()
 }
 
@@ -275,6 +342,9 @@ sealed interface MessageAction {
     data class ShowReactionDetails(val message: ChatMessageUiModel) : MessageAction
     data class ReplyPreviewTap(val messageId: ChatMessageId) : MessageAction
     data class ViewEditHistory(val message: ChatMessageUiModel) : MessageAction
+    data class ActionPress(val message: ChatMessageUiModel, val actionId: String) : MessageAction
+    data class Delete(val message: ChatMessageUiModel) : MessageAction
+    data class Retry(val message: ChatMessageUiModel) : MessageAction
     data object DismissActionMenu : MessageAction
 }
 
@@ -283,4 +353,6 @@ sealed interface AllowedMessageMenuAction {
     data class Copy(val text: String) : AllowedMessageMenuAction
     data class Edit(val text: String) : AllowedMessageMenuAction
     data object ViewEditHistory : AllowedMessageMenuAction
+    data object Delete : AllowedMessageMenuAction
+    data object Retry : AllowedMessageMenuAction
 }

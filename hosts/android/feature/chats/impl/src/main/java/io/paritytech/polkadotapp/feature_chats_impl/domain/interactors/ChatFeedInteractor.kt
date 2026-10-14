@@ -40,6 +40,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.onContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.userDeclinedIncomingRequest
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
@@ -64,6 +65,9 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallRe
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageEditHistoryItem
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ProductRoomUserActions
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -97,6 +101,8 @@ class ChatFeedInteractor @Inject internal constructor(
     private val attachmentMetaBuilder: AttachmentMetaBuilder,
     private val attachmentFileStorage: AttachmentFileStorage,
     private val hopNodeUrlProvider: HopNodeUrlProvider,
+    private val roomPolicyProvider: ChatRoomPolicyProvider,
+    private val productRoomUserActions: ProductRoomUserActions,
 ) {
     fun initiateCall(chatId: ChatId, callerName: String, withVideo: Boolean): InitiateCallResult {
         val activeCall = callStateTracker.getActiveCall()
@@ -429,6 +435,17 @@ class ChatFeedInteractor @Inject internal constructor(
             removeContactUseCase.removeContact(contactChat.contactAccountId)
         }
     }
+
+    fun observeRoomPolicy(chatId: ChatId): Flow<ChatRoomPolicy?> = roomPolicyProvider.observePolicy(chatId)
+
+    suspend fun triggerMessageAction(chatId: ChatId, messageId: ChatMessageId, actionId: String): Result<Unit> =
+        productRoomUserActions.sendEvent(chatId, ChatRoomUserEvent.ActionTriggered(messageId, actionId))
+
+    suspend fun deleteProductRoomMessage(chatId: ChatId, messageId: ChatMessageId, policy: ChatRoomPolicy): Result<Unit> =
+        productRoomUserActions.deleteMessage(chatId, messageId, policy)
+
+    suspend fun retryProductRoomMessage(chatId: ChatId, messageId: ChatMessageId): Result<Unit> =
+        productRoomUserActions.retry(chatId, messageId)
 
     companion object {
         private val LEFT_CHAT_SENT_TIMEOUT = 15.seconds

@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.direction
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.EmojiReactionGroup
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessagePopUpUiState
@@ -19,6 +20,7 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ReactionDe
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ReplyPreview
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.ChatMenuActionsProvider
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.InputMessageRelation
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.MessagePopUpSelection
@@ -36,6 +38,7 @@ import javax.inject.Inject
 class ChatMessageUiMapper @Inject constructor(
     private val helper: ChatMessageMappingHelper,
     private val chatMenuActionsProvider: ChatMenuActionsProvider,
+    private val productBodyUiMapper: ProductBodyUiMapper,
 ) {
     suspend fun map(
         messages: List<ChatMessage>,
@@ -83,9 +86,10 @@ class ChatMessageUiMapper @Inject constructor(
         originDisplayResolver: MessageOriginDisplayResolver,
         messages: List<ChatMessageUiModel>,
         userInputState: ChatUserInputState,
+        roomPolicy: ChatRoomPolicy?,
     ): MessagePopUpUiState? {
         return when (selection.type) {
-            MessagePopUpSelection.Type.ACTIONS -> constructActionMenuPopUpState(selection.messageId, reactions, messages, userInputState)
+            MessagePopUpSelection.Type.ACTIONS -> constructActionMenuPopUpState(selection.messageId, reactions, messages, userInputState, roomPolicy)
             MessagePopUpSelection.Type.REACTION_DETAILS -> constructReactionDetailsPopUpState(selection.messageId, reactions, originDisplayResolver)
         }
     }
@@ -112,6 +116,12 @@ class ChatMessageUiMapper @Inject constructor(
             is ChatMessageUiModel.File -> ReplyPreview.Content.File(fileName = message.fileName, caption = message.text)
 
             is ChatMessageUiModel.CoinagePayment -> ReplyPreview.Content.Payment(message.amount, message.direction)
+
+            is ChatMessageUiModel.Actions -> ReplyPreview.Content.Text(message.text ?: message.buttons.firstOrNull()?.title ?: return null)
+
+            is ChatMessageUiModel.ProductMedia -> ReplyPreview.Content.Text(
+                message.text ?: message.media.firstNotNullOfOrNull { it.alt } ?: return null
+            )
 
             else -> return null
         }
@@ -220,6 +230,24 @@ class ChatMessageUiMapper @Inject constructor(
                 origin = origin,
             )
 
+            is ChatMessage.Content.ProductBody -> productBodyUiMapper.map(
+                message = this,
+                body = latestContent.body,
+                direction = direction,
+                status = status,
+                replyPreview = buildReplyPreview(
+                    message = this,
+                    allMessages = messagesById,
+                    revisions = revisions,
+                    originDisplayResolver = originDisplayResolver,
+                    mappingHelper = helper
+                ),
+                reactions = messageReactions,
+                isEdited = isEdited,
+            )
+
+            is ChatMessage.Content.Deleted -> null
+
             is ChatMessage.Content.ChatRequest -> mapChatRequest(
                 message = this,
                 content = latestContent,
@@ -294,6 +322,7 @@ class ChatMessageUiMapper @Inject constructor(
         reactions: Map<ChatMessageId, List<ChatMessageReaction>>,
         messages: List<ChatMessageUiModel>,
         userInputState: ChatUserInputState,
+        roomPolicy: ChatRoomPolicy?,
     ): MessagePopUpUiState.ActionMenu? {
         val messageReactions = reactions[messageId].orEmpty()
         val userReactedEmojis = messageReactions
@@ -306,8 +335,9 @@ class ChatMessageUiMapper @Inject constructor(
         return MessagePopUpUiState.ActionMenu(
             message = message,
             userReactedEmojis = userReactedEmojis,
-            canLeaveReactions = chatMenuActionsProvider.canLeaveMenuReactions(userInputState),
-            allowedMenuActions = chatMenuActionsProvider.getMessageActions(message, userInputState).toImmutableList(),
+            canLeaveReactions = chatMenuActionsProvider.canLeaveMenuReactions(userInputState, roomPolicy),
+            allowedMenuActions = chatMenuActionsProvider.getMessageActions(message, userInputState, roomPolicy).toImmutableList(),
+            allowedReactions = roomPolicy?.messageMenu?.allowedReactions?.toImmutableList(),
         )
     }
 }
@@ -359,7 +389,8 @@ private suspend fun mapText(
         replyPreview = replyPreview,
         reactions = messageReactions,
         origin = message.origin,
-        isEdited = isEdited
+        isEdited = isEdited,
+        isMarkdown = false
     )
 }
 
@@ -436,7 +467,8 @@ private fun mapAttachmentToUi(
             replyPreview = replyPreview,
             reactions = messageReactions,
             origin = message.origin,
-            isEdited = isEdited
+            isEdited = isEdited,
+            isMarkdown = false
         )
     }
 
@@ -562,6 +594,7 @@ private suspend fun ChatMessage.Content.toReplyPreviewContent(
     is ChatMessage.Content.Text -> ReplyPreview.Content.Text(text)
     is ChatMessage.Content.ChatRequest -> welcome?.text?.let { ReplyPreview.Content.Text(it) }
     is ChatMessage.Content.RichText -> toReplyPreviewContent()
+    is ChatMessage.Content.ProductBody -> body.previewText()?.let { ReplyPreview.Content.Text(it) }
     is ChatMessage.Content.CoinagePayment -> ReplyPreview.Content.Payment(mappingHelper.extractTokenAmount(this), direction.toUi())
 
     is ChatMessage.Content.ChatAccepted,
@@ -581,7 +614,8 @@ private suspend fun ChatMessage.Content.toReplyPreviewContent(
     is ChatMessage.Content.DeviceAdded,
     is ChatMessage.Content.DeviceRemoved,
     is ChatMessage.Content.CompactionCommit,
-    is ChatMessage.Content.CompactionUnavailable -> null
+    is ChatMessage.Content.CompactionUnavailable,
+    ChatMessage.Content.Deleted -> null
 }
 
 private fun ChatMessage.Content.RichText.toReplyPreviewContent(): ReplyPreview.Content {

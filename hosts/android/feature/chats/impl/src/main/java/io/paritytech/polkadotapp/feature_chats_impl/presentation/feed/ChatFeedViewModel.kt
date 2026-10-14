@@ -18,7 +18,6 @@ import io.paritytech.polkadotapp.common.utils.combineToPair
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.common.utils.mapResult
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult
 import io.paritytech.polkadotapp.common.utils.shareInBackground
@@ -54,11 +53,13 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAno
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.toPresentationError
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.ChatMessageUiMapper
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatInputUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRequestAnswerProgress
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatSendMessageInputState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.InputMessageRelation
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.MessagePopUpSelection
@@ -66,9 +67,11 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.cle
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.isNotNone
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.sendableMessageState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.sendableMessageText
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentExecutor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentResult
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.roomAvatar
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import kotlinx.collections.immutable.persistentListOf
@@ -108,6 +111,7 @@ class ChatFeedViewModel @Inject constructor(
     private val permissionAsker: PermissionAsker,
     private val attachmentExecutor: AttachmentExecutor,
     private val dispatchers: CoroutineDispatchers,
+    private val resourceResolver: ChatResourceResolver,
     draftControllerFactory: ChatDraftController.Factory,
     callStateTracker: CallStateTracker
 ) : BaseViewModel(), ChatFeedContract {
@@ -121,6 +125,12 @@ class ChatFeedViewModel @Inject constructor(
     override val highlightEvents = _highlightEvents.receiveAsFlow()
     override val scrollToPosition = MutableSharedFlow<Int>()
     private val lastReadMessageTimestamp = MutableStateFlow<Timestamp>(0)
+
+    private val roomPolicy = interactor.observeRoomPolicy(chatId).shareInBackground()
+
+    override val roomState = roomPolicy
+        .map { it.toRoomUiState() }
+        .stateInBackground(initialValue = ChatRoomUiState.PersonChat)
 
     private val originDisplayResolver = flowOf { interactor.getMessageOriginDisplayResolver(openChatRequest) }
         .shareInBackground()
@@ -167,8 +177,9 @@ class ChatFeedViewModel @Inject constructor(
         messageUiMapper.map(messages, originDisplayResolver, reactions, revisionsMap, customMessageRenderers, activeCall)
     }.shareInBackground()
 
-    override val chatDisplay = interactor.observeChatDisplay(openChatRequest)
-        .mapResult { it.toUi() }
+    override val chatDisplay = combine(interactor.observeChatDisplay(openChatRequest), roomPolicy) { display, policy ->
+        display.map { ChatDisplayUiModel(username = it.name, avatarModel = resourceResolver.roomAvatar(it.avatar, policy?.avatar)) }
+    }
         .withLoading()
         .stateInBackground(initialValue = LoadingState.Loading)
 
@@ -200,11 +211,11 @@ class ChatFeedViewModel @Inject constructor(
         reactions,
         originDisplayResolver,
         messages,
-        chatInputStateType,
-    ) { popupSelection, reactions, originDisplayResolver, messagesList, chatInputStateType ->
+        combineToPair(chatInputStateType, roomPolicy),
+    ) { popupSelection, reactions, originDisplayResolver, messagesList, (chatInputStateType, policy) ->
         if (popupSelection == null) return@combine null
 
-        messageUiMapper.constructPopUpState(popupSelection, reactions, originDisplayResolver, messagesList, chatInputStateType)
+        messageUiMapper.constructPopUpState(popupSelection, reactions, originDisplayResolver, messagesList, chatInputStateType, policy)
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     private val messageInputState = MutableStateFlow(ChatSendMessageInputState())
@@ -506,10 +517,36 @@ class ChatFeedViewModel @Inject constructor(
                 showMessageHistory(action.message.id)
             }
 
+            is MessageAction.ActionPress -> launchUnit {
+                interactor.triggerMessageAction(chatId, action.message.id, action.actionId)
+                    .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
+            }
+
+            is MessageAction.Delete -> {
+                messagePopupSection.update { null }
+                menuState.update { it.copy(isVisible = true, type = ChatMenuType.DeleteMessageConfirmation(action.message.id)) }
+            }
+
+            is MessageAction.Retry -> {
+                messagePopupSection.update { null }
+                launchUnit {
+                    interactor.retryProductRoomMessage(chatId, action.message.id)
+                        .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
+                }
+            }
+
             is MessageAction.DismissActionMenu -> {
                 messagePopupSection.update { null }
             }
         }
+    }
+
+    override fun onDeleteMessageConfirm(messageId: ChatMessageId) = launchUnit {
+        onCloseMenu()
+
+        val policy = roomPolicy.first() ?: return@launchUnit
+        interactor.deleteProductRoomMessage(chatId, messageId, policy)
+            .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
     }
 
     override fun onAcceptChatRequest() = launchUnit {

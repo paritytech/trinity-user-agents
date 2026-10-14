@@ -67,6 +67,28 @@ fun TextMessageLayout(
     timestamp: (@Composable () -> Unit)? = null,
     visibleCharCount: Int = Int.MAX_VALUE,
 ) {
+    TextMessageLayout(
+        modifier = modifier,
+        annotatedText = rememberTextWithLinks(text, direction),
+        style = style,
+        color = color,
+        status = status,
+        timestamp = timestamp,
+        visibleCharCount = visibleCharCount,
+    )
+}
+
+/** The same layout for a text that already has its styles and links, for example rendered Markdown. */
+@Composable
+fun TextMessageLayout(
+    modifier: Modifier = Modifier,
+    annotatedText: AnnotatedString,
+    style: TextStyle,
+    color: Color = Color.Unspecified,
+    status: (@Composable () -> Unit)? = null,
+    timestamp: (@Composable () -> Unit)? = null,
+    visibleCharCount: Int = Int.MAX_VALUE,
+) {
     val textPadding = PolkadotTheme.spacings.extraMedium
     val suffixBottomPadding = PolkadotTheme.spacings.small
     val suffixEndPadding = PolkadotTheme.spacings.small
@@ -75,7 +97,6 @@ fun TextMessageLayout(
     val textToSuffixGap = 6.dp
 
     val textMeasurer = rememberTextMeasurer()
-    val annotatedText = rememberTextWithLinks(text, direction)
     val displayedText = if (visibleCharCount >= annotatedText.length) {
         annotatedText
     } else {
@@ -347,6 +368,7 @@ private fun previewTextMessage(
         text = "",
         replyPreview = null,
         reactions = persistentListOf(),
-        isEdited = false
+        isEdited = false,
+        isMarkdown = false
     )
 }

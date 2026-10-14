@@ -65,6 +65,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
     val headerRenderer by contract.headerRenderer.collectAsStateWithLifecycle()
     val customAppearance by contract.customAppearance.collectAsStateWithLifecycle()
     val revealingMessageId by contract.revealingMessageId.collectAsStateWithLifecycle()
+    val roomState by contract.roomState.collectAsStateWithLifecycle()
     val popupState = contract.popupState.collectAsStateWithLifecycle().value
     var menuLayoutInfo by remember { mutableStateOf<MessageLayoutInfo?>(null) }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -98,6 +99,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         revealingMessageId = revealingMessageId,
         onMessageRevealComplete = contract::onMessageRevealComplete,
         toolbarActions = toolbarActions,
+        roomState = roomState,
         highlightEvents = contract.highlightEvents,
         scrollToPosition = contract.scrollToPosition,
         onBackClick = contract::onBackClick,
@@ -128,7 +130,8 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onLeaveChatRequest = contract::onLeaveChatRequest,
         onLeaveChatConfirm = contract::onLeaveChatConfirm,
         onBlockUserRequest = contract::onBlockUserRequest,
-        onBlockUserConfirm = contract::onBlockUserConfirm
+        onBlockUserConfirm = contract::onBlockUserConfirm,
+        onDeleteMessageConfirm = contract::onDeleteMessageConfirm,
     )
 
     when (popupState) {
@@ -164,6 +167,7 @@ private fun ChatFeedScreenInternal(
     revealingMessageId: ChatMessageId?,
     onMessageRevealComplete: (ChatMessageId) -> Unit,
     toolbarActions: ImmutableList<ChatToolbarAction>,
+    roomState: ChatRoomUiState,
     highlightEvents: Flow<HighlightedMessage>,
     scrollToPosition: Flow<Int>,
     onBackClick: () -> Unit,
@@ -205,6 +209,7 @@ private fun ChatFeedScreenInternal(
                 ChatFeedToolbar(
                     displayState = displayState,
                     toolbarActions = toolbarActions,
+                    subtitle = roomState.subtitle,
                     showAvatar = config.showAvatar,
                     onBack = onBackClick,
                     onStartCallClick = onStartCallClick,
@@ -237,6 +242,7 @@ private fun ChatFeedScreenInternal(
                             slideInNewMessages = customAppearance != null,
                             showNewMessagesSeparator = config.showNewMessagesSeparator,
                             dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
+                            emptyPlaceholder = roomState.emptyPlaceholder,
                         )
                     }
                 }
@@ -302,7 +308,8 @@ private fun ChatFeedPreview() {
                                     reactions = persistentListOf(),
                                     origin = ChatMessageOrigin.User,
                                     replyPreview = null,
-                                    isEdited = false
+                                    isEdited = false,
+                                    isMarkdown = false
                                 ),
                                 ChatMessageUiModel.Text(
                                     id = "2",
@@ -313,7 +320,8 @@ private fun ChatFeedPreview() {
                                     reactions = persistentListOf(),
                                     origin = ChatMessageOrigin.User,
                                     replyPreview = null,
-                                    isEdited = false
+                                    isEdited = false,
+                                    isMarkdown = false
                                 ),
                                 ChatMessageUiModel.ContactAdded(
                                     id = "3",
@@ -331,6 +339,7 @@ private fun ChatFeedPreview() {
                     revealingMessageId = null,
                     onMessageRevealComplete = {},
                     toolbarActions = persistentListOf(ChatToolbarAction.VIDEO_CALL),
+                    roomState = ChatRoomUiState.PersonChat,
                     highlightEvents = emptyFlow(),
                     scrollToPosition = emptyFlow(),
                     onBackClick = {},

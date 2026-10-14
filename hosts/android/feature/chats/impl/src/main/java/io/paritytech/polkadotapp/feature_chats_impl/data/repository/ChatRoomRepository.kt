@@ -24,6 +24,11 @@ interface ChatRoomRepository : ReadOnlyChatRoomRepository {
 
     suspend fun updateRoomMetadata(chatId: ChatId, metadata: RoomMetadata)
 
+    suspend fun roomExists(chatId: ChatId): Boolean
+
+    /** Replaces the name of the room and keeps its icon. */
+    suspend fun renameRoom(chatId: ChatId, name: String)
+
     fun subscribeChatSummaries(): Flow<List<ChatRoomSummaryLocal>>
 }
 
@@ -62,6 +67,12 @@ class RealChatRoomRepository @Inject constructor(
 
     override suspend fun updateRoomMetadata(chatId: ChatId, metadata: RoomMetadata) {
         chatRoomDao.updateMetadata(chatId.toLocal(), metadata.name, metadata.icon)
+    }
+
+    override suspend fun roomExists(chatId: ChatId): Boolean = chatRoomDao.exists(chatId.toLocal())
+
+    override suspend fun renameRoom(chatId: ChatId, name: String) {
+        chatRoomDao.updateName(chatId.toLocal(), name)
     }
 
     override suspend fun getRoomMetadata(chatId: ChatId): RoomMetadata {

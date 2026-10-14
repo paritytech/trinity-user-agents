@@ -25,6 +25,7 @@ import kotlinx.collections.immutable.toPersistentList
 internal fun ChatFeedToolbar(
     displayState: LoadingState<ChatDisplayUiModel>,
     toolbarActions: ImmutableList<ChatToolbarAction>,
+    subtitle: String?,
     showAvatar: Boolean,
     onBack: () -> Unit,
     onStartCallClick: (withVideo: Boolean) -> Unit,
@@ -66,7 +67,7 @@ internal fun ChatFeedToolbar(
     PolkadotTopBar(
         navigationAction = rememberTopBarAction(action = onBack, icon = NovaIcons.ArrowLeft),
         title = displayData?.username,
-        subtitle = null,
+        subtitle = subtitle,
         actions = resolvedActions,
         leadingContent = leadingAvatar,
     )

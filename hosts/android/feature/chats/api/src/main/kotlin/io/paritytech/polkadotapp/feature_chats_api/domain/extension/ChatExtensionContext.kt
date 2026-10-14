@@ -1,9 +1,18 @@
 package io.paritytech.polkadotapp.feature_chats_api.domain.extension
 
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import kotlinx.coroutines.flow.Flow
 import kotlin.reflect.KClass
 
@@ -34,6 +43,33 @@ interface ChatExtensionContext {
     suspend fun markMessageProcessed(chatId: ChatId, messageId: ChatMessageId)
 
     fun subscribeOwnRooms(): Flow<List<ChatId>>
+
+    // Chat Extension v2. Each call below fails with [UnknownChatRoomException] when the extension owns no such room.
+
+    /** What the extension declared for the room. Null when it declared nothing. */
+    suspend fun roomDeclarations(chatId: ChatId): ChatRoomDeclarations?
+
+    /**
+     * Replaces the configuration of the room. The same configuration writes nothing. A change of
+     * [ChatRoomConfigModel.productSource] discards the stored messages of the room.
+     */
+    suspend fun setRoomConfig(chatId: ChatId, config: ChatRoomConfigModel): Result<Unit>
+
+    /** Replaces the name, the description and the avatar of the room. The v1 icon of the room stays. */
+    suspend fun setRoomMetadata(chatId: ChatId, name: String, metadata: ChatRoomMetadataModel): Result<Unit>
+
+    suspend fun setRoomPreview(chatId: ChatId, preview: ChatRoomPreviewModel): Result<Unit>
+
+    suspend fun setRoomToolbar(chatId: ChatId, actions: List<ChatToolbarActionModel>): Result<Unit>
+
+    suspend fun setRoomSuggestions(chatId: ChatId, suggestions: List<ChatSuggestionModel>): Result<Unit>
+
+    suspend fun setRoomCommands(chatId: ChatId, commands: List<ChatCommandModel>): Result<Unit>
+
+    suspend fun setRoomFooter(chatId: ChatId, footer: ChatRoomFooterModel): Result<Unit>
+
+    /** Shows the activity line of the room, or removes it with null. The host keeps it in memory only. */
+    suspend fun setRoomActivity(chatId: ChatId, activity: ChatRoomActivityModel?): Result<Unit>
 }
 
 suspend fun ChatExtensionContext.markMessageProcessed(message: ChatMessage) {

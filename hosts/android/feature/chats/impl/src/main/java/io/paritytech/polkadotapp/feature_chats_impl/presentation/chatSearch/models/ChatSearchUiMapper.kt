@@ -132,7 +132,9 @@ private fun Chat?.toRowStatus(): ChatSearchRowStatus {
 
 private fun ChatSummaryBadge.toBadgeUi(): ChatListUiState.Badge {
     return when (this) {
+        // A search row does not load images, so a product badge image shows as no badge.
         is ChatSummaryBadge.Notification,
+        is ChatSummaryBadge.Image,
         is ChatSummaryBadge.None -> ChatListUiState.Badge.None
 
         is ChatSummaryBadge.Unread -> ChatListUiState.Badge.Unread(count)

@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 
 class Chat(
     val id: ChatId,
@@ -15,5 +16,7 @@ class Chat(
     /**
      * @see [ChatSummary.customPreviewRenderer] for explanation why is it here
      */
-    val customPreviewRenderer: CustomChatPreviewRenderer<*>?
+    val customPreviewRenderer: CustomChatPreviewRenderer<*>?,
+    /** Null for a person chat. */
+    val roomPolicy: ChatRoomPolicy?,
 )

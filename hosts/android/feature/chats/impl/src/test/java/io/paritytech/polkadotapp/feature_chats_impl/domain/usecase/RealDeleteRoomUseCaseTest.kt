@@ -1,0 +1,42 @@
+package io.paritytech.polkadotapp.feature_chats_impl.domain.usecase
+
+import io.mockk.coVerify
+import io.mockk.mockk
+import io.mockk.verify
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomActivityWriter
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomDeclarationsWriter
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
+import kotlinx.coroutines.runBlocking
+import org.junit.Test
+
+class RealDeleteRoomUseCaseTest {
+    private val room = ChatId.forExtensionRoom("ProductBot_game.dot", "lobby")
+
+    private val chatRoomRepository: ChatRoomRepository = mockk(relaxed = true)
+    private val chatMessageRepository: ChatMessageRepository = mockk(relaxed = true)
+    private val chatDraftRepository: ChatDraftRepository = mockk(relaxed = true)
+    private val declarationsWriter: ChatRoomDeclarationsWriter = mockk(relaxed = true)
+    private val activityWriter: ChatRoomActivityWriter = mockk(relaxed = true)
+
+    private val useCase = RealDeleteRoomUseCase(
+        chatRoomRepository = chatRoomRepository,
+        chatMessageRepository = chatMessageRepository,
+        chatDraftRepository = chatDraftRepository,
+        declarationsWriter = declarationsWriter,
+        activityWriter = activityWriter,
+    )
+
+    @Test
+    fun `deleting a room removes its messages, draft, declarations and activity line`() = runBlocking<Unit> {
+        useCase.invoke(room)
+
+        coVerify { chatRoomRepository.deleteRoom(room) }
+        coVerify { chatMessageRepository.deleteAllChatMessages(room) }
+        coVerify { chatDraftRepository.deleteDraft(room) }
+        coVerify { declarationsWriter.delete(room) }
+        verify { activityWriter.set(room, null) }
+    }
+}

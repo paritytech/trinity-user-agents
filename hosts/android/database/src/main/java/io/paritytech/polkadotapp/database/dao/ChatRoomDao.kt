@@ -23,6 +23,12 @@ abstract class ChatRoomDao {
     @Query("SELECT * FROM chat_rooms")
     abstract fun subscribeAllRooms(): Flow<List<ChatRoomLocal>>
 
+    @Query("SELECT EXISTS(SELECT 1 FROM chat_rooms WHERE id = :chatId)")
+    abstract suspend fun exists(chatId: ByteArray): Boolean
+
+    @Query("UPDATE chat_rooms SET name = :name WHERE id = :chatId")
+    abstract suspend fun updateName(chatId: ByteArray, name: String)
+
     @Query("UPDATE chat_rooms SET name = :name, icon = :icon WHERE id = :chatId")
     abstract suspend fun updateMetadata(chatId: ByteArray, name: String?, icon: String?)
 
@@ -43,7 +49,8 @@ abstract class ChatRoomDao {
                m.status AS msg_status, COALESCE(rev.type, m.type) AS msg_type,
                m.searchableContent AS msg_searchableContent,
                COALESCE(rev.content, m.content) AS msg_content,
-               m.replyToMessageId AS msg_replyToMessageId, m.isInternal AS msg_isInternal
+               m.replyToMessageId AS msg_replyToMessageId, m.isInternal AS msg_isInternal,
+               m.originParticipantId AS msg_originParticipantId
         FROM chat_rooms r
         LEFT JOIN (
             SELECT chatId,

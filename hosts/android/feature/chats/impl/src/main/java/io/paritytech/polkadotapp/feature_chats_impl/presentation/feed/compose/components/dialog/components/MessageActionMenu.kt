@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ContentCopy
 import io.paritytech.polkadotapp.design.components.icon.vectors.Edit
 import io.paritytech.polkadotapp.design.components.icon.vectors.ReplyArrow
+import io.paritytech.polkadotapp.design.components.icon.vectors.Trash
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -22,6 +23,7 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.AllowedMes
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageAction
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessagePopUpUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.icons.EditHistory
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.icons.MessageStatusFailed
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -76,6 +78,23 @@ internal fun ActionMenuList(
                             onClick = { onMessageAction(MessageAction.ViewEditHistory(state.message)) }
                         )
                     }
+
+                    is AllowedMessageMenuAction.Retry -> {
+                        ActionMenuItem(
+                            text = stringResource(RCommon.string.common_retry),
+                            icon = MessageStatusFailed,
+                            onClick = { onMessageAction(MessageAction.Retry(state.message)) }
+                        )
+                    }
+
+                    is AllowedMessageMenuAction.Delete -> {
+                        ActionMenuItem(
+                            text = stringResource(RCommon.string.common_delete),
+                            icon = NovaIcons.Trash,
+                            onClick = { onMessageAction(MessageAction.Delete(state.message)) },
+                            isDestructive = true,
+                        )
+                    }
                 }
             }
         }
@@ -87,7 +106,10 @@ private fun ActionMenuItem(
     text: String,
     icon: ImageVector,
     onClick: () -> Unit,
+    isDestructive: Boolean = false,
 ) {
+    val color = if (isDestructive) PolkadotTheme.colors.fg.error else PolkadotTheme.colors.fg.primary
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -101,7 +123,7 @@ private fun ActionMenuItem(
         NovaIcon(
             modifier = Modifier.size(20.dp),
             imageVector = icon,
-            tint = PolkadotTheme.colors.fg.primary
+            tint = color
         )
 
         HorizontalSpacer { smallIncreased }
@@ -109,7 +131,7 @@ private fun ActionMenuItem(
         NovaText(
             text = text,
             style = PolkadotTheme.typography.body.large,
-            color = PolkadotTheme.colors.fg.primary
+            color = color
         )
     }
 }

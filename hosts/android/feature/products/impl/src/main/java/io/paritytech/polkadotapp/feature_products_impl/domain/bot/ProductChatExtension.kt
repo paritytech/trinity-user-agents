@@ -2,6 +2,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
 import io.paritytech.polkadotapp.common.utils.childScope
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
@@ -10,10 +12,19 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesR
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
@@ -34,14 +45,12 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -63,6 +72,7 @@ class ProductChatExtension(
     appContext: Context,
     val product: Product,
     private val workerRefCounter: ProductWorkerRefCounter,
+    private val declarationsRepository: ChatRoomDeclarationsRepository,
     val origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
@@ -81,12 +91,12 @@ class ProductChatExtension(
     // Strong ref to the messaging target bound weakly onto the shared worker; held for our lifetime.
     private var chatMessaging: ProductChatMessaging? = null
 
-    // Rooms the product asked to show nothing below the messages. Absent means the text input, the default.
-    private val roomsWithoutInput = MutableStateFlow(emptySet<ProductChatIdParameter>())
-
+    // A footer that the product draws hides the input until the host can draw it (P8.6).
     override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> {
-        val room = chatId.productRoomId(id) ?: return flowOf(true)
-        return roomsWithoutInput.map { room !in it }.distinctUntilChanged()
+        if (chatId.productRoomId(id) == null) return flowOf(true)
+        return declarationsRepository.observe(chatId)
+            .map { declarations -> (declarations ?: ChatRoomDeclarations.EMPTY).effectiveFooter is ChatRoomFooterModel.Input }
+            .distinctUntilChanged()
     }
 
     override fun customMessageRenderers(): List<CustomChatMessageRenderer<*>> {
@@ -179,13 +189,6 @@ class ProductChatExtension(
             return Result.success(chatMessage.id)
         }
 
-        override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
-            roomsWithoutInput.update { rooms ->
-                if (showsTextInput) rooms - chatIdParameter else rooms + chatIdParameter
-            }
-            return Result.success(Unit)
-        }
-
         override fun subscribeChatRooms(): Flow<List<ProductChatRoom>> {
             return extensionContext.subscribeOwnRooms().map { chatIds ->
                 chatIds.mapNotNull { chatId ->
@@ -194,8 +197,48 @@ class ProductChatExtension(
             }
         }
 
+        override suspend fun roomDeclarations(chatIdParameter: ProductChatIdParameter): Result<ChatRoomDeclarations?> =
+            runCancellableCatching { extensionContext.roomDeclarations(chatIdParameter.toChatId(id)) }
+
+        override suspend fun setRoomConfig(chatIdParameter: ProductChatIdParameter, config: ChatRoomConfigModel): Result<Unit> =
+            extensionContext.setRoomConfig(chatIdParameter.toChatId(id), config)
+
+        override suspend fun setRoomMetadata(
+            chatIdParameter: ProductChatIdParameter,
+            name: String,
+            metadata: ChatRoomMetadataModel,
+        ): Result<Unit> = extensionContext.setRoomMetadata(chatIdParameter.toChatId(id), name, metadata)
+
+        override suspend fun setRoomPreview(chatIdParameter: ProductChatIdParameter, preview: ChatRoomPreviewModel): Result<Unit> =
+            extensionContext.setRoomPreview(chatIdParameter.toChatId(id), preview)
+
+        override suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter): Result<Unit> =
+            runCancellableCatching { extensionContext.deleteRoom(chatIdParameter.toChatId(id)) }
+
+        override suspend fun setRoomToolbar(
+            chatIdParameter: ProductChatIdParameter,
+            actions: List<ChatToolbarActionModel>,
+        ): Result<Unit> = extensionContext.setRoomToolbar(chatIdParameter.toChatId(id), actions)
+
+        override suspend fun setRoomSuggestions(
+            chatIdParameter: ProductChatIdParameter,
+            suggestions: List<ChatSuggestionModel>,
+        ): Result<Unit> = extensionContext.setRoomSuggestions(chatIdParameter.toChatId(id), suggestions)
+
+        override suspend fun setRoomCommands(chatIdParameter: ProductChatIdParameter, commands: List<ChatCommandModel>): Result<Unit> =
+            extensionContext.setRoomCommands(chatIdParameter.toChatId(id), commands)
+
+        override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ChatRoomFooterModel): Result<Unit> =
+            extensionContext.setRoomFooter(chatIdParameter.toChatId(id), footer)
+
+        override suspend fun setRoomActivity(
+            chatIdParameter: ProductChatIdParameter,
+            activity: ChatRoomActivityModel?,
+        ): Result<Unit> = extensionContext.setRoomActivity(chatIdParameter.toChatId(id), activity)
+
         private fun ProductBotMessage.toChatMessageContent(): ChatMessage.Content = when (this) {
             is ProductBotMessage.Text -> ChatMessage.Content.Text(text)
+            is ProductBotMessage.Body -> ChatMessage.Content.ProductBody(body)
             is ProductBotMessage.Custom -> {
                 val messageContent = ProductsMessageContent(messageType, data, alt)
                 ChatMessage.Content.Custom(
