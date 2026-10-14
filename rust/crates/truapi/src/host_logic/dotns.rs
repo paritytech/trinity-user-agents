@@ -244,7 +244,7 @@ fn classify_localhost(input: &str) -> Option<NavigateDecision> {
 /// a [`NavigateDecision::Reject`] so dangerous schemes (`javascript:`,
 /// `data:`, `file:`, `vbscript:`, ...) cannot reach `Platform::navigate_to`.
 const ALLOWED_EXTERNAL_SCHEMES: &[&str] =
-	&["http", "https", "mailto", "tel", "sms", "maps", "polkadot", "polkadotapp", "dot"];
+	&["http", "https", "mailto", "tel", "sms", "maps", "polkadotapp"];
 
 /// Mirrors `normalizeUrl`: prepend `https://` if missing, otherwise pass the
 /// URL through as its canonical string form. Returns `Err(reason)` for an
@@ -285,7 +285,6 @@ mod tests {
 
 	enum Expected {
 		Decision(NavigateDecision),
-		AnyExternalOrReject,
 		Reject,
 	}
 
@@ -471,9 +470,9 @@ mod tests {
 				expected: dot("game.dot", "shop/-/pocket"),
 			},
 			TestCase {
-				name: "polkadot scheme non dot host falls through",
-				input: "polkadot://example.com/settings",
-				expected: Expected::AnyExternalOrReject,
+				name: "polkadotapp scheme hands off to the app",
+				input: "polkadotapp://pay",
+				expected: external("polkadotapp://pay"),
 			},
 			TestCase {
 				name: "polkadot scheme with path",
@@ -635,28 +634,6 @@ mod tests {
 				input: "maps:?q=Berlin",
 				expected: external("maps:?q=Berlin"),
 			},
-			TestCase {
-				name: "external polkadot mobile payment",
-				input: "polkadotapp://pay",
-				expected: external("polkadotapp://pay"),
-			},
-			TestCase {
-				name: "external polkadot mobile payment parameters",
-				input: "polkadotapp://pay?address=1xXvM8o8N7hGp4cCdHAFSC3g9N2rfQdbH8H6d9SjsUd2rck&amount=1000000&lockAmount=true",
-				expected: external(
-					"polkadotapp://pay?address=1xXvM8o8N7hGp4cCdHAFSC3g9N2rfQdbH8H6d9SjsUd2rck&amount=1000000&lockAmount=true",
-				),
-			},
-			TestCase {
-				name: "external polkadot mobile preserves encoded query and fragment",
-				input: "polkadotapp://pay?label=Coffee%20%26%20cake#receipt",
-				expected: external("polkadotapp://pay?label=Coffee%20%26%20cake#receipt"),
-			},
-			TestCase {
-				name: "external polkadot mobile normalizes scheme case",
-				input: "POLKADOTAPP://pay?amount=1000000&lockAmount=true",
-				expected: external("polkadotapp://pay?amount=1000000&lockAmount=true"),
-			},
 			TestCase { name: "reject empty", input: "", expected: Expected::Reject },
 			TestCase { name: "reject whitespace", input: "   ", expected: Expected::Reject },
 			TestCase {
@@ -690,16 +667,6 @@ mod tests {
 			let actual = parse_navigate(case.input);
 			match case.expected {
 				Expected::Decision(expected) => assert_eq!(actual, expected, "{}", case.name),
-				Expected::AnyExternalOrReject => {
-					assert!(
-						matches!(
-							actual,
-							NavigateDecision::External { .. } | NavigateDecision::Reject { .. }
-						),
-						"{}: expected External or Reject, got {actual:?}",
-						case.name,
-					)
-				},
 				Expected::Reject => {
 					assert!(
 						matches!(actual, NavigateDecision::Reject { .. }),

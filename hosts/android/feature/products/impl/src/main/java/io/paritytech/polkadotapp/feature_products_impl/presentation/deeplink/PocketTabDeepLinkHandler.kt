@@ -10,6 +10,8 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccoun
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import javax.inject.Inject
 
+// `polkadotapp://pocket` is for links from no product: `navigate_to` refuses the `polkadotapp:` scheme, so a product
+// links to `/-/pocket` under its own name instead.
 internal class PocketTabDeepLinkHandler @Inject constructor(
     private val accountRepository: AccountRepository,
     private val router: ProductsRouter,

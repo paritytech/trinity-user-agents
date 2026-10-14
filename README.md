@@ -95,10 +95,6 @@ The [permission model](docs/rfcs/0002-permission-model.md) separates outbound do
 Android permission prompts belong to one request and close when it finishes or is cancelled,
 including cancellation while the app is backgrounded.
 
-Use `system.navigateTo` with `polkadot://<product>.<tld>/<path>` to open a product,
-or `polkadotapp://pay?...` to open a payment link through the host. Payment links
-require `OpenUrl` permission and retain their address, amount, and other parameters.
-
 The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`,
 on every supported network) only for device permissions and legacy-account signing.
 All other operations it handles bypass permission prompts and recorded decisions.
