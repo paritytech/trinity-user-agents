@@ -234,6 +234,13 @@ impl HostRpcClient {
         self.inner.closed.load(Ordering::Relaxed)
     }
 
+    /// Close the connection for every holder, failing its pending requests
+    /// and subscriptions, so a pool holding it opens a fresh one.
+    pub fn close(&self) {
+        self.inner
+            .close_with_error(client_error("json-rpc connection closed as unresponsive"));
+    }
+
     /// Send a JSON-RPC request without waiting for its response.
     ///
     /// Used by best-effort notifications where the caller must not block on
