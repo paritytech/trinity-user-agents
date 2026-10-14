@@ -13,6 +13,21 @@ class RecordingWorker : ProductWorker {
     val renderedRooms = mutableListOf<ProductChatIdParameter?>()
     val events = mutableListOf<JsUiEvent>()
     val roomEvents = mutableListOf<Pair<ProductChatIdParameter, ProductRoomEvent>>()
+    val roomCalls = mutableListOf<Pair<String, ProductChatIdParameter>>()
+    var briefHolds = 0
+
+    override suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> {
+        roomCalls += "open" to roomId
+        return Result.success(Unit)
+    }
+
+    override suspend fun closeRoom(roomId: ProductChatIdParameter) {
+        roomCalls += "close" to roomId
+    }
+
+    override fun holdBriefly() {
+        briefHolds++
+    }
 
     override suspend fun publishRoomEvent(roomId: ProductChatIdParameter, event: ProductRoomEvent): Result<Unit> {
         roomEvents += roomId to event

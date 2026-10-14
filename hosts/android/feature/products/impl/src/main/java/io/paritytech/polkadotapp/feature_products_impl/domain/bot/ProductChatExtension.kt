@@ -25,10 +25,18 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
@@ -52,6 +60,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -143,7 +152,12 @@ class ProductChatExtension(
                 reference.enableModalityApi(WorkerModalityApi.Chat(messaging))
                 // A boot failure must surface as failed calls, not as a chat that waits forever.
                 runCatching { reference.worker() }.fold(
-                    onSuccess = runningWorker::attach,
+                    onSuccess = { worker ->
+                        runningWorker.attach(worker)
+                        // A product with no room yet has no screen to start it, so it runs a short while to create one.
+                        val ownRooms = chatExtensionContext.subscribeOwnRooms().firstOrNull().orEmpty()
+                        if (ownRooms.none { it.productRoomId(id) != null }) worker.holdBriefly()
+                    },
                     onFailure = { error ->
                         if (error is CancellationException) throw error
                         Timber.e(error, "No worker to drive the chat of ${product.id.value}")
@@ -173,6 +187,35 @@ class ProductChatExtension(
         botScope = null
         chatMessaging = null
         Timber.d("Disposed product bot: ${product.name}")
+    }
+
+    override fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle? {
+        if (chatId.productRoomId(id) == null) return null
+        return object : ChatRoomLifecycle {
+            override suspend fun open(chatId: ChatId): Result<Unit> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(UnknownChatRoomException())
+                return runningWorker.openRoom(room)
+            }
+
+            override suspend fun close(chatId: ChatId) {
+                chatId.productRoomId(id)?.let { runningWorker.closeRoom(it) }
+            }
+        }
+    }
+
+    override fun roomQuerying(chatId: ChatId): ProductChatQuerying? {
+        if (chatId.productRoomId(id) == null) return null
+        return object : ProductChatQuerying {
+            override suspend fun messagesPage(chatId: ChatId, anchor: ChatPageAnchorModel, pageSize: Int): Result<ProductMessagesPage> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.messagesPage(room, anchor, pageSize)
+            }
+
+            override suspend fun userAction(chatId: ChatId, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.userAction(room, action)
+            }
+        }
     }
 
     override suspend fun onUserEvent(chatId: ChatId, event: ChatRoomUserEvent) {

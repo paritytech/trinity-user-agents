@@ -41,6 +41,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.onContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.userDeclinedIncomingRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
@@ -263,6 +264,17 @@ class ChatFeedInteractor @Inject internal constructor(
     suspend fun triggerMessageAction(chatId: ChatId, messageId: ChatMessageId, actionId: String) {
         chatEngine.dispatchUserEvent(chatId, ChatRoomUserEvent.ActionTriggered(messageId, actionId))
     }
+
+    /**
+     * Holds the worker of a product room while the room screen shows it, and tells the product. Call
+     * [closeRoom] once for each [openRoom] that succeeds. A person chat holds nothing.
+     */
+    suspend fun openRoom(chatId: ChatId): Result<Unit> = chatEngine.roomLifecycle(chatId).open(chatId)
+
+    suspend fun closeRoom(chatId: ChatId) = chatEngine.roomLifecycle(chatId).close(chatId)
+
+    /** The page and user-action queries of a room whose messages the product keeps, or null without a product. */
+    suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? = chatEngine.roomQuerying(chatId)
 
     /** A product action of a menu, the toolbar or a suggestion that the user selected. */
     suspend fun sendUserEvent(chatId: ChatId, event: ChatRoomUserEvent) {

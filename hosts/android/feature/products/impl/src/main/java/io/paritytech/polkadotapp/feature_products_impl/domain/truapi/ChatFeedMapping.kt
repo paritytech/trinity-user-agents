@@ -1,16 +1,28 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.parity.truapi.ChatQueryException
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReactionSummaryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageStatus
+import uniffi.truapi.ChatPageAnchor
+import uniffi.truapi.ChatUserAction
+import uniffi.truapi.ProductChatMessagesQueryItem
+import uniffi.truapi.ProductChatQueryError
+import uniffi.truapi.ProductChatUserActionError
+import uniffi.truapi.ProductChatUserActionItem
 import uniffi.truapi.ChatMessage as CoreChatMessage
 
 // Maps the messages that cross the wire to the chat models of the app, and back. [rendererId] is the
@@ -70,4 +82,48 @@ fun ChatMessageStatus.toModel(): ProductMessageStatusModel = when (this) {
     ChatMessageStatus.DELIVERED -> ProductMessageStatusModel.DELIVERED
     ChatMessageStatus.READ -> ProductMessageStatusModel.READ
     ChatMessageStatus.FAILED -> ProductMessageStatusModel.FAILED
+}
+
+fun ChatPageAnchorModel.toCore(): ChatPageAnchor = when (this) {
+    is ChatPageAnchorModel.After -> ChatPageAnchor.After(cursor)
+    is ChatPageAnchorModel.Before -> ChatPageAnchor.Before(cursor)
+}
+
+/** Null when a new or edited message has no body for the product. */
+fun ChatUserActionModel.toCore(): ChatUserAction? = when (this) {
+    is ChatUserActionModel.NewMessage -> content.toCoreBody()?.let { ChatUserAction.NewMessage(it, replyTo) }
+    is ChatUserActionModel.EditMessage -> content.toCoreBody()?.let { ChatUserAction.EditMessage(messageId, it) }
+    is ChatUserActionModel.DeleteMessage -> ChatUserAction.DeleteMessage(messageId)
+    is ChatUserActionModel.ReactionPlaced -> ChatUserAction.ReactionPlaced(messageId, emoji)
+    is ChatUserActionModel.ReactionRemoved -> ChatUserAction.ReactionRemoved(messageId, emoji)
+    is ChatUserActionModel.Seen -> ChatUserAction.Seen(messageId)
+    is ChatUserActionModel.Retry -> ChatUserAction.Retry(messageId)
+}
+
+fun ProductChatMessagesQueryItem.toModel(rendererId: String) =
+    ProductMessagesPage(messages = messages.map { it.toModel(rendererId) }, next = next)
+
+fun ProductChatUserActionItem.toModel(rendererId: String): ChatUserActionOutcome = when (this) {
+    is ProductChatUserActionItem.MessageCreated -> ChatUserActionOutcome.MessageCreated(v1.toModel(rendererId))
+    ProductChatUserActionItem.Acknowledged -> ChatUserActionOutcome.Acknowledged
+}
+
+/** The failure that a room screen shows for a query that has no answer. */
+fun Throwable.toQueryException(): ProductChatQueryException = when (this) {
+    is ProductChatQueryException -> this
+    is ChatQueryException.Refused -> when (val error = error) {
+        ProductChatQueryError.NotAvailable -> ProductChatQueryException.NotAvailable()
+        ProductChatQueryError.UnknownRoom -> ProductChatQueryException.UnknownRoom()
+        is ProductChatQueryError.Unknown -> ProductChatQueryException.Failed(error.reason)
+    }
+    is ChatQueryException.ActionRefused -> when (val error = error) {
+        ProductChatUserActionError.UnknownRoom -> ProductChatQueryException.UnknownRoom()
+        ProductChatUserActionError.UnknownMessage -> ProductChatQueryException.UnknownMessage()
+        is ProductChatUserActionError.Rejected -> ProductChatQueryException.Rejected(error.reason)
+        is ProductChatUserActionError.Unknown -> ProductChatQueryException.Failed(error.reason)
+    }
+    is ChatQueryException.Failed -> ProductChatQueryException.Failed(reason)
+    is ChatQueryException.NoAnswer -> ProductChatQueryException.NoAnswer()
+    is ChatQueryException.TimedOut -> ProductChatQueryException.TimedOut()
+    else -> ProductChatQueryException.Unavailable(this)
 }

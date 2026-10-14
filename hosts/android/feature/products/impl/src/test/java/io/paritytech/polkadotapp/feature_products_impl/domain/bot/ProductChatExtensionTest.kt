@@ -312,6 +312,37 @@ class ProductChatExtensionTest {
 
     private fun userMessage(content: ChatMessage.Content) = ChatMessage.new(chatId = room, content = content, origin = ChatMessageOrigin.User)
 
+    @Test
+    fun `a product without a room runs a short while to create one`() = runTest {
+        val worker = RecordingWorker()
+
+        withChatHost(ownRooms = flowOf(emptyList())) { extension(FakeRefCounter(worker)).startGlobalWork() }
+
+        assertEquals(1, worker.briefHolds)
+    }
+
+    @Test
+    fun `a product with a room waits for a screen to open it`() = runTest {
+        val worker = RecordingWorker()
+
+        withChatHost(ownRooms = flowOf(listOf(room))) { extension(FakeRefCounter(worker)).startGlobalWork() }
+
+        assertEquals(0, worker.briefHolds)
+    }
+
+    @Test
+    fun `a room screen opens and closes the room of the product`() = runTest {
+        val worker = RecordingWorker()
+        val extension = extension(FakeRefCounter(worker))
+        withChatHost(ownRooms = flowOf(listOf(room))) { extension.startGlobalWork() }
+
+        val lifecycle = requireNotNull(extension.roomLifecycle(room))
+        lifecycle.open(room)
+        lifecycle.close(room)
+
+        assertEquals(listOf("open" to ProductChatIdParameter(ROOM), "close" to ProductChatIdParameter(ROOM)), worker.roomCalls)
+        assertEquals(null, extension.roomLifecycle(ChatId.forExtension(extensionId)))
+
     private suspend fun ProductChatExtension.pinnedAndRemovable(chatId: ChatId): Pair<ChatPreview?, Boolean> = coroutineScope {
         val computationalScope = object : ComputationalScope, CoroutineScope by this {}
         val preview = with(computationalScope) { customChatPreviewDelegate(chatId).provider.provide().first() }
