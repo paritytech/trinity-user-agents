@@ -25,11 +25,11 @@ import { err, ok } from "neverthrow";
 import { scale } from "@parity/truapi";
 
 import type {
-  ChatMessageContent,
+  ChatMessage,
   ChatRoom,
   GenericError,
+  HostChatActionSubscribeItem,
   HostChatListSubscribeItem,
-  HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostLocaleSubscribeItem,
   HostLocalStorageChangeItem,
@@ -48,6 +48,15 @@ import type {
   RequiredHostCallbacks,
   UserConfirmationReview,
 } from "../generated/host-callbacks.js";
+import {
+  createMockChat,
+  type ChatMessageRecord,
+  type MockChatListRow,
+  type MockChatRoom,
+  type MockChatUser,
+} from "./mock-chat.js";
+
+export type { ChatMessageRecord } from "./mock-chat.js";
 import type { ProductRuntimeConfig } from "../runtime.js";
 
 /** How the mock answers a permission prompt for one capability. */
@@ -341,16 +350,6 @@ export interface SigningLogEntry {
   payload: unknown;
 }
 
-/** One chat message the product posted through the mock. */
-export interface ChatMessageRecord {
-  /** Id the mock assigned and returned to the product. */
-  messageId: string;
-  /** Room the message was posted to. */
-  roomId: string;
-  /** What was posted. */
-  payload: ChatMessageContent;
-}
-
 /** State of the mock's chain connection, as the host sees it. */
 export type ChainStatus = "Idle" | "Connected" | "Disconnected";
 
@@ -572,6 +571,33 @@ export interface MockHost {
   /** Messages the product posted, with the ids the mock assigned. */
   getChatMessageLog(): ChatMessageRecord[];
   /**
+   * What the product declared for every chat room, in room id order: the
+   * metadata, the configuration, the preview, the footer, the toolbar, the
+   * suggestions, the commands, the activity line, and every feed update.
+   */
+  rooms(): MockChatRoom[];
+  /** What the product declared for one room, or `undefined` for no room. */
+  room(roomId: string): MockChatRoom | undefined;
+  /**
+   * The messages of a room, oldest first. A room the host stores gives its
+   * store. A room the product keeps gives the screen and page cache: the
+   * pages the host asked for and the feed updates the product pushed.
+   */
+  feed(roomId: string): ChatMessage[];
+  /**
+   * The chat list row of a room: the declared preview over the host
+   * defaults of RFC §4 (the newest message, the host unread count).
+   */
+  preview(roomId: string): MockChatListRow | undefined;
+  /** Every chat event the mock sent to the product, in order. */
+  events(): HostChatActionSubscribeItem[];
+  /**
+   * The user and the host screen of the chat rooms. It asks the product the
+   * chat queries and sends the chat events, through the host runtime that
+   * `chatUser.attach` gives it.
+   */
+  chatUser: MockChatUser;
+  /**
    * Product-scoped storage the core has written, keyed without the internal
    * namespace prefix.
    *
@@ -614,7 +640,10 @@ export interface MockHost {
   clearPreimages(): void;
   /** Drop the product and core storage contents. */
   clearStorage(): void;
-  /** Drop the registered rooms and bots and the posted-message log. */
+  /**
+   * Drop the registered rooms, their declarations and messages, the bots,
+   * the posted-message log, the sent events and the chat user recordings.
+   */
   clearChatState(): void;
   /**
    * Return the mock to its freshly-constructed state, keeping its config.
@@ -900,14 +929,10 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   const openOperations: OpenOperation[] = [];
   let nextOperationId = 0;
   const permissionDecisions = new Map<string, boolean>();
-  const chatRooms = new Map<string, ChatRoom>();
-  const chatBots = new Map<string, HostChatRegisterBotRequest>();
-  const chatMessages: ChatMessageRecord[] = [];
   // Ids start at 1, not 0: the id is what the product cancels by, and a
   // product that treats 0 as "no id" cannot cancel the first notification it
   // ever schedules.
   let nextNotificationId = 1;
-  let nextChatMessageId = 0;
   let devicePermissions = devicePermissionsInitial;
   let remotePermissions = remotePermissionsInitial;
   let enforcePermissions = false;
@@ -918,22 +943,20 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   /** Ends one live subscription each, so `dispose` can close them all. */
   const subscriptionClosers = new Set<() => void>();
   const themeSubscribers = new Set<(item: HostThemeSubscribeItem) => void>();
-  const chatRoomSubscribers = new Set<
-    (item: HostChatListSubscribeItem) => void
-  >();
-  /**
-   * Entries in key order, which is the order the Rust mock's `BTreeMap`
-   * yields. Insertion order would put a different list in the subscription
-   * payload than the sibling host sends for the same rooms.
-   */
-  const byKey = <T>(entries: Map<string, T>): T[] =>
-    [...entries.entries()]
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(([, value]) => value);
-  const publishChatRooms = (): void => {
-    const item = { rooms: byKey(chatRooms) };
-    for (const push of chatRoomSubscribers) push(item);
-  };
+  // The rooms are in key order, the order the Rust mock's `BTreeMap` gives.
+  // Insertion order gives a different list in the subscription payload than
+  // the Rust mock sends for the same rooms.
+  const chat = createMockChat({
+    ...(faults.chatError === undefined ? {} : { chatError: faults.chatError }),
+    liveRooms: (first, register) =>
+      liveSubscription<HostChatListSubscribeItem>(
+        first,
+        subscriptionClosers,
+        register,
+      ),
+    failedRooms: (reason) =>
+      failedSubscription<HostChatListSubscribeItem>(reason),
+  });
   let chainStatus: ChainStatus = "Idle";
   /**
    * One socket per proxied endpoint.
@@ -1311,65 +1334,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
     },
 
-    chat: {
-      async createChatRoom(_product, request) {
-        if (faults.chatError) throw new Error(faults.chatError);
-        if (chatRooms.has(request.roomId)) return { status: "Exists" };
-        chatRooms.set(request.roomId, {
-          roomId: request.roomId,
-          // A product that creates a room hosts it; a product reaching a room
-          // as a bot registers the bot instead.
-          participatingAs: "RoomHost",
-        });
-        publishChatRooms();
-        return { status: "New" };
-      },
-      async registerChatBot(_product, request) {
-        if (faults.chatError) throw new Error(faults.chatError);
-        if (chatBots.has(request.botId)) return { status: "Exists" };
-        chatBots.set(request.botId, request);
-        return { status: "New" };
-      },
-      async postChatMessage(
-        _product,
-        request,
-      ): Promise<HostChatPostMessageResponse> {
-        if (faults.chatError) throw new Error(faults.chatError);
-        // Posting to a room the product never registered is a product bug,
-        // and a mock that silently accepted it would hide one.
-        if (!chatRooms.has(request.roomId)) {
-          throw new Error(`unknown chat room ${request.roomId}`);
-        }
-        const messageId = `mock-message:${nextChatMessageId++}`;
-        chatMessages.push({
-          messageId,
-          roomId: request.roomId,
-          payload: request.payload,
-        });
-        return { messageId };
-      },
-      async setChatRoomFooter() {
-        if (faults.chatError) throw new Error(faults.chatError);
-      },
-      subscribeChatRooms() {
-        // The other chat calls fail with this reason, so the subscription
-        // reports it too rather than handing back a stream that looks healthy
-        // and never carries the rooms a failing host would refuse to list.
-        if (faults.chatError) {
-          return failedSubscription<HostChatListSubscribeItem>(
-            faults.chatError,
-          );
-        }
-        return liveSubscription<HostChatListSubscribeItem>(
-          { rooms: byKey(chatRooms) },
-          subscriptionClosers,
-          (push) => {
-            chatRoomSubscribers.add(push);
-            return () => chatRoomSubscribers.delete(push);
-          },
-        );
-      },
-    },
+    chat: chat.callbacks,
 
     locale: {
       async *subscribeLocale(): AsyncGenerator<
@@ -1536,9 +1501,15 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       chainStatus = "Idle";
     },
     getOpenOperations: () => [...openOperations],
-    getChatRooms: () => byKey(chatRooms),
-    getChatBots: () => byKey(chatBots),
-    getChatMessageLog: () => [...chatMessages],
+    getChatRooms: () => chat.chatRooms(),
+    getChatBots: () => chat.chatBots(),
+    getChatMessageLog: () => chat.postedMessages(),
+    rooms: () => chat.rooms(),
+    room: (roomId: string) => chat.room(roomId),
+    feed: (roomId: string) => chat.feed(roomId),
+    preview: (roomId: string) => chat.preview(roomId),
+    events: () => chat.events(),
+    chatUser: chat.user,
     seedPreimage(value) {
       const key = preimageKey(value);
       preimages.set(hex(key), value);
@@ -1596,11 +1567,8 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     clearPreimages: () => preimages.clear(),
     clearStorage: () => storage.clear(),
     clearChatState: () => {
-      chatRooms.clear();
-      chatBots.clear();
-      chatMessages.length = 0;
       // Live subscriptions stay open and see the emptied list, as on Rust.
-      publishChatRooms();
+      chat.clear();
     },
     reset() {
       this.clearNavigationLog();
@@ -1626,7 +1594,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       chainStatus = "Idle";
       enforcePermissions = false;
       nextNotificationId = 1;
-      nextChatMessageId = 0;
       hostCallCount = 0;
     },
     statements: notModeled("statements"),
