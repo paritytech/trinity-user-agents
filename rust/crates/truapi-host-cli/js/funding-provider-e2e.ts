@@ -189,6 +189,7 @@ export async function runProviderStart(
   const check = rowFactory(rows);
   const served = serve(client);
   let inbound = "";
+  let outbound = "";
   let state: ProviderState | undefined;
 
   await check("provider_assigned", async () => {
@@ -343,7 +344,7 @@ export async function runProviderStart(
   });
 
   await check("provider_out_released", async () => {
-    const outbound = await requestFunding(client, "Out", OUT_AMOUNT);
+    outbound = await requestFunding(client, "Out", OUT_AMOUNT);
     await served.next(assignedTo(outbound), `the session ${outbound}`);
     const paymentId = randomId();
     const paid = await client.payment.request({
@@ -363,6 +364,27 @@ export async function runProviderStart(
       throw new Error(`ended as ${stringify(last)}`);
     }
     return "the core released the session once the named payment completed";
+  });
+
+  await check("provider_payout_retrying", async () => {
+    if (!outbound) throw new Error("no released withdrawal");
+    await report(client, outbound, { tag: "Converting" });
+    await report(client, outbound, { tag: "PayoutRetrying" });
+    await report(client, outbound, { tag: "PayoutRetrying" });
+    await report(client, outbound, {
+      tag: "Payout",
+      value: { outcome: { tag: "PaidOut" } },
+    });
+    const late = await client.fundingProvider.report({
+      intent: outbound,
+      update: { tag: "PayoutRetrying" },
+    });
+    if (!late.isErr() || !stringify(late.error).includes("OutOfOrder")) {
+      throw new Error(
+        `a retry after the payout was not refused: ${stringify(late)}`,
+      );
+    }
+    return "retries were taken after the release, and refused once the payout was reported";
   });
 
   await check("provider_cancel", async () => {

@@ -73,11 +73,17 @@ impl FromLatest for HostLocalStorageReadResponse {
 impl IntoLatest for HostLocalStorageReadError {
 	fn into_latest(self) -> Self::Latest {
 		match self {
-			Self::V1(v01::HostLocalStorageReadError::Full) => v02::HostLocalStorageReadError::Full,
-			Self::V1(v01::HostLocalStorageReadError::Unknown { reason }) => {
-				v02::HostLocalStorageReadError::Unknown { reason }
-			},
+			Self::V1(error) => error.into(),
 			Self::V2(latest) => latest,
+		}
+	}
+}
+
+impl From<v01::HostLocalStorageReadError> for v02::HostLocalStorageReadError {
+	fn from(error: v01::HostLocalStorageReadError) -> Self {
+		match error {
+			v01::HostLocalStorageReadError::Full => Self::Full,
+			v01::HostLocalStorageReadError::Unknown { reason } => Self::Unknown { reason },
 		}
 	}
 }

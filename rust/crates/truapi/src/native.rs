@@ -24,6 +24,7 @@ mod executor;
 mod platform;
 mod renderer;
 mod runtime;
+mod subscribers;
 mod ws_bridge;
 
 pub use crate::{
