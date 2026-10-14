@@ -10,6 +10,7 @@ protocol ModuleNavigating: AnyObject {
         transitioningDelegate: UIViewControllerTransitioningDelegate?
     )
     func openProduct(page: ProductPage)
+    func openPocket()
     func openScanPanel()
 }
 
@@ -83,6 +84,16 @@ extension ModuleNavigator: ModuleNavigating {
         }
 
         tabBar.openProduct(page: page)
+    }
+
+    func openPocket() {
+        guard let view = UIApplication.shared.mainTabBarController else {
+            return
+        }
+
+        // A card is a modal over the tabs, so the Pocket would be selected unseen.
+        view.presentedViewController?.dismiss(animated: true)
+        view.select(tab: .wallet)
     }
 
     func openScanPanel() {

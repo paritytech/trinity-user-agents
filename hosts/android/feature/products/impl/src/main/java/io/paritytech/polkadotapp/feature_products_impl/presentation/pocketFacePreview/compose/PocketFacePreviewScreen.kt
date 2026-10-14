@@ -30,6 +30,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardSize
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview.PocketFacePreviewContract
 import io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview.PocketFacePreviewState
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -92,14 +93,16 @@ private fun PocketFacePreviewScreenInternal(
 
                 // The same frame the approval sheet gives a card, so what is drawn here is the size
                 // and shape the user will actually see.
-                PolkadotSurface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(PocketCardSize.HEIGHT),
-                    shape = PolkadotTheme.shapes.large,
-                    color = PolkadotTheme.colors.bg.surface.container,
-                ) {
-                    FaceOrExplanation(face = state.face)
+                PocketCardTheme {
+                    PolkadotSurface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(PocketCardSize.HEIGHT),
+                        shape = PolkadotTheme.shapes.large,
+                        color = PolkadotTheme.colors.bg.surface.container,
+                    ) {
+                        FaceOrExplanation(face = state.face)
+                    }
                 }
             }
         }
