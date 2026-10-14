@@ -1,5 +1,4 @@
 // Minimal server wire contract for testing macro expansions independently of runtime I/O.
-#[allow(dead_code)]
 mod host_internal {
     pub mod sso_wire {
         use super::sso_messages::{Response, v1::RemoteMessage};
@@ -32,6 +31,7 @@ mod host_internal {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct BarRequest;
 
+        #[derive(Debug, PartialEq, Eq)]
         pub struct Response<P> {
             pub responding_to: String,
             pub payload: P,
