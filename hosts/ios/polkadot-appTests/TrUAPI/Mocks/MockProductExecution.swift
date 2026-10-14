@@ -103,6 +103,50 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         publishedChatActions.append(item)
     }
 
+    func publishChatEvent(roomId _: String, peer _: String, event _: ChatEvent) throws {}
+
+    func chatMessagesQuery(
+        _: ProductChatMessagesQueryRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatMessagesQueryItem {
+        throw ChatQueryError.refused(.notAvailable)
+    }
+
+    func chatUserAction(
+        _: ProductChatUserActionRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatUserActionItem {
+        throw ChatQueryError.actionRefused(.unknownRoom)
+    }
+
+    func chatReactionsQuery(
+        _: ProductChatReactionsQueryRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatReactionsQueryItem {
+        throw ChatQueryError.refused(.notAvailable)
+    }
+
+    func chatParticipantsQuery(
+        _: ProductChatParticipantsQueryRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatParticipantsQueryItem {
+        throw ChatQueryError.refused(.notAvailable)
+    }
+
+    func chatMessageActionsQuery(
+        _: ProductChatMessageActionsQueryRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatMessageActionsQueryItem {
+        throw ChatQueryError.refused(.notAvailable)
+    }
+
+    func chatParticipantActionsQuery(
+        _: ProductChatParticipantActionsQueryRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatParticipantActionsQueryItem {
+        throw ChatQueryError.refused(.notAvailable)
+    }
+
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {
         renderRequests.append(request)
         if !renderErrors.isEmpty {
