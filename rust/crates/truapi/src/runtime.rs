@@ -42,6 +42,8 @@ pub mod statement_allowance;
 /// `StatementStore` surface: proofs plus submit and subscribe flows.
 pub mod statement_store;
 mod statement_store_rpc;
+#[cfg(feature = "test-host")]
+mod test_resource_controls;
 mod vrf;
 
 use core::{future::Future, time::Duration};
