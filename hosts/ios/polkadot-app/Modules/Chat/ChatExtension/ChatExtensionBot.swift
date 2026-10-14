@@ -96,7 +96,8 @@ class ChatExtensionBot {
              .productBody,
              .deviceAdded,
              .deviceRemoved,
-             .call:
+             .call,
+             .deleted:
             return .skipped
         }
     }

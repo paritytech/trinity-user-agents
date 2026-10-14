@@ -262,7 +262,8 @@ private extension ContactsListViewModelFactory {
 
         case .reacted,
              .reactionRemoved,
-             .compactedMessages:
+             .compactedMessages,
+             .deleted:
             return nil
 
         case let .edited(editedContent):

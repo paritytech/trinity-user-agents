@@ -97,7 +97,8 @@ private extension Chat.LocalMessage.Status.OutgoingStatus {
         switch self {
         case .new: .pending
         case .sent: .sent
-        case .delivered: .delivered
+        case .delivered,
+             .read: .delivered
         case .failed: .failed
         }
     }

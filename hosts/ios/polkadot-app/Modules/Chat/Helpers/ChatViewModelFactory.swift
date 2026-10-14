@@ -131,7 +131,8 @@ extension ChatViewModelFactory: ChatViewModelMaking {
         case .token,
              .reacted,
              .reactionRemoved,
-             .edited:
+             .edited,
+             .deleted:
             return false
 
         case .call(.offer):
@@ -511,7 +512,8 @@ private extension ChatViewModelFactory {
                 )
             ]
 
-        case .compactedMessages:
+        case .compactedMessages,
+             .deleted:
             return []
 
         case let .productBody(body):
@@ -1037,7 +1039,8 @@ extension Chat.LocalMessage.Status.OutgoingStatus {
         switch self {
         case .new: .pending
         case .sent: .sent
-        case .delivered: .delivered
+        case .delivered,
+             .read: .delivered
         case .failed: .failed
         }
     }

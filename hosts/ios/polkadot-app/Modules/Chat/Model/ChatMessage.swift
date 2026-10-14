@@ -178,6 +178,9 @@ extension Chat.LocalMessage {
         case multiChatAccepted(Chat.RemoteMessageContentV1.MessageContent.DeviceChatAccepted)
         case call(CallSignalingPayload)
         case productBody(ProductBody)
+        /// The row of a message that was deleted. The row stays, so replies, the extension history and the
+        /// last message of the chat keep a valid reference.
+        case deleted
 
         enum CallSignalingPayload: Equatable {
             case offer(Chat.RemoteMessageContentV1.MessageContent.DataChannelOfferContent)
@@ -276,6 +279,7 @@ extension Chat.LocalMessage.Content {
         case deviceRemoved = 18
         case compactedMessages = 19
         case multiChatAccepted = 20
+        case deleted = 246
         case productBody = 247
         case versionedChatRequest = 248
         case call = 249
@@ -337,7 +341,8 @@ extension Chat.LocalMessage.Content {
             case .token,
                  .compactedMessages,
                  .deviceAdded,
-                 .deviceRemoved:
+                 .deviceRemoved,
+                 .deleted:
                 true
             }
         }
@@ -369,7 +374,8 @@ extension Chat.LocalMessage.Content {
                  .compactedMessages,
                  .deviceAdded,
                  .deviceRemoved,
-                 .call:
+                 .call,
+                 .deleted:
                 false
             }
         }
@@ -401,7 +407,8 @@ extension Chat.LocalMessage.Content {
                  .compactedMessages,
                  .deviceAdded,
                  .deviceRemoved,
-                 .call:
+                 .call,
+                 .deleted:
                 false
             }
         }
@@ -459,6 +466,8 @@ extension Chat.LocalMessage.Content {
             .call
         case .productBody:
             .productBody
+        case .deleted:
+            .deleted
         }
     }
 
@@ -496,7 +505,8 @@ extension Chat.LocalMessage.Content {
              .compactedMessages,
              .deviceAdded,
              .deviceRemoved,
-             .call:
+             .call,
+             .deleted:
             nil
         }
     }
@@ -606,6 +616,8 @@ extension Chat.LocalMessage {
             case sent
             case delivered
             case failed
+            /// The peer saw the message.
+            case read
         }
 
         enum IncomingStatus: String, Equatable {
@@ -655,6 +667,7 @@ extension Chat.LocalMessage.Status: RawRepresentable {
         case 3: self = .outgoing(.delivered)
         case 4: self = .incoming(.seen)
         case 5: self = .outgoing(.failed)
+        case 6: self = .outgoing(.read)
         default: return nil
         }
     }
@@ -667,6 +680,7 @@ extension Chat.LocalMessage.Status: RawRepresentable {
         case .outgoing(.delivered): 3
         case .incoming(.seen): 4
         case .outgoing(.failed): 5
+        case .outgoing(.read): 6
         }
     }
 }
@@ -694,7 +708,8 @@ extension Chat.LocalMessage.Status.OutgoingStatus: Comparable {
         case .new: 0
         case .sent: 1
         case .delivered: 2
-        case .failed: 3
+        case .read: 3
+        case .failed: 4
         }
     }
 }

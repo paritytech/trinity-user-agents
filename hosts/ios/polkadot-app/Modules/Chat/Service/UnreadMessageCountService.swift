@@ -70,7 +70,8 @@ private extension UnreadMessageCountService {
         NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.reactionRemoved.rawValue)),
         NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.token.rawValue)),
         NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.deviceAdded.rawValue)),
-        NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.deviceRemoved.rawValue))
+        NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.deviceRemoved.rawValue)),
+        NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.deleted.rawValue))
     ]
 }
 

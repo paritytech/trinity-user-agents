@@ -85,6 +85,8 @@ extension Chat.LocalMessage.Content: ScaleCodable {
             )
         case .productBody:
             self = try .productBody(ProductBody(scaleDecoder: scaleDecoder))
+        case .deleted:
+            self = .deleted
         case .none:
             throw ScaleCodingError.unexpectedDecodedValue
         }
@@ -150,6 +152,8 @@ extension Chat.LocalMessage.Content: ScaleCodable {
             try content.encode(scaleEncoder: scaleEncoder)
         case let .productBody(body):
             try body.encode(scaleEncoder: scaleEncoder)
+        case .deleted:
+            break
         }
     }
 }
