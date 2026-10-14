@@ -109,6 +109,14 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   rather than importing a concrete protocol version. Runtime code may use
   `truapi::versioned::*` for wire envelopes, but should unwrap them into latest
   payloads immediately.
+- In `rust/crates/truapi/src/runtime/capabilities/`, capture
+  `request.version()` before calling `request.into_latest()`. Handle requests
+  using `latest` payloads, and convert responses, subscription items, and domain
+  errors with `FromLatest::from_latest(value, version)` at the capability
+  boundary, including early-return paths. Keep framework errors unchanged.
+  Internal helpers use latest payloads and errors. Add missing canonical types
+  to `truapi::latest`; do not match or construct `V1`/`V2` envelopes in capability
+  logic. Preserve this pattern when adding or refactoring methods.
 - Inter-host SSO uses `#[sso_service]` as described
   in the [macro guide](rust/crates/truapi-macros/README.md). Keep per-variant pairing,
   dispatch, and correlation in that macro; do not add manual per-variant catalogs.

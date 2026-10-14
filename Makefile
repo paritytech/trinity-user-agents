@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cross-product-ringvrf-context e2e-preimage-submit-prompt e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -480,17 +480,11 @@ e2e-chat-cli: ## Run the Chat content-screening battery against a chat signing-h
 e2e-pocket-cli: ## Run the Pocket protocol battery against a Pocket signing-host CLI.
 	scripts/battery.sh --pocket-host
 
-e2e-cross-product-storage: ## One product reads another's storage on the signing-host CLI, granted by a local product config.
-	scripts/cross-product-storage-e2e.sh
+CROSS_PRODUCT_SCENARIOS := $(patsubst scripts/cross-product-%-e2e.sh,%,$(wildcard scripts/cross-product-*-e2e.sh))
 
-e2e-cross-product-ringvrf: ## One product signs with another's ring-VRF key on the signing-host CLI, granted by a local product config.
-	scripts/cross-product-ringvrf-e2e.sh
-
-e2e-cross-product-signing: ## One product signs with another's account on the signing-host CLI, granted by a local product config.
-	scripts/cross-product-signing-e2e.sh
-
-e2e-cross-product-ringvrf-context: ## One product proves with another's ring-VRF key in a third product's context on the signing-host CLI, granted by local product configs.
-	scripts/cross-product-ringvrf-context-e2e.sh
+e2e-cross-product: ## One product uses another's storage, keys or accounts on the signing-host CLI. Pick a scenario with SCENARIO=<name>.
+	@test -x scripts/cross-product-$(SCENARIO)-e2e.sh || { echo "SCENARIO must be one of: $(CROSS_PRODUCT_SCENARIOS)" >&2; exit 1; }
+	scripts/cross-product-$(SCENARIO)-e2e.sh
 
 e2e-preimage-submit-prompt: ## Upload preimages under a PreimageSubmit grant on the signing-host CLI with no per-upload confirmation.
 	scripts/preimage-submit-prompt-e2e.sh
