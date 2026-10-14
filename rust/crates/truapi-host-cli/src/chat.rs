@@ -554,7 +554,11 @@ mod tests {
 	fn post(host: &CliChatHost, room_id: &str, content: ChatMessageContent) -> String {
 		futures::executor::block_on(host.post_chat_message(
 			&product(),
-			HostChatPostMessageRequest { room_id: room_id.to_string(), payload: content },
+			HostChatPostMessageRequest {
+				room_id: room_id.to_string(),
+				payload: content,
+				alt: None,
+			},
 		))
 		.expect("the room exists")
 		.message_id
