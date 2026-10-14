@@ -15,7 +15,7 @@
 #     app/...
 #
 # The app builds without it and then has no bundled provider. Build-time
-# FUNDTEST_* variables (FUNDTEST_FAUCET_SEED, ...) are passed through to the
+# FUNDTEST_* variables (FUNDTEST_CARD_ARRIVAL_MS, ...) are passed through to the
 # provider's build.
 #
 # Usage: hosts/android/scripts/bundle-funding-provider.sh
