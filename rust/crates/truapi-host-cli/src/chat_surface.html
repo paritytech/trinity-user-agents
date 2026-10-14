@@ -143,7 +143,8 @@ section { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
 .empty { margin: auto; text-align: center; color: var(--muted); max-width: 360px; }
 .empty p { font: italic 18px var(--sans); color: var(--ink); margin: 0 0 8px; }
 .empty code { font: 12px var(--mono); color: var(--warn); }
-.msg { display: flex; gap: 10px; align-items: flex-end; max-width: 72%; animation: rise 0.18s ease-out; }
+.msg { display: flex; gap: 10px; align-items: flex-end; max-width: 72%; }
+.msg.fresh { animation: rise 0.18s ease-out; }
 .msg.person { align-self: flex-end; flex-direction: row-reverse; }
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
 .bubble {
@@ -204,6 +205,79 @@ aside[hidden], section[hidden] { display: none; }
 .logline.WRN { color: var(--warn); }
 .logline.ERR, .logline.FTL { color: var(--err); }
 .logfoot { padding: 6px 14px; border-top: 1px solid var(--line); font: 11px var(--mono); color: var(--faint); display: flex; justify-content: space-between; }
+[hidden] { display: none !important; }
+.room .rowtext { flex: 1; min-width: 0; }
+.room .rowname { display: flex; align-items: center; gap: 6px; }
+.room .rowname b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room .pin { font: 10px var(--mono); color: var(--accent); }
+.room .line { display: block; font: 12px var(--ui); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room .line.ongoing { color: var(--ok); font-style: italic; }
+.badge { flex: none; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font: 600 11px/20px var(--mono); text-align: center; }
+.badge.img { padding: 0; background: none; width: 20px; }
+.badge.img img { width: 20px; height: 20px; border-radius: 5px; object-fit: cover; }
+.dots::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.2s steps(4) infinite; }
+@keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+.roomhead { flex-wrap: wrap; }
+.roomhead .titles { flex: 1; min-width: 0; }
+.roomhead .titles p { margin: 2px 0 0; font: 12px var(--ui); color: var(--muted); white-space: pre-wrap; }
+.roomhead .people { font: 11px var(--mono); color: var(--muted); background: none; border: 0; padding: 0; text-decoration: underline dotted; }
+.toolbar { display: flex; gap: 6px; align-items: center; position: relative; }
+.toolbar button { display: inline-flex; gap: 6px; align-items: center; }
+.toolbar img, .menu img { width: 16px; height: 16px; border-radius: 3px; object-fit: cover; }
+.paging { align-self: center; font: 12px var(--mono); color: var(--muted); }
+.paging.err { color: var(--err); }
+.msg.other .who { display: block; font: 11px var(--mono); color: var(--accent); margin-bottom: 3px; }
+.msg .tools { align-self: center; opacity: 0; transition: opacity 120ms; }
+.msg:hover .tools, .msg:focus-within .tools { opacity: 1; }
+.msg .tools button { padding: 2px 7px; }
+.msg.flash .bubble { outline: 2px solid var(--warn); }
+.quote { display: block; border-left: 3px solid var(--accent); padding: 2px 8px; margin-bottom: 6px; font-size: 12px; opacity: 0.85; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.person .quote { border-left-color: var(--accent-ink); }
+.meta { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; font: 10px var(--mono); color: var(--faint); }
+.person .meta { color: rgba(21, 26, 5, 0.6); }
+.meta .tick.Read { color: #2e7dff; }
+.meta .tick.Failed { color: var(--err); font-weight: 700; }
+.deleted .bubble { font-style: italic; color: var(--muted); background: transparent; border-style: dashed; }
+.reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.chip { font: 12px var(--ui); padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+.chip.mine { border-color: var(--accent); color: var(--accent); }
+.md p { margin: 0 0 6px; }
+.md p:last-child { margin-bottom: 0; }
+.md ul, .md ol { margin: 4px 0 6px; padding-left: 20px; }
+.md blockquote { margin: 4px 0; padding-left: 8px; border-left: 3px solid var(--line); color: var(--muted); }
+.md pre { margin: 4px 0; padding: 6px 8px; background: var(--bg); border-radius: 6px; overflow-x: auto; font: 12px var(--mono); white-space: pre; }
+.md code { font: 12px var(--mono); background: rgba(255, 255, 255, 0.07); padding: 0 3px; border-radius: 3px; }
+.person .md code { background: rgba(0, 0, 0, 0.1); }
+.md .dropped { color: var(--muted); white-space: pre-wrap; font: 12px var(--mono); }
+.mediaitem { display: flex; flex-direction: column; gap: 3px; max-width: 260px; }
+.mediaitem small { font: 10px var(--mono); color: var(--muted); }
+.mediabox { display: grid; place-items: center; text-align: center; min-width: 160px; min-height: 90px; padding: 8px; border: 1px dashed var(--faint); border-radius: 8px; font: 11px var(--mono); color: var(--muted); background: rgba(0, 0, 0, 0.25); word-break: break-all; }
+.mediaitem video { max-width: 240px; border-radius: 8px; }
+.unsupported { font-style: italic; }
+.composer { display: flex; flex-direction: column; gap: 6px; }
+.banner { display: flex; justify-content: space-between; align-items: center; font: 12px var(--mono); color: var(--muted); border-left: 3px solid var(--accent); padding: 2px 8px; }
+.banner button { padding: 1px 7px; }
+#activity { font: 12px var(--ui); color: var(--ok); font-style: italic; min-height: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { border-radius: 999px; }
+.catalogue { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); max-height: 220px; overflow-y: auto; }
+.catalogue button { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: 5px 10px; }
+.catalogue button small { color: var(--muted); margin-left: 8px; }
+.attach { display: flex; gap: 4px; }
+.attach button { padding: 6px 8px; }
+.customfooter { border: 1px dashed var(--faint); border-radius: 10px; padding: 14px; text-align: center; font: 12px var(--mono); color: var(--muted); }
+.menu { position: fixed; z-index: 10; min-width: 200px; max-width: 320px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 5px 0; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+.menu button { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: 6px 14px; font: 13px var(--ui); }
+.menu button.destructive { color: var(--err); }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+.menu .note { display: block; padding: 4px 14px; text-align: left; }
+.menu .picker { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 10px; }
+.menu .picker button { width: auto; padding: 3px 6px; font-size: 16px; }
+.sheet { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
+.sheet > div { width: min(440px, 92vw); max-height: 80vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.sheet h3 { margin: 0 0 10px; font: 600 13px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.person-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 4px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; text-align: left; font: 13px var(--ui); }
+.person-row small { display: block; font: 11px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -230,12 +304,20 @@ aside[hidden], section[hidden] { display: none; }
   <section id="chat-pane">
     <div class="roomhead" id="roomhead"></div>
     <div id="thread"></div>
-    <footer>
-      <form class="compose" id="compose">
-        <textarea id="input" rows="1" placeholder="Message, or /command payload" disabled></textarea>
-        <button id="send" type="submit" disabled>Send</button>
-      </form>
-      <div class="hint"><span id="status"></span><span>Enter to send, Shift+Enter for newline</span></div>
+    <footer id="footer">
+      <div class="composer">
+        <div id="activity" hidden></div>
+        <div id="banner" class="banner" hidden></div>
+        <div id="catalogue" class="catalogue" hidden></div>
+        <div id="suggestions" class="chips" hidden></div>
+        <div id="customfooter" class="customfooter" hidden>Custom footer: the product draws it through Renderer::render, which this page does not run.</div>
+        <form class="compose" id="compose">
+          <span class="attach" id="attach"></span>
+          <textarea id="input" rows="1" placeholder="Message" disabled></textarea>
+          <button id="send" type="submit" disabled>Send</button>
+        </form>
+      </div>
+      <div class="hint"><span id="status"></span><span id="hinttext">Enter to send, Shift+Enter for newline, / for commands</span></div>
     </footer>
   </section>
   <div class="gutter" id="gutter-log" title="Drag to resize"></div>
@@ -250,10 +332,51 @@ aside[hidden], section[hidden] { display: none; }
     <div class="logfoot"><span id="logcount"></span><span>console of the worker in this page</span></div>
   </aside>
 </main>
+<div id="menu" class="menu" hidden></div>
+<div id="sheet" class="sheet" hidden><div id="sheetbody"></div></div>
 <script>
-const state = { productId: "", worker: { configured: true, connected: 0 }, rooms: [], bots: [], messages: [], selected: null };
+// The chat surface: what a phone shows of the rooms a product declared.
+// Everything the host keeps arrives on the socket; everything the person does
+// leaves as one operation. Rooms the product keeps (productSource) are paged
+// from the product through the host, and the person's changes in them wait
+// for the product's answer.
+const USER = "user";
+const PRODUCT = "product";
+const PAGE_SIZE = 40;
+const PEOPLE_PAGE = 100;
+const REACTIONS = ["\u{1F44D}", "❤️", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F64F}"];
+const MD_COLLAPSE = 4000;
+const params = new URLSearchParams(location.search);
+
+const state = {
+  productId: "",
+  worker: { configured: true, connected: 0 },
+  timeouts: { page: 10000, send: 30000, action: 10000, query: 5000 },
+  rooms: new Map(),
+  bots: [],
+  // roomId -> messages in screen order (host store, or the product's pages plus updates).
+  messages: new Map(),
+  selected: params.get("room"),
+  // Whether the person chose a room, which a `?room=` link then leaves alone.
+  picked: false,
+  opened: null,
+  // roomId -> { next, loading, error, asked: Set } for rooms the product keeps.
+  paging: new Map(),
+  // roomId -> sends the product did not answer yet: { tempId, text, replyTo, status, reqId }.
+  temps: new Map(),
+  // roomId -> { count, list, next, loading, byId: Map, asked: Set }.
+  people: new Map(),
+  seenSent: new Map(),
+  // Messages already drawn once, as "roomId\nmessageId".
+  drawn: new Set(),
+  replyTo: null,
+  editing: null,
+};
 const $ = (id) => document.getElementById(id);
 let statusTimer = null;
+let reqSeq = 0;
+let tempSeq = 0;
+const pending = new Map();
 
 function el(tag, cls, text) {
   const node = document.createElement(tag);
@@ -266,9 +389,19 @@ function safeUrl(url) {
   return /^(https?:|data:|blob:)/i.test(String(url || "")) ? String(url) : null;
 }
 
+function imageUrl(resource) {
+  if (!resource || resource.type !== "Inline") return null;
+  return /^data:image\//i.test(resource.dataUrl || "") ? resource.dataUrl : null;
+}
+
+function shortKey(key) {
+  const k = String(key || "");
+  return k.length > 18 ? `${k.slice(0, 10)}…${k.slice(-6)}` : k;
+}
+
 function avatar(icon, name, small) {
   const box = el("span", small ? "avatar sm" : "avatar", (String(name || "?").trim()[0] || "?").toUpperCase());
-  const src = safeUrl(icon);
+  const src = typeof icon === "string" ? safeUrl(icon) : imageUrl(icon);
   if (src) {
     const img = el("img");
     img.alt = "";
@@ -278,6 +411,10 @@ function avatar(icon, name, small) {
   return box;
 }
 
+function roomAvatar(room, small) {
+  return avatar(room.avatar && room.avatar.type === "Inline" ? room.avatar : room.icon, room.name, small);
+}
+
 function link(url, label) {
   const href = safeUrl(url);
   if (!href) return el("span", null, label);
@@ -285,15 +422,23 @@ function link(url, label) {
   a.href = href;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
+  if (/^https?:/i.test(href)) a.onclick = (event) => { if (!confirm(`Open ${href}?`)) event.preventDefault(); };
   return a;
 }
 
 function humanSize(bytes) {
+  if (bytes == null) return "size unknown";
   const n = Number(bytes) || 0;
   const units = ["B", "KB", "MB", "GB"];
   let i = 0, v = n;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
   return (i === 0 ? v : v.toFixed(1)) + " " + units[i];
+}
+
+function clock(ms) {
+  if (ms == null) return "";
+  const d = new Date(Number(ms));
+  return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
 function send(op) {
@@ -302,118 +447,338 @@ function send(op) {
   return true;
 }
 
+// An operation that gets an `answer`. The callback receives the frame.
+function ask(op, fields, onAnswer) {
+  const reqId = ++reqSeq;
+  pending.set(reqId, onAnswer || (() => {}));
+  if (!send(Object.assign({ op, reqId }, fields))) {
+    pending.delete(reqId);
+    (onAnswer || (() => {}))({ kind: "answer", op, reqId, error: { tag: "SocketClosed" } });
+  }
+  return reqId;
+}
+
 function setStatus(text, tone) {
   const node = $("status");
   node.textContent = text;
   node.className = tone || "";
   clearTimeout(statusTimer);
-  statusTimer = setTimeout(() => { node.textContent = ""; node.className = ""; }, 4000);
+  statusTimer = setTimeout(() => { node.textContent = ""; node.className = ""; }, 5000);
 }
 
-function renderContent(msg) {
-  const c = msg.content || {};
+function describeError(error) {
+  if (!error) return "unknown error";
+  return error.reason ? `${error.tag}: ${error.reason}` : error.tag;
+}
+
+// ---------------------------------------------------------------- Markdown
+
+// The subset of RFC 6.1: paragraphs, bold, italic, code, fenced code, lists,
+// blockquotes and https links. Headings draw as bold paragraphs; tables, raw
+// HTML and images drop to their text. Built from DOM nodes, never innerHTML.
+function inline(text, parent) {
+  const pattern = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(!?\[[^\]\n]*\]\([^)\s]+\))/g;
+  let last = 0, match;
+  // Bare links in the text are links too.
+  const words = (chunk) => linkify(chunk, parent);
+  while ((match = pattern.exec(text))) {
+    if (match.index > last) words(text.slice(last, match.index));
+    const token = match[0];
+    if (match[1]) parent.appendChild(el("code", null, token.slice(1, -1)));
+    else if (match[2]) { const b = el("strong"); inline(token.slice(2, -2), b); parent.appendChild(b); }
+    else if (match[3]) { const i = el("em"); inline(token.slice(1, -1), i); parent.appendChild(i); }
+    else {
+      const parts = /^(!?)\[([^\]]*)\]\(([^)\s]+)\)$/.exec(token);
+      if (parts[1] === "!") parent.appendChild(document.createTextNode(parts[2]));
+      else if (/^https?:\/\//i.test(parts[3])) { const a = link(parts[3], parts[2] || parts[3]); a.title = parts[3]; parent.appendChild(a); }
+      else parent.appendChild(document.createTextNode(parts[2]));
+    }
+    last = match.index + token.length;
+  }
+  if (last < text.length) words(text.slice(last));
+}
+
+function markdown(source) {
+  const root = el("div", "md");
+  const lines = String(source).replace(/\r\n?/g, "\n").split("\n");
+  let i = 0;
+  const isTable = (line) => /^\s*\|.*\|\s*$/.test(line);
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*$/.test(line)) { i++; continue; }
+    if (/^```/.test(line)) {
+      const code = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]);
+      i++;
+      root.appendChild(el("pre", null, code.join("\n")));
+      continue;
+    }
+    if (/^#{1,6}\s/.test(line)) {
+      const p = el("p"); const b = el("strong"); inline(line.replace(/^#{1,6}\s+/, ""), b); p.appendChild(b); root.appendChild(p);
+      i++;
+      continue;
+    }
+    if (/^\s*>/.test(line)) {
+      const quote = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ""));
+      const block = el("blockquote"); block.appendChild(markdown(quote.join("\n"))); root.appendChild(block);
+      continue;
+    }
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
+      const ordered = /^\s*\d+[.)]\s+/.test(line);
+      const list = el(ordered ? "ol" : "ul");
+      while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
+        const item = el("li"); inline(lines[i].replace(/^\s*([-*+]|\d+[.)])\s+/, ""), item); list.appendChild(item); i++;
+      }
+      root.appendChild(list);
+      continue;
+    }
+    if (isTable(line)) {
+      const rows = [];
+      while (i < lines.length && isTable(lines[i])) rows.push(lines[i++]);
+      root.appendChild(el("div", "dropped", rows.join("\n")));
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(```|#{1,6}\s|\s*>|\s*([-*+]|\d+[.)])\s+)/.test(lines[i]) && !isTable(lines[i])) para.push(lines[i++]);
+    const p = el("p");
+    // Raw HTML is not drawn: it stays text, as everything here does.
+    inline(para.join("\n"), p);
+    p.style.whiteSpace = "pre-wrap";
+    root.appendChild(p);
+  }
+  return root;
+}
+
+// Text into `parent`, with its URLs as links that ask before they open. A
+// punctuation mark at the end of a URL stays text.
+function linkify(text, parent) {
+  String(text).split(/(https?:\/\/[^\s<>"]+)/g).forEach((part, index) => {
+    if (index % 2 === 0) { parent.appendChild(document.createTextNode(part)); return; }
+    const url = part.replace(/[.,;:!?)]+$/, "");
+    parent.appendChild(link(url, url));
+    if (url.length < part.length) parent.appendChild(document.createTextNode(part.slice(url.length)));
+  });
+  return parent;
+}
+
+function plainText(text) {
+  return linkify(text, el("div", "text"));
+}
+
+function collapsible(node, length) {
+  if (length <= MD_COLLAPSE) return node;
   const box = el("div");
-  if (c.type === "Text") {
-    box.appendChild(el("div", "text", c.text));
-  } else if (c.type === "RichText") {
-    if (c.text != null) box.appendChild(el("div", "text", c.text));
+  node.style.maxHeight = "220px";
+  node.style.overflow = "hidden";
+  const more = el("button", null, "Show more");
+  more.type = "button";
+  more.onclick = () => { node.style.maxHeight = ""; more.remove(); };
+  box.append(node, more);
+  return box;
+}
+
+// ------------------------------------------------------------------ bodies
+
+function mediaNode(item) {
+  const box = el("div", "mediaitem");
+  box.dataset.media = item.kind;
+  const meta = item.meta || {};
+  const res = item.resource || {};
+  const caption = [meta.mimeType, humanSize(meta.sizeBytes), meta.width && meta.height ? `${meta.width}×${meta.height}` : null].filter(Boolean).join(" · ");
+  if (item.kind === "Image") {
+    const src = imageUrl(res);
+    if (src) {
+      const img = el("img");
+      img.alt = meta.alt || "";
+      img.title = meta.alt || "";
+      img.src = src;
+      if (meta.width) img.style.aspectRatio = `${meta.width} / ${meta.height || meta.width}`;
+      box.appendChild(img);
+    } else {
+      const placeholder = el("div", "mediabox", res.type === "Preimage"
+        ? `image from preimage ${shortKey(res.key)}\nnot fetched on the dev page`
+        : `image (${res.mimeType || "unknown type"}) not drawn`);
+      placeholder.dataset.preimage = res.key || "";
+      placeholder.title = res.key || "";
+      box.appendChild(placeholder);
+    }
+  } else if (item.kind === "Video") {
+    const poster = el("div", "mediabox", `▶ video${meta.placeholder ? ` · poster ${meta.placeholder}` : ""}`);
+    box.appendChild(poster);
+    if (res.type === "Inline" && /^data:video\//i.test(res.dataUrl || "")) {
+      const play = el("button", null, "Play");
+      play.type = "button";
+      play.onclick = () => {
+        const video = el("video");
+        video.controls = true;
+        video.src = res.dataUrl;
+        poster.replaceWith(video);
+        play.remove();
+        video.play().catch(() => {});
+      };
+      box.appendChild(play);
+    } else if (res.type === "Preimage") {
+      poster.textContent += `\npreimage ${shortKey(res.key)}`;
+    }
+  } else {
+    const file = el("div", "file");
+    file.appendChild(el("span", "glyph", (String(meta.mimeType || "file").split("/")[1] || "file").slice(0, 4).toUpperCase()));
+    const info = el("div");
+    if (res.type === "Inline") {
+      const a = el("a", null, item.fileName || "file");
+      a.href = res.dataUrl;
+      a.download = item.fileName || "file";
+      info.appendChild(a);
+    } else {
+      info.appendChild(el("span", null, `${item.fileName || "file"} (preimage ${shortKey(res.key)})`));
+    }
+    info.appendChild(el("small", null, `${meta.mimeType || "unknown"} · ${humanSize(meta.sizeBytes ?? res.size)}`));
+    file.appendChild(info);
+    box.appendChild(file);
+    return box;
+  }
+  if (meta.alt || caption) box.appendChild(el("small", null, [meta.alt, caption].filter(Boolean).join(" — ")));
+  return box;
+}
+
+// A first-version message, which can carry URL media and files.
+function legacyNode(c) {
+  const box = el("div");
+  if (c.type === "RichText") {
+    if (c.text != null) box.appendChild(plainText(c.text));
     const media = el("div", "media");
     for (const item of c.media || []) {
       const src = safeUrl(item.url);
       if (src && /^data:image\/|\.(png|jpe?g|gif|webp|svg|avif)(\?|#|$)/i.test(src)) {
-        const a = link(src, "");
-        const img = el("img");
-        img.alt = "";
-        img.src = src;
-        a.appendChild(img);
-        media.appendChild(a);
-      } else {
-        media.appendChild(link(item.url, item.url));
-      }
+        const img = el("img"); img.alt = ""; img.src = src; media.appendChild(img);
+      } else media.appendChild(link(item.url, item.url));
     }
     if (media.childNodes.length) box.appendChild(media);
-  } else if (c.type === "Actions") {
-    if (c.text != null) box.appendChild(el("div", "text", c.text));
-    const row = el("div", c.layout === "Grid" ? "actions grid" : "actions");
-    for (const action of c.actions || []) {
-      const button = el("button", null, action.title);
-      button.type = "button";
-      button.onclick = () => send({ op: "trigger", roomId: msg.roomId, messageId: msg.messageId, actionId: action.actionId });
-      row.appendChild(button);
-    }
-    box.appendChild(row);
   } else if (c.type === "File") {
     const file = el("div", "file");
     file.appendChild(el("span", "glyph", "FILE"));
     const info = el("div");
     info.appendChild(link(c.url, c.fileName || "file"));
-    info.appendChild(el("small", null, `${c.mimeType || "unknown"} \u00b7 ${humanSize(c.sizeBytes)}`));
+    info.appendChild(el("small", null, `${c.mimeType || "unknown"} · ${humanSize(c.sizeBytes)}`));
     file.appendChild(info);
     box.appendChild(file);
-    if (c.text != null) box.appendChild(el("div", "text", c.text));
+    if (c.text != null) box.appendChild(plainText(c.text));
   } else if (c.type === "Custom") {
-    box.className = "custom";
-    box.appendChild(el("small", null, `custom: ${c.messageType}`));
-    const hex = String(c.payloadHex || "");
-    if (hex.length > 96) {
-      const details = el("details");
-      details.appendChild(el("summary", null, `${hex.length / 2 | 0} bytes`));
-      details.appendChild(el("pre", "hex", hex));
-      box.appendChild(details);
-    } else {
-      box.appendChild(el("pre", "hex", hex || "(empty)"));
+    box.appendChild(el("small", "unsupported", `custom ${c.messageType}: ${c.payloadHex || "(empty)"}`));
+  } else return null;
+  return box;
+}
+
+function bodyNode(roomId, msg) {
+  const b = msg.body || {};
+  if (msg.legacy) { const legacy = legacyNode(msg.legacy); if (legacy) return legacy; }
+  const box = el("div", "body");
+  box.dataset.body = b.type;
+  if (b.type === "Text") {
+    box.appendChild(collapsible(plainText(b.text), b.text.length));
+  } else if (b.type === "RichText") {
+    if (b.text != null) box.appendChild(collapsible(markdown(b.text), b.text.length));
+    if ((b.media || []).length) {
+      const media = el("div", "media");
+      for (const item of b.media) media.appendChild(mediaNode(item));
+      box.appendChild(media);
     }
+  } else if (b.type === "Actions") {
+    if (b.text != null) box.appendChild(plainText(b.text));
+    const row = el("div", b.layout === "Grid" ? "actions grid" : "actions");
+    for (const action of b.actions || []) {
+      const button = el("button", null, action.title);
+      button.type = "button";
+      button.dataset.action = action.actionId;
+      button.onclick = () => send({ op: "trigger", roomId, messageId: msg.messageId, actionId: action.actionId });
+      row.appendChild(button);
+    }
+    if (row.childNodes.length) box.appendChild(row);
+  } else if (b.type === "Custom") {
+    // This page runs no Renderer, so a custom body draws its preview text.
+    box.className = "body custom";
+    box.appendChild(el("div", "text", b.previewText || "Unsupported message"));
+    box.appendChild(el("small", null, `custom ${b.messageType}, drawn by Renderer::render on a phone`));
   } else {
-    box.appendChild(el("div", "text", `unsupported content: ${JSON.stringify(c)}`));
+    box.appendChild(el("div", "text unsupported", `unsupported body: ${JSON.stringify(b)}`));
   }
   return box;
 }
 
-function renderMessage(msg) {
-  const c = msg.content || {};
-  if (c.type === "Reaction" || c.type === "ReactionRemoved") {
-    const verb = c.type === "Reaction" ? "reacted" : "removed reaction";
-    return el("div", "note", `${msg.author} ${verb} ${c.emoji} on ${c.messageId} \u00b7 ${msg.messageId}`);
-  }
-  const person = msg.author === "person";
-  const row = el("div", person ? "msg person" : "msg product");
-  if (!person) {
-    const room = state.rooms.find((r) => r.roomId === msg.roomId);
-    row.appendChild(avatar(room && room.icon, room ? room.name : "?", true));
-  }
-  const bubble = el("div", "bubble");
-  bubble.appendChild(renderContent(msg));
-  bubble.appendChild(el("span", "mid", msg.messageId));
-  row.appendChild(bubble);
-  return row;
+function quoteText(msg) {
+  if (!msg) return null;
+  if (msg.deleted) return "deleted message";
+  const b = msg.body || {};
+  if (b.type === "RichText" && !b.text && (b.media || []).length) return `[${b.media[0].kind}]`;
+  return String(msg.preview || "").split("\n")[0];
 }
 
-function emptyState(title, hint) {
-  const box = el("div", "empty");
-  box.appendChild(el("p", null, title));
-  if (hint) box.appendChild(el("code", null, hint));
-  return box;
+// --------------------------------------------------------------- rooms
+
+function roomOf(roomId) { return state.rooms.get(roomId); }
+function messagesOf(roomId) {
+  if (!state.messages.has(roomId)) state.messages.set(roomId, []);
+  return state.messages.get(roomId);
+}
+function isSource(room) { return !!(room && room.config && room.config.productSource); }
+
+function sortedRooms() {
+  return [...state.rooms.values()].sort((a, b) => {
+    const pa = a.list && a.list.pinned ? 1 : 0, pb = b.list && b.list.pinned ? 1 : 0;
+    if (pa !== pb) return pb - pa;
+    const ta = (a.list && a.list.timestamp) || 0, tb = (b.list && b.list.timestamp) || 0;
+    if (ta !== tb) return tb - ta;
+    return String(a.name).localeCompare(String(b.name));
+  });
 }
 
-function renderHeader() {
-  $("product").textContent = state.productId || "unknown product";
-  const w = $("worker");
-  if (!state.worker.configured) { w.textContent = "worker: not configured"; w.className = "pill"; }
-  else if (!state.worker.connected) { w.textContent = "worker: 0 connected"; w.className = "pill warn"; }
-  else { w.textContent = `worker: ${state.worker.connected} connected`; w.className = "pill ok"; }
+function badgeNode(badge) {
+  if (!badge) return null;
+  if (badge.type === "UnreadCount") {
+    const node = el("span", "badge", badge.count);
+    node.dataset.badge = String(badge.count);
+    return node;
+  }
+  if (badge.type === "Image") {
+    const node = el("span", "badge img");
+    node.dataset.badge = "image";
+    const src = imageUrl(badge.resource);
+    if (src) { const img = el("img"); img.alt = ""; img.src = src; node.appendChild(img); }
+    else node.textContent = "•";
+    return node;
+  }
+  return null;
 }
 
 function renderRooms() {
   const list = $("rooms");
   list.textContent = "";
-  for (const room of state.rooms) {
+  for (const room of sortedRooms()) {
     const button = el("button", room.roomId === state.selected ? "room active" : "room");
     button.type = "button";
-    button.appendChild(avatar(room.icon, room.name));
-    const label = el("span", null, room.name);
-    label.appendChild(el("small", null, room.participatingAs === "Bot" ? `${room.roomId} \u00b7 bot` : room.roomId));
-    button.appendChild(label);
-    button.onclick = () => { state.selected = room.roomId; renderRooms(); renderThread(true); };
+    button.dataset.roomId = room.roomId;
+    if (room.list && room.list.pinned) button.dataset.pinned = "true";
+    button.appendChild(roomAvatar(room));
+    const text = el("span", "rowtext");
+    const name = el("span", "rowname");
+    name.appendChild(el("b", null, room.name));
+    if (room.list && room.list.pinned) name.appendChild(el("span", "pin", "PIN"));
+    text.appendChild(name);
+    const line = room.list && room.list.text;
+    if (line) {
+      const node = el("span", line.ongoing ? "line ongoing dots" : "line", line.text);
+      node.dataset.preview = line.text;
+      if (line.ongoing) node.dataset.ongoing = "true";
+      text.appendChild(node);
+    } else {
+      text.appendChild(el("span", "line", room.description || room.roomId));
+    }
+    button.appendChild(text);
+    const badge = badgeNode(room.list && room.list.badge);
+    if (badge) button.appendChild(badge);
+    button.onclick = () => selectRoom(room.roomId);
     list.appendChild(button);
   }
   const bots = $("bots");
@@ -427,33 +792,717 @@ function renderRooms() {
   }
 }
 
-function renderThread(forceBottom) {
-  const thread = $("thread");
-  const pinned = forceBottom || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 40;
-  thread.textContent = "";
-  const head = $("roomhead");
-  head.textContent = "";
-  const room = state.rooms.find((r) => r.roomId === state.selected);
-  $("input").disabled = !room;
-  $("send").disabled = !room;
-  if (!room) {
-    head.appendChild(el("h1", null, "No room"));
-    thread.appendChild(emptyState("Waiting for the worker to register a room",
-      state.worker.configured ? null : "pass --worker-bundle to truapi-host dev"));
-    return;
-  }
-  head.appendChild(avatar(room.icon, room.name, true));
-  head.appendChild(el("h1", null, room.name));
-  head.appendChild(el("code", null, `${room.roomId} \u00b7 as ${room.participatingAs}`));
-  const messages = state.messages.filter((m) => m.roomId === room.roomId);
-  if (!messages.length) thread.appendChild(emptyState("No messages yet"));
-  for (const msg of messages) thread.appendChild(renderMessage(msg));
-  if (pinned) thread.scrollTop = thread.scrollHeight;
+function selectRoom(roomId) {
+  state.picked = true;
+  if (state.selected === roomId && state.opened === roomId) return;
+  state.selected = roomId;
+  state.replyTo = null;
+  state.editing = null;
+  openSelected();
+  renderRooms();
+  renderRoom(true);
 }
 
-function upsert(list, key, item) {
-  const i = list.findIndex((x) => x[key] === item[key]);
-  if (i >= 0) list[i] = item; else list.push(item);
+// RoomOpened and RoomClosed follow the screen; a room the product keeps is
+// paged from the newest message each time it opens.
+function openSelected() {
+  if (state.opened === state.selected) return;
+  if (state.opened && state.rooms.has(state.opened)) send({ op: "close", roomId: state.opened });
+  state.opened = null;
+  const room = roomOf(state.selected);
+  if (!room || !surface.socket || surface.socket.readyState !== 1) return;
+  state.opened = room.roomId;
+  send({ op: "open", roomId: room.roomId });
+  if (isSource(room)) {
+    state.messages.set(room.roomId, []);
+    state.paging.set(room.roomId, { next: undefined, loading: false, error: null, asked: new Set() });
+    loadPage(room.roomId, null);
+  }
+  if (room.config.participants) countPeople(room.roomId);
+}
+
+function loadPage(roomId, cursor) {
+  const paging = state.paging.get(roomId);
+  if (!paging || paging.loading) return;
+  const key = cursor == null ? "<newest>" : cursor;
+  if (paging.asked.has(key) && !paging.error) return;
+  paging.asked.add(key);
+  paging.loading = true;
+  paging.error = null;
+  renderRoom(false);
+  ask("messages", { roomId, before: true, cursor, pageSize: PAGE_SIZE }, (frame) => {
+    paging.loading = false;
+    if (frame.error) {
+      paging.error = frame.error;
+      paging.asked.delete(key);
+    } else {
+      const list = messagesOf(roomId);
+      const known = new Set(list.map((m) => m.messageId));
+      const older = frame.ok.messages.filter((m) => !known.has(m.messageId));
+      list.unshift(...older);
+      paging.next = frame.ok.next == null ? null : frame.ok.next;
+    }
+    const thread = $("thread");
+    const fromBottom = thread.scrollHeight - thread.scrollTop;
+    renderRoom(cursor == null);
+    if (cursor != null) thread.scrollTop = thread.scrollHeight - fromBottom;
+  });
+}
+
+function peopleOf(roomId) {
+  if (!state.people.has(roomId)) state.people.set(roomId, { count: null, list: [], next: undefined, loading: false, byId: new Map(), asked: new Set() });
+  return state.people.get(roomId);
+}
+
+function countPeople(roomId) {
+  const people = peopleOf(roomId);
+  ask("participants", { roomId, query: { type: "Count" } }, (frame) => {
+    people.count = frame.ok ? frame.ok.count : null;
+    if (frame.error) people.countError = frame.error;
+    if (roomId === state.selected) renderHeader2();
+  });
+}
+
+function resolveAuthors(roomId, ids) {
+  const room = roomOf(roomId);
+  if (!room || !room.config.participants) return;
+  const people = peopleOf(roomId);
+  const wanted = ids.filter((id) => id !== USER && id !== PRODUCT && !people.byId.has(id) && !people.asked.has(id));
+  if (!wanted.length) return;
+  wanted.forEach((id) => people.asked.add(id));
+  ask("participants", { roomId, query: { type: "ByIds", participantIds: wanted.slice(0, 100) } }, (frame) => {
+    if (frame.ok && frame.ok.participants) for (const entry of frame.ok.participants) people.byId.set(entry.participantId, entry);
+    if (roomId === state.selected) renderRoom(false);
+  });
+}
+
+function participantName(roomId, id) {
+  if (id === USER) return "You";
+  const room = roomOf(roomId);
+  if (id === PRODUCT) return room ? room.name : state.productId;
+  const entry = state.people.has(roomId) ? state.people.get(roomId).byId.get(id) : null;
+  if (!entry) return id;
+  const p = entry.participant;
+  switch (p.kind) {
+    case "Person": return `Person #${p.personId}`;
+    case "LitePerson": return `Lite person ${shortKey(p.account)}`;
+    case "Contact": return `Contact ${shortKey(p.handle)}`;
+    case "Product": return p.productId;
+    case "Custom": return p.nickname;
+    default: return id;
+  }
+}
+
+// ------------------------------------------------------------- the room
+
+function statusTick(status) {
+  return { Preparing: "◷", Sent: "✓", Delivered: "✓✓", Read: "✓✓", Failed: "⚠ failed" }[status] || status;
+}
+
+function renderMessage(room, msg, temp) {
+  const roomId = room.roomId;
+  const mine = msg.origin === USER;
+  const row = el("div", `msg ${mine ? "person" : msg.origin === PRODUCT ? "product" : "other"}${msg.deleted ? " deleted" : ""}`);
+  // Only a message drawn for the first time rises in; a redraw stays still.
+  const drawn = `${roomId}\n${msg.messageId}`;
+  if (!state.drawn.has(drawn)) { state.drawn.add(drawn); row.classList.add("fresh"); }
+  row.dataset.messageId = msg.messageId;
+  row.dataset.origin = msg.origin;
+  row.dataset.status = msg.status;
+  if (msg.editedAt != null) row.dataset.edited = "true";
+  if (temp) row.dataset.temp = "true";
+  if (!mine) {
+    if (msg.origin === PRODUCT) row.appendChild(roomAvatar(room, true));
+    else {
+      const entry = state.people.has(roomId) ? state.people.get(roomId).byId.get(msg.origin) : null;
+      const custom = entry && entry.participant.kind === "Custom" ? entry.participant.avatar : null;
+      row.appendChild(avatar(custom, participantName(roomId, msg.origin), true));
+    }
+  }
+  const bubble = el("div", "bubble");
+  if (msg.origin !== USER && msg.origin !== PRODUCT) bubble.appendChild(el("span", "who", participantName(roomId, msg.origin)));
+  if (msg.replyTo) {
+    const target = messagesOf(roomId).find((m) => m.messageId === msg.replyTo);
+    const quote = el("span", "quote", target ? quoteText(target) : `reply to ${msg.replyTo}`);
+    quote.dataset.replyTo = msg.replyTo;
+    quote.onclick = () => jumpTo(roomId, msg.replyTo);
+    bubble.appendChild(quote);
+  }
+  if (msg.deleted) bubble.appendChild(el("div", "text", "This message was deleted"));
+  else bubble.appendChild(bodyNode(roomId, msg));
+  if (!msg.deleted && (msg.reactions || []).length) {
+    const chips = el("div", "reactions");
+    for (const reaction of msg.reactions) {
+      const chip = el("button", reaction.reactedByUser ? "chip mine" : "chip", `${reaction.emoji} ${reaction.count}`);
+      chip.type = "button";
+      chip.dataset.emoji = reaction.emoji;
+      chip.title = room.config.reactionDetails ? "Click to toggle, right-click for who reacted" : "Click to toggle";
+      chip.onclick = () => react(roomId, msg, reaction.emoji, !reaction.reactedByUser);
+      chip.oncontextmenu = (event) => { if (room.config.reactionDetails) { event.preventDefault(); whoReacted(roomId, msg.messageId); } };
+      chips.appendChild(chip);
+    }
+    bubble.appendChild(chips);
+  }
+  const meta = el("span", "meta");
+  if (msg.editedAt != null) meta.appendChild(el("span", "edited", `edited ${clock(msg.editedAt)}`));
+  meta.appendChild(el("span", null, clock(msg.timestamp)));
+  meta.appendChild(el("span", "mid", msg.messageId));
+  if (mine || msg.status !== "Sent") {
+    const tick = el("span", `tick ${msg.status}`, statusTick(msg.status));
+    tick.title = msg.status;
+    meta.appendChild(tick);
+  }
+  bubble.appendChild(meta);
+  row.appendChild(bubble);
+  if (!msg.deleted) {
+    const tools = el("span", "tools");
+    const more = el("button", null, "⋯");
+    more.type = "button";
+    more.title = "Message menu";
+    more.dataset.menu = msg.messageId;
+    more.onclick = (event) => openMessageMenu(room, msg, temp, event);
+    tools.appendChild(more);
+    row.appendChild(tools);
+    row.oncontextmenu = (event) => { event.preventDefault(); openMessageMenu(room, msg, temp, event); };
+  }
+  return row;
+}
+
+function renderHeader2() {
+  const head = $("roomhead");
+  head.textContent = "";
+  const room = roomOf(state.selected);
+  if (!room) {
+    head.appendChild(el("h1", null, "No room"));
+    return;
+  }
+  head.appendChild(roomAvatar(room, true));
+  const titles = el("div", "titles");
+  const h1 = el("h1", null, room.name);
+  h1.id = "roomname";
+  titles.appendChild(h1);
+  if (room.description) { const p = el("p", null, room.description); p.id = "roomdescription"; titles.appendChild(p); }
+  const people = state.people.get(room.roomId);
+  const count = room.config.participants ? (people && people.count != null ? people.count : "…") : 2;
+  const peopleButton = el("button", "people", `${count} participants`);
+  peopleButton.type = "button";
+  peopleButton.id = "participants";
+  peopleButton.onclick = () => openPeople(room);
+  const sub = el("code", null, `${room.roomId} · ${isSource(room) ? "product source" : "host store"} · `);
+  sub.appendChild(peopleButton);
+  titles.appendChild(sub);
+  head.appendChild(titles);
+  head.appendChild(toolbarNode(room));
+}
+
+function runHandler(handler, onCallback) {
+  if (handler.type === "Deeplink") {
+    if (confirm(`Open ${handler.url}?`)) {
+      if (/^https?:/i.test(handler.url)) window.open(handler.url, "_blank", "noopener");
+      else setStatus(`deeplink ${handler.url}: a phone navigates there`, "ok");
+    }
+  } else onCallback();
+}
+
+// Up to two actions inline, the rest behind an overflow button.
+function toolbarNode(room) {
+  const bar = el("div", "toolbar");
+  bar.id = "toolbar";
+  const actions = room.toolbar || [];
+  const button = (action, labelled) => {
+    const b = el("button");
+    b.type = "button";
+    b.dataset.toolbar = action.actionId;
+    b.title = action.label;
+    const src = imageUrl(action.icon);
+    if (src) { const img = el("img"); img.alt = ""; img.src = src; b.appendChild(img); }
+    if (labelled || !src) b.appendChild(document.createTextNode(action.label));
+    b.onclick = () => { closeMenu(); runHandler(action.handler, () => send({ op: "toolbar", roomId: room.roomId, actionId: action.actionId })); };
+    return b;
+  };
+  actions.slice(0, 2).forEach((action) => bar.appendChild(button(action, false)));
+  if (actions.length > 2) {
+    const more = el("button", null, "⋯");
+    more.type = "button";
+    more.id = "toolbar-more";
+    more.title = "More actions";
+    more.onclick = (event) => showMenu(event, actions.slice(2).map((action) => button(action, true)));
+    bar.appendChild(more);
+  }
+  return bar;
+}
+
+function renderRoom(forceBottom) {
+  renderHeader2();
+  const thread = $("thread");
+  const pinned = forceBottom || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60;
+  thread.textContent = "";
+  const room = roomOf(state.selected);
+  if (!room) {
+    thread.appendChild(emptyState("Waiting for the worker to register a room",
+      state.worker.configured ? null : "pass --worker-bundle to truapi-host dev"));
+    renderFooter(null);
+    return;
+  }
+  const messages = messagesOf(room.roomId);
+  const temps = state.temps.get(room.roomId) || [];
+  if (isSource(room)) {
+    const paging = state.paging.get(room.roomId) || {};
+    let line = null;
+    if (paging.loading) line = el("div", "paging", "loading…");
+    else if (paging.error) {
+      line = el("div", "paging err", `could not load: ${describeError(paging.error)} `);
+      const retry = el("button", null, "Retry");
+      retry.type = "button";
+      retry.onclick = () => loadPage(room.roomId, messages.length ? paging.next : null);
+      line.appendChild(retry);
+    } else if (paging.next) {
+      line = el("button", "paging", "Load older messages");
+      line.type = "button";
+      line.id = "older";
+      line.onclick = () => loadPage(room.roomId, paging.next);
+    } else if (paging.next === null && messages.length) line = el("div", "paging", "start of the conversation");
+    if (line) thread.appendChild(line);
+  }
+  if (!messages.length && !temps.length) {
+    const empty = emptyState(room.config.placeholder != null ? room.config.placeholder : "No messages yet");
+    empty.id = "placeholder";
+    thread.appendChild(empty);
+  }
+  resolveAuthors(room.roomId, [...new Set(messages.map((m) => m.origin))]);
+  for (const msg of messages) thread.appendChild(renderMessage(room, msg, false));
+  for (const temp of temps) {
+    thread.appendChild(renderMessage(room, {
+      messageId: temp.tempId, origin: USER, timestamp: temp.at, status: temp.status,
+      body: { type: "Text", text: temp.text }, replyTo: temp.replyTo, reactions: [], preview: temp.text,
+    }, temp));
+  }
+  if (pinned) thread.scrollTop = thread.scrollHeight;
+  renderFooter(room);
+  reportSeen(room);
+}
+
+function emptyState(title, hint) {
+  const box = el("div", "empty");
+  box.appendChild(el("p", null, title));
+  if (hint) box.appendChild(el("code", null, hint));
+  return box;
+}
+
+function jumpTo(roomId, messageId, tries) {
+  const node = document.querySelector(`#thread [data-message-id="${CSS.escape(messageId)}"]`);
+  if (node) {
+    node.scrollIntoView({ block: "center" });
+    node.classList.add("flash");
+    setTimeout(() => node.classList.remove("flash"), 1200);
+    return;
+  }
+  const paging = state.paging.get(roomId);
+  if (paging && paging.next && (tries || 0) < 20) {
+    loadPage(roomId, paging.next);
+    setTimeout(() => jumpTo(roomId, messageId, (tries || 0) + 1), 400);
+  } else setStatus(`message ${messageId} is not loaded`, "warn");
+}
+
+// The newest message on screen is reported once each time it changes.
+function reportSeen(room) {
+  if (state.opened !== room.roomId || document.hidden) return;
+  const messages = messagesOf(room.roomId).filter((m) => !m.deleted);
+  const newest = messages[messages.length - 1];
+  if (!newest || state.seenSent.get(room.roomId) === newest.messageId) return;
+  state.seenSent.set(room.roomId, newest.messageId);
+  ask("seen", { roomId: room.roomId, messageId: newest.messageId });
+}
+
+// ---------------------------------------------------------------- footer
+
+function renderFooter(room) {
+  const input = $("input");
+  const footer = room ? room.footer || { type: "Input" } : null;
+  const inputShown = !!footer && footer.type === "Input";
+  $("compose").hidden = !inputShown;
+  $("customfooter").hidden = !(footer && footer.type === "Custom");
+  $("footer").hidden = !!footer && footer.type === "Empty";
+  $("footer").dataset.footer = footer ? footer.type : "";
+  input.disabled = !room;
+  $("send").disabled = !room;
+  input.placeholder = inputShown && footer.placeholder ? footer.placeholder : "Message";
+  const attach = $("attach");
+  attach.textContent = "";
+  if (inputShown) {
+    for (const [key, label, glyph] of [["photo", "Photo", "\u{1F4F7}"], ["video", "Video", "\u{1F3A5}"], ["file", "File", "\u{1F4CE}"]]) {
+      if (!footer[key]) continue;
+      const b = el("button", null, glyph);
+      b.type = "button";
+      b.dataset.attach = key;
+      b.title = `${label}: the dev page sends no attachments`;
+      b.onclick = () => setStatus(`${label} attachments are sent from a phone, not from the dev page`, "warn");
+      attach.appendChild(b);
+    }
+    if (footer.payment) {
+      const b = el("button", null, "Pay");
+      b.type = "button";
+      b.dataset.attach = "payment";
+      b.title = `Payment to ${footer.payment.destination}: no payment path on the dev page`;
+      b.onclick = () => setStatus("this host has no payment path", "warn");
+      attach.appendChild(b);
+    }
+  }
+  const activity = $("activity");
+  activity.hidden = !(room && room.activity);
+  activity.textContent = room && room.activity ? room.activity.text : "";
+  activity.className = "dots";
+  const banner = $("banner");
+  banner.textContent = "";
+  const target = state.editing || state.replyTo;
+  banner.hidden = !room || !target;
+  if (room && target) {
+    const msg = messagesOf(room.roomId).find((m) => m.messageId === target);
+    banner.appendChild(el("span", null, `${state.editing ? "Editing" : "Replying to"} ${target}: ${quoteText(msg) || ""}`));
+    const cancel = el("button", null, "✕");
+    cancel.type = "button";
+    cancel.onclick = () => { if (state.editing) input.value = ""; state.editing = null; state.replyTo = null; renderFooter(room); };
+    banner.appendChild(cancel);
+  }
+  renderSuggestions(room);
+  renderCatalogue(room);
+}
+
+// Quick replies hide while the person types.
+function renderSuggestions(room) {
+  const strip = $("suggestions");
+  strip.textContent = "";
+  const list = room && room.footer && room.footer.type === "Input" ? room.suggestions || [] : [];
+  strip.hidden = !list.length || $("input").value.length > 0;
+  for (const suggestion of list) {
+    const chip = el("button", null, suggestion.text);
+    chip.type = "button";
+    chip.dataset.suggestion = suggestion.suggestionId;
+    chip.onclick = () => {
+      if (suggestion.sendsText) postText(room, suggestion.text, null);
+      else send({ op: "suggestion", roomId: room.roomId, suggestionId: suggestion.suggestionId });
+    };
+    strip.appendChild(chip);
+  }
+}
+
+// A `/` at the start of the input opens the declared commands that start
+// with the text after it.
+function renderCatalogue(room) {
+  const box = $("catalogue");
+  box.textContent = "";
+  const value = $("input").value;
+  const match = /^\/(\S*)$/.exec(value);
+  const commands = room && match ? (room.commands || []).filter((c) => c.name.startsWith(match[1])) : [];
+  box.hidden = !commands.length;
+  for (const command of commands) {
+    const b = el("button", null, `/${command.name}`);
+    b.type = "button";
+    b.dataset.command = command.name;
+    if (command.argumentHint) b.appendChild(el("small", null, command.argumentHint));
+    b.appendChild(el("small", null, command.description));
+    b.onclick = () => { $("input").value = `/${command.name} `; $("input").focus(); renderFooter(room); };
+    box.appendChild(b);
+  }
+}
+
+// ------------------------------------------------------------------ send
+
+function postText(room, text, replyTo) {
+  if (isSource(room)) {
+    // Drawn at once as Preparing; the product's MessageCreated replaces it.
+    const temp = { tempId: `local-${++tempSeq}`, text, replyTo, status: "Preparing", at: Date.now() };
+    const temps = state.temps.get(room.roomId) || [];
+    temps.push(temp);
+    state.temps.set(room.roomId, temps);
+    sendTemp(room, temp);
+  } else {
+    ask("post", { roomId: room.roomId, text, replyTo }, (frame) => {
+      if (frame.error) setStatus(`send: ${describeError(frame.error)}`, "err");
+      else if (frame.ok && frame.ok.workers === 0) setStatus("post: no worker connected", "warn");
+    });
+  }
+  renderRoom(true);
+}
+
+function sendTemp(room, temp) {
+  temp.status = "Preparing";
+  temp.reqId = ask("post", { roomId: room.roomId, text: temp.text, replyTo: temp.replyTo }, (frame) => {
+    const temps = state.temps.get(room.roomId) || [];
+    if (frame.ok) {
+      state.temps.set(room.roomId, temps.filter((t) => t !== temp));
+      if (frame.ok.message) upsertMessage(room.roomId, frame.ok.message);
+    } else if (frame.error && frame.error.tag === "Rejected") {
+      state.temps.set(room.roomId, temps.filter((t) => t !== temp));
+      setStatus(`not sent: ${frame.error.reason}`, "err");
+    } else {
+      temp.status = "Failed";
+      setStatus(`not sent: ${describeError(frame.error)}`, "err");
+    }
+    if (room.roomId === state.selected) renderRoom(false);
+  });
+}
+
+function submit() {
+  const input = $("input");
+  const text = input.value;
+  const room = roomOf(state.selected);
+  if (!room || !text.trim()) return;
+  if (state.editing) {
+    const messageId = state.editing;
+    state.editing = null;
+    ask("edit", { roomId: room.roomId, messageId, text }, (frame) => {
+      if (frame.error) setStatus(`edit: ${describeError(frame.error)}`, "err");
+    });
+    input.value = "";
+    renderFooter(room);
+    return;
+  }
+  // Only a name the room declared becomes a command; anything else is a message.
+  const command = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  if (command && (room.commands || []).some((c) => c.name === command[1])) {
+    send({ op: "command", roomId: room.roomId, command: command[1], payload: (command[2] || "").trim() });
+  } else {
+    postText(room, text, state.replyTo);
+  }
+  state.replyTo = null;
+  input.value = "";
+  renderFooter(room);
+}
+
+function react(roomId, msg, emoji, placed) {
+  ask("react", { roomId, messageId: msg.messageId, emoji, placed }, (frame) => {
+    if (frame.error || frame.kind === "error") setStatus(`reaction: ${describeError(frame.error) || frame.message}`, "err");
+  });
+}
+
+// ----------------------------------------------------------------- menus
+
+function closeMenu() { $("menu").hidden = true; $("menu").textContent = ""; }
+
+function showMenu(event, items) {
+  const menu = $("menu");
+  menu.textContent = "";
+  for (const item of items) menu.appendChild(item);
+  menu.hidden = false;
+  const x = Math.min(event.clientX, window.innerWidth - 240);
+  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(8, x)}px`;
+  menu.style.top = `${Math.max(8, y)}px`;
+  event.stopPropagation();
+}
+
+function menuItem(label, onClick, options) {
+  const b = el("button", options && options.destructive ? "destructive" : null);
+  b.type = "button";
+  if (options && options.id) b.dataset.item = options.id;
+  if (options && options.icon) { const src = imageUrl(options.icon); if (src) { const img = el("img"); img.alt = ""; img.src = src; b.appendChild(img); } }
+  b.appendChild(document.createTextNode(label));
+  b.onclick = () => { closeMenu(); onClick(); };
+  return b;
+}
+
+function productItems(actions, onCallback) {
+  // Destructive entries draw red and last.
+  const ordered = [...actions].sort((a, b) => Number(a.destructive) - Number(b.destructive));
+  return ordered.map((action) => menuItem(action.label, () => runHandler(action.handler, () => onCallback(action)), { destructive: action.destructive, icon: action.icon, id: action.actionId }));
+}
+
+function builtInItems(room, msg, temp, hidden) {
+  const items = [];
+  const mine = msg.origin === USER;
+  const source = isSource(room);
+  const text = msg.body && (msg.body.text != null ? msg.body.text : null);
+  const show = (name) => !hidden.includes(name);
+  if (temp) {
+    if (msg.status === "Failed") items.push(menuItem("Retry", () => sendTemp(room, temp), { id: "Retry" }));
+    items.push(menuItem("Delete", () => { state.temps.set(room.roomId, (state.temps.get(room.roomId) || []).filter((t) => t !== temp)); renderRoom(false); }, { id: "Delete", destructive: true }));
+    return items;
+  }
+  if (show("Copy") && text) items.push(menuItem("Copy", () => navigator.clipboard.writeText(text).then(() => setStatus("copied", "ok"), () => setStatus("copy refused by the browser", "warn")), { id: "Copy" }));
+  if (show("Reply")) items.push(menuItem("Reply", () => { state.replyTo = msg.messageId; state.editing = null; renderFooter(room); $("input").focus(); }, { id: "Reply" }));
+  if (show("Edit") && mine && msg.body && msg.body.type === "Text") items.push(menuItem("Edit", () => { state.editing = msg.messageId; state.replyTo = null; $("input").value = msg.body.text; renderFooter(room); $("input").focus(); }, { id: "Edit" }));
+  if (show("Retry") && source && msg.status === "Failed") items.push(menuItem("Retry", () => ask("retry", { roomId: room.roomId, messageId: msg.messageId }, (frame) => { if (frame.error) setStatus(`retry: ${describeError(frame.error)}`, "err"); }), { id: "Retry" }));
+  const deletable = mine || (!source && msg.status === "Failed");
+  if (show("Delete") && deletable) items.push(menuItem("Delete", () => ask("delete", { roomId: room.roomId, messageId: msg.messageId }, (frame) => { if (frame.error) setStatus(`delete: ${describeError(frame.error)}`, "err"); }), { id: "Delete", destructive: true }));
+  if (show("React")) {
+    const picker = el("div", "picker");
+    picker.dataset.item = "React";
+    const allowed = room.config.allowedReactions || REACTIONS;
+    for (const emoji of allowed) {
+      const b = el("button", null, emoji);
+      b.type = "button";
+      b.dataset.emoji = emoji;
+      b.onclick = () => { closeMenu(); const held = (msg.reactions || []).find((r) => r.emoji === emoji && r.reactedByUser); react(room.roomId, msg, emoji, !held); };
+      picker.appendChild(b);
+    }
+    items.push(picker);
+  }
+  if (room.config.reactionDetails && (msg.reactions || []).length) items.push(menuItem("Who reacted", () => whoReacted(room.roomId, msg.messageId), { id: "WhoReacted" }));
+  return items;
+}
+
+// The built-in entries, then the product's own when the room asks for them.
+function openMessageMenu(room, msg, temp, event) {
+  const position = { clientX: event.clientX, clientY: event.clientY, stopPropagation() {} };
+  event.stopPropagation();
+  if (temp || !room.config.messageActions) {
+    showMenu(position, builtInItems(room, msg, temp, []));
+    return;
+  }
+  showMenu(position, [el("span", "note", "asking the product…")]);
+  ask("messageActions", { roomId: room.roomId, messageId: msg.messageId }, (frame) => {
+    let items;
+    const callback = (action) => send({ op: "messageAction", roomId: room.roomId, messageId: msg.messageId, actionId: action.actionId });
+    if (frame.ok && frame.ok.type === "Custom") items = productItems(frame.ok.actions, callback);
+    else if (frame.ok) {
+      items = builtInItems(room, msg, null, frame.ok.hidden || []);
+      if (frame.ok.actions.length) { items.push(el("hr")); items.push(...productItems(frame.ok.actions, callback)); }
+    } else {
+      // NotAvailable, a time-out or no worker: the host's own menu.
+      items = builtInItems(room, msg, null, []);
+      if (frame.error.tag !== "NotAvailable") items.push(el("span", "note", `menu: ${describeError(frame.error)}`));
+    }
+    showMenu(position, items);
+  });
+}
+
+function whoReacted(roomId, messageId) {
+  openSheet("Who reacted", [el("span", "note", "asking the product…")]);
+  ask("reactions", { roomId, messageId }, (frame) => {
+    if (frame.error) {
+      if (frame.error.tag === "NotAvailable") { closeSheet(); setStatus("who reacted is not available", "warn"); return; }
+      openSheet("Who reacted", [el("span", "note", describeError(frame.error))]);
+      return;
+    }
+    resolveAuthors(roomId, frame.ok.reactions.map((r) => r.participantId));
+    const rows = frame.ok.reactions.map((r) => {
+      const row = el("div", "person-row");
+      row.dataset.participant = r.participantId;
+      row.appendChild(el("span", null, r.emoji));
+      row.appendChild(el("span", null, participantName(roomId, r.participantId)));
+      return row;
+    });
+    openSheet("Who reacted", rows.length ? rows : [el("span", "note", "nobody")]);
+  });
+}
+
+function closeSheet() { $("sheet").hidden = true; $("sheetbody").textContent = ""; }
+
+function openSheet(title, nodes) {
+  const body = $("sheetbody");
+  body.textContent = "";
+  body.appendChild(el("h3", null, title));
+  for (const node of nodes) body.appendChild(node);
+  $("sheet").hidden = false;
+}
+
+function describeParticipant(entry) {
+  const p = entry.participant;
+  switch (p.kind) {
+    case "Person": return `Person ${p.personId}`;
+    case "LitePerson": return `Lite person ${p.account}`;
+    case "Contact": return `Contact handle ${p.handle}`;
+    case "Product": return `Product ${p.productId}`;
+    case "Custom": return `Custom${p.avatar ? " with avatar" : ""}`;
+    default: return p.kind;
+  }
+}
+
+// The built-in entry of each participant kind (RFC defaults table).
+function builtInParticipant(entry) {
+  const p = entry.participant;
+  switch (p.kind) {
+    case "Person": return [menuItem("Open People profile", () => setStatus(`a phone opens the People profile of person ${p.personId}`, "ok"), { id: "builtin" })];
+    case "LitePerson": return [menuItem("Copy address", () => navigator.clipboard.writeText(p.account).then(() => setStatus("copied", "ok"), () => setStatus(p.account, "ok")), { id: "builtin" })];
+    case "Contact": return [menuItem("Open contact", () => setStatus("a phone opens the contact", "ok"), { id: "builtin" })];
+    case "Product": return [menuItem("Open product", () => setStatus(`a phone opens ${p.productId}`, "ok"), { id: "builtin" })];
+    default: return [];
+  }
+}
+
+function openParticipantMenu(room, entry, event) {
+  const position = { clientX: event.clientX, clientY: event.clientY, stopPropagation() {} };
+  event.stopPropagation();
+  if (!room.config.participantActions) { showMenu(position, builtInParticipant(entry).concat(builtInParticipant(entry).length ? [] : [el("span", "note", "no actions")])); return; }
+  showMenu(position, [el("span", "note", "asking the product…")]);
+  ask("participantActions", { roomId: room.roomId, participantId: entry.participantId }, (frame) => {
+    const callback = (action) => send({ op: "participantAction", roomId: room.roomId, participantId: entry.participantId, actionId: action.actionId });
+    let items = builtInParticipant(entry);
+    if (frame.ok && frame.ok.type === "Custom") items = productItems(frame.ok.actions, callback);
+    else if (frame.ok && frame.ok.actions.length) { if (items.length) items.push(el("hr")); items.push(...productItems(frame.ok.actions, callback)); }
+    else if (frame.error && frame.error.tag !== "NotAvailable") items.push(el("span", "note", describeError(frame.error)));
+    showMenu(position, items.length ? items : [el("span", "note", "no actions")]);
+  });
+}
+
+function personRow(room, entry) {
+  const row = el("button", "person-row");
+  row.type = "button";
+  row.dataset.participant = entry.participantId;
+  const p = entry.participant;
+  row.appendChild(avatar(p.kind === "Custom" ? p.avatar : null, participantName(room.roomId, entry.participantId), true));
+  const label = el("span", null, participantName(room.roomId, entry.participantId));
+  label.appendChild(el("small", null, `${entry.participantId} · ${describeParticipant(entry)}`));
+  row.appendChild(label);
+  row.onclick = (event) => openParticipantMenu(room, entry, event);
+  return row;
+}
+
+// The participants sheet: the two defaults, or the product's pages of 100.
+function openPeople(room) {
+  if (!room.config.participants) {
+    openSheet("2 participants", [
+      el("div", "person-row", "You (user)"),
+      el("div", "person-row", `${room.name} (product)`),
+    ]);
+    return;
+  }
+  const people = peopleOf(room.roomId);
+  const draw = () => {
+    const nodes = people.list.map((entry) => personRow(room, entry));
+    if (people.loading) nodes.push(el("span", "note", "loading…"));
+    else if (people.error) nodes.push(el("span", "note", describeError(people.error)));
+    else if (people.next) {
+      const more = el("button", null, "Load more");
+      more.type = "button";
+      more.id = "people-more";
+      more.onclick = () => page(people.next);
+      nodes.push(more);
+    }
+    openSheet(`${people.count != null ? people.count : people.list.length} participants`, nodes);
+  };
+  const page = (cursor) => {
+    people.loading = true;
+    draw();
+    ask("participants", { roomId: room.roomId, query: { type: "Page", cursor, pageSize: PEOPLE_PAGE } }, (frame) => {
+      people.loading = false;
+      people.error = frame.error || null;
+      if (frame.ok) {
+        for (const entry of frame.ok.participants) { people.list.push(entry); people.byId.set(entry.participantId, entry); }
+        people.next = frame.ok.next == null ? null : frame.ok.next;
+      }
+      draw();
+    });
+  };
+  if (people.next === undefined && !people.list.length) page(null);
+  else draw();
+}
+
+// -------------------------------------------------------------- protocol
+
+function upsertMessage(roomId, message) {
+  const list = messagesOf(roomId);
+  const index = list.findIndex((m) => m.messageId === message.messageId);
+  if (index >= 0) list[index] = message; else list.push(message);
+}
+
+function renderHeader() {
+  $("product").textContent = state.productId || "unknown product";
+  const w = $("worker");
+  if (!state.worker.configured) { w.textContent = "worker: not configured"; w.className = "pill"; }
+  else if (!state.worker.connected) { w.textContent = "worker: 0 connected"; w.className = "pill warn"; }
+  else { w.textContent = `worker: ${state.worker.connected} connected`; w.className = "pill ok"; }
 }
 
 function strip(frame) {
@@ -462,8 +1511,13 @@ function strip(frame) {
   return copy;
 }
 
+// `?room=<id>` opens that room as soon as the product declares it, until the
+// person picks a room; otherwise the first room of the list opens.
 function ensureSelection() {
-  if (!state.rooms.some((r) => r.roomId === state.selected)) state.selected = state.rooms.length ? state.rooms[0].roomId : null;
+  const wanted = params.get("room");
+  if (!state.picked && wanted && state.rooms.has(wanted)) state.selected = wanted;
+  else if (!state.rooms.has(state.selected)) state.selected = (sortedRooms()[0] || {}).roomId || null;
+  openSelected();
 }
 
 function handle(frame) {
@@ -471,57 +1525,96 @@ function handle(frame) {
     case "snapshot":
       state.productId = frame.productId || "";
       state.worker = frame.worker || { configured: false, connected: 0 };
-      state.rooms = frame.rooms || [];
+      if (frame.timeouts) state.timeouts = frame.timeouts;
+      state.rooms = new Map((frame.rooms || []).map((room) => [room.roomId, room]));
       state.bots = frame.bots || [];
-      state.messages = frame.messages || [];
+      state.messages = new Map();
+      for (const entry of frame.messages || []) upsertMessage(entry.roomId, entry.message);
+      // A reconnected socket is a new screen: open the room again.
+      state.opened = null;
       ensureSelection();
-      renderHeader(); renderRooms(); renderThread(true);
+      renderHeader(); renderRooms(); renderRoom(true);
       break;
-    case "room":
-      upsert(state.rooms, "roomId", strip(frame));
+    case "room": {
+      const room = strip(frame);
+      const before = state.rooms.get(room.roomId);
+      state.rooms.set(room.roomId, room);
+      // A change of mode discards what the screen held, as the host does.
+      if (before && isSource(before) !== isSource(room)) {
+        state.messages.set(room.roomId, []);
+        if (state.opened === room.roomId) { state.opened = null; }
+      }
       ensureSelection();
-      renderRooms(); renderThread(false);
+      renderRooms();
+      if (room.roomId === state.selected) renderRoom(false);
+      break;
+    }
+    case "roomDeleted":
+      state.rooms.delete(frame.roomId);
+      state.messages.delete(frame.roomId);
+      if (state.opened === frame.roomId) state.opened = null;
+      ensureSelection();
+      renderRooms(); renderRoom(true);
       break;
     case "bot":
-      upsert(state.bots, "botId", strip(frame));
+      state.bots = state.bots.filter((b) => b.botId !== frame.botId).concat([strip(frame)]);
       renderRooms();
       break;
-    case "message":
-      upsert(state.messages, "messageId", strip(frame));
-      if (frame.roomId === state.selected) renderThread(frame.author === "person");
+    case "message": {
+      const room = state.rooms.get(frame.roomId);
+      if (room && frame.list) room.list = frame.list;
+      const list = messagesOf(frame.roomId);
+      const known = list.some((m) => m.messageId === frame.message.messageId);
+      // A room the product keeps shows what its window holds plus what is new.
+      if (known || frame.persisted || state.opened === frame.roomId) upsertMessage(frame.roomId, frame.message);
+      renderRooms();
+      if (frame.roomId === state.selected) renderRoom(frame.message.origin === USER);
       break;
-    case "workers":
+    }
+    case "workers": {
+      const first = !state.worker.connected && frame.connected > 0;
       state.worker.connected = frame.connected;
       renderHeader();
+      // The page opens its room before the worker it boots attaches, so the
+      // first worker hears RoomOpened again.
+      if (first && state.opened) send({ op: "open", roomId: state.opened });
       break;
+    }
+    case "answer": {
+      const callback = pending.get(frame.reqId);
+      pending.delete(frame.reqId);
+      if (callback) callback(frame);
+      break;
+    }
     case "delivered":
+      if (frame.reqId != null && pending.has(frame.reqId)) { const cb = pending.get(frame.reqId); pending.delete(frame.reqId); cb(frame); }
+      if (frame.op === "seen") break;
       if (frame.workers > 0) setStatus(`${frame.op}: delivered to ${frame.workers} worker(s)`, "ok");
       else setStatus(`${frame.op}: no worker connected`, "warn");
       break;
     case "error":
+      if (frame.reqId != null && pending.has(frame.reqId)) { const cb = pending.get(frame.reqId); pending.delete(frame.reqId); cb({ kind: "answer", error: { tag: "Refused", reason: frame.message } }); }
       setStatus(`error: ${frame.message}`, "err");
       break;
   }
 }
 
-function submit() {
-  const input = $("input");
-  const text = input.value;
-  if (!state.selected || !text.trim()) return;
-  let op;
-  if (text.startsWith("/")) {
-    const match = /^\/(\S*)(?:\s([\s\S]*))?$/.exec(text);
-    op = { op: "command", roomId: state.selected, command: match[1], payload: match[2] || "" };
-  } else {
-    op = { op: "post", roomId: state.selected, text };
-  }
-  if (send(op)) input.value = "";
-}
-
 $("compose").onsubmit = (event) => { event.preventDefault(); submit(); };
 $("input").onkeydown = (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); submit(); }
+  if (event.key === "Escape") { state.editing = null; state.replyTo = null; renderFooter(roomOf(state.selected)); }
 };
+$("input").oninput = () => { const room = roomOf(state.selected); renderSuggestions(room); renderCatalogue(room); };
+$("thread").onscroll = () => {
+  const room = roomOf(state.selected);
+  const paging = room && state.paging.get(room.roomId);
+  if (paging && paging.next && !paging.loading && $("thread").scrollTop < 20) loadPage(room.roomId, paging.next);
+};
+document.addEventListener("click", (event) => { if (!$("menu").contains(event.target)) closeMenu(); });
+$("sheet").onclick = (event) => { if (event.target === $("sheet")) closeSheet(); };
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeMenu(); closeSheet(); } });
+document.addEventListener("visibilitychange", () => { const room = roomOf(state.selected); if (room) reportSeen(room); });
+window.addEventListener("pagehide", () => { if (state.opened) send({ op: "close", roomId: state.opened }); });
 $("restart").onclick = () => location.reload();
 
 // Three panes, each shown or hidden and the two side ones sized by drag,
@@ -656,14 +1749,17 @@ $("logclear").onclick = () => { workerLog.entries.length = 0; workerLog.dropped 
 renderLayout();
 if (layout.log) renderLog();
 
+
 surface.onState = (open) => {
   const link = $("link");
   link.textContent = open ? "socket open" : "reconnecting";
   link.className = open ? "pill ok" : "pill off";
+  // A new socket is a new screen; the snapshot opens the room again.
+  if (!open) state.opened = null;
 };
 if (surface.socket && surface.socket.readyState === 1) surface.onState(true);
 surface.onFrame = handle;
-renderHeader(); renderRooms(); renderThread(true);
+renderHeader(); renderRooms(); renderRoom(true);
 for (const frame of surface.queue.splice(0)) handle(frame);
 </script>
 <!--WORKER_BOOT-->

@@ -247,13 +247,59 @@ The frame port then also serves:
 | `WS /chat/ws`              | The page's view of the chat, as JSON text frames.                                                                         |
 
 The worker boots with the page, so reloading the page restarts the worker. The
-page lists the rooms the worker created and each room's messages. A line typed
-there reaches every live worker through `chat.actionSubscribe()` as a
-`MessagePosted` from peer `native`, the way the iOS host delivers it; a line
-starting with `/` becomes a `Command`, and a button on an `Actions` message
-becomes an `ActionTriggered` naming that message. A person's message takes its
-id from the same sequence as the product's, so a trigger can never name the
-wrong one.
+page is the phone's chat screen for [Chat Extension v2](../../../docs/rfcs/chat-extension-v2.md),
+drawn from what the in-memory host keeps. The sample product in
+[`playground/chat-v2`](../../../playground/chat-v2/README.md) drives every part
+of it:
+
+```bash
+cd playground/chat-v2 && yarn install --frozen-lockfile && yarn build
+truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index.js -- yarn dev
+# open http://127.0.0.1:9955/chat and type /help in a room
+```
+
+- **Chat list.** Each room with its name, avatar and description, ordered as
+  the product's preview says (pinned rooms first, then by time), with the
+  preview text (animated while `ongoing`) and the badge: a count, an image, or
+  nothing. Where the product set no preview, the host derives the text from
+  the newest message and counts the unread messages of a room it keeps.
+- **Room.** Every body kind: `Text` with its links, `RichText` as the Markdown
+  subset of the RFC (bold, italic, code, fenced code, lists, quotes, links;
+  headings bold, tables as text) with inline images, preimage images as a
+  placeholder with their key, a video poster that plays an inline video, a file
+  row that downloads an inline file, `Actions` buttons, and `Custom` as its
+  `preview_text` (the page runs no `Renderer`). Messages show "edited",
+  deletion, status ticks, reactions (yours highlighted, click to toggle) and a
+  reply quote that jumps to its message.
+- **Menus.** The message menu holds the built-in entries of the RFC defaults
+  (Copy, Reply, Edit and Delete for your own messages, React, Retry for a failed
+  message in a product-source room), then, when the room sets
+  `message_actions`, the product's entries from `message_actions_query`
+  (`hidden` removes built-ins; destructive entries are red and last). "Who
+  reacted" asks `reactions_query` when the room sets `reaction_details`.
+- **Header.** The participant count (`participants_query` `Count`, or 2), a
+  participant sheet that pages by 100 with each kind drawn, a menu for each
+  participant (`participant_actions_query`), and the toolbar: two actions
+  inline, the rest behind an overflow button. A deeplink asks before it opens.
+- **Footer.** `Input` with its hint and the photo, video, file and payment
+  buttons it declares (the page sends no attachments), `Empty`, or `Custom` as a
+  placeholder box; above it the activity line, the quick replies (hidden while
+  you type), and the `/` catalogue of the room's commands. Only a declared
+  command name becomes a `Command`; any other text is a message. An empty room
+  shows its `placeholder`.
+
+A room the host keeps stores what you send and tells the product with the
+events of `chat.actionSubscribe()` (`MessagePosted` with the host's id,
+`UserEdited`, `UserDeleted`, `UserReacted`, and `Seen` when the room asks for
+it). A room the product keeps (`product_source`) is paged from the product with
+`messages_query`, newest page first and older pages as you scroll up; what you
+send shows as `Preparing` until `user_action` answers `MessageCreated`, and your
+edits, deletions, reactions, retries and seen reports go there too. The host
+waits 10 s for a page, 30 s for a send, 10 s for another action and 5 s for the
+other queries, asks an `unavailable` query once more after 1 s, and draws the
+host default when the product answers `NotAvailable`. Selecting a room sends
+`RoomOpened`, leaving it `RoomClosed` (which also clears its activity line).
+`?room=<id>` opens a room as soon as the product declares it.
 
 The worker runs as a module script in the page, so its console is the page's.
 The **Logs** pane shows it: every line levelled from its `[INF]`/`[WRN]`/`[ERR]`
@@ -263,14 +309,26 @@ remembered across reloads.
 
 ![Toggling the rooms and log panes and dragging the log wider](docs/chat-panes.gif)
 
-On `/chat/ws` the host sends a `snapshot` of rooms, bots and messages first,
-then a `room`, `bot` or `message` event as each lands, and `workers` whenever a
-worker connects or disconnects. The page sends `post`, `trigger` and `command`
-operations; each is answered with `delivered` and the number of workers that
-took it, where 0 means none is connected, or with `error` for an unknown room
-or an action the core refused. Without `--worker-bundle` the page still shows
-the chat, but boots no worker until one is given. Other host modes serve none
-of these routes.
+On `/chat/ws` the host sends a `snapshot` (rooms with their declarations and
+list row, bots, the messages of rooms the host keeps, and the time-outs) first,
+then a `room`, `roomDeleted`, `bot` or `message` event as each lands, and
+`workers` whenever a worker connects or disconnects. The page sends one
+operation per thing a person does: `post`, `edit`, `delete`, `react`, `seen`,
+`retry`, `trigger`, `command`, `messageAction`, `participantAction`, `toolbar`,
+`suggestion`, `open` and `close`, and the queries `messages`, `reactions`,
+`participants`, `messageActions` and `participantActions`. An event is answered
+with `delivered` and the number of workers that took it, where 0 means none is
+connected; a query or a user action with `answer`, which carries the page's
+`reqId` and the product's answer or the reason there is none (`Timeout`,
+`NoWorker`, `NotAvailable`, `Rejected`, ...); a refusal with `error`. Every
+message and declaration the host takes is also a line of the `TRUAPI_CHAT_LOG`
+transcript. Without `--worker-bundle` the page still shows the chat, but boots
+no worker until one is given. Other host modes serve none of these routes.
+
+`make e2e-chat-cli` runs the sample product on this page in headless Chromium
+after the content-screening phase (`scripts/launch-cli-chat-playground.mjs`):
+it types the command list and writes one row per scenario the page covers to
+`playground/test-results/cli-chat/diagnosis-report.md`, with a screenshot each.
 
 ### Interactive terminal UI
 
@@ -798,7 +856,7 @@ Scripts under `js/scripts/` include:
   scripts/battery.sh --pairing-host     # paired phase only
   make e2e-signing-cli                  # direct phase only
   make e2e-pairing-cli                  # paired phase only
-  make e2e-chat-cli                     # chat phase only
+  make e2e-chat-cli                     # chat phases only: screening, then the v2 sample on /chat
   scripts/battery.sh --pocket-host      # Pocket phase only
   make e2e-pocket-cli                   # Pocket phase only
   scripts/battery.sh --release          # release binary
