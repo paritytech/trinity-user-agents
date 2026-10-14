@@ -12,6 +12,10 @@ public extension ChatViewLayout {
         let footerConfiguration: (any HashableContentConfiguration)?
         /// The text that the chat shows while it has no messages. Nil shows nothing.
         let placeholderText: String?
+        /// The state of each end of the window. A product-source room pages, other rooms hold every message.
+        public var paging: Paging = .complete
+        /// The line above the input while the product of the room loads or does not answer.
+        public var roomStatus: RoomStatus?
 
         public init(
             headerConfiguration: ChatHeaderConfiguration,

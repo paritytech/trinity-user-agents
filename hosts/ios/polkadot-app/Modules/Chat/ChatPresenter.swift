@@ -114,6 +114,18 @@ extension ChatPresenter: ChatPresenterProtocol {
 
         interactor.readMessages([targetMessageId])
     }
+
+    func loadOlderMessages() {
+        interactor.loadOlderMessages()
+    }
+
+    func loadNewerMessages() {
+        interactor.loadNewerMessages()
+    }
+
+    func jumpToMessage(_ messageId: String) {
+        interactor.jump(to: messageId)
+    }
 }
 
 extension ChatPresenter: ChatInteractorOutputProtocol {
@@ -155,6 +167,14 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
 
     func didRemoveChat() {
         wireframe.dismissChat(from: view)
+    }
+
+    func didJump(to messageId: Chat.MessageId, found: Bool) {
+        guard found else {
+            return
+        }
+
+        view?.scrollToMessage(messageId)
     }
 }
 
@@ -235,12 +255,13 @@ private extension ChatPresenter {
             }
         )
 
-        let viewModel = viewModelFactory.viewModel(
+        var viewModel = viewModelFactory.viewModel(
             model: listModel,
             metadata: metadata,
             actions: contextActions,
             footerConfiguration: footer
         )
+        viewModel.paging = ChatViewLayout.ViewModel.Paging(paging: listModel.paging)
         view?.didReceive(viewModel: viewModel)
     }
 
@@ -495,5 +516,27 @@ extension ChatPresenter: ChatMoreActionsDelegate {
 extension ChatPresenter: ChatAttachmentPreviewDelegate {
     func attachmentPreview(didComplete text: String, attachment: ProcessedAttachment) {
         interactor.send(text: text, attachments: [attachment], replyToMessageId: nil)
+    }
+}
+
+extension ChatViewLayout.ViewModel.Paging {
+    /// The rows at the ends of the window: a spinner while a page loads, a text when it failed.
+    init(paging: ChatPagingState) {
+        self.init(older: Edge(edge: paging.older), newer: Edge(edge: paging.newer))
+    }
+}
+
+private extension ChatViewLayout.ViewModel.Paging.Edge {
+    init(edge: ChatPagingState.Edge) {
+        switch edge {
+        case .more:
+            self = .more
+        case .loading:
+            self = .loading
+        case .end:
+            self = .end
+        case .failed:
+            self = .failed(String(localized: .ChatExtension.pageFailed))
+        }
     }
 }

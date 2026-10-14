@@ -10,11 +10,26 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
         case sendUserMessage(Chat.LocalMessage.Content)
         case sendCommand(Chat.Command)
         case deleteMessage(Chat.MessageId)
+        case markAsSeen(Set<Chat.MessageId>)
+        case loadOlder
+        case loadNewer
+        case jump(Chat.MessageId)
+        case perform(ChatSourceAction)
+        case openRoom
+        case closeRoom
+        case retryRoom
     }
 
     var takesCommands = true
     /// What `chatMetadataStream` yields before it finishes.
     var metadataUpdates: [ChatMetadata?] = []
+    /// What `messageSnapshots` yields. The stream stays open, as the stream of a room screen does.
+    var snapshotUpdates: [MessageListSnapshot] = []
+    var store = ChatRoomPolicy.MessageStore.host
+    var jumpFindsMessage = true
+    var actionOutcome = ChatSourceActionOutcome.done
+    /// What `sendUserMessage` and `deleteMessage` throw after they record the call.
+    var sendError: Error?
 
     let calls: AsyncStream<Call>
     private let continuation: AsyncStream<Call>.Continuation
@@ -25,6 +40,10 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
 
     func sendUserMessage(with content: Chat.LocalMessage.Content) async throws {
         continuation.yield(.sendUserMessage(content))
+
+        if let sendError {
+            throw sendError
+        }
     }
 
     func sendCommand(_ command: Chat.Command) async -> Bool {
@@ -36,7 +55,10 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
         AsyncStream<[Chat.LocalMessage]> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
-    func markAsSeen(messageIds _: Set<Chat.MessageId>) async throws {}
+    func markAsSeen(messageIds: Set<Chat.MessageId>) async throws {
+        continuation.yield(.markAsSeen(messageIds))
+    }
+
     func leaveChat() async throws {}
     func blockUser() async throws {}
     func unblockUser() async throws {}
@@ -60,5 +82,57 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
 
     func deleteMessage(_ messageId: Chat.MessageId) async throws {
         continuation.yield(.deleteMessage(messageId))
+
+        if let sendError {
+            throw sendError
+        }
+    }
+
+    func messageSnapshots() async throws -> AnyAsyncSequence<MessageListSnapshot> {
+        guard !snapshotUpdates.isEmpty else {
+            return AsyncStream<MessageListSnapshot> { $0.finish() }.eraseToAnyAsyncSequence()
+        }
+
+        let updates = snapshotUpdates
+        return AsyncStream<MessageListSnapshot> { continuation in
+            updates.forEach { continuation.yield($0) }
+        }
+        .eraseToAnyAsyncSequence()
+    }
+
+    func messageStore() async -> ChatRoomPolicy.MessageStore {
+        store
+    }
+
+    func loadOlder() async -> ChatPageOutcome {
+        continuation.yield(.loadOlder)
+        return .appended(0)
+    }
+
+    func loadNewer() async -> ChatPageOutcome {
+        continuation.yield(.loadNewer)
+        return .appended(0)
+    }
+
+    func jump(to messageId: Chat.MessageId) async -> Bool {
+        continuation.yield(.jump(messageId))
+        return jumpFindsMessage
+    }
+
+    func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome {
+        continuation.yield(.perform(action))
+        return actionOutcome
+    }
+
+    func openRoom() async {
+        continuation.yield(.openRoom)
+    }
+
+    func closeRoom() async {
+        continuation.yield(.closeRoom)
+    }
+
+    func retryRoom() async {
+        continuation.yield(.retryRoom)
     }
 }

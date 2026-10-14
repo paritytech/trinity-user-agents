@@ -14,8 +14,24 @@ actor ChatInteractorState {
     private var pendingReactionTargetMessageId: Chat.MessageId?
     var model: MessageListModel?
 
+    /// The model of a window. The paging state, the readiness and the edits of a product-source room come
+    /// from the snapshot.
     func onSnapshot(_ snapshot: MessageListSnapshot) -> MessageListModel {
-        onMessagesUpdate(snapshot.messages)
+        var model = onMessagesUpdate(snapshot.messages)
+        model.paging = snapshot.paging
+        model.readiness = snapshot.readiness
+
+        if !snapshot.editedAt.isEmpty {
+            model = model.addingEdits(snapshot.editedAt)
+        }
+
+        self.model = model
+        return model
+    }
+
+    /// The paging state of the last window.
+    var paging: ChatPagingState {
+        model?.paging ?? .complete
     }
 
     func onMessagesUpdate(_ messages: [Chat.LocalMessage]) -> MessageListModel {
