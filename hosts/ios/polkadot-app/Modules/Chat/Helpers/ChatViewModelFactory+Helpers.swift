@@ -108,6 +108,15 @@ extension UIAction {
         }
     }
 
+    static func chatRetry(_ action: @escaping () -> Void) -> UIAction {
+        UIAction(
+            title: String(localized: .Common.retry),
+            image: UIImage(resource: .iconRefresh).withTintColor(.fgPrimary, renderingMode: .alwaysOriginal)
+        ) { _ in
+            action()
+        }
+    }
+
     static func chatEditHistory(_ action: @escaping () -> Void) -> UIAction {
         UIAction(
             title: String(localized: .chatEditHistory),

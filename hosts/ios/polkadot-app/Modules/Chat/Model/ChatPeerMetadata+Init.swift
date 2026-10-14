@@ -31,7 +31,8 @@ extension Chat.LocalModel {
             chatId: chatId,
             peerMetadata: peerMetadata,
             state: .created,
-            subtitle: roomDeclarations?.description
+            subtitle: roomDeclarations?.description,
+            roomPolicy: roomPolicy
         )
     }
 }

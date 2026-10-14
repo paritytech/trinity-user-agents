@@ -226,6 +226,9 @@ private extension ChatPresenter {
                 Task {
                     @MainActor in moduleNavigator.openProduct(page: productPage)
                 }
+            },
+            retry: { [weak self] messageId in
+                self?.interactor.retrySend(messageId: messageId)
             }
         )
 

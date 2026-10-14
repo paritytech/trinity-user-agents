@@ -11,4 +11,6 @@ struct ChatMetadata: Equatable {
     let state: State
     /// The line under the name in the header, for example the description of a product room.
     var subtitle: String?
+    /// What a product room offers. Nil for a person chat.
+    var roomPolicy: ChatRoomPolicy?
 }

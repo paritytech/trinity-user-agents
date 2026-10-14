@@ -18,4 +18,6 @@ struct ChatViewModelActions {
     let unblockUser: () -> Void
     let startCall: (_ callType: ChatCallType) -> Void
     let openProduct: (ProductPage) -> Void
+    /// Sends a failed message of a product-source room again.
+    let retry: (_ messageId: String) -> Void
 }

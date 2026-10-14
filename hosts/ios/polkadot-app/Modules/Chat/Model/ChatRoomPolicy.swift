@@ -9,6 +9,9 @@ struct ChatRoomPolicy: Equatable {
     enum MessageStore: Equatable {
         /// The host database keeps the messages. `post_message` and feed updates write to it.
         case host
+        /// The product keeps the messages, and the host keeps a page cache (`product_source`). No room has
+        /// this store until the configuration of a room decodes (P2.10).
+        case product
     }
 
     enum ListPreview: Equatable {
@@ -158,6 +161,11 @@ extension ChatRoomPolicy {
         case let .input(input):
             .inputField(.init(canPay: input.allowsPayment, canAttachFile: false))
         }
+    }
+
+    /// The built-in Retry exists only in a room whose product keeps the messages (02-DESIGN §13 item 9).
+    var offersRetry: Bool {
+        messageStore == .product && messageMenu.builtIns.contains(.retry)
     }
 
     /// The number that the chat list shows on the row of the room.

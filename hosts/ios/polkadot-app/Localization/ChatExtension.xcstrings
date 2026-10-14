@@ -44,6 +44,17 @@
           }
         }
       }
+    },
+    "room.placeholder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No messages yet"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

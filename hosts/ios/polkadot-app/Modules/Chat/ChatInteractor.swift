@@ -359,6 +359,12 @@ extension ChatInteractor: ChatInteractorInputProtocol {
             await engine.processAction(action)
         }
     }
+
+    func retrySend(messageId: Chat.MessageId) {
+        // Seam for P5.5: a product-source room sends again through `user_action`, and no room has that
+        // store until the room configuration decodes (P2.10).
+        logger.warning("Retry of message \(messageId) waits for product-source rooms (P5.5)")
+    }
 }
 
 private extension ChatInteractor {

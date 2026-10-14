@@ -56,6 +56,8 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func declineChatRequest()
     func processAction(_ action: Chat.Action)
     func isMicrophoneDenied() -> Bool
+    /// Sends a failed message of a product-source room again through `user_action` (P5.5).
+    func retrySend(messageId: Chat.MessageId)
 }
 
 @MainActor

@@ -107,8 +107,14 @@ extension ChatViewModelFactory: ChatViewModelMaking {
             scrollDownConfiguration: scrollDownConfiguration,
             scrollToReactionConfiguration: scrollToReactionConfiguration,
             sections: sections,
-            footerConfiguration: footerConfiguration
+            footerConfiguration: footerConfiguration,
+            placeholderText: placeholderText(for: metadata.chatMetadata)
         )
+    }
+
+    /// A product room shows the text of its product, or the host text, while it has no messages.
+    func placeholderText(for chatMetadata: ChatMetadata) -> String? {
+        chatMetadata.roomPolicy.map { $0.placeholder ?? String(localized: .ChatExtension.roomPlaceholder) }
     }
 
     func transferPreviewText(
@@ -295,7 +301,8 @@ private extension ChatViewModelFactory {
                     messageActions: ChatMessageBubbleAction.textMessageActions(
                         for: status,
                         input: metadata.peerMetadata.input,
-                        isEdited: isEdited
+                        isEdited: isEdited,
+                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false
                     ),
                     status: status,
                     deliveryDate: deliveryDate,
@@ -314,7 +321,8 @@ private extension ChatViewModelFactory {
                     messageActions: ChatMessageBubbleAction.textMessageActions(
                         for: status,
                         input: metadata.peerMetadata.input,
-                        isEdited: isEdited
+                        isEdited: isEdited,
+                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false
                     ),
                     status: status,
                     deliveryDate: deliveryDate,
@@ -405,7 +413,8 @@ private extension ChatViewModelFactory {
                     messageActions: ChatMessageBubbleAction.textMessageActions(
                         for: status,
                         input: metadata.peerMetadata.input,
-                        isEdited: isEdited
+                        isEdited: isEdited,
+                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false
                     ),
                     status: status,
                     deliveryDate: deliveryDate,
@@ -751,6 +760,7 @@ private extension ChatViewModelFactory {
                 case .copy: UIAction.chatCopy { actions.copy(text) }
                 case .reaction: nil
                 case .edited: UIAction.chatEditHistory { actions.showEditHistory(messageId) }
+                case .retry: UIAction.chatRetry { actions.retry(messageId) }
                 }
             }
         }
@@ -1039,8 +1049,8 @@ extension Chat.LocalMessage.Status.OutgoingStatus {
         switch self {
         case .new: .pending
         case .sent: .sent
-        case .delivered,
-             .read: .delivered
+        case .delivered: .delivered
+        case .read: .read
         case .failed: .failed
         }
     }
