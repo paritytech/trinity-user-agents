@@ -22,6 +22,7 @@ mod dotns_lookup;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
+mod payment_id;
 pub mod product_manifest;
 mod product_subtree;
 mod renderer;
@@ -77,10 +78,11 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-	AccountAccessReview, ChatFieldError, IdentityDisclosureReview, PermissionAuthorizationRequest,
-	PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductStorageKey,
-	SessionUiInfo, UserConfirmationReview, normalize_chat_identifier, normalize_product_identifier,
-	validate_chat_icon, validate_chat_message_content, validate_chat_name,
+	AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
+	ProductContext, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
+	normalize_chat_identifier, normalize_product_identifier, validate_chat_icon,
+	validate_chat_message_content, validate_chat_name,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
@@ -124,7 +126,7 @@ use crate::{
 	chain_runtime::RuntimeFailure,
 	host_internal::{
 		bulletin::preimage_key,
-		permissions::{PermissionsService, TemporaryPermissions},
+		permissions::{PermissionsService, TemporaryPermissions, cross_product_signature_key},
 		product_manifest::Granted,
 		sso_messages::RingVrfError,
 	},
@@ -702,6 +704,36 @@ impl ProductRuntimeHost {
 		self.platform.confirm_user_action(review).await
 	}
 
+	/// Confirm a signature with `account`. When the account belongs to another
+	/// product, the user is asked once per kind and owning product for the rest
+	/// of this execution. Prompts open one at a time, and a signature the user
+	/// already approved never waits for one.
+	async fn confirm_signature(
+		&self,
+		kind: CrossProductSignatureKind,
+		account: &v01::ProductAccountId,
+		review: impl FnOnce() -> UserConfirmationReview,
+	) -> Result<bool, v01::GenericError> {
+		if account.dot_ns_identifier == self.product_id() {
+			return self.confirm_product_action(review()).await;
+		}
+		let approval =
+			cross_product_signature_key(&self.product_id(), &account.dot_ns_identifier, kind);
+		let permissions = &self.temporary_permissions;
+		if permissions.authorize(&approval, false) {
+			return Ok(true);
+		}
+		let _prompt = permissions.signature_prompt().await;
+		if permissions.authorize(&approval, false) {
+			return Ok(true);
+		}
+		let approved = self.confirm_product_action(review()).await?;
+		if approved {
+			permissions.grant(approval);
+		}
+		Ok(approved)
+	}
+
 	async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
 		self.require_remote_permission(v01::RemotePermission::ChainSubmit, denied_error)
 			.await
@@ -989,8 +1021,6 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 		},
 	})
 }
-
-const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
 
 impl ProductRuntimeHost {
 	/// Chat access policy for this connection; see [`chat_platform_for`].
