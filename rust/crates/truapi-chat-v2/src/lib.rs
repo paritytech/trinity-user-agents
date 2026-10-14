@@ -393,6 +393,20 @@ pub enum V2ChatMessageContent {
         reference: Option<String>,
         revision: u64,
     },
+    /// The sender's host hands this contact's host the public half of its
+    /// pairwise host-channel key, so the two hosts can derive a channel of
+    /// their own and stop relaying through Chat. Host-originated and
+    /// host-consumed: products never send or see it. Sent once per contact;
+    /// a later frame replaces the earlier one. V2 wire enum index 23.
+    ///
+    /// Prototype (seity doc/HOST_CHANNEL_PLAN.md): the frame is the host
+    /// section of a Contacts connect, carried on Chat until Contacts exists.
+    HostChannelBootstrap {
+        /// Frame version; only `1` is defined.
+        version: u8,
+        /// X25519 public key, pairwise for this contact.
+        channel_public_key: [u8; 32],
+    },
     /// The envelope was valid enough to recover id/timestamp, but the versioned
     /// content wrapper is not yet represented by this SDK surface.
     UnsupportedVersion { version_index: u8 },
@@ -1048,6 +1062,23 @@ pub fn encode_personal_profile_reference_message(
     })
 }
 
+/// Encode a host-channel bootstrap (content index 23, version 1).
+pub fn encode_host_channel_bootstrap_message(
+    message_id: &str,
+    timestamp: u64,
+    channel_public_key: &[u8; 32],
+) -> Result<Vec<u8>, ChatError> {
+    encode_message(message_id, timestamp, |out| {
+        out.push(23);
+        out.push(HOST_CHANNEL_BOOTSTRAP_VERSION);
+        out.extend_from_slice(channel_public_key);
+        Ok(())
+    })
+}
+
+/// The one host-channel bootstrap frame version this crate writes and reads.
+pub const HOST_CHANNEL_BOOTSTRAP_VERSION: u8 = 1;
+
 /// Encode a v2 compacted-messages reference (content index 19).
 pub fn encode_compacted_messages_message(
     message_id: &str,
@@ -1341,6 +1372,20 @@ pub fn decode_message(data: &[u8]) -> Result<V2ChatMessage, ChatError> {
                     statement_account_id,
                     encryption_public_key,
                 },
+            }
+        }
+        23 => {
+            let version = cursor.read_u8("host_channel_version")?;
+            if version != HOST_CHANNEL_BOOTSTRAP_VERSION {
+                return Err(ChatError::InvalidEncoding(format!(
+                    "unsupported host channel bootstrap version {version}"
+                )));
+            }
+            let channel_public_key = cursor.read_array_32("host_channel_public_key")?;
+            cursor.finish()?;
+            V2ChatMessageContent::HostChannelBootstrap {
+                version,
+                channel_public_key,
             }
         }
         21 | 22 => {
@@ -3740,6 +3785,43 @@ mod tests {
         let mut bad = withdrawn.clone();
         *bad.last_mut().unwrap() = 7;
         assert!(decode_message(&bad).is_err());
+    }
+
+    #[test]
+    fn host_channel_bootstrap_wire_roundtrips_and_pins_its_bytes() {
+        let key = [0x42u8; 32];
+        let encoded = encode_host_channel_bootstrap_message("hc", 9, &key).unwrap();
+        // message_id "hc", timestamp 9, VersionedChatMessage.V1, index 23, version 1, key.
+        let mut expected = vec![8, b'h', b'c'];
+        expected.extend_from_slice(&9u64.to_le_bytes());
+        expected.extend_from_slice(&[0, 23, 1]);
+        expected.extend_from_slice(&key);
+        assert_eq!(encoded, expected);
+        let decoded = decode_message(&encoded).unwrap();
+        assert_eq!(decoded.message_id, "hc");
+        assert_eq!(decoded.timestamp, 9);
+        assert_eq!(
+            decoded.content,
+            V2ChatMessageContent::HostChannelBootstrap {
+                version: 1,
+                channel_public_key: key,
+            }
+        );
+    }
+
+    #[test]
+    fn host_channel_bootstrap_refuses_other_versions_and_trailing_bytes() {
+        let key = [7u8; 32];
+        let mut other_version = encode_host_channel_bootstrap_message("hc", 1, &key).unwrap();
+        // compact("hc") is 3 bytes, timestamp 8, envelope version 1, index 1: the frame version is byte 13.
+        other_version[3 + 8 + 1 + 1] = 2;
+        assert!(decode_message(&other_version).is_err());
+        let mut trailing = encode_host_channel_bootstrap_message("hc", 1, &key).unwrap();
+        trailing.push(0);
+        assert!(decode_message(&trailing).is_err());
+        let mut short = encode_host_channel_bootstrap_message("hc", 1, &key).unwrap();
+        short.pop();
+        assert!(decode_message(&short).is_err());
     }
 
     #[test]

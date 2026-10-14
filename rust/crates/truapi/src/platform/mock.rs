@@ -799,6 +799,14 @@ fn core_key(key: &CoreStorageKey) -> String {
             hex_key(root_public_key),
             hex_key(genesis_hash)
         ),
+        CoreStorageKey::HostChannelPeers {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:host-channel-peers:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
         CoreStorageKey::NativeChatFileChunk {
             root_public_key,
             genesis_hash,

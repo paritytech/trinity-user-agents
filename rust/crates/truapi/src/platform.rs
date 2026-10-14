@@ -1975,20 +1975,15 @@ pub enum CoreStorageKey {
         /// Host-selected Chat network.
         genesis_hash: [u8; 32],
     },
-    /// Versioned bounded receiving ledger, shared across product executions.
-    /// Host product/account deletion must invoke ReceivingService::revoke first.
+    /// The host-channel keys this wallet's contacts handed over in a Chat
+    /// bootstrap frame, one per peer (seity `doc/HOST_CHANNEL_PLAN.md`).
+    /// Public keys only; the pair secret is derived on use.
     #[codec(index = 20)]
-    NotificationReceiving,
-    /// Bounded upload consent and rolling quota. Revocation retains quota and
-    /// advances a generation so outstanding confirmations cannot restore it.
-    #[codec(index = 21)]
-    AutomaticPreimageUploads {
-        /// Authenticated requesting product.
-        product_id: String,
-        /// Root account that explicitly granted consent.
-        root_public_key: Bytes32,
-        /// Host-selected Bulletin network.
-        genesis_hash: Bytes32,
+    HostChannelPeers {
+        /// Wallet whose contacts sent the keys.
+        root_public_key: [u8; 32],
+        /// Host-selected Chat network.
+        genesis_hash: [u8; 32],
     },
 }
 
@@ -2058,6 +2053,7 @@ pub fn describe_core_storage_key(
         CoreStorageKey::ProfilePersonalReferencesReceived { .. } => {
             ("ProfilePersonalReferencesReceived", None)
         }
+        CoreStorageKey::HostChannelPeers { .. } => ("HostChannelPeers", None),
         CoreStorageKey::NativeChatFileChunk { product_id, .. } => {
             ("NativeChatFileChunk", Some(product_id))
         }

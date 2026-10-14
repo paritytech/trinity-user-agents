@@ -109,6 +109,19 @@ pub(crate) enum OpenedDeviceMessage {
     /// Host-consumed: the reference is a bearer capability and never reaches
     /// the product.
     ProfileReference(ProfileReferenceFrame),
+    /// The peer host's half of the host channel. Host-consumed; never reaches
+    /// the product.
+    HostChannelBootstrap(HostChannelBootstrapFrame),
+}
+
+/// A screened host-channel bootstrap frame (Chat v2 content 23).
+pub(crate) struct HostChannelBootstrapFrame {
+    /// Native message identifier.
+    pub(crate) message_id: String,
+    /// Sender timestamp.
+    pub(crate) timestamp: u64,
+    /// The peer's pairwise X25519 public key for this wallet.
+    pub(crate) channel_public_key: [u8; 32],
 }
 
 /// A screened profile reference frame.
@@ -572,6 +585,20 @@ pub(crate) fn classify_message(
         }
         V2ChatMessageContent::ContactAdded => DeviceLifecycle::ContactAdded,
         V2ChatMessageContent::LeftChat => DeviceLifecycle::LeftChat,
+        V2ChatMessageContent::HostChannelBootstrap {
+            channel_public_key,
+            ..
+        } => {
+            validate_id(&message.message_id)?;
+            validate_public_key(&channel_public_key)?;
+            return Ok(OpenedDeviceMessage::HostChannelBootstrap(
+                HostChannelBootstrapFrame {
+                    message_id: message.message_id,
+                    timestamp: message.timestamp,
+                    channel_public_key,
+                },
+            ));
+        }
         V2ChatMessageContent::PersonalProfileReference {
             discloser_product_id,
             reference,

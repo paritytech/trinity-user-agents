@@ -198,6 +198,11 @@ impl NativeChatActor {
         let mut bytes_seen = 0usize;
         let mut had_history = false;
         let mut had_rich = false;
+        // Profile references are the Host's, not the product's: collected here,
+        // stored after the open commits, and cut out of what the product sees.
+        let mut profile_references = Vec::new();
+        let mut host_channel_bootstraps = Vec::new();
+        let mut stripped = false;
         while let Some((mut bytes, depth)) = work.pop() {
             context.require_current()?;
             bytes_seen = bytes_seen
@@ -308,6 +313,16 @@ impl NativeChatActor {
                         profile_references.push(frame);
                     }
                 }
+                OpenedDeviceMessage::HostChannelBootstrap(frame) => {
+                    if !super::receive::valid_peer_timestamp(frame.timestamp, current_unix_secs()) {
+                        return Err(Error::InvalidStatement);
+                    }
+                    // As a profile frame: never forwarded, live frames only.
+                    stripped = true;
+                    if depth == 0 {
+                        host_channel_bootstraps.push(frame);
+                    }
+                }
             }
         }
         let rich = self.prepare_rich(context, peer, &request_id, rich).await?;
@@ -321,10 +336,13 @@ impl NativeChatActor {
                     files::merge_received(state, rich)
                 })
                 .await?;
-            // Preserve the original canonical request when it needed neither HOP
-            // expansion nor removal of private rich-content frames, except
-            // references already transferred by legacy migration.
-            let plaintext = if had_history || had_rich {
+            self.record_profile_references(context, peer, profile_references)
+                .await?;
+            self.record_host_channel_bootstraps(context, peer, host_channel_bootstraps)
+                .await?;
+            // Preserve the original canonical request only when no history
+            // expansion or removal of private frames was needed.
+            let plaintext = if had_history || had_rich || stripped {
                 wire::encode_transport_request_plaintext(&request_id, &expanded)
                     .map_err(|_| Error::InvalidStatement)?
             } else {
@@ -379,6 +397,8 @@ impl NativeChatActor {
             imports,
         };
         self.record_profile_references(context, peer, profile_references)
+            .await?;
+        self.record_host_channel_bootstraps(context, peer, host_channel_bootstraps)
             .await?;
         let valid = context.session_valid.clone();
         self.store

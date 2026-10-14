@@ -3499,3 +3499,157 @@ fn personal_pending_shares_are_removed_while_unready_and_withdrawn_when_ready() 
         );
     });
 }
+
+// ---- host channel bootstrap (seity doc/HOST_CHANNEL_PLAN.md, steps 3-4) ----
+
+#[test]
+fn a_ready_peer_gets_one_host_channel_bootstrap_per_session() {
+    block_on(async {
+        let fixture = Fixture::new();
+        set_product_grants(
+            &fixture.platform,
+            PRODUCT,
+            crate::platform::PermissionAuthorizationStatus::Authorized,
+        )
+        .await;
+        let actor = fixture.actor().await;
+        let identity = IdentityFixture::new();
+        let peer = DeviceFixture::new(1);
+        seed_peer(&actor, &identity, &[&peer]).await;
+
+        assert!(
+            actor
+                .publish_host_channel_bootstraps(&fixture.context)
+                .await
+                .unwrap(),
+            "a ready peer is bootstrapped"
+        );
+        assert!(
+            !actor
+                .publish_host_channel_bootstraps(&fixture.context)
+                .await
+                .unwrap(),
+            "and only once per session"
+        );
+        let packets: Vec<Outgoing> = actor
+            .store
+            .read(|state| {
+                state
+                    .outbox
+                    .iter()
+                    .filter(|entry| entry.kind == OutgoingKind::HostChannelBootstrap)
+                    .cloned()
+                    .collect()
+            })
+            .await
+            .unwrap();
+        assert_eq!(packets.len(), 1);
+        let packet = &packets[0];
+        assert!(packet.request_id.starts_with("hostchan-"));
+        let wire::V2StatementTransportData::MultiRequest(native) =
+            open_output(&actor, &identity, &packet.statement, false, false)
+        else {
+            panic!("a bootstrap is a native multi-device request")
+        };
+        let body = open_body(&actor, &peer, &native.encrypted_request, &native.devices_info);
+        let decoded = wire::decode_message_exchange_request_plaintext(&body).unwrap();
+        assert_eq!(decoded.messages.len(), 1);
+        let message = wire::decode_message(&decoded.messages[0]).unwrap();
+        let expected = crate::host_logic::host_channel::ChannelKey::derive(
+            &fixture.context.entropy,
+            &fixture.context.genesis_hash,
+            &identity.account,
+        )
+        .public();
+        assert_eq!(
+            message.content,
+            wire::V2ChatMessageContent::HostChannelBootstrap {
+                version: 1,
+                channel_public_key: expected,
+            }
+        );
+        // The relay sends it alongside the profile frames.
+        let fixture2 = Fixture::new();
+        set_product_grants(
+            &fixture2.platform,
+            PRODUCT,
+            crate::platform::PermissionAuthorizationStatus::Authorized,
+        )
+        .await;
+        let actor2 = fixture2.actor().await;
+        seed_peer(&actor2, &identity, &[&peer]).await;
+        actor2.relay_profile_reference(&fixture2.context).await;
+        assert!(
+            actor2
+                .store
+                .read(|state| state
+                    .outbox
+                    .iter()
+                    .any(|entry| entry.kind == OutgoingKind::HostChannelBootstrap))
+                .await
+                .unwrap()
+        );
+    });
+}
+
+async fn open_bootstrap_frame(
+    fixture: &Fixture,
+    actor: &Arc<NativeChatActor>,
+    identity: &IdentityFixture,
+    peer: &DeviceFixture,
+    request_id: &str,
+    timestamp: u64,
+    key: &[u8; 32],
+) {
+    let frame =
+        wire::encode_host_channel_bootstrap_message(&format!("{request_id}-frame"), timestamp, key)
+            .unwrap();
+    let plaintext = wire::encode_transport_request_plaintext(request_id, &[frame]).unwrap();
+    let packet = native_packet(actor, identity, peer, &plaintext, false, false);
+    actor
+        .open_statement(&fixture.context, &NativeChatRegistry::default(), packet)
+        .await
+        .unwrap();
+}
+
+async fn held_channel_key(fixture: &Fixture, identity: &IdentityFixture) -> Option<[u8; 32]> {
+    crate::runtime::host_channel::read_peers(
+        fixture.platform.as_ref(),
+        profile::profile_owner(&fixture.context),
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .find(|held| held.peer_identity == identity.account)
+    .map(|held| held.channel_public_key)
+}
+
+#[test]
+fn a_received_bootstrap_stores_the_peers_key_and_a_later_one_replaces_it() {
+    block_on(async {
+        let fixture = Fixture::new();
+        let actor = fixture.actor().await;
+        let identity = IdentityFixture::new();
+        let peer = DeviceFixture::new(1);
+        seed_peer(&actor, &identity, &[&peer]).await;
+        assert_eq!(held_channel_key(&fixture, &identity).await, None);
+
+        let first = wire::x25519_public_key(&[0x51; 32]);
+        open_bootstrap_frame(&fixture, &actor, &identity, &peer, "boot-1", fixture.timestamp, &first)
+            .await;
+        assert_eq!(held_channel_key(&fixture, &identity).await, Some(first));
+
+        let second = wire::x25519_public_key(&[0x52; 32]);
+        open_bootstrap_frame(
+            &fixture,
+            &actor,
+            &identity,
+            &peer,
+            "boot-2",
+            fixture.timestamp + 1,
+            &second,
+        )
+        .await;
+        assert_eq!(held_channel_key(&fixture, &identity).await, Some(second));
+    });
+}
