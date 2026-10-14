@@ -370,6 +370,14 @@ impl FundingRegistry {
 		self.lock_sessions().get(intent).cloned()
 	}
 
+	/// Whether a provider still works on any session: one in flight, or a
+	/// withdrawal whose payout or refund it has not reported.
+	pub fn in_progress(&self) -> bool {
+		self.lock_sessions()
+			.values()
+			.any(|session| session.provider_id.is_some() && session.serves_provider())
+	}
+
 	/// Every session the user started that the core keeps, for the host's
 	/// progress and history views: those in flight first, then the ended
 	/// ones, each newest first.

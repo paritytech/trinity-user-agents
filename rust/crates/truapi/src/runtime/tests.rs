@@ -8377,10 +8377,12 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	))
 	.expect("opened")
 	.intent;
+	let unassigned_in_progress = before.funding().in_progress();
 	assert!(
 		futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot", None))
 			.expect("selected")
 	);
+	let assigned_in_progress = before.funding().in_progress();
 	let worker = provider_worker(&before, "ramp.dot");
 	let assigned = first_served(&worker);
 	let assigned_at = before.funding().get(&intent).expect("kept").assigned_at_ms;
@@ -8397,6 +8399,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	let after = start(&storage);
 	let restarted = provider_worker(&after, "ramp.dot");
 	let replayed = first_served(&restarted);
+	let restarted_in_progress = after.funding().in_progress();
 	report_funding(&restarted, &intent, v01::FundingUpdate::Delivered).expect("delivered");
 
 	let assignment = |expires_at, last_update, saved: Option<&[u8]>| {
@@ -8413,6 +8416,15 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 		}))
 	};
 	let delivered = wait_for_stage(&after, &intent);
+	assert_eq!(
+		(
+			unassigned_in_progress,
+			assigned_in_progress,
+			restarted_in_progress,
+			after.funding().in_progress()
+		),
+		(false, true, true, false)
+	);
 	const WEEK_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 	assert_eq!(
 		(
