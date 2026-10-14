@@ -135,6 +135,16 @@ extension ProductBot: ChatExtensionBotProtocol {
                 #endif
 
                 logger.debug("Initialized and started bot: \(product.name)")
+
+                #if targetEnvironment(simulator)
+                    // Sends the command list of `make ios-chat-v2-run`, one file at a time,
+                    // until `dispose` stops this task.
+                    if TrUAPIE2ECommandFeed.isEnabled(for: product.id) {
+                        await TrUAPIE2ECommandFeed.run(logger: logger) { [runtime] text, roomId in
+                            try await runtime.onUserMessage(text: text, roomId: roomId)
+                        }
+                    }
+                #endif
             } catch is CancellationError {
                 logger.debug("Start superseded by dispose for product bot: \(product.name)")
             } catch {

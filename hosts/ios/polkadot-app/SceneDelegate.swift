@@ -28,6 +28,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             return
         }
 
+        #if targetEnvironment(simulator)
+            TrUAPIE2EIdentitySeed.seedIfRequested()
+        #endif
+
         initializeApp(windowScene)
         handleContexts(with: options.urlContexts)
         handleUserActivities(options.userActivities)

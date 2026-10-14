@@ -708,7 +708,18 @@ that product:
 make ios-chat-host-playground-run
 ```
 
-Run both integrations with one iOS build using `make ios-chat-all`.
+The Chat Extension v2 sample product (`playground/chat-v2`) has its own
+launcher. It seeds a wallet with a simulator-only hook, so a new simulator needs
+no onboarding, sends the sample's commands through a simulator-only command
+feed, and writes one diagnosis row per iOS scenario of the test plan to
+`playground/test-results/ios-chat-v2/diagnosis-report.md`. See
+[docs/chat-ios-simulator.md](docs/chat-ios-simulator.md):
+
+```bash
+make ios-chat-v2-run
+```
+
+Run every integration with one iOS build using `make ios-chat-all`.
 
 The Android twin of that launcher runs the same TrUAPI Playground worker
 against the shared core inside a headless emulator, and writes its report to

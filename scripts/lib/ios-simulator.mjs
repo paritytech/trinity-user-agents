@@ -9,6 +9,12 @@ import { capture, captureOptional, run } from "./process.mjs";
 /** Development bundle id of the Polkadot iOS app: `APP_MAIN_BUNDLE` in `hosts/ios/Configs/base.debug.xcconfig`. */
 export const DEFAULT_BUNDLE = "io.parity.polkadotapp.develop";
 
+/**
+ * The lite username that the simulator-only `TRUAPI_IOS_E2E_SEED_IDENTITY`
+ * hook stores with a new random wallet, when the simulator has none.
+ */
+export const E2E_SEED_IDENTITY = "truapie2e.00";
+
 /** Default DerivedData location of the sibling polkadot-app-ios-v2 checkout. */
 export function defaultAppPath(repoRoot) {
   return resolve(
