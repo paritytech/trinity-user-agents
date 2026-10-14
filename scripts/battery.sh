@@ -10,6 +10,9 @@
 #   scripts/battery.sh                    # both phases
 #   scripts/battery.sh --signing-host     # direct phase only
 #   scripts/battery.sh --pairing-host     # paired phase only
+#   scripts/battery.sh --chat-host        # Chat phases only: content screening, then
+#                                         # the Chat Extension v2 sample product on the
+#                                         # dev chat page (playground/test-results/cli-chat/)
 #   scripts/battery.sh --pocket-host      # Pocket phase only
 #   scripts/battery.sh --release          # build and run the release binary
 #   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
@@ -221,6 +224,20 @@ chat_phase() {
   return "$rc"
 }
 
+# The Chat Extension v2 sample product on the dev chat page, in headless
+# Chromium. The launcher starts its own `truapi-host dev`, drives the command
+# list and writes one diagnosis row per scenario the page covers.
+chat_v2_phase() {
+  local log="$LOG_DIR/chat-v2-cli.log"
+  echo "battery: chat extension v2 phase (report playground/test-results/cli-chat/diagnosis-report.md)"
+  node scripts/launch-cli-chat-playground.mjs --host-bin "$ROOT/$HOST" > >(tee "$log") 2>&1 &
+  local pid=$! rc=0
+  start_watchdog "$pid" "chat extension v2 phase"
+  wait "$pid" || rc=$?
+  stop_watchdog
+  return "$rc"
+}
+
 pocket_phase() {
   local log="$LOG_DIR/pocket-host-cli.log"
   echo "battery: pocket phase (host transcript $LOG_DIR/pocket-host-transcript.jsonl)"
@@ -347,6 +364,9 @@ fi
 if [ "$RUN_CHAT" = 1 ]; then
   CHAT_RC=0
   chat_phase || CHAT_RC=$?
+  CHAT_V2_RC=0
+  chat_v2_phase || CHAT_V2_RC=$?
+  if [ "$CHAT_RC" = 0 ]; then CHAT_RC="$CHAT_V2_RC"; fi
 fi
 
 if [ "$RUN_POCKET" = 1 ]; then
