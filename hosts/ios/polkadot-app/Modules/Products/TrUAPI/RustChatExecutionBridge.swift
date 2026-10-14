@@ -8,11 +8,19 @@ import TrUAPIHost
 /// `ChatHostBridge` callbacks against the product's chat binding.
 final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge, @unchecked Sendable {
     private let chatMessaging: any ProductChatMessaging
-    // The base class keeps `dependencies` private; hold on to the logger here.
+    private let feedListeners: ProductFeedListeners
+    // The base class keeps `dependencies` private; hold on to what this bridge reads here.
+    private let productId: ProductId
     private let logger: LoggerProtocol
 
-    init(dependencies: Dependencies, chatMessaging: any ProductChatMessaging) {
+    init(
+        dependencies: Dependencies,
+        chatMessaging: any ProductChatMessaging,
+        feedListeners: ProductFeedListeners = .shared
+    ) {
         self.chatMessaging = chatMessaging
+        self.feedListeners = feedListeners
+        productId = dependencies.productId
         logger = dependencies.logger
         super.init(dependencies: dependencies)
     }
@@ -114,6 +122,30 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             try await chatMessaging.deleteRoom(roomId: requireRoomId(roomId))
         } catch ChatRoomError.unknownRoom {
             logger.debug("[truapi:chat-bridge] deleteRoom \(roomId): no such room")
+        }
+    }
+
+    /// The core reads the configuration of the room and sets `persist` for a room that the host stores. For a
+    /// room that the product keeps, only an open room screen takes the update.
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
+        guard let roomId = roomId.nilIfEmpty else {
+            throw NativeChatFeedRejection.Rejected(reason: "a chat room needs an id")
+        }
+
+        guard persist else {
+            let chatId = Chat.Id.chatExtension(productId, roomId: roomId)
+            if await !feedListeners.deliver(update, roomId: roomId, to: chatId) {
+                logger.debug("[truapi:chat-bridge] updateFeed \(roomId): no open room takes it")
+            }
+            return
+        }
+
+        do {
+            try await chatMessaging.applyFeedUpdate(roomId: roomId, update: Chat.ProductFeedUpdate(update))
+        } catch let error as Chat.ProductFeedError {
+            throw error.rejection
+        } catch let ChatRoomError.unknownRoom(roomId) {
+            throw NativeChatFeedRejection.Rejected(reason: "no chat room \(roomId)")
         }
     }
 

@@ -34,6 +34,9 @@ protocol ProductChatMessaging: Sendable {
     func setRoomCommands(roomId: String, commands: [Chat.RoomCommand]) async throws
     /// Chat Extension v2 `set_room_activity`.
     func setRoomActivity(roomId: String, activity: Chat.RoomActivity?) async throws
+    /// Chat Extension v2 `update_feed` for a room that the host stores. Throws `Chat.ProductFeedError` for a
+    /// refused update.
+    func applyFeedUpdate(roomId: String, update: Chat.ProductFeedUpdate) async throws
 }
 
 /// Serves those calls from a chat binding. Conformers differ only in where the
@@ -151,6 +154,11 @@ extension BoundProductChatMessaging {
     func setRoomActivity(roomId: String, activity: Chat.RoomActivity?) async throws {
         let (context, bot) = try requireMessaging()
         try await context.setRoomActivity(for: bot, roomId: roomId, activity: activity)
+    }
+
+    func applyFeedUpdate(roomId: String, update: Chat.ProductFeedUpdate) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.applyFeedUpdate(for: bot, roomId: roomId, update: update)
     }
 }
 
