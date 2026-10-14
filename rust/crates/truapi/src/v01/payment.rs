@@ -5,8 +5,8 @@ use super::account::DerivationIndex;
 /// Request to subscribe to payment balance updates.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostPaymentBalanceSubscribeRequest {
-    /// Optional purse selector. `None` means MAIN_PURSE.
-    pub purse: Option<u32>,
+	/// Optional purse selector. `None` means MAIN_PURSE.
+	pub purse: Option<u32>,
 }
 
 /// Current payment balance state pushed to subscribers.
@@ -16,8 +16,8 @@ pub struct HostPaymentBalanceSubscribeRequest {
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostPaymentBalanceSubscribeItem {
-    /// Balance that can be spent right now.
-    pub available: u128,
+	/// Balance that can be spent right now.
+	pub available: u128,
 }
 
 /// Source for a payment top-up operation.
@@ -27,48 +27,48 @@ pub struct HostPaymentBalanceSubscribeItem {
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum PaymentTopUpSource {
-    /// Fund from one of the calling product's scoped accounts.
-    ProductAccount {
-        /// Account selector within the product subtree; the same selector as
-        /// [`ProductAccountId::derivation_index`].
-        ///
-        /// [`ProductAccountId::derivation_index`]: super::account::ProductAccountId::derivation_index
-        derivation_index: DerivationIndex,
-    },
-    /// Fund from a one-time account represented by its private key. This is a
-    /// standard account holding public funds, not a coin key.
-    PrivateKey {
-        /// Sr25519 secret key bytes.
-        sr25519_secret_key: [u8; 64],
-    },
-    /// Fund directly from coin secret keys. Each key is an sr25519 secret
-    /// controlling a single coin.
-    Coins {
-        /// Sr25519 secret keys, one per coin.
-        sr25519_secret_keys: Vec<[u8; 64]>,
-    },
+	/// Fund from one of the calling product's scoped accounts.
+	ProductAccount {
+		/// Account selector within the product subtree; the same selector as
+		/// [`ProductAccountId::derivation_index`].
+		///
+		/// [`ProductAccountId::derivation_index`]: super::account::ProductAccountId::derivation_index
+		derivation_index: DerivationIndex,
+	},
+	/// Fund from a one-time account represented by its private key. This is a
+	/// standard account holding public funds, not a coin key.
+	PrivateKey {
+		/// Sr25519 secret key bytes.
+		sr25519_secret_key: [u8; 64],
+	},
+	/// Fund directly from coin secret keys. Each key is an sr25519 secret
+	/// controlling a single coin.
+	Coins {
+		/// Sr25519 secret keys, one per coin.
+		sr25519_secret_keys: Vec<[u8; 64]>,
+	},
 }
 
 /// Request to top up the product payment balance.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostPaymentTopUpRequest {
-    /// Optional purse selector. `None` means MAIN_PURSE.
-    pub into: Option<u32>,
-    /// Amount to top up.
-    pub amount: u128,
-    /// Funding source for the top-up.
-    pub source: PaymentTopUpSource,
+	/// Optional purse selector. `None` means MAIN_PURSE.
+	pub into: Option<u32>,
+	/// Amount to top up.
+	pub amount: u128,
+	/// Funding source for the top-up.
+	pub source: PaymentTopUpSource,
 }
 
 /// Request to initiate a payment to another account.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostPaymentRequest {
-    /// Optional purse selector. `None` means MAIN_PURSE.
-    pub from: Option<u32>,
-    /// Amount to pay.
-    pub amount: u128,
-    /// Destination account.
-    pub destination: [u8; 32],
+	/// Optional purse selector. `None` means MAIN_PURSE.
+	pub from: Option<u32>,
+	/// Amount to pay.
+	pub amount: u128,
+	/// Destination account.
+	pub destination: [u8; 32],
 }
 
 /// Receipt returned after a successful payment request.
@@ -78,8 +78,8 @@ pub struct HostPaymentRequest {
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostPaymentResponse {
-    /// The assigned payment identifier.
-    pub id: String,
+	/// The assigned payment identifier.
+	pub id: String,
 }
 
 /// Payment lifecycle status pushed to subscribers.
@@ -92,15 +92,15 @@ pub struct HostPaymentResponse {
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostPaymentStatusSubscribeItem {
-    /// Payment is being processed.
-    Processing,
-    /// Payment has been settled successfully.
-    Completed,
-    /// Payment has failed.
-    Failed {
-        /// Failure reason.
-        reason: String,
-    },
+	/// Payment is being processed.
+	Processing,
+	/// Payment has been settled successfully.
+	Completed,
+	/// Payment has failed.
+	Failed {
+		/// Failure reason.
+		reason: String,
+	},
 }
 
 /// Error from [`crate::api::Payment::balance_subscribe`].
@@ -110,13 +110,13 @@ pub enum HostPaymentStatusSubscribeItem {
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostPaymentBalanceSubscribeError {
-    /// User denied the balance disclosure request.
-    PermissionDenied,
-    /// Catch-all.
-    Unknown {
-        /// Human-readable failure reason.
-        reason: String,
-    },
+	/// User denied the balance disclosure request.
+	PermissionDenied,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 /// Error from [`crate::api::Payment::top_up`].
@@ -126,20 +126,20 @@ pub enum HostPaymentBalanceSubscribeError {
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostPaymentTopUpError {
-    /// The source account does not hold sufficient funds.
-    InsufficientFunds,
-    /// The source account was not found or is invalid.
-    InvalidSource,
-    /// Some coins were claimed but the total fell short of the requested amount.
-    PartialPayment {
-        /// Amount that was successfully credited.
-        credited: u128,
-    },
-    /// Catch-all.
-    Unknown {
-        /// Human-readable failure reason.
-        reason: String,
-    },
+	/// The source account does not hold sufficient funds.
+	InsufficientFunds,
+	/// The source account was not found or is invalid.
+	InvalidSource,
+	/// Some coins were claimed but the total fell short of the requested amount.
+	PartialPayment {
+		/// Amount that was successfully credited.
+		credited: u128,
+	},
+	/// Catch-all.
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 /// Error from [`crate::api::Payment::request`].
@@ -149,15 +149,15 @@ pub enum HostPaymentTopUpError {
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostPaymentError {
-    /// User rejected the payment request.
-    Rejected,
-    /// User's available balance is not sufficient for the requested amount.
-    InsufficientBalance,
-    /// Catch-all.
-    Unknown {
-        /// Human-readable failure reason.
-        reason: String,
-    },
+	/// User rejected the payment request.
+	Rejected,
+	/// User's available balance is not sufficient for the requested amount.
+	InsufficientBalance,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 /// Error from [`crate::api::Payment::status_subscribe`].
@@ -167,18 +167,18 @@ pub enum HostPaymentError {
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostPaymentStatusSubscribeError {
-    /// Payment ID was not found or does not belong to the current product.
-    PaymentNotFound,
-    /// Catch-all.
-    Unknown {
-        /// Human-readable failure reason.
-        reason: String,
-    },
+	/// Payment ID was not found or does not belong to the current product.
+	PaymentNotFound,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 /// Request to subscribe to a payment status.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostPaymentStatusSubscribeRequest {
-    /// Payment identifier to watch.
-    pub payment_id: String,
+	/// Payment identifier to watch.
+	pub payment_id: String,
 }

@@ -3,16 +3,13 @@ import UIKit
 import UIKitExt
 
 final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
-    private let personDataStore: DetermineStatePersonDataStore
     private let moduleNavigator: ModuleNavigating
     private let flowState: SPAFlowState
 
     init(
-        personDataStore: DetermineStatePersonDataStore,
         flowState: SPAFlowState,
         moduleNavigator: ModuleNavigating = ModuleNavigator()
     ) {
-        self.personDataStore = personDataStore
         self.flowState = flowState
         self.moduleNavigator = moduleNavigator
     }
@@ -40,19 +37,5 @@ final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
             style: .alert,
             from: nil
         )
-    }
-
-    func showCollectibles(from view: WalletMainViewProtocol?, url: URL) {
-        guard let collectiblesView = CollectiblesViewFactory.createView(
-            url: url,
-            personDataStore: personDataStore
-        ) else {
-            return
-        }
-
-        let nav = AppNavigationController(rootViewController: collectiblesView.controller)
-        nav.modalPresentationStyle = .fullScreen
-
-        view?.controller.present(nav, animated: true)
     }
 }

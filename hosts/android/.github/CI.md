@@ -37,8 +37,7 @@ not contain credentials.
 Most variables below are **mandatory**: the build reads them with `readSecretOrThrow`
 and fails at configuration time when one is missing or empty, so a deploy can never ship
 a placeholder fallback. Only `signingConfigs` still uses `readSecretOrDefault`.
-`SENTRY_DSN`, `REFERRAL_WEB_HOST` and `GAME_RESULTS_FALLBACK_URL` are optional and keep a
-fallback — the features they configure are not part of the current production build.
+`SENTRY_DSN` is optional and keeps a fallback.
 
 | Variable | Purpose |
 |----------|---------|
@@ -54,8 +53,6 @@ fallback — the features they configure are not part of the current production 
 | `SENTRY_DSN` | Client DSN embedded in debug/nightly manifests for runtime error reporting. Optional; an empty value disables runtime reporting. |
 | `SENTRY_ORG` | Sentry organization slug used by the Gradle plugin. |
 | `SENTRY_PROJECT` | Sentry project slug used by the Gradle plugin. |
-| `REFERRAL_WEB_HOST` | Allowed web host for referral-ticket deeplinks. Supply a host only, without a scheme or path. Optional. |
-| `GAME_RESULTS_FALLBACK_URL` | Final HTTPS fallback for the game-results webview when DotNs and Remote Config do not provide a URL. Optional. |
 
 ### Workflow Variables
 

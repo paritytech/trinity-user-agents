@@ -188,6 +188,7 @@ for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
 session-record cleanup remain on the wallet side.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
+SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`
 encoding for `with_signed_transaction`.
 
@@ -237,6 +238,19 @@ host owns where the bytes live. The crate stores nothing itself: a host implemen
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
 control of quota and of whether the bytes are backed up or encrypted.
 
+### Durable transactions
+
+Native signing hosts keep a ledger of signed transactions in the core database,
+so a payment or transfer is followed to a verdict across crashes and restarts.
+A domain in the core registers presigned mortal extrinsics; the core broadcasts
+them once the rows commit, watches each one, and decides whatever it no longer
+watches from the chain. Signed bytes are never stored, so a transaction left
+live by a previous process is decided by recovery rather than sent again.
+
+The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
+run a background task that awaits `runDurableRecovery()`, which returns once
+nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+
 ### Wire debugger
 
 [`@parity/truapi-debugger`](js/packages/truapi-debugger) is the consumer for the
@@ -282,6 +296,12 @@ make wasm     # rebuild truapi WASM artifacts under js/packages/truapi-host/dist
 
 CI regenerates the shared bindings before building and testing both npm
 packages, so generated client and host callback changes are checked together.
+
+CI and `make check` enforce Rust formatting, including the runtime module tree, and Prettier formatting for the JS host package. Run `make fmt` and `npm run format --prefix js/packages/truapi-host` to apply the same rules locally. Use `make fmt-check` or `format:check` for the JS package to check without writing. Rust uses the nightly in `nightly-toolchain` and the [Polkadot SDK formatting rules](https://github.com/paritytech/polkadot-sdk/blob/master/.rustfmt.toml) with edition 2024.
+
+Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
+
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
 
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)
@@ -661,6 +681,29 @@ make ios-chat-host-playground-run
 ```
 
 Run both integrations with one iOS build using `make ios-chat-all`.
+
+The Android twin of that launcher runs the same TrUAPI Playground worker
+against the shared core inside a headless emulator, and writes its report to
+`playground/test-results/android-chat/diagnosis-report.md`:
+
+```bash
+cd hosts/android && ./gradlew :app:assembleVanillaDebug && cd -
+make android-chat-playground-run
+```
+
+Prerequisites:
+
+- an Android SDK on `ANDROID_HOME`, with the `truapi-chat-e2e` AVD created
+- the Rust Android targets (`make android-jni`, which needs `cargo-ndk` and the NDK)
+- a `python` on `PATH`, which the rust-android-gradle linker wrapper shells out to
+- a stub `hosts/android/app/google-services.json`
+- a debug keystore configured in `hosts/android/local.properties`
+- the debug `applicationId` `com.example.polkadot.debug`; a fork that renames it
+  must pass `TRUAPI_ANDROID_E2E_PACKAGE`
+
+The `TRUAPI_ANDROID_E2E_*` environment variables override every default
+(device, APK, product, room, message, username, URL, report path); they
+mirror the iOS `TRUAPI_IOS_E2E_*` ones.
 
 ## Regenerate the TypeScript client
 

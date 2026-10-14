@@ -59,25 +59,16 @@ private extension ChatViewModelFactory {
         switch metadata.state {
         case .created:
             ChatRequestedBannerView.ViewModel(
-                username: metadata.peerMetadata.name,
-                isFromGame: metadata.peerMetadata.contactSource.isFromGame
+                username: metadata.peerMetadata.name
             )
         case .pending:
             ChatRequestInProgressBannerView.ViewModel(
                 username: metadata.peerMetadata.name,
-                inputConfig: .chat(
-                    canPay: false,
-                    canAttachFile: false,
+                inputConfig: .chatRequest(
                     inputAccessibilityId: AccessibilityID.Chats.inviteMessageInput,
                     sendAccessibilityId: AccessibilityID.Chats.inviteSendButton
                 )
             )
         }
-    }
-}
-
-private extension Chat.Contact.Source {
-    var isFromGame: Bool {
-        self != .chat
     }
 }

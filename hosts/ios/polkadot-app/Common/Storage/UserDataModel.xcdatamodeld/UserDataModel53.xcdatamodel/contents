@@ -1,11 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="24901" systemVersion="25F71" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithSwiftData="YES" userDefinedModelVersionIdentifier="">
-    <entity name="CDAirdropRegistration" representedClassName="CDAirdropRegistration" syncable="YES" codeGenerationType="class">
-        <attribute name="beneficiary" optional="YES" attributeType="Binary"/>
-        <attribute name="gameIndex" optional="YES" attributeType="Integer 64" usesScalarValueType="YES"/>
-        <attribute name="identifier" optional="YES" attributeType="String"/>
-        <attribute name="usesScoreAlias" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
-    </entity>
     <entity name="CDAllowanceRecord" representedClassName="CDAllowanceRecord" syncable="YES" codeGenerationType="class">
         <attribute name="accountId" optional="YES" attributeType="Binary"/>
         <attribute name="allocatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
@@ -13,9 +7,6 @@
         <attribute name="kind" optional="NO" attributeType="Integer 16" defaultValueString="-1" usesScalarValueType="YES"/>
         <attribute name="latestRenewedPeriod" optional="NO" attributeType="Integer 64" defaultValueString="-1" usesScalarValueType="YES"/>
         <attribute name="priorityLevel" optional="NO" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
-    </entity>
-    <entity name="CDBannedPlayer" representedClassName="CDBannedPlayer" syncable="YES" codeGenerationType="class">
-        <attribute name="accountId" optional="YES" attributeType="String"/>
     </entity>
     <entity name="CDChat" representedClassName="CDChat" syncable="YES" codeGenerationType="class">
         <attribute name="chatType" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
@@ -49,7 +40,6 @@
         <relationship name="chat" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChat" inverseName="contact" inverseEntity="CDChat"/>
         <relationship name="chatRequest" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatRequest" inverseName="contact" inverseEntity="CDChatRequest"/>
         <relationship name="devices" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDContactDevice" inverseName="contact" inverseEntity="CDContactDevice"/>
-        <relationship name="game" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDContactGame" inverseName="contacts" inverseEntity="CDContactGame"/>
     </entity>
     <entity name="CDChatExtensionHistory" representedClassName="CDChatExtensionHistory" syncable="YES" codeGenerationType="class">
         <attribute name="chatId" optional="YES" attributeType="String"/>
@@ -132,11 +122,6 @@
         <attribute name="statementAccountId" attributeType="Binary"/>
         <relationship name="contact" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="devices" inverseEntity="CDChatContact"/>
     </entity>
-    <entity name="CDContactGame" representedClassName="CDContactGame" syncable="YES" codeGenerationType="class">
-        <attribute name="gameDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
-        <attribute name="gameIndex" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
-        <relationship name="contacts" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="game" inverseEntity="CDChatContact"/>
-    </entity>
     <entity name="CDIncomingPayment" representedClassName="CDIncomingPayment" syncable="YES" codeGenerationType="class">
         <attribute name="actualClaimed" optional="YES" attributeType="String"/>
         <attribute name="amount" attributeType="String"/>
@@ -162,15 +147,6 @@
         <attribute name="stage" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="surplusInPlanks" optional="YES" attributeType="String"/>
         <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
-    </entity>
-    <entity name="CDGameVote" representedClassName="CDGameVote" syncable="YES" codeGenerationType="class">
-        <attribute name="accountId" optional="YES" attributeType="String"/>
-        <attribute name="gameIndex" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
-        <attribute name="identifier" optional="YES" attributeType="String"/>
-        <attribute name="isBanned" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
-        <attribute name="previewImageData" optional="YES" attributeType="Binary"/>
-        <attribute name="voteCounter" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
-        <attribute name="voteUpdateDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
     </entity>
     <entity name="CDLocalDevice" representedClassName="CDLocalDevice" syncable="YES" codeGenerationType="class">
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>

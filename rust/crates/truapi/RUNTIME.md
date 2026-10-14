@@ -221,6 +221,20 @@ it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
 and `core_database_status()` reports the SQLite version, schema version and
 path. Web hosts do not compile the store.
 
+### Durable transactions
+
+The `durable` module runs over the core database. A domain registers presigned
+mortal extrinsics (`DurableRequest::presigned`, then `execute` or
+`execute_with`, whose hook writes the domain's own rows in the same
+transaction); the engine broadcasts them once committed and follows each with
+a submission watch. Whatever no watch owns, including everything a previous
+process left live, is decided by recovery passes: the completion ladder over
+the shared chain capabilities and the domain's `CompletionOracle`. Every
+verdict is a compare-and-set against the status and attempt it was derived
+from, and rows are never deleted. The engine reports whether work is pending
+to `HostCallbacks::durable_work_changed`; the host then runs a background task
+awaiting `run_durable_recovery()`, which returns once nothing is live.
+
 ### The two roles
 
 Both implement the role-neutral **`ProductAuthority`** trait; each owns its
@@ -386,8 +400,12 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Defined in `truapi_provider::platform` so the provider implements them
   without linking the runtime, and re-exported here.
 - `AuthPresenter`: render core-owned auth state transitions.
-- `UserConfirmation`: confirm signing, transaction, resource, alias, and
-  preimage actions before the core asks the paired wallet.
+- `UserConfirmation`: confirm signing, transaction, resource and alias
+  actions before the core asks the paired wallet. `preimage.submit` raises
+  no per-upload confirmation: the `PreimageSubmit` permission authorizes it.
+  `AllowAlways` covers every upload; `AllowOnce` covers a single upload.
+  Allocating or renewing the Bulletin allowance may still ask the paired
+  wallet.
 - `ThemeHost`: stream the host theme into the runtime.
 - `PreimageHost`: submit and look up preimages through the host-selected backend.
 - `ChatPlatform`: create product-scoped native chat rooms, register product

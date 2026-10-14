@@ -94,7 +94,6 @@ extension ProductBot: ChatExtensionBotProtocol {
     var peerMetadata: Chat.PeerMetadata {
         Chat.PeerMetadata(
             name: product.name,
-            contactSource: .chat,
             icon: .product(domain: product.id),
             input: .inputField(.init(canPay: false, canAttachFile: false)),
             moreActions: []
