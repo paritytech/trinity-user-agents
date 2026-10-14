@@ -19,6 +19,7 @@ import {
 } from "./lib/chat-diagnosis-report.mjs";
 import {
   DEFAULT_BUNDLE,
+  E2E_SEED_IDENTITY,
   appGroupId,
   bootAndInstallApp,
   defaultAppPath,
@@ -55,6 +56,10 @@ const expectedReply =
   process.env.TRUAPI_IOS_E2E_CHAT_EXPECTED_REPLY ?? "Echo: hello";
 const expectedStartupMessage =
   process.env.TRUAPI_IOS_E2E_CHAT_EXPECTED_STARTUP_MESSAGE ?? "";
+// A new simulator has no wallet: the app seeds one with this lite username,
+// so the run needs no onboarding taps. An empty value turns the seed off.
+const seedIdentity =
+  process.env.TRUAPI_IOS_E2E_SEED_IDENTITY ?? E2E_SEED_IDENTITY;
 const expectCustomRenderer =
   process.env.TRUAPI_IOS_E2E_CHAT_EXPECT_CUSTOM_RENDERER !== "0";
 const worker = resolve(productRoot, "out/worker/index.js");
@@ -70,6 +75,13 @@ const reportPath = resolve(
   process.env.TRUAPI_IOS_E2E_CHAT_REPORT ??
     "playground/test-results/ios-chat/diagnosis-report.md",
 );
+
+// The app's console output, kept when the harness names a file for it.
+const appLog = process.env.TRUAPI_IOS_E2E_APP_LOG
+  ? resolve(repoRoot, process.env.TRUAPI_IOS_E2E_APP_LOG)
+  : undefined;
+
+if (appLog) mkdirSync(dirname(appLog), { recursive: true });
 
 if (!existsSync(app)) {
   throw new Error(`iOS app bundle not found: ${app}`);
@@ -171,7 +183,14 @@ try {
   const launchApp = () =>
     run(
       "xcrun",
-      ["simctl", "launch", "--terminate-running-process", device.udid, bundle],
+      [
+        "simctl",
+        "launch",
+        "--terminate-running-process",
+        ...(appLog ? [`--stdout=${appLog}`, `--stderr=${appLog}`] : []),
+        device.udid,
+        bundle,
+      ],
       {
         env: {
           ...process.env,
@@ -185,6 +204,7 @@ try {
           SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_MESSAGE: message,
           SIMCTL_CHILD_TRUAPI_IOS_E2E_OPEN_CHAT: "1",
           SIMCTL_CHILD_TRUAPI_IOS_E2E_RUNTIME_MARKERS: "1",
+          SIMCTL_CHILD_TRUAPI_IOS_E2E_SEED_IDENTITY: seedIdentity,
         },
       },
     );
