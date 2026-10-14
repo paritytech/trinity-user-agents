@@ -11,6 +11,12 @@
 //! same seam browser hosts use for their confirmation modals; a headless host
 //! implements it with its approval policy.
 
+mod replay;
+
+use crate::runtime::{
+	AccountHolder, SsoAccountHolderService, authority::AuthoritySession,
+	product_consent::ProductConsent, signing_host::WalletAccountHolder,
+};
 use std::{
 	collections::{HashSet, VecDeque},
 	sync::Arc,
@@ -24,74 +30,37 @@ use futures::{
 	future::{Fuse, FusedFuture},
 	pin_mut,
 };
-use parity_scale_codec::Encode;
 use tracing::{debug, instrument, warn};
-use truapi::latest as api;
 
-use super::{
-	SigningHost, SigningHostSsoService,
-	sso_replay::{ReplayExecution, SsoReplayScope, execute_once},
-};
 use crate::{
-	chain_runtime::RuntimeFailure,
 	host_internal::{
 		sso_messages::{
-			IncomingSsoRequest, OnExistingAllowancePolicy, RemoteMessage, RemoteMessageData,
-			SsoResponseCode, build_outgoing_request_statement,
-			build_signed_session_response_statement, decode_incoming_sso_request, v1,
+			IncomingSsoRequest, RemoteMessage, RemoteMessageData, SsoResponseCode,
+			build_outgoing_request_statement, build_signed_session_response_statement,
+			decode_incoming_sso_request, v1,
 		},
 		sso_wire::ResponseOutcome,
 	},
 	host_logic::{
-		entropy::root_entropy_source,
-		product_account::{
-			ProductAccountError, derive_identity_keypair, derive_root_keypair_from_entropy,
-			derive_sr25519_hard_path,
-		},
 		session::SsoSessionInfo,
 		sso::pairing::{
-			ResponderIdentity, VersionedHandshakeProposal, bootstrap_topic,
-			decode_pairing_deeplink, derive_identity_chat_private_key,
-			derive_x25519_keypair_from_entropy, encrypt_v2_handshake_response,
-			establish_responder_session_info, v2, x25519_public_key,
+			VersionedHandshakeProposal, decode_pairing_deeplink, v2, x25519_public_key,
 		},
-		statement_store::{build_signed_statement, parse_new_statements_result},
+		statement_store::parse_new_statements_result,
 	},
 	runtime::{
-		authority::{AuthorityError, AuthoritySession},
+		authority::AuthorityError,
 		services::RuntimeServices,
 		sso_remote::{fresh_statement_expiry, sso_message_id},
-		sso_service::{Dispatch, SsoWithdrawals},
-		statement_allowance::StatementAllowanceError,
+		sso_service::Dispatch,
 		statement_store_rpc,
-		statement_store_rpc::StatementStoreRpcClientError,
 	},
 	unix_time::current_unix_secs as statement_current_unix_secs,
 };
-
-mod sso_replay;
+use replay::{ReplayExecution, SsoReplayLocks, SsoReplayScope, execute_once};
 
 /// Upper bound on undecodable request ids acknowledged within one serve loop.
 const MAX_DECODE_FAILURE_REQUEST_IDS: usize = 1024;
-
-fn derive_responder_identity(
-	entropy: &[u8],
-	network_suffix: &str,
-) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
-	let statement = derive_identity_keypair(entropy, network_suffix)?;
-	let (encryption_secret_key, encryption_public_key) =
-		derive_x25519_keypair_from_entropy(entropy, SSO_ENCRYPTION_DOMAIN);
-	let identity_chat_private_key = derive_identity_chat_private_key(entropy);
-	Ok((
-		ResponderIdentity {
-			statement_secret: statement.secret.to_bytes(),
-			statement_public_key: statement.public.to_bytes(),
-			encryption_secret_key,
-			encryption_public_key,
-		},
-		identity_chat_private_key,
-	))
-}
 
 /// Bounded set of undecodable request ids acknowledged within one serve loop.
 struct DecodeFailureRequestIds {
@@ -192,6 +161,7 @@ pub trait DevicePairingObserver: Send + Sync {
 }
 
 struct EstablishedPairing {
+	wallet_session: AuthoritySession,
 	session: SsoSessionInfo,
 	replay_scope: SsoReplayScope,
 }
@@ -256,67 +226,82 @@ fn sanitize_pairing_metadata(value: String) -> Option<String> {
 	(!value.is_empty()).then_some(value)
 }
 
+/// Incoming SSO for one signing host: pairing answers, served sessions and
+/// duplicate detection, each peer answered by its own [`SsoAccountHolderService`].
+pub struct SsoResponderService {
+	services: Arc<RuntimeServices>,
+	wallet: Arc<WalletAccountHolder>,
+	consent: Arc<ProductConsent>,
+	/// Serializes replay-ledger updates within each wallet and peer scope.
+	replay_locks: SsoReplayLocks,
+}
+
 impl SsoResponderService {
+	/// Answer peers of `wallet` over the runtime's statement store, confirming their
+	/// requests through `consent`.
+	pub fn new(
+		services: Arc<RuntimeServices>,
+		wallet: Arc<WalletAccountHolder>,
+		consent: Arc<ProductConsent>,
+	) -> Arc<Self> {
+		Arc::new(Self { services, wallet, consent, replay_locks: SsoReplayLocks::default() })
+	}
+
+	fn account_holder_service(&self, session: AuthoritySession) -> SsoAccountHolderService {
+		SsoAccountHolderService::new(self.wallet.clone(), self.consent.clone(), session)
+	}
+
 	/// Answer `deeplink` and serve the resulting SSO session until it ends.
 	#[instrument(skip_all, fields(runtime.method = "sso_responder.respond_to_pairing"))]
-	pub async fn respond_to_pairing(
-		services: Arc<RuntimeServices>,
-		signing_host: Arc<SigningHost>,
-		deeplink: &str,
-	) -> Result<ResponderExit, String> {
-		let established = establish_pairing_session(&services, &signing_host, deeplink).await?;
-		serve_session(services, signing_host, established.session, established.replay_scope).await
+	pub async fn respond_to_pairing(&self, deeplink: &str) -> Result<ResponderExit, String> {
+		let established = self.establish_pairing_session(deeplink).await?;
+		serve_session(
+			self,
+			established.session,
+			established.replay_scope,
+			established.wallet_session,
+		)
+		.await
 	}
 
 	/// Answer a pairing host's handshake without entering its long-lived serve loop.
-	pub async fn establish_pairing(
-		services: Arc<RuntimeServices>,
-		signing_host: Arc<SigningHost>,
-		deeplink: &str,
-	) -> Result<(), String> {
-		establish_pairing_session(&services, &signing_host, deeplink).await?;
+	pub async fn establish_pairing(&self, deeplink: &str) -> Result<(), String> {
+		self.establish_pairing_session(deeplink).await?;
 		Ok(())
 	}
 
 	async fn establish_pairing_session(
-		services: &RuntimeServices,
-		signing_host: &SigningHost,
+		&self,
 		deeplink: &str,
 	) -> Result<EstablishedPairing, String> {
 		let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-		let entropy = signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		// Product accounts and the SSO statement identity derive from the
-		// canonical root key; the identity is the RFC-0022 `uid.<suffix>` default
-		// account of the network this host is configured for.
-		let root = derive_root_keypair_from_entropy(&entropy)
-			.map_err(|err| format!("root account derivation failed: {err}"))?;
-		let (identity, identity_chat_private_key) =
-			derive_responder_identity(&entropy, signing_host.network_suffix())
-				.map_err(|err| format!("responder identity derivation failed: {err}"))?;
-		let device_enc_pub_key = x25519_public_key(services.device_encryption_secret().await?);
-		let session = responder_session_from_identity(&identity, peer)?;
-
-		let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
-			identity_account_id: identity.statement_public_key,
-			root_account_id: root.public.to_bytes(),
-			identity_chat_private_key,
-			sso_enc_pub_key: identity.encryption_public_key,
-			device_enc_pub_key,
-			root_entropy_source: root_entropy_source(&entropy),
-		}));
-		submit_handshake_answer(services, &session, peer, &success, "sso-responder handshake").await?;
+		let wallet_session = self
+			.wallet
+			.current_session()
+			.ok_or_else(|| "signing host has no active local session".to_string())?;
+		let device_enc_pub_key = x25519_public_key(self.services.device_encryption_secret().await?);
+		let (session, statement) = self
+			.wallet
+			.pairing_answer(&wallet_session, peer, device_enc_pub_key)
+			.map_err(|error| error.to_string())?;
+		self.services
+			.statement_store
+			.submit(statement, "sso-responder handshake")
+			.await?;
+		self.wallet
+			.require_current_session(&wallet_session)
+			.map_err(|error| error.to_string())?;
 		debug!("answered pairing handshake");
 		// The submit is the earliest point the peer could read the answer.
-		if let Some(observer) = services.device_pairing_observer() {
+		if let Some(observer) = self.services.device_pairing_observer() {
 			observer.device_paired(peer);
 		}
 
 		Ok(EstablishedPairing {
+			wallet_session: wallet_session.clone(),
 			session,
 			replay_scope: SsoReplayScope {
-				root_public_key: root.public.to_bytes(),
+				root_public_key: wallet_session.public_key,
 				peer_statement_account_id: peer.statement_account_id,
 				peer_encryption_public_key: peer.encryption_public_key,
 			},
@@ -324,40 +309,38 @@ impl SsoResponderService {
 	}
 
 	/// Resume a previously paired SSO session from its persisted public peer keys.
-	pub async fn resume_pairing(
-		services: Arc<RuntimeServices>,
-		signing_host: Arc<SigningHost>,
-		peer: PairedSsoPeer,
-	) -> Result<ResponderExit, String> {
-		let entropy = signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		let root = derive_root_keypair_from_entropy(&entropy)
-			.map_err(|err| format!("root account derivation failed: {err}"))?;
-		let session = responder_session(&entropy, signing_host.network_suffix(), peer)?;
+	pub async fn resume_pairing(&self, peer: PairedSsoPeer) -> Result<ResponderExit, String> {
+		let wallet_session = self
+			.wallet
+			.current_session()
+			.ok_or_else(|| "signing host has no active local session".to_string())?;
+		let session = self
+			.wallet
+			.sso_session(&wallet_session, peer)
+			.map_err(|error| error.to_string())?;
 		serve_session(
-			services,
-			signing_host,
+			self,
 			session,
 			SsoReplayScope {
-				root_public_key: root.public.to_bytes(),
+				root_public_key: wallet_session.public_key,
 				peer_statement_account_id: peer.statement_account_id,
 				peer_encryption_public_key: peer.encryption_public_key,
 			},
+			wallet_session,
 		)
 		.await
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.
-	pub async fn disconnect_paired_host(
-		services: Arc<RuntimeServices>,
-		signing_host: Arc<SigningHost>,
-		peer: PairedSsoPeer,
-	) -> Result<(), String> {
-		let entropy = signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		let session = responder_session(&entropy, signing_host.network_suffix(), peer)?;
+	pub async fn disconnect_paired_host(&self, peer: PairedSsoPeer) -> Result<(), String> {
+		let wallet_session = self
+			.wallet
+			.current_session()
+			.ok_or_else(|| "signing host has no active local session".to_string())?;
+		let session = self
+			.wallet
+			.sso_session(&wallet_session, peer)
+			.map_err(|error| error.to_string())?;
 		let message_id = sso_message_id();
 		let message = RemoteMessage {
 			message_id: message_id.clone(),
@@ -369,7 +352,10 @@ impl SsoResponderService {
 			vec![message],
 			fresh_statement_expiry(),
 		)?;
-		services.statement_store.submit_sso(statement, "sso-responder disconnect").await
+		self.services
+			.statement_store
+			.submit_sso(statement, "sso-responder disconnect")
+			.await
 	}
 
 	/// Tell the pairing host that allowance allocation is under way, moving it off
@@ -377,114 +363,88 @@ impl SsoResponderService {
 	///
 	/// Answering at all needs this host's own statement-store allowance, which is
 	/// the `WalletSso` renewal target, so callers register that before calling.
-	/// Callers own the matching [`notify_pairing_failed`]: the host has dropped its
-	/// QR and waits without a deadline, so an allocation that then fails leaves it
-	/// waiting forever unless it is told.
+	/// Callers own the matching [`Self::notify_pairing_failed`]: the host has
+	/// dropped its QR and waits without a deadline, so an allocation that then
+	/// fails leaves it waiting forever unless it is told.
 	pub async fn notify_pairing_allowance_allocation(
-		services: Arc<RuntimeServices>,
-		signing_host: Arc<SigningHost>,
+		&self,
 		deeplink: &str,
 	) -> Result<AnnouncedPairing, String> {
 		let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-		let entropy = signing_host
-			.root_entropy()
-			.map_err(|err| format!("signing host has no active local session: {err}"))?;
-		let (identity, _) = derive_responder_identity(&entropy, signing_host.network_suffix())
-			.map_err(|err| format!("responder identity derivation failed: {err}"))?;
-		let session = responder_session_from_identity(&identity, peer)?;
-
+		let wallet_session = self
+			.wallet
+			.current_session()
+			.ok_or_else(|| "signing host has no active local session".to_string())?;
 		let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
-		submit_handshake_answer(
-			&services,
-			&session,
-			peer,
-			&pending,
-			"sso-responder allowance allocation",
-		)
-		.await?;
+		let statement = self
+			.wallet
+			.pairing_notice(&wallet_session, peer, &pending)
+			.map_err(|error| error.to_string())?;
+		self.services
+			.statement_store
+			.submit(statement, "sso-responder allowance allocation")
+			.await?;
 		debug!("told pairing host that allowance allocation started");
-		Ok(AnnouncedPairing { identity, peer })
+		Ok(AnnouncedPairing { wallet: self.wallet.clone(), session: wallet_session, peer })
 	}
 
 	/// Tell the pairing host that pairing failed, so it reports `reason` and offers
 	/// a retry rather than waiting on an answer that is never coming.
 	pub async fn notify_pairing_failed(
-		services: Arc<RuntimeServices>,
+		&self,
 		announced: &AnnouncedPairing,
 		reason: String,
 	) -> Result<(), String> {
-		let session = responder_session_from_identity(&announced.identity, announced.peer)?;
-		let failed = v2::EncryptedResponse::Failed(reason);
-		submit_handshake_answer(
-			&services,
-			&session,
-			announced.peer,
-			&failed,
-			"sso-responder pairing failure",
-		)
-		.await?;
+		let statement = announced
+			.wallet
+			.pairing_notice(
+				&announced.session,
+				announced.peer,
+				&v2::EncryptedResponse::Failed(reason),
+			)
+			.map_err(|error| error.to_string())?;
+		self.services
+			.statement_store
+			.submit(statement, "sso-responder pairing failure")
+			.await?;
 		debug!("told pairing host that pairing failed");
 		Ok(())
 	}
+
+	/// Bind an external SSO transport to the wallet matching both of its keys.
+	pub fn open_service(
+		&self,
+		own_statement_account_id: [u8; 32],
+		own_encryption_public_key: [u8; 32],
+	) -> Result<SsoAccountHolderService, AuthorityError> {
+		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.wallet.require_sso_identity(
+			&session,
+			own_statement_account_id,
+			own_encryption_public_key,
+		)?;
+		Ok(self.account_holder_service(session))
+	}
 }
 
-fn responder_session(
-	entropy: &[u8],
-	network_suffix: &str,
-	peer: PairedSsoPeer,
-) -> Result<SsoSessionInfo, String> {
-	let (identity, _) = derive_responder_identity(entropy, network_suffix)
-		.map_err(|err| format!("responder identity derivation failed: {err}"))?;
-	responder_session_from_identity(&identity, peer)
-}
-
-fn responder_session_from_identity(
-	identity: &ResponderIdentity,
-	peer: PairedSsoPeer,
-) -> Result<SsoSessionInfo, String> {
-	establish_responder_session_info(
-		identity,
-		peer.statement_account_id,
-		peer.encryption_public_key,
-	)
-}
-
-/// Encrypt `response` to the pairing host and post it on the handshake topic.
-async fn submit_handshake_answer(
-	services: &RuntimeServices,
-	session: &SsoSessionInfo,
-	peer: PairedSsoPeer,
-	response: &v2::EncryptedResponse,
-	context: &'static str,
-) -> Result<(), String> {
-	let handshake = encrypt_v2_handshake_response(peer.encryption_public_key, response)?;
-	let topic = bootstrap_topic(peer.statement_account_id, peer.encryption_public_key);
-	let statement = build_signed_statement(
-		session,
-		topic,
-		topic,
-		handshake.encode(),
-		fresh_statement_expiry(),
-	)?;
-	services.statement_store.submit(statement, context).await
-}
-
-/// Keep the responder identity and peer for both pairing notices.
-// No `Debug`: it holds the responder statement secret.
+/// Wallet activation and peer bound to an in-progress pairing notice.
 pub struct AnnouncedPairing {
-	identity: ResponderIdentity,
+	wallet: Arc<WalletAccountHolder>,
+	session: AuthoritySession,
 	peer: PairedSsoPeer,
 }
 
 /// Serve inbound session statements until the session ends.
 #[instrument(skip_all, fields(runtime.method = "sso_responder.serve_session"))]
 async fn serve_session(
-	services: Arc<RuntimeServices>,
-	signing_host: Arc<SigningHost>,
+	responder: &SsoResponderService,
 	session: SsoSessionInfo,
 	replay_scope: SsoReplayScope,
+	wallet_session: AuthoritySession,
 ) -> Result<ResponderExit, String> {
-	let service = SigningHostSsoService::new(signing_host.clone());
+	let service = responder.account_holder_service(wallet_session);
+	service.require_current_session().map_err(|error| error.to_string())?;
+	let services = &responder.services;
 	let rpc_client = services
 		.statement_store
 		.client("sso-responder session")
@@ -494,7 +454,7 @@ async fn serve_session(
 		statement_store_rpc::subscribe_match_all(&rpc_client, &[session.session_id_peer])
 			.await
 			.map_err(|err| format!("sso-responder subscribe failed: {err}"))?;
-	let (services, session) = (&services, &session);
+	let session = &session;
 	let pages = futures::stream::unfold(
 		(subscription, DecodeFailureRequestIds::new()),
 		move |(mut subscription, mut decode_failure_request_ids)| async move {
@@ -511,9 +471,13 @@ async fn serve_session(
 	);
 	// Boxed as a trait object so the hosts that await a session need not
 	// lay out this future or prove it `Send`.
-	serve_pages(pages, signing_host.sso_withdrawals(), |incoming| {
-		serve_statement(services, &signing_host, &service, session, replay_scope, incoming)
-	})
+	serve_pages(
+		pages,
+		|message| {
+			service.handle_control(message);
+		},
+		|incoming| serve_statement(responder, &service, session, replay_scope, incoming),
+	)
 	.boxed()
 	.await
 }
@@ -526,7 +490,7 @@ const MAX_QUEUED_REQUESTS: usize = 64;
 /// so a `Cancel` reaches the request it withdraws.
 async fn serve_pages<Fut>(
 	pages: impl Stream<Item = Result<Vec<IncomingSsoRequest>, String>>,
-	withdrawals: &SsoWithdrawals,
+	handle_control: impl Fn(&RemoteMessage),
 	mut serve: impl FnMut(IncomingSsoRequest) -> Fut,
 ) -> Result<ResponderExit, String>
 where
@@ -566,9 +530,9 @@ where
 					None => break,
 				};
 				for incoming in page {
-					if let Some(targets) = withdrawn_targets(&incoming) {
-						for target in targets {
-							withdrawals.withdraw(target);
+					if incoming.messages.iter().all(|message| message.withdrawn_request_id().is_some()) {
+						for message in &incoming.messages {
+							handle_control(message);
 						}
 						continue;
 					}
@@ -665,25 +629,10 @@ fn log_request_received(incoming: &IncomingSsoRequest) {
 	}
 }
 
-/// The requests a statement withdraws, when it carries nothing but `Cancel`s.
-fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
-	incoming
-		.messages
-		.iter()
-		.map(|message| match &message.data {
-			RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
-				Some(withdrawal.message_id.as_str())
-			},
-			_ => None,
-		})
-		.collect()
-}
-
 /// Serve one inbound request statement exactly once across redeliveries.
 async fn serve_statement(
-	services: &RuntimeServices,
-	signing_host: &SigningHost,
-	service: &SigningHostSsoService,
+	responder: &SsoResponderService,
+	service: &SsoAccountHolderService,
 	session: &SsoSessionInfo,
 	replay_scope: SsoReplayScope,
 	incoming: IncomingSsoRequest,
@@ -691,9 +640,10 @@ async fn serve_statement(
 	let request_id = incoming.request_id.clone();
 	let expires_at_unix_secs = incoming.expires_at_unix_secs;
 	let duplicate_exit = duplicate_request_exit(&incoming);
+	let services = &responder.services;
 	let execution = execute_once(
 		services.platform.as_ref(),
-		signing_host.sso_replay_locks(),
+		&responder.replay_locks,
 		replay_scope,
 		&request_id,
 		expires_at_unix_secs,
@@ -713,7 +663,7 @@ async fn serve_statement(
 /// Ack one inbound request statement and answer its batched messages.
 async fn serve_request(
 	services: &RuntimeServices,
-	service: &SigningHostSsoService,
+	service: &SsoAccountHolderService,
 	session: &SsoSessionInfo,
 	incoming: IncomingSsoRequest,
 ) -> Result<Option<ResponderExit>, String> {
@@ -723,22 +673,23 @@ async fn serve_request(
 		let request_name = message.name();
 		let responding_to = message.message_id.clone();
 		let started = Instant::now();
-		let (response, outcome) = match service.answer(message).await {
-			Dispatch::Response(answer) => (answer.message, answer.outcome),
-			Dispatch::Disconnected => {
-				debug!("pairing host disconnected the SSO session");
-				return Ok(Some(ResponderExit::PeerDisconnected));
-			},
-			Dispatch::NotARequest(name) => {
-				warn!(name, "peer sent a response variant as a request");
-				continue;
-			},
-			Dispatch::Withdraw(_) => continue,
-			Dispatch::Withdrawn => {
-				debug!(%responding_to, "pairing host withdrew the SSO request");
-				continue;
-			},
-		};
+		let (response, outcome) =
+			match service.answer(message).await.map_err(|error| error.to_string())? {
+				Dispatch::Response(answer) => (answer.message, answer.outcome),
+				Dispatch::Disconnected => {
+					debug!("pairing host disconnected the SSO session");
+					return Ok(Some(ResponderExit::PeerDisconnected));
+				},
+				Dispatch::NotARequest(name) => {
+					warn!(name, "peer sent a response variant as a request");
+					continue;
+				},
+				Dispatch::Withdraw(_) => continue,
+				Dispatch::Withdrawn => {
+					debug!(%responding_to, "pairing host withdrew the SSO request");
+					continue;
+				},
+			};
 		let response_message_id = response.message_id.clone();
 		let statement_request_id = format!("resp:{response_message_id}");
 		let statement = build_outgoing_request_statement(
@@ -849,143 +800,6 @@ fn response_cli_summary(
 		summary.push_str(&reason.replace(['\r', '\n'], " "));
 	}
 	summary
-}
-
-/// Issue a statement allowance with the period actually found or registered.
-pub async fn allocate_statement_store_allowance(
-	services: &RuntimeServices,
-	signing_host: &SigningHost,
-	session: &AuthoritySession,
-	product_id: &str,
-	policy: OnExistingAllowancePolicy,
-) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
-	use super::allowance_renewal::{self, StatementRenewalTarget};
-	use crate::runtime::statement_allowance::{
-		self, PooledRegistrationParams, allocated_in, find_including_rings,
-		register_statement_account_pooled, scan_collections,
-	};
-
-	signing_host.require_current_session(session)?;
-	let entropy = signing_host.root_entropy()?;
-	let allowance =
-		derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id])?;
-	// Test signatures use real keys without claiming on-chain registration.
-	#[cfg(feature = "test-host")]
-	if signing_host.grants_allowances_unchecked() {
-		return Ok(StatementStoreAllocation {
-			secret: allowance.secret.to_bytes().to_vec(),
-			period: statement_allowance::slot::current_period(current_unix_secs()?),
-		});
-	}
-	let target = allowance.public.to_bytes();
-	let candidates = signing_host.reserved_person_collection_candidates(session)?;
-	let client = services.statement_store.chain_client("statement-store allowance").await?;
-	let rpc = client.rpc();
-	let chain = services.chain_context.get(&client).await?;
-	let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
-	let period = statement_allowance::slot::current_period(current_unix_secs()?);
-	let reuse_existing = matches!(policy, OnExistingAllowancePolicy::Ignore);
-
-	// Hold through scan and submission so renewal cannot select the same slot.
-	let _registration = signing_host.renewal.registration_lock().lock().await;
-
-	// Existing allocations need no proof or costly ring snapshot.
-	let signer = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
-	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
-	let scans = scan_collections(
-		rpc,
-		&chain.metadata,
-		&signer,
-		&collections,
-		statement_allowance::CollectionScanParams {
-			network_suffix: &network_suffix,
-			period,
-			target: &target,
-			reuse_existing,
-		},
-	)
-	.await?;
-	if let Some((collection, seq)) = allocated_in(&scans) {
-		debug!(
-			%product_id,
-			period,
-			seq,
-			%collection,
-			"statement-store allowance already allocated"
-		);
-		signing_host.require_current_session(session)?;
-		return Ok(StatementStoreAllocation {
-			secret: allowance.secret.to_bytes().to_vec(),
-			period,
-		});
-	}
-
-	// Every ring back to index 0, because a membership that stopped being
-	// re-included still proves against the ring that holds it.
-	let memberships =
-		find_including_rings(rpc, &chain.metadata, &signer, &collections, u32::MAX).await?;
-	if memberships.is_empty() {
-		return Err(AllowanceAllocationError::MissingPersonhoodMembership {
-			resource: "statement-store",
-		});
-	}
-	signing_host.require_current_session(session)?;
-	let outcome = register_statement_account_pooled(
-		rpc,
-		&chain.metadata,
-		&chain.state,
-		&signer,
-		&scans,
-		&memberships,
-		PooledRegistrationParams {
-			target: &target,
-			period,
-			network_suffix: &network_suffix,
-			reuse_existing,
-			// Only renewal may reclaim slots belonging to its own ledger.
-			allow_eviction: false,
-			protected: &[],
-		},
-	)
-	.await?;
-	match outcome {
-		statement_allowance::RegistrationOutcome::Registered {
-			block_hash,
-			seq,
-			ring_index,
-			collection,
-		} => {
-			debug!(
-				%product_id,
-				%block_hash,
-				seq,
-				ring_index,
-				%collection,
-				"registered statement-store allowance"
-			);
-		},
-		statement_allowance::RegistrationOutcome::AlreadyAllocated { seq, collection } => {
-			debug!(
-				%product_id,
-				seq,
-				%collection,
-				"statement-store allowance already allocated"
-			);
-		},
-	}
-	signing_host.require_current_session(session)?;
-	if let Err(reason) = allowance_renewal::track(
-		signing_host,
-		vec![StatementRenewalTarget::ProductStatementAllowance {
-			product_id: product_id.to_string(),
-		}],
-	)
-	.await
-	{
-		warn!(%product_id, %reason, "failed to record statement-store renewal target");
-	}
-	signing_host.require_current_session(session)?;
-	Ok(StatementStoreAllocation { secret: allowance.secret.to_bytes().to_vec(), period })
 }
 
 #[cfg(test)]

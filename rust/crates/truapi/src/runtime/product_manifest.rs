@@ -228,7 +228,7 @@ pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> 
 /// to parse alike, and whoever debugs it goes to fix a manifest that is already
 /// correct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RefusedBecause {
+enum RefusedBecause {
 	/// The published manifest does not name this caller for this scope.
 	NotGranted,
 	/// The user has already refused this pair.
@@ -271,7 +271,7 @@ pub async fn grants_scope(
 }
 
 /// Published access subject to this host's stored account-access refusals.
-pub async fn scope_grant(
+async fn scope_grant(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	caller_id: &str,
@@ -497,23 +497,9 @@ pub async fn ring_vrf_key_access_granted(
 	calling_product_id: &str,
 	handle: &v01::ProductAccountId,
 ) -> Result<AuthorizedAccess, RingVrfError> {
-	// A caller id that does not normalize names no product, so it holds no key
-	// and no manifest can grant it. It takes the same refusal as a product that
-	// granted nothing rather than an error carrying the string back: on the wire
-	// path this field is peer-supplied, and one refusal for every reason is the
-	// whole design of this seam.
 	let Ok(caller) = normalize_product_identifier(calling_product_id) else {
 		return Err(RingVrfError::NotAllowlisted);
 	};
-	// The handle is normalized here, not only at the frontend. The frontend
-	// does it before delegating, but `sso_responder` hands a wire request
-	// straight to the authority unnormalized, so without this the two doors
-	// disagree: an owner naming its own key `PEOPL.DOT` over the wire is
-	// refused where the same request from a local product runtime succeeds.
-	//
-	// A handle that does not normalize names no product, so it owns no key and
-	// no manifest can grant it: it takes the same refusal as a product that
-	// granted nothing, rather than a distinguishable error.
 	let Ok(owner) = normalize_product_identifier(&handle.dot_ns_identifier) else {
 		return Err(RingVrfError::NotAllowlisted);
 	};

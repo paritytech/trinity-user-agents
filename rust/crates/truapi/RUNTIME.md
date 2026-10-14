@@ -19,74 +19,37 @@ protocol API into a working host. It owns:
 
 ## Architecture
 
-Two ownership bands. A **per-product-connection** band (byte frames →
-dispatcher → role-neutral product runtime) is minted once per host↔product
-connection by the role handle and lives for that product's whole session; a
-**shared per-host** band owns role-neutral infrastructure (`RuntimeServices`)
-and the role object (`PairingHost` or `SigningHost`), which is itself the
-`ProductAuthority`. Pure `host_logic` is a no-I/O library both bands call, not a
-stage in the frame path; the host's `Platform` impl is the syscall floor.
+Each product connection has its own `ProductRuntime`, `ProductRuntimeHost` and `ProductConnection`, which hold that product's adapters, permissions and action streams. Everything else is shared per host: `HostAccounts` with its `AccountHolder`, the `HostSession`, and `RuntimeServices`. `host_logic` is a pure library both call, and the host's `Platform` implementation performs all I/O.
 
 ```text
-   ┌───────────────────────────────────────────────────────┐
-   │ product      sandboxed iframe · native WebView        │
-   └───────────────────────────────────────────────────────┘
-                              │  ▲
-          SCALE frames        │  │  MessageChannel · loopback
-          both directions     ▼  │  WS
-   ┌───────────────────────────────────────────────────────┐
-   │ binding layer :  host shell / transport adapter       │
-   │ thin byte bridge  ·  no protocol logic                │
-   └───────────────────────────────────────────────────────┘
+Per product connection
+┌─────────────────────────────────────────────────────────────┐
+│ ProductRuntime: frames → Dispatcher                         │
+│ ProductRuntimeHost<H>: validation and protocol adapters     │
+│ ProductConnection: permissions, platform adapters, demand   │
+└────────────────────┬──────────────────────┬─────────────────┘
+                     │ account operations   │ login / identity
+Shared per host      ▼                      ▼
+┌──────────────────────────────┐  ┌────────────────────────────┐
+│ HostAccounts<H>              │  │ HostSession                │
+│ acquire, retain, use grants  │  │ SigningHost                │
+│ HostGrantStore + registry    │  │ or SsoRequestService       │
+└──────────────────┬───────────┘  └────────────────────────────┘
+                   │ AccountHolder
+         ┌─────────┴─────────────────────┐
+         ▼                               ▼
+ WalletAccountHolder              RemoteAccountHolder
+ wallet secrets and issuance      canonical calls ↔ SSO messages
+         ▲                               │
+         │                               ▼
+ SsoAccountHolderService           SsoRequestService
+ confirms peer requests           selected channel and transport
 
- ══ per host→product connection ( one per connected product ) ══
-   ┌───────────────────────────────────────────────────────┐
-   │ ProductRuntime           frame endpoint               │
-   │ decode each SCALE frame → dispatch one typed call     │
-   └───────────────────────────────────────────────────────┘
-                              │  typed method call
-                              ▼
-   ┌───────────────────────────────────────────────────────┐
-   │ ProductRuntimeHost       role-neutral                 │
-   │ validate · permission-gate · confirm                  │
-   └───────────────────────────────────────────────────────┘
-                              │  wallet-authority tail :
-                              │  sign · alias · entropy · alloc
-                              │  via  Arc<dyn ProductAuthority>
-                              ▼
-
- ══ shared per host app ( one per host, all connections ) ══════
-     the PairingHostRuntime | SigningHostRuntime handle owns both:
-   ┌─────────────────────────────┐   ┌────────────────────────┐
-   │ role  =  ProductAuthority   │   │ RuntimeServices        │
-   │ PairingHost | SigningHost   │   │ platform · chain · RPC │
-   └─────────────────────────────┘   └────────────────────────┘
-              │
-              │  PairingHost only : encrypted SSO channel
-              ▼
-       ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
-       ╎ remote signing host   ( external wallet ) ╎
-       └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
-
-   both bands call host_logic for pure work, never traverse it :
-   ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
-   ╎ host_logic       pure library ( no I/O )              ╎
-   ╎ crypto · codecs · derivation · policy                 ╎
-   └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
-
- ══ host-owned floor · where every I/O above bottoms out ═══════
-   ┌───────────────────────────────────────────────────────┐
-   │ Platform impl  ( TS / Swift / Kotlin )                │
-   │ storage · prompts · chain RPC · navigation            │
-   └───────────────────────────────────────────────────────┘
+Shared RuntimeServices: platform, chain access and RPC clients
+Host Platform: storage, prompts, chain transport and navigation
 ```
 
-`ProductRuntimeHost` handles everything role-neutral (id normalization,
-permission gating, confirmation, soft product-key derivation), then delegates
-the wallet-authority tail (`sign_*`, `create_transaction`, `account_alias`,
-`create_proof`, `allocate_resources`, `derive_entropy`) through an
-`Arc<dyn ProductAuthority>` handle with an `AuthoritySession` snapshot the
-role revalidates before touching key material.
+`HostAccounts` binds each call to the calling product and the current wallet activation, keeps the grants it was issued, and signs with delegated keys itself. It confirms signing, transaction, VRF and allocation requests with the user before the `AccountHolder` acts on them; allowances it allocates in the background need no confirmation. The `AccountHolder` owns wallet secrets and grant issuance, and is the only writer of the ring-VRF registry its host reads.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures
@@ -237,16 +200,8 @@ awaiting `run_durable_recovery()`, which returns once nothing is live.
 
 ### The two roles
 
-Both implement the role-neutral **`ProductAuthority`** trait; each owns its
-role-specific lifecycle, so no method exists on a role that can't mean it:
-
-- **`PairingHost`** (seedless): the user's keys live in an external wallet, so
-  signing/aliases/entropy relay over an encrypted SSO channel (statement store
-  on the People chain; the channel lives in `pairing_host/sso_channel.rs`). The
-  v2 wire protocol uses raw X25519 keys, HKDF-SHA256, and
-  ChaCha20-Poly1305. It owns pairing/login state, persisted auth-session reload,
-  and remote signing-host liveness monitoring.
-- **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
+- **`PairingHost`** (seedless): runs `HostAccounts<RemoteAccountHolder>` and owns logout and the paired session's grants. `SsoRequestService` owns pairing and login state, persisted session reload and remote signing-host liveness, and carries account operations to the phone over the encrypted SSO channel (People-chain statement store; v2 wire protocol with raw X25519 keys, HKDF-SHA256 and ChaCha20-Poly1305). The paired host confirms a signing, transaction, VRF or allocation request before forwarding it, and the phone confirms it again.
+- **`SigningHost`** (wallet-local): runs `HostAccounts<WalletAccountHolder>`. `WalletAccountHolder` owns local entropy, derivation, grant issuance and renewal, and asks for account access before a product uses another product's ring-VRF keys; `SigningHost` routes activation, lock and product reset through `HostAccounts`. It signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0022
   `uid.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
@@ -261,6 +216,8 @@ role-specific lifecycle, so no method exists on a role that can't mean it:
   builds report them as unavailable) and do need metadata, which they take from
   the `RuntimeServices`-owned per-chain cache rather than re-reading it per
   call.
+- `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review.
+- `HostGrantStore`: holds the keys and public subtrees issued to `HostAccounts`, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O
@@ -278,12 +235,9 @@ the page.
 
 ### Inter-host SSO
 
-`PairingHost::call(request)` sends typed requests to
-[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
-consent and business logic; `sso_responder.rs` owns the transport loop and shared
-allowance helpers. Resource consent is bound to the request's signing session:
-account changes, disconnects, and reactivation invalidate pending approval before
-allocation or key return. Allocation failure details stay in local transcripts.
+On the signing host, [`SsoResponderService`](src/runtime/sso_responder_service.rs) owns the transport: it answers pairing, runs the serve loop, drops duplicate requests, and gives each peer its own [`SsoAccountHolderService`](src/runtime/sso_account_holder_service.rs). That service is bound to the wallet activation that authenticated the peer's channel and calls `WalletAccountHolder` directly; once that activation ends it answers only not-connected. A native wallet with its own transport opens the same per-peer service from the native runtime.
+
+On the paired host, `SsoRequestService::call(request)` sends typed requests to the peer's `SsoAccountHolderService`. That service confirms each signing, transaction, VRF and allocation request with the user before `WalletAccountHolder` acts on it, and approval is bound to the request's signing session, so account changes, disconnects and reactivation invalidate a pending one. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
 Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and
@@ -297,7 +251,7 @@ a withdrawn request posts no response. See the
 [SSO request cancellation RFC](../../../docs/rfcs/sso-request-cancellation.md).
 
 When a device finishes pairing, the signing host reports it to the embedder's
-[`DevicePairingObserver`](src/runtime/signing_host/sso_responder.rs), installed
+[`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
 once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
 host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
 pairing produced, which is also what `resume_pairing` and

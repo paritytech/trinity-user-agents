@@ -14,13 +14,10 @@ use web_time::{Duration, Instant};
 
 use crate::{
 	chain_runtime::{ChainRuntime, RuntimeFailure},
-	host_internal::{
-		bulletin::{
-			STORE_PALLET_NAME, allowance_signer, build_signed_store_transaction, preimage_key,
-		},
-		extrinsic::Sr25519Signer,
+	host_internal::bulletin::{
+		MORTAL_PERIOD_BLOCKS, STORE_PALLET_NAME, preimage_key, store_transaction_payload,
 	},
-	runtime::BulletinAllowanceKey,
+	runtime::AuthorityError,
 };
 use futures::{FutureExt, pin_mut};
 use subxt::{
@@ -49,15 +46,6 @@ const SUBMIT_ATTEMPTS: usize = 2;
 /// identical transaction can be included at most once, so re-broadcasting it
 /// can never double-store the preimage.
 const MAX_IDENTICAL_BROADCASTS: usize = 2;
-/// Wall-clock window to keep re-checking whether a freshly-claimed allowance
-/// has propagated to the dry-run view before treating the rejection as real.
-/// Bounding by elapsed time rather than a best-block count keeps the intended
-/// ~18s budget stable across changes in Bulletin's block cadence (a fixed
-/// count silently shrank the budget when block time dropped), and leaves room
-/// in the end-to-end submit timeout for one refresh and retry.
-const ALLOWANCE_DRY_RUN_PROPAGATION_WINDOW: Duration = Duration::from_secs(18);
-/// Bound each wait for a newer best block while allowance state propagates.
-const ALLOWANCE_DRY_RUN_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Finalized blocks to inspect for the already-broadcast transaction after
 /// the watch is interrupted (for example when `chainHead_follow` emits a
 /// `stop` event mid-submission).
@@ -122,6 +110,9 @@ pub enum BulletinSubmitError {
 	/// Subxt failed while building, validating, submitting, or reading events.
 	#[display("subxt: {_0}")]
 	Subxt(#[error(source)] Box<subxt::Error>),
+	/// The original host operation or account holder is no longer available.
+	#[display("{_0}")]
+	Authority(#[error(not(source))] AuthorityError),
 	/// The allowance key could not be converted to its purpose-scoped signer.
 	#[display("invalid allowance key: {_0}")]
 	InvalidAllowanceKey(#[error(not(source))] String),
@@ -171,6 +162,12 @@ pub enum AllowanceRejectionPhase {
 	DryRun,
 	#[display("dispatch")]
 	Dispatch,
+}
+
+impl From<AuthorityError> for BulletinSubmitError {
+	fn from(error: AuthorityError) -> Self {
+		Self::Authority(error)
+	}
 }
 
 impl BulletinSubmitError {
@@ -231,11 +228,6 @@ pub struct BulletinRpc {
 	submit_lock: futures::lock::Mutex<()>,
 	/// Last phase entered, for timeout reasons.
 	phase: StdMutex<SubmissionPhase>,
-	/// Wall-clock budget for allowance propagation to reach the dry-run view.
-	allowance_propagation_window: Duration,
-	/// Bound on each wait for a newer best block while allowance state
-	/// propagates.
-	allowance_block_wait_timeout: Duration,
 }
 
 impl BulletinRpc {
@@ -246,8 +238,6 @@ impl BulletinRpc {
 			genesis_hash,
 			submit_lock: futures::lock::Mutex::new(()),
 			phase: StdMutex::new(SubmissionPhase::Connect),
-			allowance_propagation_window: ALLOWANCE_DRY_RUN_PROPAGATION_WINDOW,
-			allowance_block_wait_timeout: ALLOWANCE_DRY_RUN_BLOCK_WAIT_TIMEOUT,
 		}
 	}
 
@@ -279,7 +269,7 @@ impl BulletinRpc {
 		self
 	}
 
-	/// Submit `value` as a Bulletin preimage signed by `allowance`, returning
+	/// Submit `value` using the selected account's signing operation, returning
 	/// the preimage key once the transaction is included and its dispatch
 	/// succeeded.
 	#[instrument(skip_all, fields(runtime.method = "bulletin_rpc.submit_preimage"))]
@@ -287,7 +277,12 @@ impl BulletinRpc {
 		&self,
 		cx: &CallContext,
 		deadline: Instant,
-		allowance: &BulletinAllowanceKey,
+		account_id: &subxt::utils::AccountId32,
+		sign: &(
+		     dyn Fn(&[u8]) -> Result<subxt::utils::MultiSignature, BulletinSubmitError>
+		         + Send
+		         + Sync
+		 ),
 		value: &[u8],
 	) -> Result<Vec<u8>, BulletinSubmitError> {
 		// Serialize submissions, keeping the lock wait cancellable.
@@ -305,7 +300,7 @@ impl BulletinRpc {
 			let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
 				return Err(BulletinSubmitError::Timeout { phase: self.current_phase() });
 			};
-			let flow = self.submit_flow(allowance, value).fuse();
+			let flow = self.submit_flow(account_id, sign, value).fuse();
 			let timeout = futures_timer::Delay::new(remaining).fuse();
 			let cancelled = cx.cancel().cancelled().fuse();
 			pin_mut!(flow, timeout, cancelled);
@@ -329,7 +324,12 @@ impl BulletinRpc {
 
 	async fn submit_flow(
 		&self,
-		allowance: &BulletinAllowanceKey,
+		account_id: &subxt::utils::AccountId32,
+		sign: &(
+		     dyn Fn(&[u8]) -> Result<subxt::utils::MultiSignature, BulletinSubmitError>
+		         + Send
+		         + Sync
+		 ),
 		value: &[u8],
 	) -> Result<Vec<u8>, BulletinSubmitError> {
 		let key = preimage_key(value);
@@ -351,11 +351,8 @@ impl BulletinRpc {
 		let head = initial_best_block(&mut best_blocks).await?;
 
 		self.enter_phase(SubmissionPhase::Build);
-		let signer =
-			allowance_signer(allowance).map_err(BulletinSubmitError::InvalidAllowanceKey)?;
-		let signed = self
-			.build_signed_and_dry_run(&mut best_blocks, head, &finalized, &signer, value)
-			.await?;
+		let signed =
+			self.build_signed_and_dry_run(head, &finalized, account_id, sign, value).await?;
 		drop(best_blocks);
 
 		self.enter_phase(SubmissionPhase::Watch);
@@ -407,84 +404,52 @@ impl BulletinRpc {
 		Ok(key.to_vec())
 	}
 
-	/// Build, sign, and dry-run the extrinsic against the chosen best block.
-	/// Dry-run provides the typed signal used to distinguish stale allowances,
-	/// nonce races, and other runtime validity failures.
 	async fn build_signed_and_dry_run(
 		&self,
-		best_blocks: &mut Blocks<SubstrateConfig>,
 		head: Block<SubstrateConfig>,
 		finalized: &OnlineClientAtBlock<SubstrateConfig>,
-		signer: &Sr25519Signer,
+		account_id: &subxt::utils::AccountId32,
+		sign: &(
+		     dyn Fn(&[u8]) -> Result<subxt::utils::MultiSignature, BulletinSubmitError>
+		         + Send
+		         + Sync
+		 ),
 		value: &[u8],
 	) -> Result<SignedStore, BulletinSubmitError> {
-		let mut block = head;
-		let mut allowance_rejections = 0;
-		let mut allowance_rejection_started = None;
-		loop {
-			self.enter_phase(SubmissionPhase::Build);
-			let at_block = block
-				.at()
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-			let signed = build_signed_store_transaction(&at_block, finalized, signer, value)
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-
-			self.enter_phase(SubmissionPhase::DryRun);
-			let validity = signed
-				.validate()
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-			match Self::classify_dry_run_validity(validity)? {
-				DryRunStatus::Valid => return Ok(signed),
-				DryRunStatus::AllowanceRejected => {
-					let started = allowance_rejection_started.get_or_insert_with(Instant::now);
-					let elapsed = started.elapsed();
-					if elapsed >= self.allowance_propagation_window {
-						warn!(
-							rejections = allowance_rejections + 1,
-							elapsed_ms = elapsed.as_millis(),
-							allowance_propagation_window_ms =
-								self.allowance_propagation_window.as_millis(),
-							stop = "propagation-window",
-							"Bulletin allowance remained unavailable to dry-run"
-						);
-						return Err(BulletinSubmitError::AllowanceRejected {
-							phase: AllowanceRejectionPhase::DryRun,
-						});
-					}
-					allowance_rejections += 1;
-					warn!(
-						attempt = allowance_rejections,
-						elapsed_ms = elapsed.as_millis(),
-						allowance_propagation_window_ms =
-							self.allowance_propagation_window.as_millis(),
-						block_wait_timeout_ms = self.allowance_block_wait_timeout.as_millis(),
-						"Bulletin allowance not visible to dry-run yet; rebuilding at next block"
-					);
-					block = match next_best_block(
-						best_blocks,
-						self.allowance_block_wait_timeout,
-						SubmissionPhase::DryRun,
-					)
-					.await
-					{
-						Err(BulletinSubmitError::Timeout { .. }) => {
-							warn!(
-								rejections = allowance_rejections,
-								elapsed_ms = started.elapsed().as_millis(),
-								stop = "block-wait-timeout",
-								"Bulletin allowance remained unavailable to dry-run"
-							);
-							return Err(BulletinSubmitError::AllowanceRejected {
-								phase: AllowanceRejectionPhase::DryRun,
-							});
-						},
-						result => result?,
-					};
-				},
-			}
+		self.enter_phase(SubmissionPhase::Build);
+		let at_block = head
+			.at()
+			.await
+			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		let payload = store_transaction_payload(value);
+		let params = subxt::config::DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
+			.mortal_from_unchecked(
+				MORTAL_PERIOD_BLOCKS,
+				finalized.block_number(),
+				finalized.block_hash(),
+			)
+			.build();
+		let mut prepared = at_block
+			.tx()
+			.create_signable(&payload, account_id, params)
+			.await
+			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		let bytes = prepared
+			.signer_payload()
+			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		let signed = prepared
+			.sign_with_account_and_signature(account_id, &sign(&bytes)?)
+			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		self.enter_phase(SubmissionPhase::DryRun);
+		let validity = signed
+			.validate()
+			.await
+			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		match Self::classify_dry_run_validity(validity)? {
+			DryRunStatus::Valid => Ok(signed),
+			DryRunStatus::AllowanceRejected => Err(BulletinSubmitError::AllowanceRejected {
+				phase: AllowanceRejectionPhase::DryRun,
+			}),
 		}
 	}
 

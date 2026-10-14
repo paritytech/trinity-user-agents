@@ -1,21 +1,16 @@
-//! Incoming SSO requests, consent prompts and wallet authority calls.
+//! Incoming SSO account requests and wallet grant responses.
 
 use std::sync::Arc;
 
-use crate::platform::{
-	CreateTransactionReview, ResourceAllocationReview, SignPayloadReview, SignRawReview,
-	UserConfirmationReview,
-};
-use futures::{FutureExt, pin_mut};
+use futures::StreamExt;
 use tracing::warn;
 use truapi::latest as api;
 
 use super::{
-	SigningHost,
-	sso_responder::{
-		AllowanceAllocationError, allocate_bulletin_allowance, allocate_smart_contract_allowance,
-		allocate_statement_store_allowance,
-	},
+	authority::{AccountGrant, AccountGrantOutcome, AccountInvocation},
+	product_consent::ProductConsent,
+	signing_host::WalletAccountHolder,
+	validate_vrf_transcript,
 };
 use crate::{
 	host_internal::{
@@ -23,45 +18,97 @@ use crate::{
 			CreateAccountProofResponse, CreateTransactionLegacyPayload, CreateTransactionPayload,
 			CreateTransactionRequest, CreateTransactionResponse,
 			CreateTransactionWithLegacyAccountRequest, GetAccountAliasResponse,
-			ListRingVrfKeysResponse, OnExistingAllowancePolicy, ProductRequest,
-			ProductSubtreeRequest, ProductSubtreeResponse, RegisterRingVrfKeyResponse,
-			RemoteMessage, ResourceAllocationRequest, ResourceAllocationResponse,
-			RingVrfSignResponse, SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse,
-			SignRequest, SignResponse, SignVrfResponse, SsoAllocatedResource, SsoAllocationOutcome,
+			ListRingVrfKeysResponse, ProductRequest, ProductSubtreeRequest, ProductSubtreeResponse,
+			RegisterRingVrfKeyResponse, RemoteMessage, ResourceAllocationRequest,
+			ResourceAllocationResponse, RingVrfSignResponse, SignRawWithLegacyAccountRequest,
+			SignRawWithLegacyAccountResponse, SignRequest, SignResponse, SignVrfResponse,
+			SsoAllocatedResource, SsoAllocationOutcome,
 		},
 		sso_wire::ResponseOutcome,
 	},
-	host_logic::product_account::{derive_ring_vrf_domain_entropy, product_public_key_to_address},
+	host_logic::product_account::product_public_key_to_address,
+	platform::{
+		ResourceAllocationReview, SignVrfReview, UserConfirmationReview,
+		normalize_product_identifier,
+	},
 	runtime::{
 		authority::{
-			AuthoritySession, CreateTransactionAuthorityRequest, ProductAuthority,
+			AccountHolder, AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
 			SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 		},
-		sso_service::{Dispatch, SsoReply, SsoRequestContext},
+		sso_service::{Dispatch, SsoReply, SsoRequestContext, SsoWithdrawals},
 	},
 };
 
+/// Incoming requests for one authenticated wallet activation and peer.
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Object))]
+pub struct SsoAccountHolderService {
+	wallet: Arc<WalletAccountHolder>,
+	consent: Arc<ProductConsent>,
+	session: AuthoritySession,
+	withdrawals: SsoWithdrawals,
+}
+
 impl SsoAccountHolderService {
-	/// Answer `message`, unless the pairing host withdraws it first.
-	///
-	/// A `Cancel` withdraws the request it names and is itself not answered.
-	/// A withdrawn request has no response to post.
-	pub async fn answer(&self, message: RemoteMessage) -> Dispatch {
-		let withdrawals = self.signing_host.sso_withdrawals();
-		let Some(request) = withdrawals.begin(&message.message_id) else {
-			return Dispatch::Withdrawn;
-		};
-		let cx = self.current_session().map(|session| {
-			SsoRequestContext::new(&message.message_id, session, request.cancel.clone())
-		});
-		match self.dispatch(cx, message).await {
-			Dispatch::Withdraw(target) => {
-				withdrawals.withdraw(&target);
-				Dispatch::Withdraw(target)
-			},
-			Dispatch::Response(_) if request.cancel.is_cancelled() => Dispatch::Withdrawn,
-			dispatch => dispatch,
+	/// Bind one peer to the activation that authenticated its transport, confirming
+	/// each of its requests through `consent`.
+	pub fn new(
+		wallet: Arc<WalletAccountHolder>,
+		consent: Arc<ProductConsent>,
+		session: AuthoritySession,
+	) -> Self {
+		Self { wallet, consent, session, withdrawals: SsoWithdrawals::default() }
+	}
+
+	/// Run the wallet's `operation` only once the user confirms the paired host's request.
+	async fn confirmed<T>(
+		&self,
+		invocation: AccountInvocation<'_>,
+		review: UserConfirmationReview,
+		operation: impl Future<Output = Result<T, AuthorityError>>,
+	) -> Result<T, AuthorityError> {
+		self.consent.review(invocation.call, invocation.caller, review).await?;
+		operation.await
+	}
+
+	/// Require the activation that authenticated this peer.
+	pub fn require_current_session(&self) -> Result<(), AuthorityError> {
+		self.wallet.require_current_session(&self.session)
+	}
+
+	/// Apply a withdrawal without waiting behind the request it cancels.
+	pub fn handle_control(&self, message: &RemoteMessage) -> Option<Dispatch> {
+		let target = message.withdrawn_request_id()?;
+		self.withdrawals.withdraw(target);
+		Some(Dispatch::Withdraw(target.to_string()))
+	}
+
+	/// Answer a request without releasing stale or withdrawn wallet results.
+	pub async fn answer(&self, message: RemoteMessage) -> Result<Dispatch, AuthorityError> {
+		if let Some(control) = self.handle_control(&message) {
+			return Ok(control);
 		}
+		let Some(request) = self.withdrawals.begin(&message.message_id) else {
+			return Ok(Dispatch::Withdrawn);
+		};
+		if self.require_current_session().is_err() {
+			return Ok(self.dispatch(None, message).await);
+		}
+		let cx = SsoRequestContext::new(
+			&message.message_id,
+			self.session.clone(),
+			request.cancel.clone(),
+		);
+		let dispatch = self.dispatch(Some(cx), message.clone()).await;
+		if matches!(dispatch, Dispatch::Response(_)) {
+			if request.cancel.is_cancelled() {
+				return Ok(Dispatch::Withdrawn);
+			}
+			if self.require_current_session().is_err() {
+				return Ok(self.dispatch(None, message).await);
+			}
+		}
+		Ok(dispatch)
 	}
 
 	async fn serve_sign(
@@ -69,65 +116,36 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: SignRequest,
 	) -> Result<api::HostSignPayloadResponse, String> {
+		let watermarked = matches!(request, SignRequest::Raw(_));
 		match request {
 			SignRequest::Payload(request) => {
-				let request = *request;
-				self.confirm(
-					cx,
-					UserConfirmationReview::SignPayload(SignPayloadReview::Product {
-						// A relayed request carries no caller identity.
-						calling_product_id: None,
-						request: request.clone(),
-					}),
-				)
-				.await?;
-				self.signing_host
-					.sign_payload(
-						&cx.call,
-						&cx.session,
-						// A relayed request carries no caller identity, and
-						// this role confirms every one of them anyway.
-						None,
-						SignPayloadAuthorityRequest::Product(request),
-					)
+				let invocation = cx.account_invocation(None);
+				let request = SignPayloadAuthorityRequest::Product(*request);
+				let review = request.review(invocation.caller);
+				self.confirmed(invocation, review, self.wallet.sign_payload(invocation, request))
 					.await
-					.map_err(|err| err.to_string())
 			},
-			SignRequest::Raw(request) => self.serve_sign_raw(cx, request, true).await,
-			SignRequest::RawUnwatermarkedDeprecated(request) => {
-				self.serve_sign_raw(cx, request, false).await
+			SignRequest::Raw(raw) | SignRequest::RawUnwatermarkedDeprecated(raw) => {
+				self.serve_sign_raw(cx, SignRawAuthorityRequest::Product(raw), watermarked)
+					.await
 			},
 			SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request) => {
 				self.serve_sign_raw_with_legacy_account(cx, request, false).await
 			},
 		}
+		.map_err(|error| error.to_string())
 	}
 
 	async fn serve_sign_raw(
 		&self,
 		cx: &SsoRequestContext,
-		request: api::HostSignRawRequest,
+		request: SignRawAuthorityRequest,
 		watermarked: bool,
-	) -> Result<api::HostSignPayloadResponse, String> {
-		self.confirm(
-			cx,
-			UserConfirmationReview::SignRaw(SignRawReview::Product {
-				calling_product_id: None,
-				request: request.clone(),
-				watermarked,
-			}),
-		)
-		.await?;
-		self.signing_host
-			.sign_raw(
-				&cx.call,
-				&cx.session,
-				None,
-				SignRawAuthorityRequest::Product(request),
-				watermarked,
-			)
+	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
+		let invocation = cx.account_invocation(None);
+		let review = request.review(invocation.caller, watermarked);
+		self.confirmed(invocation, review, self.wallet.sign_raw(invocation, request, watermarked))
 			.await
-			.map_err(|err| err.to_string())
 	}
 
 	async fn serve_sign_raw_with_legacy_account(
@@ -135,162 +153,33 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: SignRawWithLegacyAccountRequest,
 		watermarked: bool,
-	) -> Result<api::HostSignPayloadResponse, String> {
+	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
 		let public_request = api::HostSignRawWithLegacyAccountRequest {
 			signer: product_public_key_to_address(request.account),
 			payload: request.data,
 		};
-		self.confirm(
+		self.serve_sign_raw(
 			cx,
-			UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
-				request: public_request.clone(),
-				watermarked,
-			}),
+			SignRawAuthorityRequest::IdentityAccount {
+				account: request.account,
+				request: public_request,
+			},
+			watermarked,
 		)
-		.await?;
-		self.signing_host
-			.sign_raw(
-				&cx.call,
-				&cx.session,
-				None,
-				SignRawAuthorityRequest::LegacyAccount {
-					account: request.account,
-					request: public_request,
-				},
-				watermarked,
-			)
-			.await
-			.map_err(|err| err.to_string())
+		.await
 	}
 
 	async fn serve_create_transaction(
 		&self,
 		cx: &SsoRequestContext,
-		review: CreateTransactionReview,
 		request: CreateTransactionAuthorityRequest,
-	) -> Result<Vec<u8>, String> {
-		self.confirm(cx, UserConfirmationReview::CreateTransaction(review)).await?;
-		self.signing_host
-			.create_transaction(&cx.call, &cx.session, None, request)
+	) -> CreateTransactionResponse {
+		let invocation = cx.account_invocation(None);
+		let review = request.review(invocation.caller);
+		self.confirmed(invocation, review, self.wallet.create_transaction(invocation, request))
 			.await
 			.map(|response| response.transaction)
-			.map_err(|err| err.to_string())
-	}
-}
-
-/// Handler error once the pairing host has withdrawn the request; never
-/// posted, because a withdrawn request has no response.
-const WITHDRAWN: &str = "Withdrawn";
-
-/// SSO handlers served by a locally activated [`SigningHost`].
-pub struct SigningHostSsoService {
-	signing_host: Arc<SigningHost>,
-}
-
-impl SigningHostSsoService {
-	/// Serve requests and prompt through the signing host's platform.
-	pub fn new(signing_host: Arc<SigningHost>) -> Self {
-		Self { signing_host }
-	}
-
-	/// The person's answer to `review`, or `None` once the pairing host has
-	/// withdrawn the request, which leaves nothing authorized.
-	async fn prompt(
-		&self,
-		cx: &SsoRequestContext,
-		review: UserConfirmationReview,
-	) -> Option<Result<bool, api::GenericError>> {
-		let answer = self.signing_host.platform.confirm_user_action(review).fuse();
-		let withdrawn = cx.call.cancel().cancelled().fuse();
-		pin_mut!(answer, withdrawn);
-		futures::select_biased! {
-			_ = withdrawn => None,
-			answer = answer => Some(answer),
-		}
-	}
-
-	/// Run the platform confirmation seam; rejection and failure both refuse
-	/// the operation with an opaque reason (host-spec B.7).
-	async fn confirm(
-		&self,
-		cx: &SsoRequestContext,
-		review: UserConfirmationReview,
-	) -> Result<(), String> {
-		match self.prompt(cx, review).await {
-			Some(Ok(true)) => Ok(()),
-			Some(Ok(false)) => Err("Rejected".to_string()),
-			Some(Err(err)) => Err(format!("confirmation failed: {}", err.reason)),
-			None => Err(WITHDRAWN.to_string()),
-		}
-	}
-
-	async fn allocate(
-		&self,
-		session: &AuthoritySession,
-		calling_product_id: &str,
-		resource: api::AllocatableResource,
-		on_existing: OnExistingAllowancePolicy,
-	) -> Result<SsoAllocationOutcome, AllowanceAllocationError> {
-		let signing_host = &self.signing_host;
-		let services = &signing_host.services;
-		match resource {
-			api::AllocatableResource::StatementStoreAllowance => {
-				allocate_statement_store_allowance(
-					services,
-					signing_host,
-					session,
-					calling_product_id,
-					on_existing,
-				)
-				.await
-				.map(|allocation| {
-					SsoAllocationOutcome::Allocated(SsoAllocatedResource::StatementStoreAllowance {
-						slot_account_key: allocation.secret,
-					})
-				})
-			},
-			api::AllocatableResource::BulletinAllowance => allocate_bulletin_allowance(
-				services,
-				signing_host,
-				session,
-				calling_product_id,
-				on_existing,
-			)
-			.await
-			.map(|slot_account_key| {
-				SsoAllocationOutcome::Allocated(SsoAllocatedResource::BulletinAllowance {
-					slot_account_key,
-				})
-			}),
-			api::AllocatableResource::SmartContractAllowance(index) => {
-				allocate_smart_contract_allowance(
-					services,
-					signing_host,
-					session,
-					calling_product_id,
-					index,
-					on_existing,
-				)
-				.await
-				.map(|()| {
-					SsoAllocationOutcome::Allocated(SsoAllocatedResource::SmartContractAllowance)
-				})
-			},
-			api::AllocatableResource::AutoSigning => {
-				let product_root_private_key = signing_host
-					.product_subtree_secret(calling_product_id)
-					.map_err(AllowanceAllocationError::Authority)?;
-				let root_entropy = signing_host.root_entropy()?;
-				let ring_vrf_domain_entropy =
-					derive_ring_vrf_domain_entropy(&root_entropy, calling_product_id)
-						.map_err(super::product_authority_error)
-						.map_err(AllowanceAllocationError::Authority)?;
-				Ok(SsoAllocationOutcome::Allocated(SsoAllocatedResource::AutoSigning {
-					product_root_private_key,
-					ring_vrf_domain_entropy,
-				}))
-			},
-		}
+			.map_err(|error| error.to_string())
 	}
 }
 
@@ -365,7 +254,6 @@ fn resource_allocation_outcome(
 
 #[truapi_macros::sso_service]
 impl SsoAccountHolderService {
-	/// Sign a payload or raw bytes with a product account.
 	async fn sign(&self, cx: &SsoRequestContext, request: SignRequest) -> SignResponse {
 		let payload = self.serve_sign(cx, request).await;
 		if let Err(reason) = &payload {
@@ -374,16 +262,19 @@ impl SsoAccountHolderService {
 		payload
 	}
 
-	/// Derive a contextual alias for a registered ring-VRF key.
 	async fn get_account_alias(
 		&self,
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountGetAliasRequest>,
 	) -> GetAccountAliasResponse {
-		self.signing_host.account_alias(&cx.call, &cx.session, request).await
+		self.wallet
+			.account_alias(
+				cx.account_invocation(Some(&request.calling_product_id)),
+				request.payload,
+			)
+			.await
 	}
 
-	/// Allocate SSO-backed resources for a product.
 	async fn resource_allocation(
 		&self,
 		cx: &SsoRequestContext,
@@ -391,47 +282,61 @@ impl SsoAccountHolderService {
 	) -> ResourceAllocationResponse {
 		let mut failures = Vec::new();
 		let payload = async {
+			let count = request.resources.len();
+			let invocation = cx.account_invocation(Some(&request.calling_product_id));
 			let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
 				calling_product_id: request.calling_product_id.clone(),
 				resources: request.resources.clone(),
 			});
-			match self.prompt(cx, review).await {
-				Some(Ok(true)) => {},
-				Some(Ok(false)) => {
-					return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
+			let allocation = self.wallet.allocate_grants(
+				invocation,
+				api::HostRequestResourceAllocationRequest { resources: request.resources },
+				request.on_existing,
+			);
+			let mut grants = match self.confirmed(invocation, review, allocation).await {
+				Ok(grants) => grants,
+				Err(AuthorityError::Rejected) => {
+					return Ok(vec![SsoAllocationOutcome::Rejected; count]);
 				},
-				Some(Err(err)) => return Err(format!("confirmation failed: {}", err.reason)),
-				None => return Err(WITHDRAWN.to_string()),
-			}
-
-			self.signing_host
-				.require_current_session(&cx.session)
-				.map_err(|err| err.to_string())?;
-			let mut outcomes = Vec::with_capacity(request.resources.len());
-			for resource in request.resources {
-				self.signing_host
-					.require_current_session(&cx.session)
-					.map_err(|err| err.to_string())?;
-				if cx.call.cancel().is_cancelled() {
-					return Err(WITHDRAWN.to_string());
-				}
-				let outcome = self
-					.allocate(
-						&cx.session,
-						&request.calling_product_id,
-						resource,
-						request.on_existing,
-					)
-					.await;
-				self.signing_host
-					.require_current_session(&cx.session)
-					.map_err(|err| err.to_string())?;
-				outcomes.push(outcome.unwrap_or_else(|err| {
-					let reason = err.to_string();
-					warn!(%reason, "resource allocation item failed");
-					failures.push(reason);
-					SsoAllocationOutcome::NotAvailable
-				}));
+				Err(error) => return Err(error.to_string()),
+			};
+			let mut outcomes = Vec::with_capacity(count);
+			while let Some(grant) = grants.next().await {
+				outcomes.push(match grant {
+					Ok(AccountGrantOutcome::Allocated(grant)) => {
+						SsoAllocationOutcome::Allocated(match grant {
+							AccountGrant::StatementStore { key, .. } => {
+								SsoAllocatedResource::StatementStoreAllowance {
+									slot_account_key: key.as_secret_bytes().to_vec(),
+								}
+							},
+							AccountGrant::Bulletin(key) => {
+								SsoAllocatedResource::BulletinAllowance {
+									slot_account_key: key.as_secret_bytes().to_vec(),
+								}
+							},
+							AccountGrant::SmartContract => {
+								SsoAllocatedResource::SmartContractAllowance
+							},
+							AccountGrant::AutoSigning(key) => SsoAllocatedResource::AutoSigning {
+								product_root_private_key: *key.as_secret_bytes(),
+								ring_vrf_domain_entropy: *key.ring_vrf_domain_entropy(),
+							},
+						})
+					},
+					Ok(AccountGrantOutcome::Rejected) => {
+						failures.push(AuthorityError::Rejected.to_string());
+						SsoAllocationOutcome::NotAvailable
+					},
+					Ok(AccountGrantOutcome::NotAvailable { reason }) => {
+						if let Some(reason) = reason {
+							warn!(%reason, "resource allocation item failed");
+							failures.push(reason);
+						}
+						SsoAllocationOutcome::NotAvailable
+					},
+					Err(error) => return Err(error.to_string()),
+				});
 			}
 			Ok(outcomes)
 		}
@@ -442,7 +347,6 @@ impl SsoAccountHolderService {
 		allocation_reply(payload, failures)
 	}
 
-	/// Build a signed transaction for a product account.
 	async fn create_transaction(
 		&self,
 		cx: &SsoRequestContext,
@@ -450,15 +354,10 @@ impl SsoAccountHolderService {
 	) -> CreateTransactionResponse {
 		let CreateTransactionPayload::V1(payload) = request.payload;
 		let payload = payload.into_product_payload();
-		self.serve_create_transaction(
-			cx,
-			CreateTransactionReview::Product { calling_product_id: None, payload: payload.clone() },
-			CreateTransactionAuthorityRequest::Product(payload),
-		)
-		.await
+		self.serve_create_transaction(cx, CreateTransactionAuthorityRequest::Product(payload))
+			.await
 	}
 
-	/// Build a signed transaction for the wallet's identity account.
 	async fn create_transaction_with_legacy_account(
 		&self,
 		cx: &SsoRequestContext,
@@ -467,13 +366,11 @@ impl SsoAccountHolderService {
 		let CreateTransactionLegacyPayload::V1(payload) = request.payload;
 		self.serve_create_transaction(
 			cx,
-			CreateTransactionReview::LegacyAccount(payload.clone()),
 			CreateTransactionAuthorityRequest::IdentityAccount(payload),
 		)
 		.await
 	}
 
-	/// Sign raw data with a legacy account.
 	async fn sign_raw_with_legacy_account(
 		&self,
 		cx: &SsoRequestContext,
@@ -482,33 +379,39 @@ impl SsoAccountHolderService {
 		self.serve_sign_raw_with_legacy_account(cx, request, true)
 			.await
 			.map(|response| response.signature)
+			.map_err(|error| error.to_string())
 	}
 
-	/// Create a ring-VRF proof bound to a context and message.
 	async fn create_account_proof(
 		&self,
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountCreateProofRequest>,
 	) -> CreateAccountProofResponse {
-		self.signing_host.create_proof(&cx.call, &cx.session, request).await
+		self.wallet
+			.create_proof(cx.account_invocation(Some(&request.calling_product_id)), request.payload)
+			.await
 	}
 
-	/// Sign an RFC-0023 VRF transcript.
 	async fn sign_vrf(
 		&self,
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountSignVrfRequest>,
 	) -> SignVrfResponse {
-		self.signing_host
-			.sign_vrf_request(
-				&cx.call,
-				&cx.session,
-				request.calling_product_id,
-				request.payload,
-				false,
-			)
-			.await
-			.map_err(api::HostAccountSignVrfError::from)
+		let invocation = cx.account_invocation(Some(&request.calling_product_id));
+		async {
+			validate_vrf_transcript(&request.payload)
+				.map_err(|reason| AuthorityError::Unknown { reason })?;
+			normalize_product_identifier(&request.payload.account.dot_ns_identifier)
+				.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })?;
+			let review = UserConfirmationReview::SignVrf(SignVrfReview {
+				calling_product_id: request.calling_product_id.clone(),
+				request: request.payload.clone(),
+			});
+			self.confirmed(invocation, review, self.wallet.sign_vrf(invocation, request.payload))
+				.await
+		}
+		.await
+		.map_err(api::HostAccountSignVrfError::from)
 	}
 
 	/// Consent-free product hard-subtree public key.
@@ -517,37 +420,52 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: ProductSubtreeRequest,
 	) -> ProductSubtreeResponse {
-		self.signing_host
-			.product_subtree_public_key(&cx.call, &cx.session, request.product_id)
+		self.wallet
+			.product_subtree_public_key(cx.account_invocation(None), request.product_id)
+			.await
+			.map_err(|err| err.to_string())?
+			.resolve()
 			.await
 			.map_err(|err| err.to_string())
 	}
 
-	/// Register a ring-VRF key owned by the calling product.
 	async fn register_ring_vrf_key(
 		&self,
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountRegisterRingVrfKeyRequest>,
 	) -> RegisterRingVrfKeyResponse {
-		self.signing_host.register_ring_vrf_key(&cx.call, &cx.session, request).await
+		self.wallet
+			.register_ring_vrf_key(
+				cx.account_invocation(Some(&request.calling_product_id)),
+				request.payload,
+			)
+			.await
 	}
 
-	/// List registered ring-VRF keys.
 	async fn list_ring_vrf_keys(
 		&self,
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountListRingVrfKeysRequest>,
 	) -> ListRingVrfKeysResponse {
-		self.signing_host.list_ring_vrf_keys(&cx.call, &cx.session, request).await
+		self.wallet
+			.list_ring_vrf_keys(
+				cx.account_invocation(Some(&request.calling_product_id)),
+				request.payload,
+			)
+			.await
 	}
 
-	/// Sign bytes directly with a registered ring-VRF key.
 	async fn ring_vrf_sign(
 		&self,
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountRingVrfSignRequest>,
 	) -> RingVrfSignResponse {
-		self.signing_host.ring_vrf_sign(&cx.call, &cx.session, request).await
+		self.wallet
+			.ring_vrf_sign(
+				cx.account_invocation(Some(&request.calling_product_id)),
+				request.payload,
+			)
+			.await
 	}
 }
 

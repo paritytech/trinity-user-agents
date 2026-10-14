@@ -15,12 +15,15 @@ use std::time::Duration;
 use web_time::Duration;
 
 use super::{
-	auth_state::AuthStateMachine, identity::resolve_session_identity_with_chain,
-	pairing_host::PairingHost, statement_store_rpc,
+	super::{
+		auth_state::AuthStateMachine, identity::resolve_session_identity_with_chain,
+		statement_store_rpc,
+	},
+	SsoRequestService,
 };
 use crate::{
 	host_logic::{
-		session::{SessionInfo, encode_persisted_session},
+		session::SessionInfo,
 		sso::pairing::{
 			PairingBootstrap, PairingDeviceIdentity, VersionedHandshakeResponse,
 			create_pairing_bootstrap_from_identity, decode_app_handshake_data,
@@ -44,7 +47,7 @@ use subxt_rpcs::{RpcClient, client::RpcSubscription};
 use tracing::{debug, info, instrument};
 #[cfg(test)]
 use truapi::versioned::account::HostRequestLoginResponse;
-use truapi::{CallError, latest as api, versioned::account::HostRequestLoginError};
+use truapi::{CallError, latest as api, latest::HostRequestLoginError};
 
 #[cfg(not(test))]
 const PAIRING_QUERY_INTERVAL: Duration = Duration::from_secs(2);
@@ -72,8 +75,8 @@ fn pairing_deadline_reason() -> String {
 pub enum SsoPairingOutcome {
 	/// Pairing was cancelled or another activation won.
 	Cancelled,
-	/// Wallet handshake completed; the session is resolved and persisted.
-	Success(Box<SessionInfo>),
+	/// The resolved wallet session is persisted and installed.
+	Success,
 }
 
 // Dropped requests must not leave their pairing UI active.
@@ -97,18 +100,19 @@ impl Drop for AbandonedPairingGuard {
 	}
 }
 
-/// One pairing (login) attempt driven on behalf of a pairing host.
+/// One selected outbound pairing attempt.
 pub struct SsoPairingFlow<'a> {
-	host: &'a PairingHost,
+	host: &'a SsoRequestService,
+	login_generation: u64,
 }
 
 impl<'a> SsoPairingFlow<'a> {
-	/// Bind a pairing attempt to its host.
-	pub fn new(host: &'a PairingHost) -> Self {
-		Self { host }
+	/// Bind the attempt to its service and login generation.
+	pub fn new(host: &'a SsoRequestService, login_generation: u64) -> Self {
+		Self { host, login_generation }
 	}
 
-	/// Run pairing and persist the resolved wallet session.
+	/// Complete wallet pairing and commit the selected session.
 	pub async fn request_session(
 		&self,
 	) -> Result<SsoPairingOutcome, CallError<HostRequestLoginError>> {
@@ -149,11 +153,9 @@ impl<'a> SsoPairingFlow<'a> {
 		let Some((cancel_rx, pairing_epoch)) =
 			self.host.auth_state.pairing_started(bootstrap.deeplink.clone())
 		else {
-			return Err(CallError::Domain(HostRequestLoginError::V1(
-				api::HostRequestLoginError::Unknown {
-					reason: "login already in progress".to_string(),
-				},
-			)));
+			return Err(CallError::Domain(api::HostRequestLoginError::Unknown {
+				reason: "login already in progress".to_string(),
+			}));
 		};
 		info!("presenting pairing QR, waiting for wallet handshake");
 		let mut reset_guard = AbandonedPairingGuard {
@@ -176,7 +178,7 @@ impl<'a> SsoPairingFlow<'a> {
 				reset_guard.disarm();
 				Ok(outcome)
 			},
-			Ok(outcome @ SsoPairingOutcome::Success(_)) => {
+			Ok(outcome @ SsoPairingOutcome::Success) => {
 				reset_guard.disarm();
 				Ok(outcome)
 			},
@@ -189,7 +191,7 @@ impl<'a> SsoPairingFlow<'a> {
 
 	fn fail_before_pairing(&self, reason: String) -> CallError<HostRequestLoginError> {
 		self.host.auth_state.login_failed_before_pairing(reason.clone());
-		CallError::Domain(HostRequestLoginError::V1(api::HostRequestLoginError::Unknown { reason }))
+		CallError::Domain(api::HostRequestLoginError::Unknown { reason })
 	}
 
 	async fn run_pairing_flow(
@@ -267,28 +269,20 @@ impl<'a> SsoPairingFlow<'a> {
 			_ = cancel => return Ok(SsoPairingOutcome::Cancelled),
 			session = resolve_session => session,
 		};
-		let persist_session = self
-			.host
-			.platform
-			.write_core_storage(CoreStorageKey::AuthSession, encode_persisted_session(&session))
-			.fuse();
-		pin_mut!(persist_session);
-		futures::select! {
-			_ = cancel => {
-				clear_auth_session(self.host.platform.as_ref()).await;
-				return Ok(SsoPairingOutcome::Cancelled);
-			},
-			persist_result = persist_session => persist_result
-				.map_err(|err| format!("session persist failed: {err:?}"))?,
+		let persisted = {
+			let persist_session =
+				self.host.commit_login_session(&session, self.login_generation).fuse();
+			pin_mut!(persist_session);
+			futures::select! {
+				_ = cancel => false,
+				result = persist_session => result.map_err(|err| format!("session persist failed: {err:?}"))?,
+			}
 		};
-		futures::select! {
-			_ = cancel => {
-				clear_auth_session(self.host.platform.as_ref()).await;
-				return Ok(SsoPairingOutcome::Cancelled);
-			},
-			default => {}
-		};
-		Ok(SsoPairingOutcome::Success(Box::new(session)))
+		if !persisted {
+			self.host.discard_login_session().await;
+			return Ok(SsoPairingOutcome::Cancelled);
+		}
+		Ok(SsoPairingOutcome::Success)
 	}
 }
 
@@ -347,13 +341,6 @@ async fn write_last_processed_pairing_statement(
 		.await
 	{
 		debug!("last processed pairing statement write failed: {err:?}");
-	}
-}
-
-#[instrument(skip_all, fields(runtime.method = "sso.auth_session.clear"))]
-async fn clear_auth_session(storage: &(impl CoreStorage + ?Sized)) {
-	if let Err(err) = storage.clear_core_storage(CoreStorageKey::AuthSession).await {
-		debug!("auth session clear failed: {err:?}");
 	}
 }
 

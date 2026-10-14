@@ -1,32 +1,53 @@
+//! Shared resource controls for the test host.
+
+use super::authority::AuthorityError;
+use core::sync::atomic::{AtomicBool, Ordering};
+use std::{collections::HashSet, sync::Mutex};
+
+/// Test-host allocation behavior shared by its wallet and product host.
+#[derive(Default)]
+pub struct TestResourceControls {
+	unchecked: AtomicBool,
+	withheld: Mutex<HashSet<String>>,
+}
+
 impl TestResourceControls {
 	/// Whether allocation is answered as granted without performing it.
-	#[cfg(feature = "test-host")]
 	pub fn grants_allowances_unchecked(&self) -> bool {
-		self.grant_allowances_unchecked.load(std::sync::atomic::Ordering::Relaxed)
+		self.unchecked.load(Ordering::Relaxed)
+	}
+
+	/// Answer resource allocation as granted without performing it.
+	pub fn set_grant_allowances_unchecked(&self, granted: bool) {
+		self.unchecked.store(granted, Ordering::Relaxed);
+	}
+
+	/// Replace refused resource tags; SmartContractAllowance covers every index.
+	pub fn set_withheld_resources(&self, tags: Vec<String>) {
+		*self.withheld.lock().expect("withheld resource mutex poisoned") =
+			tags.into_iter().collect();
 	}
 
 	/// Whether `resource` is answered as refused.
-	#[cfg(feature = "test-host")]
-	fn withholds(&self, resource: &v01::AllocatableResource) -> bool {
+	pub fn withholds(&self, resource: &truapi::latest::AllocatableResource) -> bool {
 		let tag = match resource {
-			v01::AllocatableResource::StatementStoreAllowance => "StatementStoreAllowance",
-			v01::AllocatableResource::BulletinAllowance => "BulletinAllowance",
-			v01::AllocatableResource::SmartContractAllowance(_) => "SmartContractAllowance",
-			v01::AllocatableResource::AutoSigning => "AutoSigning",
+			truapi::latest::AllocatableResource::StatementStoreAllowance => {
+				"StatementStoreAllowance"
+			},
+			truapi::latest::AllocatableResource::BulletinAllowance => "BulletinAllowance",
+			truapi::latest::AllocatableResource::SmartContractAllowance(_) => {
+				"SmartContractAllowance"
+			},
+			truapi::latest::AllocatableResource::AutoSigning => "AutoSigning",
 		};
-		self.withheld_resources
-			.lock()
-			.expect("withheld resource mutex poisoned")
-			.contains(tag)
+		self.withheld.lock().expect("withheld resource mutex poisoned").contains(tag)
 	}
 
-	/// Refuse a withheld resource before any allowance for it is derived.
-	///
-	/// The allowance-key calls allocate on their own, without a product ever
-	/// asking for an allocation, so a check that lived only in the allocation
-	/// answer would hand the key to the very path the product takes.
-	#[cfg(feature = "test-host")]
-	fn refuse_withheld(&self, resource: &v01::AllocatableResource) -> Result<(), AuthorityError> {
+	/// Withholding also applies to implicit native allowance access.
+	pub fn refuse_withheld(
+		&self,
+		resource: &truapi::latest::AllocatableResource,
+	) -> Result<(), AuthorityError> {
 		if self.withholds(resource) {
 			return Err(AuthorityError::Rejected);
 		}

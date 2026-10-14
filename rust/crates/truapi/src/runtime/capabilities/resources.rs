@@ -1,6 +1,5 @@
 //! Product-facing resources capability adapters.
 
-use crate::platform::{ResourceAllocationReview, UserConfirmationReview};
 use tracing::instrument;
 use truapi::{
 	CallContext, CallError,
@@ -18,10 +17,7 @@ use truapi::{
 use super::from_latest_error;
 use truapi::versioned::{FromLatest, IntoLatest, Versioned};
 
-use crate::runtime::{
-	ProductRuntimeHost, RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-	remote_authority_call, remote_authority_context_with_default, until_cancelled,
-};
+use crate::runtime::{AccountHolder, ProductRuntimeHost, authority::AuthorityError};
 
 #[truapi::async_trait]
 impl<H: AccountHolder> ResourceAllocation for ProductRuntimeHost<H> {
@@ -35,49 +31,23 @@ impl<H: AccountHolder> ResourceAllocation for ProductRuntimeHost<H> {
 		let version = request.version();
 		let inner = request.into_latest();
 		let result = async {
-			let Some(session) = self.authority.current_session() else {
+			let Some(authority_session) = self.accounts.current_session() else {
 				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
 					reason: "No active session".to_string(),
 				}));
 			};
 
-			let confirmed = until_cancelled(
-				cx,
-				self.confirm_product_action(UserConfirmationReview::ResourceAllocation(
-					ResourceAllocationReview {
-						calling_product_id: self.product_id(),
-						resources: inner.resources.clone(),
+			self.accounts
+				.allocate_resources(cx, &authority_session, &self.connection.product, inner)
+				.await
+				.map_err(|error| match error {
+					AuthorityError::ConfirmationFailed(error) => CallError::HostFailure {
+						reason: format!("resource allocation confirmation failed: {error:?}"),
 					},
-				)),
-			)
-			.await
-			.map_err(|err| {
-				CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: err.to_string(),
+					error => CallError::Domain(latest::ResourceAllocationError::Unknown {
+						reason: error.to_string(),
+					}),
 				})
-			})?
-			.map_err(|err| CallError::HostFailure {
-				reason: format!("resource allocation confirmation failed: {err:?}"),
-			})?;
-			if !confirmed {
-				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: "User rejected resource allocation".to_string(),
-				}));
-			}
-			let cx = remote_authority_context_with_default(
-				cx,
-				RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-			);
-			remote_authority_call(
-				&cx,
-				self.authority.allocate_resources(&cx, &session, self.product_id(), inner),
-			)
-			.await
-			.map_err(|err| {
-				CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: err.to_string(),
-				})
-			})
 		}
 		.await;
 		result
@@ -99,14 +69,14 @@ impl<H: AccountHolder> Entropy for ProductRuntimeHost<H> {
 		let version = request.version();
 		let latest::HostDeriveEntropyRequest { context } = request.into_latest();
 		let result = async {
-			let Some(session) = self.authority.current_session() else {
+			let Some(authority_session) = self.accounts.current_session() else {
 				return Err(CallError::Domain(latest::HostDeriveEntropyError::Unknown {
 					reason: "Not connected".to_string(),
 				}));
 			};
 			let entropy = self
-				.authority
-				.derive_entropy(&session, &self.product_id(), &context)
+				.accounts
+				.derive_entropy(&authority_session, &self.connection.product_id(), &context)
 				.map_err(|err| {
 					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
 						reason: err.to_string(),

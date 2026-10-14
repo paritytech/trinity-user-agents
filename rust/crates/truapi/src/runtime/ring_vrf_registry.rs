@@ -7,7 +7,7 @@ use std::{
 
 use crate::platform::{CoreStorageKey, Platform, normalize_product_identifier};
 use parity_scale_codec::{Decode, Encode};
-use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation};
+use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation, RingVrfKeyDisclosure};
 
 use crate::host_internal::sso_messages::RingVrfError;
 
@@ -33,18 +33,23 @@ pub struct RingVrfRegistryStore {
 	storage_guard: futures::lock::Mutex<()>,
 }
 
+/// Prepared registry mutation bound to one root and storage lock.
+pub struct RegistryUpdate<'a> {
+	store: &'a RingVrfRegistryStore,
+	root_public_key: [u8; 32],
+	snapshot: RegistrySnapshot,
+	_guard: futures::lock::MutexGuard<'a, ()>,
+}
+
 impl RegistryUpdate<'_> {
-	/// Persist a registration without replacing an existing key.
-	pub async fn register(
-		&self,
-		root_public_key: [u8; 32],
+	/// Add a registration without replacing an existing key.
+	pub fn register(
+		&mut self,
 		handle: ProductAccountId,
 		ring: RingLocation,
 		public_key: [u8; 32],
 	) -> Result<(), RingVrfError> {
-		let _guard = self.storage_guard.lock().await;
-		let mut snapshot = self.load_under_guard(root_public_key).await?;
-		if let Some(entry) = snapshot.entries.iter_mut().find(|entry| entry.handle == handle) {
+		if let Some(entry) = self.snapshot.entries.iter_mut().find(|entry| entry.handle == handle) {
 			if entry.public_key != Some(public_key) {
 				return Err(invalid_registry("registered key handle has a conflicting public key"));
 			}
@@ -52,54 +57,45 @@ impl RegistryUpdate<'_> {
 				entry.rings.push(ring.clone());
 			}
 		} else {
-			snapshot.entries.push(RegisteredRingVrfKey {
+			self.snapshot.entries.push(RegisteredRingVrfKey {
 				handle: handle.clone(),
 				rings: vec![ring.clone()],
 				public_key: Some(public_key),
 			});
 		}
-		if !snapshot.selected_providers.iter().any(|provider| provider.ring == ring) {
-			snapshot.selected_providers.push(SelectedProvider { ring, handle });
+		if !self.snapshot.selected_providers.iter().any(|provider| provider.ring == ring) {
+			self.snapshot.selected_providers.push(SelectedProvider { ring, handle });
 		}
-		self.persist_under_guard(root_public_key, snapshot).await
+		Ok(())
 	}
 
-	/// Persist a user-selected provider after validating its registration.
-	pub async fn select_provider(
-		&self,
-		root_public_key: [u8; 32],
+	/// Select a provider already registered for this ring.
+	pub fn select_provider(
+		&mut self,
 		ring: RingLocation,
 		handle: ProductAccountId,
 	) -> Result<(), RingVrfError> {
-		let _guard = self.storage_guard.lock().await;
-		let mut snapshot = self.load_under_guard(root_public_key).await?;
-		let registered = snapshot
+		let registered = self
+			.snapshot
 			.entries
 			.iter()
 			.any(|entry| entry.handle == handle && entry.rings.contains(&ring));
 		if !registered {
 			return Err(RingVrfError::KeyNotInRing);
 		}
-		snapshot.selected_providers.retain(|provider| provider.ring != ring);
-		snapshot.selected_providers.push(SelectedProvider { ring, handle });
-		self.persist_under_guard(root_public_key, snapshot).await
+		self.snapshot.selected_providers.retain(|provider| provider.ring != ring);
+		self.snapshot.selected_providers.push(SelectedProvider { ring, handle });
+		Ok(())
 	}
 
-	/// Reconcile one owner's complete response with locally registered keys.
-	///
-	/// RFC-0024 has no revocation operation, so a remote response cannot
-	/// invalidate an entry already accepted by this host. This also prevents a
-	/// list response created before a fire-and-forget registration mirror from
-	/// removing that local registration.
-	pub async fn reconcile_owner(
-		&self,
-		root_public_key: [u8; 32],
+	/// Merge a complete owner listing without discarding local registrations.
+	pub fn reconcile_owner(
+		&mut self,
 		owner: &str,
 		entries: Vec<RegisteredRingVrfKey>,
 	) -> Result<Vec<RegisteredRingVrfKey>, RingVrfError> {
 		validate_authoritative_owner_entries(owner, &entries)?;
-		let _guard = self.storage_guard.lock().await;
-		let mut snapshot = self.load_under_guard(root_public_key).await?;
+		let snapshot = &mut self.snapshot;
 		let mut owner_entries = snapshot
 			.entries
 			.iter()
@@ -144,8 +140,12 @@ impl RegistryUpdate<'_> {
 				}
 			}
 		}
-		self.persist_under_guard(root_public_key, snapshot).await?;
 		Ok(owner_entries)
+	}
+
+	/// Persist only to the root captured during preparation.
+	pub async fn persist(self) -> Result<(), RingVrfError> {
+		self.store.persist_under_guard(self.root_public_key, self.snapshot).await
 	}
 }
 
@@ -201,6 +201,16 @@ impl RingVrfRegistryStore {
 			.into_iter()
 			.filter(|entry| entry.handle.dot_ns_identifier == owner)
 			.collect())
+	}
+
+	/// Load one root's registry while retaining storage serialization.
+	pub async fn prepare_update(
+		&self,
+		root_public_key: [u8; 32],
+	) -> Result<RegistryUpdate<'_>, RingVrfError> {
+		let guard = self.storage_guard.lock().await;
+		let snapshot = self.load_under_guard(root_public_key).await?;
+		Ok(RegistryUpdate { store: self, root_public_key, snapshot, _guard: guard })
 	}
 
 	pub async fn selected_provider(
@@ -284,6 +294,15 @@ impl RingVrfRegistryStore {
 		snapshot: RegistrySnapshot,
 	) -> Result<(), RingVrfError> {
 		validate_snapshot(&snapshot)?;
+		if self
+			.cache
+			.lock()
+			.expect("ring-VRF registry cache mutex poisoned")
+			.get(&root_public_key) ==
+			Some(&snapshot)
+		{
+			return Ok(());
+		}
 		self.platform
 			.write_core_storage(
 				CoreStorageKey::RingVrfRegistry { root_public_key },
@@ -359,11 +378,12 @@ fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
 	Ok(())
 }
 
-fn apply_ring_vrf_disclosure(
-	entries: &mut [latest::RegisteredRingVrfKey],
-	disclosure: latest::RingVrfKeyDisclosure,
+/// Hide public keys from a listing that asked for anonymized entries.
+pub fn apply_ring_vrf_disclosure(
+	entries: &mut [RegisteredRingVrfKey],
+	disclosure: RingVrfKeyDisclosure,
 ) {
-	if disclosure == latest::RingVrfKeyDisclosure::Anonymized {
+	if disclosure == RingVrfKeyDisclosure::Anonymized {
 		for entry in entries {
 			entry.public_key = None;
 		}

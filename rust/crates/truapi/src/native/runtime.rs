@@ -23,11 +23,9 @@ use crate::{
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
-		sso_messages::{
-			RemoteMessage, RemoteMessageData, SsoRequestOutcome, decode_remote_message, v1,
-		},
+		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
-	runtime::{AnnouncedPairing, sso_remote::sso_message_id},
+	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 	subscription::Spawner,
 };
@@ -563,27 +561,16 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.run_durable_recovery().await
 	}
 
-	/// Answer one decrypted SSO remote message from a wallet-managed
-	/// statement-store session.
-	///
-	/// `message` is one SCALE-encoded `RemoteMessage` exactly as decrypted from
-	/// the session statement. The bytes are deliberately opaque at this
-	/// boundary: the wallet forwards wire encodings verbatim and never
-	/// constructs them. Session control and transport stay with the wallet —
-	/// `Disconnected` is reported, never handled here. Confirmation-gated
-	/// requests await `confirm_user_action`, so this can take arbitrarily long.
-	///
-	/// A `Cancel` withdraws the request it names and returns at once. It
-	/// reaches a running request only if the wallet passes it on as it
-	/// arrives; queued behind that request it arrives too late to stop it.
-	/// The withdrawn request, and the `Cancel` itself, answer `Ignored`.
-	pub async fn handle_sso_request(
+	/// Bind externally owned SSO transport to its current wallet activation.
+	pub fn open_sso_service(
 		&self,
-		message: Vec<u8>,
-	) -> Result<SsoRequestOutcome, HostRejection> {
-		let message =
-			decode_remote_message(&message).map_err(|reason| HostRejection::Rejected { reason })?;
-		Ok(self.runtime.answer_sso_request(message).await)
+		own_statement_account_id: Bytes32,
+		own_encryption_public_key: Bytes32,
+	) -> Result<Arc<SsoAccountHolderService>, HostRejection> {
+		self.runtime
+			.open_sso_service(own_statement_account_id, own_encryption_public_key)
+			.map(Arc::new)
+			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
 	}
 
 	/// Build the SCALE-encoded `Disconnected` message a wallet posts over a
@@ -664,7 +651,11 @@ impl NativeProductExecution {
 	}
 
 	fn admin(&self) -> crate::HostAdmin {
-		self.runtime.product_admin_with(self.product.clone(), self.adapters())
+		crate::host_core::product_admin_with_adapters(
+			&self.runtime,
+			self.product.clone(),
+			self.adapters(),
+		)
 	}
 
 	fn require_chat(&self) -> Result<(), crate::ProductRuntimeError> {
@@ -703,28 +694,22 @@ impl NativeProductExecution {
 		&self,
 		request: truapi::latest::RemotePermissionRequest,
 	) -> Result<bool, HostRejection> {
-		use truapi::{api::Permissions, versioned::IntoLatest};
-
 		if self.closed.load(Ordering::Acquire) {
 			return Err(HostRejection::Rejected {
 				reason: "product execution is closed".to_string(),
 			});
 		}
-		let response = self
+		let granted = self
 			.admin()
-			.product_runtime()
-			.authorize_remote_permission(
-				&truapi::CallContext::default(),
-				truapi::versioned::permissions::RemotePermissionRequest::V1(request),
-			)
+			.authorize_remote_permission(request)
 			.await
-			.map_err(|error| HostRejection::Rejected { reason: format!("{error:?}") })?;
+			.map_err(|error| HostRejection::Rejected { reason: error.reason })?;
 		if self.closed.load(Ordering::Acquire) {
 			return Err(HostRejection::Rejected {
 				reason: "product execution is closed".to_string(),
 			});
 		}
-		Ok(response.into_latest().granted)
+		Ok(granted)
 	}
 
 	/// Read a product-scoped permission authorization without prompting.
@@ -903,8 +888,12 @@ impl NativeProductExecution {
 		let adapters = self.adapters();
 		let product_control = self.product_control.clone();
 		let runtime_factory = Arc::new(move |sink| {
-			let product_runtime =
-				runtime.product_runtime_with(product.clone(), adapters.clone(), sink);
+			let product_runtime = crate::host_core::product_runtime_with_adapters(
+				&runtime,
+				product.clone(),
+				adapters.clone(),
+				sink,
+			);
 			*product_control.lock().expect("native product control mutex poisoned") =
 				Some(product_runtime.control());
 			product_runtime
