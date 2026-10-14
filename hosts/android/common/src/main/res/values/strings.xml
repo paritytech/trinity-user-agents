@@ -970,7 +970,6 @@
     <string name="truapi_confirm_title_create_proof">Create proof?</string>
     <string name="truapi_confirm_title_identity_disclosure">Share your identity?</string>
     <string name="truapi_confirm_title_resource_allocation">Allocate resources?</string>
-    <string name="truapi_confirm_title_preimage_submit">Submit preimage?</string>
     <string name="truapi_confirm_title_account_access">Allow account access?</string>
     <string name="truapi_confirm_title_product_subtree">Allow own-account access?</string>
     <string name="truapi_confirm_label_request">Request</string>
