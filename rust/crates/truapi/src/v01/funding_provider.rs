@@ -201,6 +201,9 @@ pub enum FundingUpdate {
 		/// Amount the top-up asks to credit.
 		amount: u128,
 	},
+	/// Outbound: a payout attempt failed and the provider is trying again.
+	/// Allowed after `Released` and before `Payout`, as often as it retries.
+	PayoutRetrying,
 }
 
 /// How a provider's payout to the user went after an outbound session was
