@@ -64,11 +64,12 @@ pub trait System: Send + Sync {
 
 	/// Request the host to open a URL.
 	///
-	/// External URLs, including `polkadotapp://...` and other allowed application
-	/// schemes, require `DevicePermission::OpenUrl`. A one-use grant covers one
-	/// handoff. dotNS names, `localhost`, and host-handled Pocket links consume
-	/// no external-navigation grant. Use `polkadot://<product>.<tld>/<path>` for
-	/// product navigation and `polkadotapp://pay?...` for payment links.
+	/// An `http` or `https` URL outside the ecosystem needs a
+	/// `RemotePermission::Remote` grant for the target host, and prompts for one
+	/// on first use. dotNS names, `localhost`, and the app-handoff schemes
+	/// (`mailto:`, `tel:`, `polkadot:`, `polkadotapp:`) consume no grant. The grant is
+	/// per host and shared with outbound data access to that host, so approving
+	/// one covers the other.
 	///
 	/// ```ts
 	/// const result = await truapi.system.navigateTo({
