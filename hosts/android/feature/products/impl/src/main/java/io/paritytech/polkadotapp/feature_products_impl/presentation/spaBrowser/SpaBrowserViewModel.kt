@@ -6,6 +6,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
@@ -18,6 +19,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.SpaBrow
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -48,6 +50,8 @@ class SpaBrowserViewModel @Inject constructor(
 ) : BaseViewModel(), SpaBrowserContract {
     val webView: StateFlow<WebView?> = productSessionController.webView
 
+    private val outdatedTabId = MutableStateFlow<Long?>(null)
+
     // One load per tab, in two phases: resolve the manifest, then serve the archive. Both report
     // into this stream, so progress and page state are views of it rather than separate truths.
     private val pageLoad: Flow<PageLoad> = productSessionController.activeTab
@@ -77,12 +81,14 @@ class SpaBrowserViewModel @Inject constructor(
     override val state: StateFlow<SpaBrowserUiState> = combine(
         productSessionController.activeTab,
         pageLoad,
-    ) { info, load ->
+        outdatedTabId,
+    ) { info, load, outdatedTabId ->
         SpaBrowserUiState(
             title = info?.title,
             subtitle = info?.host,
             loadProgress = load.toProgress(),
             pageState = load.toPageState(),
+            isNewBuildPromptShown = outdatedTabId != null,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, SpaBrowserUiState())
 
@@ -115,6 +121,28 @@ class SpaBrowserViewModel @Inject constructor(
             productSessionController.goToPreviousTab() -> Unit
             else -> router.leaveBrowser()
         }
+    }
+
+    // Runs when a tab is opened or restored from the tab bar and when the app returns from background. The user may
+    // be in the middle of something, so a new build waits for their consent.
+    override fun onScreenStarted() {
+        val tabId = productSessionController.openTabs.value.firstOrNull { it.isActive }?.id ?: return
+
+        launch {
+            productSessionController.isTabOutdated(tabId)
+                .logFailure("failed to check tab $tabId for a new build")
+                .onSuccess { isOutdated -> if (isOutdated) outdatedTabId.value = tabId }
+        }
+    }
+
+    override fun onReloadForNewBuildConfirmed() {
+        val tabId = outdatedTabId.value ?: return
+        outdatedTabId.value = null
+        productSessionController.reloadTab(tabId)
+    }
+
+    override fun onReloadForNewBuildDismissed() {
+        outdatedTabId.value = null
     }
 
     private fun quitOnLastTabClosed() {

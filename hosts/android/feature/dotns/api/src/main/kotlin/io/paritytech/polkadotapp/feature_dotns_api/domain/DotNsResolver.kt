@@ -7,6 +7,10 @@ import java.io.File
 interface DotNsResolver {
     suspend fun resolveToLocalUri(dotNsName: String): Result<Uri>
 
+    suspend fun resolveLatestToLocalUri(dotNsName: String): Result<Uri>
+
+    suspend fun isOutdated(dotNsName: String, localUri: Uri): Result<Boolean>
+
     suspend fun getMetadataEntry(dotNsName: String, key: String): Result<String?>
 
     /** Observes resolution progress for [dotNsName]. Emits [DotNsLoadProgress.Idle] when nothing is in flight. */
@@ -17,4 +21,8 @@ interface DotNsResolver {
 
 suspend fun DotNsResolver.resolveToLocalFile(dotNsName: String): Result<File> {
     return resolveToLocalUri(dotNsName).map { File(it.path!!) }
+}
+
+suspend fun DotNsResolver.resolveLatestToLocalFile(dotNsName: String): Result<File> {
+    return resolveLatestToLocalUri(dotNsName).map { File(it.path!!) }
 }

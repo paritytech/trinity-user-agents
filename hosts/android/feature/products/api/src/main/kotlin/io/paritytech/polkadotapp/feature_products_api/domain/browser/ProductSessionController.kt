@@ -48,6 +48,15 @@ interface ProductSessionController {
     /** Rehydrate the active tab's WebView if it is asleep, so the browser screen has one to attach. */
     fun ensureActiveLive()
 
+    /**
+     * Whether the product in the tab with [id] has published a build other than the one its page shows. A sleeping
+     * tab is never outdated: it loads the latest build when it wakes up.
+     */
+    suspend fun isTabOutdated(id: Long): Result<Boolean>
+
+    /** Reload the page of the tab with [id], which picks up the product's latest build. */
+    fun reloadTab(id: Long)
+
     /** Close the active tab (and fall back to the most recent remaining tab, if any). */
     fun closeActiveTab()
 

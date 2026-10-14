@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
+import io.paritytech.polkadotapp.feature_dotns_api.domain.resolveLatestToLocalFile
 import io.paritytech.polkadotapp.feature_dotns_api.domain.resolveToLocalFile
 import kotlinx.coroutines.runBlocking
 import timber.log.Timber
@@ -43,7 +44,7 @@ open class DotNsWebViewClient(
 
         val requestPath = (url.path ?: "/").removePrefix("/")
 
-        val resolveHostFile = resolveHostFile(url) ?: run {
+        val resolveHostFile = resolveHostFile(url, request.isForMainFrame) ?: run {
             Timber.w("Archive root not resolved $url")
             return notFoundResponse()
         }
@@ -66,13 +67,17 @@ open class DotNsWebViewClient(
         }
     }
 
-    fun resolveHostFile(uri: Uri?): File? {
+    fun resolveHostFile(uri: Uri?, isMainFrame: Boolean): File? {
         val host = uri?.host ?: return null
 
         return runBlocking {
             val servedHost = servingHostResolver.servingHostFor(host)
-            dotNsResolver.resolveToLocalFile(servedHost)
-                .getOrNull() // TODO: Bad ux. We have to ask user to reload the page
+            val hostFile = if (isMainFrame) {
+                dotNsResolver.resolveLatestToLocalFile(servedHost)
+            } else {
+                dotNsResolver.resolveToLocalFile(servedHost)
+            }
+            hostFile.getOrNull() // TODO: Bad ux. We have to ask user to reload the page
         }
     }
 

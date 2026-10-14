@@ -15,7 +15,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.design.components.dialog.NovaAlertDialog
 import io.paritytech.polkadotapp.design.components.error.DefaultErrorState
 import io.paritytech.polkadotapp.design.components.progress.NovaLinearProgressIndicator
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -38,9 +40,38 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
         viewModel.onBackPressed()
     }
 
+    LifecycleStartEffect(Unit) {
+        viewModel.onScreenStarted()
+
+        onStopOrDispose { }
+    }
+
     SpaBrowserScreenInternal(
         state = state,
         webView = webView,
+    )
+
+    if (state.isNewBuildPromptShown) {
+        NewBuildDialog(
+            onReload = viewModel::onReloadForNewBuildConfirmed,
+            onDismiss = viewModel::onReloadForNewBuildDismissed,
+        )
+    }
+}
+
+@Composable
+private fun NewBuildDialog(
+    onReload: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    NovaAlertDialog(
+        title = stringResource(RCommon.string.spa_browser_new_build_title),
+        text = stringResource(RCommon.string.spa_browser_new_build_message),
+        positiveButtonTitle = stringResource(RCommon.string.spa_browser_new_build_reload),
+        onPositiveButtonClick = onReload,
+        negativeButtonTitle = stringResource(RCommon.string.spa_browser_new_build_later),
+        onNegativeButtonClick = onDismiss,
+        onDismissRequest = onDismiss,
     )
 }
 

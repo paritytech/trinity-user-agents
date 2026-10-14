@@ -139,6 +139,12 @@ class BrowserWebViewProvider @AssistedInject constructor(
         accessWebView { it.loadUrl(initialUrl) }
     }
 
+    suspend fun isContentOutdated(): Result<Boolean> = contentLoader.isDocumentOutdated()
+
+    suspend fun reload() {
+        accessWebView { it.reload() }
+    }
+
     private inner class InternalWebViewClient(
         private val innerClient: WebViewClient,
     ) : WebViewClient() {
