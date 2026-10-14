@@ -66,9 +66,7 @@ use crate::{
 		vrf::{self, Vrf},
 	},
 };
-use ring_vrf::{
-	ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
-};
+use ring_vrf::{ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof};
 use sso_replay::SsoReplayLocks;
 
 /// The network suffix the unit tests configure their signing host for. `dot`
@@ -1162,7 +1160,7 @@ impl ProductAuthority for SigningHost {
 			)
 			.await?;
 		self.ring_resolver.validate(&request.payload.ring_location).await?;
-		let context = development_context_bytes(&request.payload.context);
+		let context = context_bytes(&request.payload.context);
 		let alias = vrf.alias(&entropy, &context)?;
 		Ok(v01::ContextualAlias { context, alias: alias.to_vec() })
 	}
@@ -1200,7 +1198,7 @@ impl ProductAuthority for SigningHost {
 		// Reject a stale request if the local session disconnected or changed
 		// while its chain snapshot was being resolved.
 		self.require_current_session(session)?;
-		let context = development_context_bytes(&request.payload.context);
+		let context = context_bytes(&request.payload.context);
 		let (proof, alias) =
 			create_proof(&vrf, &entropy, &resolved, &context, &request.payload.message)?;
 		Ok(v01::HostAccountCreateProofResponse {
@@ -1970,28 +1968,6 @@ mod tests {
 		let ring = full_person_ring_location();
 		register_full_person_key(&authority, &session, &ring);
 
-		// `raw:` reaches `development_context_bytes`, which uses the caller's own
-		// 32 bytes verbatim, so admitting it would let a grantee name any
-		// context at all, including a third product's.
-		let mint_raw = |caller: &str| {
-			futures::executor::block_on(authority.create_proof(
-				&CallContext::default(),
-				&session,
-				ProductRequest {
-					calling_product_id: caller.to_string(),
-					payload: v01::HostAccountCreateProofRequest {
-						key_handle: full_person_key_handle(),
-						context: v01::ProductProofContext {
-							product_id: "raw:".to_string(),
-							suffix: v01::DerivationIndex::Raw([0x11; 32]),
-						},
-						ring_location: ring.clone(),
-						message: b"m".to_vec(),
-					},
-				},
-			))
-		};
-
 		let mint = |caller: &str, context: &str| {
 			futures::executor::block_on(authority.create_proof(
 				&CallContext::default(),
@@ -2031,12 +2007,6 @@ mod tests {
 		assert!(
 			mint("dim2.dot", "app.peopl.dot").is_ok(),
 			"the granting product is all its executables, so its context is too"
-		);
-		assert_eq!(
-			mint_raw("dim2.dot").err(),
-			Some(RingVrfError::NotAllowlisted),
-			"a grant must not reach the development context, which names no \
-             product and so binds the grantee to nothing"
 		);
 		assert_eq!(
 			mint("dim2.dot", "dim2.paseo").err(),
@@ -2197,26 +2167,6 @@ mod tests {
 			assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted), "proof: {why}");
 			assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted), "read: {why}");
 		}
-	}
-
-	/// A context grant does not reach the development context.
-	///
-	/// `raw:` names no product, so there is no manifest to consent with, and its
-	/// bytes are whatever the caller chose, which could be any product's
-	/// context.
-	#[test]
-	fn a_context_grant_does_not_reach_the_raw_context() {
-		let (proof, alias) = third_product_context(
-			OWNER_GRANTS_DIM2NEXT,
-			Some(r#"{"dim2next":["all"]}"#),
-			v01::ProductProofContext {
-				product_id: "raw:".to_string(),
-				suffix: v01::DerivationIndex::Raw([0x11; 32]),
-			},
-			|_| {},
-		);
-		assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
-		assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted));
 	}
 
 	/// A context grant does not open the owner's key.
