@@ -335,8 +335,9 @@ impl ProductRuntimeHost {
 		}
 		request.id = host_payment_id(&self.product, request.id);
 		let (host_id, amount) = (request.id, request.amount);
-		let recorded =
-			self.record_funding_start(latest::FundingDirection::Out, host_id, amount).await?;
+		let recorded = self
+			.record_funding_start(latest::FundingDirection::Out, host_id, amount)
+			.await?;
 		let requested = platform.request_payment(&self.product, request).await;
 		if requested.is_err() {
 			self.forget_funding_start(recorded, host_id).await;
