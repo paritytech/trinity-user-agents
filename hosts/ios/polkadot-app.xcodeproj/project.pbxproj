@@ -206,6 +206,7 @@
 				Modules/Chat/Model/CoreData/VoIPContactIncomingSettings.swift,
 				Modules/Chat/Model/CoreData/VoIPContactOutgoingSettings.swift,
 				"Modules/Chat/Model/Date+Chat.swift",
+				"Modules/Chat/Model/LocalMessage+ProductBody.swift",
 				"Modules/Chat/Model/LocalMessage+RichContent.swift",
 				Modules/Chat/Model/OpaqueMessageWrapper.swift,
 				Modules/Chat/Model/RemoteChatMessage.swift,

@@ -83,6 +83,8 @@ extension Chat.LocalMessage.Content: ScaleCodable {
             self = try .compactedMessages(
                 ChatRemoteMessageContent.CompactedMessagesContent(scaleDecoder: scaleDecoder)
             )
+        case .productBody:
+            self = try .productBody(ProductBody(scaleDecoder: scaleDecoder))
         case .none:
             throw ScaleCodingError.unexpectedDecodedValue
         }
@@ -146,6 +148,8 @@ extension Chat.LocalMessage.Content: ScaleCodable {
             try payload.encode(scaleEncoder: scaleEncoder)
         case let .compactedMessages(content):
             try content.encode(scaleEncoder: scaleEncoder)
+        case let .productBody(body):
+            try body.encode(scaleEncoder: scaleEncoder)
         }
     }
 }

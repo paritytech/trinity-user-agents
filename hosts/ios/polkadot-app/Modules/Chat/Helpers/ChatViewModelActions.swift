@@ -11,6 +11,8 @@ struct ChatViewModelActions {
     let declineChatRequest: () -> Void
     let showEditHistory: (_ messageId: String) -> Void
     let showFile: (URL) -> Void
+    /// Asks the user before the app leaves for an external address.
+    let openLink: (URL) -> Void
     let processAction: (_ action: Chat.Action) -> Void
     let selectAttachment: (Chat.LocalMessage.Content.Attachment) -> Void
     let unblockUser: () -> Void

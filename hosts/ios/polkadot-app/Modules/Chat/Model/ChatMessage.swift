@@ -177,6 +177,7 @@ extension Chat.LocalMessage {
         case deviceRemoved(Chat.RemoteMessageContentV1.MessageContent.DeviceRemovedContent)
         case multiChatAccepted(Chat.RemoteMessageContentV1.MessageContent.DeviceChatAccepted)
         case call(CallSignalingPayload)
+        case productBody(ProductBody)
 
         enum CallSignalingPayload: Equatable {
             case offer(Chat.RemoteMessageContentV1.MessageContent.DataChannelOfferContent)
@@ -275,6 +276,7 @@ extension Chat.LocalMessage.Content {
         case deviceRemoved = 18
         case compactedMessages = 19
         case multiChatAccepted = 20
+        case productBody = 247
         case versionedChatRequest = 248
         case call = 249
         case unsupported = 255
@@ -300,7 +302,8 @@ extension Chat.LocalMessage.Content {
             switch self {
             case .text,
                  .reply,
-                 .richText:
+                 .richText,
+                 .productBody:
                 true
             default:
                 false
@@ -328,6 +331,7 @@ extension Chat.LocalMessage.Content {
                  .customRendered,
                  .file,
                  .richText,
+                 .productBody,
                  .call:
                 false
             case .token,
@@ -361,6 +365,7 @@ extension Chat.LocalMessage.Content {
                  .customRendered,
                  .file,
                  .richText,
+                 .productBody,
                  .compactedMessages,
                  .deviceAdded,
                  .deviceRemoved,
@@ -392,6 +397,7 @@ extension Chat.LocalMessage.Content {
                  .customRendered,
                  .file,
                  .richText,
+                 .productBody,
                  .compactedMessages,
                  .deviceAdded,
                  .deviceRemoved,
@@ -451,6 +457,8 @@ extension Chat.LocalMessage.Content {
             .multiChatAccepted
         case .call:
             .call
+        case .productBody:
+            .productBody
         }
     }
 
@@ -484,6 +492,7 @@ extension Chat.LocalMessage.Content {
              .versionedChatRequest,
              .file,
              .richText,
+             .productBody,
              .compactedMessages,
              .deviceAdded,
              .deviceRemoved,
@@ -498,6 +507,7 @@ extension Chat.LocalMessage.Content {
         case let .reply(replyContent): replyContent.ownContent.text
         case let .staticTextImageContent(textImage): textImage.text
         case let .richText(richText): richText.text
+        case let .productBody(body): body.text
         default: nil
         }
     }

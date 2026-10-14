@@ -212,6 +212,30 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
 
 extension ChatWireframe: MediaPreviewPresentable {}
 
+extension ChatWireframe: WebPresentable {
+    func confirmOpenLink(_ url: URL, from view: ControllerBackedProtocol?) {
+        guard let scheme = url.scheme?.lowercased(), supportedSafariScheme.contains(scheme) else {
+            logger.warning("Chat link with an unsupported scheme was not opened")
+            return
+        }
+
+        let openTitle = String(localized: .ChatExtension.linkOpenAction)
+        let openAction = AlertPresentableAction(title: openTitle) { [weak self, weak view] in
+            guard let view else { return }
+            self?.showWeb(url: url, from: view, style: WebPresentableStyle(mode: .modal(.fullScreen)))
+        }
+
+        let viewModel = AlertPresentableViewModel(
+            title: String(localized: .ChatExtension.linkOpenTitle),
+            message: url.absoluteString,
+            actions: [openAction],
+            closeActionTitle: String(localized: .Common.cancel)
+        )
+
+        present(viewModel: viewModel, style: .alert, from: view)
+    }
+}
+
 extension ChatWireframe: PHPickerViewControllerDelegate {
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         let providers: [ChatAttachmentProviding] = results.compactMap { result in

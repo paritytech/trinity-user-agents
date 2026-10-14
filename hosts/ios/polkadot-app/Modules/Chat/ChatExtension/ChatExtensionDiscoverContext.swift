@@ -94,14 +94,15 @@ actor ChatExtensionDiscoverContext {
         settings: SettingsManagerProtocol & ChatExtensionBotSettings,
         storageFacade: StorageFacadeProtocol,
         operationQueue: OperationQueue,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        messageOrderAllocator: ChatMessageOrderAllocating = FileChatMessageOrderAllocator.shared
     ) {
         self.settings = settings
         self.storageFacade = storageFacade
 
         messageRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
-                mapper: AnyCoreDataMapper(ChatMessageEntityMapper())
+                mapper: AnyCoreDataMapper(ChatMessageEntityMapper(orderAllocator: messageOrderAllocator))
             )
         )
 

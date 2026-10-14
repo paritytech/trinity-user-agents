@@ -174,10 +174,59 @@ public struct RingVrfProofResult: Codable {
 
 // MARK: - Messages
 
-public enum ProductBotMessage {
+public enum ProductBotMessage: Equatable {
     case text(String)
     /// `alt` is the product's one-line description, shown where the card is listed rather than drawn.
     case custom(messageType: String, data: Data, alt: String?)
+    /// Each media item is an `https` URL or an inline `data:` image. The core screened both.
+    case richText(text: String?, media: [String])
+    case actions(ProductBotActions)
+    case file(ProductBotFile)
+}
+
+/// Buttons that the host draws below an optional text.
+public struct ProductBotActions: Equatable, Sendable {
+    public enum Layout: Equatable, Sendable {
+        case column
+        case grid
+    }
+
+    public struct Button: Equatable, Sendable {
+        public let actionId: String
+        public let title: String
+
+        public init(actionId: String, title: String) {
+            self.actionId = actionId
+            self.title = title
+        }
+    }
+
+    public let text: String?
+    public let buttons: [Button]
+    public let layout: Layout
+
+    public init(text: String?, buttons: [Button], layout: Layout) {
+        self.text = text
+        self.buttons = buttons
+        self.layout = layout
+    }
+}
+
+/// A file that the product serves at an `https` URL.
+public struct ProductBotFile: Equatable, Sendable {
+    public let url: String
+    public let fileName: String
+    public let mimeType: String
+    public let sizeBytes: UInt64
+    public let text: String?
+
+    public init(url: String, fileName: String, mimeType: String, sizeBytes: UInt64, text: String?) {
+        self.url = url
+        self.fileName = fileName
+        self.mimeType = mimeType
+        self.sizeBytes = sizeBytes
+        self.text = text
+    }
 }
 
 // MARK: - Signing
