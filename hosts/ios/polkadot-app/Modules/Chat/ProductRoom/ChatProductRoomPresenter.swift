@@ -10,7 +10,7 @@ import UIKit
 /// When the product refuses a question or does not answer it in time, the room uses the host default for the item.
 @MainActor
 final class ChatProductRoomPresenter {
-    weak var view: ChatViewProtocol?
+    weak var view: ChatProductRoomViewProtocol?
 
     /// Asks the room screen to draw the room again, for example when the product answered a question.
     var onChange: (() -> Void)?
@@ -53,8 +53,13 @@ final class ChatProductRoomPresenter {
     }
 
     func update(policy: ChatRoomPolicy?, messages: [Chat.LocalMessage]) {
+        let previous = self.policy
         self.policy = policy
         self.messages = Dictionary(messages.map { ($0.messageId, $0) }, uniquingKeysWith: { _, newest in newest })
+
+        if previous?.toolbarActions != policy?.toolbarActions || previous == nil {
+            provideToolbar()
+        }
     }
 
     /// The id under which the product knows a message of the room.

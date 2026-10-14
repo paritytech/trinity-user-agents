@@ -13,6 +13,7 @@ final class LiquidGlassChatNavigationBarController: ChatNavigationBarControlling
     private var headerConfiguration: ChatHeaderConfiguration?
     private var callActions: [ChatCallType] = []
     private var contactMenu: UIMenu?
+    private var productToolbar: [UIBarButtonItem] = []
 
     init(
         navigationItem: UINavigationItem,
@@ -44,6 +45,11 @@ final class LiquidGlassChatNavigationBarController: ChatNavigationBarControlling
     func apply(contactMenu: UIMenu?) {
         self.contactMenu = contactMenu
         refreshContactMenuPresentation()
+    }
+
+    func apply(productToolbar: [UIBarButtonItem]) {
+        self.productToolbar = productToolbar
+        refreshRightBarButtonItems()
     }
 
     func update(headerConfiguration: ChatHeaderConfiguration) {
@@ -82,7 +88,7 @@ private extension LiquidGlassChatNavigationBarController {
     }
 
     func refreshRightBarButtonItems() {
-        let items = ChatCallBarButtons.make(for: callActions, onStartCall: onStartCall)
+        let items = productToolbar + ChatCallBarButtons.make(for: callActions, onStartCall: onStartCall)
         navigationItem?.rightBarButtonItems = items.isEmpty ? nil : items
     }
 }

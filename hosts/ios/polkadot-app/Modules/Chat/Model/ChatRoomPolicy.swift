@@ -3,8 +3,8 @@ import Foundation
 /// What a product room offers. The value comes from the declarations of the product and, for each aspect
 /// that the product does not declare, from the host defaults of 02-DESIGN §4.
 ///
-/// The policy reads the footer, the chat-list preview, the configuration and the commands of a room. The
-/// toolbar and the activity line keep the defaults until the room screen draws them (P6).
+/// The policy reads the footer, the chat-list preview, the configuration, the toolbar, the suggestions and the
+/// commands of a room. The activity line lives in ``ChatRoomActivityStore``, because the host does not keep it.
 struct ChatRoomPolicy: Equatable {
     enum MessageStore: Equatable {
         /// The host database keeps the messages. `post_message` and feed updates write to it.
@@ -115,6 +115,12 @@ struct ChatRoomPolicy: Equatable {
     var productQueries: Set<ProductQuery> = []
     /// Goes up by one at each configuration that the product sets, so an open room knows to reload.
     var configGeneration: Int64 = 0
+    /// The buttons of the room toolbar that the product set (`set_room_toolbar`).
+    var toolbarActions: [Chat.RoomToolbarAction] = []
+    /// The quick replies above the input that the product set (`set_room_suggestions`).
+    var roomSuggestions: [Chat.RoomSuggestion] = []
+    /// The slash commands that the product declares (`set_room_commands`), for the catalogue of the input.
+    var roomCommands: [Chat.RoomCommand] = []
 }
 
 extension ChatRoomPolicy {
@@ -179,7 +185,10 @@ extension ChatRoomPolicy {
             activity: defaults.activity,
             hostAppliesUserActions: !config.productSource,
             productQueries: ProductQuery.declared(by: config),
-            configGeneration: declarations?.configGeneration ?? 0
+            configGeneration: declarations?.configGeneration ?? 0,
+            toolbarActions: declarations?.toolbar ?? [],
+            roomSuggestions: declarations?.suggestions ?? [],
+            roomCommands: declarations?.commands ?? []
         )
     }
 

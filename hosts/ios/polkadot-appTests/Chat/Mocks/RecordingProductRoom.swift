@@ -1,5 +1,6 @@
 import Foundation
 import os
+import PolkadotUI
 import TrUAPIHost
 import UIKit
 import UIKitExt
@@ -182,5 +183,28 @@ enum ProductRoomTestData {
         handler: ChatActionHandler = .callback
     ) -> ChatProductAction {
         ChatProductAction(actionId: id, label: id, icon: nil, destructive: destructive, handler: handler)
+    }
+}
+
+/// Records what a product room shows.
+@MainActor
+final class RecordingProductRoomView: ChatProductRoomViewProtocol {
+    let controller = UIViewController()
+    private(set) var toolbars: [[UIBarButtonItem]] = []
+    private(set) var reactionDetails: [ReactionDetailsViewModel] = []
+    private(set) var failures: [String] = []
+
+    var isSetup: Bool { true }
+
+    func didReceive(productToolbar: [UIBarButtonItem]) {
+        toolbars.append(productToolbar)
+    }
+
+    func showReactionDetails(viewModel: ReactionDetailsViewModel) {
+        reactionDetails.append(viewModel)
+    }
+
+    func showActionFailure(_ message: String) {
+        failures.append(message)
     }
 }
