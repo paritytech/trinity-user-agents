@@ -20,10 +20,6 @@ enum TrUAPIActionPromptViewFactory {
         let body: String
         let iconName: String
         switch context.request {
-        case let .preimageSubmit(productId, size):
-            title = String(localized: .Products.actionPreimageTitle)
-            body = String(localized: .Products.actionPreimageBody(productId: productId, size: size.formatted()))
-            iconName = "doc.text"
         case let .productSubtree(productId):
             title = String(localized: .Products.actionProductSubtreeTitle)
             body = String(localized: .Products.actionProductSubtreeBody(productId: productId))
