@@ -2968,8 +2968,7 @@ fn navigate_to_external_denies_without_open_url_permission() {
 		"tel:+15551234567",
 		"sms:+15551234567",
 		"maps:?q=Berlin",
-		"polkadot://1exampleaddress",
-		"dot:transfer",
+		"polkadotapp://pay?address=1xXvM8o8N7hGp4cCdHAFSC3g9N2rfQdbH8H6d9SjsUd2rck&amount=1000000&lockAmount=true",
 	];
 	let mut responses = Vec::new();
 	for url in urls {
@@ -3076,8 +3075,7 @@ fn navigate_to_consumes_open_url_allow_once_at_handoff() {
 			"tel:+15551234567",
 			"sms:+15551234567",
 			"maps:?q=Berlin",
-			"polkadot://1exampleaddress",
-			"dot:transfer",
+			"polkadotapp://pay?address=1xXvM8o8N7hGp4cCdHAFSC3g9N2rfQdbH8H6d9SjsUd2rck&amount=1000000&lockAmount=true",
 		] {
 			for request_upfront in [false, true] {
 				let platform = Arc::new(StubPlatform {
