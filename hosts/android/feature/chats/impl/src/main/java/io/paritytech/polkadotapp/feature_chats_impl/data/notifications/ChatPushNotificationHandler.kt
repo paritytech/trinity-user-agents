@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.ChatActiveTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.asAnyRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_api.domain.notifications.ChatPushContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.notifications.IncomingChatPushDecoder
 import io.paritytech.polkadotapp.feature_chats_api.domain.notifications.IncomingChatPushDecoder.Companion.MESSAGE_KEY
@@ -295,6 +296,10 @@ internal class ChatPushNotificationHandler @Inject constructor(
             }
 
             is ChatMessage.Content.ChatRequest -> content.welcome?.text
+
+            is ChatMessage.Content.ProductBody -> content.body.previewText() ?: unsupportedText()
+
+            is ChatMessage.Content.Deleted -> null
         }
     }
 
@@ -320,6 +325,7 @@ internal fun ChatMessage.Content.isDisplayableAsPush(): Boolean = when (this) {
     is ChatMessage.Content.DataChannelOffer,
     is ChatMessage.Content.ChatRequest,
     is ChatMessage.Content.Unsupported,
+    is ChatMessage.Content.ProductBody,
     is ChatMessage.Content.Custom<*> -> true
 
     is ChatMessage.Content.LeftChat,
@@ -332,5 +338,6 @@ internal fun ChatMessage.Content.isDisplayableAsPush(): Boolean = when (this) {
     is ChatMessage.Content.DeviceAdded,
     is ChatMessage.Content.DeviceRemoved,
     is ChatMessage.Content.CompactionCommit,
-    is ChatMessage.Content.CompactionUnavailable -> false
+    is ChatMessage.Content.CompactionUnavailable,
+    is ChatMessage.Content.Deleted -> false
 }

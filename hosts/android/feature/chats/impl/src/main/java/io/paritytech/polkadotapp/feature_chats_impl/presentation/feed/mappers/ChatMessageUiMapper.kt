@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_calls_api.domain.models.ActiveCallState
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Attachment
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageDirection
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReaction
@@ -219,6 +220,21 @@ class ChatMessageUiMapper @Inject constructor(
                 status = status,
                 origin = origin,
             )
+
+            is ChatMessage.Content.ProductBody -> mapText(
+                message = this,
+                content = ChatMessage.Content.Text(latestContent.body.previewText().orEmpty()),
+                isEdited = isEdited,
+                direction = direction,
+                status = status,
+                messagesById = messagesById,
+                revisions = revisions,
+                originDisplayResolver = originDisplayResolver,
+                mappingHelper = helper,
+                messageReactions = messageReactions
+            )
+
+            is ChatMessage.Content.Deleted -> null
 
             is ChatMessage.Content.ChatRequest -> mapChatRequest(
                 message = this,
@@ -562,6 +578,7 @@ private suspend fun ChatMessage.Content.toReplyPreviewContent(
     is ChatMessage.Content.Text -> ReplyPreview.Content.Text(text)
     is ChatMessage.Content.ChatRequest -> welcome?.text?.let { ReplyPreview.Content.Text(it) }
     is ChatMessage.Content.RichText -> toReplyPreviewContent()
+    is ChatMessage.Content.ProductBody -> body.previewText()?.let { ReplyPreview.Content.Text(it) }
     is ChatMessage.Content.CoinagePayment -> ReplyPreview.Content.Payment(mappingHelper.extractTokenAmount(this), direction.toUi())
 
     is ChatMessage.Content.ChatAccepted,
@@ -581,7 +598,8 @@ private suspend fun ChatMessage.Content.toReplyPreviewContent(
     is ChatMessage.Content.DeviceAdded,
     is ChatMessage.Content.DeviceRemoved,
     is ChatMessage.Content.CompactionCommit,
-    is ChatMessage.Content.CompactionUnavailable -> null
+    is ChatMessage.Content.CompactionUnavailable,
+    ChatMessage.Content.Deleted -> null
 }
 
 private fun ChatMessage.Content.RichText.toReplyPreviewContent(): ReplyPreview.Content {

@@ -10,6 +10,9 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomC
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -57,4 +60,19 @@ interface ChatExtension {
 
     fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> = flowOf(true)
     fun observeChatConfig(chatId: ChatId): Flow<ChatConfig> = flowOf(ChatConfig.Default)
+
+    /** Holds the worker of the product while a room screen shows [chatId]. Null when the room needs no worker. */
+    fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle? = null
+
+    /** The queries of a room whose messages the product keeps. Null when the extension cannot answer them. */
+    fun roomQuerying(chatId: ChatId): ProductChatQuerying? = null
+
+    /** Gives an action of the user in [chatId] that is not a saved message to the extension. */
+    suspend fun onUserEvent(chatId: ChatId, event: ChatRoomUserEvent) = Unit
+
+    /**
+     * Gives a slash command that the user typed to the extension. True when the extension takes it, so the
+     * host does not send the text as a message.
+     */
+    suspend fun handleCommand(chatId: ChatId, name: String, arguments: String): Boolean = false
 }

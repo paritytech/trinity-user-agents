@@ -69,6 +69,8 @@ class ChatMessageLocal(
         DEVICE_ADDED,
         DEVICE_REMOVED,
         COMPACTION_COMMIT,
-        COMPACTION_UNAVAILABLE
+        COMPACTION_UNAVAILABLE,
+        PRODUCT_BODY,
+        DELETED,
     }
 }

@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isInternal
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.CustomContentDecoder
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.ChatMessageContentLocal
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.toData
@@ -130,6 +131,8 @@ internal fun ChatMessage.Content.toLocalType(): ChatMessageLocal.Type {
         is ChatMessage.Content.DeviceRemoved -> ChatMessageLocal.Type.DEVICE_REMOVED
         is ChatMessage.Content.CompactionCommit -> ChatMessageLocal.Type.COMPACTION_COMMIT
         is ChatMessage.Content.CompactionUnavailable -> ChatMessageLocal.Type.COMPACTION_UNAVAILABLE
+        is ChatMessage.Content.ProductBody -> ChatMessageLocal.Type.PRODUCT_BODY
+        is ChatMessage.Content.Deleted -> ChatMessageLocal.Type.DELETED
     }
 }
 
@@ -157,6 +160,8 @@ internal fun KClass<out ChatMessage.Content>.toLocalType(): ChatMessageLocal.Typ
         ChatMessage.Content.DeviceRemoved::class -> ChatMessageLocal.Type.DEVICE_REMOVED
         ChatMessage.Content.CompactionCommit::class -> ChatMessageLocal.Type.COMPACTION_COMMIT
         ChatMessage.Content.CompactionUnavailable::class -> ChatMessageLocal.Type.COMPACTION_UNAVAILABLE
+        ChatMessage.Content.ProductBody::class -> ChatMessageLocal.Type.PRODUCT_BODY
+        ChatMessage.Content.Deleted::class -> ChatMessageLocal.Type.DELETED
         else -> error("Unknown content type: $this")
     }
 }
@@ -167,6 +172,7 @@ private fun ChatMessage.Content.toSearchableContent(): String {
         is ChatMessage.Content.RichText -> text.orEmpty()
         is ChatMessage.Content.Edited -> content.text.orEmpty()
         is ChatMessage.Content.ChatRequest -> welcome?.text.orEmpty()
+        is ChatMessage.Content.ProductBody -> body.previewText().orEmpty()
 
         ChatMessage.Content.LeftChat,
         ChatMessage.Content.ContactAdded,
@@ -185,7 +191,8 @@ private fun ChatMessage.Content.toSearchableContent(): String {
         is ChatMessage.Content.ChatAccepted,
         is ChatMessage.Content.DeviceChatAccepted,
         is ChatMessage.Content.CompactionCommit,
-        is ChatMessage.Content.CompactionUnavailable -> ""
+        is ChatMessage.Content.CompactionUnavailable,
+        ChatMessage.Content.Deleted -> ""
     }
 }
 

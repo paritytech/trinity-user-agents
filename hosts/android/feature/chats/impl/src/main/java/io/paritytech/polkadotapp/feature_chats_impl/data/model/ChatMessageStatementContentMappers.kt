@@ -160,6 +160,8 @@ private fun ChatMessage.Content.toStatementStoreContent(): Result<ChatMessageSta
                 node = NodeEndpoint.WssUrl(nodeUrl)
             )
             is ChatMessage.Content.CompactionUnavailable -> error("CompactionUnavailable is local-only and cannot be sent over network")
+            is ChatMessage.Content.ProductBody -> error("A product body is local-only and cannot be sent over network")
+            ChatMessage.Content.Deleted -> error("Deleted is local-only and cannot be sent over network")
         }
     }
 }
