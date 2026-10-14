@@ -43,13 +43,14 @@ struct RustChatExecutionBridgeTests {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
         try await bridge.setRoomFooter(roomId: "r", footer: .empty)
-        try await bridge.setRoomFooter(
-            roomId: "r",
-            footer: .input(ChatInputConfig(placeholder: nil, photo: true, video: true, file: false, payment: nil))
-        )
+        let input = ChatInputConfig(placeholder: nil, photo: true, video: true, file: false, payment: nil)
+        try await bridge.setRoomFooter(roomId: "r", footer: .input(input))
 
         #expect(api.roomFooters.map(\.footer) == [.empty, .textInput])
         #expect(api.roomFooters.map(\.roomId) == ["r", "r"])
+        await #expect(throws: HostRejection.self) {
+            try await bridge.setRoomFooter(roomId: "r", footer: .custom)
+        }
     }
 
     @Test func setRoomFooterRejectsAnEmptyRoom() async throws {

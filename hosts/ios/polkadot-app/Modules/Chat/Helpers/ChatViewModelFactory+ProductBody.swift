@@ -10,6 +10,37 @@ struct ProductBodyRenderContext {
     let deliveryDate: Date?
     let layoutContext: MessageLayoutContext
     let actions: ChatViewModelActions?
+    let offersDelete: Bool
+    let canReply: Bool
+    let reactions: [ReactionViewModel]
+    /// Nil means the room offers no reactions.
+    let reactionChoice: ChatReactionChoice?
+}
+
+extension Chat.LocalMessage.Content {
+    /// The line that a reply quotes from a product body, or nil for other content.
+    var productReplyPreview: String? {
+        guard case let .productBody(body) = self else {
+            return nil
+        }
+
+        return body.replyPreview
+    }
+}
+
+extension Chat.LocalMessage.Content.ProductBody {
+    /// The line that a reply quotes from the body.
+    var replyPreview: String {
+        if let text = text?.nilIfEmpty {
+            return text
+        }
+
+        switch self {
+        case .richText: return String(localized: .Common.mediaFile)
+        case .actions: return String(localized: .ChatExtension.messagePreviewActions)
+        case let .file(file): return file.fileName
+        }
+    }
 }
 
 extension ChatViewModelFactory {
@@ -28,17 +59,15 @@ extension ChatViewModelFactory {
             innerContent: SwiftUIContentConfiguration(view: view),
             side: .leading,
             bubbleColor: .bgSurfaceContainer,
-            canReply: false,
+            canReply: context.canReply,
+            addReaction: addReaction(context: context),
+            messageReaction: messageReaction(context: context),
             contentInsets: .zero,
             layoutType: context.layoutContext.layoutType,
             identifier: ChatMediaStackView.reuseIdentifier
         )
 
-        if let text, let actions = context.actions {
-            configuration.setActions { [actions] in
-                [UIAction.chatCopy { actions.copy(text) }]
-            }
-        }
+        setProductMenu(on: &configuration, text: text, context: context)
 
         return .init(context.messageId, configuration)
     }
@@ -64,17 +93,15 @@ extension ChatViewModelFactory {
             innerContent: SwiftUIContentConfiguration(view: view),
             side: .leading,
             bubbleColor: .bgSurfaceContainer,
-            canReply: false,
+            canReply: context.canReply,
+            addReaction: addReaction(context: context),
+            messageReaction: messageReaction(context: context),
             contentInsets: .zero,
             layoutType: context.layoutContext.layoutType,
             identifier: ChatActionsMessageView.reuseIdentifier
         )
 
-        if let text, let actions = context.actions {
-            configuration.setActions { [actions] in
-                [UIAction.chatCopy { actions.copy(text) }]
-            }
-        }
+        setProductMenu(on: &configuration, text: text, context: context)
 
         return .init(messageId, configuration)
     }
@@ -102,15 +129,66 @@ extension ChatViewModelFactory {
 
         var configuration = ChatMessageContainerConfiguration.file(
             viewModel: viewModel,
-            layoutType: context.layoutContext.layoutType
+            layoutType: context.layoutContext.layoutType,
+            canReply: context.canReply,
+            addReaction: addReaction(context: context),
+            messageReaction: messageReaction(context: context)
         )
 
-        if let text = file.text?.nilIfEmpty, let actions = context.actions {
-            configuration.setActions { [actions] in
-                [UIAction.chatCopy { actions.copy(text) }]
-            }
-        }
+        setProductMenu(on: &configuration, text: file.text?.nilIfEmpty, context: context)
 
         return .init(context.messageId, configuration)
+    }
+}
+
+private extension ChatViewModelFactory {
+    func addReaction(context: ProductBodyRenderContext) -> ChatMessageContainerConfiguration.AddReactionViewModel? {
+        context.canReply
+            ? addReactionViewModel(
+                messageId: context.messageId,
+                choice: context.reactionChoice,
+                actions: context.actions
+            )
+            : nil
+    }
+
+    func messageReaction(
+        context: ProductBodyRenderContext
+    ) -> ChatMessageContainerConfiguration.MessageReactionViewModel? {
+        messageReactionViewModel(messageId: context.messageId, reactions: context.reactions, actions: context.actions)
+    }
+
+    /// Reply when the room has an input, Copy for a body with text, then Delete when the room offers it.
+    /// Delete is the last entry.
+    func setProductMenu(
+        on configuration: inout ChatMessageContainerConfiguration,
+        text: String?,
+        context: ProductBodyRenderContext
+    ) {
+        guard let actions = context.actions, context.canReply || text != nil || context.offersDelete else {
+            return
+        }
+
+        let messageId = context.messageId
+        let canReply = context.canReply
+        let offersDelete = context.offersDelete
+
+        configuration.setActions { [actions] in
+            var elements: [UIMenuElement] = []
+
+            if canReply {
+                elements.append(UIAction.chatReply { actions.reply(messageId) })
+            }
+
+            if let text {
+                elements.append(UIAction.chatCopy { actions.copy(text) })
+            }
+
+            if offersDelete {
+                elements.append(UIAction.chatDelete { actions.delete(messageId) })
+            }
+
+            return elements
+        }
     }
 }

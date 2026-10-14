@@ -152,6 +152,10 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
     func didDeclineChatRequest() {
         wireframe.dismissChat(from: view)
     }
+
+    func didRemoveChat() {
+        wireframe.dismissChat(from: view)
+    }
 }
 
 private extension ChatPresenter {
@@ -222,6 +226,12 @@ private extension ChatPresenter {
                 Task {
                     @MainActor in moduleNavigator.openProduct(page: productPage)
                 }
+            },
+            retry: { [weak self] messageId in
+                self?.interactor.retrySend(messageId: messageId)
+            },
+            delete: { [weak self] messageId in
+                self?.handleDeleteAction(for: messageId)
             }
         )
 
@@ -312,7 +322,7 @@ private extension ChatPresenter {
                 case let .versionedChatRequest(content):
                     content.ensureV1().welcomeMessage?.text ?? String(localized: .chatReplyPlaceholder)
                 default:
-                    String(localized: .chatReplyPlaceholder)
+                    message.content.productReplyPreview ?? String(localized: .chatReplyPlaceholder)
                 }
             }
 
@@ -398,6 +408,14 @@ private extension ChatPresenter {
                 from: view,
                 messageId: messageId
             )
+        }
+    }
+
+    func handleDeleteAction(for messageId: String) {
+        MainActor.assumeIsolated {
+            wireframe.confirmDeleteMessage(from: view) { [weak self] in
+                self?.interactor.deleteMessage(messageId: messageId)
+            }
         }
     }
 

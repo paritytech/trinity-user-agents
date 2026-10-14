@@ -15,6 +15,10 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
     public let isMuted: Bool
     public let hasReaction: Bool
     public let unreadCount: Int
+    /// A badge that the chat sets. It replaces the reaction and the unread badges.
+    public let badge: DSChatListBadge.Kind?
+    /// The message is an activity that continues, for example "Alice is typing".
+    public let isOngoing: Bool
     public let accessibilityId: String?
 
     let dateFormatter: TimestampFormatting
@@ -31,6 +35,8 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
         isMuted: Bool = false,
         hasReaction: Bool = false,
         unreadCount: Int = 0,
+        badge: DSChatListBadge.Kind? = nil,
+        isOngoing: Bool = false,
         accessibilityId: (any AccessibilityIdentifying)? = nil
     ) {
         self.dateFormatter = dateFormatter
@@ -44,6 +50,8 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
         self.isMuted = isMuted
         self.hasReaction = hasReaction
         self.unreadCount = unreadCount
+        self.badge = badge
+        self.isOngoing = isOngoing
         self.accessibilityId = accessibilityId?.rawValue
     }
 
@@ -68,6 +76,8 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
         hasher.combine(isMuted)
         hasher.combine(hasReaction)
         hasher.combine(unreadCount)
+        hasher.combine(badge)
+        hasher.combine(isOngoing)
         hasher.combine(accessibilityId)
     }
 
@@ -81,6 +91,8 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
             lhs.isMuted == rhs.isMuted &&
             lhs.hasReaction == rhs.hasReaction &&
             lhs.unreadCount == rhs.unreadCount &&
+            lhs.badge == rhs.badge &&
+            lhs.isOngoing == rhs.isOngoing &&
             lhs.accessibilityId == rhs.accessibilityId
     }
 
@@ -93,7 +105,9 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
             messageContext: messageContext,
             isMuted: isMuted,
             hasReaction: hasReaction,
-            unreadCount: unreadCount
+            unreadCount: unreadCount,
+            badge: badge,
+            isOngoing: isOngoing
         )
     }
 

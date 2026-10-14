@@ -59,10 +59,15 @@ private extension ChatInteractor {
 
             do {
                 let metadataStream = engine.chatMetadataStream()
+                var hasShownChat = false
                 for try await chatMetadata in metadataStream {
                     if let chatMetadata {
+                        hasShownChat = true
                         let metadata = MessageListMetadata(chatMetadata: chatMetadata, myUsername: currentUsername)
                         await self?.presenter?.didReceive(metadata: metadata)
+                    } else if hasShownChat, self?.isProductRoom == true {
+                        await self?.presenter?.didRemoveChat()
+                        hasShownChat = false
                     }
                 }
             } catch {
@@ -354,9 +359,30 @@ extension ChatInteractor: ChatInteractorInputProtocol {
             await engine.processAction(action)
         }
     }
+
+    func deleteMessage(messageId: Chat.MessageId) {
+        Task { [engine, logger] in
+            do {
+                try await engine.deleteMessage(messageId)
+            } catch {
+                logger.error("Can't delete message \(messageId): \(error)")
+            }
+        }
+    }
+
+    func retrySend(messageId: Chat.MessageId) {
+        // Seam for P5.5: a product-source room sends again through `user_action`, and no room has that
+        // store until the room configuration decodes (P2.10).
+        logger.warning("Retry of message \(messageId) waits for product-source rooms (P5.5)")
+    }
 }
 
 private extension ChatInteractor {
+    /// A leave or a block of a person chat dismisses the screen on its own path.
+    var isProductRoom: Bool {
+        chatId.roomId != nil
+    }
+
     /// A product room takes `/name arguments` as a command event instead of a posted message.
     func sentAsCommand(
         text: String?,

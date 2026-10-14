@@ -9,9 +9,12 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
     enum Call: Equatable {
         case sendUserMessage(Chat.LocalMessage.Content)
         case sendCommand(Chat.Command)
+        case deleteMessage(Chat.MessageId)
     }
 
     var takesCommands = true
+    /// What `chatMetadataStream` yields before it finishes.
+    var metadataUpdates: [ChatMetadata?] = []
 
     let calls: AsyncStream<Call>
     private let continuation: AsyncStream<Call>.Continuation
@@ -41,7 +44,12 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
     func declineChatRequest() async throws {}
 
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?> {
-        AsyncStream<ChatMetadata?> { $0.finish() }.eraseToAnyAsyncSequence()
+        let updates = metadataUpdates
+        return AsyncStream<ChatMetadata?> { continuation in
+            updates.forEach { continuation.yield($0) }
+            continuation.finish()
+        }
+        .eraseToAnyAsyncSequence()
     }
 
     func footerStream() async throws -> AnyAsyncSequence<(any HashableContentConfiguration)?>? {
@@ -49,4 +57,8 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
     }
 
     func processAction(_: Chat.Action) async {}
+
+    func deleteMessage(_ messageId: Chat.MessageId) async throws {
+        continuation.yield(.deleteMessage(messageId))
+    }
 }

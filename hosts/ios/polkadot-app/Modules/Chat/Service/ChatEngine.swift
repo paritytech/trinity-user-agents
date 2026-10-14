@@ -20,6 +20,8 @@ protocol ChatEngineProtocol {
     func processAction(_ action: Chat.Action) async
     /// Gives true when the room's extension took the command, so the text must not be posted.
     func sendCommand(_ command: Chat.Command) async -> Bool
+    /// Replaces a message with the deleted tombstone and tells the extension of a product room.
+    func deleteMessage(_ messageId: Chat.MessageId) async throws
 }
 
 enum ChatEngineError: Error {
@@ -31,6 +33,7 @@ final class ChatEngine {
     let messageProviderFactory: ChatMessageDataProviderMaking
     let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
     let messageStatusUpdateRepository: AnyDataProviderRepository<Chat.ChatMessageStatusUpdate>
+    let messageDeletionRepository: AnyDataProviderRepository<Chat.MessageDeletion>
     let attachmentsUpdateRepository: AnyDataProviderRepository<Chat.AttachmentUploadingUpdate>
     let chatProvider: ChatContactDataProviderMaking
     let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
@@ -93,6 +96,14 @@ final class ChatEngine {
                 filter: nil,
                 sortDescriptors: [],
                 mapper: AnyCoreDataMapper(ChatMessageStatusUpdateMapper())
+            )
+        )
+
+        messageDeletionRepository = AnyDataProviderRepository(
+            storageFacade.createRepository(
+                filter: nil,
+                sortDescriptors: [],
+                mapper: AnyCoreDataMapper(ChatMessageDeletionMapper())
             )
         )
 
@@ -263,6 +274,18 @@ extension ChatEngine: ChatEngineProtocol {
 
         let handler = chatExtensionRegistry.getChatExtensionBot(for: extensionId) as? ChatCommandHandling
         return await handler?.handle(command: command, roomId: roomId) ?? false
+    }
+
+    func deleteMessage(_ messageId: Chat.MessageId) async throws {
+        let deletion = Chat.MessageDeletion(messageId: messageId)
+        try await messageDeletionRepository.saveOperation({ [deletion] }, { [] }).asyncExecute()
+
+        guard case let .chatExtension(extensionId, roomId) = chatId else {
+            return
+        }
+
+        let handler = chatExtensionRegistry.getChatExtensionBot(for: extensionId) as? ChatUserDeletionHandling
+        await handler?.userDeleted(messageId: messageId, roomId: roomId)
     }
 }
 

@@ -56,6 +56,9 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func declineChatRequest()
     func processAction(_ action: Chat.Action)
     func isMicrophoneDenied() -> Bool
+    /// Sends a failed message of a product-source room again through `user_action` (P5.5).
+    func retrySend(messageId: Chat.MessageId)
+    func deleteMessage(messageId: Chat.MessageId)
 }
 
 @MainActor
@@ -71,6 +74,9 @@ protocol ChatInteractorOutputProtocol: AnyObject {
     func didBlockUser()
 
     func didDeclineChatRequest()
+
+    /// The chat of the screen went away, for example because its product deleted the room.
+    func didRemoveChat()
 }
 
 @MainActor
@@ -101,6 +107,9 @@ protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
     )
 
     func dismissChat(from view: ControllerBackedProtocol?)
+
+    /// Asks the user to confirm the delete of a message.
+    func confirmDeleteMessage(from view: ControllerBackedProtocol?, onConfirm: @escaping () -> Void)
 
     func showDocument(at url: URL)
 

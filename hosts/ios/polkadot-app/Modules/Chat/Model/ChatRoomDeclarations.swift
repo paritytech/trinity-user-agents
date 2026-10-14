@@ -8,7 +8,8 @@ extension Chat {
     /// Extension v2 values. They stay opaque here until the Swift bindings of those values exist.
     struct RoomDeclarations: Equatable {
         let description: String?
-        let avatar: RoomAvatar
+        /// Nil draws the icon of the product.
+        let avatar: RoomImage?
         let config: Data?
         /// Goes up by one at each configuration that the product sets, so an open room reloads its policy.
         let configGeneration: Int64
@@ -19,11 +20,11 @@ extension Chat {
         let footerConfig: Data?
     }
 
-    /// The avatar that a product gives to a room, as a reference that the resource resolver reads.
-    enum RoomAvatar: Equatable {
-        case none
-        /// The key of inline bytes in the attachment store.
-        case inline(storeKey: Data)
+    /// An image that a product gives to a room, for its avatar or its badge.
+    enum RoomImage: Equatable {
+        /// The bytes of the image. The core limits their size.
+        case inline(Data)
+        /// The key of a preimage that the resource resolver gets.
         case preimage(key: Data)
     }
 
@@ -34,15 +35,18 @@ extension Chat {
         }
 
         let order: Order
-        let timestamp: Int64
+        /// The sort key in milliseconds since the Unix epoch. Nil uses the time of the last message.
+        let timestamp: Int64?
         let badge: RoomBadge
+        /// Nil shows the last message.
         let text: String?
+        /// The text shows as an activity that continues, for example "Alice is typing".
         let ongoing: Bool
 
         /// The preview of a room whose product set none: the host draws the last message.
         static let hostDefault = RoomPreview(
             order: .byTimestamp,
-            timestamp: 0,
+            timestamp: nil,
             badge: .hostDefault,
             text: nil,
             ongoing: false
@@ -53,8 +57,9 @@ extension Chat {
         /// The host counts the unread messages.
         case hostDefault
         case none
+        /// Zero shows no badge.
         case unreadCount(Int32)
-        case image(ref: Data)
+        case image(RoomImage)
     }
 }
 
@@ -62,7 +67,13 @@ extension Chat {
     struct RoomDescriptionUpdate {
         let chatId: Chat.Id
         let description: String?
-        let avatar: RoomAvatar
+        let avatar: RoomImage?
+    }
+
+    /// Replaces the name of a room and keeps its v1 icon.
+    struct RoomNameUpdate {
+        let chatId: Chat.Id
+        let name: String
     }
 
     struct RoomConfigUpdate {

@@ -6,6 +6,8 @@ public extension ChatMessageStatusViewConfiguration {
         case pending
         case sent
         case delivered
+        /// The peer saw the message: the two ticks of `delivered`, filled with the success colour.
+        case read
         case failed
 
         public var image: UIImage {
@@ -16,6 +18,8 @@ public extension ChatMessageStatusViewConfiguration {
                 UIImage(resource: .messageSent)
             case .delivered:
                 UIImage(resource: .messageDelivered)
+            case .read:
+                UIImage(resource: .messageDelivered).withTintColor(.fgSuccess, renderingMode: .alwaysOriginal)
             case .failed:
                 UIImage(resource: .exclamationMark).withTintColor(.fgError, renderingMode: .alwaysOriginal)
             }

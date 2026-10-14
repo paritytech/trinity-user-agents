@@ -41,6 +41,30 @@ struct ChatExtensionRoomMetadataTests {
         #expect(try await storedRoom()?.message?.messageId == message.messageId)
     }
 
+    /// A save of the chat model never deletes what the product declared for its room.
+    @Test
+    func savingTheRoomChatAgainKeepsItsDeclarations() async throws {
+        let context = makeContext()
+        _ = try await context.createRoom(for: bot, roomId: roomId, name: "Jollity", icon: nil)
+        try await saveDeclarations()
+
+        let withoutMetadata = Chat.LocalModel(
+            peer: .chatExtension(bot.identifier, roomId: roomId),
+            message: nil,
+            unreadDisplayMessageCount: 0,
+            hasIncomingReaction: false,
+            createdAt: Date(),
+            roomMetadata: nil
+        )
+        try await chatRepository.saveOperation({ [withoutMetadata] }, { [] }).asyncExecute()
+        try await savePlacedRoom(name: "Renamed")
+
+        let declarations = try await storedDeclarations()
+        #expect(declarations?.description == "Weekly game")
+        #expect(declarations?.preview.text == "Your turn")
+        #expect(try await storedRoom()?.roomMetadata?.name == "Renamed")
+    }
+
     /// The worker's own icon for its room wins over the one its manifest declares.
     @Test
     func aRoomDrawsTheInlineIconItsWorkerRegistered() {
@@ -102,6 +126,36 @@ private extension ChatExtensionRoomMetadataTests {
             roomMetadata: Chat.RoomMetadata(chatRelativeId: roomId, name: name, icon: nil)
         )
         try await chatRepository.saveOperation({ [chat] }, { [] }).asyncExecute()
+    }
+
+    func saveDeclarations() async throws {
+        let description = Chat.RoomDescriptionUpdate(chatId: chatId, description: "Weekly game", avatar: nil)
+        try await storageFacade.createRepository(mapper: AnyCoreDataMapper(
+            ChatRoomDeclarationUpdateMapper<Chat.RoomDescriptionUpdate>()
+        ))
+        .saveOperation({ [description] }, { [] })
+        .asyncExecute()
+
+        let preview = Chat.RoomPreviewUpdate(chatId: chatId, preview: Chat.RoomPreview(
+            order: .byTimestamp,
+            timestamp: nil,
+            badge: .hostDefault,
+            text: "Your turn",
+            ongoing: false
+        ))
+        try await storageFacade.createRepository(mapper: AnyCoreDataMapper(
+            ChatRoomDeclarationUpdateMapper<Chat.RoomPreviewUpdate>()
+        ))
+        .saveOperation({ [preview] }, { [] })
+        .asyncExecute()
+    }
+
+    func storedDeclarations() async throws -> Chat.RoomDeclarations? {
+        try await storageFacade.createRepository(mapper: AnyCoreDataMapper(ChatRoomDeclarationsMapper()))
+            .fetchAllOperation(with: RepositoryFetchOptions())
+            .asyncExecute()
+            .first { $0.chatId == chatId.rawRepresentation }?
+            .declarations
     }
 
     func storedRoom() async throws -> Chat.LocalModel? {

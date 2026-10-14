@@ -10,6 +10,11 @@ protocol ChatResourceResolving: Sendable {
     func image(for resource: ChatResource) async -> UIImage?
 }
 
+protocol ChatResourceEvicting: Sendable {
+    /// Removes the resources from the caches, for example when the room that referenced them goes away.
+    func evict(_ resources: [ChatResource]) async
+}
+
 /// Resolves the resources of chat bodies, room avatars and product widgets through one bounded disk cache.
 ///
 /// Inline bytes need no fetch. A preimage key goes through the preimage lookup. An `https` address goes
@@ -59,6 +64,15 @@ final class ChatResourceResolver: ChatResourceResolving, @unchecked Sendable {
 
         images.setObject(image, forKey: key)
         return image
+    }
+}
+
+extension ChatResourceResolver: ChatResourceEvicting {
+    func evict(_ resources: [ChatResource]) async {
+        for resource in resources {
+            images.removeObject(forKey: resource.cacheKey as NSString)
+            await cache.remove(for: resource.cacheKey)
+        }
     }
 }
 

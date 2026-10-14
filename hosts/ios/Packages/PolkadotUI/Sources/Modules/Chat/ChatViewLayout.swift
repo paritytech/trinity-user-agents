@@ -14,6 +14,7 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
     private let chatInputHostView = ChatInputHostView()
     private let scrollDownButton = ScrollToBottomButton()
     private let scrollToReactionButton = ScrollToReactionButton()
+    private let placeholderView = ChatPlaceholderView()
     private var currentInputViewHeight: CGFloat = 0
     private var currentKeyboardHeight: CGFloat = 0
 
@@ -60,6 +61,7 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
         collectionView.backgroundColor = .clear
         collectionView.keyboardDismissMode = .interactive
         collectionView.delegate = self
+        collectionView.backgroundView = placeholderView
 
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
         tapGesture.cancelsTouchesInView = false
@@ -207,6 +209,8 @@ public extension ChatViewLayout {
         scrollDownButton.unreadCount = viewModel.scrollDownConfiguration.unreadCount
 
         centerItem.configuration = viewModel.headerConfiguration
+
+        placeholderView.text = viewModel.sections.isEmpty ? viewModel.placeholderText : nil
 
         updateView(
             sections: viewModel.sections,

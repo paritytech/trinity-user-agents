@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// An image or a file that a product gives to a chat: inline bytes, a preimage key, or an address.
@@ -21,5 +22,23 @@ enum ChatResource: Hashable, Sendable {
         }
 
         self = .address(url)
+    }
+}
+
+extension Chat.RoomImage {
+    /// The store keeps no media type for a room image, and the resolver reads the type from the bytes.
+    var resource: ChatResource {
+        switch self {
+        case let .inline(data): .inline(mimeType: "application/octet-stream", data: data)
+        case let .preimage(key): .preimage(key: key)
+        }
+    }
+
+    /// A short value that names the image, for view identity.
+    var identifier: String {
+        switch self {
+        case let .inline(data): "inline:" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        case let .preimage(key): "preimage:" + key.map { String(format: "%02x", $0) }.joined()
+        }
     }
 }

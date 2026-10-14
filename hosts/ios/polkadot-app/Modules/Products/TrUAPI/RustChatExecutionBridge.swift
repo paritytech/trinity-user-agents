@@ -62,6 +62,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw HostRejection.Rejected(reason: "a chat room needs an id")
         }
 
+        // The input settings of a v2 footer and a product drawn footer wait for P6.6.
         let roomFooter: Chat.RoomFooter =
             switch footer {
             case .input: .textInput

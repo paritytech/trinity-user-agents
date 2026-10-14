@@ -15,6 +15,16 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     private(set) var createdRooms: [CreateRoomRequest] = []
     private(set) var roomFooters: [(roomId: String, footer: Chat.RoomFooter)] = []
     private(set) var subscribeRoomsCallCount = 0
+    private(set) var roomPreviews: [(roomId: String, preview: Chat.RoomPreview)] = []
+    struct RoomMetadataCall: Equatable {
+        let roomId: String
+        let name: String
+        let description: String?
+        let avatar: Chat.RoomImage?
+    }
+
+    private(set) var roomMetadata: [RoomMetadataCall] = []
+    private(set) var deletedRoomIds: [String] = []
 
     func sendMessage(_ message: ProductBotMessage, roomId: String?) async throws -> String {
         if let sendMessageError { throw sendMessageError }
@@ -30,6 +40,18 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
 
     func setRoomFooter(roomId: String, footer: Chat.RoomFooter) async throws {
         roomFooters.append((roomId, footer))
+    }
+
+    func deleteRoom(roomId: String) async throws {
+        deletedRoomIds.append(roomId)
+    }
+
+    func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws {
+        roomPreviews.append((roomId, preview))
+    }
+
+    func setRoomMetadata(roomId: String, name: String, description: String?, avatar: Chat.RoomImage?) async throws {
+        roomMetadata.append(RoomMetadataCall(roomId: roomId, name: name, description: description, avatar: avatar))
     }
 
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]> {
