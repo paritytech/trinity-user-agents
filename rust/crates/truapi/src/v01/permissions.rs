@@ -82,6 +82,9 @@ pub enum RemotePermission {
 	/// Submitting statements on behalf of the user via `remote_statement_store_submit`.
 	#[display("submit statements")]
 	StatementSubmit,
+	/// Paying cache providers to keep preimages via `remote_preimage_retain`.
+	#[display("keep preimages on cache providers")]
+	PreimageRetain,
 }
 
 /// remote-permission request (RFC 0002).

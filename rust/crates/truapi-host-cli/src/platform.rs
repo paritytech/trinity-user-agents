@@ -989,6 +989,15 @@ impl PreimageReadHost for CliPlatform {
 		})
 	}
 
+	/// Keep a preimage on a cache node, paid by the cache payer of this host. The CLI host shows
+	/// no confirmation of its own: the permission `PreimageRetain` covers each retention.
+	async fn retain_preimage(
+		&self,
+		request: api::RemotePreimageRetainRequest,
+	) -> Result<api::RemotePreimageRetainResponse, api::PreimageRetainError> {
+		self.bulletin.source().retain(request).await
+	}
+
 	/// The account of the cache payer of this host, from the ledger of a cache node.
 	async fn cache_account(
 		&self,

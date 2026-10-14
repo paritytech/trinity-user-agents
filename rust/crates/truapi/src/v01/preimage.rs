@@ -334,3 +334,62 @@ pub struct RemotePreimageCacheAccountResponse {
 	/// The price of retention for each started MiB and each started hour.
 	pub retention_price: u64,
 }
+
+/// Request to keep a preimage on a cache provider for a period, paid in advance.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageRetainRequest {
+	/// The preimage key: blake2b-256 of the value. For a chunked file, the key of
+	/// its manifest.
+	pub key: Vec<u8>,
+	/// How long to keep the preimage, in seconds from now.
+	pub period_secs: u64,
+	/// The size that the retention pays for. For a chunked file, the size of the
+	/// manifest and all its chunks, so the provider keeps the chunks too. `None`:
+	/// the host reads the value to learn its size.
+	pub size: Option<u64>,
+	/// The cache provider to keep it. `None` lets the host pick one, a home node
+	/// of the key first.
+	pub provider: Option<[u8; 32]>,
+}
+
+/// The retention that the host bought.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageRetainResponse {
+	/// Unix seconds until which the provider keeps the preimage.
+	pub until: u64,
+	/// Endpoint id of the provider that keeps it.
+	pub provider: [u8; 32],
+	/// Display name of the provider, from the provider set.
+	pub name: Option<String>,
+	/// Region of the provider, from the provider set.
+	pub region: Option<String>,
+	/// The size that the retention paid for.
+	pub size: u64,
+	/// The chunks of a chunked file that the provider keeps with the manifest.
+	pub chunks: u32,
+	/// What the retention cost, in the units of the ledger of the provider. A
+	/// retention that a previous one covers costs 0.
+	pub charged: u64,
+}
+
+/// Why the host could not keep a preimage.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum PreimageRetainError {
+	/// No source has the preimage yet. The product can ask again after its
+	/// submit lands.
+	NotFound,
+	/// The period is longer than the providers accept.
+	PeriodTooLong {
+		/// The longest period, in seconds.
+		max_secs: u64,
+	},
+	/// The payer cannot pay for the period.
+	NotAvailable,
+	/// The person declined the retention.
+	Declined,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+}

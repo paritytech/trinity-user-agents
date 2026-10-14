@@ -14,7 +14,8 @@ use truapi::{
 		RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
 		RemotePreimageLookupSubscribeRequest, RemotePreimageReadError, RemotePreimageReadRequest,
 		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
-		RemotePreimageReadTorrentResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+		RemotePreimageReadTorrentResponse, RemotePreimageRetainError, RemotePreimageRetainRequest,
+		RemotePreimageRetainResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
 		RemotePreimageSubmitResponse,
 	},
 };
@@ -269,6 +270,34 @@ impl Preimage for ProductRuntimeHost {
 			.await
 			.map(RemotePreimageCacheAccountResponse::V1)
 			.map_err(|error| CallError::Domain(RemotePreimageReadError::V1(error)))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "preimage.retain"))]
+	async fn retain(
+		&self,
+		_cx: &CallContext,
+		request: RemotePreimageRetainRequest,
+	) -> Result<RemotePreimageRetainResponse, CallError<RemotePreimageRetainError>> {
+		let RemotePreimageRetainRequest::V1(request) = request;
+		let Some(host) = self.services.preimage_read_host() else {
+			return Err(CallError::Unsupported);
+		};
+		if request.key.len() != 32 {
+			return Err(CallError::Domain(RemotePreimageRetainError::V1(
+				v01::PreimageRetainError::Unknown {
+					reason: "a preimage key is 32 bytes".to_string(),
+				},
+			)));
+		}
+		self.require_remote_permission(
+			v01::RemotePermission::PreimageRetain,
+			RemotePreimageRetainError::V1(v01::PreimageRetainError::Declined),
+		)
+		.await?;
+		host.retain_preimage(request)
+			.await
+			.map(RemotePreimageRetainResponse::V1)
+			.map_err(|error| CallError::Domain(RemotePreimageRetainError::V1(error)))
 	}
 }
 

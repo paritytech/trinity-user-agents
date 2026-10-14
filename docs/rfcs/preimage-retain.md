@@ -52,28 +52,44 @@ async fn retain(
 The `v01` types:
 
 ```rust
-/// Request to keep a preimage available in a cache provider.
+/// Request to keep a preimage on a cache provider for a period, paid in advance.
 pub struct RemotePreimageRetainRequest {
-    /// The preimage key: blake2b-256 of the value.
+    /// The preimage key: blake2b-256 of the value. For a chunked file, the key of its manifest.
     pub key: Vec<u8>,
-    /// How long to keep the preimage available, in seconds from now.
+    /// How long to keep the preimage, in seconds from now.
     pub period_secs: u64,
+    /// The size that the retention pays for. For a chunked file, the size of the manifest and all its chunks, so the
+    /// provider keeps the chunks too. `None`: the host reads the value to learn its size.
+    pub size: Option<u64>,
+    /// The cache provider to keep it. `None` lets the host pick one, a home node of the key first.
+    pub provider: Option<[u8; 32]>,
 }
 
-/// The retention the host bought.
+/// The retention that the host bought.
 pub struct RemotePreimageRetainResponse {
-    /// Unix seconds until which a cache provider keeps the preimage.
+    /// Unix seconds until which the provider keeps the preimage.
     pub until: u64,
+    /// The provider that keeps it, with its name and region from the provider set.
+    pub provider: [u8; 32],
+    pub name: Option<String>,
+    pub region: Option<String>,
+    /// The size that the retention paid for, and the chunks of a chunked file that the provider keeps with it.
+    pub size: u64,
+    pub chunks: u32,
+    /// What the retention cost, in the units of the ledger. A retention that a previous one covers costs 0.
+    pub charged: u64,
 }
 
-/// Why the host could not retain the preimage.
+/// Why the host could not keep a preimage.
 pub enum PreimageRetainError {
-    /// The preimage is not on Bulletin yet. The product can ask again after its submit lands.
+    /// No source has the preimage yet. The product can ask again after its submit lands.
     NotFound,
-    /// The period is longer than the host accepts.
+    /// The period is longer than the providers accept.
     PeriodTooLong { max_secs: u64 },
-    /// The allowance cannot pay for the period.
+    /// The payer cannot pay for the period.
     NotAvailable,
+    /// The person declined the retention: the permission or the confirmation.
+    Declined,
     /// Catch-all.
     Unknown { reason: String },
 }
@@ -83,8 +99,18 @@ A product, in TypeScript:
 
 ```ts
 const submitted = await truapi.preimage.submit(value);
-const kept = await truapi.preimage.retain({ key: submitted.value, periodSecs: 7 * 24 * 3600 });
+const kept = await truapi.preimage.retain({
+  key: submitted.value,
+  periodSecs: 7n * 24n * 3600n,
+  size: undefined,
+  provider: undefined,
+});
 ```
+
+The size of the request matters for a chunked file. TrUAPI stores a file above 2 MiB as 1 MiB chunks and a manifest,
+each a preimage, and a product reads the chunks one by one. A provider that keeps only the manifest serves the chunks
+from Bulletin. With the size of the manifest and all its chunks, the provider keeps the chunks too, in one payment
+(`cache` `docs/spa-redesign-plan.md`, D4).
 
 ### Semantics
 
@@ -98,22 +124,23 @@ const kept = await truapi.preimage.retain({ key: submitted.value, periodSecs: 7 
 
 ### Permission and confirmation
 
-The same pattern as `submit`:
-
-- an active session;
-- a new remote permission, `PreimageRetain`, decided once for each product;
-- a confirmation for each call, `UserConfirmationReview::PreimageRetain { size, period_secs, price }`, where `price`
-  is the host's estimate in allowance units.
+- A new remote permission, `PreimageRetain`, decided once for each product, as `PreimageSubmit` is.
+- A confirmation for each call, with the size, the period and the price, shown by the platform: the platform knows the
+  provider and its prices. truapi 0.25 has no `UserConfirmationReview` for preimages, so the core asks only for the
+  permission. A platform that does not show a confirmation (the CLI host) relies on the permission.
 
 ### Host side
 
-- A new method on the platform seam, `PreimageHost::retain_preimage(key, period_secs)`, with a default implementation
-  that answers `Unsupported`. A host without cache providers (the iOS, Android and web hosts today) changes nothing, and
-  products learn the capability is missing.
-- The core keeps the session, permission, confirmation and allowance checks. The platform does the provider part.
-- The CLI host on `lc/cache-prototype` already has the provider part for reads (`truapi-host-cli/src/cache_lookup.rs`).
-  For `retain` it picks a provider in the same order as reads (the key's home nodes first, then measured latency), signs
-  a retention authorization with the payer key `//allowance//cache//{product}`, and sends it to the provider.
+- A new method of the platform capability for cache providers, `PreimageReadHost::retain_preimage(request)`, next to
+  `read_preimage`, `read_torrent` and `cache_account`. A host without cache providers has no such capability and
+  answers `Unsupported`.
+- The core checks the key and the permission. The platform does the provider part.
+- The CLI host (`truapi-host-cli/src/cache_lookup.rs`) picks a provider in the same order as reads (the key's home nodes
+  first, then measured latency), or the provider of the request. It signs a retention authorization with its cache
+  payer (`//allowance//cache//{product}` of the signed-in account, or a test seed) and sends it to `POST /pin`. A
+  refused payer is `NotAvailable`, a key that no source has is `NotFound`, and a window longer than the provider keeps
+  content is `PeriodTooLong`.
+- dotli shows the size, the period and the price before it signs, and pays with its cache payer.
 
 The messages, with the cache prototype's provider API:
 
@@ -159,6 +186,5 @@ retry.
 
 - How many providers should the host retain on by default, and may a product ask for more?
 - How is the cache allowance funded (Universal Service Allowance, dotUSD), and how does the confirmation show the price?
-- Should the response carry the provider and the amount charged, or only `until`?
 - Should the host renew a retention by itself before it ends, like the statement-store allowance renewal?
 - Should a product be told when a provider loses retained content early?

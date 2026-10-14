@@ -53,6 +53,7 @@ use truapi::{
 			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
 			RemotePreimageReadError, RemotePreimageReadRequest, RemotePreimageReadResponse,
 			RemotePreimageReadTorrentRequest, RemotePreimageReadTorrentResponse,
+			RemotePreimageRetainError, RemotePreimageRetainRequest, RemotePreimageRetainResponse,
 			RemotePreimageSubmitRequest,
 		},
 		resource_allocation::{
@@ -4588,6 +4589,68 @@ impl crate::platform::PreimageReadHost for FixedPreimageRead {
 			retention_price: 1,
 		})
 	}
+
+	/// A retention of the request's period from t=1000 on the provider [7; 32], for 3 credits.
+	async fn retain_preimage(
+		&self,
+		request: v01::RemotePreimageRetainRequest,
+	) -> Result<v01::RemotePreimageRetainResponse, v01::PreimageRetainError> {
+		Ok(v01::RemotePreimageRetainResponse {
+			until: 1000 + request.period_secs,
+			provider: request.provider.unwrap_or([7; 32]),
+			name: Some("A".to_string()),
+			region: None,
+			size: request.size.unwrap_or(1),
+			chunks: 0,
+			charged: 3,
+		})
+	}
+}
+
+// A retention needs the read host of the platform and the permission PreimageRetain of the person,
+// and a key of 32 bytes. Then the answer of the host comes back as it is.
+#[test]
+fn preimage_retain_needs_the_permission_and_the_read_host() {
+	let retain = |host: &ProductRuntimeHost, key: Vec<u8>| {
+		let request = RemotePreimageRetainRequest::V1(v01::RemotePreimageRetainRequest {
+			key,
+			period_secs: 3600,
+			size: Some(5),
+			provider: None,
+		});
+		futures::executor::block_on(Preimage::retain(host, &CallContext::default(), request)).map(
+			|response| {
+				let RemotePreimageRetainResponse::V1(response) = response;
+				(response.until, response.provider, response.charged)
+			},
+		)
+	};
+	let report = v01::PreimageReadReport { served_by: None, attempts: Vec::new(), host_ms: 0 };
+	let read_host =
+		Arc::new(FixedPreimageRead(v01::RemotePreimageReadResponse { value: None, report }));
+
+	let granted = stub_platform();
+	let host = ProductRuntimeHost::new_compat(granted.clone(), test_spawner());
+	assert_eq!(retain(&host, vec![1; 32]), Err(CallError::Unsupported));
+	host.services.install_preimage_read_host(read_host.clone());
+	assert!(matches!(retain(&host, vec![1; 31]), Err(CallError::Domain(_))));
+	assert_eq!(retain(&host, vec![1; 32]), Ok((4600, [7; 32], 3)));
+	assert!(
+		granted
+			.remote_permission_requests
+			.lock()
+			.unwrap()
+			.iter()
+			.any(|request| request.permission == v01::RemotePermission::PreimageRetain)
+	);
+
+	let denied = Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
+	let host = ProductRuntimeHost::new_compat(denied, test_spawner());
+	host.services.install_preimage_read_host(read_host);
+	assert_eq!(
+		retain(&host, vec![1; 32]),
+		Err(CallError::Domain(RemotePreimageRetainError::V1(v01::PreimageRetainError::Declined)))
+	);
 }
 
 // The cache account comes from the read host of the platform as it is. A host without one does not

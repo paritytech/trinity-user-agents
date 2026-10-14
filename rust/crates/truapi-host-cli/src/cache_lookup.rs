@@ -48,7 +48,8 @@ use truapi::{
 	v01::{
 		BulletinReadVia, CacheOrigin, PreimageReadAttempt, PreimageReadAttemptSource,
 		PreimageReadError, PreimageReadOutcome, PreimageReadReport, PreimageReadRoute,
-		PreimageReadSource, RemotePreimageCacheAccountResponse, RemotePreimageReadResponse,
+		PreimageReadSource, PreimageRetainError, RemotePreimageCacheAccountResponse,
+		RemotePreimageReadResponse, RemotePreimageRetainRequest, RemotePreimageRetainResponse,
 	},
 };
 use zeroize::Zeroizing;
@@ -180,6 +181,19 @@ struct Quote {
 	#[serde(default)]
 	retention_allowance_per_day: u64,
 }
+
+/// What a cache node answers to `POST /pin`.
+#[derive(Deserialize)]
+struct PinReply {
+	until: u64,
+	size: u64,
+	charged: u64,
+	#[serde(default)]
+	chunks: u32,
+}
+
+/// The longest wait for a pin: the node fetches the content first, for a chunked file each chunk.
+const PIN_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// One read through the cache nodes: the value, the provider that served it, and each provider that
 /// the host asked.
@@ -324,6 +338,24 @@ fn receipt_message(
 	let mut message = signed_fields(RECEIPT_PREFIX, transfer, payer, provider, content_id);
 	message.push(0);
 	message.extend_from_slice(&[0; 24]);
+	message
+}
+
+/// The bytes that a payer signs to pay in advance for retention: the layout of a receipt, with the
+/// service byte 1, the size that the retention pays for, and the window `from` to `until`.
+fn retention_message(
+	transfer: &str,
+	payer: &[u8; 32],
+	provider: &[u8; 32],
+	content_id: &str,
+	size: u64,
+	window: (u64, u64),
+) -> Vec<u8> {
+	let mut message = signed_fields(RECEIPT_PREFIX, transfer, payer, provider, content_id);
+	message.push(1);
+	message.extend_from_slice(&size.to_le_bytes());
+	message.extend_from_slice(&window.0.to_le_bytes());
+	message.extend_from_slice(&window.1.to_le_bytes());
 	message
 }
 
@@ -681,6 +713,91 @@ impl CacheNodes {
 		Ok(Some(Answer { value: body.to_vec(), origin, provider_ms, trace, price }))
 	}
 
+	/// Keep the content `cid` of `size` bytes on the provider of `request`, or on the first
+	/// provider in quality order with the home nodes of `cid` first, for `request.period_secs`.
+	/// The payer signs a retention authorization for the size and the window, and the provider
+	/// fetches, checks and keeps the content before it charges.
+	async fn retain(
+		&self,
+		request: &RemotePreimageRetainRequest,
+		cid: &str,
+		size: u64,
+	) -> Result<RemotePreimageRetainResponse, PreimageRetainError> {
+		let unknown = |reason: String| PreimageRetainError::Unknown { reason };
+		let Some(payer) = self.payer() else {
+			return Err(unknown(format!("no cache payer yet: sign in, or set {PAYER_SEED_ENV}")));
+		};
+		let (ids, providers) = self.load_providers();
+		let homes = home_nodes(cid, &ids);
+		let ordered = {
+			let quality = self.quality.lock().expect("cache quality mutex poisoned");
+			order(&providers, &homes, &quality, false, Instant::now())
+		};
+		let provider = match request.provider {
+			Some(id) => {
+				ordered.into_iter().find(|provider| provider.id == id).ok_or_else(|| {
+					unknown("the cache provider is not in the provider set".to_string())
+				})?
+			},
+			None => ordered
+				.into_iter()
+				.next()
+				.ok_or_else(|| unknown("no cache providers".to_string()))?,
+		};
+		let payer_id = payer.public.to_bytes();
+		let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs());
+		let window = (now, now.saturating_add(request.period_secs));
+		let transfer = self.transfer_id();
+		let message = retention_message(&transfer, &payer_id, &provider.id, cid, size, window);
+		let signature = payer.sign_simple(SIGNING_CONTEXT, &message);
+		let body = json!({
+			"reference": { "source": format!("bulletin:{cid}"), "cid": null, "size": size },
+			"authorization": {
+				"receipt": {
+					"transfer": transfer,
+					"payer": hex::encode(payer_id),
+					"provider": hex::encode(provider.id),
+					"content": cid,
+					"service": "Retention",
+					"size": size,
+					"from": window.0,
+					"until": window.1,
+				},
+				"signature": hex::encode(signature.to_bytes()),
+			},
+		});
+		let response = self
+			.http
+			.post(format!("{}/pin", provider.url))
+			.timeout(PIN_TIMEOUT)
+			.json(&body)
+			.send()
+			.await
+			.map_err(|error| unknown(error.to_string()))?;
+		let status = response.status();
+		if !status.is_success() {
+			let text = response.text().await.unwrap_or_default();
+			return Err(pin_error(status, &text));
+		}
+		let reply: PinReply = response.json().await.map_err(|error| unknown(error.to_string()))?;
+		info!(
+			cid,
+			node = provider.url,
+			until = reply.until,
+			charged = reply.charged,
+			"cache node keeps the preimage"
+		);
+		Ok(RemotePreimageRetainResponse {
+			until: reply.until,
+			provider: provider.id,
+			name: provider.name.clone(),
+			region: provider.region.clone(),
+			size: reply.size,
+			chunks: reply.chunks,
+			charged: reply.charged,
+		})
+	}
+
 	/// The account of the payer at the provider `only`, or at the first provider in quality order:
 	/// the quote of the provider's ledger. Without a payer or a provider, there is no account.
 	async fn account(
@@ -777,6 +894,24 @@ impl CacheNodes {
 	}
 }
 
+/// The error of a pin from the status and the text of the node: a payer that cannot pay is
+/// `NotAvailable`, content that no source has is `NotFound`, and a window longer than the node
+/// keeps content is `PeriodTooLong`, with the limit from the text of the node.
+fn pin_error(status: reqwest::StatusCode, text: &str) -> PreimageRetainError {
+	if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+		return PreimageRetainError::NotAvailable;
+	}
+	if status == reqwest::StatusCode::NOT_FOUND {
+		return PreimageRetainError::NotFound;
+	}
+	if let Some(rest) = text.split("a pin ends 1 to ").nth(1) &&
+		let Some(max_secs) = rest.split_whitespace().next().and_then(|secs| secs.parse().ok())
+	{
+		return PreimageRetainError::PeriodTooLong { max_secs };
+	}
+	PreimageRetainError::Unknown { reason: format!("{status}: {text}") }
+}
+
 /// A payer from a 32-byte hex seed. The function expands the seed as Substrate expands an sr25519
 /// mini secret key.
 fn payer_from_seed(seed: &str) -> Result<Keypair, String> {
@@ -796,6 +931,34 @@ impl<S> CacheFirst<S> {
 	/// Ask `cache` before `fallback`. Without cache nodes, `fallback` answers alone.
 	pub fn new(cache: Option<Arc<CacheNodes>>, fallback: S) -> Self {
 		Self { cache, fallback }
+	}
+}
+
+impl<S: BlobSource> CacheFirst<S> {
+	/// Keep the preimage of `request.key` on a cache node. Without a size in the request, the host
+	/// reads the preimage once, from the cache nodes or Bulletin, to learn its size.
+	pub async fn retain(
+		&self,
+		request: RemotePreimageRetainRequest,
+	) -> Result<RemotePreimageRetainResponse, PreimageRetainError> {
+		let Some(cache) = &self.cache else {
+			return Err(PreimageRetainError::Unknown { reason: "no cache providers".to_string() });
+		};
+		let key = <[u8; 32]>::try_from(request.key.as_slice()).map_err(|_| {
+			PreimageRetainError::Unknown { reason: "a preimage key is 32 bytes".to_string() }
+		})?;
+		let cid = preimage_cid(&key);
+		let size = match request.size {
+			Some(size) => size,
+			None => match self.get(&cid).await {
+				Ok(Some(value)) => value.len() as u64,
+				Ok(None) => return Err(PreimageRetainError::NotFound),
+				Err(SourceError::Transient(reason) | SourceError::Permanent(reason)) => {
+					return Err(PreimageRetainError::Unknown { reason });
+				},
+			},
+		};
+		cache.retain(&request, &cid, size).await
 	}
 }
 
@@ -1060,6 +1223,7 @@ mod tests {
 				hex::encode(payer),
 				hex::encode(receipt_message("t-1", &payer, &[7; 32], key)),
 				hex::encode(read_message("t-1", &payer, &[7; 32], key, 1_791_500_000)),
+				hex::encode(retention_message("t-1", &payer, &[7; 32], key, 1 << 20, (1000, 4600))),
 			),
 			(
 				"1b90bef8509cc25b45d94885d8a1eca44bd751212310efc75c9e2628a663b98f".to_string(),
@@ -1068,7 +1232,31 @@ mod tests {
 					"63616368652d726563656970742f32{fields}00000000000000000000000000000000000000000000000000"
 				),
 				format!("63616368652d726561642f31{fields}e01ec86a00000000"),
+				format!(
+					"63616368652d726563656970742f32{fields}010000100000000000e803000000000000f811000000000000"
+				),
 			)
+		);
+	}
+
+	// A product gets a reason that it can act on from the answer of the node.
+	#[test]
+	fn pin_errors() {
+		use reqwest::StatusCode;
+		assert_eq!(
+			[
+				pin_error(StatusCode::PAYMENT_REQUIRED, "refused: payer has 0 credits"),
+				pin_error(StatusCode::NOT_FOUND, "not found"),
+				pin_error(
+					StatusCode::BAD_REQUEST,
+					"rejected: a pin ends 1 to 1209600 seconds after the node's clock 5, not at 9999999"
+				),
+			],
+			[
+				PreimageRetainError::NotAvailable,
+				PreimageRetainError::NotFound,
+				PreimageRetainError::PeriodTooLong { max_secs: 1_209_600 },
+			]
 		);
 	}
 

@@ -55,6 +55,7 @@ pub struct JsBridge {
     pub read_preimage: Function,
     pub read_torrent: Function,
     pub cache_account: Function,
+    pub retain_preimage: Function,
     pub begin_operation: Function,
     pub end_operation: Function,
     pub read: Function,
@@ -121,6 +122,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("readTorrent")),
             cache_account: get_optional_function(callbacks, "cacheAccount")?
                 .unwrap_or_else(|| missing_callback("cacheAccount")),
+            retain_preimage: get_optional_function(callbacks, "retainPreimage")?
+                .unwrap_or_else(|| missing_callback("retainPreimage")),
             begin_operation: get_function(callbacks, "beginOperation")?,
             end_operation: get_function(callbacks, "endOperation")?,
             read: get_function(callbacks, "read")?,
@@ -147,7 +150,8 @@ impl JsBridge {
                 && get_optional_function(callbacks, "removePocketCard")?.is_some(),
             preimage_read_present: get_optional_function(callbacks, "readPreimage")?.is_some()
                 && get_optional_function(callbacks, "readTorrent")?.is_some()
-                && get_optional_function(callbacks, "cacheAccount")?.is_some(),
+                && get_optional_function(callbacks, "cacheAccount")?.is_some()
+                && get_optional_function(callbacks, "retainPreimage")?.is_some(),
             scanner_present: get_optional_function(callbacks, "scanCode")?.is_some(),
         })
     }
@@ -652,6 +656,23 @@ impl crate::platform::PreimageReadHost for WasmPlatform {
             "cacheAccount response did not decode",
         )
         .map_err(|reason| latest::PreimageReadError::Unknown { reason })
+    }
+
+    async fn retain_preimage(
+        &self,
+        request: latest::RemotePreimageRetainRequest,
+    ) -> Result<latest::RemotePreimageRetainResponse, latest::PreimageRetainError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.retain_preimage,
+            vec![Uint8Array::from(request.encode().as_slice()).into()],
+        )
+        .await
+        .map_err(|reason| latest::PreimageRetainError::Unknown { reason })?;
+        decode_bytes::<latest::RemotePreimageRetainResponse>(
+            bytes,
+            "retainPreimage response did not decode",
+        )
+        .map_err(|reason| latest::PreimageRetainError::Unknown { reason })
     }
 }
 

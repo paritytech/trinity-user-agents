@@ -270,6 +270,13 @@ describe("createWebWorkerPairingHostRuntime", () => {
             readPrice: 0n,
             retentionPrice: 0n,
           }),
+          retainPreimage: async () => ({
+            until: 0n,
+            provider: `0x${"00".repeat(32)}`,
+            size: 0n,
+            chunks: 0,
+            charged: 0n,
+          }),
         },
       }),
       { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },

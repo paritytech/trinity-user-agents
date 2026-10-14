@@ -52,6 +52,8 @@ import type {
   RemotePreimageReadResponse,
   RemotePreimageReadTorrentRequest,
   RemotePreimageReadTorrentResponse,
+  RemotePreimageRetainRequest,
+  RemotePreimageRetainResponse,
   Result,
 } from "@parity/truapi";
 
@@ -1698,6 +1700,16 @@ export interface PreimageReadHost {
   cacheAccount(
     request: RemotePreimageCacheAccountRequest,
   ): Promise<RemotePreimageCacheAccountResponse>;
+
+  /**
+   * Keep the preimage of `request.key` on a cache provider for
+   * `request.period_secs`. The host shows the size, the period and the price
+   * to the person, pays the provider with a retention authorization of the
+   * cache payer, and answers what the provider kept.
+   */
+  retainPreimage(
+    request: RemotePreimageRetainRequest,
+  ): Promise<RemotePreimageRetainResponse>;
 }
 
 /**

@@ -7,7 +7,8 @@ use crate::{
 		RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
 		RemotePreimageLookupSubscribeRequest, RemotePreimageReadError, RemotePreimageReadRequest,
 		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
-		RemotePreimageReadTorrentResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+		RemotePreimageReadTorrentResponse, RemotePreimageRetainError, RemotePreimageRetainRequest,
+		RemotePreimageRetainResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
 		RemotePreimageSubmitResponse,
 	},
 	wire, wire_trait,
@@ -149,6 +150,34 @@ pub trait Preimage: Send + Sync {
 		_cx: &CallContext,
 		_request: RemotePreimageCacheAccountRequest,
 	) -> Result<RemotePreimageCacheAccountResponse, CallError<RemotePreimageReadError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Keep a preimage on a cache provider for a period, paid in advance from
+	/// the cache payer of the product. The host asks the person for the
+	/// permission `PreimageRetain` once, and shows the size, the period and the
+	/// price before it pays. The provider fetches the preimage (for a chunked
+	/// file, the manifest and its chunks), checks it against its key and keeps it
+	/// until `until`. Retention is best effort: Bulletin stays the durable copy.
+	/// A host without cache providers answers `Unsupported`.
+	///
+	/// ```ts
+	/// const kept = await truapi.preimage.retain({
+	///   key: "0x…",
+	///   periodSecs: 7n * 24n * 3600n,
+	///   size: undefined,
+	///   provider: undefined,
+	/// });
+	/// if (kept.isOk()) {
+	///   console.log("kept until", kept.value.until, "for", kept.value.charged);
+	/// }
+	/// ```
+	#[wire(id = 2)]
+	async fn retain(
+		&self,
+		_cx: &CallContext,
+		_request: RemotePreimageRetainRequest,
+	) -> Result<RemotePreimageRetainResponse, CallError<RemotePreimageRetainError>> {
 		Err(CallError::unavailable())
 	}
 }

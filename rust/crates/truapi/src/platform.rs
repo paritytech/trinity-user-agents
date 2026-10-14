@@ -42,11 +42,12 @@ use truapi::{
 		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
-		PreimageReadError, PreimageReadRoute, ProductAccountId, ProductAccountTxPayload,
-		ProductProofContext, RemotePermission, RemotePermissionRequest,
+		PreimageReadError, PreimageReadRoute, PreimageRetainError, ProductAccountId,
+		ProductAccountTxPayload, ProductProofContext, RemotePermission, RemotePermissionRequest,
 		RemotePreimageCacheAccountRequest, RemotePreimageCacheAccountResponse,
 		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
-		RemotePreimageReadTorrentResponse, RingLocation,
+		RemotePreimageReadTorrentResponse, RemotePreimageRetainRequest,
+		RemotePreimageRetainResponse, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -3083,6 +3084,15 @@ pub trait PreimageReadHost: Send + Sync {
 		&self,
 		request: RemotePreimageCacheAccountRequest,
 	) -> Result<RemotePreimageCacheAccountResponse, PreimageReadError>;
+
+	/// Keep the preimage of `request.key` on a cache provider for
+	/// `request.period_secs`. The host shows the size, the period and the price
+	/// to the person, pays the provider with a retention authorization of the
+	/// cache payer, and answers what the provider kept.
+	async fn retain_preimage(
+		&self,
+		request: RemotePreimageRetainRequest,
+	) -> Result<RemotePreimageRetainResponse, PreimageRetainError>;
 }
 
 /// Host-implemented adapter through which product Chat calls reach host

@@ -233,6 +233,14 @@ pub mod latest {
 	/// Cache account of the payer of a product, and the prices of the ledger.
 	pub type RemotePreimageCacheAccountResponse =
 		LatestOf<versioned::preimage::RemotePreimageCacheAccountResponse>;
+	/// Preimage retention request: the key, the period, the size and the provider.
+	pub type RemotePreimageRetainRequest =
+		LatestOf<versioned::preimage::RemotePreimageRetainRequest>;
+	/// Preimage retention result: the provider, the end and the charge.
+	pub type RemotePreimageRetainResponse =
+		LatestOf<versioned::preimage::RemotePreimageRetainResponse>;
+	/// Preimage retention failure.
+	pub type PreimageRetainError = LatestOf<versioned::preimage::RemotePreimageRetainError>;
 	/// Preimage read failure.
 	pub type PreimageReadError = LatestOf<versioned::preimage::RemotePreimageReadError>;
 	/// Login request error.
