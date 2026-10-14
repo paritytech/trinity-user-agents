@@ -6,8 +6,16 @@ import Operation_iOS
 import Products
 import StructuredConcurrency
 
+/// The products the provider serves bots for, and the bots built so far. A product is listed as
+/// soon as it is known; its bot follows once the manifest resolves and the worker archive
+/// downloads, or never when neither can be read.
+struct ProductBots {
+    let products: [Product]
+    let built: [ProductBot]
+}
+
 protocol ProductBotProviding {
-    func observeBots() -> AnyAsyncSequence<[ProductBot]>
+    func observeBots() -> AnyAsyncSequence<ProductBots>
 }
 
 final class ProductBotProvider: ProductBotProviding {
@@ -40,34 +48,31 @@ final class ProductBotProvider: ProductBotProviding {
         self.logger = logger
     }
 
-    func observeBots() -> AnyAsyncSequence<[ProductBot]> {
-        productProvider.asyncStream()
+    /// Lists every product before building a single bot, so a chat row never waits on the manifest
+    /// or the worker archive.
+    func observeBots() -> AnyAsyncSequence<ProductBots> {
+        var productDicts = productProvider.asyncStream()
             .scan([String: Product]()) { dict, changes in
                 changes.mergeToDict(dict)
             }
-            .map { [self] productDict in
-                var products = Array(productDict.values)
+            .makeAsyncIterator()
+        var listed: [Product]?
 
-                #if targetEnvironment(simulator)
-                    if let injected = Self.simulatorChatProduct(),
-                       !products.contains(where: { $0.identifier == injected.identifier }) {
-                        products.append(injected)
-                    }
-                #endif
-
-                // After the E2E injection, so a launcher naming a host-placed product keeps the
-                // display name it asked for.
-                for hostPlaced in await hostPlacedProducts() {
-                    guard !products.contains(where: { $0.identifier == hostPlaced.identifier }) else {
-                        continue
-                    }
-
-                    products.append(hostPlaced)
-                }
-
-                return await makeBots(for: products)
+        // Pulled by the store, so a new product dict is read only after the previous one's bots
+        // were built, and the consumer's cancellation reaches the resolve in flight.
+        return AsyncThrowingStream(unfolding: { [self] in
+            if let products = listed {
+                listed = nil
+                return await ProductBots(products: products, built: makeBots(for: products))
             }
-            .eraseToAnyAsyncSequence()
+
+            guard let productDict = try await productDicts.next() else { return nil }
+
+            let products = await listProducts(from: productDict)
+            listed = products
+
+            return ProductBots(products: products, built: [])
+        }).eraseToAnyAsyncSequence()
     }
 
     #if targetEnvironment(simulator)
@@ -94,6 +99,29 @@ final class ProductBotProvider: ProductBotProviding {
 }
 
 private extension ProductBotProvider {
+    func listProducts(from productDict: [String: Product]) async -> [Product] {
+        var products = Array(productDict.values)
+
+        #if targetEnvironment(simulator)
+            if let injected = Self.simulatorChatProduct(),
+               !products.contains(where: { $0.identifier == injected.identifier }) {
+                products.append(injected)
+            }
+        #endif
+
+        // After the E2E injection, so a launcher naming a host-placed product keeps the
+        // display name it asked for.
+        for hostPlaced in await hostPlacedProducts() {
+            guard !products.contains(where: { $0.identifier == hostPlaced.identifier }) else {
+                continue
+            }
+
+            products.append(hostPlaced)
+        }
+
+        return products
+    }
+
     /// Unioned into the stream rather than written to the product repository: nothing installs
     /// them, so nothing can uninstall them either. Pocket refuses to remove a privileged card;
     /// this gets the same result without a second copy of the collection to keep in step.

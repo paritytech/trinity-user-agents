@@ -6,7 +6,7 @@ extension Chat.LocalModel {
         case let .person(contact):
             return contact.toPeerMetadata()
         case let .chatExtension(extId, _):
-            let extMetadata = registry.getChatExtensionBot(for: extId)?.peerMetadata ?? .unknown
+            let extMetadata = registry.peerMetadata(for: extId) ?? .unknown
 
             return Chat.PeerMetadata(
                 name: roomMetadata?.name ?? extMetadata.name,

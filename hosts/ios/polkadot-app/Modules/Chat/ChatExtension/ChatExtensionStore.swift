@@ -1,5 +1,6 @@
 import Foundation
 import AsyncExtensions
+import Products
 
 protocol ChatExtensionStoring: AnyObject {
     var delegate: ChatExtensionDelegate? { get set }
@@ -7,6 +8,9 @@ protocol ChatExtensionStoring: AnyObject {
     var allExtensions: [ChatExtending] { get }
 
     func getChatExtensionBot(for extensionId: ChatExtension.Id) -> ChatExtensionBotProtocol?
+
+    /// The product listed under this id, whether or not its bot is built yet.
+    func product(for extensionId: ChatExtension.Id) -> Product?
 
     func startObserving()
 }
@@ -18,6 +22,7 @@ final class ChatExtensionStore: ChatExtensionStoring {
     private let productBotProvider: ProductBotProviding
 
     private let lock = NSLock()
+    private var products: [ChatExtension.Id: Product] = [:]
     private var productBots: [ChatExtension.Id: ProductBot] = [:]
     private var observationTask: Task<Void, Never>?
 
@@ -56,12 +61,19 @@ final class ChatExtensionStore: ChatExtensionStoring {
         return bot
     }
 
+    func product(for extensionId: ChatExtension.Id) -> Product? {
+        lock.lock()
+        let product = products[extensionId]
+        lock.unlock()
+        return product
+    }
+
     func startObserving() {
         observationTask = Task { [weak self, productBotProvider] in
             do {
-                for try await incomingBots in productBotProvider.observeBots() {
+                for try await bots in productBotProvider.observeBots() {
                     guard !Task.isCancelled else { return }
-                    self?.diffAndApply(incomingBots)
+                    self?.apply(bots)
                 }
             } catch {
                 // Stream completed with error — observation stops
@@ -71,38 +83,43 @@ final class ChatExtensionStore: ChatExtensionStoring {
 
     // MARK: - Private
 
-    private func diffAndApply(_ incomingBots: [ProductBot]) {
-        let incomingById = Dictionary(
-            incomingBots.map { ($0.identifier, $0) },
+    /// A product keeps the bot it already has: swapping one would drop the worker it drives, and a
+    /// later build that yields none leaves it in place; only a product that left the list loses
+    /// its bot. A product is enabled when it is listed and again when its bot is built, so the
+    /// list redraws its rows with the bot's metadata.
+    private func apply(_ incoming: ProductBots) {
+        let incomingProducts = Dictionary(
+            incoming.products.map { ($0.extensionId, $0) },
+            uniquingKeysWith: { _, last in last }
+        )
+        let incomingBots = Dictionary(
+            incoming.built.map { ($0.identifier, $0) },
             uniquingKeysWith: { _, last in last }
         )
 
-        let added: [ProductBot]
-        let removed: [ProductBot]
-
         lock.lock()
 
-        let existingIds = Set(productBots.keys)
-        let incomingIds = Set(incomingById.keys)
+        let removedIds = Set(products.keys).subtracting(incomingProducts.keys)
+        let addedProductIds = Set(incomingProducts.keys).subtracting(products.keys)
+        products = incomingProducts
 
-        let addedIds = incomingIds.subtracting(existingIds)
-        let removedIds = existingIds.subtracting(incomingIds)
+        let removedBots = removedIds.compactMap { productBots.removeValue(forKey: $0) }
+        let addedBotIds = Set(incomingBots.keys).subtracting(productBots.keys)
 
-        removed = removedIds.compactMap { productBots.removeValue(forKey: $0) }
-        added = addedIds.compactMap { incomingById[$0] }
-
-        for bot in added {
-            productBots[bot.identifier] = bot
+        for id in addedBotIds {
+            productBots[id] = incomingBots[id]
         }
 
         lock.unlock()
 
-        for bot in removed {
+        for bot in removedBots {
             Task { await bot.dispose() }
         }
 
-        if !addedIds.isEmpty {
-            delegate?.didEnableExtensions(addedIds)
+        let enabledIds = addedProductIds.union(addedBotIds)
+
+        if !enabledIds.isEmpty {
+            delegate?.didEnableExtensions(enabledIds)
         }
 
         if !removedIds.isEmpty {
