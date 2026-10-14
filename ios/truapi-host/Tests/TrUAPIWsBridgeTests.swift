@@ -122,7 +122,7 @@ struct TrUAPIWsBridgeTests {
     }
 }
 
-private extension TrUAPIWsBridgeTests {
+extension TrUAPIWsBridgeTests {
     static func makeHostRuntimeConfig() throws -> HostRuntimeConfig {
         try HostRuntimeConfig(
             hostName: "truapi-host-tests",
@@ -135,7 +135,9 @@ private extension TrUAPIWsBridgeTests {
             databaseDirectory: temporaryDatabaseDirectory()
         )
     }
+}
 
+private extension TrUAPIWsBridgeTests {
     // wire_table.rs: SYSTEM_FEATURE_SUPPORTED { trait_id: 1, method_id: 1 }.
     // Both bytes are load-bearing: a lone method byte is read as the trait and
     // routes into a different trait's method 0 rather than failing.
@@ -277,7 +279,7 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
 }
 
 // Conforms to `ChatHostBridge` so a new requirement there fails this job.
-// Every member is written out: the protocol supplies no defaults.
+// Every member is written out, also the members with a default.
 final class StubChatHostBridge: ChatHostBridge {
     func createRoom(
         roomId _: String,
@@ -298,6 +300,26 @@ final class StubChatHostBridge: ChatHostBridge {
     func setRoomFooter(roomId _: String, footer _: ChatRoomFooter) async throws {}
 
     func listRooms() async throws -> [ChatRoom] { [] }
+
+    func roomConfig(roomId _: String) async throws -> ChatRoomConfig { .hostDefault }
+
+    func setRoomConfig(roomId _: String, config _: ChatRoomConfig) async throws {}
+
+    func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
+
+    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws {}
+
+    func deleteRoom(roomId _: String) async throws {}
+
+    func updateFeed(roomId _: String, update _: ChatFeedUpdate, persist _: Bool) async throws {}
+
+    func setRoomToolbar(roomId _: String, actions _: [ChatToolbarAction]) async throws {}
+
+    func setRoomSuggestions(roomId _: String, suggestions _: [ChatSuggestion]) async throws {}
+
+    func setRoomCommands(roomId _: String, commands _: [ChatCommandSpec]) async throws {}
+
+    func setRoomActivity(roomId _: String, activity _: ChatActivity?) async throws {}
 }
 
 // Conforms to `PocketHostBridge` so a new requirement there fails this job.
