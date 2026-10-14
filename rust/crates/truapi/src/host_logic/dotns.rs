@@ -244,7 +244,7 @@ fn classify_localhost(input: &str) -> Option<NavigateDecision> {
 /// a [`NavigateDecision::Reject`] so dangerous schemes (`javascript:`,
 /// `data:`, `file:`, `vbscript:`, ...) cannot reach `Platform::navigate_to`.
 const ALLOWED_EXTERNAL_SCHEMES: &[&str] =
-	&["http", "https", "mailto", "tel", "sms", "maps", "polkadot", "dot"];
+	&["http", "https", "mailto", "tel", "sms", "maps", "polkadotapp"];
 
 /// Mirrors `normalizeUrl`: prepend `https://` if missing, otherwise pass the
 /// URL through as its canonical string form. Returns `Err(reason)` for an
@@ -285,7 +285,6 @@ mod tests {
 
 	enum Expected {
 		Decision(NavigateDecision),
-		AnyExternalOrReject,
 		Reject,
 	}
 
@@ -471,9 +470,9 @@ mod tests {
 				expected: dot("game.dot", "shop/-/pocket"),
 			},
 			TestCase {
-				name: "polkadot scheme non dot host falls through",
-				input: "polkadot://example.com/settings",
-				expected: Expected::AnyExternalOrReject,
+				name: "polkadotapp scheme hands off to the app",
+				input: "polkadotapp://pay",
+				expected: external("polkadotapp://pay"),
 			},
 			TestCase {
 				name: "polkadot scheme with path",
@@ -668,16 +667,6 @@ mod tests {
 			let actual = parse_navigate(case.input);
 			match case.expected {
 				Expected::Decision(expected) => assert_eq!(actual, expected, "{}", case.name),
-				Expected::AnyExternalOrReject => {
-					assert!(
-						matches!(
-							actual,
-							NavigateDecision::External { .. } | NavigateDecision::Reject { .. }
-						),
-						"{}: expected External or Reject, got {actual:?}",
-						case.name,
-					)
-				},
 				Expected::Reject => {
 					assert!(
 						matches!(actual, NavigateDecision::Reject { .. }),
