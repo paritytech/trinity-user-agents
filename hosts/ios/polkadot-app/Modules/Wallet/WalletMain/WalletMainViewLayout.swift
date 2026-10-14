@@ -74,6 +74,13 @@ struct WalletView: View {
                     // peek a card shows is all of it that takes a press, the
                     // rest is under the card above.
                     PocketCollectionCardView(card: card)
+                        .onGeometryChange(for: CGRect.self) { proxy in
+                            proxy.frame(in: .global)
+                        } action: {
+                            viewModel.pocketCardFrames[card.key] = $0
+                        }
+                        // Its screen draws the card while it is open.
+                        .opacity(viewModel.openPocketCard == card.key ? 0 : 1)
                         .contentShape(RoundedRectangle(cornerRadius: PocketCardSize.cornerRadius))
                         .onTapGesture { viewModel.onOpenPocketCard?(card) }
                         // A host-placed card is removable by nobody, so a long

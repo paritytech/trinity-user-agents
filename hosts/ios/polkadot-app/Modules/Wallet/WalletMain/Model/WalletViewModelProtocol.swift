@@ -21,12 +21,14 @@ enum WalletExpandedSection: Equatable {
     }
 }
 
-protocol WalletViewModelProtocol: Observation.Observable {
+protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     var identityDetailsViewModel: IdentityDetailsViewModel { get set }
     var assetDetailsViewModel: AssetDetailsViewModel { get set }
     var expandedSection: WalletExpandedSection { get set }
     var isCollectiblesAvailable: Bool { get set }
     var pocketCards: [PocketCardViewModel] { get set }
+    var pocketCardFrames: [PocketCardKey: CGRect] { get set }
+    var openPocketCard: PocketCardKey? { get set }
 
     var onUsername: (() -> Void)? { get set }
     var onBalance: (() -> Void)? { get set }
@@ -44,6 +46,10 @@ class WalletViewModel: WalletViewModelProtocol {
     var expandedSection: WalletExpandedSection = .none
     var isCollectiblesAvailable: Bool = false
     var pocketCards: [PocketCardViewModel] = []
+    /// Where each card is in the window, for its screen to fly from. Read on
+    /// demand, so moving a card never redraws the Pocket.
+    @ObservationIgnored var pocketCardFrames: [PocketCardKey: CGRect] = [:]
+    var openPocketCard: PocketCardKey?
 
     var onUsername: (() -> Void)?
     var onBalance: (() -> Void)?

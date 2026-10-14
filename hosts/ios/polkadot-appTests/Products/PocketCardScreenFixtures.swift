@@ -23,11 +23,12 @@ func showing(_ root: UIViewController) throws -> UIWindow {
 }
 
 /// Wraps a card's screen as the app presents it: the root of a full-screen
-/// navigation controller.
+/// navigation controller whose presentation the screen animates.
 @MainActor
-func cardNavigation(_ screen: UIViewController) -> UINavigationController {
+func cardNavigation(_ screen: PocketCardScreenViewController) -> UINavigationController {
     let navigation = AppNavigationController(rootViewController: screen)
     navigation.modalPresentationStyle = .fullScreen
+    navigation.transitioningDelegate = screen
     return navigation
 }
 
@@ -44,7 +45,7 @@ func present(_ presented: UIViewController, from presenter: UIViewController) as
 /// Presents `screen` as the app presents a card and returns the window it is
 /// shown in, which the test keeps alive.
 @MainActor
-func presentCard(_ screen: UIViewController) async throws -> UIWindow {
+func presentCard(_ screen: PocketCardScreenViewController) async throws -> UIWindow {
     let presenter = UIViewController()
     let window = try showing(presenter)
     await present(cardNavigation(screen), from: presenter)
@@ -53,9 +54,9 @@ func presentCard(_ screen: UIViewController) async throws -> UIWindow {
 
 /// Closes the card `screen` is presented in and returns once it has closed.
 @MainActor
-func closeCard(_ screen: UIViewController) async {
+func closeCard(_ screen: UIViewController, animated: Bool = true) async {
     await withCheckedContinuation { closed in
-        screen.dismiss(animated: true) { closed.resume() }
+        screen.dismiss(animated: animated) { closed.resume() }
     }
 }
 
