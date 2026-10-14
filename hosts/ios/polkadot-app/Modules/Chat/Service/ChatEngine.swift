@@ -190,6 +190,7 @@ extension ChatEngine: ChatEngineProtocol {
         }
 
         try await messageStatusUpdateRepository.saveOperation({ updates }, { [] }).asyncExecute()
+        await reportSeen(messageIds)
     }
 
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?> {

@@ -3,14 +3,13 @@ import Foundation
 /// What a product room offers. The value comes from the declarations of the product and, for each aspect
 /// that the product does not declare, from the host defaults of 02-DESIGN §4.
 ///
-/// The policy reads the footer and the chat-list preview of a room. The room configuration stays opaque
-/// bytes until the Swift bindings of P2.10 exist, so the aspects that it sets use the defaults.
+/// The policy reads the footer, the chat-list preview, the configuration and the commands of a room. The
+/// toolbar and the activity line keep the defaults until the room screen draws them (P6).
 struct ChatRoomPolicy: Equatable {
     enum MessageStore: Equatable {
         /// The host database keeps the messages. `post_message` and feed updates write to it.
         case host
-        /// The product keeps the messages, and the host keeps a page cache (`product_source`). No room has
-        /// this store until the configuration of a room decodes (P2.10).
+        /// The product keeps the messages, and the host keeps a page cache (`product_source`).
         case product
     }
 
@@ -76,9 +75,23 @@ struct ChatRoomPolicy: Equatable {
         case empty
     }
 
+    /// Only a declared command name after `/` is a command. Any other `/text` is a message
+    /// (02-DESIGN §13 item 12).
     enum SlashCommands: Equatable {
-        /// Any `/name` is a command. This is the behaviour until a product can declare its commands.
-        case anyName
+        case declared(Set<String>)
+
+        func isCommand(_ name: String) -> Bool {
+            switch self {
+            case let .declared(names): names.contains(name)
+            }
+        }
+    }
+
+    /// A question that the host asks the product about the room (02-DESIGN §3.2).
+    enum ProductQuery: Hashable, CaseIterable {
+        case participants
+        case messageActions
+        case participantActions
     }
 
     let messageStore: MessageStore
@@ -98,6 +111,10 @@ struct ChatRoomPolicy: Equatable {
     let activity: String?
     /// The host applies reply, edit, delete and reactions to its own store and reports them to the product.
     let hostAppliesUserActions: Bool
+    /// The questions that the room declares. Each other aspect uses the host default.
+    var productQueries: Set<ProductQuery> = []
+    /// Goes up by one at each configuration that the product sets, so an open room knows to reload.
+    var configGeneration: Int64 = 0
 }
 
 extension ChatRoomPolicy {
@@ -123,30 +140,46 @@ extension ChatRoomPolicy {
         footer: .input(defaultInput),
         placeholder: nil,
         suggestions: [],
-        slashCommands: .anyName,
+        slashCommands: .declared([]),
         activity: nil,
         hostAppliesUserActions: true
     )
 
     /// The policy of a room with the footer and the chat-list preview that the product set, if any.
     init(footer: Chat.RoomFooter?, preview: Chat.RoomPreview = .hostDefault) {
+        self.init(footer: footer, declarations: nil, preview: preview)
+    }
+
+    /// The policy of a room from what its product declared. A nil value of a declaration uses the default.
+    init(footer: Chat.RoomFooter?, declarations: Chat.RoomDeclarations?) {
+        self.init(footer: footer, declarations: declarations, preview: declarations?.preview ?? .hostDefault)
+    }
+
+    private init(footer: Chat.RoomFooter?, declarations: Chat.RoomDeclarations?, preview: Chat.RoomPreview) {
         let defaults = Self.defaults
+        let config = declarations?.effectiveConfig ?? .hostDefault
+
         self.init(
-            messageStore: defaults.messageStore,
+            messageStore: config.productSource ? .product : .host,
             listPreview: ListPreview(preview: preview),
             listBadge: ListBadge(badge: preview.badge),
             listOrder: ListOrder(isPinned: preview.order == .pinToTop, timestamp: preview.timestamp),
-            reportsSeen: defaults.reportsSeen,
-            messageMenu: defaults.messageMenu,
+            reportsSeen: config.reportSeen,
+            messageMenu: MessageMenu(
+                builtIns: defaults.messageMenu.builtIns,
+                allowedReactions: config.allowedReactions
+            ),
             participants: defaults.participants,
-            offersReactionDetails: defaults.offersReactionDetails,
+            offersReactionDetails: config.reactionDetails,
             toolbar: defaults.toolbar,
-            footer: footer == .empty ? .empty : defaults.footer,
-            placeholder: defaults.placeholder,
-            suggestions: defaults.suggestions,
-            slashCommands: defaults.slashCommands,
+            footer: Footer(declared: declarations?.footerConfig, legacy: footer) ?? defaults.footer,
+            placeholder: config.placeholder,
+            suggestions: declarations?.suggestions?.map(\.text) ?? defaults.suggestions,
+            slashCommands: .declared(Set(declarations?.commands?.map(\.name) ?? [])),
             activity: defaults.activity,
-            hostAppliesUserActions: defaults.hostAppliesUserActions
+            hostAppliesUserActions: !config.productSource,
+            productQueries: ProductQuery.declared(by: config),
+            configGeneration: declarations?.configGeneration ?? 0
         )
     }
 
@@ -187,6 +220,41 @@ extension ChatRoomPolicy {
     }
 }
 
+private extension ChatRoomPolicy.Footer {
+    /// The declared footer wins over the footer of the first version. A product draws no custom footer on this
+    /// host yet (P6.6), so the bridge refuses one and a stored one reads as no declaration.
+    init?(declared: Chat.RoomFooterConfig?, legacy: Chat.RoomFooter?) {
+        switch declared {
+        case let .input(input):
+            self = .input(ChatRoomPolicy.Input(
+                allowsPhoto: input.photo,
+                allowsVideo: input.video,
+                allowsFile: input.file,
+                allowsPayment: input.payment != nil,
+                placeholder: input.placeholder
+            ))
+        case .empty:
+            self = .empty
+        case .custom,
+             nil:
+            guard legacy == .empty else { return nil }
+            self = .empty
+        }
+    }
+}
+
+private extension ChatRoomPolicy.ProductQuery {
+    static func declared(by config: Chat.RoomConfig) -> Set<Self> {
+        Set(allCases.filter { query in
+            switch query {
+            case .participants: config.participants
+            case .messageActions: config.messageActions
+            case .participantActions: config.participantActions
+            }
+        })
+    }
+}
+
 private extension ChatRoomPolicy.ListPreview {
     init(preview: Chat.RoomPreview) {
         if let text = preview.text {
@@ -215,7 +283,7 @@ extension Chat.LocalModel {
         case .person:
             nil
         case .chatExtension:
-            ChatRoomPolicy(footer: roomFooter, preview: roomDeclarations?.preview ?? .hostDefault)
+            ChatRoomPolicy(footer: roomFooter, declarations: roomDeclarations)
         }
     }
 }
