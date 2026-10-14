@@ -2,6 +2,8 @@
 //!
 //! Local and paired hosts use the same request and session types.
 
+use super::product_consent::ProductConsent;
+use crate::platform::ProductContext;
 use async_trait::async_trait;
 use truapi::{
 	CallContext, CancellationReason,
@@ -31,6 +33,31 @@ use crate::{
 		statement_store::statement_public_key_from_secret,
 	},
 };
+
+/// Trust boundary for product identity and host permissions.
+#[derive(Clone, Copy)]
+pub enum AccountCaller<'a> {
+	/// Product identity bound by this host's runtime.
+	Local {
+		/// Product bound by the host runtime.
+		product: &'a ProductContext,
+	},
+	/// Product identity reported by an authenticated paired host.
+	Remote {
+		/// Some SSO operations carry no product identity.
+		product_id: Option<&'a str>,
+	},
+}
+
+impl AccountCaller<'_> {
+	/// Product named by this invocation, when the transport supplied one.
+	pub fn product_id(&self) -> Option<&str> {
+		match self {
+			Self::Local { product } => Some(&product.product_id),
+			Self::Remote { product_id } => *product_id,
+		}
+	}
+}
 
 /// Core-only Bulletin key, zeroized on drop and redacted in diagnostics.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
@@ -123,6 +150,9 @@ pub enum AuthorityError {
 	/// User or authority rejected the request.
 	#[display("Rejected")]
 	Rejected,
+	/// The platform could not present or complete a wallet review.
+	#[display("confirmation failed: {}", _0.reason)]
+	ConfirmationFailed(#[error(not(source))] crate::latest::GenericError),
 	/// The selected authority session is no longer active.
 	#[display("Disconnected")]
 	Disconnected,
@@ -191,6 +221,9 @@ impl From<AuthorityError> for HostAccountSignVrfError {
 		match err {
 			AuthorityError::Disconnected => Self::NotConnected,
 			AuthorityError::Rejected => Self::Rejected,
+			AuthorityError::ConfirmationFailed(error) => {
+				Self::Unknown { reason: format!("VRF signing confirmation failed: {error:?}") }
+			},
 			AuthorityError::Cancelled(err) => Self::Unknown { reason: err.to_string() },
 			AuthorityError::Unavailable { reason } |
 			AuthorityError::NotSupported { reason } |
@@ -310,6 +343,9 @@ impl StatementStoreAllowanceKey {
 pub trait ProductAuthority: Send + Sync {
 	/// Current account-authority session, if connected.
 	fn current_session(&self) -> Option<AuthoritySession>;
+
+	/// This runtime's account-access decisions and operation reviews.
+	fn consent(&self) -> &ProductConsent;
 
 	/// Seed a product subtree for authority tests.
 	#[cfg(test)]
