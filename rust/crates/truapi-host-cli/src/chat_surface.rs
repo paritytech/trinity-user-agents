@@ -321,7 +321,7 @@ fn unknown_room(room_id: &str) -> Value {
 mod tests {
 	use super::*;
 	use truapi::{
-		latest::HostChatCreateRoomRequest,
+		latest::{ChatRoomConfig, ChatRoomMetadata, HostChatCreateRoomRequest},
 		platform::{ChatPlatform, ProductContext},
 	};
 
@@ -366,9 +366,15 @@ mod tests {
 			&product,
 			HostChatCreateRoomRequest {
 				room_id: "daily".to_string(),
-				name: "Daily".to_string(),
-				icon: String::new(),
+				metadata: ChatRoomMetadata {
+					name: "Daily".to_string(),
+					avatar: None,
+					description: None,
+				},
+				config: ChatRoomConfig::default(),
+				preview: None,
 			},
+			String::new(),
 		))
 		.expect("a new room is created");
 		ChatSurface::new(chat, worker_bundle, "chat.dot".to_string())

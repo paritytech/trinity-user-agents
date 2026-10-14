@@ -383,8 +383,8 @@ impl ChatPlatform for CliChatHost {
 		} else {
 			let room = RoomRecord {
 				participating_as: ChatRoomParticipation::RoomHost,
-				name: request.name.clone(),
-				icon: request.icon.clone(),
+				name: request.metadata.name.clone(),
+				icon: icon_url.clone(),
 			};
 			let event = with_kind("room", room_json(&request.room_id, &room));
 			state.rooms.insert(request.room_id.clone(), room);
@@ -587,8 +587,12 @@ mod tests {
 		let (before, mut early) = host.observe();
 		assert!(before.rooms.is_empty());
 
-		futures::executor::block_on(host.create_chat_room(&product(), room("support")))
-			.expect("a new room is created");
+		futures::executor::block_on(host.create_chat_room(
+			&product(),
+			room("support"),
+			String::new(),
+		))
+		.expect("a new room is created");
 		let (after, mut late) = host.observe();
 		let id = post(&host, "support", text("hi"));
 
@@ -624,8 +628,12 @@ mod tests {
 	fn person_and_product_messages_share_one_id_sequence() {
 		let transcript = tempfile::NamedTempFile::new().expect("a temp transcript");
 		let host = CliChatHost::new(Some(transcript.path().to_path_buf()));
-		futures::executor::block_on(host.create_chat_room(&product(), room("support")))
-			.expect("a new room is created");
+		futures::executor::block_on(host.create_chat_room(
+			&product(),
+			room("support"),
+			String::new(),
+		))
+		.expect("a new room is created");
 
 		let first = post(&host, "support", text("welcome"));
 		let second = host.post_person_message("support", text("hello")).expect("the room exists");
