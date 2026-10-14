@@ -16,7 +16,9 @@ final class ChatInteractor {
     private var messagesTask: Task<Void, Never>?
     private var metadataTask: Task<Void, Never>?
     private var footerTask: Task<Void, Never>?
-    private let state = ChatInteractorState()
+    /// The last open, close or retry of the room. Each one waits for the one before it.
+    var roomTask: Task<Void, Never>?
+    let state = ChatInteractorState()
 
     private let notificationsCleaner: any PushNotificationsCleaning
 
@@ -382,33 +384,6 @@ extension ChatInteractor: ChatInteractorInputProtocol {
         }
     }
 
-    func loadOlderMessages() {
-        Task { [engine, state] in
-            guard await state.paging.older.canAsk else {
-                return
-            }
-
-            _ = await engine.loadOlder()
-        }
-    }
-
-    func loadNewerMessages() {
-        Task { [engine, state] in
-            guard await state.paging.newer.canAsk else {
-                return
-            }
-
-            _ = await engine.loadNewer()
-        }
-    }
-
-    func jump(to messageId: Chat.MessageId) {
-        Task { [weak self, engine] in
-            let found = await engine.jump(to: messageId)
-            await self?.presenter?.didJump(to: messageId, found: found)
-        }
-    }
-
     func retrySend(messageId: Chat.MessageId) {
         // Only a product-source room offers Retry (02-DESIGN §13 item 9). It sends again through `user_action`.
         Task {
@@ -478,12 +453,5 @@ extension ChatInteractor {
         case let .chatExtension(chatExtensionId, _):
             foregroundVisibilityReporter.updateVisibleScreen(.chatExtension(extensionId: chatExtensionId))
         }
-    }
-}
-
-private extension ChatPagingState.Edge {
-    /// True when a page for this end can come: more messages exist, or the last page failed.
-    var canAsk: Bool {
-        self == .more || self == .failed
     }
 }

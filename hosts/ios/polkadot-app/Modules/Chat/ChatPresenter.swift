@@ -51,10 +51,12 @@ extension ChatPresenter: ChatPresenterProtocol {
 
     func viewWillAppear() {
         interactor.notifyViewAppeared()
+        interactor.openRoom()
     }
 
     func viewWillDisappear() {
         interactor.notifyViewDisappeared()
+        interactor.closeRoom()
     }
 
     func send(text: String, replyToMessageId: String? = nil) {
@@ -114,18 +116,6 @@ extension ChatPresenter: ChatPresenterProtocol {
 
         interactor.readMessages([targetMessageId])
     }
-
-    func loadOlderMessages() {
-        interactor.loadOlderMessages()
-    }
-
-    func loadNewerMessages() {
-        interactor.loadNewerMessages()
-    }
-
-    func jumpToMessage(_ messageId: String) {
-        interactor.jump(to: messageId)
-    }
 }
 
 extension ChatPresenter: ChatInteractorOutputProtocol {
@@ -167,18 +157,6 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
 
     func didRemoveChat() {
         wireframe.dismissChat(from: view)
-    }
-
-    func didRefuseUserAction(reason: String?) {
-        view?.showActionFailure(reason ?? String(localized: .ChatExtension.actionRefused))
-    }
-
-    func didJump(to messageId: Chat.MessageId, found: Bool) {
-        guard found else {
-            return
-        }
-
-        view?.scrollToMessage(messageId)
     }
 }
 
@@ -266,6 +244,7 @@ private extension ChatPresenter {
             footerConfiguration: footer
         )
         viewModel.paging = ChatViewLayout.ViewModel.Paging(paging: listModel.paging)
+        viewModel.roomStatus = ChatViewLayout.ViewModel.RoomStatus(readiness: listModel.readiness)
         view?.didReceive(viewModel: viewModel)
     }
 
@@ -504,21 +483,5 @@ private extension ChatPresenter {
                 )
             }
         }
-    }
-}
-
-extension ChatPresenter: ChatMoreActionsDelegate {
-    func didConfirmLeaveChat() {
-        interactor.leaveChat()
-    }
-
-    func didConfirmBlockUser() {
-        interactor.blockUser()
-    }
-}
-
-extension ChatPresenter: ChatAttachmentPreviewDelegate {
-    func attachmentPreview(didComplete text: String, attachment: ProcessedAttachment) {
-        interactor.send(text: text, attachments: [attachment], replyToMessageId: nil)
     }
 }

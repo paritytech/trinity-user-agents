@@ -207,6 +207,10 @@ private extension ChatViewController {
         rootView.onJumpToMessage = { [weak presenter] messageId in
             presenter?.jumpToMessage(messageId)
         }
+
+        rootView.onRetryRoom = { [weak presenter] in
+            presenter?.retryRoom()
+        }
     }
 }
 

@@ -42,6 +42,8 @@ protocol ChatPresenterProtocol: AnyObject {
     func loadNewerMessages()
     /// The user tapped a reply quote whose message is not in the window.
     func jumpToMessage(_ messageId: String)
+    /// The user asked the product of the room again after it did not answer.
+    func retryRoom()
 }
 
 protocol ChatInteractorInputProtocol: AnyObject {
@@ -75,6 +77,12 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func loadNewerMessages()
     /// Asks the message source for pages until the message is in the window.
     func jump(to messageId: Chat.MessageId)
+    /// The room screen shows the room: a product room holds its product (02-DESIGN §5.2).
+    func openRoom()
+    /// The room screen does not show the room anymore: a product room releases its product.
+    func closeRoom()
+    /// Opens the room again and asks for the newest page, after the product did not answer (P5.7).
+    func retryRoom()
 }
 
 @MainActor

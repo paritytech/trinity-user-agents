@@ -22,3 +22,21 @@ private extension ChatViewLayout.ViewModel.Paging.Edge {
         }
     }
 }
+
+extension ChatViewLayout.ViewModel.RoomStatus {
+    /// The line above the input: a spinner while the first page loads, a retry when the product does not
+    /// answer. A ready room shows no line.
+    init?(readiness: ChatRoomReadiness) {
+        switch readiness {
+        case .ready:
+            return nil
+        case .loading:
+            self = .loading(String(localized: .ChatExtension.roomLoading))
+        case .unavailable:
+            self = .unavailable(
+                text: String(localized: .ChatExtension.roomUnavailable),
+                retryTitle: String(localized: .ChatExtension.roomRetry)
+            )
+        }
+    }
+}
