@@ -18,6 +18,8 @@ protocol ChatEngineProtocol {
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?>
     func footerStream() async throws -> AnyAsyncSequence<(any HashableContentConfiguration)?>?
     func processAction(_ action: Chat.Action) async
+    /// Gives true when the room's extension took the command, so the text must not be posted.
+    func sendCommand(_ command: Chat.Command) async -> Bool
 }
 
 enum ChatEngineError: Error {
@@ -252,6 +254,15 @@ extension ChatEngine: ChatEngineProtocol {
         for chatExtension in extensions {
             await chatExtension.process(action: action, context: actionContext)
         }
+    }
+
+    func sendCommand(_ command: Chat.Command) async -> Bool {
+        guard case let .chatExtension(extensionId, roomId) = chatId else {
+            return false
+        }
+
+        let handler = chatExtensionRegistry.getChatExtensionBot(for: extensionId) as? ChatCommandHandling
+        return await handler?.handle(command: command, roomId: roomId) ?? false
     }
 }
 

@@ -133,6 +133,10 @@ private final class RecordingProductIconViewModelFactory: ProductIconViewModelMa
         requestedDomains.append(domain)
         return StaticImageViewModel(image: nil)
     }
+
+    func createViewModel(forResource _: String) -> (any ImageViewModelProtocol)? {
+        nil
+    }
 }
 
 private final class IdleChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
@@ -155,6 +159,9 @@ private final class IdleChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
         actionId _: String,
         payload _: String?
     ) async {}
+
+    func dispatchActionTrigger(roomId _: String?, messageId _: String, actionId _: String) async {}
+    func dispatchCommand(_: Chat.Command, roomId _: String?) async -> Bool { false }
 
     @MainActor func attach(presentationView _: ControllerBackedProtocol) {}
     func dispose() async {}

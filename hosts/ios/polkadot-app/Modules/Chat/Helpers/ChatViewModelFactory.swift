@@ -39,6 +39,7 @@ final class ChatViewModelFactory {
     let attachmentViewModelFactory: ChatAttachmentViewModelMaking
     let productRepository: AnyDataProviderRepository<Product>
     let productNameCache: ProductNameCaching
+    let productMediaLoader: ChatImageLoader
     let flowState: SPAFlowState
     let logger: LoggerProtocol
 
@@ -51,6 +52,7 @@ final class ChatViewModelFactory {
         attachmentViewModelFactory: ChatAttachmentViewModelMaking,
         productRepository: AnyDataProviderRepository<Product>,
         productNameCache: ProductNameCaching,
+        productMediaLoader: ChatImageLoader = .resources(),
         flowState: SPAFlowState,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -61,6 +63,7 @@ final class ChatViewModelFactory {
         self.attachmentViewModelFactory = attachmentViewModelFactory
         self.productRepository = productRepository
         self.productNameCache = productNameCache
+        self.productMediaLoader = productMediaLoader
         self.flowState = flowState
         self.logger = logger
         customDecodersById = customDecoders.reduce(into: [:]) {
@@ -510,6 +513,48 @@ private extension ChatViewModelFactory {
 
         case .compactedMessages:
             return []
+
+        case let .productBody(body):
+            let context = ProductBodyRenderContext(
+                messageId: message.messageId,
+                status: status,
+                deliveryDate: deliveryDate,
+                layoutContext: layoutContext,
+                actions: actions
+            )
+            return [productBodyConfiguration(body, context: context, metadata: metadata, reactions: reactions)]
+        }
+    }
+
+    func productBodyConfiguration(
+        _ body: Chat.LocalMessage.Content.ProductBody,
+        context: ProductBodyRenderContext,
+        metadata: MessageListMetadata,
+        reactions: [ReactionViewModel]
+    ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
+        switch body {
+        case let .richText(richText) where !richText.media.isEmpty:
+            productMediaConfiguration(richText, context: context)
+        case let .file(file):
+            productFileConfiguration(file, context: context)
+        case let .actions(productActions):
+            productActionsConfiguration(productActions, context: context)
+        case .richText:
+            textMessageConfiguration(
+                messageId: context.messageId,
+                text: body.text ?? "",
+                messageActions: ChatMessageBubbleAction.textMessageActions(
+                    for: context.status,
+                    input: metadata.peerMetadata.input,
+                    isEdited: false
+                ),
+                status: context.status,
+                deliveryDate: context.deliveryDate,
+                layoutContext: context.layoutContext,
+                reactions: reactions,
+                actions: context.actions,
+                markdown: .init(openLink: context.actions?.openLink)
+            )
         }
     }
 
@@ -589,7 +634,8 @@ private extension ChatViewModelFactory {
         attachments: [Chat.LocalMessage.Content.Attachment]? = nil,
         reactions: [ReactionViewModel] = [],
         actions: ChatViewModelActions? = nil,
-        inboxBubbleStyle: InboxBubbleStyle? = nil
+        inboxBubbleStyle: InboxBubbleStyle? = nil,
+        markdown: ChatMessageContainerConfiguration.MarkdownBody? = nil
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
         let (textAfterStrip, productLinkPreview) = resolveProductLinkPreview(
             text: text,
@@ -662,7 +708,8 @@ private extension ChatViewModelFactory {
             messageReaction: messageReaction,
             isEdited: isEdited,
             canReply: messageActions.contains(.reply),
-            inboxBubbleStyle: inboxBubbleStyle
+            inboxBubbleStyle: inboxBubbleStyle,
+            markdown: markdown
         )
 
         var configuration = makeTextMessageContainerConfiguration(context: context)

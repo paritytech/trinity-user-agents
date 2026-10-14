@@ -131,7 +131,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
 
     /// A press inside a body the product drew is a renderer action addressed by
     /// `RenderContext`, not a chat action: `ChatActionPayload.actionTriggered`
-    /// means a host-drawn `Actions` button, which this host does not raise.
+    /// means a host-drawn `Actions` button, see ``dispatchActionTrigger(roomId:messageId:actionId:)``.
     func dispatchEvent(
         roomId: String?,
         messageId: String,
@@ -159,6 +159,38 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
             logger.debug("Rust chat runtime disposed before event \(actionId)")
         } catch {
             logger.error("Rust chat runtime failed to dispatch event \(actionId): \(error)")
+        }
+    }
+
+    func dispatchActionTrigger(roomId: String?, messageId: String, actionId: String) async {
+        do {
+            try checkNotDisposed()
+            guard let roomId else { throw ChatSeamError.roomlessChat }
+            try requireExecution().publishChatAction(HostChatActionSubscribeItem(
+                roomId: roomId,
+                peer: "native",
+                payload: .actionTriggered(ActionTrigger(messageId: messageId, actionId: actionId, payload: nil))
+            ))
+        } catch is CancellationError {
+            logger.debug("Rust chat runtime disposed before action \(actionId)")
+        } catch {
+            logger.error("Rust chat runtime failed to report action \(actionId): \(error)")
+        }
+    }
+
+    func dispatchCommand(_ command: Chat.Command, roomId: String?) async -> Bool {
+        do {
+            try checkNotDisposed()
+            guard let roomId else { throw ChatSeamError.roomlessChat }
+            try requireExecution().publishChatAction(HostChatActionSubscribeItem(
+                roomId: roomId,
+                peer: "native",
+                payload: .command(ChatCommand(command: command.name, payload: command.arguments))
+            ))
+            return true
+        } catch {
+            logger.error("Rust chat runtime failed to send a command: \(error)")
+            return false
         }
     }
 

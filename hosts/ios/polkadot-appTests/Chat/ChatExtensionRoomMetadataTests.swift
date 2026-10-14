@@ -49,10 +49,18 @@ struct ChatExtensionRoomMetadataTests {
         #expect(chat.peerMetadata(using: StubRegistry(bot: bot)).icon == .image(pngData))
     }
 
-    /// Drawing a remote room icon needs a fetch the chats list does not make.
+    /// A remote room icon loads through the chat resource resolver.
     @Test
-    func aRoomWithARemoteIconShowsTheManifestIcon() {
+    func aRoomWithARemoteIconLoadsItAsAResource() {
         let chat = room(icon: "https://example.com/icon.png")
+
+        #expect(chat.peerMetadata(using: StubRegistry(bot: bot)).icon == .resource("https://example.com/icon.png"))
+    }
+
+    /// Only an inline image or an `https` URL is a room icon, so any other address keeps the manifest icon.
+    @Test
+    func aRoomWithAnotherAddressShowsTheManifestIcon() {
+        let chat = room(icon: "http://example.com/icon.png")
 
         #expect(chat.peerMetadata(using: StubRegistry(bot: bot)).icon == .product(domain: bot.identifier))
     }

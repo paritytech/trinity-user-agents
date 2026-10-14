@@ -59,7 +59,7 @@ struct RustChatExecutionBridgeTests {
         #expect(api.roomFooters.isEmpty)
     }
 
-    @Test func postMessageForwardsTextAndCustomOnly() async throws {
+    @Test func postMessageForwardsTextAndCustom() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
 
@@ -90,6 +90,82 @@ struct RustChatExecutionBridgeTests {
             )
         }
         #expect(api.sentMessages.count == 2)
+    }
+
+    @Test func postMessageForwardsRichTextWithItsMedia() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+        let media = ["https://example.com/a.png", "data:image/png;base64,AAAA"]
+
+        _ = try await bridge.postMessage(
+            roomId: "r",
+            content: .richText(ChatRichText(text: "**hi**", media: media.map { ChatMedia(url: $0) })),
+            alt: nil
+        )
+
+        #expect(api.sentMessages == [.richText(text: "**hi**", media: media)])
+    }
+
+    @Test func postMessageForwardsActionsWithTheirLayout() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+
+        _ = try await bridge.postMessage(
+            roomId: "r",
+            content: .actions(ChatActions(
+                text: "Pick one",
+                actions: [ChatAction(actionId: "yes", title: "Yes"), ChatAction(actionId: "no", title: "No")],
+                layout: .grid
+            )),
+            alt: nil
+        )
+
+        let expected = ProductBotActions(
+            text: "Pick one",
+            buttons: [.init(actionId: "yes", title: "Yes"), .init(actionId: "no", title: "No")],
+            layout: .grid
+        )
+        #expect(api.sentMessages == [.actions(expected)])
+    }
+
+    @Test func postMessageForwardsAFile() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+
+        _ = try await bridge.postMessage(
+            roomId: "r",
+            content: .file(ChatFile(
+                url: "https://example.com/report.pdf",
+                fileName: "report.pdf",
+                mimeType: "application/pdf",
+                sizeBytes: 2_048,
+                text: "Your report"
+            )),
+            alt: nil
+        )
+
+        let expected = ProductBotFile(
+            url: "https://example.com/report.pdf",
+            fileName: "report.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 2_048,
+            text: "Your report"
+        )
+        #expect(api.sentMessages == [.file(expected)])
+    }
+
+    @Test func postMessageRejectsAReactionRemoval() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.postMessage(
+                roomId: "r",
+                content: .reactionRemoved(ChatReaction(messageId: "m", emoji: "x")),
+                alt: nil
+            )
+        }
+        #expect(api.sentMessages.isEmpty)
     }
 
     /// A failing surface must surface as a rejection, not a silent success.

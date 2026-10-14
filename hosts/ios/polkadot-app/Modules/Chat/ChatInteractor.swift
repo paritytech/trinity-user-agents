@@ -132,6 +132,10 @@ extension ChatInteractor: ChatInteractorInputProtocol {
                 // map empty "" messages to nil
                 let text = text.flatMap { $0.isEmpty ? nil : $0 }
 
+                if await self.sentAsCommand(text: text, attachments: attachments, replyToMessageId: replyToMessageId) {
+                    return
+                }
+
                 // TODO: Add support for attachments in reply and edit in the separate task
                 if let replyToMessageId {
                     let richTextContent = ChatRemoteMessageContent.RichText(
@@ -349,6 +353,25 @@ extension ChatInteractor: ChatInteractorInputProtocol {
         Task {
             await engine.processAction(action)
         }
+    }
+}
+
+private extension ChatInteractor {
+    /// A product room takes `/name arguments` as a command event instead of a posted message.
+    func sentAsCommand(
+        text: String?,
+        attachments: [ProcessedAttachment]?,
+        replyToMessageId: String?
+    ) async -> Bool {
+        guard
+            replyToMessageId == nil,
+            attachments?.isEmpty ?? true,
+            let command = text.flatMap(Chat.Command.init(text:))
+        else {
+            return false
+        }
+
+        return await engine.sendCommand(command)
     }
 }
 

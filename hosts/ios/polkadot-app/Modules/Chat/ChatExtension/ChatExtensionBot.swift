@@ -93,6 +93,7 @@ class ChatExtensionBot {
             )
         case .customRendered,
              .file,
+             .productBody,
              .deviceAdded,
              .deviceRemoved,
              .call:

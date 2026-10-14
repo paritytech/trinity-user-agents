@@ -16,6 +16,7 @@ public struct ChatMessageTextView: View, Hashable {
             .foregroundStyle(Color(viewModel.textColor))
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .environment(\.openURL, OpenURLAction(handler: openLinkAction(viewModel.openLink)))
     }
 
     private var statusPlaceholder: Text {
@@ -35,6 +36,8 @@ public extension ChatMessageTextView {
         let rawText: String
         let textColor: UIColor
         let statusPlaceholderImage: UIImage?
+        /// Opens a tapped link. Without it, the system opens the link.
+        let openLink: ((URL) -> Void)?
 
         public init(
             text: String,
@@ -45,6 +48,21 @@ public extension ChatMessageTextView {
             self.textColor = textColor
             attributedText = .from(markdown: text, textColor: textColor)
             self.statusPlaceholderImage = statusPlaceholderImage
+            openLink = nil
+        }
+
+        /// Product rich text: the Markdown subset of ``ChatMarkdownText``.
+        public init(
+            markdown: String,
+            textColor: UIColor,
+            statusPlaceholderImage: UIImage? = nil,
+            openLink: ((URL) -> Void)?
+        ) {
+            rawText = markdown
+            self.textColor = textColor
+            attributedText = ChatMarkdownText.attributedString(from: markdown)
+            self.statusPlaceholderImage = statusPlaceholderImage
+            self.openLink = openLink
         }
 
         /// Initializer for pre-built attributed text (e.g., diff highlighting)
@@ -57,6 +75,21 @@ public extension ChatMessageTextView {
             rawText = String(attributedText.characters)
             self.textColor = textColor
             self.statusPlaceholderImage = statusPlaceholderImage
+            openLink = nil
+        }
+
+        public static func == (lhs: ViewModel, rhs: ViewModel) -> Bool {
+            lhs.attributedText == rhs.attributedText &&
+                lhs.rawText == rhs.rawText &&
+                lhs.textColor == rhs.textColor &&
+                lhs.statusPlaceholderImage == rhs.statusPlaceholderImage
+        }
+
+        public func hash(into hasher: inout Hasher) {
+            hasher.combine(attributedText)
+            hasher.combine(rawText)
+            hasher.combine(textColor)
+            hasher.combine(statusPlaceholderImage)
         }
     }
 }
