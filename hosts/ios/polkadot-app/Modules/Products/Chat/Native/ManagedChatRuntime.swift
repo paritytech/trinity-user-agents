@@ -95,6 +95,14 @@ final class ManagedChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
         )
     }
 
+    /// The native runtime never posts `Actions` messages, so no button of its own can be pressed.
+    func dispatchActionTrigger(roomId _: String?, messageId _: String, actionId _: String) async {}
+
+    /// The native runtime has no command event: the text goes to the product as a message.
+    func dispatchCommand(_: Chat.Command, roomId _: String?) async -> Bool {
+        false
+    }
+
     @MainActor
     func attach(presentationView view: ControllerBackedProtocol) {
         Task { [weak self] in

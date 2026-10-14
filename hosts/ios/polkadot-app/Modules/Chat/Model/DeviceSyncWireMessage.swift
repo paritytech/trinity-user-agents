@@ -97,7 +97,8 @@ extension Chat.LocalMessage.Content {
              .customRendered,
              .chatRequest,
              .versionedChatRequest,
-             .file:
+             .file,
+             .productBody:
             nil
         }
     }

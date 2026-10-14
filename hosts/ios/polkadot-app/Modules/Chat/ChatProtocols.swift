@@ -104,6 +104,9 @@ protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
 
     func showDocument(at url: URL)
 
+    /// Opens an `http` or `https` address in the in-app browser after the user confirms.
+    func confirmOpenLink(_ url: URL, from view: ControllerBackedProtocol?)
+
     func showImagePicker(
         from view: ControllerBackedProtocol?,
         onAttachmentSelected: @escaping (([ChatAttachmentProviding]) -> Void)

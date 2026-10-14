@@ -53,20 +53,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw HostRejection.Rejected(reason: "a chat message needs a room")
         }
 
-        let message: ProductBotMessage =
-            switch content {
-            case let .text(text):
-                .text(text)
-            case let .custom(custom):
-                .custom(messageType: custom.messageType, data: custom.payload, alt: alt)
-            case .richText,
-                 .actions,
-                 .file,
-                 .reaction,
-                 .reactionRemoved:
-                throw HostRejection.Rejected(reason: "this host renders text and custom messages only")
-            }
-        return try await chatMessaging.sendMessage(message, roomId: roomId)
+        return try await chatMessaging.sendMessage(content.toBotMessage(alt: alt), roomId: roomId)
     }
 
     func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws {
@@ -106,6 +93,35 @@ extension RoomInfo {
 }
 
 private extension ChatMessageContent {
+    /// The core screened every field: media and file URLs are `https` or inline images.
+    func toBotMessage(alt: String?) throws -> ProductBotMessage {
+        switch self {
+        case let .text(text):
+            .text(text)
+        case let .custom(custom):
+            .custom(messageType: custom.messageType, data: custom.payload, alt: alt)
+        case let .richText(richText):
+            .richText(text: richText.text, media: richText.media.map(\.url))
+        case let .actions(actions):
+            .actions(ProductBotActions(
+                text: actions.text,
+                buttons: actions.actions.map { .init(actionId: $0.actionId, title: $0.title) },
+                layout: actions.layout == .grid ? .grid : .column
+            ))
+        case let .file(file):
+            .file(ProductBotFile(
+                url: file.url,
+                fileName: file.fileName,
+                mimeType: file.mimeType,
+                sizeBytes: file.sizeBytes,
+                text: file.text
+            ))
+        case .reaction,
+             .reactionRemoved:
+            throw HostRejection.Rejected(reason: "this host does not apply reactions from a product")
+        }
+    }
+
     var variantName: String {
         switch self {
         case .text: "text"

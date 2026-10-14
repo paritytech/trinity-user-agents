@@ -91,7 +91,8 @@ struct InboxTextConfigurationBuilder: TextMessageConfigurationBuilding {
             canReply: context.canReply,
             addReaction: context.addReaction,
             messageReaction: context.messageReaction,
-            layoutType: context.layoutContext.layoutType
+            layoutType: context.layoutContext.layoutType,
+            markdown: context.markdown
         )
     }
 }

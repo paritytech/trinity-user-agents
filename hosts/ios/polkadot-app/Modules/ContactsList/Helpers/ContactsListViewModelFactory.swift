@@ -51,7 +51,8 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
             let peerMetadata = chatWithPeerMetadata.peerMetadata
 
             let messageDate: Date? = chat.message.map { Date.fromChatTimestamp($0.timestamp) }
-            let unreadCount = chat.unreadDisplayMessageCount
+            let unreadCount = chat.roomPolicy?.listBadgeCount(hostUnreadCount: chat.unreadDisplayMessageCount)
+                ?? chat.unreadDisplayMessageCount
 
             let lastMessage = lastMessageText(
                 for: chatWithPeerMetadata,
@@ -100,6 +101,10 @@ private extension ContactsListViewModelFactory {
         case .richText,
              .staticTextImageContent,
              .file:
+            return .media
+        case .productBody(.file):
+            return .media
+        case let .productBody(.richText(richText)) where !richText.media.isEmpty:
             return .media
         case .call:
             return callMessageKind(for: message)
@@ -167,6 +172,18 @@ private extension ContactsListViewModelFactory {
         }
 
         return String(localized: .chatLastMessageMediaFile)
+    }
+
+    func productBodyPreview(_ body: Chat.LocalMessage.Content.ProductBody) -> String {
+        if let text = body.text, !text.isEmpty {
+            return text
+        }
+
+        switch body {
+        case .richText: return String(localized: .chatLastMessageMediaFile)
+        case let .file(file): return file.fileName
+        case .actions: return String(localized: .ChatExtension.messagePreviewActions)
+        }
     }
 
     // swiftlint:disable:next cyclomatic_complexity
@@ -281,6 +298,9 @@ private extension ContactsListViewModelFactory {
 
         case let .file(file):
             return file.name
+
+        case let .productBody(body):
+            return productBodyPreview(body)
 
         case .unsupported:
             return String(localized: .chatUnsupportedContent)

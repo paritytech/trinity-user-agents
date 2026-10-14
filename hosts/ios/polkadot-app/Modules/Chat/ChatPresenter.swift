@@ -201,6 +201,9 @@ private extension ChatPresenter {
             showFile: { [weak self] url in
                 self?.handleShowFile(at: url)
             },
+            openLink: { [weak self] url in
+                self?.handleOpenLink(url)
+            },
             processAction: { [weak self] action in
                 self?.interactor.processAction(action)
             },
@@ -401,6 +404,12 @@ private extension ChatPresenter {
     func handleShowFile(at url: URL) {
         MainActor.assumeIsolated {
             wireframe.showDocument(at: url)
+        }
+    }
+
+    func handleOpenLink(_ url: URL) {
+        MainActor.assumeIsolated {
+            wireframe.confirmOpenLink(url, from: view)
         }
     }
 

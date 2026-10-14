@@ -80,6 +80,14 @@ final class ProductBot: ChatExtensionBot {
     }
 }
 
+// MARK: - ChatCommandHandling
+
+extension ProductBot: ChatCommandHandling {
+    func handle(command: Chat.Command, roomId: String?) async -> Bool {
+        await runtime.dispatchCommand(command, roomId: roomId)
+    }
+}
+
 // MARK: - ChatExtensionBotProtocol
 
 extension ProductBot: ChatExtensionBotProtocol {
@@ -95,8 +103,8 @@ extension ProductBot: ChatExtensionBotProtocol {
         Chat.PeerMetadata(
             name: product.name,
             icon: .product(domain: product.id),
-            input: .inputField(.init(canPay: false, canAttachFile: false)),
-            moreActions: []
+            input: ChatRoomPolicy.defaults.peerInput,
+            moreActions: ChatRoomPolicy.defaults.toolbar
         )
     }
 
@@ -146,6 +154,13 @@ extension ProductBot: ChatExtensionBotProtocol {
                 messageType: messageType,
                 actionId: actionId,
                 payload: payload as? String
+            )
+        case let .productButton(messageId, actionId):
+            let message = await (try? context.getMessage(messageId: messageId))
+            await runtime.dispatchActionTrigger(
+                roomId: message?.chatId.roomId,
+                messageId: messageId,
+                actionId: actionId
             )
         }
     }

@@ -30,6 +30,15 @@ private extension ChatMessageContainerConfiguration {
 }
 
 public extension ChatMessageContainerConfiguration {
+    /// Draws the text with the Markdown subset of ``ChatMarkdownText`` and opens links through the host.
+    struct MarkdownBody {
+        let openLink: ((URL) -> Void)?
+
+        public init(openLink: ((URL) -> Void)?) {
+            self.openLink = openLink
+        }
+    }
+
     static func outboxRichText(
         text: String?,
         statusConfiguration: ChatMessageStatusViewConfiguration?,
@@ -64,11 +73,13 @@ public extension ChatMessageContainerConfiguration {
         canReply: Bool = true,
         addReaction: AddReactionViewModel? = nil,
         messageReaction: MessageReactionViewModel? = nil,
-        layoutType: LayoutType = .plain
+        layoutType: LayoutType = .plain,
+        markdown: MarkdownBody? = nil
     ) -> Self {
         makeRichText(
             style: .inbox,
             text: text,
+            markdown: markdown,
             statusConfiguration: statusConfiguration,
             attachments: attachments,
             productLinkPreview: productLinkPreview,
@@ -350,6 +361,7 @@ private extension ChatMessageContainerConfiguration {
     static func makeRichText(
         style: RichTextStyle,
         text: String?,
+        markdown: MarkdownBody? = nil,
         bubbleStrokeColor: UIColor? = nil,
         bubbleStrokeWidth: CGFloat = 0,
         statusConfiguration: ChatMessageStatusViewConfiguration?,
@@ -386,12 +398,21 @@ private extension ChatMessageContainerConfiguration {
 
         let innerContent = ChatRichTextMessageConfiguration(
             attachmentItems: attachments ?? [],
-            textViewModel: trimmedText.map {
-                .init(
-                    text: $0,
-                    textColor: style.textColor,
-                    statusPlaceholderImage: statusConfiguration?.placeholderImage
-                )
+            textViewModel: trimmedText.map { text in
+                if let markdown {
+                    .init(
+                        markdown: text,
+                        textColor: style.textColor,
+                        statusPlaceholderImage: statusConfiguration?.placeholderImage,
+                        openLink: markdown.openLink
+                    )
+                } else {
+                    .init(
+                        text: text,
+                        textColor: style.textColor,
+                        statusPlaceholderImage: statusConfiguration?.placeholderImage
+                    )
+                }
             },
             productLinkPreview: productLinkPreview
         )
