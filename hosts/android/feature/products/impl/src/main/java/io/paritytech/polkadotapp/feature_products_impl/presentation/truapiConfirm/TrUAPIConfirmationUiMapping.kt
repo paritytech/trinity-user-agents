@@ -37,11 +37,6 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
         *resources.map { detail(RCommon.string.truapi_confirm_label_resource, it) }.toTypedArray(),
     )
 
-    is TrUAPIConfirmation.PreimageSubmit -> build(
-        RCommon.string.truapi_confirm_title_preimage_submit,
-        detail(RCommon.string.truapi_confirm_label_payload_size, "$sizeBytes"),
-    )
-
     is TrUAPIConfirmation.AccountAccess -> build(
         RCommon.string.truapi_confirm_title_account_access,
         detail(RCommon.string.truapi_confirm_label_target_product, targetProductId),
