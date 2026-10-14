@@ -6,13 +6,13 @@ import io.paritytech.polkadotapp.feature_calls_api.domain.models.ActiveCallState
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Attachment
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageDirection
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReaction
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.direction
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.EmojiReactionGroup
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessagePopUpUiState
