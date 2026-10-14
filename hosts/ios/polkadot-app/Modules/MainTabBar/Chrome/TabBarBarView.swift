@@ -14,7 +14,7 @@ struct TabBarBarView: View {
             isShelfOpen: $model.isShelfOpen,
             shelfContentHeight: $model.shelfContentHeight,
             availableHeight: model.availablePanelHeight,
-            selectedSlot: model.selectedItemIndex,
+            selectedSlot: model.selectedSlot,
             isBarHidden: model.isBarHidden,
             first: { slot(at: 0) },
             second: { slot(at: 1) },
@@ -50,7 +50,7 @@ struct TabBarBarView: View {
         if let item = model.items[safe: index] {
             TabBarSlotView(
                 item: item,
-                isSelected: item.role == .tab && index == model.selectedItemIndex,
+                isSelected: index == model.selectedSlot,
                 isActive: index == model.activeActionItemIndex,
                 action: { model.onSlotTapped?(index) }
             )

@@ -236,6 +236,7 @@ private extension TabBarBottomChromeController {
         barModel.items = slots.map { slot in
             slot.makeBarItem(spaTabCount: spaTabCount, showsLabel: showsLabels)
         }
+        barModel.appsItemIndex = slotMap.itemIndex(for: .spaTabs)
 
         setSelectedIndex(selectedTabIndex)
         updateActiveActionIndex()

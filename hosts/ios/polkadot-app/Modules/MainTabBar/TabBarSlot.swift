@@ -36,7 +36,6 @@ extension TabBarAction {
         TabBarBarItem(
             content: content(spaTabCount: spaTabCount),
             title: showsLabel ? title : nil,
-            role: .action,
             accessibilityLabel: accessibilityLabel(spaTabCount: spaTabCount)
         )
     }

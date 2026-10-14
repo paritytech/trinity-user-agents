@@ -8,7 +8,10 @@ import UIKit
 @Observable
 final class TabBarBarViewModel {
     var items: [TabBarBarItem] = []
+    /// The bar item index of the current tab, the tab beneath any mounted product.
     var selectedItemIndex = 0
+    /// The Apps item's bar index, written by the chrome with the items.
+    var appsItemIndex: Int?
     var activeActionItemIndex: Int?
     /// Whether the bar row is faded out, leaving only an open centre panel. Set while the panel's search is focused.
     var isBarHidden = false
@@ -30,6 +33,26 @@ final class TabBarBarViewModel {
     var onShelfChipCloseRequested: ((UUID) -> Void)?
     var onShelfSettingsTapped: (() -> Void)?
     var onShelfConnectionStatusTapped: (() -> Void)?
+
+    var selectionPlacement: TabBarSelectionPlacement {
+        TabBarSelectionPolicy.placement(
+            tabItemIndex: selectedItemIndex,
+            mountedProductId: mountedChipId,
+            isShelfOpen: isShelfOpen
+        )
+    }
+
+    /// The bar slot holding the pill. The shelf draws no pill on a cell yet, so a product cell placement keeps it
+    /// on the Apps item.
+    var selectedSlot: Int? {
+        switch selectionPlacement {
+        case let .tab(itemIndex):
+            itemIndex
+        case .appsItem,
+             .productCell:
+            appsItemIndex
+        }
+    }
 
     /// Open fraction of the centre control, 0 closed to 1 open. SwiftUI moves it during a drag or tap, and
     /// UIKit moves it through `setCenterPanelOpen`.
