@@ -24,6 +24,20 @@ protocol ChatProductRoomWireframing: AnyObject {
 
     /// Opens the App of a product.
     func openProduct(_ productId: String)
+
+    /// Asks the user for the kind of attachment (P6.7).
+    func chooseAttachmentKind(
+        _ kinds: [ChatAttachmentKind],
+        from view: ControllerBackedProtocol?,
+        onSelect: @escaping (ChatAttachmentKind) -> Void
+    )
+
+    /// Lets the user pick one attachment of a kind, and gives its bytes.
+    func pickAttachment(
+        _ kind: ChatAttachmentKind,
+        from view: ControllerBackedProtocol?,
+        completion: @escaping (PickedAttachment) -> Void
+    )
 }
 
 extension ChatWireframe: ChatProductRoomWireframing {
@@ -80,6 +94,28 @@ extension ChatWireframe: ChatProductRoomWireframing {
         ProductOpener().open(productId: productId)
     }
 
+    func chooseAttachmentKind(
+        _ kinds: [ChatAttachmentKind],
+        from view: ControllerBackedProtocol?,
+        onSelect: @escaping (ChatAttachmentKind) -> Void
+    ) {
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        for kind in kinds {
+            sheet.addAction(UIAlertAction(title: kind.title, style: .default) { _ in onSelect(kind) })
+        }
+        sheet.addAction(UIAlertAction(title: String(localized: .Common.cancel), style: .cancel))
+        view?.controller.present(sheet, animated: true)
+    }
+
+    func pickAttachment(
+        _ kind: ChatAttachmentKind,
+        from view: ControllerBackedProtocol?,
+        completion: @escaping (PickedAttachment) -> Void
+    ) {
+        guard let controller = view?.controller else { return }
+        productAttachmentPicker.present(kind, from: controller, completion: completion)
+    }
+
     func openProductLink(_ url: URL, from view: ControllerBackedProtocol?) {
         ChatProductLinkOpener(linkHandler: DeferredLinkHandler.shared).open(url) { [weak self, weak view] webURL in
             guard let view else { return }
@@ -117,6 +153,16 @@ struct ChatProductLinkOpener {
             showWeb(url)
         case .system:
             UIApplication.shared.open(url)
+        }
+    }
+}
+
+private extension ChatAttachmentKind {
+    var title: String {
+        switch self {
+        case .photo: String(localized: .ChatExtension.attachmentPhoto)
+        case .video: String(localized: .ChatExtension.attachmentVideo)
+        case .file: String(localized: .ChatExtension.attachmentFile)
         }
     }
 }

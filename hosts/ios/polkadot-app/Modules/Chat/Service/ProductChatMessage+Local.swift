@@ -148,6 +148,8 @@ extension Chat.LocalMessage.Content {
             .reactionPlaced(messageId: reaction.messageId, emoji: reaction.emoji)
         case let .reactionRemoved(reaction):
             .reactionRemoved(messageId: reaction.messageId, emoji: reaction.emoji)
+        case let .productBody(body):
+            body.userWireBody.map { .newMessage(body: $0, replyTo: nil) }
         default:
             nil
         }

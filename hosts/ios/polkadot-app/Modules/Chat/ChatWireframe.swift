@@ -16,6 +16,8 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
     let videoPreviewPlayerFactory: VideoPreviewPlayerFactoryProtocol
 
     private var onAttachmentSelected: (([ChatAttachmentProviding]) -> Void)?
+    /// Picks the attachments of a product room (P6.7).
+    let productAttachmentPicker = ProductAttachmentPicker()
 
     var mediaPreviewActiveDataSources: [PhotoPreviewDataSource] = []
 

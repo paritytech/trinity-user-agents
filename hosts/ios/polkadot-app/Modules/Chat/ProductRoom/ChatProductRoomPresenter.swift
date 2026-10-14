@@ -41,6 +41,8 @@ final class ChatProductRoomPresenter {
     var footerWidget: ProductFooterWidgetViewModel?
     /// Sends a text as a message of the user, as the input sends it.
     var sendText: ((String) -> Void)?
+    /// Sends a content as a message of the user through the message source of the room (P6.7).
+    var sendContent: ((Chat.LocalMessage.Content) async throws -> Void)?
 
     init?(
         chatId: Chat.Id,

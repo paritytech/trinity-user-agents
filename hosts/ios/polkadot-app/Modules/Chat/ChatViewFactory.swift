@@ -123,6 +123,9 @@ enum ChatViewFactory {
             productRoom?.sendText = { [weak presenter] text in
                 presenter?.send(text: text, replyToMessageId: nil)
             }
+            productRoom?.sendContent = { [engine = interactor.engine] content in
+                try await engine.sendUserMessage(with: content)
+            }
             presenter.productRoom = productRoom
             viewModelFactory.productRoom = productRoom
         }

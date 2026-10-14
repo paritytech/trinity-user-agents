@@ -3,8 +3,10 @@ import Foundation
 /// What the user did in a product room that the host stores, as the product receives it on
 /// `action_subscribe` (02-DESIGN §3.3.9, §13 item 11). Each message id is the id that the product knows.
 enum ProductChatUserEvent: Equatable, Sendable {
-    /// The host gave the id. The user posts text only, because a product room takes no attachment yet (P6.7).
+    /// The host gave the id.
     case messagePosted(messageId: String, text: String, replyTo: String?)
+    /// The user posted an inline attachment (P6.7). The host gave the id.
+    case attachmentPosted(messageId: String, body: Chat.LocalMessage.Content.ProductBody)
     case edited(messageId: String, text: String)
     case deleted(messageId: String)
     case reacted(messageId: String, emoji: String, placed: Bool)
@@ -31,6 +33,8 @@ extension ProductChatUserEvent {
             self = .reacted(messageId: productId(reaction.messageId), emoji: reaction.emoji, placed: true)
         case let .reactionRemoved(reaction):
             self = .reacted(messageId: productId(reaction.messageId), emoji: reaction.emoji, placed: false)
+        case let .productBody(body):
+            self = .attachmentPosted(messageId: message.messageId, body: body)
         default:
             return nil
         }

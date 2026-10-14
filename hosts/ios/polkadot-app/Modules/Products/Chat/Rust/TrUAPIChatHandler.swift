@@ -458,6 +458,8 @@ private extension ProductChatUserEvent {
         switch self {
         case let .messagePosted(messageId, text, replyTo):
             .messagePosted(messageId: messageId, body: .text(text: text), replyTo: replyTo)
+        case let .attachmentPosted(messageId, body):
+            .messagePosted(messageId: messageId, body: body.userWireBody ?? .text(text: ""), replyTo: nil)
         case let .edited(messageId, text):
             .userEdited(messageId: messageId, body: .text(text: text))
         case let .deleted(messageId):

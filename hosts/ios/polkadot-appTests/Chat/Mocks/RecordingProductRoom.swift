@@ -230,3 +230,17 @@ final class RecordingProductRoomView: ChatProductRoomViewProtocol {
         failures.append(message)
     }
 }
+
+extension RecordingProductRoomWireframe {
+    func chooseAttachmentKind(
+        _: [ChatAttachmentKind],
+        from _: ControllerBackedProtocol?,
+        onSelect _: @escaping (ChatAttachmentKind) -> Void
+    ) {}
+
+    func pickAttachment(
+        _: ChatAttachmentKind,
+        from _: ControllerBackedProtocol?,
+        completion _: @escaping (PickedAttachment) -> Void
+    ) {}
+}
