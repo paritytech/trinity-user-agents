@@ -43,6 +43,8 @@ internal fun ScrollToNewButton(
     unreadCounter: Int,
     containerColor: Color? = null,
     iconTint: Color? = null,
+    /** Replaces the scroll when the newest messages are not loaded. */
+    onShowNewest: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
 
@@ -67,11 +69,15 @@ internal fun ScrollToNewButton(
                     containerColor = containerColor ?: PolkadotTheme.colors.bg.surface.nested
                 ),
                 onClick = {
-                    scope.launch {
-                        if (lazyListState.scrolledTooFar) {
-                            lazyListState.scrollToItem(TOO_FAR_INDEX)
+                    if (onShowNewest != null) {
+                        onShowNewest()
+                    } else {
+                        scope.launch {
+                            if (lazyListState.scrolledTooFar) {
+                                lazyListState.scrollToItem(TOO_FAR_INDEX)
+                            }
+                            lazyListState.animateScrollToItem(0)
                         }
-                        lazyListState.animateScrollToItem(0)
                     }
                 }
             ) {

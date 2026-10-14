@@ -281,6 +281,7 @@ private fun ReplyBanner(
             AnnotatedString(content.caption ?: stringResource(RCommon.string.chat_attachment_name_video))
         is ReplyPreview.Content.File -> AnnotatedString(content.caption ?: content.fileName)
         is ReplyPreview.Content.Payment -> content.paymentSubtitle(PolkadotTheme.typography.body.smallEmphasized)
+        ReplyPreview.Content.Unloaded -> AnnotatedString(stringResource(RCommon.string.chat_reply_earlier_message))
     }
 
     TitledBanner(

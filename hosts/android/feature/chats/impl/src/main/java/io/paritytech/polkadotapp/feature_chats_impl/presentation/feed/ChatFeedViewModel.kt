@@ -49,16 +49,20 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asChatRequestEr
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAnotherChatPresentationError
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.toPresentationError
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.ChatMessageUiMapper
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.toUi
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatInputUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatPageEdgeUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.canLoad
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRequestAnswerProgress
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatSendMessageInputState
@@ -149,6 +153,11 @@ class ChatFeedViewModel @Inject constructor(
 
     private val customMessageRenderers = flowOf { interactor.getCustomMessageRenderersForChat(chatId) }
 
+    // The window of a product-source room can miss the replied message, so its quote offers a jump.
+    private val quotesUnloadedReplies = roomPolicy
+        .map { it?.messageStore == ChatRoomPolicy.MessageStore.PRODUCT }
+        .distinctUntilChanged()
+
     private val animatesMessageReveal = flowOf { interactor.animatesMessageReveal(chatId) }
         .shareInBackground()
 
@@ -180,10 +189,21 @@ class ChatFeedViewModel @Inject constructor(
         combineToPair(reactions, statusOverrides),
         originDisplayResolver,
         revisions,
-        customMessageRenderers
-    ) { (messages, activeCall), (reactions, statusOverrides), originDisplayResolver, revisionsMap, customMessageRenderers ->
-        messageUiMapper.map(messages, originDisplayResolver, reactions, revisionsMap, customMessageRenderers, activeCall, statusOverrides)
+        combineToPair(customMessageRenderers, quotesUnloadedReplies),
+    ) { (messages, activeCall), (reactions, statusOverrides), originDisplayResolver, revisionsMap, (customMessageRenderers, quotesUnloaded) ->
+        messageUiMapper.map(
+            messages = messages,
+            originDisplayResolver = originDisplayResolver,
+            reactions = reactions,
+            revisions = revisionsMap,
+            customMessageRenderers = customMessageRenderers,
+            activeCall = activeCall,
+            statusOverrides = statusOverrides,
+            quoteUnloadedReplies = quotesUnloaded,
+        )
     }.shareInBackground()
+
+    private val paging = feedSnapshot.map { it.paging }.distinctUntilChanged()
 
     override val chatDisplay = combine(interactor.observeChatDisplay(openChatRequest), roomPolicy) { display, policy ->
         display.map { ChatDisplayUiModel(username = it.name, avatarModel = resourceResolver.roomAvatar(it.avatar, policy?.avatar)) }
@@ -264,11 +284,14 @@ class ChatFeedViewModel @Inject constructor(
         messages,
         firstNewMessageInfo,
         unreadCounter.distinctUntilChanged(),
-    ) { messagesList, firstNewMessageInfo, unreadCounter ->
+        paging,
+    ) { messagesList, firstNewMessageInfo, unreadCounter, paging ->
         ChatMessagesState(
             messages = messagesList,
             unreadCounter = unreadCounter,
-            firstNewMessageInfo = firstNewMessageInfo
+            firstNewMessageInfo = firstNewMessageInfo,
+            olderPage = paging.older.toUi(),
+            newerPage = paging.newer.toUi(),
         )
     }
         .withLoading()
@@ -482,6 +505,19 @@ class ChatFeedViewModel @Inject constructor(
         lastReadMessageTimestamp.update { max(it, message.timestamp) }
     }
 
+    override fun onLoadOlderMessages() = launchUnit {
+        if (chatMessagesState.value.dataOrNull?.olderPage?.canLoad == true) interactor.loadOlderMessages(chatId)
+    }
+
+    override fun onLoadNewerMessages() = launchUnit {
+        if (chatMessagesState.value.dataOrNull?.newerPage?.canLoad == true) interactor.loadNewerMessages(chatId)
+    }
+
+    override fun onShowNewestMessages() = launchUnit {
+        if (chatMessagesState.value.dataOrNull?.newerPage != ChatPageEdgeUiState.END) interactor.showNewestMessages(chatId)
+        scrollToPosition.emit(NEWEST_MESSAGE_POSITION)
+    }
+
     override fun onClearEdit() {
         messageInputState.update { it.copy(relation = InputMessageRelation.None, inputMessage = "") }
     }
@@ -520,7 +556,7 @@ class ChatFeedViewModel @Inject constructor(
                 messagePopupSection.update { MessagePopUpSelection.reactionDetails(action.message.id) }
             }
 
-            is MessageAction.ReplyPreviewTap -> scrollToMessage(action.messageId)
+            is MessageAction.ReplyPreviewTap -> launchUnit { jumpToMessage(action.messageId) }
             is MessageAction.ViewEditHistory -> {
                 messagePopupSection.update { null }
                 showMessageHistory(action.message.id)
@@ -666,11 +702,18 @@ class ChatFeedViewModel @Inject constructor(
     private fun jumpToTargetMessageIfNeeded() {
         val messageId = payload.targetMessageId ?: return
 
-        launchUnit {
-            chatMessagesState.first { state -> state.dataOrNull?.messages.orEmpty().any { it.id == messageId } }
-            scrollToMessage(messageId)
-        }
+        launchUnit { jumpToMessage(messageId) }
     }
+
+    /** Pages a product-source room until the message is loaded, then scrolls to it. */
+    private suspend fun jumpToMessage(messageId: ChatMessageId) {
+        if (!isLoaded(chatMessagesState.value.dataOrNull, messageId)) interactor.jumpToMessage(chatId, messageId)
+
+        chatMessagesState.first { isLoaded(it.dataOrNull, messageId) }
+        scrollToMessage(messageId)
+    }
+
+    private fun isLoaded(state: ChatMessagesState?, messageId: ChatMessageId) = state?.messages.orEmpty().any { it.id == messageId }
 
     private fun scrollToMessage(messageId: String) {
         chatMessagesState.value.onLoaded { state ->

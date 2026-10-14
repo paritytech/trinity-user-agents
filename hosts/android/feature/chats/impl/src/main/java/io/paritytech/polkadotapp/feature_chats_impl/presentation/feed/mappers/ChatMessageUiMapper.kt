@@ -49,6 +49,8 @@ class ChatMessageUiMapper @Inject constructor(
         activeCall: ActiveCallState? = null,
         /** The ticks that a product gave to the messages of the user. They replace the ticks of the host status. */
         statusOverrides: Map<ChatMessageId, ChatMessageUiModel.Status> = emptyMap(),
+        /** Quote a replied message outside [messages] with a placeholder that the user can tap. */
+        quoteUnloadedReplies: Boolean = false,
     ): ImmutableList<ChatMessageUiModel> {
         val messagesById: Map<String, ChatMessage> = messages.associateBy { it.id }
         val callContext = buildCallResolutionContext(messages, activeCall)
@@ -79,6 +81,7 @@ class ChatMessageUiMapper @Inject constructor(
                 customMessageRenderers = customMessageRenderers,
                 callContext = callContext,
                 statusOverride = statusOverrides[message.id],
+                quoteUnloadedReplies = quoteUnloadedReplies,
             )
         }.toImmutableList()
     }
@@ -164,6 +167,7 @@ class ChatMessageUiMapper @Inject constructor(
         customMessageRenderers: Map<String, CustomChatMessageRenderer<*>>,
         callContext: CallResolutionContext,
         statusOverride: ChatMessageUiModel.Status?,
+        quoteUnloadedReplies: Boolean,
     ): ChatMessageUiModel? {
         val direction = direction.toUi()
         val status = statusOverride ?: status.toUi()
@@ -179,6 +183,7 @@ class ChatMessageUiMapper @Inject constructor(
                 revisions = revisions,
                 originDisplayResolver = originDisplayResolver,
                 mappingHelper = helper,
+                quoteUnloadedReplies = quoteUnloadedReplies,
                 messageReactions = messageReactions
             )
 
@@ -199,6 +204,7 @@ class ChatMessageUiMapper @Inject constructor(
                 revisions = revisions,
                 originDisplayResolver = originDisplayResolver,
                 mappingHelper = helper,
+                quoteUnloadedReplies = quoteUnloadedReplies,
                 messageReactions = messageReactions,
                 isEdited = isEdited
             )
@@ -244,7 +250,8 @@ class ChatMessageUiMapper @Inject constructor(
                     allMessages = messagesById,
                     revisions = revisions,
                     originDisplayResolver = originDisplayResolver,
-                    mappingHelper = helper
+                    mappingHelper = helper,
+                    quoteUnloadedReplies = quoteUnloadedReplies,
                 ),
                 reactions = messageReactions,
                 isEdited = isEdited,
@@ -374,14 +381,16 @@ private suspend fun mapText(
     revisions: Map<ChatMessageId, MessageRevision>,
     originDisplayResolver: MessageOriginDisplayResolver,
     mappingHelper: ChatMessageMappingHelper,
-    messageReactions: ImmutableList<ChatMessageUiModel.Reaction>
+    messageReactions: ImmutableList<ChatMessageUiModel.Reaction>,
+    quoteUnloadedReplies: Boolean,
 ): ChatMessageUiModel.Text {
     val replyPreview = buildReplyPreview(
         message = message,
         allMessages = messagesById,
         revisions = revisions,
         originDisplayResolver = originDisplayResolver,
-        mappingHelper = mappingHelper
+        mappingHelper = mappingHelper,
+        quoteUnloadedReplies = quoteUnloadedReplies,
     )
 
     return ChatMessageUiModel.Text(
@@ -426,14 +435,16 @@ private suspend fun mapRichText(
     originDisplayResolver: MessageOriginDisplayResolver,
     mappingHelper: ChatMessageMappingHelper,
     isEdited: Boolean,
-    messageReactions: ImmutableList<ChatMessageUiModel.Reaction>
+    messageReactions: ImmutableList<ChatMessageUiModel.Reaction>,
+    quoteUnloadedReplies: Boolean,
 ): ChatMessageUiModel? {
     val replyPreview = buildReplyPreview(
         message = message,
         allMessages = messagesById,
         revisions = revisions,
         originDisplayResolver = originDisplayResolver,
-        mappingHelper = mappingHelper
+        mappingHelper = mappingHelper,
+        quoteUnloadedReplies = quoteUnloadedReplies,
     )
 
     return mapAttachmentToUi(
@@ -574,9 +585,11 @@ private suspend fun buildReplyPreview(
     revisions: Map<ChatMessageId, MessageRevision>,
     originDisplayResolver: MessageOriginDisplayResolver,
     mappingHelper: ChatMessageMappingHelper,
+    quoteUnloadedReplies: Boolean,
 ): ReplyPreview? {
     val repliedId = message.replyToMessageId ?: return null
-    val repliedMessage = allMessages[repliedId] ?: return null
+    val repliedMessage = allMessages[repliedId]
+        ?: return if (quoteUnloadedReplies) ReplyPreview(messageId = repliedId, title = "", content = ReplyPreview.Content.Unloaded) else null
 
     val revision = revisions[repliedId]
     val content = revision?.content ?: repliedMessage.content

@@ -68,19 +68,22 @@ fun ReplyPreviewBubble(
 
                 is ReplyPreview.Content.Text,
                 is ReplyPreview.Content.File,
-                is ReplyPreview.Content.Payment -> Unit
+                is ReplyPreview.Content.Payment,
+                ReplyPreview.Content.Unloaded -> Unit
             }
 
             Column(
                 modifier = Modifier.padding(PolkadotTheme.spacings.small)
             ) {
-                NovaText(
-                    text = preview.title,
-                    style = PolkadotTheme.typography.title.tiny,
-                    color = textColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (preview.title.isNotEmpty()) {
+                    NovaText(
+                        text = preview.title,
+                        style = PolkadotTheme.typography.title.tiny,
+                        color = textColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 NovaText(
                     text = preview.content.subtitle(PolkadotTheme.typography.body.smallEmphasized),
@@ -139,6 +142,7 @@ private fun ReplyPreview.Content.subtitle(style: TextStyle): AnnotatedString {
         is ReplyPreview.Content.Video -> AnnotatedString(caption ?: stringResource(RCommon.string.chat_attachment_name_video))
         is ReplyPreview.Content.File -> AnnotatedString(caption ?: fileName)
         is ReplyPreview.Content.Payment -> paymentSubtitle(style)
+        ReplyPreview.Content.Unloaded -> AnnotatedString(stringResource(RCommon.string.chat_reply_earlier_message))
     }
 }
 

@@ -194,6 +194,9 @@ class ChatFeedInteractor @Inject internal constructor(
 
     suspend fun loadNewerMessages(chatId: ChatId): ChatPageOutcome = roomSource(chatId).source().loadNewer()
 
+    /** Replaces the window with the newest page of the room. */
+    suspend fun showNewestMessages(chatId: ChatId) = roomSource(chatId).source().reload()
+
     /** Pages until the message is in the window. False when the room has no such message. */
     suspend fun jumpToMessage(chatId: ChatId, messageId: ChatMessageId): Boolean = roomSource(chatId).source().jump(messageId)
 

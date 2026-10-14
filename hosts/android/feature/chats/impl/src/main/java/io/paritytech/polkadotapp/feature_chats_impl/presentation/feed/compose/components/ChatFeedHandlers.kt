@@ -19,12 +19,13 @@ import kotlinx.coroutines.flow.Flow
 @Composable
 internal fun ScrollDownUponNewMessageHandler(
     messages: ImmutableList<ChatMessageUiModel>,
-    lazyListState: LazyListState
+    lazyListState: LazyListState,
+    followsNewest: Boolean = true,
 ) {
     val latestMessage = messages.firstOrNull()
 
     LaunchedEffect(latestMessage) {
-        if (latestMessage != null) {
+        if (latestMessage != null && followsNewest) {
             val isOwnMessage = latestMessage.direction == ChatMessageUiModel.Direction.OUTGOING
             val isCloseToNewest = lazyListState.firstVisibleItemIndex <= 2
 
