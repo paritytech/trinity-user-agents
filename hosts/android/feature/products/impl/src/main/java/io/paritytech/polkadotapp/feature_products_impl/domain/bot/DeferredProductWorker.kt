@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +35,12 @@ class DeferredProductWorker : ProductWorker {
     override suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit> =
         awaitWorker().fold(
             onSuccess = { it.onUserMessage(roomId, text) },
+            onFailure = { Result.failure(it) },
+        )
+
+    override suspend fun publishRoomEvent(roomId: ProductChatIdParameter, event: ProductRoomEvent): Result<Unit> =
+        awaitWorker().fold(
+            onSuccess = { it.publishRoomEvent(roomId, event) },
             onFailure = { Result.failure(it) },
         )
 

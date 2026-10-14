@@ -239,6 +239,32 @@ abstract class ChatMessageDao {
     @Query("UPDATE chat_messages SET status = 'IS_READ' WHERE id = :messageId")
     abstract suspend fun markMessageAsRead(messageId: String)
 
+    @Query(
+        "UPDATE chat_messages SET content = :content, type = 'DELETED', isInternal = 1, status = 'IS_READ', " +
+            "searchableContent = '', updatedAt = :updatedAt WHERE id = :messageId"
+    )
+    protected abstract suspend fun rewriteRowAsDeleted(messageId: String, content: ByteArray, updatedAt: Long)
+
+    @Query("DELETE FROM chat_message_reactions WHERE messageId = :messageId")
+    protected abstract suspend fun deleteReactionsOf(messageId: String)
+
+    @Query("DELETE FROM message_revisions WHERE messageId = :messageId")
+    protected abstract suspend fun deleteRevisionsOf(messageId: String)
+
+    /** Keeps the row as a hidden tombstone, so its id stays taken, and drops its reactions and revisions. */
+    @Transaction
+    open suspend fun rewriteAsDeleted(messageId: String, content: ByteArray, updatedAt: Long) {
+        rewriteRowAsDeleted(messageId, content, updatedAt)
+        deleteReactionsOf(messageId)
+        deleteRevisionsOf(messageId)
+    }
+
+    @Query(
+        "SELECT id FROM chat_messages WHERE chatId = :chatId AND isInternal = 0 AND type != 'EDITED' AND timestamp <= :timestamp " +
+            "ORDER BY sortOrder DESC, timestamp DESC LIMIT 1"
+    )
+    abstract suspend fun getNewestVisibleMessageIdUpTo(chatId: ByteArray, timestamp: Long): String?
+
     @Query("SELECT * FROM chat_messages WHERE chatId = :chatId AND type = 'UNSUPPORTED'")
     abstract suspend fun getUnsupportedMessages(chatId: ByteArray): List<ChatMessageLocal>
 

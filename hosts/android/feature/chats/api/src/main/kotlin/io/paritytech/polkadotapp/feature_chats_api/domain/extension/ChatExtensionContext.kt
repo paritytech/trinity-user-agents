@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import kotlinx.coroutines.flow.Flow
 import kotlin.reflect.KClass
 
@@ -44,7 +45,7 @@ interface ChatExtensionContext {
 
     fun subscribeOwnRooms(): Flow<List<ChatId>>
 
-    // Chat Extension v2. Each call below fails with [UnknownChatRoomException] when the extension owns no such room.
+    // Chat Extension v2. Each call below fails with `UnknownChatRoomException` when the extension owns no such room.
 
     /** What the extension declared for the room. Null when it declared nothing. */
     suspend fun roomDeclarations(chatId: ChatId): ChatRoomDeclarations?
@@ -70,6 +71,12 @@ interface ChatExtensionContext {
 
     /** Shows the activity line of the room, or removes it with null. The host keeps it in memory only. */
     suspend fun setRoomActivity(chatId: ChatId, activity: ChatRoomActivityModel?): Result<Unit>
+
+    /**
+     * Stores one change that the extension pushes to a room whose messages the host keeps. Message ids are the
+     * ids of the extension. A refusal is a `ProductFeedRejection`.
+     */
+    suspend fun applyFeedUpdate(chatId: ChatId, update: ProductFeedUpdateModel): Result<Unit>
 }
 
 suspend fun ChatExtensionContext.markMessageProcessed(message: ChatMessage) {

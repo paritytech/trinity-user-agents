@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
@@ -52,4 +53,10 @@ interface ProductChatMessaging {
     suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ChatRoomFooterModel): Result<Unit>
 
     suspend fun setRoomActivity(chatIdParameter: ProductChatIdParameter, activity: ChatRoomActivityModel?): Result<Unit>
+
+    /** Stores a feed update of a room that the host keeps. A refusal is a `ProductFeedRejection`. */
+    suspend fun applyFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Result<Unit>
+
+    /** Gives a feed update of a room that the product keeps to the screens that show it. False when none does. */
+    suspend fun deliverLiveFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Boolean
 }

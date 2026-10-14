@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -14,6 +15,16 @@ import kotlinx.coroutines.flow.Flow
  */
 interface ProductWorker : JsEventDispatcher {
     suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit>
+
+    /**
+     * Gives one event of a product room to the product. A runtime without Chat Extension v2 takes a posted text
+     * as a user message and refuses the other events.
+     */
+    suspend fun publishRoomEvent(roomId: ProductChatIdParameter, event: ProductRoomEvent): Result<Unit> {
+        val content = (event as? ProductRoomEvent.MessagePosted)?.content as? ChatMessage.Content.Text
+            ?: return Result.failure(UnsupportedRoomEventException(event))
+        return onUserMessage(roomId, content.text)
+    }
 
     fun renderMessage(
         roomId: ProductChatIdParameter?,

@@ -53,7 +53,6 @@ import uniffi.truapi.ChatFile
 import uniffi.truapi.ChatInputConfig
 import uniffi.truapi.ChatMedia
 import uniffi.truapi.ChatMessageContent
-import uniffi.truapi.ChatReaction
 import uniffi.truapi.ChatResource
 import uniffi.truapi.ChatRichText
 import uniffi.truapi.ChatRoomBadge
@@ -111,19 +110,6 @@ class ProductChatHostBridgeTest {
         assertTrue(footed!!.message!!.contains("a chat room needs an id"))
         assertTrue(api.sentText.isEmpty())
         assertTrue(api.footers.isEmpty())
-    }
-
-    @Test
-    fun `an unsupported content variant is rejected by name`() = runTest {
-        val api = FakeChatMessaging()
-
-        val thrown = runCatching {
-            bridge(api).postMessage(ROOM, ChatMessageContent.Reaction(reaction()), alt = null)
-        }.exceptionOrNull()
-
-        assertTrue(thrown is HostRejection)
-        assertTrue(thrown!!.message!!.contains("Reaction"))
-        assertTrue(api.sentText.isEmpty())
     }
 
     @Test
@@ -352,8 +338,6 @@ class ProductChatHostBridgeTest {
     private fun key() = ByteArray(32) { 5 }
 
     private fun bridge(api: FakeChatMessaging) = ProductChatHostBridge(productId, api)
-
-    private fun reaction() = ChatReaction(messageId = "msg-1", emoji = "👍")
 }
 
 private fun <T> messagingNotSupported(): Result<T> = Result.failure(

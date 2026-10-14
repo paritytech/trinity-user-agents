@@ -68,6 +68,12 @@ interface ChatMessageRepository {
     suspend fun shiftChatMessagesToTimestamp(chatId: ChatId, timestamp: Timestamp)
     suspend fun removeMessage(messageId: ChatMessageId)
 
+    /** Replaces the message with a hidden [ChatMessage.Content.Deleted] tombstone and drops its reactions and revisions. */
+    suspend fun markMessageDeleted(messageId: ChatMessageId)
+
+    /** The newest message that a room shows at or before [timestamp]. */
+    suspend fun getNewestVisibleMessageIdUpTo(chatId: ChatId, timestamp: Timestamp): ChatMessageId?
+
     suspend fun markMessagesAsReadUpToTimestamp(chatId: ChatId, timestamp: Timestamp)
     suspend fun markMessagesByTypesAsRead(chatId: ChatId, types: List<String>)
     suspend fun markMessageAsRead(messageId: ChatMessageId)
@@ -257,6 +263,14 @@ class RealChatMessageRepository @Inject constructor(
     override suspend fun removeMessage(messageId: ChatMessageId) {
         chatMessageDao.remove(messageId)
     }
+
+    override suspend fun markMessageDeleted(messageId: ChatMessageId) {
+        val (content, _) = ChatMessage.Content.Deleted.toLocal(AlwaysFailCustomContentDecoder())
+        chatMessageDao.rewriteAsDeleted(messageId, content, updatedAt = System.currentTimeMillis())
+    }
+
+    override suspend fun getNewestVisibleMessageIdUpTo(chatId: ChatId, timestamp: Timestamp): ChatMessageId? =
+        chatMessageDao.getNewestVisibleMessageIdUpTo(chatId.toLocal(), timestamp)
 
     override suspend fun markMessagesAsReadUpToTimestamp(chatId: ChatId, timestamp: Timestamp) {
         chatMessageDao.markMessagesAsReadUpToTimestamp(chatId.toLocal(), timestamp)

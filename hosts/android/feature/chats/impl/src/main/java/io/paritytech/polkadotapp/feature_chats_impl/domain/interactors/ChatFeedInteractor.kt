@@ -40,6 +40,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.onContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.userDeclinedIncomingRequest
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
@@ -180,6 +181,8 @@ class ChatFeedInteractor @Inject internal constructor(
         text: String,
         replyToMessageId: ChatMessageId?
     ) {
+        // Only a command that the room declares goes to the product; any other `/text` is a message.
+        if (chatEngine.handleCommand(chatId, text)) return
         val content = ChatMessage.Content.Text(text)
         chatEngine.sendUserMessage(
             chatId = chatId,
@@ -249,6 +252,21 @@ class ChatFeedInteractor @Inject internal constructor(
     suspend fun markMessagesAsReadUpToTimestamp(chatId: ChatId, timestamp: Timestamp) {
         chatMessageRepository.markMessagesAsReadUpToTimestamp(chatId, timestamp)
         chatNotificationPublisher.cancelChatNotification(chatId)
+        chatEngine.reportSeen(chatId, timestamp)
+    }
+
+    /** Deletes a message for the user. Only a product room allows it. */
+    suspend fun deleteMessage(chatId: ChatId, messageId: ChatMessageId): Result<Unit> =
+        chatEngine.deleteMessageForUser(chatId, messageId)
+
+    /** A press on a button of an Actions message. */
+    suspend fun triggerMessageAction(chatId: ChatId, messageId: ChatMessageId, actionId: String) {
+        chatEngine.dispatchUserEvent(chatId, ChatRoomUserEvent.ActionTriggered(messageId, actionId))
+    }
+
+    /** A product action of a menu, the toolbar or a suggestion that the user selected. */
+    suspend fun sendUserEvent(chatId: ChatId, event: ChatRoomUserEvent) {
+        chatEngine.dispatchUserEvent(chatId, event)
     }
 
     // Workaround: messages like reactions and edits exist in DB but not in UI models,

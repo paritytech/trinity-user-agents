@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.common.utils.flowOfAll
 import io.paritytech.polkadotapp.common.utils.inBackground
 import io.paritytech.polkadotapp.common.utils.mapToSet
 import io.paritytech.polkadotapp.common.utils.requireNotNull
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.common.utils.withFlowScope
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.getAccountByIdOrThrow
@@ -58,6 +59,12 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.isExtensionChat
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.NoChatRoomLifecycle
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.DeleteRoomUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageProcessingRepository
@@ -83,7 +90,9 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.chatSummaryOrd
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductFeedApplier
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductRoomDeclarer
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.SlashCommand
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.catch
@@ -122,6 +131,7 @@ class ChatEngine @Inject constructor(
     private val chatRoomRepository: ChatRoomRepository,
     private val deleteRoomUseCase: DeleteRoomUseCase,
     private val productRoomDeclarer: ProductRoomDeclarer,
+    private val productFeedApplier: ProductFeedApplier,
 ) : ChatMessageSender {
     private val savedMessagesFlow = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 64)
 
@@ -626,6 +636,45 @@ class ChatEngine @Inject constructor(
         }
     }
 
+    /**
+     * Deletes a message for the user in a product room: the room keeps a hidden tombstone, and the extension
+     * gets the event. A person chat has no delete.
+     */
+    suspend fun deleteMessageForUser(chatId: ChatId, messageId: ChatMessageId): Result<Unit> = runCancellableCatching {
+        require(chatId.isExtensionChat()) { "Only a product room deletes a message" }
+        val message = chatMessageRepository.getMessageById(chatId, messageId, getCustomContentDecoder(chatId))
+        require(message != null && message.chatId == chatId) { "No message $messageId in the room" }
+
+        chatMessageRepository.markMessageDeleted(messageId)
+        messagesChangedFlow.tryEmit(Unit)
+        dispatchUserEvent(chatId, ChatRoomUserEvent.MessageDeleted(messageId))
+    }
+
+    /** Gives an action of the user that is not a saved message to the extension of the room. */
+    suspend fun dispatchUserEvent(chatId: ChatId, event: ChatRoomUserEvent) {
+        chatExtensionRegistry.getExtensionForChat(chatId)?.onUserEvent(chatId, event)
+    }
+
+    /** Tells the extension of a room the newest message that the user saw, up to [timestamp]. */
+    suspend fun reportSeen(chatId: ChatId, timestamp: Timestamp) {
+        if (!chatId.isExtensionChat()) return
+        val messageId = chatMessageRepository.getNewestVisibleMessageIdUpTo(chatId, timestamp) ?: return
+        dispatchUserEvent(chatId, ChatRoomUserEvent.MessageSeen(messageId))
+    }
+
+    /** True when the extension of the room takes [text] as a slash command, so it is no message. */
+    suspend fun handleCommand(chatId: ChatId, text: String): Boolean {
+        val command = SlashCommand.parse(text) ?: return false
+        val extension = chatExtensionRegistry.getExtensionForChat(chatId) ?: return false
+        return extension.handleCommand(chatId, command.name, command.arguments)
+    }
+
+    suspend fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle =
+        chatExtensionRegistry.getExtensionForChat(chatId)?.roomLifecycle(chatId) ?: NoChatRoomLifecycle
+
+    suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? =
+        chatExtensionRegistry.getExtensionForChat(chatId)?.roomQuerying(chatId)
+
     fun subscribeRevisions(chatId: ChatId): Flow<Map<ChatMessageId, MessageRevision>> {
         return flowOfAll {
             val decoder = getCustomContentDecoder(chatId)
@@ -816,6 +865,10 @@ class ChatEngine @Inject constructor(
 
         override suspend fun setRoomActivity(chatId: ChatId, activity: ChatRoomActivityModel?): Result<Unit> =
             productRoomDeclarer.setActivity(extensionId, chatId, activity)
+
+        override suspend fun applyFeedUpdate(chatId: ChatId, update: ProductFeedUpdateModel): Result<Unit> =
+            productFeedApplier.apply(extensionId, chatId, update, getCustomContentDecoder(chatId)) { saveMessage(it) }
+                .onSuccess { messagesChangedFlow.tryEmit(Unit) }
     }
 }
 

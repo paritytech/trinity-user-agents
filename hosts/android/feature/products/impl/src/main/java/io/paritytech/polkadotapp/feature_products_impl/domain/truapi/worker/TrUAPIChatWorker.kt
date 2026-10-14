@@ -5,12 +5,17 @@ import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
+import io.paritytech.polkadotapp.feature_products_api.model.toChatId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCoreBody
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -32,7 +37,10 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
+import uniffi.truapi.ActionTrigger
 import uniffi.truapi.ChatActionPayload
+import uniffi.truapi.ChatCommand
+import uniffi.truapi.ChatEvent
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
@@ -80,6 +88,13 @@ class TrUAPIChatWorker(
         return outcome.logFailure("truapi.chat.action for ${productId.value}")
     }
 
+    override suspend fun publishRoomEvent(roomId: ProductChatIdParameter, event: ProductRoomEvent): Result<Unit> {
+        val chatEvent = event.toChatEvent() ?: return Result.success(Unit)
+        val outcome = runCatching { awaitRunningExecution().publishChatEvent(roomId.value, NATIVE_PEER, chatEvent) }
+        outcome.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        return outcome.logFailure("truapi.chat.event for ${productId.value}")
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun renderMessage(
         roomId: ProductChatIdParameter?,
@@ -88,7 +103,11 @@ class TrUAPIChatWorker(
         messageData: DataByteArray,
     ): Flow<Result<JsWidget>> {
         if (roomId == null) return flowOf(roomlessFailure("render"))
-        val context = RenderContext.ChatMessage(roomId = roomId.value, messageId = messageId, messageType = messageType)
+        val context = RenderContext.ChatMessage(
+            roomId = roomId.value,
+            messageId = productMessageId(roomId, messageId),
+            messageType = messageType,
+        )
         return workers.executionState(productId)
             .distinctUntilChanged()
             .flatMapLatest { state ->
@@ -114,12 +133,36 @@ class TrUAPIChatWorker(
             Timber.w("TrUAPI chat dispatchEvent for %s/%s dropped: no running execution", productId.value, event.messageId)
             return
         }
-        val context = RenderContext.ChatMessage(roomId = roomId.value, messageId = event.messageId, messageType = event.messageType)
+        val context = RenderContext.ChatMessage(
+            roomId = roomId.value,
+            messageId = productMessageId(roomId, event.messageId),
+            messageType = event.messageType,
+        )
         runCatching {
             execution.publishRendererAction(
                 HostRendererActionSubscribeItem(context, event.actionId, event.eventType.toActionPayload()),
             )
         }.logFailure("truapi.renderer.action '${event.actionId}' for ${productId.value}")
+    }
+
+    // A message that the product pushed has a store id that starts with its room; the product knows it without.
+    private fun productMessageId(roomId: ProductChatIdParameter, storedId: ChatMessageId): String =
+        ProductMessageIds.product(storedId, roomId.toChatId(productId.toChatExtensionId()))
+
+    private fun ProductRoomEvent.toChatEvent(): ChatEvent? = when (this) {
+        is ProductRoomEvent.MessagePosted -> content.toCoreBody()?.let { ChatEvent.MessagePosted(messageId, it, replyTo) }
+        is ProductRoomEvent.UserEdited -> content.toCoreBody()?.let { ChatEvent.UserEdited(messageId, it) }
+        is ProductRoomEvent.UserDeleted -> ChatEvent.UserDeleted(messageId)
+        is ProductRoomEvent.UserReacted -> ChatEvent.UserReacted(messageId, emoji, placed)
+        is ProductRoomEvent.Seen -> ChatEvent.Seen(messageId)
+        is ProductRoomEvent.ActionTriggered -> ChatEvent.ActionTriggered(ActionTrigger(messageId, actionId, payload = null))
+        is ProductRoomEvent.Command -> ChatEvent.Command(ChatCommand(command = name, payload = arguments))
+        is ProductRoomEvent.MessageActionTriggered -> ChatEvent.MessageActionTriggered(messageId, actionId)
+        is ProductRoomEvent.ParticipantActionTriggered -> ChatEvent.ParticipantActionTriggered(participantId, actionId)
+        is ProductRoomEvent.ToolbarActionTriggered -> ChatEvent.ToolbarActionTriggered(actionId)
+        is ProductRoomEvent.SuggestionSelected -> ChatEvent.SuggestionSelected(suggestionId)
+        ProductRoomEvent.RoomOpened -> ChatEvent.RoomOpened
+        ProductRoomEvent.RoomClosed -> ChatEvent.RoomClosed
     }
 
     private fun <T> roomlessFailure(what: String): Result<T> {

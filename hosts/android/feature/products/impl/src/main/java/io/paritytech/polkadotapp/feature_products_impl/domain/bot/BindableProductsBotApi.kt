@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
@@ -86,6 +87,12 @@ class BindableProductsBotApi(
 
     override suspend fun setRoomActivity(chatIdParameter: ProductChatIdParameter, activity: ChatRoomActivityModel?): Result<Unit> =
         withChat { it.setRoomActivity(chatIdParameter, activity) }
+
+    override suspend fun applyFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Result<Unit> =
+        withChat { it.applyFeedUpdate(chatIdParameter, update) }
+
+    override suspend fun deliverLiveFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Boolean =
+        chatSlot.tryUse().getOrNull()?.deliverLiveFeedUpdate(chatIdParameter, update) ?: false
 
     private suspend fun <T> withChat(call: suspend (ProductChatMessaging) -> Result<T>): Result<T> =
         chatSlot.tryUse().fold(

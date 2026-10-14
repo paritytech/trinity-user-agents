@@ -25,6 +25,10 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
@@ -36,6 +40,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.Produc
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
@@ -54,6 +59,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Products extension that drives a product's shared worker. Supports multiple rooms — JS scripts can
@@ -73,6 +79,7 @@ class ProductChatExtension(
     val product: Product,
     private val workerRefCounter: ProductWorkerRefCounter,
     private val declarationsRepository: ChatRoomDeclarationsRepository,
+    private val feedListeners: ProductFeedListeners,
     val origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
@@ -87,6 +94,8 @@ class ProductChatExtension(
     private class Disposed : Exception("the product's chat extension was disposed")
 
     private var botScope: CoroutineScope? = null
+
+    private val lastSeen = ConcurrentHashMap<ChatId, String>()
 
     // Strong ref to the messaging target bound weakly onto the shared worker; held for our lifetime.
     private var chatMessaging: ProductChatMessaging? = null
@@ -123,7 +132,7 @@ class ProductChatExtension(
 
             chatExtensionContext.subscribeNewMessages(NewMessagesRoomFilter.AnyFromExtension(id))
                 .filter { it.origin !is ChatMessageOrigin.Extension }
-                .onEach { message -> routeMessage(message) }
+                .onEach { message -> routeMessage(chatExtensionContext, message) }
                 .launchIn(scope)
 
             // Enable chat messaging before the worker's started hook so an initial/welcome message
@@ -166,11 +175,63 @@ class ProductChatExtension(
         Timber.d("Disposed product bot: ${product.name}")
     }
 
-    private suspend fun routeMessage(message: ChatMessage) {
-        when (val content = message.content) {
-            is ChatMessage.Content.Text -> runningWorker.onUserMessage(message.chatId.productRoomId(id), content.text)
-            else -> {}
+    override suspend fun onUserEvent(chatId: ChatId, event: ChatRoomUserEvent) {
+        val room = chatId.productRoomId(id) ?: return
+        val config = declarationsRepository.get(chatId)?.effectiveConfig ?: ChatRoomConfigModel.HOST_DEFAULT
+        val roomEvent = event.toRoomEvent(chatId, config) ?: return
+        runningWorker.publishRoomEvent(room, roomEvent)
+            .onFailure { Timber.w(it, "No room event %s for %s", roomEvent::class.simpleName, product.id.value) }
+    }
+
+    override suspend fun handleCommand(chatId: ChatId, name: String, arguments: String): Boolean {
+        val room = chatId.productRoomId(id) ?: return false
+        val declared = declarationsRepository.get(chatId)?.commands.orEmpty().any { it.name == name }
+        // A command that no worker takes is sent as a message, so the user loses nothing.
+        return declared && runningWorker.publishRoomEvent(room, ProductRoomEvent.Command(name, arguments)).isSuccess
+    }
+
+    // In a room whose product keeps the messages, these actions go to `user_action`, so they send no event.
+    private suspend fun routeMessage(context: ChatExtensionContext, message: ChatMessage) {
+        val room = message.chatId.productRoomId(id) ?: return
+        val config = context.roomDeclarations(message.chatId)?.effectiveConfig ?: ChatRoomConfigModel.HOST_DEFAULT
+        if (config.productSource) return
+        val event = message.toUserEvent() ?: return
+        runningWorker.publishRoomEvent(room, event)
+            .onFailure { Timber.w(it, "No user event for %s", product.id.value) }
+    }
+
+    private fun ChatMessage.toUserEvent(): ProductRoomEvent? {
+        fun productId(storedId: String) = ProductMessageIds.product(storedId, chatId)
+        return when (val content = content) {
+            is ChatMessage.Content.Text,
+            is ChatMessage.Content.RichText,
+            -> ProductRoomEvent.MessagePosted(id, content, replyToMessageId?.let(::productId))
+            is ChatMessage.Content.Edited -> ProductRoomEvent.UserEdited(productId(content.messageId), content.content)
+            is ChatMessage.Content.Reacted -> ProductRoomEvent.UserReacted(productId(content.messageId), content.content.emoji, placed = true)
+            is ChatMessage.Content.ReactionRemoved ->
+                ProductRoomEvent.UserReacted(productId(content.messageId), content.content.emoji, placed = false)
+            else -> null
         }
+    }
+
+    private fun ChatRoomUserEvent.toRoomEvent(chatId: ChatId, config: ChatRoomConfigModel): ProductRoomEvent? {
+        fun productId(storedId: String) = ProductMessageIds.product(storedId, chatId)
+        return when (this) {
+            is ChatRoomUserEvent.MessageDeleted -> ProductRoomEvent.UserDeleted(productId(messageId)).takeUnless { config.productSource }
+            is ChatRoomUserEvent.MessageSeen -> seenEvent(chatId, productId(messageId), config)
+            is ChatRoomUserEvent.ActionTriggered -> ProductRoomEvent.ActionTriggered(productId(messageId), actionId)
+            is ChatRoomUserEvent.MessageActionTriggered -> ProductRoomEvent.MessageActionTriggered(productId(messageId), actionId)
+            is ChatRoomUserEvent.ParticipantActionTriggered -> ProductRoomEvent.ParticipantActionTriggered(participantId, actionId)
+            is ChatRoomUserEvent.ToolbarActionTriggered -> ProductRoomEvent.ToolbarActionTriggered(actionId)
+            is ChatRoomUserEvent.SuggestionSelected -> ProductRoomEvent.SuggestionSelected(suggestionId)
+        }
+    }
+
+    // The screen reports the newest visible message at each scroll; the product hears of each message once.
+    private fun seenEvent(chatId: ChatId, messageId: String, config: ChatRoomConfigModel): ProductRoomEvent? {
+        if (!config.reportSeen || config.productSource) return null
+        val previous = lastSeen.put(chatId, messageId)
+        return ProductRoomEvent.Seen(messageId).takeUnless { previous == messageId }
     }
 
     private inner class ChatMessagingBinding(
@@ -188,6 +249,12 @@ class ProductChatExtension(
             val chatMessage = extensionContext.sendMessage(chatId, message.toChatMessageContent())
             return Result.success(chatMessage.id)
         }
+
+        override suspend fun applyFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Result<Unit> =
+            extensionContext.applyFeedUpdate(chatIdParameter.toChatId(id), update)
+
+        override suspend fun deliverLiveFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Boolean =
+            feedListeners.deliver(chatIdParameter.toChatId(id), update)
 
         override fun subscribeChatRooms(): Flow<List<ProductChatRoom>> {
             return extensionContext.subscribeOwnRooms().map { chatIds ->
