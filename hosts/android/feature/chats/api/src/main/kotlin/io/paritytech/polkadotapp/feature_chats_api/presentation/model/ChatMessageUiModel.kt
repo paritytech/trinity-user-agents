@@ -277,6 +277,9 @@ data class ReplyPreview(
         data class Video(val thumbnailUri: Uri?, val caption: String?) : Content
         data class File(val fileName: String, val caption: String?) : Content
         data class Payment(val amount: TokenAmountModel, val direction: ChatMessageUiModel.Direction) : Content
+
+        /** The replied message is outside the loaded messages of the room. A tap pages until it is loaded. */
+        data object Unloaded : Content
     }
 }
 

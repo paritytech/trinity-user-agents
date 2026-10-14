@@ -54,6 +54,10 @@ private fun ChatSummary.hasMessageNewerThan(timestamp: Long): Boolean {
 
 /** A product badge replaces the host count and the reaction mark (02-DESIGN §19 item 3). */
 internal fun ChatSummary.withRoomPolicy(policy: ChatRoomPolicy?): ChatSummary {
+    // The host counts nothing in a room whose product keeps the messages: only the preview of the product counts.
+    if (policy?.messageStore == ChatRoomPolicy.MessageStore.PRODUCT && !policy.replacesHostBadge) {
+        return copy(badge = ChatSummaryBadge.None, hasUnseenReaction = false)
+    }
     if (policy == null || !policy.replacesHostBadge) return this
 
     val productBadge = when (val badge = policy.listBadge) {

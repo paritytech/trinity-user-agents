@@ -49,6 +49,14 @@ interface ChatFeedContract {
     fun onSendMessageClick()
     fun onPayClick()
     fun setChatActive()
+
+    /** The room screen became visible. A product room holds its product until [onScreenStopped]. */
+    fun onScreenStarted()
+
+    fun onScreenStopped()
+
+    /** Opens the room again and asks for the newest messages after the product did not answer. */
+    fun onRetryRoom()
     fun setChatInactive()
 
     fun onClearReply()
@@ -66,6 +74,15 @@ interface ChatFeedContract {
     fun onDeleteMessageConfirm(messageId: ChatMessageId)
 
     fun onClearEdit()
+
+    /** The user came near the oldest loaded message, or tapped the retry of a page that did not load. */
+    fun onLoadOlderMessages()
+
+    /** The user came near the newest loaded message, or tapped the retry of a page that did not load. */
+    fun onLoadNewerMessages()
+
+    /** The user asked for the newest messages of the room. */
+    fun onShowNewestMessages()
 
     fun onMessageAction(action: MessageAction)
 

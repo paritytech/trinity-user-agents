@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.awaitLoaded
-import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.presentation.ui.errors.UnexpectedPresentationError
@@ -30,11 +29,9 @@ import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.computeChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.FirstNewMessageInfo
@@ -47,12 +44,16 @@ import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asAttachmentError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAnotherChatPresentationError
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.toPresentationError
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.ChatMessageUiMapper
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.toUi
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatInputUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
@@ -68,6 +69,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.isN
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.sendableMessageState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.sendableMessageText
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toRoomUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentExecutor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentResult
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
@@ -89,13 +91,14 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 import kotlin.math.max
 import kotlin.time.Duration.Companion.milliseconds
+import io.paritytech.polkadotapp.common.R as RCommon
 
 private const val MAX_CHAT_MESSAGE_LENGTH = 500
 private const val NEWEST_MESSAGE_POSITION = 0
@@ -135,11 +138,23 @@ class ChatFeedViewModel @Inject constructor(
     private val originDisplayResolver = flowOf { interactor.getMessageOriginDisplayResolver(openChatRequest) }
         .shareInBackground()
 
-    private val reactions = interactor.subscribeChatReactions(chatId).shareInBackground()
+    private val feedSnapshot = interactor.subscribeMessages(chatId).shareInBackground()
 
-    private val revisions = interactor.subscribeRevisions(chatId).shareInBackground()
+    private val reactions = feedSnapshot.map { it.reactions }.distinctUntilChanged().shareInBackground()
+
+    private val revisions = feedSnapshot.map { it.revisions }.distinctUntilChanged().shareInBackground()
+
+    private val statusOverrides = feedSnapshot
+        .map { snapshot -> snapshot.productStatuses.mapValues { (_, status) -> status.toUi() } }
+        .distinctUntilChanged()
+        .shareInBackground()
 
     private val customMessageRenderers = flowOf { interactor.getCustomMessageRenderersForChat(chatId) }
+
+    // The window of a product-source room can miss the replied message, so its quote offers a jump.
+    private val quotesUnloadedReplies = roomPolicy
+        .map { it?.messageStore == ChatRoomPolicy.MessageStore.PRODUCT }
+        .distinctUntilChanged()
 
     private val animatesMessageReveal = flowOf { interactor.animatesMessageReveal(chatId) }
         .shareInBackground()
@@ -147,7 +162,7 @@ class ChatFeedViewModel @Inject constructor(
     private val revealedUpTo = MutableStateFlow<Timestamp?>(null)
 
     private val gatedDomainMessages = combine(
-        interactor.subscribeMessages(chatId),
+        feedSnapshot.map { it.messages },
         animatesMessageReveal,
         revealedUpTo,
     ) { domainMessages, animates, revealed ->
@@ -169,13 +184,26 @@ class ChatFeedViewModel @Inject constructor(
             gatedDomainMessages.map { it.visibleMessages },
             callStateTracker.observeActiveCall().map { state -> state?.takeIf { it.chatId == chatId } }
         ),
-        reactions,
+        combineToPair(reactions, statusOverrides),
         originDisplayResolver,
         revisions,
-        customMessageRenderers
-    ) { (messages, activeCall), reactions, originDisplayResolver, revisionsMap, customMessageRenderers ->
-        messageUiMapper.map(messages, originDisplayResolver, reactions, revisionsMap, customMessageRenderers, activeCall)
+        combineToPair(customMessageRenderers, quotesUnloadedReplies),
+    ) { (messages, activeCall), (reactions, statusOverrides), originDisplayResolver, revisionsMap, (customMessageRenderers, quotesUnloaded) ->
+        messageUiMapper.map(
+            messages = messages,
+            originDisplayResolver = originDisplayResolver,
+            reactions = reactions,
+            revisions = revisionsMap,
+            customMessageRenderers = customMessageRenderers,
+            activeCall = activeCall,
+            statusOverrides = statusOverrides,
+            quoteUnloadedReplies = quotesUnloaded,
+        )
     }.shareInBackground()
+
+    private val paging = feedSnapshot.map { it.paging }.distinctUntilChanged()
+
+    private val readiness = feedSnapshot.map { it.readiness }.distinctUntilChanged()
 
     override val chatDisplay = combine(interactor.observeChatDisplay(openChatRequest), roomPolicy) { display, policy ->
         display.map { ChatDisplayUiModel(username = it.name, avatarModel = resourceResolver.roomAvatar(it.avatar, policy?.avatar)) }
@@ -231,18 +259,14 @@ class ChatFeedViewModel @Inject constructor(
         chatInputStateType.toChatInputUiState(messageInput, answerProgress)
     }.stateIn(this, SharingStarted.Eagerly, ChatInputUiState.Hidden)
 
-    private val firstNewMessageInfo = messages
-        .take(1)
-        .map { messagesList ->
-            val index = messagesList.indexOfLast { it.isUnread() }.collectionIndexOrNull()
-
-            if (index != null) {
-                FirstNewMessageInfo(
-                    index = index,
-                    messageId = messagesList[index].id
-                )
-            } else null
+    // The "New messages" marker waits for the first page of a product-source room, so a cached page does not set it.
+    private val firstNewMessageInfo = combineToPair(messages, readiness)
+        .transformWhile { (messagesList, readiness) ->
+            val ready = readiness != ChatRoomReadiness.LOADING
+            emit(if (ready) messagesList.firstNewMessageInfo() else null)
+            !ready
         }
+        .distinctUntilChanged()
         .shareInBackground()
 
     private val unreadCounter = combine(
@@ -256,15 +280,22 @@ class ChatFeedViewModel @Inject constructor(
         messages,
         firstNewMessageInfo,
         unreadCounter.distinctUntilChanged(),
-    ) { messagesList, firstNewMessageInfo, unreadCounter ->
+        paging,
+        readiness,
+    ) { messagesList, firstNewMessageInfo, unreadCounter, paging, readiness ->
         ChatMessagesState(
             messages = messagesList,
             unreadCounter = unreadCounter,
-            firstNewMessageInfo = firstNewMessageInfo
+            firstNewMessageInfo = firstNewMessageInfo,
+            olderPage = paging.older.toUi(),
+            newerPage = paging.newer.toUi(),
+            readiness = readiness.toUi(),
         )
     }
         .withLoading()
         .stateIn(CoroutineScope(coroutineContext + dispatchers.computation), SharingStarted.Eagerly, LoadingState.Loading)
+
+    private val feedPaging = ChatFeedPaging(chatId, interactor, chatMessagesState)
 
     override val menuState = MutableStateFlow(ChatMenuState())
 
@@ -289,6 +320,7 @@ class ChatFeedViewModel @Inject constructor(
 
     override fun onCleared() {
         interactor.setChatInactive()
+        interactor.releaseRoom(chatId)
         draftController.flush()
         super.onCleared()
     }
@@ -306,7 +338,7 @@ class ChatFeedViewModel @Inject constructor(
         revealedUpTo.value = message.timestamp
         interactor.setLastRevealedTimestamp(chatId, message.timestamp)
 
-        val allRevealed = interactor.subscribeMessages(chatId).first().none { it.timestamp > message.timestamp && it.animatesReveal }
+        val allRevealed = feedSnapshot.first().messages.none { it.timestamp > message.timestamp && it.animatesReveal }
         if (allRevealed) scrollToPosition.emit(NEWEST_MESSAGE_POSITION)
     }
 
@@ -386,6 +418,18 @@ class ChatFeedViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    override fun onScreenStarted() {
+        interactor.openRoom(chatId)
+    }
+
+    override fun onScreenStopped() {
+        interactor.closeRoom(chatId)
+    }
+
+    override fun onRetryRoom() {
+        interactor.retryRoom(chatId)
     }
 
     override fun setChatActive() {
@@ -471,6 +515,16 @@ class ChatFeedViewModel @Inject constructor(
 
     override fun onUnreadMessageVisible(message: ChatMessageUiModel) = launchUnit {
         lastReadMessageTimestamp.update { max(it, message.timestamp) }
+        interactor.reportMessageSeen(chatId, message.id)
+    }
+
+    override fun onLoadOlderMessages() = launchUnit { feedPaging.loadOlder() }
+
+    override fun onLoadNewerMessages() = launchUnit { feedPaging.loadNewer() }
+
+    override fun onShowNewestMessages() = launchUnit {
+        feedPaging.showNewest()
+        scrollToPosition.emit(NEWEST_MESSAGE_POSITION)
     }
 
     override fun onClearEdit() {
@@ -511,7 +565,7 @@ class ChatFeedViewModel @Inject constructor(
                 messagePopupSection.update { MessagePopUpSelection.reactionDetails(action.message.id) }
             }
 
-            is MessageAction.ReplyPreviewTap -> scrollToMessage(action.messageId)
+            is MessageAction.ReplyPreviewTap -> launchUnit { jumpToMessage(action.messageId) }
             is MessageAction.ViewEditHistory -> {
                 messagePopupSection.update { null }
                 showMessageHistory(action.message.id)
@@ -531,6 +585,7 @@ class ChatFeedViewModel @Inject constructor(
                 messagePopupSection.update { null }
                 launchUnit {
                     interactor.retryProductRoomMessage(chatId, action.message.id)
+                        .onSuccess(::showActionOutcome)
                         .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
                 }
             }
@@ -546,6 +601,7 @@ class ChatFeedViewModel @Inject constructor(
 
         val policy = roomPolicy.first() ?: return@launchUnit
         interactor.deleteProductRoomMessage(chatId, messageId, policy)
+            .onSuccess(::showActionOutcome)
             .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
     }
 
@@ -625,42 +681,36 @@ class ChatFeedViewModel @Inject constructor(
     }
 
     private suspend fun sendMessageToActiveChat(messageText: String, relation: InputMessageRelation) {
-        when (relation) {
+        val outcome = when (relation) {
             is InputMessageRelation.Edit -> {
-                if (messageText != relation.originalText) {
-                    interactor.sendEdit(
-                        chatId = chatId,
-                        messageId = relation.messageId,
-                        newText = messageText
-                    )
-                }
+                if (messageText == relation.originalText) return
+                interactor.sendEdit(chatId = chatId, messageId = relation.messageId, newText = messageText)
             }
 
-            is InputMessageRelation.Reply -> {
-                interactor.sendTextMessage(
-                    chatId = chatId,
-                    text = messageText,
-                    replyToMessageId = relation.preview.messageId
-                )
-            }
-
-            InputMessageRelation.None -> {
-                interactor.sendTextMessage(
-                    chatId = chatId,
-                    text = messageText,
-                    replyToMessageId = null
-                )
-            }
+            is InputMessageRelation.Reply -> interactor.sendTextMessage(chatId, messageText, replyToMessageId = relation.preview.messageId)
+            InputMessageRelation.None -> interactor.sendTextMessage(chatId, messageText, replyToMessageId = null)
         }
+
+        showActionOutcome(outcome)
+    }
+
+    /** A product that refuses an action of the user gives the reason (02-DESIGN §13 item 9). */
+    private fun showActionOutcome(outcome: ChatSourceActionOutcome) {
+        if (outcome !is ChatSourceActionOutcome.Refused) return
+
+        val reason = outcome.reason
+        if (reason.isNullOrBlank()) showMessage(RCommon.string.chat_message_action_failed) else showMessage(reason)
     }
 
     private fun jumpToTargetMessageIfNeeded() {
         val messageId = payload.targetMessageId ?: return
 
-        launchUnit {
-            chatMessagesState.first { state -> state.dataOrNull?.messages.orEmpty().any { it.id == messageId } }
-            scrollToMessage(messageId)
-        }
+        launchUnit { jumpToMessage(messageId) }
+    }
+
+    private suspend fun jumpToMessage(messageId: ChatMessageId) {
+        feedPaging.awaitLoaded(messageId)
+        scrollToMessage(messageId)
     }
 
     private fun scrollToMessage(messageId: String) {
@@ -710,19 +760,7 @@ class ChatFeedViewModel @Inject constructor(
 
     private fun toggleReaction(messageId: String, emoji: String) = launchUnit {
         val messageReactions = reactions.first()[messageId].orEmpty()
-        val existingUserReaction = messageReactions.find { it.origin.isUser() }
-
-        if (existingUserReaction != null) {
-            interactor.removeUserReaction(chatId, existingUserReaction)
-        }
-
-        if (existingUserReaction?.content?.emoji != emoji) {
-            interactor.addUserReaction(
-                chatId = chatId,
-                messageId = messageId,
-                content = ChatMessageReactionContent(emoji)
-            )
-        }
+        showActionOutcome(interactor.toggleUserReaction(chatId, messageId, emoji, messageReactions))
     }
 
     private fun replyToMessage(message: ChatMessageUiModel) = launchUnit {
@@ -798,6 +836,11 @@ class ChatFeedViewModel @Inject constructor(
     private fun MutableStateFlow<ChatSendMessageInputState>.updateInput(message: String) {
         update { it.copy(inputMessage = message.take(MAX_CHAT_MESSAGE_LENGTH)) }
     }
+}
+
+private fun List<ChatMessageUiModel>.firstNewMessageInfo(): FirstNewMessageInfo? {
+    val index = indexOfLast { it.isUnread() }.collectionIndexOrNull() ?: return null
+    return FirstNewMessageInfo(index = index, messageId = this[index].id)
 }
 
 private data class GatedMessages(

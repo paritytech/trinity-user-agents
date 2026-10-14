@@ -875,6 +875,9 @@
     <string name="chat_message_show_more">Show more</string>
     <string name="chat_message_video">Video</string>
     <string name="chat_message_action_failed">The app did not take the action. Try again.</string>
+    <string name="chat_reply_earlier_message">Earlier message</string>
+    <string name="chat_feed_page_failed">Messages did not load. Tap to try again.</string>
+    <string name="chat_product_room_unavailable">The app does not answer. You see the messages that loaded before.</string>
 
     <string name="notification_channel_name_video_game">Weekly game</string>
     <string name="notification_channel_description_video_game">Notifications about upcoming weekly games</string>
