@@ -25,7 +25,7 @@ use crate::{
 		permissions::TemporaryPermissions,
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
-	runtime::{AnnouncedPairing, sso_remote::sso_message_id},
+	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 	subscription::Spawner,
 };
@@ -576,12 +576,11 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		own_statement_account_id: Bytes32,
 		own_encryption_public_key: Bytes32,
-	) -> Result<Arc<super::sso::NativeSsoAccountHolderService>, HostRejection> {
-		let service = self
-			.runtime
+	) -> Result<Arc<SsoAccountHolderService>, HostRejection> {
+		self.runtime
 			.open_sso_service(own_statement_account_id, own_encryption_public_key)
-			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })?;
-		Ok(Arc::new(super::sso::NativeSsoAccountHolderService::new(service)))
+			.map(Arc::new)
+			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
 	}
 
 	/// Build the SCALE-encoded `Disconnected` message a wallet posts over a

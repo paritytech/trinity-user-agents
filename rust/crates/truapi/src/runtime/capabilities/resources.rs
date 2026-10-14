@@ -4,7 +4,7 @@ use tracing::instrument;
 use truapi::{
 	CallContext, CallError,
 	api::{Entropy, ResourceAllocation},
-	v01,
+	latest,
 	versioned::{
 		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
 		resource_allocation::{
@@ -13,6 +13,9 @@ use truapi::{
 		},
 	},
 };
+
+use super::from_latest_error;
+use truapi::versioned::{FromLatest, IntoLatest, Versioned};
 
 use crate::runtime::{AccountHolder, ProductRuntimeHost, authority::AuthorityError};
 
@@ -25,24 +28,32 @@ impl<H: AccountHolder> ResourceAllocation for ProductRuntimeHost<H> {
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, CallError<HostRequestResourceAllocationError>>
 	{
-		let HostRequestResourceAllocationRequest::V1(inner) = request;
-		let Some(authority_session) = self.accounts.current_session() else {
-			return Err(CallError::Domain(HostRequestResourceAllocationError::V1(
-				v01::ResourceAllocationError::Unknown { reason: "No active session".to_string() },
-			)));
-		};
+		let version = request.version();
+		let inner = request.into_latest();
+		let result = async {
+			let Some(authority_session) = self.accounts.current_session() else {
+				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
+					reason: "No active session".to_string(),
+				}));
+			};
 
-		self.accounts
-			.allocate_resources(cx, &authority_session, &self.connection.product, inner)
-			.await
-			.map(HostRequestResourceAllocationResponse::V1)
-			.map_err(|error| match error {
-				AuthorityError::ConfirmationFailed(error) => CallError::HostFailure {
-					reason: format!("resource allocation confirmation failed: {error:?}"),
-				},
-				error => CallError::Domain(HostRequestResourceAllocationError::V1(
-					v01::ResourceAllocationError::Unknown { reason: error.to_string() },
-				)),
+			self.accounts
+				.allocate_resources(cx, &authority_session, &self.connection.product, inner)
+				.await
+				.map_err(|error| match error {
+					AuthorityError::ConfirmationFailed(error) => CallError::HostFailure {
+						reason: format!("resource allocation confirmation failed: {error:?}"),
+					},
+					error => CallError::Domain(latest::ResourceAllocationError::Unknown {
+						reason: error.to_string(),
+					}),
+				})
+		}
+		.await;
+		result
+			.map(|response| HostRequestResourceAllocationResponse::from_latest(response, version))
+			.map_err(|error| {
+				from_latest_error::<HostRequestResourceAllocationError>(error, version)
 			})
 	}
 }
@@ -55,21 +66,28 @@ impl<H: AccountHolder> Entropy for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: HostDeriveEntropyRequest,
 	) -> Result<HostDeriveEntropyResponse, CallError<HostDeriveEntropyError>> {
-		let HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest { context }) = request;
-		let Some(authority_session) = self.accounts.current_session() else {
-			return Err(CallError::Domain(HostDeriveEntropyError::V1(
-				v01::HostDeriveEntropyError::Unknown { reason: "Not connected".to_string() },
-			)));
-		};
-		let entropy = self
-			.accounts
-			.derive_entropy(&authority_session, &self.connection.product_id(), &context)
-			.map_err(|err| {
-				CallError::Domain(HostDeriveEntropyError::V1(
-					v01::HostDeriveEntropyError::Unknown { reason: err.to_string() },
-				))
-			})?;
+		let version = request.version();
+		let latest::HostDeriveEntropyRequest { context } = request.into_latest();
+		let result = async {
+			let Some(authority_session) = self.accounts.current_session() else {
+				return Err(CallError::Domain(latest::HostDeriveEntropyError::Unknown {
+					reason: "Not connected".to_string(),
+				}));
+			};
+			let entropy = self
+				.accounts
+				.derive_entropy(&authority_session, &self.connection.product_id(), &context)
+				.map_err(|err| {
+					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
+						reason: err.to_string(),
+					})
+				})?;
 
-		Ok(HostDeriveEntropyResponse::V1(v01::HostDeriveEntropyResponse { entropy }))
+			Ok(latest::HostDeriveEntropyResponse { entropy })
+		}
+		.await;
+		result
+			.map(|response| HostDeriveEntropyResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error::<HostDeriveEntropyError>(error, version))
 	}
 }

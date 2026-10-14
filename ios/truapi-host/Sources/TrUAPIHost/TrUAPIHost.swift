@@ -984,7 +984,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     public func openSsoService(
         ownStatementAccountId: Data,
         ownEncryptionPublicKey: Data
-    ) throws -> NativeSsoAccountHolderService {
+    ) throws -> SsoAccountHolderService {
         try inner.openSsoService(
             ownStatementAccountId: ownStatementAccountId,
             ownEncryptionPublicKey: ownEncryptionPublicKey

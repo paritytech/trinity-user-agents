@@ -3,7 +3,7 @@ import TrUAPIHost
 
 struct SSOTrUAPIRequest: HostMessageIdentifiable {
     let message: SSORawHostMessage
-    let service: any NativeSsoAccountHolderServiceProtocol
+    let service: any SsoAccountHolderServiceProtocol
 
     var messageId: String { message.messageId }
 }

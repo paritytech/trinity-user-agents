@@ -41,6 +41,7 @@ use crate::{
 };
 
 /// Incoming requests for one authenticated wallet activation and peer.
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Object))]
 pub struct SsoAccountHolderService {
 	wallet: Arc<WalletAccountHolder>,
 	consent: Arc<ProductConsent>,

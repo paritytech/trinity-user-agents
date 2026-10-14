@@ -22,28 +22,15 @@ pub enum SsoRequestOutcome {
 	Ignored,
 }
 
-/// Incoming requests and cancellation for one authenticated peer.
-#[derive(uniffi::Object)]
-pub struct NativeSsoAccountHolderService {
-	service: SsoAccountHolderService,
-}
-
-impl NativeSsoAccountHolderService {
-	/// Retain the peer binding verified by the runtime.
-	pub fn new(service: SsoAccountHolderService) -> Self {
-		Self { service }
-	}
-}
-
 #[uniffi::export]
-impl NativeSsoAccountHolderService {
+impl SsoAccountHolderService {
 	/// Apply Cancel immediately; other messages remain in the transport's request queue.
 	pub fn handle_sso_control(
 		&self,
 		message: Vec<u8>,
 	) -> Result<Option<SsoRequestOutcome>, HostRejection> {
 		let message = decode_remote_message(&message).map_err(reject)?;
-		Ok(self.service.handle_control(&message).map(outcome))
+		Ok(self.handle_control(&message).map(outcome))
 	}
 
 	/// Answer one decrypted SCALE message using this peer's original wallet activation.
@@ -52,7 +39,7 @@ impl NativeSsoAccountHolderService {
 		message: Vec<u8>,
 	) -> Result<SsoRequestOutcome, HostRejection> {
 		let message = decode_remote_message(&message).map_err(reject)?;
-		Ok(outcome(self.service.answer(message).await.map_err(reject)?))
+		Ok(outcome(self.answer(message).await.map_err(reject)?))
 	}
 }
 

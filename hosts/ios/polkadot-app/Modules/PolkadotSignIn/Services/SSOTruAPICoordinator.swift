@@ -30,7 +30,7 @@ final class SSOTruAPICoordinator {
         ownKeyId: Chat.Contact.Own,
         serviceFactory: MessageExchageServiceMaking,
         runtimeProvider: TrUAPIHostRuntimeProviding,
-        makeAccountHolderService: @escaping () throws -> NativeSsoAccountHolderService,
+        makeAccountHolderService: @escaping () throws -> SsoAccountHolderService,
         chainId: ChainModel.Id = AppConfig.Chains.chatChain,
         chainRegistry: ChainRegistryProtocol = ChainRegistryFacade.sharedRegistry,
         hostsDataProviderFactory: PolkadotSignInHostDataProviderMaking = PolkadotSignInHostDataProviderFactory(),
@@ -199,17 +199,17 @@ private extension SSOTruAPICoordinator {
     actor State {
         struct Peer {
             let host: PolkadotSignInHost
-            let service: NativeSsoAccountHolderService
+            let service: SsoAccountHolderService
         }
 
-        private let makeService: () throws -> NativeSsoAccountHolderService
+        private let makeService: () throws -> SsoAccountHolderService
         private let logger: LoggerProtocol
         private var hostsByAccountId = [Data: PolkadotSignInHost]()
         private var exchangeService: AnyMessageExchangeService<OpaqueSSORawHostMessage>?
         private var peersByAccountId = [Data: Peer]()
         private var hostSubscriptionTask: Task<Void, Never>?
 
-        init(makeService: @escaping () throws -> NativeSsoAccountHolderService, logger: LoggerProtocol) {
+        init(makeService: @escaping () throws -> SsoAccountHolderService, logger: LoggerProtocol) {
             self.makeService = makeService
             self.logger = logger
         }

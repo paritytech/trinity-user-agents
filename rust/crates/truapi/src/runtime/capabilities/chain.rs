@@ -9,28 +9,33 @@ use tracing::instrument;
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
 	api::Chain,
-	v01,
-	versioned::chain::{
-		RemoteChainHeadBodyError, RemoteChainHeadBodyRequest, RemoteChainHeadBodyResponse,
-		RemoteChainHeadCallError, RemoteChainHeadCallRequest, RemoteChainHeadCallResponse,
-		RemoteChainHeadContinueError, RemoteChainHeadContinueRequest,
-		RemoteChainHeadContinueResponse, RemoteChainHeadFollowError, RemoteChainHeadFollowItem,
-		RemoteChainHeadFollowRequest, RemoteChainHeadHeaderError, RemoteChainHeadHeaderRequest,
-		RemoteChainHeadHeaderResponse, RemoteChainHeadStopOperationError,
-		RemoteChainHeadStopOperationRequest, RemoteChainHeadStopOperationResponse,
-		RemoteChainHeadStorageError, RemoteChainHeadStorageRequest, RemoteChainHeadStorageResponse,
-		RemoteChainHeadUnpinError, RemoteChainHeadUnpinRequest, RemoteChainHeadUnpinResponse,
-		RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
-		RemoteChainSpecChainNameError, RemoteChainSpecChainNameRequest,
-		RemoteChainSpecChainNameResponse, RemoteChainSpecGenesisHashError,
-		RemoteChainSpecGenesisHashRequest, RemoteChainSpecGenesisHashResponse,
-		RemoteChainSpecPropertiesError, RemoteChainSpecPropertiesRequest,
-		RemoteChainSpecPropertiesResponse, RemoteChainTransactionBroadcastError,
-		RemoteChainTransactionBroadcastRequest, RemoteChainTransactionBroadcastResponse,
-		RemoteChainTransactionStopError, RemoteChainTransactionStopRequest,
-		RemoteChainTransactionStopResponse,
+	latest,
+	versioned::{
+		FromLatest, IntoLatest, Versioned,
+		chain::{
+			RemoteChainHeadBodyError, RemoteChainHeadBodyRequest, RemoteChainHeadBodyResponse,
+			RemoteChainHeadCallError, RemoteChainHeadCallRequest, RemoteChainHeadCallResponse,
+			RemoteChainHeadContinueError, RemoteChainHeadContinueRequest,
+			RemoteChainHeadContinueResponse, RemoteChainHeadFollowError, RemoteChainHeadFollowItem,
+			RemoteChainHeadFollowRequest, RemoteChainHeadHeaderError, RemoteChainHeadHeaderRequest,
+			RemoteChainHeadHeaderResponse, RemoteChainHeadStopOperationError,
+			RemoteChainHeadStopOperationRequest, RemoteChainHeadStopOperationResponse,
+			RemoteChainHeadStorageError, RemoteChainHeadStorageRequest,
+			RemoteChainHeadStorageResponse, RemoteChainHeadUnpinError, RemoteChainHeadUnpinRequest,
+			RemoteChainHeadUnpinResponse, RemoteChainInfoError, RemoteChainInfoRequest,
+			RemoteChainInfoResponse, RemoteChainSpecChainNameError,
+			RemoteChainSpecChainNameRequest, RemoteChainSpecChainNameResponse,
+			RemoteChainSpecGenesisHashError, RemoteChainSpecGenesisHashRequest,
+			RemoteChainSpecGenesisHashResponse, RemoteChainSpecPropertiesError,
+			RemoteChainSpecPropertiesRequest, RemoteChainSpecPropertiesResponse,
+			RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
+			RemoteChainTransactionBroadcastResponse, RemoteChainTransactionStopError,
+			RemoteChainTransactionStopRequest, RemoteChainTransactionStopResponse,
+		},
 	},
 };
+
+use super::from_latest_error;
 
 use crate::{
 	host_logic::features::{chain_info, supported_chains},
@@ -47,7 +52,7 @@ impl ProductConnection {
 		let stop = self
 			.services
 			.chain
-			.remote_chain_transaction_stop(truapi::latest::RemoteChainTransactionStopRequest {
+			.remote_chain_transaction_stop(latest::RemoteChainTransactionStopRequest {
 				genesis_hash,
 				operation_id: operation_id.clone(),
 			})
@@ -73,15 +78,17 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		cx: &CallContext,
 		request: RemoteChainHeadFollowRequest,
 	) -> Subscription<RemoteChainHeadFollowItem, CallError<RemoteChainHeadFollowError>> {
-		let RemoteChainHeadFollowRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
 		let follow_subscription_id = self.connection.follow_id(cx.request_id());
 		let stream = self
 			.connection
 			.services
 			.chain
 			.remote_chain_head_follow(follow_subscription_id, inner)
-			.map(|item| {
-				item.map(RemoteChainHeadFollowItem::V1).map_err(runtime_failure_to_call_error)
+			.map(move |item| {
+				item.map(|value| RemoteChainHeadFollowItem::from_latest(value, version))
+					.map_err(runtime_failure_to_call_error)
 			});
 		Subscription::new(stream)
 	}
@@ -92,14 +99,15 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainHeadHeaderRequest,
 	) -> Result<RemoteChainHeadHeaderResponse, CallError<RemoteChainHeadHeaderError>> {
-		let RemoteChainHeadHeaderRequest::V1(mut inner) = request;
+		let version = request.version();
+		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
 		self.connection
 			.services
 			.chain
 			.remote_chain_head_header(inner)
 			.await
-			.map(RemoteChainHeadHeaderResponse::V1)
+			.map(|value| RemoteChainHeadHeaderResponse::from_latest(value, version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -109,14 +117,15 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainHeadBodyRequest,
 	) -> Result<RemoteChainHeadBodyResponse, CallError<RemoteChainHeadBodyError>> {
-		let RemoteChainHeadBodyRequest::V1(mut inner) = request;
+		let version = request.version();
+		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
 		self.connection
 			.services
 			.chain
 			.remote_chain_head_body(inner)
 			.await
-			.map(RemoteChainHeadBodyResponse::V1)
+			.map(|value| RemoteChainHeadBodyResponse::from_latest(value, version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -126,14 +135,15 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainHeadStorageRequest,
 	) -> Result<RemoteChainHeadStorageResponse, CallError<RemoteChainHeadStorageError>> {
-		let RemoteChainHeadStorageRequest::V1(mut inner) = request;
+		let version = request.version();
+		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
 		self.connection
 			.services
 			.chain
 			.remote_chain_head_storage(inner)
 			.await
-			.map(RemoteChainHeadStorageResponse::V1)
+			.map(|value| RemoteChainHeadStorageResponse::from_latest(value, version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -143,14 +153,15 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainHeadCallRequest,
 	) -> Result<RemoteChainHeadCallResponse, CallError<RemoteChainHeadCallError>> {
-		let RemoteChainHeadCallRequest::V1(mut inner) = request;
+		let version = request.version();
+		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
 		self.connection
 			.services
 			.chain
 			.remote_chain_head_call(inner)
 			.await
-			.map(RemoteChainHeadCallResponse::V1)
+			.map(|value| RemoteChainHeadCallResponse::from_latest(value, version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -160,14 +171,15 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainHeadUnpinRequest,
 	) -> Result<RemoteChainHeadUnpinResponse, CallError<RemoteChainHeadUnpinError>> {
-		let RemoteChainHeadUnpinRequest::V1(mut inner) = request;
+		let version = request.version();
+		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
 		self.connection
 			.services
 			.chain
 			.remote_chain_head_unpin(inner)
 			.await
-			.map(|()| RemoteChainHeadUnpinResponse::V1)
+			.map(|()| RemoteChainHeadUnpinResponse::from_latest((), version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -177,14 +189,15 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainHeadContinueRequest,
 	) -> Result<RemoteChainHeadContinueResponse, CallError<RemoteChainHeadContinueError>> {
-		let RemoteChainHeadContinueRequest::V1(mut inner) = request;
+		let version = request.version();
+		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
 		self.connection
 			.services
 			.chain
 			.remote_chain_head_continue(inner)
 			.await
-			.map(|()| RemoteChainHeadContinueResponse::V1)
+			.map(|()| RemoteChainHeadContinueResponse::from_latest((), version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -195,14 +208,15 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		request: RemoteChainHeadStopOperationRequest,
 	) -> Result<RemoteChainHeadStopOperationResponse, CallError<RemoteChainHeadStopOperationError>>
 	{
-		let RemoteChainHeadStopOperationRequest::V1(mut inner) = request;
+		let version = request.version();
+		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
 		self.connection
 			.services
 			.chain
 			.remote_chain_head_stop_operation(inner)
 			.await
-			.map(|()| RemoteChainHeadStopOperationResponse::V1)
+			.map(|()| RemoteChainHeadStopOperationResponse::from_latest((), version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -212,13 +226,14 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainSpecGenesisHashRequest,
 	) -> Result<RemoteChainSpecGenesisHashResponse, CallError<RemoteChainSpecGenesisHashError>> {
-		let RemoteChainSpecGenesisHashRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
 		self.connection
 			.services
 			.chain
 			.remote_chain_spec_genesis_hash(inner.genesis_hash)
 			.await
-			.map(RemoteChainSpecGenesisHashResponse::V1)
+			.map(|value| RemoteChainSpecGenesisHashResponse::from_latest(value, version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -228,13 +243,14 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainSpecChainNameRequest,
 	) -> Result<RemoteChainSpecChainNameResponse, CallError<RemoteChainSpecChainNameError>> {
-		let RemoteChainSpecChainNameRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
 		self.connection
 			.services
 			.chain
 			.remote_chain_spec_chain_name(inner.genesis_hash)
 			.await
-			.map(RemoteChainSpecChainNameResponse::V1)
+			.map(|value| RemoteChainSpecChainNameResponse::from_latest(value, version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -244,13 +260,14 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainSpecPropertiesRequest,
 	) -> Result<RemoteChainSpecPropertiesResponse, CallError<RemoteChainSpecPropertiesError>> {
-		let RemoteChainSpecPropertiesRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
 		self.connection
 			.services
 			.chain
 			.remote_chain_spec_properties(inner.genesis_hash)
 			.await
-			.map(RemoteChainSpecPropertiesResponse::V1)
+			.map(|value| RemoteChainSpecPropertiesResponse::from_latest(value, version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -263,14 +280,17 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		RemoteChainTransactionBroadcastResponse,
 		CallError<RemoteChainTransactionBroadcastError>,
 	> {
-		let RemoteChainTransactionBroadcastRequest::V1(inner) = request;
-		let denied = RemoteChainTransactionBroadcastError::V1(v01::GenericError {
-			reason: PERMISSION_DENIED_REASON.to_string(),
-		});
-		self.connection.require_chain_submit(denied).await?;
+		let version = request.version();
+		let inner = request.into_latest();
+		let denied = latest::GenericError { reason: PERMISSION_DENIED_REASON.to_string() };
+		self.connection
+			.require_chain_submit(denied)
+			.await
+			.map_err(|error| from_latest_error(error, version))?;
 		if let Some(reason) = cx.cancel().reason() {
-			return Err(CallError::Domain(RemoteChainTransactionBroadcastError::V1(
-				v01::GenericError { reason: format!("broadcast {reason}") },
+			return Err(CallError::Domain(RemoteChainTransactionBroadcastError::from_latest(
+				latest::GenericError { reason: format!("broadcast {reason}") },
+				version,
 			)));
 		}
 		let genesis_hash = inner.genesis_hash.clone();
@@ -289,7 +309,7 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		{
 			self.connection.stop_withdrawn_broadcast(genesis_hash, operation_id).await;
 		}
-		Ok(RemoteChainTransactionBroadcastResponse::V1(response))
+		Ok(RemoteChainTransactionBroadcastResponse::from_latest(response, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chain.stop_transaction"))]
@@ -298,7 +318,8 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainTransactionStopRequest,
 	) -> Result<RemoteChainTransactionStopResponse, CallError<RemoteChainTransactionStopError>> {
-		let RemoteChainTransactionStopRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
 		// ChainRuntime resolves this product-visible host handle to the
 		// provider's short-lived operation id and makes stopping an operation
 		// that completed between broadcast and stop idempotent.
@@ -307,7 +328,7 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 			.chain
 			.remote_chain_transaction_stop(inner)
 			.await
-			.map(|()| RemoteChainTransactionStopResponse::V1)
+			.map(|()| RemoteChainTransactionStopResponse::from_latest((), version))
 			.map_err(runtime_failure_to_call_error)
 	}
 
@@ -317,17 +338,19 @@ impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: RemoteChainInfoRequest,
 	) -> Result<RemoteChainInfoResponse, CallError<RemoteChainInfoError>> {
-		let RemoteChainInfoRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
 		let set =
 			supported_chains(self.connection.services.platform.as_ref())
 				.await
 				.map_err(|err| {
-					CallError::Domain(RemoteChainInfoError::V1(
-						truapi::latest::RemoteChainInfoError::Unknown(err),
+					CallError::Domain(RemoteChainInfoError::from_latest(
+						latest::RemoteChainInfoError::Unknown(err),
+						version,
 					))
 				})?;
 		chain_info(&set, &inner)
-			.map(RemoteChainInfoResponse::V1)
-			.map_err(|err| CallError::Domain(RemoteChainInfoError::V1(err)))
+			.map(|value| RemoteChainInfoResponse::from_latest(value, version))
+			.map_err(|err| CallError::Domain(RemoteChainInfoError::from_latest(err, version)))
 	}
 }
