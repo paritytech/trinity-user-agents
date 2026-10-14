@@ -919,7 +919,7 @@ export class Session {
         firstOf(
           client.payment.statusSubscribe({ request: { id } }),
           (status) =>
-            status.tag === "Completed" || status.tag === "PartiallyClaimed"
+            status.tag === "Completed" || status.tag === "ClaimedPartially"
               ? true
               : status.tag === "Failed"
                 ? false
@@ -927,9 +927,11 @@ export class Session {
           this.signal,
         ),
       );
-      // The host ends the session from the payment's outcome; once it is
-      // released the host no longer keeps saved state, so nothing more is saved.
+      // The host ends the session from the payment's outcome. A released
+      // withdrawal keeps its saved state until the payout is reported, so a
+      // restart resumes the payout rather than looking for the payment again.
       state.phase = paid ? "paying-out" : "done";
+      if (paid) await this.save();
     }
     if (state.phase === "paying-out") {
       await this.payOut();
@@ -951,6 +953,12 @@ export class Session {
     try {
       await reportAfterRelease(this.intent, { tag: "Converting" });
       await this.killAt(3);
+      if (this.trigger === "payout-retry") {
+        for (let attempt = 0; attempt < PAYOUT_RETRIES; attempt++) {
+          await sleep(this.arrivalMs(CONFIG.payoutMs), this.signal);
+          await reportAfterRelease(this.intent, { tag: "PayoutRetrying" });
+        }
+      }
       await sleep(this.arrivalMs(CONFIG.payoutMs), this.signal);
       await reportPayout(
         this.intent,
@@ -994,7 +1002,7 @@ async function reportPayout(
 
 /**
  * Reports an update on a released outbound session: `Converting` while the
- * payout is prepared, then `Payout`. The host marks the session released only
+ * payout is prepared, `PayoutRetrying` at each failed attempt, then `Payout`. The host marks the session released only
  * once the user's payment completes, so a `NotFound` right after it is
  * retried briefly; `OutOfOrder` means it was already reported before a
  * restart.
@@ -1022,4 +1030,7 @@ async function reportAfterRelease(
 }
 
 const RELEASED_REPORT_ATTEMPTS = 10;
+/** Failed payout attempts the `payout-retry` trigger makes before one goes
+ *  through. */
+const PAYOUT_RETRIES = 2;
 const RELEASED_REPORT_RETRY_MS = 1_000;

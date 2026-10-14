@@ -78,7 +78,7 @@ const client = {
       world.saved = state;
       return ok();
     },
-    presentFrame: () => ok({ outcome: "Closed" }),
+    presentFrame: () => ok({ outcome: { tag: "Closed" } }),
   },
   payment: {
     topUp: ({ id }: { id: string }) => {
@@ -291,6 +291,27 @@ test("a withdrawal that resumes after a stop asks the user to pay once", async (
       tags: ["Details", "Collecting", "Converting", "Payout"],
     });
   }
+});
+
+test("a payout retried on purpose is reported between the conversion and the outcome", async () => {
+  const session = assignment("Out", 25n * ONE_CASH + 63n * (ONE_CASH / 100n));
+  world.storage.set(
+    actionKey(session.intent),
+    toStored({
+      kind: "payout-confirmed",
+      destination: "DE89370400440532013000",
+    }),
+  );
+  expect(await new Session(session).run()).toBe("ended");
+  // The fake host refuses a report repeated word for word, as the real one
+  // does not, so the second retry shows only as the first.
+  expect(tags()).toEqual([
+    "Details",
+    "Collecting",
+    "Converting",
+    "PayoutRetrying",
+    "Payout",
+  ]);
 });
 
 // The ids are what make a repeat safe, so they must not depend on anything a

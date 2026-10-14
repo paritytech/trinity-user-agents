@@ -80,7 +80,7 @@ export async function presentScreen<K extends ScreenAction["kind"]>(
   const closed = unwrap(
     client.fundingProvider.presentFrame({
       intent,
-      route: screenUrl(route, intent),
+      target: { tag: "App", value: { route: screenUrl(route, intent) } },
     }),
     `present ${route}`,
   ).then(async (response) => {
@@ -88,7 +88,7 @@ export async function presentScreen<K extends ScreenAction["kind"]>(
     if (isWanted(action)) return action;
     // The host's own "I've sent funds" closes the bank screen with Closed:
     // the user saying they paid, as the page's own button does.
-    if (kind === "bank-sent" && response.outcome === "Closed") {
+    if (kind === "bank-sent" && response.outcome.tag === "Closed") {
       return { kind: "bank-sent" } as Wanted;
     }
     return undefined;

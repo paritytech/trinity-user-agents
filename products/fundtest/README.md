@@ -39,11 +39,12 @@ from the chain so the conversion lands the full amount.
 
 The cents of the amount choose what goes wrong:
 
-| Cents | Inbound                                                         | Outbound                           |
-| ----- | --------------------------------------------------------------- | ---------------------------------- |
-| `.13` | The payment is seen, then refunded: `Failed`, code `refunded`   | The payout fails after the release |
-| `.23` | The credit is split over two top-ups, so the host shows a retry | No change                          |
-| `.33` | The payment arrives only after the quoted ETA has passed        | The payout arrives after the ETA   |
+| Cents | Inbound                                                         | Outbound                                                                          |
+| ----- | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `.13` | The payment is seen, then refunded: `Failed`, code `refunded`   | The payout fails after the release                                                |
+| `.23` | The credit is split over two top-ups, so the host shows a retry | No change                                                                         |
+| `.33` | The payment arrives only after the quoted ETA has passed        | The payout arrives after the ETA                                                  |
+| `.63` | No change                                                       | The payout is retried twice, each reported as `PayoutRetrying`, then goes through |
 
 A crypto deposit made from a wallet ignores `.13`: the refund case only runs in demo mode, before any drip.
 

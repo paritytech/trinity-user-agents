@@ -11,6 +11,7 @@ test("the cents of the amount pick the failure case", () => {
   expect(triggerOf(cash(25n, 13n))).toBe("refund");
   expect(triggerOf(cash(4_999n, 23n) + 9_999n)).toBe("retry");
   expect(triggerOf(cash(10n, 33n))).toBe("slow");
+  expect(triggerOf(cash(25n, 63n))).toBe("payout-retry");
   expect(triggerOf(cash(25n, 0n))).toBeUndefined();
   expect(triggerOf(cash(13n, 0n))).toBeUndefined();
   expect(triggerOf(undefined)).toBeUndefined();
