@@ -37,6 +37,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.onContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.userDeclinedIncomingRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
@@ -63,6 +64,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFee
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPageOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContext
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContextFactory
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceAction
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
@@ -209,15 +212,42 @@ class ChatFeedInteractor @Inject internal constructor(
         chatId: ChatId,
         text: String,
         replyToMessageId: ChatMessageId?
-    ) {
+    ): ChatSourceActionOutcome {
         // Only a command that the room declares goes to the product; any other `/text` is a message.
-        if (chatEngine.handleCommand(chatId, text)) return
+        if (chatEngine.handleCommand(chatId, text)) return ChatSourceActionOutcome.Done
         val content = ChatMessage.Content.Text(text)
+
+        performInProductRoom(chatId, ChatSourceAction.Send(content, replyToMessageId))?.let { return it }
+
         chatEngine.sendUserMessage(
             chatId = chatId,
             content = content,
             replyToMessageId = replyToMessageId
         )
+        return ChatSourceActionOutcome.Done
+    }
+
+    /**
+     * Adds the reaction of the user, or removes it when the user has it. In a host-store room the user has one
+     * reaction a message, so a new emoji replaces the old one.
+     */
+    suspend fun toggleUserReaction(
+        chatId: ChatId,
+        messageId: ChatMessageId,
+        emoji: String,
+        messageReactions: List<ChatMessageReaction>,
+    ): ChatSourceActionOutcome {
+        performInProductRoom(chatId, ChatSourceAction.ToggleReaction(messageId, emoji))?.let { return it }
+
+        val existingUserReaction = messageReactions.find { it.origin.isUser() }
+        if (existingUserReaction != null) removeUserReaction(chatId, existingUserReaction)
+        if (existingUserReaction?.content?.emoji != emoji) addUserReaction(chatId, messageId, ChatMessageReactionContent(emoji))
+        return ChatSourceActionOutcome.Done
+    }
+
+    /** Tells the product of a product-source room that the user saw the message. The host database needs nothing. */
+    suspend fun reportMessageSeen(chatId: ChatId, messageId: ChatMessageId) {
+        performInProductRoom(chatId, ChatSourceAction.MarkSeen(setOf(messageId)))
     }
 
     suspend fun sendAttachmentMessage(
@@ -228,6 +258,9 @@ class ChatFeedInteractor @Inject internal constructor(
         text: String?,
         replyToMessageId: ChatMessageId?
     ) = runCatching {
+        // Attachments of a product-source room go to the product as inline media, which P8.6 adds.
+        check(roomSource(chatId).productSource() == null) { "A product-source room takes no attachments yet" }
+
         if (fileSize > MAX_ATTACHMENT_SIZE) {
             throw FileTooLargeException(fileSize, MAX_ATTACHMENT_SIZE)
         }
@@ -372,8 +405,11 @@ class ChatFeedInteractor @Inject internal constructor(
         return deleteContactChatLocalData(chatId)
     }
 
-    suspend fun sendEdit(chatId: ChatId, messageId: ChatMessageId, newText: String) {
+    suspend fun sendEdit(chatId: ChatId, messageId: ChatMessageId, newText: String): ChatSourceActionOutcome {
+        performInProductRoom(chatId, ChatSourceAction.Edit(messageId, ChatMessage.Content.Text(newText)))?.let { return it }
+
         chatEngine.editMessage(chatId, messageId, newText)
+        return ChatSourceActionOutcome.Done
     }
 
     suspend fun getEditHistory(chatId: ChatId, messageId: ChatMessageId): List<MessageEditHistoryItem> {
@@ -482,11 +518,21 @@ class ChatFeedInteractor @Inject internal constructor(
     suspend fun triggerMessageAction(chatId: ChatId, messageId: ChatMessageId, actionId: String): Result<Unit> =
         productRoomUserActions.sendEvent(chatId, ChatRoomUserEvent.ActionTriggered(messageId, actionId))
 
-    suspend fun deleteProductRoomMessage(chatId: ChatId, messageId: ChatMessageId, policy: ChatRoomPolicy): Result<Unit> =
-        productRoomUserActions.deleteMessage(chatId, messageId, policy)
+    suspend fun deleteProductRoomMessage(chatId: ChatId, messageId: ChatMessageId, policy: ChatRoomPolicy): Result<ChatSourceActionOutcome> {
+        performInProductRoom(chatId, ChatSourceAction.Delete(messageId))?.let { return Result.success(it) }
 
-    suspend fun retryProductRoomMessage(chatId: ChatId, messageId: ChatMessageId): Result<Unit> =
-        productRoomUserActions.retry(chatId, messageId)
+        return productRoomUserActions.deleteMessage(chatId, messageId, policy).map { ChatSourceActionOutcome.Done }
+    }
+
+    suspend fun retryProductRoomMessage(chatId: ChatId, messageId: ChatMessageId): Result<ChatSourceActionOutcome> {
+        performInProductRoom(chatId, ChatSourceAction.Retry(messageId))?.let { return Result.success(it) }
+
+        return productRoomUserActions.retry(chatId, messageId).map { ChatSourceActionOutcome.Done }
+    }
+
+    /** The outcome of the action in a product-source room, or null when the host database keeps the messages. */
+    private suspend fun performInProductRoom(chatId: ChatId, action: ChatSourceAction): ChatSourceActionOutcome? =
+        roomSource(chatId).productSource()?.perform(action)
 
     private fun roomSource(chatId: ChatId): ChatRoomSourceContext =
         roomSources.computeIfAbsent(chatId) { roomSourceContextFactory.create(it) }

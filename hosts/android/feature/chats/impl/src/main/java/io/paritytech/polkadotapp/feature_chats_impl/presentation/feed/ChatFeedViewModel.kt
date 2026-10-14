@@ -30,11 +30,9 @@ import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.computeChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.FirstNewMessageInfo
@@ -48,6 +46,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asAttachmentErr
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAnotherChatPresentationError
@@ -99,6 +98,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
+import io.paritytech.polkadotapp.common.R as RCommon
 import kotlin.math.max
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -503,6 +503,7 @@ class ChatFeedViewModel @Inject constructor(
 
     override fun onUnreadMessageVisible(message: ChatMessageUiModel) = launchUnit {
         lastReadMessageTimestamp.update { max(it, message.timestamp) }
+        interactor.reportMessageSeen(chatId, message.id)
     }
 
     override fun onLoadOlderMessages() = launchUnit {
@@ -576,6 +577,7 @@ class ChatFeedViewModel @Inject constructor(
                 messagePopupSection.update { null }
                 launchUnit {
                     interactor.retryProductRoomMessage(chatId, action.message.id)
+                        .onSuccess(::showActionOutcome)
                         .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
                 }
             }
@@ -591,6 +593,7 @@ class ChatFeedViewModel @Inject constructor(
 
         val policy = roomPolicy.first() ?: return@launchUnit
         interactor.deleteProductRoomMessage(chatId, messageId, policy)
+            .onSuccess(::showActionOutcome)
             .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
     }
 
@@ -673,30 +676,41 @@ class ChatFeedViewModel @Inject constructor(
         when (relation) {
             is InputMessageRelation.Edit -> {
                 if (messageText != relation.originalText) {
-                    interactor.sendEdit(
+                    val outcome = interactor.sendEdit(
                         chatId = chatId,
                         messageId = relation.messageId,
                         newText = messageText
                     )
+                    showActionOutcome(outcome)
                 }
             }
 
             is InputMessageRelation.Reply -> {
-                interactor.sendTextMessage(
+                val outcome = interactor.sendTextMessage(
                     chatId = chatId,
                     text = messageText,
                     replyToMessageId = relation.preview.messageId
                 )
+                showActionOutcome(outcome)
             }
 
             InputMessageRelation.None -> {
-                interactor.sendTextMessage(
+                val outcome = interactor.sendTextMessage(
                     chatId = chatId,
                     text = messageText,
                     replyToMessageId = null
                 )
+                showActionOutcome(outcome)
             }
         }
+    }
+
+    /** A product that refuses an action of the user gives the reason (02-DESIGN §13 item 9). */
+    private fun showActionOutcome(outcome: ChatSourceActionOutcome) {
+        if (outcome !is ChatSourceActionOutcome.Refused) return
+
+        val reason = outcome.reason
+        if (reason.isNullOrBlank()) showMessage(RCommon.string.chat_message_action_failed) else showMessage(reason)
     }
 
     private fun jumpToTargetMessageIfNeeded() {
@@ -762,19 +776,7 @@ class ChatFeedViewModel @Inject constructor(
 
     private fun toggleReaction(messageId: String, emoji: String) = launchUnit {
         val messageReactions = reactions.first()[messageId].orEmpty()
-        val existingUserReaction = messageReactions.find { it.origin.isUser() }
-
-        if (existingUserReaction != null) {
-            interactor.removeUserReaction(chatId, existingUserReaction)
-        }
-
-        if (existingUserReaction?.content?.emoji != emoji) {
-            interactor.addUserReaction(
-                chatId = chatId,
-                messageId = messageId,
-                content = ChatMessageReactionContent(emoji)
-            )
-        }
+        showActionOutcome(interactor.toggleUserReaction(chatId, messageId, emoji, messageReactions))
     }
 
     private fun replyToMessage(message: ChatMessageUiModel) = launchUnit {

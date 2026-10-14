@@ -92,6 +92,12 @@ class ChatRoomSourceContext(
         return pending.await()
     }
 
+    /** The source of the room when the product keeps its messages, or null when the host database keeps them. */
+    suspend fun productSource(): ChatMessageSource? {
+        source()
+        return productSource
+    }
+
     /** Holds the product of the room while the room screen shows it. A person chat holds nothing. */
     fun open() = enqueue { openRoom() }
 
