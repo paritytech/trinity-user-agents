@@ -177,150 +177,8 @@ jobs:
             core.setOutput('app', app.toString());
             core.setOutput('tests', 'true');
 
-  # Whether this change can reach the iOS app at all. A pull request that
-  # changes only core crates reaches it through the Swift bindings and the
-  # TypeScript the host's container bundles, and most such changes leave both
-  # byte for byte as they are. This job generates them on Linux and looks for
-  # main's record that the iOS tests passed against exactly that output. When
-  # it finds one, the core build and the tests are skipped: the app compiles
-  # as it does on main, and only a runtime change the tests would catch is left
-  # for main's run and the nightly. A pull request that changes anything on the
-  # iOS side skips this check and runs everything.
-  bindings:
-    name: Check whether the app's bindings changed
-    needs: check-skip-label
-    if: needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || needs.check-skip-label.outputs.tests == 'true') && !startsWith(github.head_ref, 'release/')
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    outputs:
-      key: ${{ steps.hash.outputs.key }}
-      unchanged: ${{ steps.record.outputs.run-id != '' }}
-    steps:
-      # A pull request's checkout is its merge commit, so its first parent is
-      # the base and the diff to it is exactly what the pull request changes.
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 2
-
-      # The paths this workflow runs on, less the core crates and their
-      # manifests, plus the TypeScript packages the host's container bundles.
-      # Keep it in step with on.paths.
-      - name: Decide whether only core crates changed
-        id: scope
-        run: |
-          set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
-            echo "check=$([ "$GITHUB_REF" = refs/heads/main ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          ios_side='^(hosts/ios/|ios/|Package\.swift$|Makefile$|nightly-toolchain$|js/container/|js/packages/|scripts/|package\.json$|package-lock\.json$|\.github/workflows/ios-pr\.yml$|\.github/actions/(rust-nightly|bootstrap-ios-core|find-main-artifact|upsert-pr-comment|setup-swiftlint)/)'
-          changed="$(git diff --name-only HEAD^1 HEAD)"
-          if grep -qE "$ios_side" <<<"$changed"; then
-            echo "The iOS side changed; running everything"
-            echo "check=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "check=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
-        if: steps.scope.outputs.check == 'true'
-        with:
-          toolchain: stable
-
-      - uses: ./.github/actions/rust-nightly
-        if: steps.scope.outputs.check == 'true'
-        with:
-          components: rustfmt
-
-      # Restores the cache ci.yml's iOS bindings job saves, and never saves one
-      # of its own, so this adds nothing to the repository's cache.
-      - uses: ./.github/actions/rust-cache
-        if: steps.scope.outputs.check == 'true'
-        with:
-          shared-key: ios-bindings
-          save: "false"
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: steps.scope.outputs.check == 'true'
-        with:
-          node-version: "22"
-
-      - name: Generate the bindings and codegen output
-        if: steps.scope.outputs.check == 'true'
-        run: |
-          set -euo pipefail
-          npm ci --ignore-scripts
-          TRUAPI_SKIP_PACKAGE_BUILD=1 ./scripts/codegen.sh
-          make uniffi
-          ./ios/truapi-host/scripts/sync-bindings.sh
-          make provider-swift
-          ./ios/truapi-provider/scripts/sync-bindings.sh
-
-      # The bundled container resources are left out: they are built from the
-      # TypeScript client, whose generated sources are hashed here.
-      - name: Hash what the app is built against
-        id: hash
-        if: steps.scope.outputs.check == 'true'
-        run: |
-          set -euo pipefail
-          hash="$(find ios/truapi-host/Sources ios/truapi-provider/Sources js/packages/truapi/src/generated \
-            -type f ! -path '*/Resources/*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-32)"
-          echo "key=ios-bindings-$hash" >> "$GITHUB_OUTPUT"
-
-      - name: Find main's tests against the same bindings
-        id: record
-        if: steps.scope.outputs.check == 'true' && github.event_name == 'pull_request'
-        uses: ./.github/actions/find-main-artifact
-        with:
-          name: ${{ steps.hash.outputs.key }}
-          workflow: .github/workflows/ios-pr.yml
-
-  # Whether main already built the core from exactly this commit's core inputs.
-  # Most iOS pull requests change only the app, so the Rust core they build is
-  # byte for byte the one main built, and rebuilding it costs a large macOS
-  # runner for minutes. The inputs are hashed from the tree, and only an
-  # artifact a push of this workflow to main published is trusted, so a pull
-  # request run cannot plant a core for others to use.
-  core-lookup:
-    name: Find a core built from the same inputs
-    needs: [check-skip-label, bindings]
-    if: ${{ !cancelled() && needs.check-skip-label.result == 'success' && needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || (needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true')) && !startsWith(github.head_ref, 'release/') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      key: ${{ steps.key.outputs.key }}
-      run-id: ${{ steps.find.outputs.run-id }}
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      # Everything the bootstrap reads: the crates and their lockfile, the
-      # toolchain pins, codegen and its npm manifests, the TypeScript client and
-      # container bundled into the host, the scripts that stage the bindings,
-      # the Xcode pin, and the packaging below.
-      - name: Hash the core inputs
-        id: key
-        run: |
-          set -euo pipefail
-          inputs=(
-            rust ios js/packages/truapi js/container scripts
-            Makefile Cargo.toml Cargo.lock nightly-toolchain
-            package.json package-lock.json
-            .github/actions/bootstrap-ios-core .github/actions/rust-nightly
-            hosts/ios/.github/actions/install .github/workflows/ios-pr.yml
-          )
-          hash="$(git ls-tree -r HEAD -- "${inputs[@]}" | sha256sum | cut -c1-32)"
-          echo "key=ios-core-inputs-$hash" >> "$GITHUB_OUTPUT"
-
-      - name: Find a core main built from them
-        id: find
-        uses: ./.github/actions/find-main-artifact
-        with:
-          name: ${{ steps.key.outputs.key }}
-          workflow: .github/workflows/ios-pr.yml
-
-  # The app and test jobs all need the core generated from this commit, and it
-  # is the same output for each of them, so it is built once here and carried
-  # across.
+  # The app jobs all need the core generated from this commit, and it is the
+  # same output for each of them, so it is built once here and carried across.
   # Built on the larger runner because it is Rust compilation and CPU bound.
   # The `release/` test on this job and the three below it is deliberately every
   # release branch, app and package alike, behind the label check that already
@@ -329,11 +187,9 @@ jobs:
   # and lifecycle workflows use.
   core:
     name: Build the in-tree core
-    needs: [check-skip-label, bindings, core-lookup]
-    if: ${{ !cancelled() && needs.check-skip-label.result == 'success' && needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || (needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true')) && !startsWith(github.head_ref, 'release/') }}
-    # Fetching a core main already built needs no Mac, so it does not wait for
-    # one in the large runner pool.
-    runs-on: ${{ needs.core-lookup.outputs.run-id != '' && 'ubuntu-latest' || 'parity-macos-large' }}
+    needs: check-skip-label
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
+    runs-on: parity-macos-large
     timeout-minutes: 45
     env:
       REUSE: ${{ needs.core-lookup.outputs.run-id != '' }}
