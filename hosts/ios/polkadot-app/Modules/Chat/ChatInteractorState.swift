@@ -144,7 +144,9 @@ private extension ChatInteractorState {
             let date = Date(timeIntervalSince1970: TimeInterval(message.timestamp) / 1_000)
             let section = makeSection(date: date)
 
-            if section != lastSection {
+            // A product gives its own timestamps, so a day can come back after another day in the order of the
+            // room. The collection view takes each section once.
+            if section != lastSection, messagesBySection[section] == nil {
                 orderedSections.append(section)
                 lastSection = section
             }
