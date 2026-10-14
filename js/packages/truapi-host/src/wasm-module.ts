@@ -3,6 +3,7 @@
 // declaration in `src/wasm/web/truapi_server.d.ts` types that module against
 // these interfaces so the worker can name it in a statically analysable import.
 
+import type { WasmChatQueryCore } from "./chat-queries.js";
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
 
 /** Cancellable handle on one live render stream inside the core. */
@@ -11,15 +12,27 @@ export interface WorkerRendererSubscription {
   free(): void;
 }
 
-/** One product-scoped core inside the worker. */
-export interface WorkerProductRuntime {
+/**
+ * One product-scoped core inside the worker. The chat query methods start one
+ * query each: the core calls exactly one of the three callbacks, never during
+ * the call, and a request the core refuses outright throws.
+ */
+export interface WorkerProductRuntime extends WasmChatQueryCore {
   receiveFrame(frame: Uint8Array): Promise<void>;
   /** Drop cached contact handles after a contact is removed or blocked. */
   notifyContactsChanged(): void;
   dispose(): void;
   free(): void;
-  /** Throws when the connection may not reach Chat. */
+  /**
+   * Publish one SCALE-encoded `HostChatActionSubscribeItem` of the first
+   * protocol version. Throws when the connection may not reach Chat.
+   */
   publishChatAction(action: Uint8Array): void;
+  /**
+   * Publish one SCALE-encoded `HostChatActionSubscribeItem` of the current
+   * protocol version. Throws when the connection may not reach Chat.
+   */
+  publishChatEvent(event: Uint8Array): void;
   /**
    * Publish one action triggered inside a product-rendered body, as a
    * SCALE-encoded `HostRendererActionSubscribeItem`. Throws when the

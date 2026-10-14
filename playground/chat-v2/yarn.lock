@@ -12,6 +12,14 @@
   resolved "https://registry.yarnpkg.com/@oxc-project/types/-/types-0.154.0.tgz#0a4f2adaeef41d1931861adca8166b7615e5a49a"
   integrity sha512-KYOUGQFlLWR+s4QMV2Q9ko38TZm7EdO87Qm7rvZLqk/webse/cDjtyxKhg/47l0byCbs/k46LT8qc4PKjAikzA==
 
+"@parity/truapi-host@link:../../js/packages/truapi-host":
+  version "0.0.0"
+  uid ""
+
+"@parity/truapi@^0.25.0":
+  version "0.0.0"
+  uid ""
+
 "@parity/truapi@link:../../js/packages/truapi":
   version "0.0.0"
   uid ""

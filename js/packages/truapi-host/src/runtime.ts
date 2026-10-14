@@ -3,8 +3,10 @@ import type {
   HostRendererActionSubscribeItem,
   ProductRendererRenderRequest,
   RendererNode,
+  V01HostChatActionSubscribeItem,
   WireProvider,
 } from "@parity/truapi";
+import type { ChatHostQueries } from "./chat-queries.js";
 import { CoreStorageKey as GeneratedCoreStorageKey } from "./generated/host-callbacks.js";
 import type {
   CoreAdmin,
@@ -19,6 +21,19 @@ import type {
 // SCALE bytes. The web worker pairing-host runtime adapts this typed surface
 // into the byte-oriented callback bridge consumed by the WASM core.
 export * from "./generated/host-callbacks.js";
+export {
+  CHAT_QUERY_NAMES,
+  CHAT_QUERY_TIMEOUTS_MS,
+  chatQueryTimeoutMs,
+} from "./chat-queries.js";
+export type {
+  ChatHostQueries,
+  ChatHostRuntime,
+  ChatQueryName,
+  ChatQueryOptions,
+  ChatQueryRefusal,
+  ChatQueryResult,
+} from "./chat-queries.js";
 export type { JsonRpcConnection as PlatformJsonRpcConnection } from "./generated/host-callbacks.js";
 
 /** Encode a typed core-storage slot for hosts that need an opaque backing key. */
@@ -157,7 +172,16 @@ export interface WorkerDemandChange {
   wanted: boolean;
 }
 
-export interface TrUApiProductProvider extends WireProvider, CoreAdmin {
+/**
+ * The chat queries of a provider. Each member is optional, because only a
+ * runtime with a live channel to the core can ask the product.
+ */
+export type TrUApiProductChatQueries = {
+  [Name in keyof ChatHostQueries]?: ChatHostQueries[Name];
+};
+
+export interface TrUApiProductProvider
+  extends WireProvider, CoreAdmin, TrUApiProductChatQueries {
   /**
    * Re-tune the wasm core's log level at runtime. Present on runtimes that
    * keep a live channel to the core (e.g. the Web Worker provider); absent on
@@ -166,14 +190,29 @@ export interface TrUApiProductProvider extends WireProvider, CoreAdmin {
   setLogLevel?(level: LogLevel): void;
 
   /**
-   * Publish one host-authored Chat action into the product's action stream —
-   * the path a posted message, a command, or a host-drawn `Actions` button
-   * takes back to the product. Buffered until the product subscribes. Rejects
-   * when this connection may not reach Chat.
+   * Publish one host-authored Chat action of the first protocol version into
+   * the product's action stream — the path a posted message, a command, or a
+   * host-drawn `Actions` button takes back to the product. The core converts
+   * it to the current version. Buffered until the product subscribes. Rejects
+   * when this connection may not reach Chat. Prefer {@link publishChatEvent},
+   * which carries every event.
    *
    * Present only on runtimes that keep a live channel to the core.
    */
-  publishChatAction?(action: HostChatActionSubscribeItem): Promise<void>;
+  publishChatAction?(action: V01HostChatActionSubscribeItem): Promise<void>;
+
+  /**
+   * Publish one Chat event of the current protocol version into the
+   * product's action stream: a posted message with its id, a command, a
+   * button, menu, toolbar or quick-reply press, an edit, delete, reaction or
+   * seen report in a room the host stores, or the room screen as it opens and
+   * closes. The core keeps it until the product subscribes, and gives a
+   * subscriber at the first protocol version only the events that version can
+   * carry. Rejects when this connection may not reach Chat.
+   *
+   * Present only on runtimes that keep a live channel to the core.
+   */
+  publishChatEvent?(item: HostChatActionSubscribeItem): Promise<void>;
 
   /**
    * Publish one action triggered inside a product-rendered body. Buffered

@@ -20,3 +20,24 @@ export type {
   PermissionPolicy,
   SigningLogEntry,
 } from "./web/create-mock-host.js";
+export {
+  defaultChatRoomConfig,
+  MOCK_CHAT_PAGE_SIZE,
+  MOCK_CHAT_PARTICIPANT_PAGE_SIZE,
+  MOCK_CHAT_PEER,
+  MOCK_CHAT_TIMINGS,
+} from "./web/mock-chat.js";
+export type {
+  MockActionOutcome,
+  MockChatFeedUpdate,
+  MockChatListRow,
+  MockChatNotice,
+  MockChatQueryRecord,
+  MockChatRoom,
+  MockChatTimings,
+  MockChatUser,
+  MockMessageMenu,
+  MockParticipantBuiltIn,
+  MockParticipantMenu,
+  MockSendOutcome,
+} from "./web/mock-chat.js";

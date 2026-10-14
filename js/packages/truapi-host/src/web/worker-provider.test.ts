@@ -2,11 +2,15 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 
 import {
+  HostChatActionSubscribeItem,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
+  ProductChatMessagesQueryItem,
+  ProductChatMessagesQueryRequest,
+  ProductChatQueryError,
   RendererNode,
 } from "@parity/truapi";
-import { bytesToHex } from "@parity/truapi/scale";
+import { bytesToHex, CallError } from "@parity/truapi/scale";
 import type {
   GenericError,
   ProductRendererRenderRequest,
@@ -1618,6 +1622,112 @@ describe("createWebWorkerPairingHostRuntime", () => {
     });
 
     await expect(published).rejects.toThrow("Denied");
+  });
+
+  it("publishes a chat event of the current version", async () => {
+    const worker = new FakeWorker();
+    const provider = await readyProvider(worker);
+    const item = {
+      roomId: "room",
+      peer: "native",
+      event: {
+        tag: "ToolbarActionTriggered" as const,
+        value: { actionId: "tb-1" },
+      },
+    };
+
+    const published = provider.publishChatEvent!(item);
+    const message = lastMessageOfKind(worker, "publishChatEvent");
+    expect(HostChatActionSubscribeItem.dec(message.action)).toEqual(item);
+    worker.emit({
+      kind: "publishChatEventResponse",
+      requestId: message.requestId,
+      ok: true,
+    });
+
+    await expect(published).resolves.toBeUndefined();
+  });
+
+  it("asks a chat query in the worker and decodes the answer", async () => {
+    const worker = new FakeWorker();
+    const provider = await readyProvider(worker);
+    const request = {
+      roomId: "source",
+      anchor: { tag: "Before" as const, value: {} },
+      pageSize: 40,
+    };
+
+    const answer = provider.chatMessagesQuery!(request);
+    const start = lastMessageOfKind(worker, "chatQueryStart");
+    expect(start.name).toBe("chatMessagesQuery");
+    expect(ProductChatMessagesQueryRequest.dec(start.request)).toEqual(request);
+    const item = { messages: [], next: "older" };
+    worker.emit({
+      kind: "chatQueryAnswer",
+      queryId: start.queryId,
+      item: ProductChatMessagesQueryItem.enc(item),
+    });
+
+    expect((await answer)._unsafeUnwrap()).toEqual(item);
+  });
+
+  it("gives the refusal of a chat query as its typed error", async () => {
+    const worker = new FakeWorker();
+    const provider = await readyProvider(worker);
+
+    const answer = provider.chatReactionsQuery!({
+      roomId: "source",
+      messageId: "m1",
+    });
+    const start = lastMessageOfKind(worker, "chatQueryStart");
+    worker.emit({
+      kind: "chatQueryRefusal",
+      queryId: start.queryId,
+      error: CallError(ProductChatQueryError).enc({
+        tag: "Domain",
+        value: { tag: "NotAvailable" },
+      }),
+    });
+
+    expect((await answer)._unsafeUnwrapErr()).toEqual({
+      tag: "Domain",
+      value: { tag: "NotAvailable" },
+    });
+  });
+
+  it("stops a chat query in the worker when its time limit ends", async () => {
+    const worker = new FakeWorker();
+    const provider = await readyProvider(worker);
+
+    const answer = provider.chatParticipantsQuery!(
+      { roomId: "source", query: { tag: "Count" } },
+      { timeoutMs: 10 },
+    );
+    const start = lastMessageOfKind(worker, "chatQueryStart");
+
+    expect((await answer)._unsafeUnwrapErr()).toEqual({ tag: "Timeout" });
+    expect(lastMessageOfKind(worker, "chatQueryStop")).toEqual({
+      kind: "chatQueryStop",
+      queryId: start.queryId,
+    });
+    // An answer after the stop changes nothing.
+    worker.emit({ kind: "chatQueryEnd", queryId: start.queryId });
+  });
+
+  it("fails an open chat query when the provider is disposed", async () => {
+    const worker = new FakeWorker();
+    const provider = await readyProvider(worker);
+
+    const answer = provider.chatUserAction!({
+      roomId: "source",
+      action: { tag: "Seen", value: { messageId: "m1" } },
+    });
+    provider.dispose();
+
+    expect((await answer)._unsafeUnwrapErr()).toEqual({
+      tag: "HostFailure",
+      value: { reason: "provider disposed" },
+    });
   });
 });
 

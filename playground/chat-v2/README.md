@@ -42,8 +42,9 @@ playground/chat-v2/
   worker/assets.ts           the assets, inlined by Vite
   assets/                    avatar.png, avatar-alt.png, badge.png, icon-1.png to icon-6.png, sample.png, sample.pdf, sample.mp4
   tests/unit/                bun tests of the pure modules, and of the Worker against a fake client
-  tests/support/             the fake client; the end-to-end tests against @parity/truapi-host/testing give
-                             startSampleProduct the client of the test host instead
+  tests/e2e/                 bun tests of the Worker on the test host: the real core (WASM) over the mock host of
+                             @parity/truapi-host/testing, with the mock host as the user; one test per scenario
+  tests/support/             the fake client, and the start of the Worker on the test host
 ```
 
 `bulletin-deploy.config.ts` declares the product as the playground's does:
@@ -84,7 +85,8 @@ The App calls no `Chat` method: `Chat` is a Worker service.
 
 ### The Worker
 
-At start the Worker does, in order, before its first `await`:
+At start the Worker does, in order, before its first `await` (the state load starts first, so that a query the client
+kept for a handler, which the client gives during the registration, waits for the state):
 
 1. Registers a handler for each of the six queries (`messages_query`, `user_action`, `reactions_query`,
    `participants_query`, `message_actions_query`, `participant_actions_query`) and `Renderer::render`.
@@ -245,7 +247,7 @@ yarn build             # out/ and out/worker/index.js
 
 | Where          | Available after | How                                                                                                                                                                                                                                                         |
 | -------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Test host      | P2              | `make wasm`, then `REQUIRE_WASM=1 yarn test`. The tests run the Worker against `createMockHost` from `@parity/truapi-host/testing`, send each command, and assert the calls the host received, the queries answered, and the event log                        |
+| Test host      | P2              | `make wasm` and `npm run build` in `js/packages/truapi-host`, then `REQUIRE_WASM=1 yarn test`. `tests/e2e/` runs the Worker against `createMockClient` and `createMockHost` from `@parity/truapi-host/testing`, sends each command, and asserts the calls the host received, the queries answered, and the event log |
 | CLI chat page  | P2              | `truapi-host dev --worker-bundle out/worker/index.js -- yarn dev`, then open the `/chat` URL it prints and type the commands; the worker log pane shows the event log. `make e2e-chat-cli` runs the command list without a browser                         |
 | iOS simulator  | P3; every command after P6 | `make ios-chat-run IOS_CHAT_PRODUCT_DIR=playground/chat-v2 IOS_CHAT_PRODUCT_HOST=truapi-chat-v2.dot IOS_CHAT_PRODUCT_NAME="Chat Extension v2 Sample" IOS_CHAT_PRODUCT_URL=http://127.0.0.1:3102`. The launcher builds the product, seeds it, runs the command list in both rooms, takes a screenshot per scenario and writes the diagnosis report |
 | Android emulator | P8            | `make android-chat-playground-run` with `TRUAPI_ANDROID_E2E_CHAT_PRODUCT_DIR=playground/chat-v2`, on a debug build whose chat products run on the core runtime                                                                                                |

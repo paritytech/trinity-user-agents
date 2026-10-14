@@ -188,6 +188,10 @@ export class SampleProduct {
       settings: (room) => this.#settings(room),
     });
 
+    // 0. The state load. The client gives a query it kept to the handler
+    //    during the registration, and that handler waits for `ready`, so
+    //    `ready` exists before the first handler does.
+    this.ready = this.#load();
     // 1. The handlers, before the first `await`, so no query is lost.
     this.#registerQueries();
     this.#client.renderer.onRender((request, send, interrupt) => this.#render(request, send, interrupt));
@@ -202,7 +206,6 @@ export class SampleProduct {
     });
     // 3. The rooms. A room that exists keeps what it declared.
     this.rooms = this.#createRooms();
-    this.ready = this.#load();
   }
 
   /** Every queued task has run, and the state is saved. */
