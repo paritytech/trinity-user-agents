@@ -440,7 +440,7 @@ pub enum ChatRoomOrder {
 /// The badge of a room in the chat list.
 pub enum ChatRoomBadge {
     /// No badge.
-    None,
+    Hidden,
     /// A number; `0` shows no badge.
     UnreadCount {
         /// The number shown.

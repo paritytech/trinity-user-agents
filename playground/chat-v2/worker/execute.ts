@@ -256,7 +256,7 @@ async function runPreview(ctx: ProductContext, room: RoomId, command: ParsedComm
     case "image":
       return setPreview(ctx, room, { badge: { tag: "Image", value: { resource: png(ctx.assets.badge) } } });
     case "none":
-      return setPreview(ctx, room, { badge: { tag: "None" } });
+      return setPreview(ctx, room, { badge: { tag: "Hidden" } });
     case "typing":
       if (value !== "on" && value !== "off") throw usage(command, "typing on|off");
       return setPreview(ctx, room, { text: value === "on" ? { text: ACTIVITY_TEXT, ongoing: true } : undefined });

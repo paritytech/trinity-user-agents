@@ -424,7 +424,7 @@ pub enum ChatRoomOrder {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatRoomBadge {
 	/// No badge.
-	None,
+	Hidden,
 	/// A number. The value `0` removes the badge.
 	UnreadCount {
 		/// The number the host shows.
