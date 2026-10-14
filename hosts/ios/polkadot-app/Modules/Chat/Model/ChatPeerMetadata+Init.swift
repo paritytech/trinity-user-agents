@@ -7,11 +7,12 @@ extension Chat.LocalModel {
             return contact.toPeerMetadata()
         case let .chatExtension(extId, _):
             let extMetadata = registry.getChatExtensionBot(for: extId)?.peerMetadata ?? .unknown
+            let policy = ChatRoomPolicy(footer: roomFooter)
 
             return Chat.PeerMetadata(
                 name: roomMetadata?.name ?? extMetadata.name,
                 icon: roomMetadata?.inlineIcon ?? extMetadata.icon,
-                input: roomFooter == .empty ? .empty : extMetadata.input,
+                input: policy.footer == .empty ? .empty : extMetadata.input,
                 moreActions: extMetadata.moreActions
             )
         }

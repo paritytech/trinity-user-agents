@@ -51,7 +51,8 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
             let peerMetadata = chatWithPeerMetadata.peerMetadata
 
             let messageDate: Date? = chat.message.map { Date.fromChatTimestamp($0.timestamp) }
-            let unreadCount = chat.unreadDisplayMessageCount
+            let unreadCount = chat.roomPolicy?.listBadgeCount(hostUnreadCount: chat.unreadDisplayMessageCount)
+                ?? chat.unreadDisplayMessageCount
 
             let lastMessage = lastMessageText(
                 for: chatWithPeerMetadata,

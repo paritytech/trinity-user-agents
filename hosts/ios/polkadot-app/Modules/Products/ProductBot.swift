@@ -103,8 +103,8 @@ extension ProductBot: ChatExtensionBotProtocol {
         Chat.PeerMetadata(
             name: product.name,
             icon: .product(domain: product.id),
-            input: .inputField(.init(canPay: false, canAttachFile: false)),
-            moreActions: []
+            input: ChatRoomPolicy.defaults.peerInput,
+            moreActions: ChatRoomPolicy.defaults.toolbar
         )
     }
 
