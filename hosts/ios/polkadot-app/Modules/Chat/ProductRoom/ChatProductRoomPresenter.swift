@@ -33,6 +33,7 @@ final class ChatProductRoomPresenter {
     /// The messages of the window that the room screen shows, by id.
     private(set) var messages: [Chat.MessageId: Chat.LocalMessage] = [:]
     private var icons: [ChatResource: UIImage] = [:]
+    private var activityTask: Task<Void, Never>?
     /// The product answered `NotAvailable` to `reactions_query`, so the room hides who reacted.
     var reactionDetailsUnavailable = false
     /// The live parts of the footer: the activity line, the quick replies and the slash commands.
@@ -51,6 +52,7 @@ final class ChatProductRoomPresenter {
         footerImageResolver: WidgetImageResolver = WidgetImageResolver { _ in nil },
         wireframe: ChatProductRoomWireframing,
         resolver: ChatResourceResolving = ChatResourceResolver.shared,
+        activityStore: ChatRoomActivityStoring = ChatRoomActivityStore.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         guard case let .chatExtension(productId, roomId?) = chatId else {
@@ -73,6 +75,12 @@ final class ChatProductRoomPresenter {
             productId: productId
         )
         participants.onChange = { [weak self] in self?.onChange?() }
+        accessory.onSuggestion = { [weak self] suggestion in self?.selectSuggestion(suggestion.suggestionId) }
+        activityTask = followActivity(activityStore)
+    }
+
+    deinit {
+        activityTask?.cancel()
     }
 
     /// The view model factory gives the room that it draws. The call never asks to draw again.
@@ -98,6 +106,7 @@ final class ChatProductRoomPresenter {
         }
 
         loadParticipantsIfDeclared()
+        updateAccessory()
     }
 
     /// The id under which the product knows a message of the room.
