@@ -66,9 +66,6 @@ pub use contacts::ContactResolutionError;
 type ContactsPicker =
 	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandles);
 use futures::{FutureExt, StreamExt, pin_mut};
-
-#[cfg(test)]
-use pairing_host::PairingHost;
 pub use host_accounts::HostAccounts;
 pub use pairing_host::PairingHost;
 #[cfg(feature = "test-host")]
@@ -126,9 +123,6 @@ use truapi::{
 };
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
-
-#[cfg(test)]
-use crate::host_logic::session::SessionState;
 
 #[cfg(test)]
 use crate::subscription::Spawner;
@@ -660,112 +654,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		Self { connection, accounts, host_session }
 	}
 
-	/// Test constructor building a standalone pairing-host runtime.
-	#[cfg(test)]
-	pub fn new<P>(
-		platform: Arc<P>,
-		config: (crate::platform::PairingHostConfig, ProductContext),
-		spawner: Spawner,
-	) -> Self
-	where
-		P: Platform + 'static,
-	{
-		let (host_config, product) = config;
-		let platform: Arc<dyn Platform> = platform;
-		Self::new_pairing_for_tests(platform, host_config, product, spawner).0
-	}
-
-	/// Compatibility constructor used only by tests that do not exercise
-	/// product-scoped behavior.
-	#[cfg(test)]
-	fn new_compat(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
-		Self::new_compat_with_pairing(platform, spawner).0
-	}
-
-	#[cfg(test)]
-	fn compat_host_config() -> crate::platform::PairingHostConfig {
-		crate::platform::PairingHostConfig::new(
-			crate::platform::HostInfo {
-				name: "Polkadot Web".to_string(),
-				icon: Some("https://example.invalid/dotli.png".to_string()),
-				version: None,
-				platform: truapi::latest::HostPlatform::Web,
-			},
-			crate::platform::PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
-			"polkadotapp".to_string(),
-		)
-		.expect("compat runtime config is valid")
-	}
-
-	/// Compat host used by preimage tests.
-	#[cfg(test)]
-	fn new_compat_with_bulletin(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
-		Self::new_pairing_for_tests(
-			platform,
-			Self::compat_host_config(),
-			ProductContext::new("unknown.dot".to_string())
-				.expect("compat product context is valid"),
-			spawner,
-		)
-		.0
-	}
-
-	#[cfg(test)]
-	fn new_compat_with_pairing(
-		platform: Arc<dyn Platform>,
-		spawner: Spawner,
-	) -> (Self, Arc<PairingHost>) {
-		let host_config = Self::compat_host_config();
-		Self::new_pairing_for_tests(
-			platform,
-			host_config,
-			ProductContext::new("unknown.dot".to_string())
-				.expect("compat product context is valid"),
-			spawner,
-		)
-	}
-
-	#[cfg(test)]
-	fn new_pairing_for_tests(
-		platform: Arc<dyn Platform>,
-		host_config: crate::platform::PairingHostConfig,
-		product: ProductContext,
-		spawner: Spawner,
-	) -> (Self, Arc<PairingHost>) {
-		let services = RuntimeServices::new(
-			platform.clone(),
-			host_config.host.host_info.clone(),
-			host_config.people_chain_genesis_hash,
-			host_config.bulletin_chain_genesis_hash,
-			host_config.asset_hub_chain_genesis_hash,
-			spawner.clone(),
-		);
-		let pairing_host = PairingHost::new(services.clone(), host_config);
-		let core_instance = services.next_core_instance();
-		let chat = Arc::new(ActionChannel::chat());
-		let renderer = Arc::new(ActionChannel::renderer());
-		let host = Self {
-			services,
-			platform,
-			chat_platform: None,
-			permission_status: None,
-			temporary_permissions: Arc::default(),
-			authority: pairing_host.clone(),
-			product,
-			core_instance,
-			chat,
-			renderer,
-			pocket_platform: None,
-			expanded_card: None,
-			game_platform: None,
-			open_operations: Mutex::new(HashSet::new()),
-		};
-		(host, pairing_host)
-	}
-
 	/// Shared connection state used by product control handles.
 	pub fn connection(&self) -> &Arc<ProductConnection> {
 		&self.connection
@@ -778,26 +666,26 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 
 	/// Test-only access to the shared session-state holder.
 	#[cfg(test)]
-	pub fn test_session_state(&self) -> Arc<SessionState> {
-		self.authority.session_state()
+	fn test_session_state(&self) -> Arc<SessionState> {
+		self.host_session.session_state()
 	}
 
 	/// Seed the paired Account Holder's hard product subtree for unit tests.
 	#[cfg(test)]
-	pub fn test_cache_product_subtree(
+	fn test_cache_product_subtree(
 		&self,
 		session: &SessionInfo,
 		product_id: &str,
 		public_key: [u8; 32],
 	) {
-		self.authority.cache_product_subtree_for_test(session, product_id, public_key);
+		self.accounts.cache_product_subtree_for_test(session, product_id, public_key);
 	}
 
 	/// Disconnect this runtime from its paired signing host.
 	#[cfg(test)]
 	#[instrument(skip_all, fields(runtime.method = "account.disconnect"))]
-	pub async fn disconnect(&self) {
-		self.authority.disconnect().await;
+	async fn disconnect(&self) {
+		self.host_session.disconnect().await;
 	}
 
 	fn normalize_product_account_id(
@@ -1468,6 +1356,98 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 /// Build the product-facing `Unknown` wire error carrying `reason`.
 fn preimage_submit_error(reason: String) -> CallError<latest::PreimageSubmitError> {
 	CallError::Domain(latest::PreimageSubmitError::Unknown { reason })
+}
+
+#[cfg(test)]
+impl ProductRuntimeHost<RemoteAccountHolder> {
+	/// Test constructor building a standalone pairing-host runtime.
+	fn new<P>(
+		platform: Arc<P>,
+		config: (crate::platform::PairingHostConfig, ProductContext),
+		spawner: Spawner,
+	) -> Self
+	where
+		P: Platform + 'static,
+	{
+		let (host_config, product) = config;
+		let platform: Arc<dyn Platform> = platform;
+		Self::new_pairing_for_tests(platform, host_config, product, spawner).0
+	}
+
+	/// Compatibility constructor used only by tests that do not exercise
+	/// product-scoped behavior.
+	fn new_compat(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
+		Self::new_compat_with_pairing(platform, spawner).0
+	}
+
+	fn compat_host_config() -> crate::platform::PairingHostConfig {
+		crate::platform::PairingHostConfig::new(
+			crate::platform::HostInfo {
+				name: "Polkadot Web".to_string(),
+				icon: Some("https://example.invalid/dotli.png".to_string()),
+				version: None,
+				platform: truapi::latest::HostPlatform::Web,
+			},
+			crate::platform::PlatformInfo::default(),
+			[0; 32],
+			[0xbb; 32],
+			[0xcc; 32],
+			"polkadotapp".to_string(),
+		)
+		.expect("compat runtime config is valid")
+	}
+
+	/// Compat host used by preimage tests.
+	fn new_compat_with_bulletin(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
+		Self::new_pairing_for_tests(
+			platform,
+			Self::compat_host_config(),
+			ProductContext::new("unknown.dot".to_string())
+				.expect("compat product context is valid"),
+			spawner,
+		)
+		.0
+	}
+
+	fn new_compat_with_pairing(
+		platform: Arc<dyn Platform>,
+		spawner: Spawner,
+	) -> (Self, PairingHost) {
+		let host_config = Self::compat_host_config();
+		Self::new_pairing_for_tests(
+			platform,
+			host_config,
+			ProductContext::new("unknown.dot".to_string())
+				.expect("compat product context is valid"),
+			spawner,
+		)
+	}
+
+	fn new_pairing_for_tests(
+		platform: Arc<dyn Platform>,
+		host_config: crate::platform::PairingHostConfig,
+		product: ProductContext,
+		spawner: Spawner,
+	) -> (Self, PairingHost) {
+		let services = RuntimeServices::new(
+			platform.clone(),
+			host_config.host.host_info.clone(),
+			host_config.people_chain_genesis_hash,
+			host_config.bulletin_chain_genesis_hash,
+			host_config.asset_hub_chain_genesis_hash,
+			spawner.clone(),
+		);
+		let pairing = PairingHost::new(services.clone(), host_config);
+		let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+		let host = Self::from_services(
+			services,
+			adapters,
+			pairing.accounts().clone(),
+			pairing.session().clone(),
+			product,
+		);
+		(host, pairing)
+	}
 }
 
 #[cfg(test)]

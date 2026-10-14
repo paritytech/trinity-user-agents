@@ -577,7 +577,12 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 
 fn gated_create_transaction(
 	request_id: &str,
-) -> (Arc<StubPlatform>, ProductRuntimeHost, CallContext, futures::channel::oneshot::Sender<()>) {
+) -> (
+	Arc<StubPlatform>,
+	ProductRuntimeHost<RemoteAccountHolder>,
+	CallContext,
+	futures::channel::oneshot::Sender<()>,
+) {
 	let (release, gate) = futures::channel::oneshot::channel();
 	let platform = Arc::new(StubPlatform {
 		create_transaction_confirmed: true,

@@ -149,6 +149,49 @@ pub struct PreparedWalletActivation {
 }
 
 impl WalletAccountHolder {
+	/// Inject a ring resolver for account-operation tests.
+	#[cfg(test)]
+	pub fn new_with_ring_resolver(
+		services: Arc<crate::runtime::RuntimeServices>,
+		network_suffix: String,
+		consent: Arc<ProductConsent>,
+		ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
+		ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
+	) -> WalletAccountHolder {
+		WalletAccountHolder {
+			ring_resolver,
+			..WalletAccountHolder::new(services, network_suffix, consent, ring_vrf_registry)
+		}
+	}
+
+	/// An unlocked wallet over `platform`, for allowance and renewal tests.
+	#[cfg(test)]
+	fn for_tests(
+		platform: crate::test_support::StubPlatform,
+		network_suffix: &str,
+		entropy: u8,
+	) -> Self {
+		let services = crate::runtime::RuntimeServices::new(
+			Arc::new(platform),
+			crate::platform::HostInfo {
+				name: "wallet test".to_string(),
+				icon: None,
+				version: None,
+				platform: truapi::latest::HostPlatform::Unknown,
+			},
+			[0; 32],
+			[0; 32],
+			[0; 32],
+			crate::test_support::test_spawner(),
+		);
+		let registry =
+			crate::runtime::ring_vrf_registry::RingVrfRegistryStore::new(services.platform.clone());
+		let consent = Arc::new(ProductConsent::new(services.platform.clone()));
+		let wallet = Self::new(services, network_suffix.to_string(), consent, registry);
+		wallet.install(wallet.prepare_activation(vec![entropy; 32], None).unwrap());
+		wallet
+	}
+
 	/// Start locked, with no wallet secrets, asking `consent` before a product uses another
 	/// product's ring-VRF keys.
 	pub fn new(

@@ -28,6 +28,8 @@ use crate::{
 use channel::SsoDisconnectMonitor;
 use futures::{StreamExt, channel::oneshot};
 use pairing::{SsoPairingFlow, SsoPairingOutcome};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use tracing::{instrument, warn};
 use truapi::{
@@ -221,9 +223,56 @@ impl SsoRequestService {
 		Some(OwnerHold { owner, barrier })
 	}
 
+	/// `message_id` of the request the session's request channel carries.
+	#[cfg(test)]
+	pub fn newest_request_for_tests(&self) -> Option<String> {
+		self.newest_request.lock().expect("newest request mutex poisoned").clone()
+	}
+
+	/// Change notifications the sync task has finished reconciling.
+	#[cfg(test)]
+	pub fn session_store_change_ticks_for_tests(&self) -> usize {
+		self.session_store_change_ticks.load(Ordering::SeqCst)
+	}
+
+	/// Pause replacement before the guarded installation for race tests.
+	#[cfg(test)]
+	pub fn pause_external_session_activation_for_tests(
+		&self,
+	) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+		let (entered_tx, entered_rx) = oneshot::channel();
+		let (resume_tx, resume_rx) = oneshot::channel();
+		*self
+			.external_session_activation_pause
+			.lock()
+			.expect("external activation pause mutex poisoned") = Some((entered_tx, resume_rx));
+		(entered_rx, resume_tx)
+	}
+
+	#[cfg(test)]
+	async fn wait_at_external_session_activation_pause(&self) {
+		let pause = self
+			.external_session_activation_pause
+			.lock()
+			.expect("external activation pause mutex poisoned")
+			.take();
+		if let Some((entered, resume)) = pause {
+			let _ = entered.send(());
+			let _ = resume.await;
+		}
+	}
+
 	/// Selected remote account identity.
 	pub fn current_session(&self) -> Option<AuthoritySession> {
 		self.session_state.current().as_ref().map(authority_session)
+	}
+
+	/// Start the disconnect monitor when a session is already active.
+	#[cfg(test)]
+	pub fn start_remote_monitor_for_current_session(&self) {
+		if let Some(session) = self.session_state.current() {
+			channel::start_disconnect_monitor(self, &session);
+		}
 	}
 
 	/// Install an external canonical session without copying it into storage.
@@ -657,6 +706,15 @@ impl SsoRequestService {
 		vrf::prefetch(&self.spawner);
 		self.auth_state.connected(&connected_session_ui_info(&session));
 		true
+	}
+
+	/// Install a selected session through the real lifecycle.
+	#[cfg(test)]
+	pub async fn set_connected_session_for_tests(&self, session: SessionInfo) {
+		let epoch = self.advance_session_lifecycle();
+		self.set_connected_session_if_current(session, epoch, false)
+			.await
+			.expect("test session installs");
 	}
 
 	// Stale peer notifications wake only their own waiters.

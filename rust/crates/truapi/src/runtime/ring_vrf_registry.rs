@@ -203,6 +203,20 @@ impl RingVrfRegistryStore {
 			.collect())
 	}
 
+	/// Persist a registration without replacing an existing key.
+	#[cfg(test)]
+	pub async fn register(
+		&self,
+		root_public_key: [u8; 32],
+		handle: ProductAccountId,
+		ring: RingLocation,
+		public_key: [u8; 32],
+	) -> Result<(), RingVrfError> {
+		let mut update = self.prepare_update(root_public_key).await?;
+		update.register(handle, ring, public_key)?;
+		update.persist().await
+	}
+
 	/// Load one root's registry while retaining storage serialization.
 	pub async fn prepare_update(
 		&self,
@@ -211,6 +225,25 @@ impl RingVrfRegistryStore {
 		let guard = self.storage_guard.lock().await;
 		let snapshot = self.load_under_guard(root_public_key).await?;
 		Ok(RegistryUpdate { store: self, root_public_key, snapshot, _guard: guard })
+	}
+
+	/// Reconcile one owner's complete response with locally registered keys.
+	///
+	/// RFC-0024 has no revocation operation, so a remote response cannot
+	/// invalidate an entry already accepted by this host. This also prevents a
+	/// list response created before a fire-and-forget registration mirror from
+	/// removing that local registration.
+	#[cfg(test)]
+	async fn reconcile_owner(
+		&self,
+		root_public_key: [u8; 32],
+		owner: &str,
+		entries: Vec<RegisteredRingVrfKey>,
+	) -> Result<Vec<RegisteredRingVrfKey>, RingVrfError> {
+		let mut update = self.prepare_update(root_public_key).await?;
+		let entries = update.reconcile_owner(owner, entries)?;
+		update.persist().await?;
+		Ok(entries)
 	}
 
 	pub async fn selected_provider(
@@ -240,6 +273,19 @@ impl RingVrfRegistryStore {
 			.filter(|entry| entry.rings.contains(ring))
 			.map(|entry| entry.handle)
 			.collect())
+	}
+
+	/// Persist a user-selected provider after validating its registration.
+	#[cfg(test)]
+	async fn select_provider(
+		&self,
+		root_public_key: [u8; 32],
+		ring: RingLocation,
+		handle: ProductAccountId,
+	) -> Result<(), RingVrfError> {
+		let mut update = self.prepare_update(root_public_key).await?;
+		update.select_provider(ring, handle)?;
+		update.persist().await
 	}
 
 	async fn snapshot(&self, root_public_key: [u8; 32]) -> Result<RegistrySnapshot, RingVrfError> {

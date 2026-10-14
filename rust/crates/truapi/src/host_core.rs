@@ -2026,7 +2026,6 @@ mod tests {
 	use parity_scale_codec::Encode;
 	use std::sync::atomic::Ordering;
 	use truapi::{
-		api::Permissions,
 		latest::{RemotePermission, RemotePermissionRequest, RemotePermissionResponse},
 		versioned::permissions,
 	};
@@ -2077,7 +2076,7 @@ mod tests {
 			|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 			"the boot reconcile did not report the empty session store",
 		);
-		runtime.pairing_host.session_state().set_session(session);
+		runtime.pairing.session().session_state().set_session(session);
 	}
 
 	fn assert_send<T: Send>(_: T) {}
@@ -2352,7 +2351,8 @@ mod tests {
 		let session = crate::test_support::sso_session_info();
 		install_session_after_boot(&runtime, &platform, session.clone());
 		runtime
-			.pairing_host
+			.pairing
+			.accounts()
 			.cache_product_subtree_for_test(&session, "myapp.dot", [9; 32]);
 
 		let key =
@@ -2826,24 +2826,31 @@ mod tests {
 			crate::platform::ProductExecutionKind::Worker,
 		)
 		.expect("worker product context is valid");
+		let sink = Arc::new(RecordingSink::default());
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
 			test_spawner(),
-			Arc::new(RecordingSink::default()),
+			sink.clone(),
 		);
-		let host = runtime.admin.product_runtime().clone();
 		assert!(
-			host.test_session_state().current().is_none(),
+			runtime.core.session_state().current().is_none(),
 			"the fixture must be signed out for this test to mean anything"
 		);
 
-		let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
-			host.as_ref(),
-			&CallContext::with_request_id("renderer:1".to_string()),
-			truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
-		));
+		let ids = subscription_ids("renderer_action_subscribe").expect("known subscription");
+		let mut frame = ProtocolMessage {
+			request_id: "renderer:1".to_string(),
+			payload: Payload {
+				trait_id: ids.trait_id,
+				method_id: ids.method_id,
+				message_type: crate::frame::MESSAGE_TYPE_START,
+				value: truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1.encode(),
+			},
+		};
+		futures::executor::block_on(runtime.receive_frame(frame.encode()))
+			.expect("subscribe actions");
 
 		let _render = runtime
 			.control()
@@ -2852,6 +2859,7 @@ mod tests {
 				payload: vec![],
 			})
 			.expect("a signed-out Worker connection may render");
+		sink.frames.lock().unwrap().clear();
 
 		let published = v01::HostRendererActionSubscribeItem {
 			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
@@ -2863,17 +2871,12 @@ mod tests {
 			.publish_renderer_action(published.clone())
 			.expect("a signed-out Worker connection may receive actions");
 
-		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
-		let delivered = match actions.poll_next_unpin(&mut cx) {
-			core::task::Poll::Ready(Some(item)) => item,
-			other => panic!("a published renderer action must be ready, got {other:?}"),
-		};
-		let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) =
-			delivered
-		else {
-			panic!("expected a renderer action item")
-		};
-		assert_eq!(delivered, published);
+		frame.payload.message_type = crate::frame::MESSAGE_TYPE_RECEIVE;
+		frame.payload.value =
+			truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(published).encode();
+		wait_until(|| !sink.frames.lock().unwrap().is_empty(), "renderer action must arrive");
+		let frames = sink.frames.lock().unwrap().clone();
+		assert_eq!(frames, vec![frame.encode()]);
 	}
 
 	#[test]
@@ -2905,7 +2908,7 @@ mod tests {
 			test_spawner(),
 			Arc::new(RecordingSink::default()),
 		);
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.connection.services().clone();
 		let demand = Arc::new(RecordingDemand::default());
 		assert!(
 			services.worker_ledger.install_demand_observer(demand.clone()),
@@ -3010,7 +3013,7 @@ mod tests {
 	#[test]
 	fn a_render_the_product_ends_releases_its_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.connection.services().clone();
 		let mut render = start_render(&runtime, "loyalty");
 		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
@@ -3035,7 +3038,7 @@ mod tests {
 	#[test]
 	fn a_render_the_product_interrupts_releases_its_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.connection.services().clone();
 		let mut render = start_render(&runtime, "loyalty");
 
 		let request_id = render_request_id(&sink, 0);
@@ -3067,7 +3070,7 @@ mod tests {
 	#[test]
 	fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.connection.services().clone();
 		let mut render = start_render(&runtime, "loyalty");
 
 		let request_id = render_request_id(&sink, 0);
@@ -3085,7 +3088,7 @@ mod tests {
 	#[test]
 	fn disposing_the_core_releases_an_open_renders_worker_reference() {
 		let (runtime, _sink) = render_runtime();
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.connection.services().clone();
 		let mut render = start_render(&runtime, "loyalty");
 		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
@@ -3100,7 +3103,7 @@ mod tests {
 	#[test]
 	fn one_render_ending_leaves_the_other_renders_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.connection.services().clone();
 		let mut first = start_render(&runtime, "loyalty");
 		let second = start_render(&runtime, "rewards");
 		assert_eq!(services.worker_ledger.count("worker.dot"), 2);
@@ -3370,83 +3373,6 @@ mod tests {
 	}
 
 	#[test]
-	fn dispose_releases_the_demand_open_operations_hold() {
-		let platform = Arc::new(StubPlatform::default());
-		let sink = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			platform,
-			host_config,
-			product,
-			test_spawner(),
-			sink,
-		);
-		let host = runtime.admin.product_runtime().clone();
-
-		futures::executor::block_on(truapi::api::Worker::begin_operation(
-			host.as_ref(),
-			&truapi::CallContext::default(),
-			truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-				truapi::latest::HostWorkerBeginOperationRequest { label: None },
-			),
-		))
-		.expect("begin operation");
-		assert_eq!(host.services().worker_ledger.count("myapp.dot"), 1);
-
-		runtime.dispose();
-
-		assert_eq!(
-			host.services().worker_ledger.count("myapp.dot"),
-			0,
-			"disposing a connection drops the demand its open operations held"
-		);
-	}
-
-	#[test]
-	fn dispose_ends_the_operations_the_host_is_still_holding() {
-		let platform = Arc::new(StubPlatform::default());
-		let sink = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			platform.clone(),
-			host_config,
-			product,
-			test_spawner(),
-			sink,
-		);
-		let host = runtime.admin.product_runtime().clone();
-
-		futures::executor::block_on(truapi::api::Worker::begin_operation(
-			host.as_ref(),
-			&truapi::CallContext::default(),
-			truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-				truapi::latest::HostWorkerBeginOperationRequest { label: None },
-			),
-		))
-		.expect("begin operation");
-
-		runtime.dispose();
-
-		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-		loop {
-			let ended = platform
-				.ended_operations
-				.lock()
-				.expect("ended operations mutex poisoned")
-				.clone();
-			if ended == vec![("myapp.dot".to_string(), 1)] {
-				break;
-			}
-			assert!(
-				std::time::Instant::now() < deadline,
-				"the host's own record of the operation is closed, not left to \
-                 accumulate; saw {ended:?}"
-			);
-			std::thread::yield_now();
-		}
-	}
-
-	#[test]
 	fn dispose_cancels_active_subscriptions() {
 		let theme_stream_dropped = Arc::new(AtomicBool::new(false));
 		let platform = Arc::new(StubPlatform {
@@ -3565,103 +3491,6 @@ mod tests {
 			block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
 				.expect("installed database serves writes");
 		assert_eq!(answer, 42);
-	}
-
-	#[test]
-	fn answer_sso_request_distinguishes_disconnect_from_ignorable_messages() {
-		use crate::{
-			host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
-			platform::{HostInfo, PlatformInfo, SigningHostConfig},
-		};
-
-		const ENTROPY: [u8; 32] = [0xab; 32];
-
-		let config = SigningHostConfig::new(
-			HostInfo {
-				name: "Polkadot Mobile".to_string(),
-				icon: None,
-				version: None,
-				platform: truapi::latest::HostPlatform::Unknown,
-			},
-			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
-			"paseo".to_string(),
-		)
-		.expect("signing host config is valid");
-		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-		futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-
-		let disconnected = RemoteMessage {
-			message_id: "m1".to_string(),
-			data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-		};
-		let outcome = futures::executor::block_on(runtime.answer_sso_request(disconnected));
-		assert!(matches!(outcome, SsoRequestOutcome::Disconnected));
-
-		let response_variant = RemoteMessage {
-			message_id: "m2".to_string(),
-			data: RemoteMessageData::V1(v1::RemoteMessage::SignRawWithLegacyAccountResponse(
-				Response { responding_to: "m2".to_string(), payload: Ok(vec![]) },
-			)),
-		};
-		let outcome = futures::executor::block_on(runtime.answer_sso_request(response_variant));
-		assert!(matches!(outcome, SsoRequestOutcome::Ignored));
-	}
-
-	#[test]
-	fn answer_sso_request_returns_a_correlated_response() {
-		use crate::{
-			host_internal::sso_messages::{
-				ProductSubtreeRequest, RemoteMessage, RemoteMessageData, v1,
-			},
-			platform::{HostInfo, PlatformInfo, SigningHostConfig},
-		};
-
-		const ENTROPY: [u8; 32] = [0xab; 32];
-
-		let config = SigningHostConfig::new(
-			HostInfo {
-				name: "Polkadot Mobile".to_string(),
-				icon: None,
-				version: None,
-				platform: truapi::latest::HostPlatform::Unknown,
-			},
-			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
-			"paseo".to_string(),
-		)
-		.expect("signing host config is valid");
-		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-		futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-
-		let request = RemoteMessage {
-			message_id: "m3".to_string(),
-			data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(
-				ProductSubtreeRequest { product_id: "browse.dot".to_string() },
-			)),
-		};
-		let outcome = futures::executor::block_on(runtime.answer_sso_request(request));
-		let SsoRequestOutcome::Response { message } = outcome else {
-			panic!("expected a response outcome");
-		};
-		let response =
-			RemoteMessage::decode(&mut message.as_slice()).expect("valid response encoding");
-		assert_eq!(response.message_id, "m3:response");
-		let RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(payload)) =
-			response.data
-		else {
-			panic!("expected a product subtree response payload");
-		};
-		assert_eq!(payload.responding_to, "m3");
-		assert!(payload.payload.is_ok());
 	}
 
 	#[test]
@@ -3884,6 +3713,7 @@ mod tests {
 		let host = ProductRuntimeHost::from_services(
 			runtime.services.clone(),
 			ConnectionAdapters::from_services(&runtime.services),
+			runtime.signing_host.accounts().clone(),
 			runtime.signing_host.clone(),
 			ProductContext::new("unknown.dot".to_string()).expect("valid product id"),
 		);

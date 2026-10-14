@@ -483,7 +483,9 @@ fn statement_proof_authorized_error(
 #[cfg(test)]
 mod tests {
 	use super::{
-		super::{LocalActivation, RuntimeServices, SigningHostRole},
+		super::{
+			LocalActivation, RuntimeServices, SigningHostRole, signing_host::WalletAccountHolder,
+		},
 		*,
 	};
 	use crate::{
@@ -536,14 +538,16 @@ mod tests {
 		.expect("stub core storage accepts the entry");
 	}
 
-	fn signing_host_runtime(product_id: &str) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+	fn signing_host_runtime(
+		product_id: &str,
+	) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHostRole>) {
 		signing_host_runtime_on(product_id, Arc::new(StubPlatform::default()))
 	}
 
 	fn signing_host_runtime_on(
 		product_id: &str,
 		platform: Arc<StubPlatform>,
-	) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+	) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHostRole>) {
 		let platform: Arc<dyn crate::platform::Platform> = platform;
 		let services = RuntimeServices::new(
 			platform.clone(),
@@ -564,6 +568,7 @@ mod tests {
 		let host = ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
+			signing_host.accounts().clone(),
 			signing_host.clone(),
 			ProductContext::new(product_id.to_string()).expect("valid product id"),
 		);
@@ -814,7 +819,9 @@ mod tests {
 			signed_statement([7; 32])
 		);
 		assert_eq!(
-			host.services.cached_statements(TopicFilterKind::MatchAll, &[[7; 32]]),
+			host.connection
+				.services
+				.cached_statements(TopicFilterKind::MatchAll, &[[7; 32]]),
 			vec![signed_statement([7; 32])]
 		);
 	}
@@ -923,7 +930,7 @@ mod tests {
 			..Default::default()
 		});
 		let host = ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), test_spawner());
-		host.services.cache_statement(cached.clone());
+		host.connection.services.cache_statement(cached.clone());
 		let cx = CallContext::with_request_id("sub-cached".to_string());
 		let mut subscription = futures::executor::block_on(StatementStore::subscribe(
 			&host,
@@ -949,7 +956,8 @@ mod tests {
 			)))
 		);
 		assert!(
-			host.services
+			host.connection
+				.services
 				.cached_statements(TopicFilterKind::MatchAny, &[[7; 32]])
 				.is_empty()
 		);

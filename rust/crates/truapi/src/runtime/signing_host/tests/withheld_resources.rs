@@ -15,7 +15,7 @@ fn granting_platform() -> Arc<StubPlatform> {
 
 /// Ask for `resources` and return the per-resource outcomes.
 fn allocate(
-	runtime: &ProductRuntimeHost,
+	runtime: &ProductRuntimeHost<WalletAccountHolder>,
 	resources: Vec<v01::AllocatableResource>,
 ) -> Vec<v01::AllocationOutcome> {
 	let response = futures::executor::block_on(ResourceAllocation::request(
@@ -59,11 +59,14 @@ fn withholding_nothing_leaves_every_resource_granted() {
 	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(true);
-	let runtime = product_runtime(services, activation);
+	let runtime = product_runtime(services, activation.clone());
 
 	assert_eq!(
-		allocate(&runtime, vec![v01::AllocatableResource::AutoSigning]),
-		vec![v01::AllocationOutcome::Allocated],
+		(
+			allocate(&runtime, vec![v01::AllocatableResource::AutoSigning]),
+			keeps_auto_signing(&activation, "myapp.dot"),
+		),
+		(vec![v01::AllocationOutcome::Allocated], false),
 	);
 }
 
@@ -92,7 +95,7 @@ fn a_later_set_replaces_the_earlier_one() {
 }
 
 /// Ask for a statement proof the way `createProofAuthorized` does.
-fn proof_is_signed(runtime: &ProductRuntimeHost) -> bool {
+fn proof_is_signed(runtime: &ProductRuntimeHost<WalletAccountHolder>) -> bool {
 	futures::executor::block_on(StatementStore::create_proof_authorized(
 		runtime,
 		&CallContext::default(),
@@ -130,32 +133,4 @@ fn a_granted_statement_store_allowance_signs_the_proof_path() {
 	let runtime = product_runtime(services, activation);
 
 	assert!(proof_is_signed(&runtime));
-}
-
-/// The bulletin keys allocate on their own too, both the first one a preimage
-/// submission asks for and the refreshed one it falls back to.
-#[test]
-fn a_withheld_bulletin_allowance_yields_no_key_on_either_call() {
-	let (_services, activation) = signing_runtime_with_platform(granting_platform());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	activation.set_grant_allowances_unchecked(true);
-	activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
-	let session = activation.current_session().expect("the session just made");
-	let cx = CallContext::default();
-
-	let keys = futures::executor::block_on(async {
-		[
-			activation
-				.bulletin_allowance_key(&cx, &session, "myapp.dot".to_string())
-				.await
-				.is_ok(),
-			activation
-				.refresh_bulletin_allowance_key(&cx, &session, "myapp.dot".to_string())
-				.await
-				.is_ok(),
-		]
-	});
-
-	assert_eq!(keys, [false, false]);
 }

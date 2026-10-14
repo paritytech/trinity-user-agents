@@ -2,6 +2,8 @@ import Foundation
 import Testing
 import Operation_iOS
 import SubstrateSdk
+import TrUAPIHost
+import MessageExchangeKit
 
 @testable import polkadot_app
 
@@ -29,15 +31,19 @@ private final class InMemoryHandledRequestRepositoryFactory: SSOHandledRequestRe
 /// suspend until a target count has been handled (the context processes on a
 /// detached task, so `handleMessages` returning does not imply completion).
 private actor SpyRequestHandler: SSORequestHandling {
-    typealias Message = SSORawHostMessage
+    typealias Message = SSOTrUAPIRequest
 
     private(set) var handledIds: [String] = []
     private var waiters: [(threshold: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
-    nonisolated func canHandle(_: SSORawHostMessage) -> Bool { true }
+    nonisolated func canHandle(_: SSOTrUAPIRequest) -> Bool { true }
 
-    func handle(message: SSORawHostMessage, from _: PolkadotSignInHost) async {
-        handledIds.append(message.messageId)
+    func handle(message: SSOTrUAPIRequest, from _: PolkadotSignInHost) async {
+        record(message.messageId)
+    }
+
+    func record(_ messageId: String) {
+        handledIds.append(messageId)
         resumeSatisfiedWaiters()
     }
 
@@ -54,6 +60,19 @@ private actor SpyRequestHandler: SSORequestHandling {
             waiter.continuation.resume()
             return true
         }
+    }
+}
+
+private final class StubAccountHolderService: SsoAccountHolderServiceProtocol, @unchecked Sendable {
+    var control: (Data) throws -> SsoRequestOutcome? = { _ in nil }
+    var request: (Data) async throws -> SsoRequestOutcome = { _ in .ignored }
+
+    func handleSsoControl(message: Data) throws -> SsoRequestOutcome? {
+        try control(message)
+    }
+
+    func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome {
+        try await request(message)
     }
 }
 
@@ -80,7 +99,7 @@ private func makeMessageHandler(
     spy: SpyRequestHandler,
     repositoryFactory: InMemoryHandledRequestRepositoryFactory
 ) -> SSOTrUAPIMessageHandler {
-    let context = SSORequestProcessingContext<SSORawHostMessage>(
+    let context = SSORequestProcessingContext<SSOTrUAPIRequest>(
         handlers: [spy],
         logger: MockLogger()
     )
@@ -104,7 +123,7 @@ struct SSOTrUAPIMessageHandlerTests {
         let first = try makeRawMessage(messageId: "fresh-1")
         let second = try makeRawMessage(messageId: "fresh-2")
 
-        await handler.handleMessages([first, second], from: makeHost())
+        await handler.handleMessages([first, second], from: makeHost(), service: StubAccountHolderService())
         await spy.waitForHandled(count: 2)
 
         let handledIds = await spy.handledIds
@@ -125,7 +144,7 @@ struct SSOTrUAPIMessageHandlerTests {
         let duplicate = try makeRawMessage(messageId: "dup")
         let fresh = try makeRawMessage(messageId: "fresh")
 
-        await handler.handleMessages([duplicate, fresh], from: makeHost())
+        await handler.handleMessages([duplicate, fresh], from: makeHost(), service: StubAccountHolderService())
         await spy.waitForHandled(count: 1)
 
         let handledIds = await spy.handledIds

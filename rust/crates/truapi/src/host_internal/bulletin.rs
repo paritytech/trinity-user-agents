@@ -111,6 +111,11 @@ fn require_u8_sequence<R: TypeResolver>(
 
 #[cfg(test)]
 mod tests {
+	use subxt::{
+		config::{DefaultExtrinsicParamsBuilder, substrate::SubstrateConfig},
+		tx::SubmittableTransaction,
+	};
+
 	use super::*;
 	use crate::{
 		host_internal::extrinsic::tests::{OfflineChainState, bulletin_chain_state, split_v4},
@@ -504,9 +509,7 @@ mod tests {
 
 	#[test]
 	fn rejects_secret_of_wrong_shape() {
-		let error =
-			allowance_signer(&BulletinAllowanceKey::from_secret_bytes(vec![0xff; 64]).unwrap())
-				.unwrap_err();
-		assert!(error.contains("invalid bulletin allowance key"), "{error}");
+		let error = BulletinAllowanceKey::from_secret_bytes(vec![0xff; 64]).unwrap_err();
+		assert!(error.to_string().contains("invalid bulletin allowance key"), "{error}");
 	}
 }

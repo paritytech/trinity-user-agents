@@ -685,6 +685,23 @@ impl<H: AccountHolder> HostAccounts<H> {
 	) -> Result<super::contacts::ContactHandles, AuthorityError> {
 		self.holder.contact_handles(authority_session)
 	}
+
+	/// Retained grants exercised by lifecycle tests.
+	#[cfg(test)]
+	pub fn grants_for_tests(&self) -> &HostGrantStore {
+		&self.grants
+	}
+
+	/// Seed a subtree without an account-holder exchange.
+	#[cfg(test)]
+	pub fn cache_product_subtree_for_test(
+		&self,
+		session: &SessionInfo,
+		product_id: &str,
+		public_key: [u8; 32],
+	) {
+		self.grants.cache_product_subtree_for_test(session, product_id, public_key);
+	}
 }
 
 impl<H: AccountHolder> HostAccounts<H> {
@@ -964,6 +981,20 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
 			update.select_provider(ring, handle)?;
 		}
 		update.persist().await
+	}
+
+	/// Register fixture material in the actual durable registry.
+	#[cfg(test)]
+	pub async fn register_ring_vrf_key_for_tests(
+		&self,
+		session: &SessionInfo,
+		handle: api::ProductAccountId,
+		ring: api::RingLocation,
+		public_key: [u8; 32],
+	) -> Result<(), RingVrfError> {
+		self.ring_vrf_registry
+			.register(session.public_key, handle, ring, public_key)
+			.await
 	}
 
 	async fn require_ring_vrf_key_access(

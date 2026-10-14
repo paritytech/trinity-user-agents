@@ -252,23 +252,6 @@ impl BulletinRpc {
 			.map(subxt_rpcs::RpcClient::new)
 	}
 
-	/// Override the allowance-propagation window. Test-only: lets a scripted
-	/// run exercise both the "keep polling" and "window elapsed" paths without
-	/// depending on real block cadence.
-	#[cfg(test)]
-	fn with_allowance_propagation_window(mut self, window: Duration) -> Self {
-		self.allowance_propagation_window = window;
-		self
-	}
-
-	/// Override the per-block allowance wait. Test-only: keeps scripted runs
-	/// that never produce a newer block from waiting out the real timeout.
-	#[cfg(test)]
-	fn with_allowance_block_wait_timeout(mut self, timeout: Duration) -> Self {
-		self.allowance_block_wait_timeout = timeout;
-		self
-	}
-
 	/// Submit `value` using the selected account's signing operation, returning
 	/// the preimage key once the transaction is included and its dispatch
 	/// succeeded.
@@ -867,18 +850,22 @@ mod tests {
 		use super::*;
 		use crate::{
 			chain_runtime::{RuntimeChainProvider, RuntimeFailure},
-			host_internal::extrinsic::tests::{
-				OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4,
-				system_events,
+			host_internal::{
+				bulletin::{MORTAL_PERIOD_BLOCKS, store_transaction_payload},
+				extrinsic::tests::{
+					OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4,
+					system_events,
+				},
 			},
 			host_logic::product_account::SR25519_SIGNING_CONTEXT,
 			platform::JsonRpcConnection,
+			runtime::BulletinAllowanceKey,
 			subscription::thread_per_subscription_spawner,
 		};
 		use async_trait::async_trait;
 		use futures::{StreamExt, channel::mpsc, stream::BoxStream};
 		use parity_scale_codec::{Compact, Decode, Encode};
-		use schnorrkel::{PublicKey, Signature};
+		use schnorrkel::{PublicKey, SecretKey, Signature};
 		use serde_json::{Value as JsonValue, json};
 		use std::{
 			collections::VecDeque,
@@ -1377,12 +1364,45 @@ mod tests {
 			.unwrap()
 		}
 
-		fn rpc(provider: Arc<BulletinScriptedProvider>) -> BulletinRpc {
-			BulletinRpc::new(
-				ChainRuntime::new(provider, thread_per_subscription_spawner()),
-				[0x42; 32],
-			)
-			.with_allowance_block_wait_timeout(Duration::from_millis(25))
+		struct SubmissionFixture {
+			rpc: BulletinRpc,
+			signing_available: core::sync::atomic::AtomicBool,
+		}
+
+		impl SubmissionFixture {
+			async fn submit(
+				&self,
+				value: &[u8],
+				budget: Duration,
+			) -> Result<Vec<u8>, BulletinSubmitError> {
+				use subxt::tx::Signer;
+				let signer =
+					crate::host_internal::bulletin::allowance_signer(&allowance_fixture()).unwrap();
+				self.rpc
+					.submit_preimage(
+						&CallContext::default(),
+						Instant::now() + budget,
+						&signer.account_id(),
+						&|bytes| {
+							if !self.signing_available.load(core::sync::atomic::Ordering::Relaxed) {
+								return Err(AuthorityError::Disconnected.into());
+							}
+							Ok(signer.sign(bytes))
+						},
+						value,
+					)
+					.await
+			}
+		}
+
+		fn rpc(provider: Arc<BulletinScriptedProvider>) -> SubmissionFixture {
+			SubmissionFixture {
+				signing_available: core::sync::atomic::AtomicBool::new(true),
+				rpc: BulletinRpc::new(
+					ChainRuntime::new(provider, thread_per_subscription_spawner()),
+					[0x42; 32],
+				),
+			}
 		}
 
 		fn store_signature_verifies_at(transaction: &[u8], value: &[u8], block_hash: H256) -> bool {
@@ -1432,12 +1452,9 @@ mod tests {
 			let best_hash = scripted_block_hash(5).parse().unwrap();
 			let value = b"fork mortality reproduction";
 
-			futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
+			futures::executor::block_on(
+				rpc(provider.clone()).submit(value, Duration::from_secs(2)),
+			)
 			.unwrap();
 
 			let transactions = provider.submitted_transactions();
@@ -1465,13 +1482,9 @@ mod tests {
 		fn submit_preimage_drives_subxt_happy_path() {
 			let provider = Arc::new(BulletinScriptedProvider::new([TransactionOutcome::Included]));
 			let value = b"scripted bulletin happy path";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
+			let fixture = rpc(provider.clone());
+			let result =
+				futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
 			assert_eq!(result, preimage_key(value));
 			assert_eq!(
@@ -1480,6 +1493,39 @@ mod tests {
 			);
 			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
 			assert_eq!(provider.method_count("chainHead_v1_storage"), 1);
+
+			let submitted = provider.submitted_transactions();
+			let encoded = hex::decode(submitted[0].trim_start_matches("0x")).unwrap();
+			let (account, signature, _) = split_v4(&encoded);
+			let client = OfflineChainState {
+				genesis_hash: [0x42; 32],
+				spec_version: 1,
+				transaction_version: 1,
+				metadata: ArcMetadata::from(bulletin_metadata()),
+			}
+			.client_at(1)
+			.unwrap();
+			let params = subxt::config::DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
+				.nonce(0)
+				.mortal_from_unchecked(MORTAL_PERIOD_BLOCKS, 1, subxt::utils::H256([0x11; 32]))
+				.build();
+			let payload = client
+				.tx()
+				.create_v4_signable_offline(&store_transaction_payload(value), params)
+				.unwrap()
+				.signer_payload()
+				.unwrap();
+			let public = SecretKey::from_bytes(allowance_fixture().as_secret_bytes())
+				.unwrap()
+				.to_public();
+			assert_eq!(account, public.to_bytes());
+			public
+				.verify_simple(
+					SR25519_SIGNING_CONTEXT,
+					&payload,
+					&Signature::from_bytes(&signature).unwrap(),
+				)
+				.unwrap();
 		}
 
 		#[test]
@@ -1489,13 +1535,9 @@ mod tests {
 				TransactionOutcome::Included,
 			]));
 			let value = b"scripted bulletin retry";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
+			let fixture = rpc(provider.clone());
+			let result =
+				futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
 			assert_eq!(result, preimage_key(value));
 			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 2);
@@ -1507,13 +1549,9 @@ mod tests {
 				TransactionOutcome::IncludedWithMissingBody,
 			]));
 			let value = b"scripted bulletin inconsistent inclusion";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
+			let fixture = rpc(provider.clone());
+			let result =
+				futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
 			assert_eq!(result, preimage_key(value));
 			// The reported inclusion block was inconsistent, but the re-check
@@ -1529,13 +1567,9 @@ mod tests {
 				TransactionOutcome::FollowStop,
 			]));
 			let value = b"scripted watch stop recovery";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
+			let fixture = rpc(provider.clone());
+			let result =
+				futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
 			assert_eq!(result, preimage_key(value));
 			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
@@ -1548,12 +1582,10 @@ mod tests {
 				BulletinScriptedProvider::new([TransactionOutcome::FollowStop])
 					.with_failed_events(),
 			);
-			let error = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				b"scripted watch stop failed dispatch",
-			))
+			let fixture = rpc(provider.clone());
+			let error = futures::executor::block_on(
+				fixture.submit(b"scripted watch stop failed dispatch", Duration::from_secs(2)),
+			)
 			.unwrap_err();
 
 			let BulletinSubmitError::Subxt(error) = error else {
@@ -1575,13 +1607,9 @@ mod tests {
 				TransactionOutcome::Included,
 			]));
 			let value = b"scripted watch stop rebroadcast";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
+			let fixture = rpc(provider.clone());
+			let result =
+				futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
 			assert_eq!(result, preimage_key(value));
 			let submitted = provider.submitted_transactions();
@@ -1598,13 +1626,9 @@ mod tests {
 				TransactionOutcome::Invalid,
 			]));
 			let value = b"scripted bounced rebroadcast recovery";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
+			let fixture = rpc(provider.clone());
+			let result =
+				futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
 			assert_eq!(result, preimage_key(value));
 			// The bounce triggers one more re-check, which finds the first
@@ -1618,12 +1642,10 @@ mod tests {
 				TransactionOutcome::FollowStopWithMissingBody,
 				TransactionOutcome::InvalidWithMissingBody,
 			]));
-			let error = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				b"scripted bounced rebroadcast unseen",
-			))
+			let fixture = rpc(provider.clone());
+			let error = futures::executor::block_on(
+				fixture.submit(b"scripted bounced rebroadcast unseen", Duration::from_secs(2)),
+			)
 			.unwrap_err();
 
 			assert!(matches!(error, BulletinSubmitError::RebroadcastRejected { .. }));
@@ -1640,12 +1662,10 @@ mod tests {
 				TransactionOutcome::Invalid,
 				TransactionOutcome::Invalid,
 			]));
-			let error = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				b"scripted stale allowance",
-			))
+			let fixture = rpc(provider.clone());
+			let error = futures::executor::block_on(
+				fixture.submit(b"scripted stale allowance", Duration::from_secs(2)),
+			)
 			.unwrap_err();
 
 			let BulletinSubmitError::Subxt(error) = error else {
@@ -1672,12 +1692,10 @@ mod tests {
 						false,
 					),
 			);
-			let error = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				b"scripted stale allowance",
-			))
+			let fixture = rpc(provider.clone());
+			let error = futures::executor::block_on(
+				fixture.submit(b"scripted stale allowance", Duration::from_secs(2)),
+			)
 			.unwrap_err();
 
 			assert!(matches!(
@@ -1694,13 +1712,10 @@ mod tests {
 		#[test]
 		fn submit_preimage_budget_reports_pre_broadcast_phase() {
 			let provider = Arc::new(BulletinScriptedProvider::with_options([], true));
-			let error = futures::executor::block_on(rpc(provider).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_millis(25),
-				&allowance_fixture(),
-				b"timeout",
-			))
-			.unwrap_err();
+			let fixture = rpc(provider);
+			let error =
+				futures::executor::block_on(fixture.submit(b"timeout", Duration::from_millis(25)))
+					.unwrap_err();
 
 			assert!(matches!(
 				&error,
@@ -1710,104 +1725,14 @@ mod tests {
 		}
 
 		#[test]
-		fn dry_run_rebuilds_at_a_new_best_block_then_submits() {
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([TransactionOutcome::Included])
-					.with_validation_outcomes(
-						[ValidationOutcome::AllowanceRejected, ValidationOutcome::Valid],
-						true,
-					),
-			);
-			let value = b"scripted allowance propagation";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			assert_eq!(result, preimage_key(value));
-			assert_eq!(
-				provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
-				2
-			);
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
-		}
-
-		#[test]
-		fn dry_run_propagation_block_wait_timeout_remains_an_allowance_rejection() {
+		fn a_dry_run_allowance_rejection_is_returned_without_broadcast_or_retry() {
 			let provider = Arc::new(
 				BulletinScriptedProvider::new([])
 					.with_validation_outcomes([ValidationOutcome::AllowanceRejected], false),
 			);
-			let error = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				b"scripted propagation block wait timeout",
-			))
-			.unwrap_err();
-
-			assert!(matches!(
-				error,
-				BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::DryRun }
-			));
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 0);
-		}
-
-		#[test]
-		fn dry_run_keeps_polling_past_the_old_block_count_while_blocks_are_fast() {
-			// Regression: Bulletin's best-block cadence dropped, so a
-			// fixed-count propagation budget (3 blocks) collapsed from the
-			// intended ~18s to ~3s and gave up before a freshly-claimed
-			// allowance became visible to the dry-run. The wait is now bound
-			// by wall-clock, so a rapid stream of rejections keeps polling
-			// until the allowance propagates.
-			// Six is well past the old three-block give-up cap.
-			let rejections_past_old_limit = 6;
-			let mut validation_outcomes =
-				vec![ValidationOutcome::AllowanceRejected; rejections_past_old_limit];
-			validation_outcomes.push(ValidationOutcome::Valid);
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([TransactionOutcome::Included])
-					.with_validation_outcomes(validation_outcomes, true),
-			);
-			let value = b"scripted fast-block allowance propagation";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(30),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			assert_eq!(result, preimage_key(value));
-			assert_eq!(
-				provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
-				rejections_past_old_limit + 1
-			);
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
-		}
-
-		#[test]
-		fn dry_run_propagation_stops_once_the_wall_clock_window_elapses() {
-			// A zero-length window makes the first rejection exceed the budget
-			// immediately, so a never-propagating allowance is treated as real
-			// after one dry-run rather than looping until the outer deadline.
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([])
-					.with_validation_outcomes([ValidationOutcome::AllowanceRejected; 4], true),
-			);
+			let fixture = rpc(provider.clone());
 			let error = futures::executor::block_on(
-				rpc(provider.clone())
-					.with_allowance_propagation_window(Duration::ZERO)
-					.submit_preimage(
-						&CallContext::default(),
-						Instant::now() + Duration::from_secs(2),
-						&allowance_fixture(),
-						b"scripted propagation window elapsed",
-					),
+				fixture.submit(b"rejected allowance", Duration::from_secs(2)),
 			)
 			.unwrap_err();
 
@@ -1815,10 +1740,6 @@ mod tests {
 				error,
 				BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::DryRun }
 			));
-			assert_eq!(
-				provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
-				1
-			);
 			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 0);
 		}
 	}

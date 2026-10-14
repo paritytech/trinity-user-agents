@@ -719,6 +719,43 @@ impl HostGrantStore {
 		let session_key = GrantScope::from_session(session);
 		subtrees.retain(|(key, _), _| *key != session_key);
 	}
+
+	/// Cache sizes for lifecycle regression checks.
+	#[cfg(test)]
+	pub fn capability_cache_sizes_for_tests(&self) -> (usize, usize, usize, usize) {
+		(
+			self.statement_store_allowances
+				.lock()
+				.expect("statement-store allowance cache mutex poisoned")
+				.len(),
+			self.bulletin_allowances
+				.lock()
+				.expect("bulletin allowance cache mutex poisoned")
+				.len(),
+			self.product_subtrees
+				.lock()
+				.expect("product subtree cache mutex poisoned")
+				.len(),
+			self.auto_signing_keys
+				.lock()
+				.expect("AutoSigning key cache mutex poisoned")
+				.len(),
+		)
+	}
+
+	/// Seed an authenticated subtree for existing runtime fixtures.
+	#[cfg(test)]
+	pub fn cache_product_subtree_for_test(
+		&self,
+		session: &SessionInfo,
+		product_id: &str,
+		public_key: [u8; 32],
+	) {
+		self.product_subtrees
+			.lock()
+			.expect("product subtree cache mutex poisoned")
+			.insert((GrantScope::from_session(session), product_id.to_string()), public_key);
+	}
 }
 
 impl HostGrantGuard<'_> {
