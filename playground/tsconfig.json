@@ -36,6 +36,7 @@
   ],
   "exclude": [
     "node_modules",
+    "chat-v2",
     "tests",
     "test/generated",
     "playwright.config.ts",

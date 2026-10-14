@@ -2,8 +2,7 @@
 
 _The one product every host and tool runs to test [Chat Extension v2](../../docs/rfcs/chat-extension-v2.md)._
 
-This file is the specification. The code it describes lands with the core runtime of Chat Extension v2; until then,
-nothing in this directory builds.
+This file is the specification of the code in this directory.
 
 ## Purpose
 
@@ -21,21 +20,30 @@ The product follows the layout of the [TrUAPI Playground](../README.md): a stati
 
 ```text
 playground/chat-v2/
-  package.json               yarn scripts: dev, build, test; @parity/truapi linked from ../../js/packages/truapi
+  package.json               yarn scripts: dev, build, test, lint; @parity/truapi linked from ../../js/packages/truapi
   bulletin-deploy.config.ts  the product manifest: one app and one worker executable
-  vite.config.app.ts         builds app/ into out/
+  vite.config.app.ts         builds app/ into out/; `yarn dev` serves it on port 3102
   vite.config.worker.ts      builds worker/index.ts into out/worker/index.js
+  vite.config.shared.ts      the DotNS name, from CHAT_V2_DOTNS_NAME, for the room links and the deeplink
   app/index.html             the one-page App
   app/main.ts
-  worker/index.ts            start-up: handlers, rooms, subscriptions
+  worker/index.ts            the entry: the client of the Worker and the assets, given to startSampleProduct
+  worker/product.ts          start-up: handlers, subscriptions, rooms; events, user actions, renderer
+  worker/execute.ts          the command implementations
   worker/commands.ts         the command parser and the command table
+  worker/feed.ts             feed updates, mirrored into the store in the source room
   worker/clock.ts            message ids and timestamps from counters
-  worker/store.ts            the product-source room's messages, reactions and participants
+  worker/store.ts            the product-source room's messages and reactions, and its pages
   worker/queries.ts          answers to the six host-initiated queries
+  worker/fixtures.ts         participants, menus, toolbar, bodies, room declarations, generated history
+  worker/state.ts            the state kept in product local storage
   worker/render.ts           the Custom message and Custom footer trees
   worker/log.ts              the event log
-  assets/                    avatar.png, avatar-alt.png, badge.png, icon-*.png, sample.png, sample.pdf, sample.mp4
-  tests/                     bun tests against @parity/truapi-host/testing
+  worker/assets.ts           the assets, inlined by Vite
+  assets/                    avatar.png, avatar-alt.png, badge.png, icon-1.png to icon-6.png, sample.png, sample.pdf, sample.mp4
+  tests/unit/                bun tests of the pure modules, and of the Worker against a fake client
+  tests/support/             the fake client; the end-to-end tests against @parity/truapi-host/testing give
+                             startSampleProduct the client of the test host instead
 ```
 
 `bulletin-deploy.config.ts` declares the product as the playground's does:
