@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.awaitLoaded
-import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.presentation.ui.errors.UnexpectedPresentationError
@@ -45,9 +44,9 @@ import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asAttachmentError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
-import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAnotherChatPresentationError
@@ -55,14 +54,11 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.toPresent
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.ChatMessageUiMapper
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.toUi
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatInputUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatPageEdgeUiState
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.canLoad
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRequestAnswerProgress
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatSendMessageInputState
@@ -73,6 +69,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.isN
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.sendableMessageState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.sendableMessageText
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toRoomUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentExecutor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentResult
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
@@ -99,9 +96,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
-import io.paritytech.polkadotapp.common.R as RCommon
 import kotlin.math.max
 import kotlin.time.Duration.Companion.milliseconds
+import io.paritytech.polkadotapp.common.R as RCommon
 
 private const val MAX_CHAT_MESSAGE_LENGTH = 500
 private const val NEWEST_MESSAGE_POSITION = 0
@@ -297,6 +294,8 @@ class ChatFeedViewModel @Inject constructor(
     }
         .withLoading()
         .stateIn(CoroutineScope(coroutineContext + dispatchers.computation), SharingStarted.Eagerly, LoadingState.Loading)
+
+    private val feedPaging = ChatFeedPaging(chatId, interactor, chatMessagesState)
 
     override val menuState = MutableStateFlow(ChatMenuState())
 
@@ -519,16 +518,12 @@ class ChatFeedViewModel @Inject constructor(
         interactor.reportMessageSeen(chatId, message.id)
     }
 
-    override fun onLoadOlderMessages() = launchUnit {
-        if (chatMessagesState.value.dataOrNull?.olderPage?.canLoad == true) interactor.loadOlderMessages(chatId)
-    }
+    override fun onLoadOlderMessages() = launchUnit { feedPaging.loadOlder() }
 
-    override fun onLoadNewerMessages() = launchUnit {
-        if (chatMessagesState.value.dataOrNull?.newerPage?.canLoad == true) interactor.loadNewerMessages(chatId)
-    }
+    override fun onLoadNewerMessages() = launchUnit { feedPaging.loadNewer() }
 
     override fun onShowNewestMessages() = launchUnit {
-        if (chatMessagesState.value.dataOrNull?.newerPage != ChatPageEdgeUiState.END) interactor.showNewestMessages(chatId)
+        feedPaging.showNewest()
         scrollToPosition.emit(NEWEST_MESSAGE_POSITION)
     }
 
@@ -686,36 +681,17 @@ class ChatFeedViewModel @Inject constructor(
     }
 
     private suspend fun sendMessageToActiveChat(messageText: String, relation: InputMessageRelation) {
-        when (relation) {
+        val outcome = when (relation) {
             is InputMessageRelation.Edit -> {
-                if (messageText != relation.originalText) {
-                    val outcome = interactor.sendEdit(
-                        chatId = chatId,
-                        messageId = relation.messageId,
-                        newText = messageText
-                    )
-                    showActionOutcome(outcome)
-                }
+                if (messageText == relation.originalText) return
+                interactor.sendEdit(chatId = chatId, messageId = relation.messageId, newText = messageText)
             }
 
-            is InputMessageRelation.Reply -> {
-                val outcome = interactor.sendTextMessage(
-                    chatId = chatId,
-                    text = messageText,
-                    replyToMessageId = relation.preview.messageId
-                )
-                showActionOutcome(outcome)
-            }
-
-            InputMessageRelation.None -> {
-                val outcome = interactor.sendTextMessage(
-                    chatId = chatId,
-                    text = messageText,
-                    replyToMessageId = null
-                )
-                showActionOutcome(outcome)
-            }
+            is InputMessageRelation.Reply -> interactor.sendTextMessage(chatId, messageText, replyToMessageId = relation.preview.messageId)
+            InputMessageRelation.None -> interactor.sendTextMessage(chatId, messageText, replyToMessageId = null)
         }
+
+        showActionOutcome(outcome)
     }
 
     /** A product that refuses an action of the user gives the reason (02-DESIGN §13 item 9). */
@@ -732,15 +708,10 @@ class ChatFeedViewModel @Inject constructor(
         launchUnit { jumpToMessage(messageId) }
     }
 
-    /** Pages a product-source room until the message is loaded, then scrolls to it. */
     private suspend fun jumpToMessage(messageId: ChatMessageId) {
-        if (!isLoaded(chatMessagesState.value.dataOrNull, messageId)) interactor.jumpToMessage(chatId, messageId)
-
-        chatMessagesState.first { isLoaded(it.dataOrNull, messageId) }
+        feedPaging.awaitLoaded(messageId)
         scrollToMessage(messageId)
     }
-
-    private fun isLoaded(state: ChatMessagesState?, messageId: ChatMessageId) = state?.messages.orEmpty().any { it.id == messageId }
 
     private fun scrollToMessage(messageId: String) {
         chatMessagesState.value.onLoaded { state ->
