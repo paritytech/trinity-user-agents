@@ -14,6 +14,10 @@ actor ChatInteractorState {
     private var pendingReactionTargetMessageId: Chat.MessageId?
     var model: MessageListModel?
 
+    func onSnapshot(_ snapshot: MessageListSnapshot) -> MessageListModel {
+        onMessagesUpdate(snapshot.messages)
+    }
+
     func onMessagesUpdate(_ messages: [Chat.LocalMessage]) -> MessageListModel {
         let unreadMessages = findAllUnreadMessages(from: messages)
         let unreadMessageIds = unreadMessages.map(\.messageId)

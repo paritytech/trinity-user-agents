@@ -97,12 +97,12 @@ private extension ChatInteractor {
     func subscribeMessages() {
         messagesTask = Task { [weak self] in
             do {
-                guard let messageSeq = try await self?.engine.subscribe() else {
+                guard let snapshots = try await self?.engine.messageSnapshots() else {
                     return
                 }
 
-                for try await messages in messageSeq {
-                    guard let model = await self?.state.onMessagesUpdate(messages) else {
+                for try await snapshot in snapshots {
+                    guard let model = await self?.state.onSnapshot(snapshot) else {
                         return
                     }
 
