@@ -147,6 +147,9 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
             ChatRichTextMessageConfiguration.reuseIdentifier,
             SwiftUIContentConfiguration.defaultReuseIdentifier,
             ChatPagingRowConfiguration.defaultReuseIdentifier,
+            // The media and the buttons of product bodies (Chat Extension v2).
+            ChatMediaStackView.reuseIdentifier,
+            ChatActionsMessageView.reuseIdentifier,
         ]
         .forEach {
             CollectionRegistration.registerCell(
