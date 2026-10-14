@@ -2,7 +2,6 @@
 
 mod account;
 mod allowance;
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod allowance_renewal;
 mod pairing;
 pub use allowance::AllowanceAllocationError;
