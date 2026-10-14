@@ -16,6 +16,7 @@ final class ContactsListViewModelFactory {
     let messageTimestampFormatter: TimestampFormatting
     let chatMessageDecoderFactory: ChatMessageDecoderMaking
     let productIconViewModelFactory: ProductIconViewModelMaking
+    let resources: ChatResourceResolving
     let chain: ChainModel
     let tokenFormatter: (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     private var _tokenFormatter: TransferAmountViewModelFactoryProtocol?
@@ -24,12 +25,14 @@ final class ContactsListViewModelFactory {
         messageTimestampFormatter: TimestampFormatting = ContactTimestampFormatter(),
         chatMessageDecoderFactory: ChatMessageDecoderMaking,
         productIconViewModelFactory: ProductIconViewModelMaking,
+        resources: ChatResourceResolving = ChatResourceResolver.shared,
         chain: ChainModel,
         tokenFormatter: @escaping (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     ) {
         self.messageTimestampFormatter = messageTimestampFormatter
         self.chatMessageDecoderFactory = chatMessageDecoderFactory
         self.productIconViewModelFactory = productIconViewModelFactory
+        self.resources = resources
         self.chain = chain
         self.tokenFormatter = tokenFormatter
     }
@@ -49,15 +52,9 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
         chats.forEach { chatWithPeerMetadata in
             let chat = chatWithPeerMetadata.chat
             let peerMetadata = chatWithPeerMetadata.peerMetadata
+            let preview = rowPreview(for: chatWithPeerMetadata, assetDisplayInfo: assetDisplayInfo)
+            let badge = rowBadge(for: chat)
 
-            let messageDate: Date? = chat.message.map { Date.fromChatTimestamp($0.timestamp) }
-            let unreadCount = chat.roomPolicy?.listBadgeCount(hostUnreadCount: chat.unreadDisplayMessageCount)
-                ?? chat.unreadDisplayMessageCount
-
-            let lastMessage = lastMessageText(
-                for: chatWithPeerMetadata,
-                assetDisplayInfo: assetDisplayInfo
-            )
             let avatarViewModel: AvatarViewModel = {
                 if let image = peerMetadata.icon.image {
                     return .image(image)
@@ -71,11 +68,13 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
                 avatarViewModel: avatarViewModel,
                 icon: peerMetadata.icon.imageViewModel(using: productIconViewModelFactory),
                 sender: peerMetadata.name,
-                message: lastMessage,
-                messageKind: messageKind(for: chat.message),
-                date: messageDate,
-                hasReaction: chat.hasIncomingReaction,
-                unreadCount: unreadCount,
+                message: preview.text,
+                messageKind: preview.kind,
+                date: rowDate(for: chat),
+                hasReaction: badge.hasReaction,
+                unreadCount: badge.unreadCount,
+                badge: badge.productBadge,
+                isOngoing: preview.isOngoing,
                 accessibilityId: nil
             )
             let identifiable = IdentifiableContentConfiguration(
@@ -93,7 +92,69 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
     }
 }
 
+/// The text of a row and how the row draws it.
+private struct ChatListRowPreview {
+    let text: String?
+    let kind: DSChatMessage.Kind
+    let isOngoing: Bool
+}
+
+/// The badges of a row. A product badge replaces the reaction and the unread badges of the host.
+private struct ChatListRowBadge {
+    let hasReaction: Bool
+    let unreadCount: Int
+    let productBadge: DSChatListBadge.Kind?
+}
+
 private extension ContactsListViewModelFactory {
+    func rowPreview(
+        for chatWithPeerMetadata: ChatWithPeerMetadata,
+        assetDisplayInfo: AssetBalanceDisplayInfo
+    ) -> ChatListRowPreview {
+        let chat = chatWithPeerMetadata.chat
+
+        switch chat.roomPolicy?.listPreview ?? .lastMessage {
+        case .lastMessage:
+            return ChatListRowPreview(
+                text: lastMessageText(for: chatWithPeerMetadata, assetDisplayInfo: assetDisplayInfo),
+                kind: messageKind(for: chat.message),
+                isOngoing: false
+            )
+        case let .text(text, ongoing):
+            return ChatListRowPreview(text: text, kind: .default, isOngoing: ongoing)
+        }
+    }
+
+    /// The timestamp of the product wins over the time of the last message.
+    func rowDate(for chat: Chat.LocalModel) -> Date? {
+        let timestamp = chat.productTimestamp ?? chat.message?.timestamp
+        return timestamp.map(Date.fromChatTimestamp)
+    }
+
+    func rowBadge(for chat: Chat.LocalModel) -> ChatListRowBadge {
+        switch chat.roomPolicy?.listBadge ?? .hostUnreadCount {
+        case .hostUnreadCount:
+            ChatListRowBadge(
+                hasReaction: chat.hasIncomingReaction,
+                unreadCount: chat.unreadDisplayMessageCount,
+                productBadge: nil
+            )
+        case .hidden:
+            ChatListRowBadge(hasReaction: false, unreadCount: 0, productBadge: .hidden)
+        case let .count(count):
+            ChatListRowBadge(hasReaction: false, unreadCount: 0, productBadge: .counter(count))
+        case let .image(image):
+            ChatListRowBadge(
+                hasReaction: false,
+                unreadCount: 0,
+                productBadge: .image(DSChatListBadge.ImageSource(
+                    id: image.identifier,
+                    viewModel: ChatResourceImageViewModel(resource: image.resource, resolver: resources)
+                ))
+            )
+        }
+    }
+
     func messageKind(for message: Chat.LocalMessage?) -> DSChatMessage.Kind {
         guard let message else { return .default }
 

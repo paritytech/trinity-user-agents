@@ -100,7 +100,7 @@ private extension ContactsListInteractor {
 
         var nonIncomingRequestChats: [ChatWithPeerMetadata] = []
 
-        chats.forEach { chat in
+        ChatsComparator.chatListOrder(chats).forEach { chat in
             switch chat.peer {
             case let .person(contact) where contact.hasIncomingChatRequest:
                 pendingIncomingRequestCount += 1

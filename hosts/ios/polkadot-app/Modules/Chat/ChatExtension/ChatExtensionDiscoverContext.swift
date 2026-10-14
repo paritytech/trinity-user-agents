@@ -41,6 +41,13 @@ protocol ChatExtensionDiscoverContextProtocol {
         footer: Chat.RoomFooter
     ) async throws
 
+    /// Replaces the chat-list preview of a room and leaves the rest of the room alone.
+    func setRoomPreview(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        preview: Chat.RoomPreview
+    ) async throws
+
     func subscribeRooms(
         for chatBot: ChatExtensionBotProtocol
     ) async -> AnyAsyncSequence<[RoomInfo]>
@@ -393,6 +400,15 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         try await roomFooterRepository.saveOperation({ [update] }, { [] }).asyncExecute()
     }
 
+    func setRoomPreview(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        preview: Chat.RoomPreview
+    ) async throws {
+        let chatId = try await requireRoom(of: chatBot, roomId: roomId)
+        try await saveDeclaration(Chat.RoomPreviewUpdate(chatId: chatId, preview: preview))
+    }
+
     func subscribeRooms(
         for chatBot: ChatExtensionBotProtocol
     ) async -> AnyAsyncSequence<[RoomInfo]> {
@@ -431,6 +447,43 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         try await messageRepository.saveOperation({ [message] }, { [] }).asyncExecute()
 
         return message
+    }
+}
+
+private extension ChatExtensionDiscoverContext {
+    /// The chat of a room that the product created, or `ChatRoomError.unknownRoom`.
+    func requireRoom(of chatBot: ChatExtensionBotProtocol, roomId: String) async throws -> Chat.Id {
+        let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
+
+        let existingChat = try await chatRepository
+            .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
+            .asyncExecute()
+
+        guard existingChat != nil else {
+            throw ChatRoomError.unknownRoom(roomId)
+        }
+
+        return chatId
+    }
+
+    func saveDeclaration<Update: ChatRoomDeclarationUpdating>(_ update: Update) async throws {
+        let repository = storageFacade.createRepository(
+            filter: nil,
+            sortDescriptors: [],
+            mapper: AnyCoreDataMapper(ChatRoomDeclarationUpdateMapper<Update>())
+        )
+        try await repository.saveOperation({ [update] }, { [] }).asyncExecute()
+    }
+}
+
+enum ChatRoomError: LocalizedError {
+    case unknownRoom(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .unknownRoom(roomId):
+            "no chat room \(roomId)"
+        }
     }
 }
 

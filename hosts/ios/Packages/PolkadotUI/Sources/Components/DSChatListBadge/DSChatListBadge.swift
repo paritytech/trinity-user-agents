@@ -5,6 +5,29 @@ public struct DSChatListBadge: View, Equatable {
     public enum Kind: Hashable {
         case reaction
         case counter(Int)
+        /// An image that the chat sets for its row, for example the icon of a product state.
+        case image(ImageSource)
+        /// The chat asks for no badge.
+        case hidden
+    }
+
+    /// An image for a badge. Two sources are equal when their identifiers are equal.
+    public struct ImageSource: Hashable {
+        public let id: String
+        public let viewModel: any ImageViewModelProtocol
+
+        public init(id: String, viewModel: any ImageViewModelProtocol) {
+            self.id = id
+            self.viewModel = viewModel
+        }
+
+        public static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.id == rhs.id
+        }
+
+        public func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+        }
     }
 
     private let kind: Kind
@@ -49,6 +72,20 @@ public struct DSChatListBadge: View, Equatable {
                     minHeight: DSChatListBadgeMetrics.badgeMinSize
                 )
                 .background(surfaceColor, in: Capsule())
+        case let .image(source):
+            AsyncImageView(
+                viewModel: source.viewModel,
+                settings: ImageViewModelSettings(targetSize: DSChatListBadgeMetrics.imageSize)
+            )
+            .frame(
+                width: DSChatListBadgeMetrics.badgeMinSize,
+                height: DSChatListBadgeMetrics.badgeMinSize
+            )
+            .clipShape(Circle())
+            .opacity(isMuted ? DSChatListBadgeMetrics.mutedOpacity : 1)
+            .accessibilityHidden(true)
+        case .hidden:
+            EmptyView()
         }
     }
 
@@ -65,6 +102,7 @@ private enum DSChatListBadgeMetrics {
     static let badgeMinSize: CGFloat = 20
     static let reactionIconSize: CGFloat = 16
     static let mutedOpacity: CGFloat = 0.4
+    static let imageSize = CGSize(width: badgeMinSize, height: badgeMinSize)
 }
 
 #if DEBUG
@@ -81,6 +119,7 @@ private enum DSChatListBadgeMetrics {
             HStack(spacing: 12) {
                 DSChatListBadge(kind: .counter(3), isMuted: true)
                 DSChatListBadge(kind: .counter(99), isMuted: true)
+                DSChatListBadge(kind: .hidden)
             }
         }
         .padding(24)

@@ -75,7 +75,8 @@ extension ChatModelMapper: CoreDataMapperProtocol {
                 hasIncomingReaction: hasIncomingReaction,
                 createdAt: entity.createdAt,
                 roomMetadata: roomMetadata,
-                roomFooter: entity.footer.flatMap(Chat.RoomFooter.init(rawValue:))
+                roomFooter: entity.footer.flatMap(Chat.RoomFooter.init(rawValue:)),
+                roomDeclarations: entity.roomMetadata.map { Chat.RoomDeclarations(entity: $0) }
             )
         }
     }

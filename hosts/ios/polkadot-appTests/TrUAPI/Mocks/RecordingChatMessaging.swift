@@ -15,6 +15,7 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     private(set) var createdRooms: [CreateRoomRequest] = []
     private(set) var roomFooters: [(roomId: String, footer: Chat.RoomFooter)] = []
     private(set) var subscribeRoomsCallCount = 0
+    private(set) var roomPreviews: [(roomId: String, preview: Chat.RoomPreview)] = []
 
     func sendMessage(_ message: ProductBotMessage, roomId: String?) async throws -> String {
         if let sendMessageError { throw sendMessageError }
@@ -30,6 +31,10 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
 
     func setRoomFooter(roomId: String, footer: Chat.RoomFooter) async throws {
         roomFooters.append((roomId, footer))
+    }
+
+    func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws {
+        roomPreviews.append((roomId, preview))
     }
 
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]> {
