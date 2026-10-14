@@ -1,5 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import io.parity.truapi.HostBridge
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
@@ -11,7 +15,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInt
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -20,27 +23,26 @@ import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
-import org.mockito.stubbing.Answer
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductExecutionKind
 
 class ProductTrUAPIHostBridgeTest {
-    private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
+    private fun refusingCore(): TrUAPIHostRuntime = mockk {
+        every { openProductExecution(any(), any(), any(), any(), any()) } throws IllegalStateException("loopback port unavailable")
+    }
 
-    private val gameReminder = mock(ProductGameReminder::class.java)
+    private val gameReminder = mockk<ProductGameReminder>(relaxUnitFun = true)
     private val game = ProductId.fromStoredValue("game.dot")
 
     private fun TestScope.bridge() = ProductTrUAPIHostBridge(
-        hostApiInteractor = mock(HostApiInteractor::class.java),
+        hostApiInteractor = mockk<HostApiInteractor>(),
         chainHttpClient = OkHttpClient(),
-        encryptedPreferences = mock(EncryptedPreferences::class.java),
-        confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
-        appLifecycleObserver = mock(AppLifecycleObserver::class.java),
-        dotNsTldProvider = mock(DotNsTldProvider::class.java),
-        pocketCardStore = mock(PocketCardStore::class.java),
+        encryptedPreferences = mockk<EncryptedPreferences>(),
+        confirmationLauncher = mockk<TrUAPIConfirmationLauncher>(),
+        appLifecycleObserver = mockk<AppLifecycleObserver>(),
+        dotNsTldProvider = mockk<DotNsTldProvider>(),
+        pocketCardStore = mockk<PocketCardStore>(),
         productGameReminder = gameReminder,
         scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
     )
@@ -48,7 +50,7 @@ class ProductTrUAPIHostBridgeTest {
     @Test
     fun `a core that refuses to open the execution fails the attach instead of throwing`() = runTest {
         val outcome = bridge().attach(
-            runtime = mock(TrUAPIHostRuntime::class.java, refusingCore),
+            runtime = refusingCore(),
             productId = ProductId.fromStoredValue("game.dot"),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
@@ -61,10 +63,12 @@ class ProductTrUAPIHostBridgeTest {
 
     private suspend fun TestScope.attachCapturingBridge(card: ExpandedCardFace?): HostBridge {
         var opened: HostBridge? = null
-        val runtime = mock(TrUAPIHostRuntime::class.java, Answer<Any> { invocation ->
-            opened = invocation.getArgument(0)
-            throw IllegalStateException("captured")
-        })
+        val runtime = mockk<TrUAPIHostRuntime> {
+            every { openProductExecution(any(), any(), any(), any(), any()) } answers {
+                opened = firstArg()
+                throw IllegalStateException("captured")
+            }
+        }
         bridge().attach(
             runtime = runtime,
             productId = game,
@@ -108,8 +112,8 @@ class ProductTrUAPIHostBridgeTest {
         gameBridge.scheduleReminder(1_000u)
         gameBridge.cancelReminder()
 
-        verify(gameReminder).schedule(game, 1_000)
-        verify(gameReminder).cancel(game)
+        coVerify(exactly = 1) { gameReminder.schedule(game, 1_000) }
+        coVerify(exactly = 1) { gameReminder.cancel(game) }
     }
 
     @Test
@@ -123,6 +127,6 @@ class ProductTrUAPIHostBridgeTest {
     }
 
     private suspend fun withScheduleOutcome(outcome: Result<Unit>) {
-        whenever(gameReminder.schedule(game, 1_000)).thenReturn(outcome)
+        coEvery { gameReminder.schedule(game, 1_000) } returns outcome
     }
 }

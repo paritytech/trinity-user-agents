@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_connection_status_impl.domain.health
 
+import io.mockk.mockk
 import io.novasama.substrate_sdk_android.wsrpc.state.SocketStateMachine.State
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -12,7 +13,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RawConnectivityTest {
@@ -117,7 +117,7 @@ class RawConnectivityTest {
         return results
     }
 
-    private val connectedSocket: State = mock(State.Connected::class.java)
+    private val connectedSocket: State = mockk<State.Connected>()
 
     private val reconnectingSocket: State = State.Connecting(url = "wss://example.test")
 }

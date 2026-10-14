@@ -1,5 +1,9 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.hop.compaction
 
+import io.mockk.Called
+import io.mockk.coEvery
+import io.mockk.mockk
+import io.mockk.verify
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.decodeFromByteArray
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.encodeToByteArray
@@ -13,8 +17,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.hop.model.HopPoolEntryP
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.model.VersionedHopPoolEntry
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.RetryableTransferException
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.TerminalTransferException
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -23,8 +25,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verifyNoInteractions
 
 class CompactionBatchStoreTest {
     private val nodeUrl = "wss://hop.example/node"
@@ -33,10 +33,10 @@ class CompactionBatchStoreTest {
     private val identifier = ByteArray(32) { 1 }.toDataByteArray()
     private val rawMessages = listOf(byteArrayOf(0x01, 0x02), byteArrayOf(0x03))
 
-    private val session: HopService.Session = mock(HopService.Session::class.java)
-    private val hopService: HopService = mock(HopService::class.java)
-    private val hopSigner: HopSigner = mock(HopSigner::class.java)
-    private val hopNodeUrlProvider: HopNodeUrlProvider = mock(HopNodeUrlProvider::class.java)
+    private val session: HopService.Session = mockk()
+    private val hopService: HopService = mockk()
+    private val hopSigner: HopSigner = mockk(relaxUnitFun = true)
+    private val hopNodeUrlProvider: HopNodeUrlProvider = mockk()
 
     private var ackCalled = false
 
@@ -56,8 +56,8 @@ class CompactionBatchStoreTest {
     fun `uploadBatch wraps the messages into an inline envelope and returns the entry hash`() = runBlocking<Unit> {
         val hash = ByteArray(32) { 7 }
         var submittedPlaintext: ByteArray? = null
-        whenever(session.submitEntry(any(), anyHopTicket())).thenAnswer { invocation ->
-            submittedPlaintext = invocation.arguments[0] as ByteArray
+        coEvery { session.submitEntry(any(), any()) } answers {
+            submittedPlaintext = firstArg()
             hash
         }
 
@@ -74,19 +74,18 @@ class CompactionBatchStoreTest {
         val result = runCatching { store.uploadBatch(oversized, ticket, nodeUrl) }
 
         assertTrue(result.exceptionOrNull() is IllegalArgumentException)
-        verifyNoInteractions(session)
+        verify { session wasNot Called }
     }
 
     @Test
     fun `claimBatch extracts the inline batch bytes and acks only after persist`() = runBlocking<Unit> {
         var persisted: ByteArray? = null
         var persistedBeforeAck = false
-        whenever(session.fetchEntry(any(), anyHopTicket(), any())).thenReturn(
+        coEvery { session.fetchEntry(any(), any(), any()) } returns
             HopService.FetchedEntry(inlineEnvelopeBytes()) {
                 persistedBeforeAck = persisted != null
                 ackCalled = true
             }
-        )
 
         store.claimBatch(identifier, ticket, nodeUrl) { persisted = it }
 
@@ -109,7 +108,7 @@ class CompactionBatchStoreTest {
 
     @Test
     fun `claimBatch is retryable when the entry is not found in the pool or on any fallback node`() = runBlocking<Unit> {
-        whenever(session.fetchEntry(any(), anyHopTicket(), any())).thenReturn(null)
+        coEvery { session.fetchEntry(any(), any(), any()) } returns null
 
         val result = runCatching { store.claimBatch(identifier, ticket, nodeUrl) {} }
 
@@ -174,20 +173,18 @@ class CompactionBatchStoreTest {
     }
 
     private suspend fun withHopSession() {
-        whenever(hopService.withSession<Any?>(any(), any())).thenAnswer { invocation ->
-            @Suppress("UNCHECKED_CAST")
-            val block = invocation.arguments[1] as suspend HopService.Session.() -> Any?
-            runBlocking { block(session) }
+        coEvery { hopService.withSession<Any?>(any(), any()) } coAnswers {
+            val block = secondArg<suspend HopService.Session.() -> Any?>()
+            block(session)
         }
     }
 
     private suspend fun withFallbackNodes() {
-        whenever(hopNodeUrlProvider.allWithSenderPriority(nodeUrl)).thenReturn(fallbackNodes)
+        coEvery { hopNodeUrlProvider.allWithSenderPriority(nodeUrl) } returns fallbackNodes
     }
 
     private suspend fun withFetchedEntry(bytes: ByteArray) {
-        whenever(session.fetchEntry(any(), anyHopTicket(), any()))
-            .thenReturn(HopService.FetchedEntry(bytes) { ackCalled = true })
+        coEvery { session.fetchEntry(any(), any(), any()) } returns HopService.FetchedEntry(bytes) { ackCalled = true }
     }
 
     private fun inlineEnvelopeBytes(): ByteArray {

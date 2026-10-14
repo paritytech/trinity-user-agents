@@ -1,20 +1,22 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import android.net.Uri
+import io.mockk.Called
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verifyNoInteractions
 import uniffi.truapi.RendererNode
 import uniffi.truapi.TextProps
 import java.io.File
@@ -26,7 +28,7 @@ class PocketPreviewLoaderTest {
     @get:Rule
     val workerArchive = TemporaryFolder()
 
-    private val dotNsResolver: DotNsResolver = mock()
+    private val dotNsResolver: DotNsResolver = mockk()
 
     private val fetchedUrls = mutableListOf<String>()
     private var remoteFace: Result<RendererNode> = Result.success(faceOf("from the dev server"))
@@ -86,7 +88,7 @@ class PocketPreviewLoaderTest {
     fun `a url preview does not touch dotNS`() = runBlocking {
         loader.load(gameProduct, definition(PocketCardPreview.Url(DEV_SERVER_FACE)))
 
-        verifyNoInteractions(dotNsResolver)
+        verify { dotNsResolver wasNot Called }
     }
 
     @Test
@@ -104,9 +106,9 @@ class PocketPreviewLoaderTest {
     private suspend fun publishPreview(face: String) {
         File(workerArchive.root, ARCHIVE_PATH).writeText(face)
 
-        val archiveUri: Uri = mock()
-        whenever(archiveUri.path).thenReturn(workerArchive.root.path)
-        whenever(dotNsResolver.resolveToLocalUri("worker.game.dot")).thenReturn(Result.success(archiveUri))
+        val archiveUri: Uri = mockk()
+        every { archiveUri.path } returns workerArchive.root.path
+        coEvery { dotNsResolver.resolveToLocalUri("worker.game.dot") } returns Result.success(archiveUri)
     }
 
     private companion object {

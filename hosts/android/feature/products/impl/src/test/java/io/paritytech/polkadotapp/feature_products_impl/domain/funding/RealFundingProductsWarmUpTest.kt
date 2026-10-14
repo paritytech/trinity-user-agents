@@ -1,6 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import android.net.Uri
+import io.mockk.Called
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.confirmVerified
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
@@ -11,22 +17,16 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
-import org.mockito.Mockito.verifyNoInteractions
-import org.mockito.Mockito.verifyNoMoreInteractions
 
 class RealFundingProductsWarmUpTest {
     private val base = "getcash.dot"
     private val productId = ProductId.fromStoredValue(base)
 
-    private val fundingDomainProvider: FundingDomainProvider = mock()
-    private val resolveProductUseCase: ResolveProductUseCase = mock()
-    private val dotNsResolver: DotNsResolver = mock()
+    private val fundingDomainProvider: FundingDomainProvider = mockk()
+    private val resolveProductUseCase: ResolveProductUseCase = mockk()
+    private val dotNsResolver: DotNsResolver = mockk()
 
     private val warmUp = RealFundingProductsWarmUp(
         fundingDomainProvider = fundingDomainProvider,
@@ -44,7 +44,7 @@ class RealFundingProductsWarmUpTest {
 
         verifyArchiveResolvedFor("app.$base")
         verifyArchiveResolvedFor("worker.$base")
-        verifyNoMoreInteractions(dotNsResolver)
+        confirmVerified(dotNsResolver)
     }
 
     @Test
@@ -56,7 +56,7 @@ class RealFundingProductsWarmUpTest {
         warmUp.warmUp()
 
         verifyArchiveResolvedFor(base)
-        verifyNoMoreInteractions(dotNsResolver)
+        confirmVerified(dotNsResolver)
     }
 
     @Test
@@ -65,8 +65,8 @@ class RealFundingProductsWarmUpTest {
 
         warmUp.warmUp()
 
-        verifyNoInteractions(resolveProductUseCase)
-        verifyNoInteractions(dotNsResolver)
+        verify { resolveProductUseCase wasNot Called }
+        verify { dotNsResolver wasNot Called }
     }
 
     @Test
@@ -76,7 +76,7 @@ class RealFundingProductsWarmUpTest {
 
         warmUp.warmUp()
 
-        verifyNoInteractions(dotNsResolver)
+        verify { dotNsResolver wasNot Called }
     }
 
     @Test
@@ -92,12 +92,11 @@ class RealFundingProductsWarmUpTest {
     }
 
     private suspend fun withFundingProducts(vararg productIds: ProductId) {
-        whenever(fundingDomainProvider.getFundingProductIds()).thenReturn(Result.success(productIds.toSet()))
+        coEvery { fundingDomainProvider.getFundingProductIds() } returns Result.success(productIds.toSet())
     }
 
     private suspend fun withNoFundingConfig() {
-        whenever(fundingDomainProvider.getFundingProductIds())
-            .thenReturn(Result.failure(IllegalStateException("no funding config")))
+        coEvery { fundingDomainProvider.getFundingProductIds() } returns Result.failure(IllegalStateException("no funding config"))
     }
 
     private suspend fun withResolvedExecutables(appHost: String, workerScriptUrl: String?) {
@@ -118,22 +117,22 @@ class RealFundingProductsWarmUpTest {
             product = Product(id = productId, name = base, icon = null),
             executables = executables,
         )
-        whenever(resolveProductUseCase.resolve(productId)).thenReturn(Result.success(resolved))
+        coEvery { resolveProductUseCase.resolve(productId) } returns Result.success(resolved)
     }
 
     private suspend fun withProductResolutionFailing() {
-        whenever(resolveProductUseCase.resolve(productId)).thenReturn(Result.failure(IllegalStateException("registry down")))
+        coEvery { resolveProductUseCase.resolve(productId) } returns Result.failure(IllegalStateException("registry down"))
     }
 
     private suspend fun withArchivesResolving() {
-        whenever(dotNsResolver.resolveToLocalUri(any())).thenReturn(Result.success(mock<Uri>()))
+        coEvery { dotNsResolver.resolveToLocalUri(any()) } returns Result.success(mockk<Uri>())
     }
 
     private suspend fun withArchivesFailing() {
-        whenever(dotNsResolver.resolveToLocalUri(any())).thenReturn(Result.failure(IllegalStateException("ipfs down")))
+        coEvery { dotNsResolver.resolveToLocalUri(any()) } returns Result.failure(IllegalStateException("ipfs down"))
     }
 
     private suspend fun verifyArchiveResolvedFor(host: String) {
-        verify(dotNsResolver).resolveToLocalUri(host)
+        coVerify(exactly = 1) { dotNsResolver.resolveToLocalUri(host) }
     }
 }

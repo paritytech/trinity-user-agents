@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.harness
 
+import io.mockk.every
+import io.mockk.mockk
 import io.novasama.substrate_sdk_android.encrypt.keypair.Keypair
 import io.novasama.substrate_sdk_android.encrypt.keypair.substrate.Sr25519Keypair
 import io.novasama.substrate_sdk_android.extensions.fromHex
@@ -21,8 +23,6 @@ import io.paritytech.polkadotapp.feature_coinage_impl.testKey
 import io.paritytech.polkadotapp.feature_transactions.api.data.EnrichedSendableExtrinsic
 import io.paritytech.polkadotapp.feature_transactions.api.data.Mortality
 import io.paritytech.polkadotapp.feature_transactions.api.data.withMortality
-import io.paritytech.polkadotapp.test_shared.whenever
-import org.mockito.Mockito.mock
 
 private const val KEY_SIZE = 32
 
@@ -48,7 +48,7 @@ private fun keyBytes(key: CoinageKeyIndex) = ByteArray(KEY_SIZE).also {
 }
 
 /**
- * A fake rather than a mock: the registrar reaches derivation through top-level extensions that Mockito
+ * A fake rather than a mock: the registrar reaches derivation through top-level extensions that a mock
  * cannot see past, and the fuzz driver derives a key on every step.
  */
 class FakeCoinKeypairDerivation : CoinKeypairDerivation {
@@ -137,11 +137,11 @@ private fun extrinsicWithExplicits(hex: String, explicits: Map<String, Any?>): S
             signature = null,
             signedExtras = explicits,
         ),
-        call = mock(GenericCall.Instance::class.java),
+        call = mockk<GenericCall.Instance>(),
     )
 
-    return mock(SendableExtrinsic::class.java).also {
-        whenever(it.extrinsicHex).thenReturn(hex)
-        whenever(it.extrinsic).thenReturn(instance)
+    return mockk<SendableExtrinsic> {
+        every { extrinsicHex } returns hex
+        every { extrinsic } returns instance
     }
 }

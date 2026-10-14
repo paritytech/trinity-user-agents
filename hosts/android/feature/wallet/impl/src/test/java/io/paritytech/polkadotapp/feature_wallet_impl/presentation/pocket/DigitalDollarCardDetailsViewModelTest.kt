@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModelEvent
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
@@ -15,7 +18,6 @@ import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -31,9 +33,6 @@ import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 
 private const val ONRAMP_URL = "onramp.example"
 private const val OFFRAMP_URL = "offramp.example"
@@ -43,15 +42,14 @@ private const val EVENT_TIMEOUT_MS = 1_000L
 class DigitalDollarCardDetailsViewModelTest {
     private val fundingConfig = FundingConfig(onrampUrl = ONRAMP_URL, offrampUrl = OFFRAMP_URL)
 
-    private val chainAssetProvider: ChainAssetProvider = mock(ChainAssetProvider::class.java)
-    private val coinageTestnetFundUseCase: CoinageTestnetFundUseCase = mock(CoinageTestnetFundUseCase::class.java)
-    private val coinageBackupService: CoinageBackupService = mock(CoinageBackupService::class.java)
-    private val shareCoinageLogsUseCase: ShareCoinageLogsUseCase = mock(ShareCoinageLogsUseCase::class.java)
-    private val coinageHoldingsUseCase: CoinageHoldingsUseCase = mock(CoinageHoldingsUseCase::class.java)
-    private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase =
-        mock(CoinageBalanceConverterUseCase::class.java)
-    private val router: PocketRouter = mock(PocketRouter::class.java)
-    private val tokenAmountMapper: TokenAmountMapper = mock(TokenAmountMapper::class.java)
+    private val chainAssetProvider: ChainAssetProvider = mockk()
+    private val coinageTestnetFundUseCase: CoinageTestnetFundUseCase = mockk()
+    private val coinageBackupService: CoinageBackupService = mockk()
+    private val shareCoinageLogsUseCase: ShareCoinageLogsUseCase = mockk()
+    private val coinageHoldingsUseCase: CoinageHoldingsUseCase = mockk()
+    private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase = mockk()
+    private val router: PocketRouter = mockk(relaxUnitFun = true)
+    private val tokenAmountMapper: TokenAmountMapper = mockk()
 
     private val fundingDomainProvider = ParkedFundingDomainProvider()
 
@@ -69,8 +67,8 @@ class DigitalDollarCardDetailsViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        whenever(coinageHoldingsUseCase.subscribeHoldings()).thenReturn(emptyFlow())
-        whenever(coinageBackupService.subscribeProgress()).thenReturn(flowOf(BackupProgress.NotStarted))
+        every { coinageHoldingsUseCase.subscribeHoldings() } returns emptyFlow()
+        every { coinageBackupService.subscribeProgress() } returns flowOf(BackupProgress.NotStarted)
     }
 
     @After
@@ -172,11 +170,11 @@ class DigitalDollarCardDetailsViewModelTest {
     }
 
     private fun verifySheetOpenedOnce(url: String) {
-        verify(router).openSpaSheet(url)
+        verify(exactly = 1) { router.openSpaSheet(url) }
     }
 
     private fun verifySheetNeverOpened(url: String) {
-        verify(router, never()).openSpaSheet(url)
+        verify(exactly = 0) { router.openSpaSheet(url) }
     }
 
     private suspend fun assertPresentationErrorShown(viewModel: DigitalDollarCardDetailsViewModel) {
@@ -190,7 +188,6 @@ class DigitalDollarCardDetailsViewModelTest {
         tokenAmountMapper = tokenAmountMapper
     )
 
-    // Mockito cannot suspend a stubbed suspend call.
     private class ParkedFundingDomainProvider : FundingDomainProvider {
         private val reads = ArrayDeque<CompletableDeferred<Result<FundingConfig>>>()
 

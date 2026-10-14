@@ -1,13 +1,16 @@
 package io.paritytech.polkadotapp.feature_usernames_impl.presentation.claim
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.feature_usernames_api.domain.model.AccountOnboardingStatus
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.error.UsernameFlowError
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.interactor.UsernamesClaimInteractor
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.model.ClaimUsernameOutcome
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.model.UsernameAvailabilityState
 import io.paritytech.polkadotapp.feature_usernames_impl.presentation.UsernamesRouter
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -20,15 +23,12 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 
 private const val USERNAME = "alicent"
 
 class ClaimUsernameViewModelTest {
-    private val router: UsernamesRouter = mock(UsernamesRouter::class.java)
-    private val interactor: UsernamesClaimInteractor = mock(UsernamesClaimInteractor::class.java)
+    private val router: UsernamesRouter = mockk(relaxUnitFun = true)
+    private val interactor: UsernamesClaimInteractor = mockk()
 
     // viewModelScope runs on Dispatchers.Main, and the availability pipeline debounces by 300ms.
     private val testScope = TestScope()
@@ -37,7 +37,7 @@ class ClaimUsernameViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(mainDispatcher)
-        whenever(interactor.observeAccountOnboardingStatus()).thenReturn(flowOf(AccountOnboardingStatus.EMPTY))
+        every { interactor.observeAccountOnboardingStatus() } returns flowOf(AccountOnboardingStatus.EMPTY)
     }
 
     @After
@@ -49,8 +49,8 @@ class ClaimUsernameViewModelTest {
     fun `availability failure surfaces an inline error instead of a dead button`() = runTest(mainDispatcher) {
         // The reported bug: the failure was swallowed with Timber.d, the state stayed NEUTRAL,
         // and the claim button sat disabled with nothing drawn on the field.
-        whenever(interactor.checkUsernameAvailable(any()))
-            .thenReturn(Result.failure(UsernameFlowError.VerificationUnavailable))
+        coEvery { interactor.checkUsernameAvailable(any()) } returns
+            Result.failure(UsernameFlowError.VerificationUnavailable)
 
         val viewModel = createViewModel()
         viewModel.onUsernameChanged(USERNAME)
@@ -66,9 +66,8 @@ class ClaimUsernameViewModelTest {
     @Test
     fun `a failed pre-claim recheck does not report the username as taken`() = runTest(mainDispatcher) {
         // Item A: the re-check used .getOrDefault(false), so a network blip rendered as "Taken".
-        whenever(interactor.areAccountsInitialized()).thenReturn(true)
-        whenever(interactor.checkUsernameAvailable(any()))
-            .thenReturn(Result.failure(UsernameFlowError.NoConnection))
+        coEvery { interactor.areAccountsInitialized() } returns true
+        coEvery { interactor.checkUsernameAvailable(any()) } returns Result.failure(UsernameFlowError.NoConnection)
 
         val viewModel = createViewModel()
         viewModel.onUsernameChanged(USERNAME)
@@ -81,7 +80,7 @@ class ClaimUsernameViewModelTest {
             viewModel.state.value.fieldState
         )
         assertEquals(ClaimUsernameProgress.NONE, viewModel.state.value.progress)
-        verify(interactor, never()).claimUsername(any(), any())
+        coVerify(exactly = 0) { interactor.claimUsername(any(), any()) }
     }
 
     @Test
@@ -90,8 +89,8 @@ class ClaimUsernameViewModelTest {
 
         claimWith(createViewModel())
 
-        verify(router).openClaimUnavailable()
-        verify(router, never()).openIntegrityFailed()
+        verify(exactly = 1) { router.openClaimUnavailable() }
+        verify(exactly = 0) { router.openIntegrityFailed() }
     }
 
     @Test
@@ -100,14 +99,13 @@ class ClaimUsernameViewModelTest {
 
         claimWith(createViewModel())
 
-        verify(router).openIntegrityFailed()
-        verify(router, never()).openClaimUnavailable()
+        verify(exactly = 1) { router.openIntegrityFailed() }
+        verify(exactly = 0) { router.openClaimUnavailable() }
     }
 
     @Test
     fun `backing out shows no error at all`() = runTest(mainDispatcher) {
-        whenever(interactor.checkUsernameAvailable(any()))
-            .thenReturn(Result.failure(UsernameFlowError.Cancelled))
+        coEvery { interactor.checkUsernameAvailable(any()) } returns Result.failure(UsernameFlowError.Cancelled)
 
         val viewModel = createViewModel()
         viewModel.onUsernameChanged(USERNAME)
@@ -128,15 +126,15 @@ class ClaimUsernameViewModelTest {
             ClaimUsernameFieldState.Error(UsernameFlowError.NoConnection),
             viewModel.state.value.fieldState
         )
-        verify(router, never()).openIntegrityFailed()
-        verify(router, never()).openClaimUnavailable()
+        verify(exactly = 0) { router.openIntegrityFailed() }
+        verify(exactly = 0) { router.openClaimUnavailable() }
     }
 
     private suspend fun givenClaimFails(error: UsernameFlowError) {
-        whenever(interactor.areAccountsInitialized()).thenReturn(true)
-        whenever(interactor.checkUsernameAvailable(any()))
-            .thenReturn(Result.success(UsernameAvailabilityState.Available(emptyList())))
-        whenever(interactor.claimUsername(any(), any())).thenReturn(ClaimUsernameOutcome.Failed(error))
+        coEvery { interactor.areAccountsInitialized() } returns true
+        coEvery { interactor.checkUsernameAvailable(any()) } returns
+            Result.success(UsernameAvailabilityState.Available(emptyList()))
+        coEvery { interactor.claimUsername(any(), any()) } returns ClaimUsernameOutcome.Failed(error)
     }
 
     private fun createViewModel() = ClaimUsernameViewModel(

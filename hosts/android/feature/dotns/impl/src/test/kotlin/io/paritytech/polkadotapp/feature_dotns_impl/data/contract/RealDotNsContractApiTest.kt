@@ -2,6 +2,10 @@
 
 package io.paritytech.polkadotapp.feature_dotns_impl.data.contract
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
@@ -11,18 +15,11 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_dotns_impl.data.config.DotNsConfigProvider
 import io.paritytech.polkadotapp.feature_revive_api.ReviveContractApi
 import io.paritytech.polkadotapp.feature_revive_api.ReviveContractReverted
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.ArgumentMatchers.isNull
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 import org.web3j.abi.FunctionEncoder
 import org.web3j.abi.TypeReference
 import org.web3j.abi.datatypes.Address
@@ -31,9 +28,9 @@ import org.web3j.abi.datatypes.Function
 import org.web3j.abi.datatypes.Type
 
 class RealDotNsContractApiTest {
-    private val reviveContractApi: ReviveContractApi = mock()
-    private val chainRegistry: ChainRegistry = mock()
-    private val configProvider: DotNsConfigProvider = mock()
+    private val reviveContractApi: ReviveContractApi = mockk()
+    private val chainRegistry: ChainRegistry = mockk()
+    private val configProvider: DotNsConfigProvider = mockk()
 
     private val contractApi = RealDotNsContractApi(reviveContractApi, chainRegistry, configProvider)
 
@@ -44,7 +41,7 @@ class RealDotNsContractApiTest {
         stubContentHash(NAME_RESOLVER, CONTENT_HASH)
 
         assertArrayEquals(CONTENT_HASH, contractApi.resolveContentHash(NAME).getOrThrow())
-        verify(reviveContractApi, never()).callReadOnly(eq(CHAIN_ID), eq(FIXED_RESOLVER), any(), isNull())
+        coVerify(exactly = 0) { reviveContractApi.callReadOnly(CHAIN_ID, FIXED_RESOLVER, any(), isNull()) }
     }
 
     @Test
@@ -101,19 +98,16 @@ class RealDotNsContractApiTest {
     fun `a failed call is not mistaken for a missing record`() = runBlocking<Unit> {
         stubConfig()
         stubRegistryResolver(NAME_RESOLVER)
-        whenever(reviveContractApi.callReadOnly(eq(CHAIN_ID), eq(NAME_RESOLVER), any(), isNull()))
-            .thenReturn(Result.failure(IllegalStateException("node unreachable")))
+        coEvery { reviveContractApi.callReadOnly(CHAIN_ID, NAME_RESOLVER, any(), isNull()) } returns Result.failure(IllegalStateException("node unreachable"))
 
         assertTrue(contractApi.getMetadata(NAME, MANIFEST_KEY).isFailure)
     }
 
     private fun stubConfig() = runBlocking {
-        whenever(chainRegistry.knownChains).thenReturn(
+        every { chainRegistry.knownChains } returns
             KnownChains(people = "", assetHub = CHAIN_ID, bulletIn = "", hydration = null)
-        )
-        whenever(configProvider.getDotNsConfig()).thenReturn(
+        coEvery { configProvider.getDotNsConfig() } returns
             Result.success(DotNsConfig(resolverContractAddress = FIXED_RESOLVER, registryContractAddress = REGISTRY))
-        )
     }
 
     private fun stubRegistryResolver(resolver: AccountId?) = runBlocking {
@@ -122,8 +116,7 @@ class RealDotNsContractApiTest {
             listOf(Address("0x" + address.toHexString())),
             listOf(object : TypeReference<Address>() {})
         )
-        whenever(reviveContractApi.callReadOnly(eq(CHAIN_ID), eq(REGISTRY), any(), isNull()))
-            .thenReturn(Result.success(output.toDataByteArray()))
+        coEvery { reviveContractApi.callReadOnly(CHAIN_ID, REGISTRY, any(), isNull()) } returns Result.success(output.toDataByteArray())
     }
 
     private fun stubContentHash(resolver: AccountId, contentHash: ByteArray) = runBlocking {
@@ -131,18 +124,15 @@ class RealDotNsContractApiTest {
             listOf(DynamicBytes(EIP_1577_IPFS_PREFIX + contentHash)),
             listOf(object : TypeReference<DynamicBytes>() {})
         )
-        whenever(reviveContractApi.callReadOnly(eq(CHAIN_ID), eq(resolver), any(), isNull()))
-            .thenReturn(Result.success(output.toDataByteArray()))
+        coEvery { reviveContractApi.callReadOnly(CHAIN_ID, resolver, any(), isNull()) } returns Result.success(output.toDataByteArray())
     }
 
     private fun stubEmptyOutput(resolver: AccountId) = runBlocking {
-        whenever(reviveContractApi.callReadOnly(eq(CHAIN_ID), eq(resolver), any(), isNull()))
-            .thenReturn(Result.success(DataByteArray.empty()))
+        coEvery { reviveContractApi.callReadOnly(CHAIN_ID, resolver, any(), isNull()) } returns Result.success(DataByteArray.empty())
     }
 
     private fun stubReverted(resolver: AccountId) = runBlocking {
-        whenever(reviveContractApi.callReadOnly(eq(CHAIN_ID), eq(resolver), any(), isNull()))
-            .thenReturn(Result.failure(ReviveContractReverted(DataByteArray.empty())))
+        coEvery { reviveContractApi.callReadOnly(CHAIN_ID, resolver, any(), isNull()) } returns Result.failure(ReviveContractReverted(DataByteArray.empty()))
     }
 
     @Suppress("UNCHECKED_CAST")

@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.feature_settings_impl.domain.interactors
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.novasama.substrate_sdk_android.encrypt.mnemonic.Mnemonic
 import io.paritytech.polkadotapp.common.domain.errors.BackupDecryptionKeyNotFoundException
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.AccountSecretsStorage
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
-import io.paritytech.polkadotapp.test_shared.whenever
 import io.paritytech.polkadotapp.tools_authentication_api.domain.BiometricsService
 import io.paritytech.polkadotapp.tools_backup_api.domain.BackupService
 import io.paritytech.polkadotapp.tools_backup_api.domain.error.CorruptedBackupException
@@ -15,20 +17,19 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class BackupStatusInteractorTest {
-    private val backupService: BackupService = mock()
-    private val biometricsService: BiometricsService = mock()
-    private val accountRepository: AccountRepository = mock()
-    private val accountSecretsStorage: AccountSecretsStorage = mock()
+    private val backupService: BackupService = mockk()
+    private val biometricsService: BiometricsService = mockk()
+    private val accountRepository: AccountRepository = mockk()
+    private val accountSecretsStorage: AccountSecretsStorage = mockk()
 
     private val interactor = RealBackupStatusInteractor(
         backupService = backupService,
         biometricsService = biometricsService,
         accountRepository = accountRepository,
         accountSecretsStorage = accountSecretsStorage,
-        createAndSaveBackupFromMnemonicUseCase = mock(),
+        createAndSaveBackupFromMnemonicUseCase = mockk(),
     )
 
     @Before
@@ -96,17 +97,17 @@ class BackupStatusInteractorTest {
     }
 
     private suspend fun withWalletAccount() {
-        val account: MetaAccount = mock()
-        whenever(account.id).thenReturn(META_ID)
-        whenever(accountRepository.getWalletAccount()).thenReturn(account)
+        val account: MetaAccount = mockk()
+        every { account.id } returns META_ID
+        coEvery { accountRepository.getWalletAccount() } returns account
     }
 
     private suspend fun withBackupDownloadFailure() {
-        whenever(backupService.getRestorableBackup()).thenReturn(Result.failure(RuntimeException("network")))
+        coEvery { backupService.getRestorableBackup() } returns Result.failure(RuntimeException("network"))
     }
 
     private suspend fun withNoBackup() {
-        whenever(backupService.getRestorableBackup()).thenReturn(Result.success<RestorableBackup?>(null))
+        coEvery { backupService.getRestorableBackup() } returns Result.success<RestorableBackup?>(null)
     }
 
     private suspend fun withDecryptedBackup(entropy: ByteArray) {
@@ -118,20 +119,20 @@ class BackupStatusInteractorTest {
     }
 
     private suspend fun withRestorableBackup(restoreResult: Result<Backup>) {
-        val restorable: RestorableBackup = mock()
-        whenever(restorable.createdAt).thenReturn(CREATED_AT)
-        whenever(restorable.restore()).thenReturn(restoreResult)
-        whenever(backupService.getRestorableBackup()).thenReturn(Result.success(restorable))
+        val restorable: RestorableBackup = mockk()
+        every { restorable.createdAt } returns CREATED_AT
+        coEvery { restorable.restore() } returns restoreResult
+        coEvery { backupService.getRestorableBackup() } returns Result.success(restorable)
     }
 
     private suspend fun withNoAccountPassphrase() {
-        whenever(accountSecretsStorage.getMetaAccountPassphrase(META_ID)).thenReturn(null)
+        coEvery { accountSecretsStorage.getMetaAccountPassphrase(META_ID) } returns null
     }
 
     private suspend fun withAccountPassphrase(entropy: ByteArray) {
-        val mnemonic: Mnemonic = mock()
-        whenever(mnemonic.entropy).thenReturn(entropy)
-        whenever(accountSecretsStorage.getMetaAccountPassphrase(META_ID)).thenReturn(mnemonic)
+        val mnemonic: Mnemonic = mockk()
+        every { mnemonic.entropy } returns entropy
+        coEvery { accountSecretsStorage.getMetaAccountPassphrase(META_ID) } returns mnemonic
     }
 
     private companion object {

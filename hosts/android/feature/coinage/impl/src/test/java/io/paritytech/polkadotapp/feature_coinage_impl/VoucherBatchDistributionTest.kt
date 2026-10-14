@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_coinage_impl
 
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_coinage_api.domain.common.CoinAmountBreakdown
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerFungibility
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerVoucher
@@ -14,7 +15,6 @@ import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.
 import io.paritytech.polkadotapp.feature_members_api.data.model.RingIndex
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class VoucherBatchDistributionTest {
     private val allowedExponents = (-2..7).map { ValueExponent(it) }.toSet()
@@ -114,7 +114,7 @@ class VoucherBatchDistributionTest {
 
     private fun voucher(exponent: Int, ring: Int): RecyclerVoucher = RecyclerVoucher(
         ringVrfKeyIndex = testKey(voucherIndexCounter++),
-        ringVrfPublicKey = mock(),
+        ringVrfPublicKey = mockk(),
         recyclerValue = ValueExponent(exponent),
         location = Location.InRecycler(RingIndex(ring.toBigInteger()), recyclerMembers = FULL_RING, enteredAt = null),
         recyclerFungibility = RecyclerFungibility.NONE,

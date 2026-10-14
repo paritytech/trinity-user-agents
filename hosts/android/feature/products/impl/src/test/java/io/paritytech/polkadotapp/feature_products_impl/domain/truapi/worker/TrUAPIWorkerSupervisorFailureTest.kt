@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
@@ -21,7 +22,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class TrUAPIWorkerSupervisorFailureTest {
     private val productId = ProductId.fromStoredValue("chat.dot")
@@ -47,15 +47,15 @@ class TrUAPIWorkerSupervisorFailureTest {
 
     private fun TestScope.supervisorWith(
         scriptResolver: ProductScriptResolver,
-        runtimeProvider: TrUAPIHostRuntimeProvider = mock(),
-        hostBridgeFactory: ProductTrUAPIHostBridge.Factory = mock(),
-        webViewProviderFactory: ChatWebViewProvider.Factory = mock(),
-        bootstrapInstaller: TrUAPIBootstrapInstaller = mock(),
-        refCounter: ProductWorkerRefCounter = mock(),
+        runtimeProvider: TrUAPIHostRuntimeProvider = mockk(),
+        hostBridgeFactory: ProductTrUAPIHostBridge.Factory = mockk(),
+        webViewProviderFactory: ChatWebViewProvider.Factory = mockk(),
+        bootstrapInstaller: TrUAPIBootstrapInstaller = mockk(),
+        refCounter: ProductWorkerRefCounter = mockk(),
     ): TrUAPIWorkerSupervisor = TrUAPIWorkerSupervisor(
         runtimeProvider = Lazy { runtimeProvider },
         hostBridgeFactory = hostBridgeFactory,
-        chainDirectory = mock<TrUAPIChainDirectory>(),
+        chainDirectory = mockk<TrUAPIChainDirectory>(),
         scriptResolver = scriptResolver,
         webViewProviderFactory = webViewProviderFactory,
         bootstrapInstaller = bootstrapInstaller,

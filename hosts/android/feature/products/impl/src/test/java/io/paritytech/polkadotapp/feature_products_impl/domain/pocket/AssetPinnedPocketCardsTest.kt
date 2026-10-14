@@ -2,38 +2,38 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import android.content.Context
 import android.content.res.AssetManager
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.ArgumentMatchers.anyInt
-import org.mockito.Mockito.mock
 import uniffi.truapi.RendererNode
 import java.io.File
 
 class AssetPinnedPocketCardsTest {
     private val tld = requireNotNull(DotNsTld.parse("testnet"))
-    private val context: Context = mock()
-    private val assets: AssetManager = mock()
-    private val tldProvider: DotNsTldProvider = mock()
+    private val context: Context = mockk()
+    private val assets: AssetManager = mockk()
+    private val tldProvider: DotNsTldProvider = mockk()
 
     // The real bundled file, not a stand-in: a face that stopped decoding against the renderer
     // vocabulary would otherwise be found by the user at their first launch, never by a test.
     private val bundledHumanityFace = File("src/main/assets/pocket/humanity.json")
 
     private suspend fun pinnedCards(): List<CachedPocketCard> {
-        whenever(context.assets).thenReturn(assets)
-        whenever(assets.open("pocket/humanity.json")).thenReturn(bundledHumanityFace.inputStream())
-        whenever(context.getString(anyInt())).thenReturn("Humanity")
-        whenever(tldProvider.getTld()).thenReturn(Result.success(tld))
+        every { context.assets } returns assets
+        every { assets.open("pocket/humanity.json") } returns bundledHumanityFace.inputStream()
+        every { context.getString(any()) } returns "Humanity"
+        coEvery { tldProvider.getTld() } returns Result.success(tld)
 
         return AssetPinnedPocketCards(context, tldProvider).cards()
     }
@@ -65,10 +65,10 @@ class AssetPinnedPocketCardsTest {
     // read. Offline that read never returns, and a removal arriving from the core would wait on it.
     @Test
     fun `a card is recognised as pinned without asking the network for its name`() = runBlocking {
-        whenever(context.assets).thenReturn(assets)
-        whenever(assets.open("pocket/humanity.json")).thenReturn(bundledHumanityFace.inputStream())
-        whenever(context.getString(anyInt())).thenReturn("Humanity")
-        val neverAnswers: DotNsTldProvider = mock()
+        every { context.assets } returns assets
+        every { assets.open("pocket/humanity.json") } returns bundledHumanityFace.inputStream()
+        every { context.getString(any()) } returns "Humanity"
+        val neverAnswers: DotNsTldProvider = mockk()
         val pinnedKey = PocketCardKey(ReservedProductIds.personhood(tld), PocketCardId("humanity"))
 
         val cards = AssetPinnedPocketCards(context, neverAnswers)

@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling
 
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
@@ -16,7 +17,6 @@ import io.paritytech.polkadotapp.feature_coinage_impl.testKey
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
 import java.math.BigInteger
 
 private const val FORCED_AGE = 14
@@ -112,7 +112,7 @@ class ParametricRecyclingStrategyTest {
             valueExponent = ValueExponent(1),
             age = Coin.Age.Unknown,
             isOnChain = true,
-            accountId = mock(),
+            accountId = mockk(),
             provenance = CoinProvenance.UNKNOWN,
         )
 
@@ -157,7 +157,7 @@ class ParametricRecyclingStrategyTest {
         valueExponent = ValueExponent(exponent),
         age = Coin.Age.Known(age),
         isOnChain = true,
-        accountId = mock(),
+        accountId = mockk(),
         provenance = CoinProvenance.UNKNOWN,
     )
 }

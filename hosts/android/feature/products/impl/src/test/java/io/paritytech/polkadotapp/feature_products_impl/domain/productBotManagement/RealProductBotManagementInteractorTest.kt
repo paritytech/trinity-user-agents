@@ -1,12 +1,13 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.UninstallProductUseCase
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -16,7 +17,6 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 import java.util.concurrent.Executors
 
 class RealProductBotManagementInteractorTest {
@@ -53,15 +53,15 @@ class RealProductBotManagementInteractorTest {
         }
     }
 
-    private val uninstallProductUseCase: UninstallProductUseCase = mock()
+    private val uninstallProductUseCase: UninstallProductUseCase = mockk()
 
     private val interactor = RealProductBotManagementInteractor(
-        productRepository = mock(),
-        integrationRepository = mock(),
-        botStateController = mock(),
-        resolveProductUseCase = mock(),
+        productRepository = mockk(relaxUnitFun = true),
+        integrationRepository = mockk(relaxUnitFun = true),
+        botStateController = mockk(relaxUnitFun = true),
+        resolveProductUseCase = mockk(relaxUnitFun = true),
         uninstallProductUseCase = uninstallProductUseCase,
-        dotNsTldProvider = mock(),
+        dotNsTldProvider = mockk(),
         debugPocketCards = debugPocketCards,
         dispatchers = dispatchers,
     )
@@ -138,7 +138,7 @@ class RealProductBotManagementInteractorTest {
     @Test
     fun `deleting a product forgets its app url`() = runBlocking {
         storedAppUrl = APP_URL
-        whenever(uninstallProductUseCase(PRODUCT)).thenReturn(Result.success(Unit))
+        coEvery { uninstallProductUseCase(PRODUCT) } returns Result.success(Unit)
 
         interactor.deleteProduct(PRODUCT)
 

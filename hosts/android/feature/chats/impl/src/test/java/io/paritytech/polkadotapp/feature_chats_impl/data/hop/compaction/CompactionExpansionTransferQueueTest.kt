@@ -1,5 +1,11 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.hop.compaction
 
+import io.mockk.Called
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
@@ -11,15 +17,9 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessagePlacement
 import io.paritytech.polkadotapp.feature_chats_impl.domain.compaction.CompactionExpansion
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.HopTransferRetryState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.IncomingChatMessageProcessor
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
-import org.mockito.Mockito.verifyNoInteractions
 
 class CompactionExpansionTransferQueueTest {
     private val nodeUrl = "wss://hop.example/node"
@@ -28,10 +28,10 @@ class CompactionExpansionTransferQueueTest {
     private val batchBytes = byteArrayOf(0x0A, 0x0B)
     private val rawMessages = listOf(byteArrayOf(0x01), byteArrayOf(0x02))
 
-    private val repository: CompactionExpansionRepository = mock(CompactionExpansionRepository::class.java)
-    private val store: CompactionBatchStore = mock(CompactionBatchStore::class.java)
-    private val nodeProvider: HopNodeUrlProvider = mock(HopNodeUrlProvider::class.java)
-    private val processor: IncomingChatMessageProcessor = mock(IncomingChatMessageProcessor::class.java)
+    private val repository: CompactionExpansionRepository = mockk(relaxUnitFun = true)
+    private val store: CompactionBatchStore = mockk()
+    private val nodeProvider: HopNodeUrlProvider = mockk()
+    private val processor: IncomingChatMessageProcessor = mockk(relaxUnitFun = true)
 
     private val queue = CompactionExpansionTransferQueue(
         repository = repository,
@@ -44,12 +44,12 @@ class CompactionExpansionTransferQueueTest {
     fun `process claims the batch then processes messages and marks the commit expanded`() = runBlocking<Unit> {
         withNodeAllowed(true)
         withClaimedBatch()
-        whenever(store.decodeBatchMessages(batchBytes)).thenReturn(rawMessages)
+        every { store.decodeBatchMessages(batchBytes) } returns rawMessages
 
         queue.process(expansion())
 
-        verify(processor).processRaw(eq(contactAccountId), eq(rawMessages), eq(ChatMessagePlacement.SameAs(commitId)))
-        verify(repository).markContentExpanded(commitId)
+        coVerify(exactly = 1) { processor.processRaw(contactAccountId, rawMessages, ChatMessagePlacement.SameAs(commitId)) }
+        coVerify(exactly = 1) { repository.markContentExpanded(commitId) }
     }
 
     @Test
@@ -59,8 +59,8 @@ class CompactionExpansionTransferQueueTest {
         val result = runCatching { queue.process(expansion()) }
 
         assertTerminal(result)
-        verifyNoInteractions(store)
-        verifyNoInteractions(processor)
+        verify { store wasNot Called }
+        verify { processor wasNot Called }
     }
 
     @Test
@@ -68,8 +68,8 @@ class CompactionExpansionTransferQueueTest {
         val result = runCatching { queue.process(expansion(commit = null)) }
 
         assertTerminal(result)
-        verifyNoInteractions(store)
-        verifyNoInteractions(nodeProvider)
+        verify { store wasNot Called }
+        verify { nodeProvider wasNot Called }
     }
 
     @Test
@@ -77,15 +77,15 @@ class CompactionExpansionTransferQueueTest {
         val result = runCatching { queue.process(expansion(contactAccountId = null)) }
 
         assertTerminal(result)
-        verifyNoInteractions(store)
-        verifyNoInteractions(nodeProvider)
+        verify { store wasNot Called }
+        verify { nodeProvider wasNot Called }
     }
 
     @Test
     fun `markFailed surfaces the commit as unrecoverable`() = runBlocking<Unit> {
         queue.markFailed(expansion(), TerminalTransferException("gone"))
 
-        verify(repository).markCompactionUnrecoverable(commitId)
+        coVerify(exactly = 1) { repository.markCompactionUnrecoverable(commitId) }
     }
 
     private fun expansion(
@@ -103,14 +103,13 @@ class CompactionExpansionTransferQueueTest {
     )
 
     private suspend fun withNodeAllowed(allowed: Boolean) {
-        whenever(nodeProvider.isAllowed(nodeUrl)).thenReturn(allowed)
+        coEvery { nodeProvider.isAllowed(nodeUrl) } returns allowed
     }
 
     private suspend fun withClaimedBatch() {
-        whenever(store.claimBatch(any(), anyHopTicket(), any(), any())).thenAnswer { invocation ->
-            @Suppress("UNCHECKED_CAST")
-            val persist = invocation.arguments[3] as suspend (ByteArray) -> Unit
-            runBlocking { persist(batchBytes) }
+        coEvery { store.claimBatch(any(), any(), any(), any()) } coAnswers {
+            val persist = arg<suspend (ByteArray) -> Unit>(3)
+            persist(batchBytes)
         }
     }
 
