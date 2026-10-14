@@ -36,22 +36,19 @@ use truapi::{
 	latest::{HostRequestLoginError, HostRequestLoginResponse},
 };
 
-/// Keeps account material for the paired session and hears when that session changes.
+/// Keeps grants for the paired session and hears when that session changes.
 #[async_trait::async_trait]
 pub trait PairedSessionOwner: Send + Sync {
-	/// `previous` is no longer selected: drop what is cached in memory for it.
+	/// `previous` is no longer selected: `revoked` when it was cleared, not replaced.
 	///
-	/// Runs while the session channel stops, so it must not call back into the service.
-	fn session_ended(&self, previous: Option<&SessionInfo>);
+	/// Runs while session selection is locked, so it must not call back into the service.
+	fn session_ended(&self, previous: Option<&SessionInfo>, revoked: bool);
 
-	/// Drop what is stored for `previous`, which a disconnect has cleared.
-	async fn session_cleared(&self, previous: Option<&SessionInfo>);
+	/// Finish the durable revocation a cleared session left pending.
+	async fn session_cleared(&self);
 
-	/// Reconcile kept material with `next` before it replaces `previous`.
+	/// Reconcile kept grants with `next` before it replaces `previous`.
 	async fn prepare_session(&self, previous: Option<&SessionInfo>, next: &SessionInfo);
-
-	/// Drop what is kept for every paired session.
-	async fn session_reset(&self);
 }
 
 struct LoginInFlight {
@@ -95,13 +92,6 @@ impl SessionLifecycle {
 		self.epoch = self.epoch.checked_add(1).expect("session lifecycle epoch exhausted");
 		self.external_session_active = false;
 		self.epoch
-	}
-
-	fn advance_preserving_source(&mut self) -> u64 {
-		let external_session_active = self.external_session_active;
-		let epoch = self.advance();
-		self.external_session_active = external_session_active;
-		epoch
 	}
 }
 
@@ -209,14 +199,8 @@ impl SsoRequestService {
 		lifecycle.advance()
 	}
 
-	/// Epoch of the session selection; every session change advances it.
-	pub fn current_session_lifecycle_epoch(&self) -> u64 {
-		self.session_lifecycle.lock().expect("session lifecycle mutex poisoned").epoch
-	}
-
-	/// Whether no session change happened since `epoch` was read.
-	pub fn is_session_lifecycle_current(&self, epoch: u64) -> bool {
-		self.current_session_lifecycle_epoch() == epoch
+	fn is_session_lifecycle_current(&self, epoch: u64) -> bool {
+		self.session_lifecycle.lock().expect("session lifecycle mutex poisoned").epoch == epoch
 	}
 
 	/// Test hook for [`Self::start_session_store_sync`].
@@ -441,9 +425,6 @@ impl SsoRequestService {
 	pub async fn reset_session_state(&self) {
 		self.cancel_login();
 		self.clear_disconnected_session(true).await;
-		if let Some(owner) = self.owner.upgrade() {
-			owner.session_reset().await;
-		}
 		self.auth_state.announce_current();
 	}
 
@@ -501,6 +482,9 @@ impl SsoRequestService {
 				self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
 			lifecycle.advance();
 			let previous = self.session_state.current();
+			if let Some(owner) = self.owner.upgrade() {
+				owner.session_ended(previous.as_ref(), true);
+			}
 			self.session_state.clear_session();
 			previous
 		};
@@ -509,7 +493,7 @@ impl SsoRequestService {
 			let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
 		}
 		if let Some(owner) = self.owner.upgrade() {
-			owner.session_cleared(previous.as_ref()).await;
+			owner.session_cleared().await;
 		}
 		self.auth_state.store_disconnected();
 	}
@@ -539,6 +523,11 @@ impl SsoRequestService {
 				return false;
 			}
 			let previous = self.session_state.current();
+			if previous.as_ref() != Some(&session) &&
+				let Some(owner) = self.owner.upgrade()
+			{
+				owner.session_ended(previous.as_ref(), false);
+			}
 			self.session_state.set_session(session.clone());
 			lifecycle.external_session_active = external_session;
 			previous
@@ -572,34 +561,7 @@ impl SsoRequestService {
 		self.clear_disconnected_session(true).await;
 	}
 
-	/// Advance the selection epoch without changing the session or where it
-	/// came from, so work started under the old epoch cannot finish; returns
-	/// the session selected at that moment.
-	pub fn advance_session_lifecycle_preserving_source(&self) -> Option<SessionInfo> {
-		let mut lifecycle =
-			self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-		lifecycle.advance_preserving_source();
-		self.session_state.current()
-	}
-
-	/// Run `keep` while `session` is still selected at `lifecycle_epoch`, so no
-	/// session change can interleave; `None` when it is no longer selected.
-	pub fn while_session_current<T>(
-		&self,
-		session: &SessionInfo,
-		lifecycle_epoch: u64,
-		keep: impl FnOnce() -> T,
-	) -> Option<T> {
-		let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-		let selected = lifecycle.epoch == lifecycle_epoch &&
-			session.sso.as_ref().is_some_and(|sso| {
-				self.current_sso_session_matches(SsoSessionKey::from_session(sso))
-			});
-		selected.then(keep)
-	}
-
-	/// Whether the selected session's SSO channel is `key`.
-	pub fn current_sso_session_matches(&self, key: SsoSessionKey) -> bool {
+	fn current_sso_session_matches(&self, key: SsoSessionKey) -> bool {
 		key.matches(&self.session_state)
 	}
 
