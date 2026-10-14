@@ -52,15 +52,20 @@ pub fn preimage_cid(key: &[u8; 32]) -> String {
 	cid
 }
 
-/// Build and sign a Bulletin store transaction with its allowance key.
+/// Sign with a finalized mortality anchor and the client's current account nonce.
 pub async fn build_signed_store_transaction<C: OnlineClientAtBlockT<SubstrateConfig>>(
 	client: &ClientAtBlock<SubstrateConfig, C>,
+	finalized: &ClientAtBlock<SubstrateConfig, C>,
 	signer: &Sr25519Signer,
 	data: &[u8],
 ) -> Result<SubmittableTransaction<SubstrateConfig, C>, ExtrinsicError> {
 	let payload = StaticPayload::new(STORE_PALLET_NAME, STORE_CALL_NAME, StoreCallData(data));
 	let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
-		.mortal(MORTAL_PERIOD_BLOCKS)
+		.mortal_from_unchecked(
+			MORTAL_PERIOD_BLOCKS,
+			finalized.block_number(),
+			finalized.block_hash(),
+		)
 		.build();
 	let mut tx = client.tx();
 	tx.create_signed(&payload, signer, params).await
