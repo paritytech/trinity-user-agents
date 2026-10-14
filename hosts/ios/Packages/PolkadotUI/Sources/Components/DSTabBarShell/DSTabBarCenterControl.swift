@@ -70,7 +70,7 @@ private extension DSTabBarCenterControl {
     /// notch with an even ring around it.
     var seatInset: CGFloat { DSTabBarStyle.height - bottomFromRowTop + DSTabBarStyle.notchRingGap }
 
-    /// Progress at which content, the grabber and its hit area appear.
+    /// Progress at which content and the grabber appear.
     var revealStart: CGFloat { 0.45 }
 
     /// Movement below which a drag counts as a tap.
@@ -183,18 +183,16 @@ private extension DSTabBarCenterControl {
         }
     }
 
-    /// Second grip at the top of the panel, for closing without reaching down
-    /// to the lobe. Fades in with the content and drags the panel without toggling it.
+    /// Marks the top of the open panel as draggable. Fades in with the content and takes no touches,
+    /// so a drag there reaches the content, which moves the panel through `centerPanelDrag`.
     var grabber: some View {
         Capsule()
             .fill(Color.fgPrimary.opacity(DSTabBarStyle.centerGrabberOpacity))
             .frame(width: DSTabBarStyle.centerGrabberWidth, height: DSTabBarStyle.centerGrabberThickness)
             .frame(height: DSTabBarStyle.centerGrabberHeight)
             .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
             .modifier(CenterRevealModifier(progress: progress, revealStart: revealStart, crossFades: reduceMotion))
-            .allowsHitTesting(progress > revealStart)
-            .gesture(grabberDrag)
+            .allowsHitTesting(false)
     }
 
     /// Drag up to open, down to close; a drag that barely moves is a tap.
@@ -220,22 +218,7 @@ private extension DSTabBarCenterControl {
             }
     }
 
-    /// Drag-only gesture for the grabber. The grabber drags the panel but does not toggle it, so a
-    /// tap there does nothing. The minimum distance keeps a tap from starting the drag.
-    var grabberDrag: some Gesture {
-        DragGesture(minimumDistance: tapSlop, coordinateSpace: .global)
-            .updating($isDragging) { _, dragging, _ in
-                dragging = true
-            }
-            .onChanged { value in
-                followDrag(translationHeight: value.translation.height)
-            }
-            .onEnded { value in
-                endDrag(predictedTranslationHeight: value.predictedEndTranslation.height)
-            }
-    }
-
-    /// The panel's content drags it like the grabber does, so the same settle applies to both.
+    /// The panel's content drags it through these callbacks, with the same settle as the lobe.
     var centerPanelDrag: DSTabBarCenterDrag {
         DSTabBarCenterDrag(
             onChanged: { followDrag(translationHeight: $0) },
@@ -244,9 +227,9 @@ private extension DSTabBarCenterControl {
         )
     }
 
-    /// Moves the panel with the finger from the progress at which the drag began. Both grips measure in the
-    /// global space: the grabber rides the panel's top edge, so in its own space the translation would shrink
-    /// as the panel follows the finger and the panel would fight the drag.
+    /// Moves the panel with the finger from the progress at which the drag began. Translations are in the
+    /// global space: the panel moves under the finger, so in its own space the translation would shrink
+    /// as the panel follows it and the panel would fight the drag.
     func followDrag(translationHeight: CGFloat) {
         let start = dragStart ?? progress
         dragStart = start
