@@ -32,7 +32,7 @@ public extension DotnsGatewayPallet {
         /// The chat key to reach the account with: whichever entry carries one, since a full
         /// label can be registered without the key its lite label already holds.
         public var chatKey: Data? {
-            full?.chat?.wrappedValue ?? lite?.chat?.wrappedValue
+            lite?.chat?.wrappedValue
         }
     }
 
