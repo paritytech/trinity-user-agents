@@ -13,7 +13,16 @@ own steps, and gets back a token (usually a JWT, sometimes with a refresh token)
 product in the platform's secure storage, so the worker, or the same product's App, can read it back later, including
 after a restart. The host does not authenticate anything and never refreshes a token: it stores what it is given.
 
-## Protocol
+## Motivation
+
+A provider's service decides how its users sign in, and the steps differ from one service to the next. A worker can
+follow them, but it has nowhere safe to keep the result: product local storage is not secure storage, and an App and
+its Worker would each hold their own copy. Building every service's sign-in into the host instead would make the host
+an authentication client for third parties.
+
+## Approach
+
+### Protocol
 
 Trait `AuthTokens`, wire id 26. Any execution of the product may call it.
 
@@ -36,7 +45,7 @@ struct AuthToken {
 `store` replaces any token already kept for the service. `remove` of a token that is not kept succeeds. A product
 without a session gets `Denied`; a host that cannot keep tokens answers `Unsupported`.
 
-## Rules
+### Rules
 
 - **Scoping.** Tokens are keyed by product and service. One product never reads, replaces or drops another's token,
   whatever service name it uses. The core passes the calling product to the host, which owns the keying.
@@ -52,7 +61,7 @@ without a session gets `Denied`; a host that cannot keep tokens answers `Unsuppo
 - **Not for device tokens.** The device-uniqueness backend's tokens stay inside the host and never pass through this
   trait.
 
-## Host surface
+### Host surface
 
 `AuthTokenPlatform` (`store_auth_token`, `auth_token`, `remove_auth_token`), optional and installed once with
 `set_auth_token_platform`. Native hosts implement `NativeAuthTokenCallbacks` and install it with
