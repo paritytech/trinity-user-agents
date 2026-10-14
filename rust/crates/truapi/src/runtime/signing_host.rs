@@ -1,6 +1,5 @@
 //! Wallet-local signing authority and incoming SSO handling.
 
-mod allowance;
 mod allowance_renewal;
 mod local_activation;
 mod local_identity;

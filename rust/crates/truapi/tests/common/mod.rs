@@ -2,14 +2,14 @@ mod spawner;
 pub use spawner::test_spawner;
 
 use futures::stream::{self, BoxStream};
-use parity_scale_codec::Encode;
-use truapi::frame::ProtocolMessage;
-use truapi::platform::{
-    AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
-    JsonRpcConnection, LocaleHost, NativeChatFileExportRequest, NativeChatFilePickRequest,
-    NativeChatFilesHost, NativeChatPickedFile, Navigation, Notifications, PairingHostConfig,
-    Permissions, PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage,
-    ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+use truapi::{
+	platform::{
+		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
+		JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
+		PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage,
+		ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+	},
+	v01,
 };
 
 /// Runtime configuration shared by integration tests.

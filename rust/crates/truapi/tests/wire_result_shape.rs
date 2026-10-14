@@ -84,6 +84,46 @@ impl Transport for RecordingTransport {
 	}
 }
 
+/// Transport stub that records every frame sent through it, for asserting
+/// what the core emits during a dispatch.
+#[derive(Default)]
+struct RecordingTransport {
+	/// Frames captured in send order.
+	sent: Mutex<Vec<ProtocolMessage>>,
+	recorded: Condvar,
+}
+
+impl RecordingTransport {
+	/// Wait until at least `count` frames have been recorded, or `timeout`
+	/// elapses. A subscription's frames are produced by the spawner, so a
+	/// dispatch that starts one returns before they are sent.
+	fn wait_for(&self, count: usize, timeout: Duration) {
+		let deadline = Instant::now() + timeout;
+		let mut sent = self.sent.lock().unwrap();
+		while sent.len() < count {
+			let now = Instant::now();
+			if now >= deadline {
+				break;
+			}
+			let (guard, _) = self.recorded.wait_timeout(sent, deadline - now).unwrap();
+			sent = guard;
+		}
+	}
+}
+
+impl Transport for RecordingTransport {
+	fn send(&self, message: ProtocolMessage) {
+		self.sent.lock().unwrap().push(message);
+		self.recorded.notify_all();
+	}
+	fn on_message(
+		&self,
+		_handler: Box<dyn Fn(ProtocolMessage) + Send + Sync>,
+	) -> Box<dyn FnOnce()> {
+		Box::new(|| {})
+	}
+}
+
 fn dispatch(core: &TrUApiCore, frame: ProtocolMessage) -> ProtocolMessage {
 	let encoded = frame.encode();
 	let response_bytes = futures::executor::block_on(core.receive_from_product(&encoded))

@@ -204,31 +204,29 @@ pub struct HopEndpoint {
 /// Resolved RPC/backend/genesis values for one network preset.
 #[derive(Debug, Clone, Copy)]
 pub struct NetworkConfig {
-    pub id: &'static str,
-    /// The network's dotNS TLD without the dot, as its runtimes report it in
-    /// `NetworkSuffix.NetworkSuffix`. Every reserved RFC-0022 identity the CLI
-    /// derives ends in it (`uid.<suffix>`, `peopl.<suffix>`), so a person the
-    /// CLI creates here is the same person a phone derives from that seed on
-    /// this network. `live_people_chain::network_suffix_matches_the_preset`
-    /// holds it against the chain.
-    pub network_suffix: &'static str,
-    pub identity_backend_base: &'static str,
-    pub people_ws: &'static str,
-    #[allow(dead_code)]
-    pub bulletin_ws: &'static str,
-    /// Asset Hub RPC, where PGAS allowances are claimed.
-    pub asset_hub_ws: &'static str,
-    pub people_genesis: [u8; 32],
-    pub bulletin_genesis: [u8; 32],
-    /// Asset Hub genesis hash, both the role's identity in
-    /// [`NetworkConfig::host_chain_set`] and its routing key. The chain it connects
-    /// to is authoritative for `CheckGenesis`.
-    ///
-    /// Wrong here is worse than stale elsewhere: routing matches on it, so a value
-    /// the chain does not report sends Asset Hub traffic to the fallback chain.
-    pub asset_hub_genesis: [u8; 32],
-    pub live_chain_endpoints: &'static [ChainEndpoint],
-    pub hop_endpoints: &'static [HopEndpoint],
+	pub id: &'static str,
+	/// The network's dotNS TLD without the dot, as its runtimes report it in
+	/// `NetworkSuffix.NetworkSuffix`. Every reserved RFC-0022 identity the CLI
+	/// derives ends in it (`uid.<suffix>`, `peopl.<suffix>`), so a person the
+	/// CLI creates here is the same person a phone derives from that seed on
+	/// this network. `live_people_chain::network_suffix_matches_the_preset`
+	/// holds it against the chain.
+	pub network_suffix: &'static str,
+	pub identity_backend_base: &'static str,
+	pub people_ws: &'static str,
+	pub bulletin_ws: &'static str,
+	/// Asset Hub RPC, where PGAS allowances are claimed.
+	pub asset_hub_ws: &'static str,
+	pub people_genesis: [u8; 32],
+	pub bulletin_genesis: [u8; 32],
+	/// Asset Hub genesis hash, both the role's identity in
+	/// [`NetworkConfig::host_chain_set`] and its routing key. The chain it connects
+	/// to is authoritative for `CheckGenesis`.
+	///
+	/// Wrong here is worse than stale elsewhere: routing matches on it, so a value
+	/// the chain does not report sends Asset Hub traffic to the fallback chain.
+	pub asset_hub_genesis: [u8; 32],
+	pub live_chain_endpoints: &'static [ChainEndpoint],
 }
 
 #[derive(Debug, Clone, Copy)]
