@@ -1,5 +1,6 @@
 import UIKit
 public import UIKit_iOS
+import DesignSystem
 
 public final class ActionLoadingView: UIView {
     public let backgroundView: RoundedView = {
@@ -12,7 +13,7 @@ public final class ActionLoadingView: UIView {
     public let activityIndicator: UIActivityIndicatorView = {
         let view = UIActivityIndicatorView()
         view.style = .medium
-        view.color = UIColor(resource: .white100)
+        view.color = UIColor.fgStaticWhite
         view.hidesWhenStopped = true
         return view
     }()
