@@ -31,6 +31,16 @@ class RealResourcesRepository @Inject constructor(
         }
     }
 
+    override suspend fun consumersInfo(
+        chainId: ChainId,
+        accountIds: List<AccountId>,
+    ): Result<Map<AccountId, ConsumerInfo?>> {
+        return remoteStorageSource.queryCatching(chainId) {
+            val onChainInfo = metadata.dotNsGateway.accountNames.entries(accountIds)
+            onChainInfo.mapValues { it.value.toDomain(it.key) }
+        }
+    }
+
     override fun consumerInfoFlow(chainId: ChainId, accountId: AccountId) =
         remoteStorageSource.consumerInfoFlow(chainId, accountId)
 
