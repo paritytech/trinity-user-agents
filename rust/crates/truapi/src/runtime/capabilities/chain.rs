@@ -49,7 +49,8 @@ impl ProductRuntimeHost {
 	/// Stop a broadcast whose call was withdrawn, bounded so a stalled stop
 	/// cannot hold back the withdrawn call's answer.
 	async fn stop_withdrawn_broadcast(&self, genesis_hash: Vec<u8>, operation_id: String) {
-		let stop = self.chain
+		let stop = self
+			.chain
 			.remote_chain_transaction_stop(latest::RemoteChainTransactionStopRequest {
 				genesis_hash,
 				operation_id: operation_id.clone(),
@@ -80,12 +81,12 @@ impl Chain for ProductRuntimeHost {
 		let inner = request.into_latest();
 		let follow_subscription_id = self.follow_id(cx.request_id());
 		let stream =
-			self.chain.remote_chain_head_follow(follow_subscription_id, inner).map(
-				move |item| {
+			self.chain
+				.remote_chain_head_follow(follow_subscription_id, inner)
+				.map(move |item| {
 					item.map(|value| RemoteChainHeadFollowItem::from_latest(value, version))
 						.map_err(runtime_failure_to_call_error)
-				},
-			);
+				});
 		Subscription::new(stream)
 	}
 
@@ -269,7 +270,8 @@ impl Chain for ProductRuntimeHost {
 			)));
 		}
 		let genesis_hash = inner.genesis_hash.clone();
-		let response = self.chain
+		let response = self
+			.chain
 			.remote_chain_transaction_broadcast(inner)
 			.await
 			.map_err(runtime_failure_to_call_error)?;

@@ -331,6 +331,8 @@ pub const USER_TAP_WINDOW_SECS: u64 = 5;
 
 impl Drop for ProductRuntimeHost {
 	fn drop(&mut self) {
+		// This runtime owns its chain connections outright, so they go with it.
+		self.chain.release_scope();
 		self.release_open_operations();
 	}
 }

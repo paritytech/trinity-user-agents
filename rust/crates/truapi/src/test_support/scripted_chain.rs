@@ -30,9 +30,14 @@ pub struct ScriptedProvider {
 	respond: Responder,
 	/// Every request frame the core sent, in order.
 	pub sent: Arc<Mutex<Vec<String>>>,
-	/// Response stream sender; dropping it ends the connection's responses.
+	/// First connection's response sender; dropping it ends that connection's
+	/// responses. Later connections get their own, reachable via
+	/// [`notification_sender_nth`].
 	pub sender: Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>,
 	receiver: Arc<Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>>,
+	/// Every connection's sender slot, in connect order. Slot 0 is `sender`
+	/// itself, so taking that still ends the first connection's stream.
+	pub senders: Arc<Mutex<Vec<Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>>>>,
 	/// How many times the core asked for a connection.
 	pub connect_calls: Arc<AtomicUsize>,
 }
@@ -54,11 +59,13 @@ impl ScriptedProvider {
 		F: Fn(&str) -> Vec<String> + Send + Sync + 'static,
 	{
 		let (tx, rx) = fut_mpsc::unbounded();
+		let first = Arc::new(Mutex::new(Some(tx)));
 		Self {
 			respond: Arc::new(respond),
 			sent: Arc::new(Mutex::new(Vec::new())),
-			sender: Arc::new(Mutex::new(Some(tx))),
+			sender: first.clone(),
 			receiver: Arc::new(Mutex::new(Some(rx))),
+			senders: Arc::new(Mutex::new(vec![first])),
 			connect_calls: Arc::new(AtomicUsize::new(0)),
 		}
 	}
@@ -67,6 +74,8 @@ impl ScriptedProvider {
 struct ScriptedConnection {
 	respond: Responder,
 	sent: Arc<Mutex<Vec<String>>>,
+	/// This connection's own sender, so an answer goes back on the socket that
+	/// asked rather than on whichever one connected first.
 	sender: Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>,
 	receiver: Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>,
 }
@@ -82,14 +91,12 @@ impl JsonRpcConnection for ScriptedConnection {
 		}
 	}
 	fn responses(&self) -> BoxStream<'static, String> {
-		match self.receiver.lock().unwrap().take() {
-			Some(rx) => rx.boxed(),
-			// A second connection from this provider, which happens once
-			// connections are scoped per product. The scripted response stream
-			// belongs to the first. Stay pending rather than ending, because an
-			// ended stream reads to the core as a socket that died.
-			None => futures::stream::pending().boxed(),
-		}
+		self.receiver
+			.lock()
+			.unwrap()
+			.take()
+			.expect("ScriptedConnection::responses called twice")
+			.boxed()
 	}
 
 	fn close(&self) {
@@ -104,13 +111,27 @@ impl RuntimeChainProvider for ScriptedProvider {
 		_genesis_hash: Vec<u8>,
 	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
 		self.connect_calls.fetch_add(1, Ordering::SeqCst);
-		let receiver = self.receiver.lock().unwrap().take();
-		Ok(Arc::new(ScriptedConnection {
-			respond: self.respond.clone(),
-			sent: self.sent.clone(),
-			sender: self.sender.clone(),
-			receiver: Mutex::new(receiver),
-		}))
+		// The first connection takes the channel built with the provider, so
+		// `notification_sender` keeps reaching it. Each later one gets its own.
+		match self.receiver.lock().unwrap().take() {
+			Some(receiver) => Ok(Arc::new(ScriptedConnection {
+				respond: self.respond.clone(),
+				sent: self.sent.clone(),
+				sender: self.sender.clone(),
+				receiver: Mutex::new(Some(receiver)),
+			})),
+			None => {
+				let (tx, rx) = fut_mpsc::unbounded();
+				let slot = Arc::new(Mutex::new(Some(tx)));
+				self.senders.lock().unwrap().push(slot.clone());
+				Ok(Arc::new(ScriptedConnection {
+					respond: self.respond.clone(),
+					sent: self.sent.clone(),
+					sender: slot,
+					receiver: Mutex::new(Some(rx)),
+				}))
+			},
+		}
 	}
 }
 
@@ -147,4 +168,17 @@ pub fn wait_for_sent(
 		std::thread::sleep(std::time::Duration::from_millis(10));
 	}
 	provider.sent.lock().unwrap().clone()
+}
+
+/// Sender for the `n`th connection this provider handed out, in connect order.
+pub fn notification_sender_nth(
+	provider: &ScriptedProvider,
+	n: usize,
+) -> fut_mpsc::UnboundedSender<String> {
+	provider.senders.lock().unwrap()[n]
+		.lock()
+		.unwrap()
+		.as_ref()
+		.expect("connection sender available")
+		.clone()
 }

@@ -246,7 +246,7 @@ pub trait RuntimeChainProvider: Send + Sync {
 /// follow the node refuses. Each product runtime gets its own connection, and
 /// the core's internal traffic keeps one of its own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ConnectionScope {
+enum ConnectionScope {
 	/// The core's own traffic: metadata, transaction assembly, internal reads.
 	Core,
 	/// One product runtime, identified by its `core_instance`.
@@ -279,8 +279,8 @@ pub struct ChainRuntime {
 	connections: Arc<Mutex<HashMap<String, Arc<ChainConnection>>>>,
 	connection_setups: Arc<Mutex<HashMap<String, ConnectionSetup>>>,
 	follow_starts: FollowStartRegistry,
-	/// Synchronously registered follow intents, keyed by genesis hash. Alias
-	/// cardinality includes setup tasks that have not yet been polled.
+	/// Synchronously registered follow intents, keyed by scope and genesis hash.
+	/// Alias cardinality includes setup tasks that have not yet been polled.
 	follow_intents: Arc<Mutex<HashMap<String, HashSet<String>>>>,
 	transaction_operations: Arc<Mutex<BTreeMap<u64, TransactionOperation>>>,
 	next_transaction_operation_id: Arc<AtomicU64>,
@@ -337,6 +337,25 @@ impl ChainRuntime {
 	/// same chain are two connections.
 	fn connection_key(&self, genesis_hash: &[u8]) -> String {
 		format!("{}:{}", self.scope.key_prefix(), encode_hex(genesis_hash))
+	}
+
+	/// Drop everything this scope holds, on every chain.
+	///
+	/// A scope's connections are its own, so nothing outside it can want them
+	/// once it ends. Removing the map's handle lets the `ChainConnection` drop
+	/// when its last in-flight caller finishes, which releases both
+	/// `HostRpcClient` handles and closes the host's socket. Without this the
+	/// cache grows for the life of the process: `core_instance` never repeats,
+	/// so a departed scope's key is never asked for again and `connection_for`
+	/// never reaches its eviction path.
+	pub fn release_scope(&self) {
+		let prefix = format!("{}:", self.scope.key_prefix());
+		self.connections.lock().unwrap().retain(|key, _| !key.starts_with(&prefix));
+		self.connection_setups
+			.lock()
+			.unwrap()
+			.retain(|key, _| !key.starts_with(&prefix));
+		self.follow_intents.lock().unwrap().retain(|key, _| !key.starts_with(&prefix));
 	}
 
 	/// Start (or attach to an existing) `chainHead_v1_follow` subscription.
@@ -2540,8 +2559,13 @@ mod tests {
 		assert_eq!(core.connections.lock().unwrap().len(), 1);
 	}
 
-	/// A product's follow budget is its own: four follows for one product do
-	/// not consume another product's, or the core's.
+	/// A product's follow budget is its own. Four follows for one product must
+	/// not consume another's, and the node counts follows per connection, so
+	/// the check is that no single connection carries more than four.
+	///
+	/// Counts remote follows, not local intents: `register_follow_intent`
+	/// records an entry before the node has acknowledged anything, so counting
+	/// entries alone would pass even if every follow went to one socket.
 	#[test]
 	fn a_products_follows_do_not_consume_another_scopes_budget() {
 		let provider = Arc::new(ScriptedProvider::new(|request| {
@@ -2578,20 +2602,85 @@ mod tests {
 			sent.iter().filter(|r| r.contains("chainHead_v1_follow")).count() >= 5
 		});
 
-		// Five follows, but spread over two connections, so neither is over the
-		// node's four-per-connection budget.
-		let connections = core.connections.lock().unwrap();
-		let per_connection: Vec<usize> =
-			connections.values().map(|c| c.follows.lock().unwrap().len()).collect();
-		let total: usize = per_connection.iter().sum();
-		drop(connections);
-		println!("FINDING: follows per connection = {per_connection:?}");
+		// Each follow is established only once the node has answered, which it
+		// does on the connection that asked.
+		let established = |connection: &Arc<ChainConnection>| {
+			connection
+				.follows
+				.lock()
+				.unwrap()
+				.values()
+				.filter(|follow| follow.remote_subscription_id.is_some())
+				.count()
+		};
+		let mut per_connection = Vec::new();
+		for _ in 0..200 {
+			per_connection =
+				core.connections.lock().unwrap().values().map(established).collect::<Vec<_>>();
+			if per_connection.iter().sum::<usize>() == 5 {
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(10));
+		}
+		per_connection.sort_unstable();
+
 		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 2);
-		assert_eq!(total, 5);
-		assert!(
-			per_connection.iter().all(|n| *n <= 4),
-			"a connection carries more than the node's budget: {per_connection:?}",
+		assert_eq!(
+			per_connection,
+			vec![1, 4],
+			"five established follows did not split one per product across two connections",
 		);
+	}
+
+	/// A scope that ends takes its connections with it. `core_instance` never
+	/// repeats, so without this the entry is never asked for again and the
+	/// cache grows for the life of the process. The smoldot provider caps
+	/// connections at 32, so a leak there eventually refuses every connect.
+	#[test]
+	fn a_scope_releases_its_connections_when_it_ends() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+		let other_chain = vec![0xcd; 32];
+
+		let product = core.for_product(1);
+		for chain in [&genesis, &other_chain] {
+			futures::executor::block_on(product.connection_for("release_test", chain))
+				.expect("connection");
+		}
+		futures::executor::block_on(core.connection_for("release_test", &genesis))
+			.expect("core connection");
+		assert_eq!(core.connections.lock().unwrap().len(), 3);
+
+		product.release_scope();
+
+		let remaining: Vec<String> = core.connections.lock().unwrap().keys().cloned().collect();
+		println!("FINDING: connections left after the product ended = {remaining:?}");
+		assert_eq!(remaining.len(), 1, "the product's connections outlived it");
+		assert!(
+			remaining[0].starts_with("core:"),
+			"releasing a product took the core's connection with it: {remaining:?}",
+		);
+	}
+
+	/// Releasing one product leaves another product's connections alone.
+	#[test]
+	fn releasing_one_product_does_not_touch_another() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+
+		let first = core.for_product(1);
+		let second = core.for_product(2);
+		for runtime in [&first, &second] {
+			futures::executor::block_on(runtime.connection_for("release_test", &genesis))
+				.expect("connection");
+		}
+
+		first.release_scope();
+
+		let remaining: Vec<String> = core.connections.lock().unwrap().keys().cloned().collect();
+		assert_eq!(remaining, vec!["p2:".to_owned() + &encode_hex(&genesis)]);
 	}
 
 	#[test]
