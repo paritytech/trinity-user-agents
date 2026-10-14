@@ -150,8 +150,6 @@ pub struct NetworkConfig {
 	pub network_suffix: &'static str,
 	pub identity_backend_base: &'static str,
 	pub people_ws: &'static str,
-	// Read only by tests; production routing goes through `live_chain_endpoints`.
-	#[allow(dead_code)]
 	pub bulletin_ws: &'static str,
 	/// Asset Hub RPC, where PGAS allowances are claimed.
 	pub asset_hub_ws: &'static str,
