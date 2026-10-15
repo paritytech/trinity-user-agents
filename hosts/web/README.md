@@ -294,9 +294,10 @@ the worker's calls reach the core as frames, which the inspector's **TrUAPI** vi
 - **Custom messages.** A custom message is drawn by asking the worker to render it (`RenderContext::ChatMessage`); each
   tree the worker sends replaces the card. `src/product-render.ts` draws the tree as DOM: text as text, never markup,
   sizes clamped, colors and type from the host's tokens. Images are shown from the worker's verified archive or from the
-  network's Bulletin gateway by CID, and from no other address. A button press and a text field change go back to the
-  worker as renderer actions. A tree deeper than 48 or larger than 2000 nodes is not drawn. A text field loses focus
-  when the worker sends a new tree.
+  network's Bulletin gateway by CID, and from no other address. An archive image is read from the copy in the worker
+  frame's own storage: that frame is `credentialless` in Chrome, so the page's storage does not hold it, and the worker
+  can write that copy too. A button press and a text field change go back to the worker as renderer actions. A tree
+  deeper than 48 or larger than 2000 nodes is not drawn. A text field loses focus when the worker sends a new tree.
 - **The room's text input.** A room whose footer is `TextInput` shows a composer. What the user types is kept in the
   room and sent to the worker as a `MessagePosted` chat action from the peer `native`, as the iOS host names the user.
 - **Trust.** A worker runs on this host's origin, as a product opened by name does, and is trusted like one: it can
@@ -510,9 +511,9 @@ opens, so the light client reaches no chain. It checks that:
   and chat key as the core, has no on or off controls, and stops at sign-out;
 - Pocket is drawn by the host as the native two cards, and gives the digital dollar no amount;
 - a product worker, built from `browser/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs from its
-  manifest, creates a room, posts text and a custom card, redraws the card when its button is pressed, answers what the
-  user types, makes no request outside this host, shows in the inspector, stops at sign-out, is not seen by another
-  wallet, and starts again when its wallet signs back in.
+  manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws the card
+  when its button is pressed, answers what the user types, makes no request outside this host, shows in the inspector,
+  stops at sign-out, is not seen by another wallet, and starts again when its wallet signs back in.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).

@@ -1,8 +1,9 @@
 /**
  * A product worker for the browser test: it creates one room, posts a text
- * and a counter card, draws the card, counts button presses, and answers what
- * the user types. It reaches the host only through TrUAPI, and makes no other
- * request. What it saw is kept on `window.__fixture` for the test to read.
+ * and a counter card, draws the card with an image from its own archive,
+ * counts button presses, and answers what the user types. It reaches the host
+ * only through TrUAPI, and makes no other request. What it saw is kept on
+ * `window.__fixture` for the test to read.
  */
 import type { RendererNode } from "@parity/truapi";
 import { getClientSync } from "@parity/truapi/sandbox";
@@ -53,6 +54,16 @@ const card = (): RendererNode => ({
     modifiers: [{ tag: "Padding", value: { top: 12, end: 12 } }],
     props: { horizontalAlignment: "Start" },
     children: [
+      {
+        tag: "Image",
+        value: {
+          modifiers: [
+            { tag: "Width", value: 16 },
+            { tag: "Height", value: 16 },
+          ],
+          props: { source: { tag: "Archive", value: "images/dot.svg" } },
+        },
+      },
       text(`count ${count}`, "TitleMediumRegular"),
       text("<b>not markup</b>", "BodySmallRegular"),
       {

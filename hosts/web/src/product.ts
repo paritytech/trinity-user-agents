@@ -55,6 +55,12 @@ export interface OpenProduct {
    * still reach the user.
    */
   setVisible(visible: boolean): void;
+  /**
+   * The Cache Storage the frame's document sees, or null when its document
+   * is not on this page's origin. A `credentialless` frame has storage of its
+   * own, so what its loader stored is found there and not in this page's.
+   */
+  frameCaches(): CacheStorage | null;
   dispose(): void;
 }
 
@@ -168,6 +174,13 @@ export async function openProduct(
     provider,
     setVisible(visible) {
       frame.iframe.style.display = visible ? "" : "none";
+    },
+    frameCaches() {
+      try {
+        return frame.iframe.contentWindow?.caches ?? null;
+      } catch {
+        return null;
+      }
     },
     dispose() {
       window.removeEventListener("message", onWindowMessage);
