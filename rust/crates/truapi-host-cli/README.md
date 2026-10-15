@@ -767,14 +767,16 @@ Scripts under `js/scripts/` include:
   The funding phase builds the host with `--features test-host` and installs
   a scripted funding overlay: each request the product makes is answered with
   the next outcome from `TRUAPI_FUNDING_OUTCOMES`
-  (`deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel`). A
+  (`deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel,provide-cancel-moved,provide-cancel-moved`). A
   `deliver`, `release` or `fail` session is settled through the core's test
   hook with no chain behind it. A `provide` session is handed to the product
   that asked, which `TRUAPI_FUNDING_PROVIDERS` offers as a provider with a
   scripted Worker manifest seeded into the core's cache, which runs as a Worker and serves it as the provider: it reports
   progress, starts top-ups and payment requests, which scripted engines
   complete in full and record in `TRUAPI_FUNDING_LEDGER`, and the core settles
-  the session from them. `provide-cancel` also cancels it. The phase runs the
+  the session from them. `provide-cancel` also cancels it, and
+  `provide-cancel-moved` cancels once money moved and accepts the provider's
+  offer, recording each cancel's outcome and answer. The phase runs the
   host twice on the same storage, so the provider resumes an inbound session
   after a restart with the state it saved. Every overlay request and session change is recorded in
   `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every

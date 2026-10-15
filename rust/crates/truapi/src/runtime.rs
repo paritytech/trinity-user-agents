@@ -1530,7 +1530,8 @@ impl FundingProvider for ProductRuntimeHost {
 	) -> Result<HostFundingReportResponse, CallError<HostFundingReportError>> {
 		let HostFundingReportRequest::V1(request) = request;
 		self.funding_provider_access()?;
-		self.services
+		let reported = self
+			.services
 			.funding()
 			.report(
 				self.platform.as_ref(),
@@ -1539,7 +1540,11 @@ impl FundingProvider for ProductRuntimeHost {
 				&request.intent,
 				request.update,
 			)
-			.await?
+			.await?;
+		// A cancel offer can lapse on its own, so the expiry sweep keeps time
+		// for it.
+		self.services.funding().keep_expiring(&self.services);
+		reported
 			.map(|()| HostFundingReportResponse::V1)
 			.map_err(|error| CallError::Domain(HostFundingReportError::V1(error)))
 	}
