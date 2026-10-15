@@ -196,3 +196,64 @@ suite("mute and archive on the test host", () => {
     expect(roomEvents[1].data).toEqual({ mutedUntil: null, archived: true });
   });
 });
+
+suite("preimage attachments on the test host", () => {
+  const MIB = 1024 * 1024;
+  const bytes = (size: number) => new Uint8Array(size).map((_, index) => index % 251);
+  const fetched = (running: Running, size: number) =>
+    until(
+      () => running.log().find((line) => line.via === "preimage" && line.kind === "Fetched" && (line.data as { size: number }).size === size),
+      `the product read back ${size} bytes`,
+    );
+
+  test("S57: a 3 MiB photo and a 6 MiB file arrive as preimages in both modes, and the product reads them", async () => {
+    const running = await start();
+    const { host } = running;
+    for (const room of ["host", "source"]) {
+      if (room === "source") await host.chatUser.open("source");
+      await host.chatUser.send(room, "/features preimage on");
+      await waitForText(host, room, "ok /features preimage on");
+      await host.chatUser.send(room, "/echo");
+      await waitForText(host, room, "ok /echo");
+
+      const photo = await host.chatUser.sendAttachment(room, { kind: "Image", mimeType: "image/png", bytes: bytes(3 * MIB) });
+      expect(photo.tag).toBe("Posted");
+      await waitForText(host, room, `echo media Image ${3 * MIB} Preimage`);
+      const file = await host.chatUser.sendAttachment(room, {
+        kind: "File",
+        mimeType: "application/pdf",
+        bytes: bytes(6 * MIB),
+        fileName: "big.pdf",
+      });
+      expect(file.tag).toBe("Posted");
+      await waitForText(host, room, `echo media File ${6 * MIB} Preimage`);
+      // A small one still travels inline.
+      await host.chatUser.sendAttachment(room, { kind: "Image", mimeType: "image/png", bytes: bytes(1024) });
+      await waitForText(host, room, "echo media Image 1024 Inline");
+      await host.chatUser.send(room, "/echo");
+      await waitForText(host, room, "ok /echo");
+    }
+    await fetched(running, 3 * MIB);
+    await fetched(running, 6 * MIB);
+    expect(running.log().filter((line) => line.via === "preimage" && line.kind === "Fetched")).toHaveLength(4);
+  });
+
+  test("S58: without the flag, above 8 MiB or with PreimageSubmit refused, nothing is uploaded or sent", async () => {
+    const running = await start();
+    const { host } = running;
+    const sent = () => host.feed("host").filter((message) => message.body.tag === "RichText" && message.origin.participantId === "user");
+    const refused = async (size: number) => {
+      const outcome = await host.chatUser.sendAttachment("host", { kind: "File", mimeType: "application/pdf", bytes: bytes(size) });
+      return outcome.tag === "Refused" ? outcome.reason : `sent ${outcome.tag}`;
+    };
+
+    expect(await refused(3 * MIB)).toContain("does not declare preimage attachments");
+    await host.chatUser.send("host", "/features preimage on");
+    await waitForText(host, "host", "ok /features preimage on");
+    expect(await refused(8 * MIB + 1)).toContain("larger than 8388608 bytes");
+    host.revokePermission("PreimageSubmit");
+    expect(await refused(3 * MIB)).toContain("refused preimage submission");
+    expect(sent()).toEqual([]);
+    expect(running.log().filter((line) => line.via === "media")).toEqual([]);
+  });
+});

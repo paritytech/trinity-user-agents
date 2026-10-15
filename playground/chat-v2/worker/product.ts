@@ -22,7 +22,7 @@ import type {
   VersionedProductRendererRenderError,
 } from "@parity/truapi";
 import type { HexString } from "@parity/truapi/scale";
-import { hexToUtf8, utf8ToHex } from "./bytes";
+import { hexLength, hexToUtf8, utf8ToHex } from "./bytes";
 import { Clock, type RoomId } from "./clock";
 import { parseCommand, parseCommandEvent, type ParsedCommand } from "./commands";
 import type { ProductContext, SampleClient } from "./context";
@@ -122,6 +122,35 @@ function bodyText(body: ChatMessageBody): string | undefined {
   if (body.tag === "Text") return body.value.text;
   if (body.tag === "RichText") return body.value.text;
   return undefined;
+}
+
+/** How long the product waits for the bytes of a preimage the user sent. */
+export const MEDIA_FETCH_TIMEOUT_MS = 10_000;
+
+/** One media item of a user message: its kind, its size and its resource. */
+export interface MediaSummary {
+  kind: "Image" | "Video" | "File";
+  size: number;
+  resource: "Inline" | "Preimage";
+  /** The preimage key, for a `Preimage` resource. */
+  key?: HexString;
+}
+
+/** The media items of a body. */
+export function mediaOf(body: ChatMessageBody): MediaSummary[] {
+  if (body.tag !== "RichText") return [];
+  return body.value.media.map((item) => {
+    const { resource, meta } = item.value;
+    const size =
+      meta.sizeBytes !== undefined
+        ? Number(meta.sizeBytes)
+        : resource.tag === "Inline"
+          ? hexLength(resource.value.bytes)
+          : 0;
+    return resource.tag === "Preimage"
+      ? { kind: item.tag, size, resource: "Preimage", key: resource.value.key }
+      : { kind: item.tag, size, resource: "Inline" };
+  });
 }
 
 /** The summary of an echoed room event. */
@@ -374,6 +403,45 @@ export class SampleProduct {
     await this.#feed.reply(room, `echo ${event.tag}${summary === "" ? "" : ` ${summary}`}`, { echo: true });
   }
 
+  /**
+   * Log each media item of a user message as `<kind> <size> <Inline|Preimage>`
+   * and, with `/echo`, answer `echo media <kind> <size> <resource>`. The
+   * product reads the bytes of a preimage back with `lookup_subscribe` and
+   * logs whether they came.
+   */
+  async #media(room: RoomId, body: ChatMessageBody): Promise<void> {
+    for (const item of mediaOf(body)) {
+      const line = `${item.kind} ${item.size} ${item.resource}`;
+      this.#record({ via: "media", room, kind: item.kind, data: { ...item, line } });
+      if (this.#settings(room).echo) await this.#feed.reply(room, `echo media ${line}`, { echo: true });
+      if (item.key !== undefined) void this.#fetchPreimage(room, item.key);
+    }
+  }
+
+  /** Read a preimage the user sent and log `Fetched` with its size, or `NotFetched`. */
+  #fetchPreimage(room: RoomId, key: HexString): Promise<void> {
+    return new Promise((resolve) => {
+      let done = false;
+      let subscription: { unsubscribe(): void } | undefined;
+      const finish = (kind: "Fetched" | "NotFetched", size: number | null) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        subscription?.unsubscribe();
+        this.#record({ via: "preimage", room, kind, data: { key, size } });
+        resolve();
+      };
+      const timer = setTimeout(() => finish("NotFetched", null), MEDIA_FETCH_TIMEOUT_MS);
+      subscription = this.#client.preimage.lookupSubscribe({ request: { key } }).subscribe({
+        next: (item) => {
+          if (item.value !== undefined) finish("Fetched", hexLength(item.value));
+        },
+        error: () => finish("NotFetched", null),
+      });
+      if (done) subscription.unsubscribe();
+    });
+  }
+
   // -------------------------------------------------------------- queries
 
   #registerQueries(): void {
@@ -545,6 +613,7 @@ export class SampleProduct {
       const text = bodyText(action.value.body);
       return async () => {
         await echo();
+        await this.#media(room, action.value.body);
         await this.#run(room, text === undefined ? undefined : parseCommand(text));
       };
     }
@@ -606,6 +675,7 @@ export class SampleProduct {
     switch (event.tag) {
       case "MessagePosted": {
         await this.#echo(room, event);
+        await this.#media(room, event.value.body);
         const text = bodyText(event.value.body);
         return this.#run(room, text === undefined ? undefined : parseCommand(text));
       }

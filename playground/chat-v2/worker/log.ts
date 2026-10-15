@@ -23,7 +23,9 @@ export type LogVia =
   /** The preimage key `/post rich` uses, once at each start. */
   | "preimage"
   /** One item of `room_events_subscribe`. */
-  | "room_events";
+  | "room_events"
+  /** One media item of a message the user sent. */
+  | "media";
 
 export interface LogEntry {
   via: LogVia;

@@ -64,6 +64,8 @@ export interface FakeClientOptions {
   capabilities?: HostChatCapabilitiesResponse;
   /** The product local storage; share it to play a worker restart. */
   storage?: Map<string, `0x${string}`>;
+  /** The preimages `lookupSubscribe` finds, by key. */
+  preimages?: Map<string, `0x${string}`>;
 }
 
 export function createFakeClient(options: FakeClientOptions = {}) {
@@ -145,6 +147,13 @@ export function createFakeClient(options: FakeClientOptions = {}) {
     },
     preimage: {
       submit: unary("preimageSubmit", () => `0x${"ab".repeat(32)}`),
+      lookupSubscribe: ({ request }: { request: { key: string } }) => ({
+        subscribe(observer: Observer<{ value?: `0x${string}` }> = {}) {
+          calls.push({ method: "preimageLookup", request });
+          queueMicrotask(() => observer.next?.({ value: options.preimages?.get(request.key) }));
+          return { unsubscribe: () => {}, subscriptionId: "fake" };
+        },
+      }),
     },
     notifications: {
       sendPushNotification: unary("sendPushNotification", () => ({ id: 7 })),

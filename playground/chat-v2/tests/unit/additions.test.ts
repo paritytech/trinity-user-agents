@@ -264,3 +264,45 @@ describe("/notify and the user state", () => {
     ]);
   });
 });
+
+describe("media from the user", () => {
+  const KEY = `0x${"cd".repeat(32)}` as const;
+
+  test("logs each item, echoes it and reads a preimage back (S57)", async () => {
+    const running = start({ preimages: new Map([[KEY, "0x010203"]]) });
+    await command(running, "/echo");
+    running.fake.emitEvent({
+      roomId: "host",
+      peer: "native",
+      event: {
+        tag: "MessagePosted",
+        value: {
+          messageId: "m-media",
+          body: {
+            tag: "RichText",
+            value: {
+              media: [
+                { tag: "Image", value: { resource: { tag: "Inline", value: { mimeType: "image/png", bytes: "0x0102" } }, meta: { mimeType: "image/png" } } },
+                { tag: "File", value: { resource: { tag: "Preimage", value: { key: KEY } }, meta: { mimeType: "application/pdf", sizeBytes: 6_291_456n }, fileName: "big.pdf" } },
+              ],
+            },
+          },
+        },
+      },
+    });
+    await running.product.idle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(posted(running.fake).filter((line) => line.startsWith("echo media"))).toEqual([
+      "echo media Image 2 Inline",
+      "echo media File 6291456 Preimage",
+    ]);
+    expect(running.log().filter((line) => line.via === "media").map((line) => (line.data as { line: string }).line)).toEqual([
+      "Image 2 Inline",
+      "File 6291456 Preimage",
+    ]);
+    expect(running.log().filter((line) => line.via === "preimage" && line.kind === "Fetched")).toEqual([
+      expect.objectContaining({ room: "host", data: { key: KEY, size: 3 } }),
+    ]);
+  });
+});
