@@ -5,8 +5,10 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomUserStateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
@@ -33,6 +35,13 @@ data class ChatRoomPolicy(
     val productQueries: Set<ProductQuery>,
     /** Changes at each configuration that the product sets, so a screen asks its questions again. */
     val configGeneration: Long,
+    /**
+     * The features of the Chat Extension v2 additions as the product declared them. A screen applies a feature only
+     * when the host lists its name in `ChatHostCapabilities`. The meta of the messages is in `ChatMessageMetaRepository`.
+     */
+    val features: ChatRoomFeaturesModel,
+    /** What the user set for the room: mute and archive. */
+    val userState: ChatRoomUserStateModel,
 ) {
     enum class MessageStore {
         /** The host database keeps the messages. */
@@ -131,10 +140,12 @@ data class ChatRoomPolicy(
             commands = emptyList(),
             productQueries = emptySet(),
             configGeneration = 0,
+            features = ChatRoomFeaturesModel.HOST_DEFAULT,
+            userState = ChatRoomUserStateModel.NONE,
         )
 
-        fun from(declarations: ChatRoomDeclarations?): ChatRoomPolicy {
-            if (declarations == null) return Defaults
+        fun from(declarations: ChatRoomDeclarations?, userState: ChatRoomUserStateModel = ChatRoomUserStateModel.NONE): ChatRoomPolicy {
+            if (declarations == null) return Defaults.copy(userState = userState)
 
             val config = declarations.effectiveConfig
 
@@ -161,6 +172,8 @@ data class ChatRoomPolicy(
                 commands = declarations.commands.orEmpty(),
                 productQueries = config.productQueries(),
                 configGeneration = declarations.configGeneration,
+                features = declarations.effectiveFeatures,
+                userState = userState,
             )
         }
     }

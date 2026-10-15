@@ -40,12 +40,15 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageDirection
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReaction
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatOriginCustomConfiguration
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
@@ -66,6 +69,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductCha
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.DeleteRoomUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatThreadRooms
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageProcessingRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
@@ -90,6 +94,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductFeedApplier
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductRoomAdditions
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductRoomDeclarer
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.SlashCommand
 import kotlinx.coroutines.flow.Flow
@@ -131,6 +136,8 @@ class ChatEngine @Inject constructor(
     private val deleteRoomUseCase: DeleteRoomUseCase,
     private val productRoomDeclarer: ProductRoomDeclarer,
     private val productFeedApplier: ProductFeedApplier,
+    private val productRoomAdditions: ProductRoomAdditions,
+    private val chatThreadRooms: ChatThreadRooms,
 ) : ChatMessageSender {
     private val savedMessagesFlow = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 64)
 
@@ -275,7 +282,11 @@ class ChatEngine @Inject constructor(
     context(scope: ComputationalScope)
     fun subscribeChatSummaries(): Flow<List<ChatSummary>> {
         return observeGlobalContentDecoder().flatMapLatest { contentDecoder ->
-            val allChatSummaries = chatMessageRepository.subscribeLastMessageSummaries(contentDecoder)
+            // A thread room opens from the summary under its parent message, so the list does not show it (07-LATER §9.2).
+            val allChatSummaries = combine(
+                chatMessageRepository.subscribeLastMessageSummaries(contentDecoder),
+                chatThreadRooms.observeThreadRoomIds(),
+            ) { summaries, threadRoomIds -> summaries.filterNot { it.chatId in threadRoomIds } }
             val visibleRoomIds = allChatSummaries.map { summaries -> summaries.mapToSet { it.chatId } }
                 .distinctUntilChanged()
 
@@ -865,6 +876,15 @@ class ChatEngine @Inject constructor(
         override suspend fun applyFeedUpdate(chatId: ChatId, update: ProductFeedUpdateModel): Result<Unit> =
             productFeedApplier.apply(extensionId, chatId, update, getCustomContentDecoder(chatId)) { saveMessage(it) }
                 .onSuccess { messagesChangedFlow.tryEmit(Unit) }
+
+        override suspend fun setRoomFeatures(chatId: ChatId, features: ChatRoomFeaturesModel): Result<Unit> =
+            productRoomAdditions.setFeatures(extensionId, chatId, features)
+
+        override suspend fun setMessageMeta(chatId: ChatId, messageId: String, meta: ChatMessageMetaModel): Result<Unit> =
+            productRoomAdditions.setMessageMeta(extensionId, chatId, messageId, meta, getCustomContentDecoder(chatId))
+
+        override suspend fun setRoomCall(chatId: ChatId, call: ChatRoomCallModel?): Result<Unit> =
+            productRoomAdditions.setCall(extensionId, chatId, call)
     }
 }
 

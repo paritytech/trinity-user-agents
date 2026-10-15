@@ -137,6 +137,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.Execu
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatRoomEventSink
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChatRoomEventSink
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -225,6 +227,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindPocketFaceStreams(impl: TrUAPIPocketFaceStreams): PocketFaceStreams
+
+    @Binds
+    fun bindProductChatRoomEventSink(impl: TrUAPIChatRoomEventSink): ProductChatRoomEventSink
 
     @Binds
     fun bindPocketImageResolver(impl: RealPocketImageResolver): PocketImageResolver

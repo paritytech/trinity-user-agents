@@ -5,9 +5,12 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
@@ -77,6 +80,20 @@ interface ChatExtensionContext {
      * ids of the extension. A refusal is a `ProductFeedRejection`.
      */
     suspend fun applyFeedUpdate(chatId: ChatId, update: ProductFeedUpdateModel): Result<Unit>
+
+    // Chat Extension v2 additions. Each call below fails with `UnknownChatRoomException` when the extension owns no such room.
+
+    /** Replaces the features of the room whole. The host keeps a feature also when it does not serve it. */
+    suspend fun setRoomFeatures(chatId: ChatId, features: ChatRoomFeaturesModel): Result<Unit>
+
+    /**
+     * Replaces the meta of one message, by the message id of the extension. An empty meta removes it. In a room whose
+     * messages the host keeps, a message that the room does not hold fails with `ProductFeedRejection.UnknownMessage`.
+     */
+    suspend fun setMessageMeta(chatId: ChatId, messageId: String, meta: ChatMessageMetaModel): Result<Unit>
+
+    /** Shows the call of the room, or removes it with null. The host keeps it in memory only. */
+    suspend fun setRoomCall(chatId: ChatId, call: ChatRoomCallModel?): Result<Unit>
 }
 
 suspend fun ChatExtensionContext.markMessageProcessed(message: ChatMessage) {

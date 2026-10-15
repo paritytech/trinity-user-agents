@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
@@ -20,7 +21,9 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomEventModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomUserStateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
@@ -35,6 +38,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParamet
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatRoomEventSink
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
@@ -67,16 +71,17 @@ class ProductChatExtensionTest {
     private val extensionId = product.id.toChatExtensionId()
     private val declarations: ChatRoomDeclarationsRepository = mockk()
     private val feedListeners: ProductFeedListeners = mockk()
+    private val roomEventSink: ProductChatRoomEventSink = mockk()
     private val room = ChatId.forExtensionRoom(extensionId, ROOM)
 
     private fun extension(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners)
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, roomEventSink)
 
     private fun placedByHost(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, ProductChatExtensionOrigin.PlacedByHost)
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, roomEventSink, ProductChatExtensionOrigin.PlacedByHost)
 
     private fun placedByHost(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, ProductChatExtensionOrigin.PlacedByHost)
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, roomEventSink, ProductChatExtensionOrigin.PlacedByHost)
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
@@ -326,6 +331,27 @@ class ProductChatExtensionTest {
         assertTrue(declared)
         assertFalse(undeclared)
         assertEquals(listOf<ProductRoomEvent>(ProductRoomEvent.Command("roll", "2")), worker.roomEvents.map { it.second })
+    }
+
+    @Test
+    fun `a room event of the additions goes to the core, not through the worker`() = runTest {
+        val worker = RecordingWorker()
+        val extension = extension(FakeRefCounter(worker))
+        withChatHost { extension.startGlobalWork() }
+        val event = ChatRoomEventModel.UserStateChanged(ChatRoomUserStateModel(mutedUntil = 5, archived = true))
+        coEvery { roomEventSink.publish(any(), any(), any()) } returns Result.success(Unit)
+
+        extension.onRoomEvent(room, event)
+
+        coVerify { roomEventSink.publish(product.id, ProductChatIdParameter(ROOM), event) }
+        assertTrue(worker.roomEvents.isEmpty())
+    }
+
+    @Test
+    fun `a room event of another extension is not sent`() = runTest {
+        extension(FakeRefCounter(RecordingWorker())).onRoomEvent(ChatId.forExtensionRoom("ProductBot_other.dot", ROOM), ChatRoomEventModel.CallEnded("c1"))
+
+        coVerify(exactly = 0) { roomEventSink.publish(any(), any(), any()) }
     }
 
     @Test

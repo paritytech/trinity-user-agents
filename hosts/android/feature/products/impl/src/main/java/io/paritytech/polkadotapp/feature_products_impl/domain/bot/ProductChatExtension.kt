@@ -17,10 +17,14 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomEventModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
@@ -56,6 +60,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.Produc
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatRoomEventSink
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
@@ -97,6 +102,7 @@ class ProductChatExtension(
     private val workerRefCounter: ProductWorkerRefCounter,
     private val declarationsRepository: ChatRoomDeclarationsRepository,
     private val feedListeners: ProductFeedListeners,
+    private val roomEventSink: ProductChatRoomEventSink,
     val origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
@@ -287,6 +293,13 @@ class ProductChatExtension(
             .onFailure { Timber.w(it, "No room event %s for %s", roomEvent::class.simpleName, product.id.value) }
     }
 
+    // The core keeps the event until the worker subscribes, so the event does not start the worker.
+    override suspend fun onRoomEvent(chatId: ChatId, event: ChatRoomEventModel) {
+        val room = chatId.productRoomId(id) ?: return
+        roomEventSink.publish(product.id, room, event)
+            .onFailure { Timber.w(it, "No room event %s for %s", event::class.simpleName, product.id.value) }
+    }
+
     override suspend fun handleCommand(chatId: ChatId, name: String, arguments: String): Boolean {
         val room = chatId.productRoomId(id) ?: return false
         val declared = declarationsRepository.get(chatId)?.commands.orEmpty().any { it.name == name }
@@ -407,6 +420,18 @@ class ProductChatExtension(
             chatIdParameter: ProductChatIdParameter,
             activity: ChatRoomActivityModel?,
         ): Result<Unit> = extensionContext.setRoomActivity(chatIdParameter.toChatId(id), activity)
+
+        override suspend fun setRoomFeatures(chatIdParameter: ProductChatIdParameter, features: ChatRoomFeaturesModel): Result<Unit> =
+            extensionContext.setRoomFeatures(chatIdParameter.toChatId(id), features)
+
+        override suspend fun setMessageMeta(
+            chatIdParameter: ProductChatIdParameter,
+            messageId: String,
+            meta: ChatMessageMetaModel,
+        ): Result<Unit> = extensionContext.setMessageMeta(chatIdParameter.toChatId(id), messageId, meta)
+
+        override suspend fun setRoomCall(chatIdParameter: ProductChatIdParameter, call: ChatRoomCallModel?): Result<Unit> =
+            extensionContext.setRoomCall(chatIdParameter.toChatId(id), call)
 
         private fun ProductBotMessage.toChatMessageContent(): ChatMessage.Content = when (this) {
             is ProductBotMessage.Text -> ChatMessage.Content.Text(text)

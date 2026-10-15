@@ -170,6 +170,13 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S49",
+    title: "capabilities lists exactly the features whose rows pass, and both byte bounds",
+    mode: "host",
+    phase: "P10.8",
+    drive: true,
+  },
+  {
     id: "S4",
     title: "every preview variant in the chat list",
     mode: "host",

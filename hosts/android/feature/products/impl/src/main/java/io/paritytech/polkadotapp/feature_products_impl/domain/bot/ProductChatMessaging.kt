@@ -2,9 +2,12 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
@@ -59,4 +62,14 @@ interface ProductChatMessaging {
 
     /** Gives a feed update of a room that the product keeps to the screens that show it. False when none does. */
     suspend fun deliverLiveFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Boolean
+
+    // Chat Extension v2 additions. The features of a room come with its declarations. The user state of the rooms and
+    // the bot personas do not need a chat surface: `ProductChatStoredState` reads them.
+
+    suspend fun setRoomFeatures(chatIdParameter: ProductChatIdParameter, features: ChatRoomFeaturesModel): Result<Unit>
+
+    /** A refusal is a `ProductFeedRejection`. */
+    suspend fun setMessageMeta(chatIdParameter: ProductChatIdParameter, messageId: String, meta: ChatMessageMetaModel): Result<Unit>
+
+    suspend fun setRoomCall(chatIdParameter: ProductChatIdParameter, call: ChatRoomCallModel?): Result<Unit>
 }

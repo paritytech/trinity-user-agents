@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
@@ -16,6 +17,7 @@ fun declarations(
     avatar: ChatResourceModel? = null,
     preview: ChatRoomPreviewModel? = null,
     footer: ChatRoomFooterModel? = null,
+    features: ChatRoomFeaturesModel? = null,
 ) = ChatRoomDeclarations(
     config = config,
     configGeneration = 1,
@@ -25,6 +27,7 @@ fun declarations(
     suggestions = null,
     commands = null,
     footer = footer,
+    features = features,
 )
 
 fun preview(

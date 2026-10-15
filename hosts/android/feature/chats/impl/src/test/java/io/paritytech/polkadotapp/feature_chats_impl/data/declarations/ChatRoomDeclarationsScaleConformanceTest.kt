@@ -13,11 +13,13 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewTextModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatThreadParentModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.ChatResourceLocal
@@ -120,6 +122,7 @@ class ChatRoomDeclarationsScaleConformanceTest {
             suggestions = emptyList(),
             commands = listOf(ChatCommandModel("go", "Go", null)),
             footer = ChatRoomFooterModel.Empty,
+            features = ChatRoomFeaturesModel.HOST_DEFAULT.copy(threadOf = ChatThreadParentModel("lobby", "m1")),
         )
 
         val row = ChatRoomDeclarationsLocal(
@@ -133,6 +136,9 @@ class ChatRoomDeclarationsScaleConformanceTest {
             suggestions = declarations.suggestions!!.encodeSuggestions(),
             commands = declarations.commands!!.encodeCommands(),
             footer = declarations.footer!!.encode(),
+            features = declarations.features!!.encode(),
+            mutedUntil = null,
+            archived = false,
         )
 
         assertEquals(declarations, row.toDomain())
@@ -140,12 +146,13 @@ class ChatRoomDeclarationsScaleConformanceTest {
 
     @Test
     fun `a part that does not decode reads as not declared`() {
-        val row = ChatRoomDeclarationsLocal(byteArrayOf(1), byteArrayOf(9), 1, null, null, null, null, null, null, byteArrayOf(7))
+        val row = ChatRoomDeclarationsLocal(byteArrayOf(1), byteArrayOf(9), 1, null, null, null, null, null, null, byteArrayOf(7), byteArrayOf(1, 9), null, false)
 
         val declarations = row.toDomain()
 
         assertNull(declarations.config)
         assertNull(declarations.footer)
+        assertNull(declarations.features)
     }
 
     private inline fun <reified T> decode(hex: String): T = BinaryScale.decodeFromByteArray<T>(hex.fromHex())

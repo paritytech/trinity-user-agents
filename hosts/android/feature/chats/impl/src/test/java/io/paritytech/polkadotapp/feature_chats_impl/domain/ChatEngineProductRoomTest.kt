@@ -36,6 +36,8 @@ class ChatEngineProductRoomTest {
         deleteRoomUseCase = mockk(),
         productRoomDeclarer = mockk(),
         productFeedApplier = mockk(),
+        productRoomAdditions = mockk(),
+        chatThreadRooms = mockk(),
     )
 
     @Test

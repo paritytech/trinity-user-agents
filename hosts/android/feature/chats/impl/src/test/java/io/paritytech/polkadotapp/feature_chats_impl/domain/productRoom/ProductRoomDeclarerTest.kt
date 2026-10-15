@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarat
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatMessageMetaWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomActivityWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomDeclarationsWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
@@ -29,6 +30,7 @@ class ProductRoomDeclarerTest {
     private val declarationsRepository: ChatRoomDeclarationsRepository = mockk()
     private val declarationsWriter: ChatRoomDeclarationsWriter = mockk(relaxed = true)
     private val activityWriter: ChatRoomActivityWriter = mockk(relaxed = true)
+    private val metaWriter: ChatMessageMetaWriter = mockk(relaxed = true)
 
     private val declarer = ProductRoomDeclarer(
         chatRoomRepository = chatRoomRepository,
@@ -36,6 +38,7 @@ class ProductRoomDeclarerTest {
         declarationsRepository = declarationsRepository,
         declarationsWriter = declarationsWriter,
         activityWriter = activityWriter,
+        metaWriter = metaWriter,
     )
 
     @Test
@@ -77,6 +80,7 @@ class ProductRoomDeclarerTest {
         declarer.setConfig(extensionId, room, productSource)
 
         coVerify { chatMessageRepository.deleteAllChatMessages(room) }
+        coVerify { metaWriter.deleteRoom(room) }
         coVerify { declarationsWriter.setConfig(room, productSource) }
     }
 

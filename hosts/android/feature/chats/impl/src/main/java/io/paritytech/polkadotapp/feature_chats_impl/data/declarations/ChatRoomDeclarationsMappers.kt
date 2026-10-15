@@ -36,6 +36,7 @@ fun ChatRoomDeclarationsLocal.toDomain(): ChatRoomDeclarations = ChatRoomDeclara
     suggestions = suggestions?.decodeOrNull<List<ChatSuggestionLocal>>("suggestions")?.map { it.toDomain() },
     commands = commands?.decodeOrNull<List<ChatCommandLocal>>("commands")?.map { it.toDomain() },
     footer = footer?.decodeOrNull<ChatRoomFooterLocal>("footer")?.toDomain(),
+    features = features?.decodeFeatures(),
 )
 
 fun ChatRoomConfigModel.encode(): ByteArray = BinaryScale.encodeToByteArray(toLocal())

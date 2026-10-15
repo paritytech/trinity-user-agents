@@ -27,7 +27,7 @@ test("every Android scenario of the test plan has one entry", () => {
     assert.ok(!ids.includes(id), `${id} has no Android layer`);
   }
   for (const scenario of ANDROID_CHAT_V2_SCENARIOS) {
-    assert.match(scenario.phase, /^P8\.\d$/);
+    assert.match(scenario.phase, /^P(8|10)\.\d$/);
   }
 });
 

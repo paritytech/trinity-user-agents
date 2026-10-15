@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewR
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatHostBridge
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatStoredState
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChainDirectory
@@ -58,6 +59,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
+    private val chatStoredState: ProductChatStoredState,
     dispatchers: CoroutineDispatchers,
 ) {
     private class RunningWorker(val scope: CoroutineScope) {
@@ -156,7 +158,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
                 chat = if (script.includesChat) {
-                    ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
+                    ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId), chatStoredState)
                 } else {
                     null
                 },

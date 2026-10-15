@@ -1,7 +1,9 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomUserStateRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomUserStateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isExtensionChat
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -21,12 +23,14 @@ interface ChatRoomPolicyProvider {
 
 class RealChatRoomPolicyProvider @Inject constructor(
     private val declarationsRepository: ChatRoomDeclarationsRepository,
+    private val userStateRepository: ChatRoomUserStateRepository,
 ) : ChatRoomPolicyProvider {
     override fun observePolicy(chatId: ChatId): Flow<ChatRoomPolicy?> {
         if (!chatId.isExtensionChat()) return flowOfValue(null)
 
-        return declarationsRepository.observe(chatId)
-            .map { ChatRoomPolicy.from(it) }
+        return combine(declarationsRepository.observe(chatId), userStateRepository.observe(chatId)) { declarations, userState ->
+            ChatRoomPolicy.from(declarations, userState)
+        }
             .distinctUntilChanged()
     }
 
@@ -34,10 +38,13 @@ class RealChatRoomPolicyProvider @Inject constructor(
         val roomIds = chatIds.filter { it.isExtensionChat() }
         if (roomIds.isEmpty()) return flowOfValue(emptyMap())
 
-        val policies = roomIds.map { chatId ->
-            declarationsRepository.observe(chatId).map { chatId to ChatRoomPolicy.from(it) }
-        }
+        val declarations = roomIds.map { chatId -> declarationsRepository.observe(chatId).map { chatId to it } }
 
-        return combine(policies) { it.toMap() }.distinctUntilChanged()
+        return combine(combine(declarations) { it.toMap() }, userStateRepository.observeAll()) { declared, userStates ->
+            declared.mapValues { (chatId, declaration) ->
+                ChatRoomPolicy.from(declaration, userStates[chatId] ?: ChatRoomUserStateModel.NONE)
+            }
+        }
+            .distinctUntilChanged()
     }
 }

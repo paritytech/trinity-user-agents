@@ -17,6 +17,12 @@ abstract class ChatRoomDeclarationsDao {
     @Query("DELETE FROM chat_room_declarations WHERE chatId = :chatId")
     abstract suspend fun delete(chatId: ByteArray)
 
+    @Query("SELECT chatId, features FROM chat_room_declarations WHERE features IS NOT NULL")
+    abstract fun observeDeclaredFeatures(): Flow<List<DeclaredFeatures>>
+
+    @Query("SELECT chatId, mutedUntil, archived FROM chat_room_declarations WHERE mutedUntil IS NOT NULL OR archived = 1")
+    abstract fun observeUserStates(): Flow<List<UserState>>
+
     @Transaction
     open suspend fun setConfig(chatId: ByteArray, config: ByteArray) {
         insertEmpty(chatId)
@@ -59,6 +65,18 @@ abstract class ChatRoomDeclarationsDao {
         updateFooter(chatId, footer)
     }
 
+    @Transaction
+    open suspend fun setFeatures(chatId: ByteArray, features: ByteArray) {
+        insertEmpty(chatId)
+        updateFeatures(chatId, features)
+    }
+
+    @Transaction
+    open suspend fun setUserState(chatId: ByteArray, mutedUntil: Long?, archived: Boolean) {
+        insertEmpty(chatId)
+        updateUserState(chatId, mutedUntil, archived)
+    }
+
     @Query("INSERT OR IGNORE INTO chat_room_declarations (chatId, configGeneration) VALUES (:chatId, 0)")
     protected abstract suspend fun insertEmpty(chatId: ByteArray)
 
@@ -82,4 +100,14 @@ abstract class ChatRoomDeclarationsDao {
 
     @Query("UPDATE chat_room_declarations SET footer = :footer WHERE chatId = :chatId")
     protected abstract suspend fun updateFooter(chatId: ByteArray, footer: ByteArray)
+
+    @Query("UPDATE chat_room_declarations SET features = :features WHERE chatId = :chatId")
+    protected abstract suspend fun updateFeatures(chatId: ByteArray, features: ByteArray)
+
+    @Query("UPDATE chat_room_declarations SET mutedUntil = :mutedUntil, archived = :archived WHERE chatId = :chatId")
+    protected abstract suspend fun updateUserState(chatId: ByteArray, mutedUntil: Long?, archived: Boolean)
+
+    class DeclaredFeatures(val chatId: ByteArray, val features: ByteArray)
+
+    class UserState(val chatId: ByteArray, val mutedUntil: Long?, val archived: Boolean)
 }

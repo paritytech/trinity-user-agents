@@ -17,6 +17,8 @@ data class ChatRoomDeclarations(
     val suggestions: List<ChatSuggestionModel>?,
     val commands: List<ChatCommandModel>?,
     val footer: ChatRoomFooterModel?,
+    /** The features of the Chat Extension v2 additions. The host keeps them also when it does not serve them. */
+    val features: ChatRoomFeaturesModel?,
 ) {
     /** The configuration that applies: the declared one, or the host default. */
     val effectiveConfig: ChatRoomConfigModel
@@ -25,6 +27,10 @@ data class ChatRoomDeclarations(
     /** The footer that applies: the declared one, or the input of the host. */
     val effectiveFooter: ChatRoomFooterModel
         get() = footer ?: ChatRoomFooterModel.Input(ChatInputConfigModel.HOST_DEFAULT)
+
+    /** The features that apply: the declared ones, or none. */
+    val effectiveFeatures: ChatRoomFeaturesModel
+        get() = features ?: ChatRoomFeaturesModel.HOST_DEFAULT
 
     companion object {
         val EMPTY = ChatRoomDeclarations(
@@ -36,6 +42,7 @@ data class ChatRoomDeclarations(
             suggestions = null,
             commands = null,
             footer = null,
+            features = null,
         )
     }
 }
