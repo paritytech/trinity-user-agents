@@ -39,7 +39,8 @@ TRUAPI_IOS_E2E_DEVICE=<udid> TRUAPI_IOS_E2E_APP=<path>/polkadot-app.app node scr
    its name and message.
 4. Starts the app with `simctl launch --console-pty` and keeps its console in `app.log`. The simulator-only hooks inject
    the product as a chat bot (`TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST`), hold its worker and start the command feed
-   (`TRUAPI_IOS_E2E_CHAT_COMMANDS`), and skip the notification prompt (`TRUAPI_IOS_E2E_NO_PUSH_PROMPT`).
+   (`TRUAPI_IOS_E2E_CHAT_COMMANDS`), skip the notification prompt (`TRUAPI_IOS_E2E_NO_PUSH_PROMPT`), and grant
+   products the notification permission without a prompt (`TRUAPI_IOS_E2E_GRANT_NOTIFICATIONS`, for `/notify`).
 5. Waits until the product has created its `host` room in Core Data and its bot has started, then opens the `host` room
    through the room link pipeline (`polkadot://<product>/-/chat/host`), so the room screen holds the worker and sends
    `RoomOpened`.
@@ -49,15 +50,21 @@ TRUAPI_IOS_E2E_DEVICE=<udid> TRUAPI_IOS_E2E_APP=<path>/polkadot-app.app node scr
    the simulator-only harness (`TrUAPIE2EHostAction`, `ChatProductRoomPresenter+E2E.swift`) runs the code path of the
    gesture on the room screen that shows the room (`open` through the room link pipeline, `list`, `send`, `menu`,
    `confirm`, `toolbar`, `participants`, `participant`, `reactions`, `suggestion`, `type`, `attach`, `button`,
-   `footer-action`, `older`, `jump`, `retry`, `retry-room`, `back`, `bottom`). Three actions act on the app instead of
-   one room: `release-worker` and `hold-worker` give back and take again the worker hold of the harness, and
+   `footer-action`, `older`, `jump`, `retry`, `retry-room`, `back`, `bottom`, and for P10 `room-mute <1h|8h|1w|always>`,
+   `room-unmute`, `room-archive`, `room-unarchive` (the entries of the header menu) and `search-open`). The search
+   screen of a room takes `search <text>`, `search-more` and `search-select <first|last|product id>`. The chat list
+   takes `list-mute`, `list-unmute`, `list-archive`, `list-unarchive` (its swipe actions and menu entries), `archived`
+   (opens the archived rooms) and `list-search <text>` (its search field). Three actions act on the app instead of one
+   room: `release-worker` and `hold-worker` give back and take again the worker hold of the harness, and
    `list-render` draws the chat list again from what the app stores. Two actions measure: `frames <seconds>` runs the
    frame meter on the room screen, and `participants-scroll <rows>` scrolls the participant list to its end. The
    launcher then waits for each expectation: Core Data rows, the event log of the product, or the
    `[e2e:ui] <key> <room> <value>` console markers that the app writes when what it shows changes (`window`,
    `readiness`, `toolbar`, `menu`, `footer`, `header`, `author-<id>`, `sheet`, `reactions`, `suggestions`, `catalogue`,
    `activity`, `placeholder`, `allowed`, `failure`, `policy`, `screen`, `chat-list`, `perf-ready`, `frames`,
-   `perf-participants`). It takes a screenshot at the end of each scenario and where a phase asks for one.
+   `perf-participants`, and for P10 `chat-archive`, `archived-row`, `row`, `search-action`, `search`, `jumped`,
+   `list-search`). An expectation `consoleNot` checks that the console has no line with a text, for example that no
+   notification was scheduled or that no worker started. It takes a screenshot at the end of each scenario and where a phase asks for one.
 7. Writes `playground/test-results/ios-chat-v2/diagnosis-report.md`, `event-log.jsonl`, `app.log` and the screenshots.
 
 `TRUAPI_IOS_E2E_ONLY=S3,S25` drives the named scenarios only. The app keeps its data between runs, so a scenario checks
@@ -78,13 +85,23 @@ the checks of each row are in `scripts/lib/ios-chat-v2-scenarios.mjs`. Every row
 | S6                                   | The list screen and `release-worker` let the core stop the worker (`[truapi] worker stopped`); `list-render` draws the product rooms from Core Data                                                                                          |
 | S23                                  | `/fail crash` makes the product throw outside a promise; the worker ends, the room shows `unavailable` with its window, and the next request (`retry-room`, or a `Seen` report that comes first) starts a new worker that hears `RoomOpened` |
 | S44                                  | `/flood` sends 25 edits at once; the core refuses the edits past 20 (`refused>=1`), the last edit is stored, and the `frames` marker gives the dropped frames and the number of list updates                                                 |
-| S49, S51                             | The rows of the Chat Extension v2 additions (P10); they run last, as below                                                                               |
+| S49, S51, S54 to S56, S61 to S63     | The rows of the Chat Extension v2 additions (P10); they run last, as below                                                                               |
 | S47                                  | S47 changes `allowed_reactions` twice on an open room; each change writes a new `policy` generation marker without a reopen                                                                                                                  |
 
 The launcher fails when a driven row fails or has no row.
 
-S51 and S49 are the rows of the Chat Extension v2 additions (P10) and run last. S51 declares two features that the app
-does not serve and reads the stored bytes in `CDChatRoomMetadata.ZFEATURES`; the run does not restart the app. S49 posts
+The rows of the Chat Extension v2 additions (P10) run last, S49 at the end. S51 declares two features that the app
+does not serve and reads the stored bytes in `CDChatRoomMetadata.ZFEATURES`; the run does not restart the app. S54
+mutes the `host` room from its list row for 1 hour: the product receives `UserStateChanged` (with `/echo` on), the row
+draws the muted state, and a `/notify` into the room schedules no notification; a `/notify` before the mute does. S55
+archives the room from the list, checks that it leaves the list for the archived list and stays there after
+`/post text`, unarchives it, and deletes an archived `throwaway` room. S56 mutes `host` and archives `source` from the
+header menu, lets the worker stop and holds it again: the new worker receives both states. S61 searches the `host`
+room for its user's "Crème brûlée" message with "CREME BRULEE" and jumps to it. S62 checks that `source` has no search
+action until `/search on`, pages two `search_query` answers of 30 hits, jumps to an older hit, and shows "not available"
+after `/search na`. S63 searches the chat list with the worker stopped: room names, the text of the `host` room, never
+the messages of `source`, and no `worker running` line. These rows need the sample product with `/notify` and
+`/search` (P10.10.1, P10.5.1). S49 posts
 `/caps` and expects exactly the names of `ChatHostCapabilities.served` (`IOS_CHAT_FEATURE_ROWS` in the scenario
 library), then checks that every row of each listed feature passed in the same run. With `TRUAPI_IOS_E2E_ONLY` the row
 names the feature rows that the run did not drive.
@@ -101,6 +118,6 @@ are in the evidence of each row. The app measures them with a simulator-only fra
 | B2  | `/history 50000`, opens the room (warm), then ends the worker and retries (cold)      | `perf-ready`: milliseconds from the open to a ready window |
 | B3  | the open room idle, then `/stream`, then `/flood`, each with the frame meter on       | `frames`: frames, p95, max, dropped, list updates          |
 
-B4 and B6 are unit tests that measure: run `ChatResourcePerformanceTests` with `TEST_RUNNER_TRUAPI_CHAT_PERF=1` and, for
-a file with the numbers, `TEST_RUNNER_TRUAPI_CHAT_PERF_OUT=<path>`. The numbers of the last run are in
+B4, B6 and B8 are unit tests that measure: run `ChatResourcePerformanceTests` (B4, B6) or `ChatSearchPerformanceTests`
+(B8) with `TEST_RUNNER_TRUAPI_CHAT_PERF=1` and, for a file with the numbers, `TEST_RUNNER_TRUAPI_CHAT_PERF_OUT=<path>`. The numbers of the last run are in
 `HOST-CHAT-EXTENSION-V2/results/RESULTS.md`.

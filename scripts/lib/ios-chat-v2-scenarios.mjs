@@ -17,7 +17,11 @@
  *   screen, which the app's simulator-only harness runs (`open`, `list`,
  *   `send`, `menu`, `toolbar`, `confirm`, `participants`, `participant`,
  *   `reactions`, `suggestion`, `type`, `attach`, `button`, `footer-action`,
- *   `older`, `jump`, `retry`, `retry-room`, `back`);
+ *   `older`, `jump`, `retry`, `retry-room`, `back`), on the chat list
+ *   (`list-mute`, `list-unmute`, `list-archive`, `list-unarchive`,
+ *   `archived`, `list-search`), on the room header (`room-mute`,
+ *   `room-unmute`, `room-archive`, `room-unarchive`, `search-open`) or on
+ *   the in-room search (`search`, `search-more`, `search-select`);
  * - `{ wait }`: a pause in milliseconds.
  *
  * An expectation is one of:
@@ -36,7 +40,9 @@
  * - `{ uiNot, match }`: the newest marker of a key does not match;
  * - `{ event }`: an event log entry of the product written in the phase,
  *   with `via`, `kind`, and an optional `data` substring;
- * - `{ console }`: an app console line written in the phase.
+ * - `{ console }`: an app console line written in the phase;
+ * - `{ consoleNot }`: no app console line holds this text, `settleMs` after
+ *   the steps.
  *
  * `scope: "previous"` makes a `console` or `event` expectation read from the
  * start of the previous phase instead of the start of its own phase.
@@ -82,6 +88,8 @@ export const IOS_CHAT_FEATURE_ROWS = Object.freeze({
   custom_footer: ["S35"],
   inline_attachments: ["S36"],
   room_links: ["S27", "S24"],
+  search: ["S61", "S62", "S63"],
+  mute_archive: ["S54", "S55", "S56"],
 });
 
 export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
@@ -1223,6 +1231,375 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
           steps: ["/features readaloud off", "/features calls off"],
           expect: [{ metadataHex: { ZFEATURES: "010000000000" } }],
         },
+      ],
+    },
+  },
+  {
+    id: "S54",
+    title:
+      "mute for 1 hour greys the badge, silences /notify into the room, and the product receives UserStateChanged",
+    mode: "host",
+    phase: "P10.10",
+    drive: {
+      phases: [
+        {
+          // The room is not muted: the notification reaches the app.
+          steps: ["/notify"],
+          expect: [
+            { stored: "ok /notify" },
+            {
+              console: "Scheduled push notification for truapi-chat-v2.dot",
+            },
+          ],
+        },
+        {
+          // The swipe action of the list row, with the 1 hour duration.
+          steps: [
+            "/echo",
+            "/preview badge 3",
+            { host: "list" },
+            { host: "list-mute", argument: "1h" },
+          ],
+          expect: [
+            { console: "[e2e:ui] row-actions host mute=true archive=true" },
+            {
+              event: {
+                via: "room_events",
+                kind: "UserStateChanged",
+                data: '"archived":false',
+              },
+            },
+            {
+              storedMatch: "^echo UserStateChanged muted=\\d{13} archived=false$",
+            },
+            { ui: "row", match: "^main muted=true archived=false$" },
+          ],
+          shot: "muted",
+        },
+        {
+          steps: ["/notify"],
+          expect: [
+            {
+              consoleNot: "Scheduled push notification for truapi-chat-v2.dot",
+              settleMs: 3_000,
+            },
+          ],
+        },
+        {
+          steps: [{ host: "list-unmute" }],
+          expect: [
+            { stored: "echo UserStateChanged muted=none archived=false" },
+            { ui: "row", match: "^main muted=false archived=false$" },
+          ],
+        },
+      ],
+      after: [
+        "/echo",
+        "/preview none",
+        { host: "list-unmute" },
+        { host: "open" },
+      ],
+    },
+  },
+  {
+    id: "S55",
+    title:
+      "archive moves the room to the archived list, where it stays after /post text; unarchive restores it; delete still works",
+    mode: "host",
+    phase: "P10.10",
+    drive: {
+      phases: [
+        {
+          steps: [{ host: "list" }, { host: "list-archive" }],
+          expect: [
+            { metadata: { ZARCHIVED: "1" } },
+            {
+              ui: "chat-list",
+              room: "list",
+              match: "^rooms=(?!.*Sample: host store)",
+            },
+            { ui: "archived-row", room: "list", match: "^count=[1-9]" },
+          ],
+          shot: "list",
+        },
+        {
+          // A new message does not take the room out of the archive.
+          steps: [{ host: "archived" }, "/post text", { wait: 1_000 }],
+          expect: [
+            { stored: "Plain text", prefix: true },
+            { metadata: { ZARCHIVED: "1" } },
+            { ui: "chat-archive", room: "list", match: "Sample: host store" },
+            { ui: "row", match: "^archived muted=false archived=true$" },
+          ],
+          shot: "archived",
+        },
+        {
+          steps: [{ host: "list-unarchive" }],
+          expect: [
+            { metadata: { ZARCHIVED: "0" } },
+            { ui: "chat-archive", room: "list", match: "^rooms=$" },
+            { ui: "chat-list", room: "list", match: "Sample: host store" },
+          ],
+        },
+        {
+          steps: [{ host: "list" }, "/room create", { wait: 1_000 }],
+          expect: [
+            { metadata: { ZNAME: "Sample: throwaway" }, room: "throwaway" },
+          ],
+        },
+        {
+          // Delete works as before on an archived room.
+          steps: [
+            { host: "list-archive", room: "throwaway" },
+            { wait: 1_000 },
+            { text: "/room delete", room: "host" },
+          ],
+          expect: [
+            { event: { via: "room", kind: "Deleted", room: "throwaway" } },
+            { gone: true, room: "throwaway" },
+          ],
+        },
+      ],
+      after: [{ host: "list" }, { host: "open" }, { host: "room-unarchive" }],
+    },
+  },
+  {
+    id: "S56",
+    title:
+      "a restarted worker receives UserStateChanged for every muted or archived room before live events",
+    mode: "host",
+    phase: "P10.10",
+    drive: {
+      phases: [
+        {
+          // The menu of the room header this time.
+          steps: [
+            { host: "open" },
+            { host: "room-mute", argument: "always" },
+            { host: "open", room: SOURCE },
+            { host: "room-archive", room: SOURCE },
+          ],
+          expect: [
+            { metadata: { ZMUTEDUNTIL: "9223372036854775807" } },
+            { metadata: { ZARCHIVED: "1" }, room: SOURCE },
+          ],
+        },
+        {
+          steps: [{ host: "list" }, { host: "release-worker" }],
+          expect: [
+            {
+              console:
+                "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
+              timeoutMs: 30_000,
+            },
+          ],
+        },
+        {
+          steps: [{ host: "hold-worker" }],
+          expect: [
+            {
+              event: {
+                via: "room_events",
+                kind: "UserStateChanged",
+                room: "host",
+                data: '"mutedUntil":"18446744073709551615"',
+              },
+              timeoutMs: 30_000,
+            },
+            {
+              event: {
+                via: "room_events",
+                kind: "UserStateChanged",
+                room: SOURCE,
+                data: '"archived":true',
+              },
+            },
+          ],
+        },
+      ],
+      after: [
+        { wait: 3_000 },
+        { host: "open" },
+        { host: "room-unmute" },
+        { host: "open", room: SOURCE },
+        { host: "room-unarchive", room: SOURCE },
+        { host: "open" },
+      ],
+    },
+  },
+  {
+    id: "S61",
+    title:
+      "in-room search of a host-store room finds by text, case and diacritics ignored, and jumps to the message",
+    mode: "host",
+    phase: "P10.5",
+    drive: {
+      phases: [
+        {
+          steps: [
+            { host: "list" },
+            { host: "open" },
+            { host: "send", argument: "Crème brûlée for the search" },
+            "/post text",
+            "/post text",
+            { host: "search-open" },
+            { host: "search", argument: "CREME BRULEE" },
+          ],
+          expect: [
+            { ui: "search-action", match: "^shown$" },
+            { ui: "search", match: "^state=results hits=[1-9]" },
+          ],
+          shot: "results",
+        },
+        {
+          steps: [{ host: "search-select", target: "first" }],
+          expect: [{ ui: "jumped", match: " found=true$" }],
+          shot: "jumped",
+        },
+      ],
+      after: [{ host: "list" }, { host: "open" }],
+    },
+  },
+  {
+    id: "S62",
+    title:
+      "a product-source room with search pages search_query hits and jumps to one; /search na shows not available; a room without search has no search action",
+    mode: SOURCE,
+    phase: "P10.5",
+    drive: {
+      phases: [
+        {
+          steps: [
+            "/search off",
+            "/history 120",
+            { host: "list" },
+            { host: "open" },
+          ],
+          expect: [{ ui: "search-action", match: "^hidden$" }],
+        },
+        {
+          steps: ["/search on"],
+          expect: [{ ui: "search-action", match: "^shown$" }],
+        },
+        {
+          steps: [
+            { host: "search-open" },
+            { host: "search", argument: "history MESSAGE" },
+          ],
+          expect: [
+            { event: { via: "search_query", kind: "Search" } },
+            {
+              ui: "search",
+              match: "^state=results hits=30 more=true ids=source-h-00120,",
+            },
+          ],
+          shot: "results",
+        },
+        {
+          steps: [{ host: "search-more" }],
+          expect: [
+            {
+              event: {
+                via: "search_query",
+                kind: "Search",
+                data: '"cursor":"',
+              },
+            },
+            { ui: "search", match: "^state=results hits=60 " },
+          ],
+        },
+        {
+          // The hit is older than the newest page of the room.
+          steps: [{ host: "search-select", target: "source-h-00065" }],
+          expect: [
+            {
+              ui: "jumped",
+              match: "^source-h-00065 found=true$",
+              timeoutMs: 30_000,
+            },
+          ],
+          shot: "jumped",
+        },
+        {
+          steps: [
+            "/search na",
+            { host: "search-open" },
+            { host: "search", argument: "history" },
+          ],
+          expect: [{ ui: "search", match: "^state=unavailable$" }],
+          shot: "unavailable",
+        },
+      ],
+      after: [{ host: "list" }, { host: "open" }, "/search off"],
+    },
+  },
+  {
+    id: "S63",
+    title:
+      "the list search finds product rooms by name and host-store text and starts no worker",
+    mode: "host",
+    phase: "P10.5",
+    drive: {
+      phases: [
+        {
+          steps: [
+            { host: "open" },
+            { host: "send", argument: "Zebra crossing in the host store" },
+            { host: "list" },
+            { host: "release-worker" },
+          ],
+          expect: [
+            {
+              console:
+                "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
+              timeoutMs: 30_000,
+            },
+          ],
+        },
+        {
+          steps: [{ host: "list-search", argument: "sample" }],
+          expect: [
+            {
+              ui: "list-search",
+              room: "list",
+              match:
+                "^query=sample rooms=(?=.*Sample: host store)(?=.*Sample: product source)",
+            },
+            { consoleNot: "[truapi] worker running", settleMs: 1_500 },
+          ],
+          shot: "names",
+        },
+        {
+          // The text of a host-store room matches; the messages of a
+          // product-source room never do.
+          steps: [{ host: "list-search", argument: "ZEBRA" }],
+          expect: [
+            {
+              ui: "list-search",
+              room: "list",
+              match: "^query=ZEBRA rooms= hits=host:",
+            },
+            { consoleNot: "[truapi] worker running", settleMs: 1_500 },
+          ],
+          shot: "messages",
+        },
+        {
+          steps: [{ host: "list-search", argument: "History message" }],
+          expect: [
+            {
+              ui: "list-search",
+              room: "list",
+              match: "^query=History message rooms= hits=$",
+            },
+            { consoleNot: "[truapi] worker running", settleMs: 1_500 },
+          ],
+        },
+      ],
+      after: [
+        { host: "list-search", argument: "" },
+        { host: "hold-worker" },
+        { wait: 4_000 },
+        { host: "open" },
       ],
     },
   },
