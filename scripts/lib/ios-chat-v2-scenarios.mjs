@@ -67,6 +67,8 @@
  * `{file:<name>}` a file the launcher put in the app's tmp directory.
  */
 const SOURCE = "source";
+/** A text of the user over the 3,000 characters after which a product text collapses (02-DESIGN §6.1). */
+const LONG_TEXT = "Show more ".repeat(320).trim();
 
 /** How long a staged attachment has to reach the live Bulletin chain. */
 const STAGING_TIMEOUT_MS = 180_000;
@@ -115,7 +117,7 @@ export const IOS_CHAT_FEATURE_ROWS = Object.freeze({
   commands: ["S39"],
   activity: ["S40"],
   // S49 itself also checks that a Custom body reaches the renderer.
-  custom_bodies: ["S7"],
+  custom_bodies: ["S7", "S7m", "S7t"],
   custom_footer: ["S35"],
   inline_attachments: ["S36"],
   room_links: ["S27", "S24"],
@@ -311,6 +313,92 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
             { contentType: 247, added: 4 },
             { contentType: 252, added: 1 },
           ],
+        },
+      ],
+    },
+  },
+  {
+    id: "S7m",
+    title:
+      "a tap opens product media: an image full screen, a video in the player, a file in the document preview; a missing preimage opens nothing, so the bubble offers Retry",
+    mode: "host",
+    phase: "P4",
+    drive: {
+      // PARITY row 4. The second image of `/post rich` is a preimage that
+      // the harness identity cannot store (no Bulletin allowance), so its
+      // lookup fails. Each `media` marker names what the tap did, and the
+      // `presented` marker names the screen in front after it.
+      phases: [
+        {
+          steps: [
+            "/post rich",
+            { wait: 1_500 },
+            { host: "media", target: "{lastProduct}", argument: "0" },
+          ],
+          expect: [
+            { ui: "media", match: "^image opened media\\.png$" },
+            { ui: "presented", match: "QLPreviewController" },
+          ],
+          shot: "image",
+        },
+        {
+          steps: [
+            { host: "dismiss" },
+            { host: "media", target: "{lastProduct}", argument: "1" },
+          ],
+          expect: [
+            { ui: "media", match: "^image failed$", timeoutMs: 90_000 },
+          ],
+          shot: "retry",
+        },
+        {
+          steps: [
+            "/post video",
+            { wait: 1_500 },
+            { host: "media", target: "{lastProduct}", argument: "0" },
+          ],
+          expect: [
+            { ui: "media", match: "^video opened media\\.mp4$" },
+            { ui: "presented", match: "PlayerViewController" },
+          ],
+          shot: "video",
+        },
+        {
+          steps: [
+            { host: "dismiss" },
+            "/post file",
+            { wait: 1_500 },
+            { host: "media", target: "{lastProduct}", argument: "0" },
+          ],
+          expect: [
+            { ui: "media", match: "^file opened sample\\.pdf$" },
+            { ui: "presented", match: "^(?!none$)" },
+          ],
+          shot: "file",
+        },
+      ],
+      after: [{ host: "dismiss" }],
+    },
+  },
+  {
+    id: "S7t",
+    title:
+      "a product Text draws plain, and a text over 3,000 characters shows Show more until the user expands it",
+    mode: "host",
+    phase: "P4",
+    drive: {
+      // PARITY rows 3 and 5. The text of the user in a product room is a
+      // `Text` body too, so the harness sends the long text itself.
+      phases: [
+        {
+          steps: [{ host: "send", argument: LONG_TEXT }, { wait: 1_500 }],
+          expect: [{ ui: "text-{lastUser}", match: "^collapsed$" }],
+          shot: "collapsed",
+        },
+        {
+          steps: [{ host: "show-more", target: "{memory:lastUser}" }],
+          expect: [{ ui: "text-{memory:lastUser}", match: "^expanded$" }],
+          shot: "expanded",
         },
       ],
     },

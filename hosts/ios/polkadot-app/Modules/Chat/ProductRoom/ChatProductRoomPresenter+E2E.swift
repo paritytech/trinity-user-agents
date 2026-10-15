@@ -151,6 +151,11 @@ extension ChatProductRoomPresenter {
             case "chip",
                  "branch",
                  "reasoning": runAddition(action)
+            case "media": runMedia(message: action.target ?? "last", index: action.argument.flatMap(Int.init) ?? 0)
+            case "dismiss":
+                view?.controller.presentedViewController?.dismiss(animated: false)
+                mark("presented", "none")
+            case "show-more": action.target.flatMap(e2eMessageId).map { expandText(of: $0) }
             default:
                 if !runCallE2E(action) { logger.warning("[e2e:ui] unknown action \(action.action)") }
             }
@@ -176,6 +181,23 @@ extension ChatProductRoomPresenter {
                 selectBranch(of: messageId, index: index)
             default:
                 toggleReasoning(of: messageId)
+            }
+        }
+
+        /// A tap on the media item at `index` of a message (PARITY row 4). The marker `presented` names the screen
+        /// that the room shows after the tap.
+        private func runMedia(message: String, index: Int) {
+            guard let messageId = e2eMessageId(message), let request = mediaRequest(of: messageId, at: index) else {
+                mark("media", "\(message) \(index) missing")
+                return
+            }
+
+            Task { [weak self] in
+                guard let self, await openMedia(request) else { return }
+                try? await Task.sleep(for: .seconds(1))
+                let presented = view?.controller.presentedViewController
+                    ?? view?.controller.navigationController?.presentedViewController
+                mark("presented", presented.map { String(describing: type(of: $0)) } ?? "none")
             }
         }
 
