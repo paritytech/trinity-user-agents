@@ -1331,7 +1331,7 @@ mod tests {
 
 	fn resource_review() -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: "mock.dot".to_string(),
+			calling_product_id: crate::test_support::test_product_id("mock.dot"),
 			resources: vec![],
 		})
 	}
@@ -1704,7 +1704,7 @@ mod tests {
 
 	fn allocation_review(product: &str) -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: product.to_string(),
+			calling_product_id: crate::test_support::test_product_id(product),
 			resources: vec![],
 		})
 	}
@@ -1736,7 +1736,7 @@ mod tests {
 			vec![ConfirmKind::ResourceAllocation; 2],
 			"the kind view should see two identical kinds",
 		);
-		let products: Vec<String> = p
+		let products: Vec<crate::platform::ProductId> = p
 			.reviews()
 			.into_iter()
 			.map(|review| match review {
@@ -1744,7 +1744,13 @@ mod tests {
 				other => panic!("unexpected review {other:?}"),
 			})
 			.collect();
-		assert_eq!(products, vec!["first.dot", "second.dot"]);
+		assert_eq!(
+			products,
+			vec![
+				crate::test_support::test_product_id("first.dot"),
+				crate::test_support::test_product_id("second.dot")
+			]
+		);
 	}
 
 	#[test]

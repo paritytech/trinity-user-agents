@@ -203,6 +203,14 @@ impl Decode for ProductId {
 	}
 }
 
+// Only Rust hands a `ProductId` to the app. Ids from the app stay `String`: a
+// failed lift is an internal error, and a trap in a non-throwing Swift call.
+#[cfg(not(target_arch = "wasm32"))]
+uniffi::custom_type!(ProductId, String, {
+	lower: |product_id| product_id.0,
+	try_lift: |product_id| Ok(ProductId::parse(&product_id)?),
+});
+
 /// Whether `normalized` is a development localhost identifier.
 ///
 /// Exactly `localhost`, or `localhost:` followed by a port and nothing else.

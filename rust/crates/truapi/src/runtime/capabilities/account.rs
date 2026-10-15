@@ -83,9 +83,7 @@ impl Account for ProductRuntimeHost {
 				let approved = until_cancelled(
 					cx,
 					self.confirm_product_action(UserConfirmationReview::ProductSubtree(
-						ProductSubtreeReview {
-							product_id: product_account_id.dot_ns_identifier.clone(),
-						},
+						ProductSubtreeReview { product_id: owner.clone() },
 					)),
 				)
 				.await

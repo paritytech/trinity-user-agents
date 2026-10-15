@@ -1480,6 +1480,7 @@ fn canonical_remote_request(request: &RemotePermissionRequest) -> RemotePermissi
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::test_support::test_product_id;
 
 	fn signing_host_config(
 		network_suffix: &str,
@@ -2354,11 +2355,11 @@ mod tests {
 	fn review_discriminants_do_not_move() {
 		let discriminants = [
 			UserConfirmationReview::AccountAccess(AccountAccessReview {
-				requesting_product_id: "caller.dot".to_string(),
-				target_product_id: "target.dot".to_string(),
+				requesting_product_id: test_product_id("caller.dot"),
+				target_product_id: test_product_id("target.dot"),
 			}),
 			UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
-				product_id: "caller.dot".to_string(),
+				product_id: test_product_id("caller.dot"),
 			}),
 		]
 		.map(|review| review.encode()[0]);
@@ -2503,7 +2504,7 @@ pub enum SignPayloadReview {
 		/// relayed request, which carries no caller identity. A caller other
 		/// than the account's own product is acting under that product's
 		/// `context` grant, and the user is the one who has to see that.
-		calling_product_id: Option<String>,
+		calling_product_id: Option<ProductId>,
 		/// Signing request.
 		request: HostSignPayloadRequest,
 	},
@@ -2521,7 +2522,7 @@ pub enum SignRawReview {
 	Product {
 		/// Product that asked, when the request carries a caller. See
 		/// [`SignPayloadReview::Product`].
-		calling_product_id: Option<String>,
+		calling_product_id: Option<ProductId>,
 		/// Raw signing request.
 		request: HostSignRawRequest,
 		/// Whether the signer applies the `<Bytes>` transaction-payload protection.
@@ -2545,7 +2546,7 @@ pub enum SignRawReview {
 pub struct StatementStoreProductSignReview {
 	/// Product that asked, when the request carries a caller. See
 	/// [`SignPayloadReview::Product`].
-	pub calling_product_id: Option<String>,
+	pub calling_product_id: Option<ProductId>,
 	/// Product account that will sign the statement payload.
 	pub account: ProductAccountId,
 	/// Exact unsigned statement payload to be signed.
@@ -2560,7 +2561,7 @@ pub enum CreateTransactionReview {
 	Product {
 		/// Product that asked, when the request carries a caller. See
 		/// [`SignPayloadReview::Product`].
-		calling_product_id: Option<String>,
+		calling_product_id: Option<ProductId>,
 		/// Transaction request.
 		payload: ProductAccountTxPayload,
 	},
@@ -2573,7 +2574,7 @@ pub enum CreateTransactionReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct AccountAliasReview {
 	/// Product requesting the alias.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Product-scoped context the alias is bound to.
 	pub context: ProductProofContext,
 	/// Ring the alias is derived against.
@@ -2585,7 +2586,7 @@ pub struct AccountAliasReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct CreateProofReview {
 	/// Product requesting the proof.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Product-scoped context the proof's alias is bound to.
 	pub context: ProductProofContext,
 	/// Ring the proof is generated against.
@@ -2599,7 +2600,7 @@ pub struct CreateProofReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct SignVrfReview {
 	/// Product making the request.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Product account and exact ordered transcript.
 	pub request: HostAccountSignVrfRequest,
 }
@@ -2611,7 +2612,7 @@ pub struct SignVrfReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ResourceAllocationReview {
 	/// Product the allocation is requested for.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Resources to allocate.
 	pub resources: Vec<AllocatableResource>,
 }
@@ -2621,9 +2622,9 @@ pub struct ResourceAllocationReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct AccountAccessReview {
 	/// Product currently handling the request.
-	pub requesting_product_id: String,
+	pub requesting_product_id: ProductId,
 	/// Product whose account is being requested.
-	pub target_product_id: String,
+	pub target_product_id: ProductId,
 }
 
 /// Review shown before a product learns the user's primary identity.
@@ -2631,7 +2632,7 @@ pub struct AccountAccessReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct IdentityDisclosureReview {
 	/// Product currently handling the request.
-	pub product_id: String,
+	pub product_id: ProductId,
 }
 
 /// Review shown before a product resolves its own account subtree over SSO,
@@ -2640,7 +2641,7 @@ pub struct IdentityDisclosureReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductSubtreeReview {
 	/// Product resolving its own account.
-	pub product_id: String,
+	pub product_id: ProductId,
 }
 
 /// Review shown before a user-confirmed core action continues.

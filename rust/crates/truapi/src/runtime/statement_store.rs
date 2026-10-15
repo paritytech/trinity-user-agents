@@ -342,7 +342,7 @@ impl ProductRuntimeHost {
 				.confirm_signature(CrossProductSignatureKind::StatementProof, &owner, || {
 					UserConfirmationReview::StatementStoreProductSign(
 						StatementStoreProductSignReview {
-							calling_product_id: Some(self.product_id().to_string()),
+							calling_product_id: Some(self.product_id().clone()),
 							account: product_account_id.clone(),
 							payload: payload.clone(),
 						},
@@ -642,8 +642,8 @@ mod tests {
 			.expect("statement store product sign review list mutex poisoned");
 		assert_eq!(reviews.len(), 1, "the user saw the signature");
 		assert_eq!(
-			reviews[0].calling_product_id.as_deref(),
-			Some("dim2next.paseo"),
+			reviews[0].calling_product_id,
+			Some(test_product_id("dim2next.paseo")),
 			"and saw which product asked",
 		);
 	}

@@ -1940,7 +1940,37 @@ mod tests {
 			.lock()
 			.expect("resource allocation review list mutex poisoned");
 		assert_eq!(reviews.len(), 1);
-		assert_eq!(reviews[0].calling_product_id, "myapp.dot");
+		assert_eq!(reviews[0].calling_product_id, test_product_id("myapp.dot"));
+	}
+
+	#[test]
+	fn resource_allocation_for_a_caller_that_is_not_a_product_id_is_refused_unprompted() {
+		// The review names the product receiving the allowance key, and no
+		// product can be named by an id dotNS cannot register.
+		let platform = Arc::new(StubPlatform::default());
+		let (_, signing_host) = signing_fixture(platform.clone());
+
+		let response = answer(
+			&signing_host,
+			"alloc-1",
+			v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
+				calling_product_id: "my_app.dot".to_string(),
+				resources: vec![api::AllocatableResource::StatementStoreAllowance],
+				on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
+			}),
+		);
+
+		let v1::RemoteMessage::ResourceAllocationResponse(response) = response else {
+			panic!("expected resource allocation response");
+		};
+		assert!(response.payload.is_err(), "{:?}", response.payload);
+		assert!(
+			platform
+				.resource_allocation_reviews
+				.lock()
+				.expect("resource allocation review list mutex poisoned")
+				.is_empty()
+		);
 	}
 
 	#[test]

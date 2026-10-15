@@ -7,8 +7,8 @@ use std::{
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductExecutionKind, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview,
+	PreimageHost, ProductContext, ProductExecutionKind, ProductId, ProductStorage, ProviderError,
+	ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -410,12 +410,12 @@ impl HostCallbacks for EventCallbacks {
 	}
 	async fn begin_operation(
 		&self,
-		_product_id: String,
+		_product_id: ProductId,
 		_label: String,
 	) -> Result<u32, HostRejection> {
 		Ok(1)
 	}
-	async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+	async fn end_operation(&self, _product_id: ProductId, _id: u32) -> Result<(), HostRejection> {
 		Ok(())
 	}
 }
@@ -1908,12 +1908,16 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 		async fn begin_operation(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_label: String,
 		) -> Result<u32, HostRejection> {
 			Ok(1)
 		}
-		async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+		async fn end_operation(
+			&self,
+			_product_id: ProductId,
+			_id: u32,
+		) -> Result<(), HostRejection> {
 			Ok(())
 		}
 	}
@@ -2069,12 +2073,16 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		async fn begin_operation(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_label: String,
 		) -> Result<u32, HostRejection> {
 			Ok(1)
 		}
-		async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+		async fn end_operation(
+			&self,
+			_product_id: ProductId,
+			_id: u32,
+		) -> Result<(), HostRejection> {
 			Ok(())
 		}
 	}
@@ -2538,7 +2546,9 @@ fn native_permission_confirmation_preserves_consent_lifetime() {
 				storage_events: Arc::default(),
 			};
 			let review = UserConfirmationReview::IdentityDisclosure(
-				crate::platform::IdentityDisclosureReview { product_id: "product.dot".to_string() },
+				crate::platform::IdentityDisclosureReview {
+					product_id: crate::test_support::test_product_id("product.dot"),
+				},
 			);
 			assert_eq!(
 				(

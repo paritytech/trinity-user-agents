@@ -802,7 +802,7 @@ impl UserConfirmation for CliPlatform {
 
 /// Names the product that asked, for the reviews that carry one. A relayed
 /// request carries no caller, and saying so is more use than naming nobody.
-fn asking(calling_product_id: Option<&str>) -> String {
+fn asking(calling_product_id: Option<&ProductId>) -> String {
 	match calling_product_id {
 		Some(product_id) => format!("Product {product_id}"),
 		None => "A paired host".to_string(),
@@ -818,7 +818,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign payload",
             format!(
                 "{} requested a SCALE payload signature for the {} account.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 request.account.dot_ns_identifier,
             ),
         ),
@@ -834,7 +834,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign raw data",
             format!(
                 "{} requested a raw-data signature for the {} account. The payload is hidden here.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 request.account.dot_ns_identifier,
             ),
         ),
@@ -862,7 +862,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign statement proof",
             format!(
                 "{} requested a Statement Store proof signature for the {} account over a {}-byte payload.",
-                asking(review.calling_product_id.as_deref()),
+                asking(review.calling_product_id.as_ref()),
                 review.account.dot_ns_identifier,
                 review.payload.len()
             ),
@@ -874,7 +874,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "create transaction",
             format!(
                 "{} requested a transaction from the {} account.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 payload.signer.dot_ns_identifier,
             ),
         ),
@@ -1812,7 +1812,9 @@ mod tests {
 	fn statement_proof_approval_names_both_products_without_dumping_payload() {
 		let review = UserConfirmationReview::StatementStoreProductSign(
 			truapi::platform::StatementStoreProductSignReview {
-				calling_product_id: Some("dim2next.paseo".to_string()),
+				calling_product_id: Some(
+					ProductId::parse("dim2next.paseo").expect("valid product id"),
+				),
 				account: api::ProductAccountId {
 					dot_ns_identifier: "dim2.paseo".to_string(),
 					derivation_index: api::DerivationIndex::Index(0),
@@ -1835,7 +1837,7 @@ mod tests {
 	#[test]
 	fn vrf_approval_names_both_products_without_dumping_transcript_values() {
 		let review = UserConfirmationReview::SignVrf(truapi::platform::SignVrfReview {
-			calling_product_id: "caller.dot".to_string(),
+			calling_product_id: ProductId::parse("caller.dot").expect("valid product id"),
 			request: truapi::v01::HostAccountSignVrfRequest {
 				account: truapi::v01::ProductAccountId {
 					dot_ns_identifier: "target.dot".to_string(),

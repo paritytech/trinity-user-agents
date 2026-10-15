@@ -45,7 +45,7 @@ impl ResourceAllocation for ProductRuntimeHost {
 				cx,
 				self.confirm_product_action(UserConfirmationReview::ResourceAllocation(
 					ResourceAllocationReview {
-						calling_product_id: self.product_id().to_string(),
+						calling_product_id: self.product_id().clone(),
 						resources: inner.resources.clone(),
 					},
 				)),

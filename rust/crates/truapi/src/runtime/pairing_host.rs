@@ -2046,7 +2046,7 @@ impl PairingHost {
 				cx,
 				self.platform
 					.confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
-						calling_product_id: calling_product_id.to_string(),
+						calling_product_id: calling_product_id.clone(),
 						request: request.clone(),
 					})),
 			)

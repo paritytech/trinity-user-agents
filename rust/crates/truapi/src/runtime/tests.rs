@@ -3631,8 +3631,8 @@ fn get_account_other_product_rejects_when_user_declines() {
 			.expect("account access review list mutex poisoned")
 			.as_slice(),
 		&[AccountAccessReview {
-			requesting_product_id: "myapp.dot".to_string(),
-			target_product_id: "other.dot".to_string(),
+			requesting_product_id: test_product_id("myapp.dot"),
+			target_product_id: test_product_id("other.dot"),
 		}]
 	);
 }

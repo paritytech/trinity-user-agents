@@ -26,9 +26,9 @@ const PRODUCT_ID_PARAM: &str = "product_id";
 /// produce one only in development builds.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DevServerProduct {
-	/// Identifier the product runs under: the normalized `product_id` the
-	/// address names, otherwise `localhost` or `localhost:<port>`.
-	pub product_id: String,
+	/// Identifier the product runs under: the `product_id` the address names,
+	/// otherwise `localhost` or `localhost:<port>`.
+	pub product_id: ProductId,
 	/// `http://<host>[:<port>]` origin the page is served from.
 	pub origin: String,
 	/// The address to load, with the path and query the developer typed.
@@ -83,11 +83,10 @@ impl FromStr for DevServerProduct {
 			None => ("localhost".to_string(), format!("{HTTP_PREFIX}{host}")),
 		};
 		let product_id = match parsed.query_pairs().find(|(name, _)| name == PRODUCT_ID_PARAM) {
-			Some((_, named)) => {
-				ProductId::parse(&named).map_err(DevServerError::InvalidProductId)?.into()
-			},
+			Some((_, named)) => named.into_owned(),
 			None => localhost_id,
 		};
+		let product_id = ProductId::parse(&product_id).map_err(DevServerError::InvalidProductId)?;
 		Ok(Self { product_id, origin, url: parsed.into() })
 	}
 }
@@ -99,6 +98,7 @@ fn is_dev_address(address: Ipv4Addr) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::test_support::test_product_id;
 
 	fn product(
 		product_id: &str,
@@ -106,7 +106,7 @@ mod tests {
 		url: &str,
 	) -> Result<DevServerProduct, DevServerError> {
 		Ok(DevServerProduct {
-			product_id: product_id.to_string(),
+			product_id: test_product_id(product_id),
 			origin: origin.to_string(),
 			url: url.to_string(),
 		})
@@ -173,26 +173,6 @@ mod tests {
 				"http://192.168.1.59:3000/app?product_id=Humanity.DOT",
 			)
 		);
-	}
-
-	#[test]
-	fn the_identifier_is_one_the_core_runs_a_product_under() {
-		for input in [
-			"localhost",
-			"localhost:3000",
-			"10.0.2.2:3000",
-			"192.168.1.59:8081",
-			"localhost:3000?product_id=humanity.dot",
-		] {
-			let product: DevServerProduct = input.parse().expect(input);
-			assert_eq!(
-				ProductId::parse(&product.product_id).map(String::from),
-				Ok(product.product_id.clone()),
-				"{input}"
-			);
-		}
-		let product: DevServerProduct = "10.0.2.2:3000".parse().expect("dev server");
-		assert!(ProductId::parse(&product.product_id).is_ok_and(|id| id.is_localhost()));
 	}
 
 	#[test]

@@ -778,7 +778,7 @@ impl SigningHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: &str,
+		calling_product_id: &ProductId,
 		request: v01::HostAccountSignVrfRequest,
 		authenticated_caller: bool,
 	) -> Result<v01::VrfSignature, AuthorityError> {
@@ -787,21 +787,20 @@ impl SigningHost {
 		let keypair = self.product_keypair(&request.account)?;
 		let (current, activation_generation) = self.require_current_session(session)?;
 		let owner = &request.account.dot_ns_identifier;
-		let granted = ProductId::parse(calling_product_id).is_ok_and(|caller| {
-			authenticated_caller && super::authority::is_blessed_owner(&caller, owner) ||
-				self.has_auto_signing_grant(
-					activation_generation,
-					current.public_key,
-					&caller,
-					owner,
-				)
-		});
+		let granted = authenticated_caller &&
+			super::authority::is_blessed_owner(calling_product_id, owner) ||
+			self.has_auto_signing_grant(
+				activation_generation,
+				current.public_key,
+				calling_product_id,
+				owner,
+			);
 		if !granted {
 			let confirmed = super::until_cancelled(
 				cx,
 				self.platform
 					.confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
-						calling_product_id: calling_product_id.to_string(),
+						calling_product_id: calling_product_id.clone(),
 						request: request.clone(),
 					})),
 			)
@@ -959,8 +958,7 @@ impl ProductAuthority for SigningHost {
 		calling_product_id: &ProductId,
 		request: v01::HostAccountSignVrfRequest,
 	) -> Result<v01::VrfSignature, AuthorityError> {
-		self.sign_vrf_request(cx, session, calling_product_id.as_str(), request, true)
-			.await
+		self.sign_vrf_request(cx, session, calling_product_id, request, true).await
 	}
 
 	async fn sign_payload(
@@ -3369,7 +3367,7 @@ mod tests {
 			.lock()
 			.expect("VRF signing review list mutex poisoned");
 		assert_eq!(reviews.len(), 1);
-		assert_eq!(reviews[0].calling_product_id, "other.dot");
+		assert_eq!(reviews[0].calling_product_id, test_product_id("other.dot"));
 	}
 
 	#[test]

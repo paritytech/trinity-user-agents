@@ -52,7 +52,7 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
 		product: &ProductContext,
 	) -> Result<crate::platform::HostContactPick, v01::GenericError> {
 		self.contacts
-			.pick_contact(product.product_id.to_string())
+			.pick_contact(product.product_id.clone())
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
@@ -73,7 +73,7 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 		request: &truapi::latest::HostScannerScanRequest,
 	) -> Result<crate::platform::HostScan, v01::GenericError> {
 		self.scanner
-			.scan_code(product.product_id.to_string(), product.execution_kind, request.clone())
+			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
@@ -293,7 +293,7 @@ impl ProductOperations for CallbackPlatform {
 		label: String,
 	) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
 		self.callbacks
-			.begin_operation(product.product_id.to_string(), label)
+			.begin_operation(product.product_id.clone(), label)
 			.await
 			.map(|id| v01::HostWorkerBeginOperationResponse { id })
 			.map_err(|error| v01::HostWorkerOperationError::Unknown { reason: error.to_string() })
@@ -305,7 +305,7 @@ impl ProductOperations for CallbackPlatform {
 		id: u32,
 	) -> Result<(), v01::HostWorkerOperationError> {
 		self.callbacks
-			.end_operation(product.product_id.to_string(), id)
+			.end_operation(product.product_id.clone(), id)
 			.await
 			.map_err(|error| v01::HostWorkerOperationError::Unknown { reason: error.to_string() })
 	}
@@ -783,7 +783,7 @@ impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 		product: &ProductContext,
 		request: v01::HostPaymentTopUpRequest,
 	) -> Result<(), v01::HostPaymentTopUpError> {
-		self.top_up.top_up(product.product_id.to_string(), request).await
+		self.top_up.top_up(product.product_id.clone(), request).await
 	}
 
 	fn subscribe_top_up_status(
@@ -794,7 +794,7 @@ impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 		'static,
 		Result<v01::HostPaymentTopUpStatusSubscribeItem, v01::HostPaymentTopUpStatusSubscribeError>,
 	> {
-		let product_id = product.product_id.to_string();
+		let product_id = product.product_id.clone();
 		self.statuses.follow(product.product_id.clone(), id, || {
 			match self.top_up.top_up_status(product_id, id) {
 				Ok(Some(status)) => Ok(status),
@@ -850,7 +850,7 @@ impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 		product: &ProductContext,
 		request: v01::HostPaymentRequest,
 	) -> Result<(), v01::HostPaymentError> {
-		self.payments.request_payment(product.product_id.to_string(), request).await
+		self.payments.request_payment(product.product_id.clone(), request).await
 	}
 
 	fn subscribe_payment_status(
@@ -861,7 +861,7 @@ impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 		'static,
 		Result<v01::HostPaymentStatusSubscribeItem, v01::HostPaymentStatusSubscribeError>,
 	> {
-		let product_id = product.product_id.to_string();
+		let product_id = product.product_id.clone();
 		self.statuses.follow(product.product_id.clone(), id, || {
 			match self.payments.payment_status(product_id, id) {
 				Ok(Some(status)) => Ok(status),
@@ -912,7 +912,7 @@ impl crate::platform::BalancePlatform for BalanceCallbackPlatform {
 		let (sender, changes) = mpsc::unbounded();
 		self.lock_followers().register(purse, sender);
 		let balance = self.balance.clone();
-		let product_id = product.product_id.to_string();
+		let product_id = product.product_id.clone();
 		stream::once(async move { (balance.balance(product_id, purse).await, changes) })
 			.flat_map(|(first, changes)| match first {
 				Ok(available) => stream::iter([available])
@@ -948,7 +948,7 @@ mod status_relay_tests {
 	impl NativeTopUpCallbacks for Engine {
 		async fn top_up(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_request: v01::HostPaymentTopUpRequest,
 		) -> Result<(), v01::HostPaymentTopUpError> {
 			Ok(())
@@ -956,7 +956,7 @@ mod status_relay_tests {
 
 		fn top_up_status(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			id: crate::Bytes32,
 		) -> Result<Option<v01::HostPaymentTopUpStatusSubscribeItem>, HostRejection> {
 			Ok(self.0.lock().expect("statuses").get(&id).cloned())
@@ -1081,7 +1081,7 @@ mod status_relay_tests {
 	impl NativePaymentCallbacks for Payments {
 		async fn request_payment(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_request: v01::HostPaymentRequest,
 		) -> Result<(), v01::HostPaymentError> {
 			Ok(())
@@ -1089,7 +1089,7 @@ mod status_relay_tests {
 
 		fn payment_status(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			id: crate::Bytes32,
 		) -> Result<Option<v01::HostPaymentStatusSubscribeItem>, HostRejection> {
 			Ok(self.0.lock().expect("statuses").get(&id).cloned())
@@ -1135,7 +1135,7 @@ mod status_relay_tests {
 	impl NativeBalanceCallbacks for Shared {
 		async fn balance(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_purse: Option<u32>,
 		) -> Result<u128, v01::HostPaymentBalanceSubscribeError> {
 			Ok(self.0)

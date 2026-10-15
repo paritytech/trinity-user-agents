@@ -401,8 +401,10 @@ impl SigningHostSsoService {
 	) -> ResourceAllocationResponse {
 		let mut failures = Vec::new();
 		let payload = async {
+			let calling_product_id =
+				ProductId::parse(&request.calling_product_id).map_err(|err| err.to_string())?;
 			let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
-				calling_product_id: request.calling_product_id.clone(),
+				calling_product_id,
 				resources: request.resources.clone(),
 			});
 			match self.prompt(cx, review).await {
@@ -509,14 +511,10 @@ impl SigningHostSsoService {
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountSignVrfRequest>,
 	) -> SignVrfResponse {
+		let calling_product_id = ProductId::parse(&request.calling_product_id)
+			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })?;
 		self.signing_host
-			.sign_vrf_request(
-				&cx.call,
-				&cx.session,
-				&request.calling_product_id,
-				request.payload,
-				false,
-			)
+			.sign_vrf_request(&cx.call, &cx.session, &calling_product_id, request.payload, false)
 			.await
 			.map_err(api::HostAccountSignVrfError::from)
 	}

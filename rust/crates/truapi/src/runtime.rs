@@ -739,7 +739,7 @@ impl ProductRuntimeHost {
 		let decision = match self
 			.platform
 			.confirm_permission(UserConfirmationReview::IdentityDisclosure(
-				IdentityDisclosureReview { product_id: self.product_id().to_string() },
+				IdentityDisclosureReview { product_id: self.product_id().clone() },
 			))
 			.await
 		{
@@ -812,8 +812,8 @@ async fn account_access_authorization(
 
 	let decision = platform
 		.confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-			requesting_product_id: requesting_product_id.to_string(),
-			target_product_id: target_product_id.to_string(),
+			requesting_product_id: requesting_product_id.clone(),
+			target_product_id: target_product_id.clone(),
 		}))
 		.await
 		.map_err(AccountAccessAuthorizationError::Confirmation)?;

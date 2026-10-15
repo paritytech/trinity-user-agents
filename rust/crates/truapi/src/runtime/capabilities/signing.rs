@@ -66,7 +66,7 @@ impl Signing for ProductRuntimeHost {
 					cx,
 					self.confirm_signature(CrossProductSignatureKind::Payload, &owner, || {
 						UserConfirmationReview::SignPayload(SignPayloadReview::Product {
-							calling_product_id: Some(self.product_id().to_string()),
+							calling_product_id: Some(self.product_id().clone()),
 							request: inner.clone(),
 						})
 					}),
@@ -183,7 +183,7 @@ impl Signing for ProductRuntimeHost {
 			if grant == AutoSigningGrant::Absent || names_contacts {
 				let review = || {
 					UserConfirmationReview::CreateTransaction(CreateTransactionReview::Product {
-						calling_product_id: Some(self.product_id().to_string()),
+						calling_product_id: Some(self.product_id().clone()),
 						payload: inner.clone(),
 					})
 				};
@@ -445,7 +445,7 @@ impl ProductRuntimeHost {
 		if grant == AutoSigningGrant::Absent {
 			let review = || {
 				UserConfirmationReview::SignRaw(SignRawReview::Product {
-					calling_product_id: Some(self.product_id().to_string()),
+					calling_product_id: Some(self.product_id().clone()),
 					request: inner.clone(),
 					watermarked,
 				})
