@@ -10,6 +10,10 @@ protocol TrUAPIWorkerReferencing: Sendable {
     func acquireWorker(productId: ProductId)
 
     func releaseWorker(productId: ProductId)
+
+    /// Holds the worker of the product for one wake of 30 seconds (07-LATER §10.2). A product has one wake hold, and
+    /// a new wake moves its end. The core releases the hold itself.
+    func wakeProduct(productId: ProductId, reason: ChatWakeReason) throws -> ChatWakeOutcome
 }
 
 extension TrUAPIHostRuntime: TrUAPIWorkerReferencing {}

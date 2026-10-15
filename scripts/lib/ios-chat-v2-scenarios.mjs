@@ -17,7 +17,8 @@
  *   screen, which the app's simulator-only harness runs (`open`, `list`,
  *   `send`, `menu`, `toolbar`, `confirm`, `participants`, `participant`,
  *   `reactions`, `suggestion`, `type`, `attach`, `button`, `footer-action`,
- *   `older`, `jump`, `retry`, `retry-room`, `back`);
+ *   `older`, `jump`, `retry`, `retry-room`, `back`, `release-worker`,
+ *   `hold-worker`, `wake`);
  * - `{ wait }`: a pause in milliseconds.
  *
  * An expectation is one of:
@@ -211,13 +212,14 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
       phases: [
         {
           // The list screen holds no worker, and the harness gives back its
-          // own hold, so the core stops the worker.
+          // own hold, so the core stops the worker. The wake of the last
+          // command (W1) holds it for at most 30 s more.
           steps: [{ host: "list" }, { host: "release-worker" }],
           expect: [
             {
               console:
                 "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
-              timeoutMs: 30_000,
+              timeoutMs: 45_000,
             },
           ],
         },
@@ -1224,6 +1226,56 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
           expect: [{ metadataHex: { ZFEATURES: "010000000000" } }],
         },
       ],
+    },
+  },
+  {
+    id: "S69",
+    title:
+      "a message sent and the room closed at once still gets the product's echo and preview (wake W1)",
+    mode: "host",
+    phase: "P10.4",
+    drive: {
+      phases: [
+        {
+          // The harness gives back its hold, so only the room screen holds
+          // the worker. The send wakes the worker, and the list closes the
+          // room at once.
+          steps: [
+            { host: "open" },
+            "/echo",
+            { host: "release-worker" },
+            { host: "send", argument: "w1 closed at once" },
+            { host: "list" },
+          ],
+          expect: [
+            {
+              console:
+                "[truapi] truapi-chat-v2.dot woken for message-in-flight host",
+            },
+            { storedMatch: "^echo MessagePosted .*w1 closed at once" },
+          ],
+        },
+        {
+          // The wake holds the worker for 30 s and no longer.
+          steps: [],
+          expect: [
+            {
+              console:
+                "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
+              timeoutMs: 60_000,
+            },
+          ],
+        },
+        {
+          // A message to a product whose worker does not run wakes it, and
+          // goes out when the worker is up.
+          steps: ["w1 to a stopped worker"],
+          expect: [
+            { storedMatch: "^echo MessagePosted .*w1 to a stopped worker" },
+          ],
+        },
+      ],
+      after: ["/echo", { host: "hold-worker" }, { wait: 4_000 }, { host: "open" }],
     },
   },
   {

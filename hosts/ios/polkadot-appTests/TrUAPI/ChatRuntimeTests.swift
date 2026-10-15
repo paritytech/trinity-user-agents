@@ -249,10 +249,14 @@ struct ChatRuntimeTests {
     }
 
     /// `ProductBot` downgrades this one to a debug log, so it has to stay distinct
-    /// from a real failure.
+    /// from a real failure. The message wakes the worker and waits for it for the start window of a message.
     @Test func rustRuntimeChatSeamsFailBeforeTheWorkerIsUp() async {
         let execution = MockProductExecution()
-        let runtime = makeRustRuntime(workers: StubWorkerManager())
+        let runtime = TrUAPIChatHandler(
+            productId: chatProduct,
+            workers: StubWorkerManager(),
+            messageStartupWindow: .milliseconds(100)
+        )
 
         await #expect(throws: TrUAPIChatHandler.ChatSeamError.notStarted) {
             try await runtime.onUserMessage(text: "hi", roomId: "room")

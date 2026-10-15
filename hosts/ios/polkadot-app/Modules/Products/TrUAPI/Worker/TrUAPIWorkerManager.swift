@@ -28,6 +28,11 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
 
     func releaseWorker(for productId: ProductId)
 
+    /// Wakes the worker of the product: the core holds it for 30 seconds, and a UIKit background task keeps the app
+    /// active for the same time (07-LATER §10.2). Gives nil when the core cannot wake the product.
+    @discardableResult
+    func wake(_ productId: ProductId, reason: ChatWakeReason) async -> ChatWakeOutcome?
+
     /// What `productId`'s worker is built against, for the life of the session
     /// rather than of any one worker.
     func context(of productId: ProductId) -> ProductWorkerContext
@@ -92,6 +97,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     /// publishes no execution, so without this a handler would wait for one
     /// forever.
     private let startupWindow: Duration
+    private let backgroundTasks: any ProductWakeBackgroundTasking
     private let logger: LoggerProtocol
 
     private var held: [ProductId: Held] = [:]
@@ -116,12 +122,14 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         collection: any PocketCardStore,
         references: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
         startupWindow: Duration = .seconds(30),
+        backgroundTasks: any ProductWakeBackgroundTasking = ProductWakeBackgroundTasks(),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.builder = builder
         self.collection = collection
         self.references = references
         self.startupWindow = startupWindow
+        self.backgroundTasks = backgroundTasks
         self.logger = logger
 
         Task { await self.beginFollowing() }
@@ -146,6 +154,27 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         } catch {
             logger.error("[truapi] \(productId)'s worker request could not be given back: \(error)")
         }
+    }
+
+    nonisolated func wake(_ productId: ProductId, reason: ChatWakeReason) async -> ChatWakeOutcome? {
+        let outcome: ChatWakeOutcome
+        do {
+            outcome = try references().wakeProduct(productId: productId, reason: reason)
+        } catch {
+            logger.error("[truapi] \(productId) was not woken for \(reason.logName): \(error)")
+            return nil
+        }
+
+        guard case let .held(untilMs) = outcome else {
+            logger.warning("[truapi] \(productId) used its notification wakes of this hour")
+            return outcome
+        }
+
+        await restartIfFaulted(productId)
+        let deadline = Date(timeIntervalSince1970: TimeInterval(untilMs) / 1_000)
+        await backgroundTasks.hold(productId: productId, until: deadline)
+        logger.debug("[truapi] \(productId) woken for \(reason.logName) until \(untilMs)")
+        return outcome
     }
 
     /// Started from a task rather than in `init`, because the drain task
@@ -312,5 +341,16 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
 
     private nonisolated func publishCards(_ cards: [PocketCard], of productId: ProductId) {
         executionSubject.value[productId]?.notifyPocketCardsChanged(cards: cards)
+    }
+}
+
+extension ChatWakeReason {
+    /// The reason in the console lines of the app.
+    var logName: String {
+        switch self {
+        case .productStart: "product-start"
+        case let .messageInFlight(roomId): "message-in-flight \(roomId)"
+        case let .notification(roomId, watchId): "notification \(roomId) \(watchId)"
+        }
     }
 }

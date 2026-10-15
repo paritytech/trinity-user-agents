@@ -277,7 +277,8 @@ extension ProductBot: ChatExtensionBotProtocol {
             guard let self else { return }
 
             do {
-                // The start holds no worker (02-DESIGN D10): the worker starts when a room screen opens.
+                // The start holds no worker (02-DESIGN D10): the worker starts when a room screen opens or a
+                // message wakes it. A product with no room gets one start wake (W2, 07-LATER §10.2).
                 try await runtime.start(messagingSupport: .init(bot: self, context: context))
 
                 #if targetEnvironment(simulator)
@@ -288,7 +289,10 @@ extension ProductBot: ChatExtensionBotProtocol {
                         await TrUAPIE2EWorkerHolds.register(
                             .init(
                                 release: { await handler.releaseHeldWorker() },
-                                hold: { try await handler.holdWorker() }
+                                hold: { try await handler.holdWorker() },
+                                wake: { [workers = handler.workers, productId = product.id] reason in
+                                    await workers.wake(productId, reason: reason)
+                                }
                             ),
                             productId: product.id
                         )
