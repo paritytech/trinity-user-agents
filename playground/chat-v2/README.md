@@ -90,7 +90,9 @@ kept for a handler, which the client gives during the registration, waits for th
 
 1. Registers a handler for each of the six queries (`messages_query`, `user_action`, `reactions_query`,
    `participants_query`, `message_actions_query`, `participant_actions_query`) and `Renderer::render`.
-2. Opens `Chat::action_subscribe` and `Renderer::action_subscribe`.
+2. Opens `Chat::action_subscribe`, `Renderer::action_subscribe` and `Chat::room_events_subscribe`. The last one logs
+   each item with `via: "room_events"`; a host before the [additions](../../docs/rfcs/chat-extension-v2-additions.md)
+   refuses it, and the product works on without it.
 3. Calls `create_room` (V2) for the two rooms of the next section. A room that answers `Exists` is not declared again.
 
 It keeps its state, the counters, the `source` room's messages and each command's current setting, in product local
@@ -195,6 +197,8 @@ runs in either room.
 | `/fail crash`                                      | `source` | The next `user_action` `NewMessage` handler throws outside any promise, which ends the worker                                                                                                                                                     | Cached pages stay, the input says the product is unavailable, retry starts the worker again                                 | S23           |
 | `/fail unavailable`                                | Both   | The next query interrupts with `NotAvailable`                                                                                                                                                                                        | The host default for that item, with no error shown                                                                         | S32, S46      |
 | `/deeplink`                                        | Both   | `set_room_config` with `message_actions: true`; posts a `Text` message whose `message_actions_query` answer is `Custom { [act-open-app] }` with `Deeplink { url: "polkadot://<product>/?from=deeplink" }`                              | A long press offers "Open the App"; a pick asks for confirmation and opens the App with its banner                          | S27           |
+| `/caps`                                            | Both   | `capabilities`; posts one `RichText` line `caps: <name>, <name>; inline <n> B; preimage <n> B`, with `none` for an empty list, or `Text` `caps unavailable` when the host answers `Unsupported` or `HostFailure("unavailable")` | The names are exactly the features whose scenarios then pass on that host                                                 | S49, S50      |
+| `/features <name> on\|off`, `/features calls audio\|video\|both\|off` | Both | `set_room_features` with one field changed and the others as last declared: `preimage` sets `preimage_attachments`, `search` sets `search`, `readaloud` sets `read_aloud`, `calls` sets `calls` (`off` sets `None`) | The host keeps the declaration whole across restarts, a feature it does not serve included, and ignores what it does not serve | S51 and the P10 rows |
 | `/echo`                                            | Both   | Toggles echo. While on, every user event in the room is answered with `update_feed` `New` `Text "echo <event> <summary>"`                                                                                                             | One echo per send, reply, edit, delete, reaction and seen report                                                            | S12 to S14    |
 
 Events and queries the product answers outside the table:
@@ -209,6 +213,37 @@ Events and queries the product answers outside the table:
 | `RoomOpened`                                                 | Restores the activity line when `/activity on` is set                                             |
 | `RoomClosed`, `UserEdited`, `UserDeleted`, `UserReacted`, `Seen` in `host` | Logged; echoed when `/echo` is on                                                   |
 | `Renderer::action_subscribe` for `card-like` or `footer-ping` | `update_feed` `New` `Text "card liked"` or `"footer ping"`                                       |
+
+## Chat Extension v2 additions
+
+The [additions RFC](../../docs/rfcs/chat-extension-v2-additions.md) adds `Chat` methods `22` to `27`. The sample product
+grows one command group per item of the P10 plan, in the order of the plan. Each command answers `ok <command>` or
+`error <command>: <reason>` as the commands above do. On a host before the additions every new call answers
+`Unsupported`: the command answers `error`, `/caps` answers `caps unavailable`, and every command of the first table works
+on (S52).
+
+| Command                                    | Item  | Does                                                                                                                                                                  | Scenarios        | Status      |
+| ------------------------------------------ | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ----------- |
+| `/caps`                                    | P10.8 | `capabilities`; posts the names and both bounds, or `caps unavailable`                                                                                                | S49, S50         | Implemented |
+| `/features preimage\|search\|readaloud on\|off`, `/features calls audio\|video\|both\|off` | P10.8 | `set_room_features` with one field changed                                       | S51              | Implemented |
+| `/bot add <id> <name>`                     | P10.6 | `register_bot` with `avatar-alt.png` inline; a repeat replaces the name and icon                                                                                      | S53              | Planned     |
+| `/bot post <id> <text>`                    | P10.6 | `update_feed` `New` with `origin: bot:<id>`                                                                                                                            | S53              | Planned     |
+| `/bot typing <id>`                         | P10.6 | `set_room_activity` with `participant_id: "bot:<id>"`                                                                                                                  | S53              | Planned     |
+| `/notify [<seconds>]`                      | P10.10 | `send_push_notification` with the room link `polkadot://<product>/-/chat/<room>` as deeplink, now or after `<seconds>`; `UserStateChanged` is logged and echoed     | S54 to S56       | Planned     |
+| `/features preimage on`                    | P10.3 | As above; then the Worker logs each received media item as `<kind> <size> <Inline\|Preimage>`, and with `/echo` answers `echo media <kind> <size> <resource kind>`  | S57 to S60, B7   | Planned     |
+| `/search on\|na\|off`                    | P10.5 | `set_room_features { search }`; `na` keeps it declared and interrupts `NotAvailable`; `search_query` pages the stored messages newest first with the cursor `<index>` | S61 to S63, B8   | Planned     |
+| `/thread <id>`                             | P10.9 | Creates `thread-<room>-<id>` with `thread_of`, posts three replies from `p1`, `p2` and `bot:helper` when present, and sets the summary of the root                    | S64              | Planned     |
+| `/menu thread`                             | P10.9 | Adds `act-thread` "Reply in thread" to the message menu                                                                                                               | S64              | Planned     |
+| `/branches <id> <n>`                       | P10.9 | `set_message_meta` with `branch: { 1, n }`; answers `BranchSelected` with `Edited` "Branch i of n" and the new position                                              | S65              | Planned     |
+| `/reason`                                  | P10.9 | A reasoning row `Preparing`, twenty `Edited`, then `StatusChanged { Sent }` with `duration_ms: 4000`                                                                  | S66              | Planned     |
+| `/features readaloud on`                   | P10.9 | As above; the host offers "Read aloud" on text messages                                                                                                              | S67              | Planned     |
+| `/wake watch`                              | P10.4 | Registers a receiving watch with the route `/-/chat/<room>` where the receiving API exists, else answers `error`; on `Woken` sets the preview "Woken by <watch_id>", posts "woken" in a host-store room and sends a notification into the room | S69 to S71, B9 | Planned |
+| `/call ring [video]`                       | P10.7 | `set_room_call` `Ringing` from `p1`; `CallAnswered` accept sets `Active` without a session, decline clears the call                                                  | S73              | Planned     |
+| `/call active [video]`, `/call end`        | P10.7 | `set_room_call` `Active` without a session, or `None`; `CallRequested` answers `Active` without a session and posts "call requested video=<bool>"                    | S72, S74         | Planned     |
+| `/call media <peer account>`               | P10.7 | Creates a Media session and binds it with `Active { media_session }`; waits on the Media service                                                                      | S75              | Planned     |
+
+The catalogue `/commands` declares holds at most 32 commands, the bound of the RFC. With every group above, the table
+holds more than 32 commands, so `/commands` then declares the first 32 of the table.
 
 ## Event log
 
@@ -226,7 +261,7 @@ and one more line for every query it answers. A collector keeps the lines whose 
 | `t`    | Always `"chat-v2"`                                                                                                                        |
 | `boot` | How many times the Worker started, kept in product storage; a worker restart shows as a new `boot`                                      |
 | `seq`  | Line counter of this boot, from 1                                                                                                         |
-| `via`  | `action_subscribe`, one of the six query names, `render`, `renderer_action`, or `answer`                                                  |
+| `via`  | `action_subscribe`, `room_events`, one of the six query names, `render`, `renderer_action`, `answer`, or `preimage`                      |
 | `re`   | For `answer`: the `seq` of the query it answers                                                                                           |
 | `room` | The room id, or `null` for a render request without one                                                                                   |
 | `kind` | The event, action, query or answer variant: `MessagePosted`, `NewMessage`, `Before`, `Count`, `MessageCreated`, `NotAvailable`, `Timeout` |

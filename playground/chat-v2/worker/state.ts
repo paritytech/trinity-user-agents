@@ -2,7 +2,7 @@
  * The state the product keeps in its local storage, so that a worker restart
  * continues where the last run stopped.
  */
-import type { ChatReactionDetail, ChatRoomConfig, ChatRoomPreview } from "@parity/truapi";
+import type { ChatReactionDetail, ChatRoomConfig, ChatRoomFeatures, ChatRoomPreview } from "@parity/truapi";
 import type { HexString } from "@parity/truapi/scale";
 import { emptyClockState, type ClockState, type RoomId } from "./clock";
 import { defaultPreview, hostStoreConfig, productSourceConfig, sourcePreview } from "./fixtures";
@@ -29,6 +29,8 @@ export interface RoomSettings {
   echoMessages: string[];
   /** The reactions on the messages of a host-store room. */
   reactionBook: Record<string, ChatReactionDetail[]>;
+  /** The optional features `/features` declared last. */
+  features: ChatRoomFeatures;
 }
 
 /** The one-shot failures of `/fail`. */
@@ -66,7 +68,13 @@ export function roomSettings(room: RoomId): RoomSettings {
     deeplinkMessages: [],
     echoMessages: [],
     reactionBook: {},
+    features: defaultFeatures(),
   };
+}
+
+/** The features of a room that declared none. */
+export function defaultFeatures(): ChatRoomFeatures {
+  return { preimageAttachments: false, search: false, readAloud: false };
 }
 
 export function initialState(): ProductState {
@@ -103,7 +111,10 @@ export function decodeState(text: string): ProductState {
   if (value === null || typeof value !== "object" || !("version" in value) || value.version !== 2) {
     throw new Error("unknown state version");
   }
-  return value as ProductState;
+  const state = value as ProductState;
+  // A state saved before `/features` existed has no features: the default.
+  for (const settings of Object.values(state.rooms)) settings.features ??= defaultFeatures();
+  return state;
 }
 
 /** The product local storage, as the Worker uses it. */

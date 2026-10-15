@@ -1,0 +1,180 @@
+/**
+ * The commands and the start of the Chat Extension v2 additions, against the
+ * fake client: `/caps`, `/features` and `room_events_subscribe`.
+ */
+import { describe, expect, test } from "bun:test";
+import type { HostChatSetRoomFeaturesRequest, HostChatUpdateFeedRequest } from "@parity/truapi";
+import { bytesToHex } from "../../worker/bytes";
+import { capsText, isUnavailable } from "../../worker/execute";
+import type { Assets } from "../../worker/fixtures";
+import { startSampleProduct } from "../../worker/product";
+import { decodeState, encodeState, initialState } from "../../worker/state";
+import { createFakeClient, type FakeClient, type FakeClientOptions } from "../support/fake-client";
+
+const tiny = bytesToHex(new Uint8Array([1, 2, 3]));
+const assets: Assets = {
+  avatar: tiny,
+  avatarAlt: tiny,
+  badge: tiny,
+  icons: [tiny, tiny, tiny, tiny, tiny, tiny],
+  samplePng: tiny,
+  samplePdf: tiny,
+  sampleMp4: tiny,
+};
+
+function start(options: FakeClientOptions = {}, fake: FakeClient = createFakeClient(options)) {
+  const lines: string[] = [];
+  const product = startSampleProduct({
+    client: fake.client,
+    assets,
+    product: "sample.dot",
+    logSink: (line) => lines.push(line),
+    crash: () => {},
+  });
+  return { fake, product, log: () => lines.map((line) => JSON.parse(line) as Record<string, unknown>) };
+}
+
+/** Post a command in `host` and wait until the product ran it. */
+async function command(running: ReturnType<typeof start>, text: string) {
+  running.fake.emitEvent({
+    roomId: "host",
+    peer: "native",
+    event: { tag: "MessagePosted", value: { messageId: `host-${text}`, body: { tag: "Text", value: { text } } } },
+  });
+  await running.product.idle();
+}
+
+/** The bodies of the messages the product posted in `host`, as text. */
+function posted(fake: FakeClient): string[] {
+  return (fake.callsOf("updateFeed") as HostChatUpdateFeedRequest[]).flatMap(({ roomId, update }) => {
+    if (roomId !== "host" || update.tag !== "New") return [];
+    const { body } = update.value;
+    if (body.tag === "Text") return [body.value.text];
+    if (body.tag === "RichText") return [body.value.text ?? ""];
+    return [];
+  });
+}
+
+describe("room events", () => {
+  test("the Worker opens room_events_subscribe at start and logs each item", async () => {
+    const running = start();
+    await running.product.idle();
+    running.fake.emitRoomEvent({ roomId: "host", event: { tag: "CallRequested", value: { video: true } } });
+    await running.product.idle();
+
+    expect(running.log().filter((line) => line.via === "room_events")).toEqual([
+      expect.objectContaining({ room: "host", kind: "CallRequested", data: { video: true } }),
+    ]);
+  });
+});
+
+describe("/caps", () => {
+  test("posts the names and both bounds as RichText (S49)", async () => {
+    const running = start({
+      capabilities: { features: ["search", "call_buttons"], inlineAttachmentMaxBytes: 1_048_576, preimageAttachmentMaxBytes: 0 },
+    });
+    await command(running, "/caps");
+
+    expect(posted(running.fake)).toEqual(["caps: search, call_buttons; inline 1048576 B; preimage 0 B"]);
+    const [request] = (running.fake.callsOf("updateFeed") as HostChatUpdateFeedRequest[]).filter(
+      ({ update }) => update.tag === "New",
+    );
+    expect(request?.update.tag === "New" && request.update.value.body.tag).toBe("RichText");
+  });
+
+  test("says none for a host that lists no feature", () => {
+    expect(capsText([], 1_048_576, 0)).toBe("caps: none; inline 1048576 B; preimage 0 B");
+  });
+
+  test("posts caps unavailable on a host before the additions, which keeps working (S50, S52)", async () => {
+    const running = start({ unknown: new Set(["capabilities", "setRoomFeatures", "roomEventsSubscribe"]) });
+    await command(running, "/caps");
+    await command(running, "/features search on");
+    await command(running, "/post text");
+    await command(running, "/preview pin");
+
+    expect(posted(running.fake)).toEqual([
+      "caps unavailable",
+      "error /features search on: set_room_features Unsupported",
+      expect.stringContaining("Plain text"),
+      "ok /preview pin",
+    ]);
+    // A refused declaration is not kept.
+    expect(running.product.state.rooms.host.features).toEqual({
+      preimageAttachments: false,
+      search: false,
+      readAloud: false,
+    });
+  });
+
+  test("tells an unknown call from another failure", () => {
+    expect(isUnavailable({ tag: "Unsupported" })).toBe(true);
+    expect(isUnavailable({ tag: "HostFailure", value: { reason: "unavailable" } })).toBe(true);
+    expect(isUnavailable({ tag: "HostFailure", value: { reason: "the host is down" } })).toBe(false);
+    expect(isUnavailable({ tag: "Denied" })).toBe(false);
+  });
+});
+
+describe("/features", () => {
+  test("changes one field and keeps the others (S51)", async () => {
+    const running = start();
+    for (const text of ["/features readaloud on", "/features calls both", "/features preimage on", "/features calls off"]) {
+      await command(running, text);
+    }
+
+    const declared = (running.fake.callsOf("setRoomFeatures") as HostChatSetRoomFeaturesRequest[]).map(
+      ({ features }) => features,
+    );
+    expect(declared).toEqual([
+      { preimageAttachments: false, search: false, readAloud: true },
+      { preimageAttachments: false, search: false, readAloud: true, calls: { audio: true, video: true } },
+      { preimageAttachments: true, search: false, readAloud: true, calls: { audio: true, video: true } },
+      { preimageAttachments: true, search: false, readAloud: true },
+    ]);
+    expect(posted(running.fake)).toEqual([
+      "ok /features readaloud on",
+      "ok /features calls both",
+      "ok /features preimage on",
+      "ok /features calls off",
+    ]);
+  });
+
+  test("answers the usage for a name or a value it does not know", async () => {
+    const running = start();
+    for (const text of ["/features", "/features bogus on", "/features search maybe", "/features calls loud"]) {
+      await command(running, text);
+    }
+
+    expect(running.fake.callsOf("setRoomFeatures")).toEqual([]);
+    for (const line of posted(running.fake)) {
+      expect(line).toContain("usage: /features preimage|search|readaloud on|off, calls audio|video|both|off");
+    }
+  });
+
+  test("keeps the features of the room across a worker restart", async () => {
+    const storage = new Map<string, `0x${string}`>();
+    const first = start({}, createFakeClient({ storage }));
+    await command(first, "/features search on");
+    await first.product.idle();
+
+    const second = start({}, createFakeClient({ storage }));
+    await command(second, "/features readaloud on");
+    expect((second.fake.callsOf("setRoomFeatures") as HostChatSetRoomFeaturesRequest[]).at(-1)?.features).toEqual({
+      preimageAttachments: false,
+      search: true,
+      readAloud: true,
+    });
+  });
+
+  test("a state saved before /features loads with the default features", () => {
+    const state = initialState();
+    const saved = JSON.parse(encodeState(state)) as { rooms: Record<string, Record<string, unknown>> };
+    for (const room of Object.values(saved.rooms)) delete room.features;
+
+    expect(decodeState(JSON.stringify(saved)).rooms.source.features).toEqual({
+      preimageAttachments: false,
+      search: false,
+      readAloud: false,
+    });
+  });
+});

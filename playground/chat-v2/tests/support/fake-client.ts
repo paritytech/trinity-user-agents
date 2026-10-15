@@ -7,7 +7,12 @@
  * same `startSampleProduct`.
  */
 import { errAsync, okAsync } from "neverthrow";
-import type { HostChatActionSubscribeItem, HostRendererActionSubscribeItem } from "@parity/truapi";
+import type {
+  HostChatActionSubscribeItem,
+  HostChatCapabilitiesResponse,
+  HostChatRoomEventsSubscribeItem,
+  HostRendererActionSubscribeItem,
+} from "@parity/truapi";
 import type { SampleClient } from "../../worker/context";
 
 export interface RecordedCall {
@@ -22,11 +27,21 @@ export interface QueryOutcome {
   interrupt?: unknown;
 }
 
-function observable<Item>() {
-  const observers = new Set<{ next?: (item: Item) => void }>();
+interface Observer<Item> {
+  next?: (item: Item) => void;
+  error?: (error: unknown) => void;
+}
+
+function observable<Item>(refusal?: () => unknown) {
+  const observers = new Set<Observer<Item>>();
   return {
     observable: {
-      subscribe(observer: { next?: (item: Item) => void } = {}) {
+      subscribe(observer: Observer<Item> = {}) {
+        const refused = refusal?.();
+        if (refused !== undefined) {
+          observer.error?.(refused);
+          return { unsubscribe: () => {}, subscriptionId: "fake" };
+        }
         observers.add(observer);
         return { unsubscribe: () => observers.delete(observer), subscriptionId: "fake" };
       },
@@ -40,6 +55,13 @@ function observable<Item>() {
 export interface FakeClientOptions {
   /** Methods the fake refuses with `Unknown`. */
   refuse?: ReadonlySet<string>;
+  /**
+   * Methods the fake does not know, as a host before the Chat additions:
+   * they answer `Unsupported`. `roomEventsSubscribe` ends at once.
+   */
+  unknown?: ReadonlySet<string>;
+  /** The answer of `capabilities`. */
+  capabilities?: HostChatCapabilitiesResponse;
   /** The product local storage; share it to play a worker restart. */
   storage?: Map<string, `0x${string}`>;
 }
@@ -48,6 +70,9 @@ export function createFakeClient(options: FakeClientOptions = {}) {
   const calls: RecordedCall[] = [];
   const handlers = new Map<string, Handler>();
   const actions = observable<HostChatActionSubscribeItem>();
+  const roomEvents = observable<HostChatRoomEventsSubscribeItem>(() =>
+    options.unknown?.has("roomEventsSubscribe") ? { tag: "Unsupported" } : undefined,
+  );
   const rendererActions = observable<HostRendererActionSubscribeItem>();
   const storage = options.storage ?? new Map<string, `0x${string}`>();
   let hostIds = 0;
@@ -56,6 +81,7 @@ export function createFakeClient(options: FakeClientOptions = {}) {
     (method: string, answer: (request: never) => unknown = () => undefined) =>
     (request: never) => {
       calls.push({ method, request });
+      if (options.unknown?.has(method)) return errAsync({ tag: "Unsupported" });
       if (options.refuse?.has(method)) {
         return errAsync({ tag: "Domain", value: { tag: "V1", value: { tag: "Unknown", value: { reason: "refused by the fake" } } } });
       }
@@ -81,7 +107,18 @@ export function createFakeClient(options: FakeClientOptions = {}) {
       setRoomSuggestions: unary("setRoomSuggestions"),
       setRoomCommands: unary("setRoomCommands"),
       setRoomActivity: unary("setRoomActivity"),
+      capabilities: unary(
+        "capabilities",
+        () =>
+          options.capabilities ?? {
+            features: ["call_buttons", "search"],
+            inlineAttachmentMaxBytes: 1_048_576,
+            preimageAttachmentMaxBytes: 0,
+          },
+      ),
+      setRoomFeatures: unary("setRoomFeatures"),
       actionSubscribe: () => actions.observable,
+      roomEventsSubscribe: () => roomEvents.observable,
       onMessagesQuery: register("messages_query"),
       onUserAction: register("user_action"),
       onReactionsQuery: register("reactions_query"),
@@ -116,6 +153,9 @@ export function createFakeClient(options: FakeClientOptions = {}) {
     },
     emitEvent(item: HostChatActionSubscribeItem) {
       actions.emit(item);
+    },
+    emitRoomEvent(item: HostChatRoomEventsSubscribeItem) {
+      roomEvents.emit(item);
     },
     emitRendererAction(item: HostRendererActionSubscribeItem) {
       rendererActions.emit(item);
