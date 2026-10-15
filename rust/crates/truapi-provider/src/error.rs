@@ -9,11 +9,6 @@ use crate::storage::StorageClientError;
 /// Failure modes of a [`ChainProvider`](crate::platform::ChainProvider) and of
 /// the embedded provider's own API, so callers can match on the cause (e.g.
 /// for retry or telemetry).
-///
-/// Which variants are constructed depends on the enabled backends and target
-/// (e.g. `MissingRuntime` is native-WebSocket only), so the enum as a whole
-/// allows dead variants rather than cfg-gating each one.
-#[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum ProviderError {
 	/// No backend is registered — and no bundled network defines — this
