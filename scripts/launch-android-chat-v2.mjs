@@ -175,6 +175,15 @@ async function runScenario(scenario) {
   }
 }
 
+/**
+ * The rows that show each Chat feature that the app can list (S49). The app
+ * lists a feature only when these rows pass on the emulator.
+ */
+const FEATURE_ROWS = {
+  product_source_rooms: "S15 to S24 and S46",
+  custom_bodies: "S7",
+};
+
 const DRIVERS = {
   async S2({ note }) {
     const declarations = Object.fromEntries(
@@ -591,6 +600,40 @@ const DRIVERS = {
     } finally {
       await command("host", `/meta ${ROOMS.host.name}`, { reply: true });
     }
+  },
+
+  // S49: the product reads from `capabilities` exactly the names that the app
+  // lists (the app logs them as it answers), and both attachment bounds.
+  async S49({ note }) {
+    await openRoom("host");
+    const before = messages("host");
+    const mark = logMark();
+    await command("host", "/caps");
+    const answer = await waitFor(
+      () => addedMessages("host", before).find((message) => message.text.startsWith("caps"))?.text,
+      { timeoutMs: COMMAND_TIMEOUT_MS, message: "no capabilities message stored" },
+    );
+    const logged = await waitForLog(
+      mark,
+      (line) => line.message.startsWith("truapi.chat.capabilities "),
+      "the capabilities that the app lists",
+    );
+    const listed = logged.message.split(": ").slice(1).join(": ").split(",").filter(Boolean);
+    const match = /caps: (.*); inline (\d+) B; preimage (\d+) B/.exec(answer);
+    expect(match, `no capabilities in "${answer}"`);
+    const read = match[1] === "none" ? [] : match[1].split(", ");
+    expect(
+      [...read].sort().join(",") === [...listed].sort().join(","),
+      `the product read ${read.join(",") || "none"}, the app lists ${listed.join(",") || "none"}`,
+    );
+    expect(match[2] === String(1024 * 1024) && match[3] === "0", `bounds inline ${match[2]} B, preimage ${match[3]} B`);
+    const unbacked = listed.filter((name) => !FEATURE_ROWS[name]);
+    expect(unbacked.length === 0, `the app lists ${unbacked.join(", ")} without a row of the launcher that passes for it`);
+    await waitScreen((screen) => findText(screen, /^caps: /), "the capabilities message");
+    note(`\`${await screenshot(scenarioById("S49"), "host")}\``);
+    note(
+      `the app lists ${listed.join(", ") || "none"}; the product read ${read.join(", ") || "none"}; inline ${match[2]} B, preimage ${match[3]} B; the rows of the listed names: ${listed.map((name) => `${name} ${FEATURE_ROWS[name]}`).join(", ") || "none"}`,
+    );
   },
 
   async S7({ note }) {

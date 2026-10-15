@@ -73,7 +73,7 @@ row format of the iOS report.
 
 | Kind       | Scenarios                                                                        | Row                                           |
 | ---------- | -------------------------------------------------------------------------------- | --------------------------------------------- |
-| Driven     | S1 to S4 and S6 to S14 (`host` room), S11 and S15 to S24 and S46 (`source` room) | `pass`, or `fail` with the first failed check |
+| Driven     | S1 to S4, S6 to S14 and S49 (`host` room), S11, S15 to S24 and S46 (`source` room) | `pass`, or `fail` with the first failed check |
 | Not driven | S5 (the sample has no command that calls `delete_room`)                          | `skip` with that reason                       |
 | Not driven | S25 to S41                                                                       | `skip: needs P8.6`                            |
 | Not driven | S44, S47                                                                         | `skip: needs P8.8`                            |
@@ -96,6 +96,7 @@ the app. The launcher fails when a driven row fails or has no row.
 | S7–S10   | `/post all` and `/help` stored and drawn; `/stream` and `/edit` with one revision row; `/delete` tombstone; reactions table                  |
 | S12–S14  | `/echo`, then send, reply, edit, react, delete from the menu; the Actions press; `/commands`, then `/help` as `Command`                      |
 | S4, S6   | `/preview` variants in the chat list rows; the list with the product server stopped                                                          |
+| S49      | `/caps`: the stored answer has the names that the app logs (`truapi.chat.capabilities`), each with a row above, and the bounds 1 MiB and 0 |
 
 ## Troubleshooting
 
