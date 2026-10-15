@@ -30,7 +30,10 @@ use truapi::latest::{
 
 use super::{funding::lock, services::RuntimeServices};
 use crate::{
-	host_logic::{funding::FundingChoice, funding_providers::LearnedSupport},
+	host_logic::{
+		funding::FundingChoice,
+		funding_providers::{LearnedLimit, LearnedSupport},
+	},
 	platform::{FundingQuoteList, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable},
 	unix_time::current_unix_millis,
 };
@@ -44,6 +47,9 @@ const ANSWER_REUSE_MS: u64 = 30_000;
 const QUOTE_REFRESH: Duration = Duration::from_secs(60);
 /// How long the country the host detected is reused before asking again.
 const DETECTED_COUNTRY_REUSE_MS: u64 = 60 * 60 * 1_000;
+/// How long a detection that found no country stands before asking again,
+/// as location or a SIM can become available soon after.
+const UNDETECTED_COUNTRY_RETRY_MS: u64 = 60 * 1_000;
 
 /// A provider's answer and when it came.
 #[derive(Clone)]
@@ -207,17 +213,24 @@ impl RuntimeServices {
 		.boxed()
 	}
 
-	/// The country the host detected for the user, reused for an hour.
+	/// The country the host detected for the user as an ISO 3166-1 alpha-2
+	/// code, reused for an hour. A detection that found none, or answered
+	/// something that is not a two-letter code, is asked again after a
+	/// minute.
 	pub async fn detected_funding_country(&self) -> Option<String> {
 		let now_ms = current_unix_millis();
 		let cached = lock(&self.funding_quotes().detected).clone();
-		if let Some((at_ms, country)) = cached &&
-			now_ms.saturating_sub(at_ms) < DETECTED_COUNTRY_REUSE_MS
-		{
-			return country;
+		if let Some((at_ms, country)) = cached {
+			let reuse_ms = match country {
+				Some(_) => DETECTED_COUNTRY_REUSE_MS,
+				None => UNDETECTED_COUNTRY_RETRY_MS,
+			};
+			if now_ms.saturating_sub(at_ms) < reuse_ms {
+				return country;
+			}
 		}
 		let platform = self.funding().platform()?;
-		let country = platform.detected_country().await.map(|country| country.to_uppercase());
+		let country = platform.detected_country().await.and_then(alpha2);
 		*lock(&self.funding_quotes().detected) = Some((now_ms, country.clone()));
 		country
 	}
@@ -252,15 +265,16 @@ impl RuntimeServices {
 		stream::select_all(rows).boxed()
 	}
 
-	/// [`Self::get_funding_quote`] as the host's list: the rows so far with
-	/// the best quote marked, again after each answer, and a new round of
-	/// asks every minute while the session is open, has no provider and
-	/// this is the latest list asked for it.
+	/// [`Self::get_funding_quote`] as the host's list, under the returned
+	/// request id: the rows so far with the best quote marked, again after
+	/// each answer, and a new round of asks every minute. Lists stop, mid
+	/// round too, once the session is handed to a provider or ends, or a
+	/// newer request or [`FundingQuotes::stop_watching`] replaces this one.
 	pub fn watch_funding_quotes(
 		self: &Arc<Self>,
 		intent: &str,
 		ask: FundingQuoteAsk,
-	) -> BoxStream<'static, FundingQuoteList> {
+	) -> (u64, BoxStream<'static, FundingQuoteList>) {
 		self.watch_funding_quotes_within(intent, ask, QUOTE_DEADLINE, QUOTE_REFRESH)
 	}
 
@@ -272,12 +286,19 @@ impl RuntimeServices {
 		ask: FundingQuoteAsk,
 		deadline: Duration,
 		refresh: Duration,
-	) -> BoxStream<'static, FundingQuoteList> {
+	) -> (u64, BoxStream<'static, FundingQuoteList>) {
 		let watch = self.funding_quotes().watch(intent);
+		let current = {
+			let services = self.clone();
+			let intent = intent.to_string();
+			move || services.quotes_still_wanted(&intent, watch)
+		};
 		let services = self.clone();
 		let intent = intent.to_string();
 		let refresh_ms = refresh.as_millis() as u64;
-		stream::unfold(None, move |round_at: Option<u64>| {
+		let still_current = current.clone();
+		let lists = stream::unfold(None, move |round_at: Option<u64>| {
+			let current = current.clone();
 			let services = services.clone();
 			let intent = intent.clone();
 			let ask = ask.clone();
@@ -286,11 +307,7 @@ impl RuntimeServices {
 					let wait = round_at.saturating_sub(current_unix_millis());
 					futures_timer::Delay::new(Duration::from_millis(wait)).await;
 				}
-				let quotable = services
-					.funding()
-					.get(&intent)
-					.is_some_and(|session| !session.is_terminal() && session.provider_id.is_none());
-				if !quotable || !services.funding_quotes().is_watched(&intent, watch) {
+				if !current() {
 					return None;
 				}
 				let refresh_at_ms = current_unix_millis().saturating_add(refresh_ms);
@@ -308,7 +325,13 @@ impl RuntimeServices {
 					})
 					.collect();
 				let rows = services.get_funding_quote_within(&intent, ask, deadline);
-				let start = FundingQuoteList { rows: pending, best: None, refresh_at_ms };
+				let start = FundingQuoteList {
+					request_id: watch,
+					rows: pending,
+					best: None,
+					refresh_at_ms,
+				};
+				let providers = services.clone();
 				let lists = rows
 					.scan(start, move |list, row| {
 						match list.rows.iter_mut().find(|kept| kept.provider_id == row.provider_id)
@@ -316,7 +339,9 @@ impl RuntimeServices {
 							Some(kept) => *kept = row,
 							None => list.rows.push(row),
 						}
-						list.best = best_quote(direction, &list.rows);
+						list.best = best_quote(direction, &list.rows, |provider_id| {
+							providers.funding_providers().is_quote_target(provider_id)
+						});
 						future::ready(Some(list.clone()))
 					})
 					.boxed();
@@ -324,7 +349,19 @@ impl RuntimeServices {
 			}
 		})
 		.flatten()
-		.boxed()
+		.take_while(move |_| future::ready(still_current()))
+		.boxed();
+		(watch, lists)
+	}
+
+	/// Whether list `watch` of session `intent` is still wanted: the latest
+	/// one asked for, for a session still open and not yet handed to a
+	/// provider.
+	fn quotes_still_wanted(&self, intent: &str, watch: u64) -> bool {
+		self.funding_quotes().is_watched(intent, watch) &&
+			self.funding()
+				.get(intent)
+				.is_some_and(|session| !session.is_terminal() && session.provider_id.is_none())
 	}
 
 	/// Ask one provider, holding its worker while it answers.
@@ -351,6 +388,7 @@ impl RuntimeServices {
 					quotes.remember(provider_id, &ask, now_ms, answer.clone());
 					if let Some(supported) = shows_support(answer, ask.country.is_some()) {
 						let (min, max) = limits_shown(answer);
+						let limit = |amount| LearnedLimit { amount, learned_at_ms: now_ms };
 						self.learn_funding_support(LearnedSupport {
 							provider_id: provider_id.to_string(),
 							direction: ask.direction,
@@ -358,9 +396,10 @@ impl RuntimeServices {
 							asset: ask.asset.clone(),
 							network: ask.network.clone(),
 							country: ask.country.clone(),
+							asked: ask.amount,
 							supported,
-							min,
-							max,
+							min: min.map(limit),
+							max: max.map(limit),
 							learned_at_ms: now_ms,
 						});
 					}
@@ -444,11 +483,16 @@ fn limits_shown(answer: &FundingQuoteAnswer) -> (Option<u128>, Option<u128>) {
 	}
 }
 
-/// The provider whose quote is best for the user in `direction`: the least
-/// to pay inbound, the most to receive outbound. The earliest row wins a tie.
-fn best_quote(direction: FundingDirection, rows: &[FundingQuoteRow]) -> Option<String> {
+/// The provider whose quote is best for the user in `direction`, among
+/// those a session can still be handed to: the least to pay inbound, the
+/// most to receive outbound. The earliest row wins a tie.
+fn best_quote(
+	direction: FundingDirection,
+	rows: &[FundingQuoteRow],
+	selectable: impl Fn(&str) -> bool,
+) -> Option<String> {
 	let quoted = rows.iter().filter_map(|row| match &row.state {
-		FundingQuoteState::Quoted { quote } => Some((row, quote)),
+		FundingQuoteState::Quoted { quote } if selectable(&row.provider_id) => Some((row, quote)),
 		_ => None,
 	});
 	let best = match direction {
@@ -456,6 +500,12 @@ fn best_quote(direction: FundingDirection, rows: &[FundingQuoteRow]) -> Option<S
 		FundingDirection::Out => quoted.rev().max_by_key(|(_, quote)| quote.receive_amount),
 	};
 	best.map(|(row, _)| row.provider_id.clone())
+}
+
+/// `raw` as an ISO 3166-1 alpha-2 code, uppercased, when it is one.
+fn alpha2(raw: String) -> Option<String> {
+	let code = raw.trim().to_ascii_uppercase();
+	(code.len() == 2 && code.bytes().all(|byte| byte.is_ascii_uppercase())).then_some(code)
 }
 
 fn expired(quote: &FundingQuote, now_ms: u64) -> bool {
@@ -479,6 +529,7 @@ mod tests {
 			network_fee: 0,
 			eta_secs: None,
 			expires_at,
+			asset_decimals: 2,
 		}
 	}
 
@@ -506,7 +557,8 @@ mod tests {
 	}
 
 	// The user pays the least for what they add, and receives the most for
-	// what they withdraw; among equals the host's own order decides.
+	// what they withdraw; among equals the host's own order decides. A
+	// provider a session can no longer be handed to is never the best.
 	#[test]
 	fn the_best_quote_is_cheapest_in_and_most_generous_out() {
 		let rows = [
@@ -519,13 +571,21 @@ mod tests {
 			},
 		];
 
+		let any = |_: &str| true;
+
 		assert_eq!(
 			(
-				best_quote(FundingDirection::In, &rows),
-				best_quote(FundingDirection::Out, &rows),
-				best_quote(FundingDirection::In, &rows[3..]),
+				best_quote(FundingDirection::In, &rows, any),
+				best_quote(FundingDirection::Out, &rows, any),
+				best_quote(FundingDirection::In, &rows[3..], any),
+				best_quote(FundingDirection::In, &rows, |provider_id| provider_id != "second.dot"),
 			),
-			(Some("second.dot".to_string()), Some("first.dot".to_string()), None)
+			(
+				Some("second.dot".to_string()),
+				Some("first.dot".to_string()),
+				None,
+				Some("third.dot".to_string()),
+			)
 		);
 	}
 
@@ -552,5 +612,15 @@ mod tests {
 			.map(|choice| choice.quote.quote_id.clone())
 			.collect();
 		assert_eq!(kept, vec!["live".to_string()]);
+	}
+
+	// A host answers whatever its platform reports; only a two-letter code
+	// reaches a quote ask.
+	#[test]
+	fn only_an_alpha2_code_counts_as_a_detected_country() {
+		assert_eq!(
+			["de", " PT ", "deu", "D1", ""].map(|raw| alpha2(raw.to_string())),
+			[Some("DE".to_string()), Some("PT".to_string()), None, None, None]
+		);
 	}
 }

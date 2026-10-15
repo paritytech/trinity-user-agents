@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins
 
+import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.roundToInt
 
 /**
@@ -94,7 +96,16 @@ object CoinageScene {
      * Reads the field's live spring values rather than the layout's targets, so what is drawn is wherever
      * each coin has actually got to.
      */
-    fun batches(field: CoinageCoinField, designs: List<CoinageAssetStore.Design>): List<CoinageBatch> {
+
+    /**
+     * [window] is how far down the field the drawing surface starts: the surface is at most one screen tall
+     * and pinned to the visible part of the field, so a coin is drawn that much higher than it is laid out.
+     */
+    fun batches(
+        field: CoinageCoinField,
+        designs: List<CoinageAssetStore.Design>,
+        window: Float
+    ): List<CoinageBatch> {
         val batches = LinkedHashMap<String, MutableList<CoinageInstance>>()
 
         for (member in field.members) {
@@ -102,7 +113,7 @@ object CoinageScene {
             val design = designs.getOrNull(exponent) ?: continue
 
             batches.getOrPut(geometry(member.coin.exponent).key) { mutableListOf() } +=
-                instance(member, design, field.distanceToTarget(member))
+                instance(member, design, field.distanceToTarget(member), window)
         }
 
         return batches.map { (geometry, instances) -> CoinageBatch(geometry, instances) }
@@ -111,7 +122,8 @@ object CoinageScene {
     private fun instance(
         member: CoinageCoinField.Member,
         design: CoinageAssetStore.Design,
-        distance: Float
+        distance: Float,
+        window: Float
     ): CoinageInstance {
         val (outer, core) = metals(member.coin.exponent)
         val channels = member.channels
@@ -121,7 +133,7 @@ object CoinageScene {
         return CoinageInstance(
             // World y runs up, so screen y is negated here and never in the shader.
             positionX = channels.centreX.value,
-            positionY = -channels.centreY.value,
+            positionY = window - channels.centreY.value,
             positionZ = channels.lift.value,
             height = channels.height.value,
             // The strip turns coins by a negative angle; spin about z is for the detail view.
@@ -135,7 +147,7 @@ object CoinageScene {
             tile = design.tile,
             reeds = reeds(member.coin.exponent),
             luster = channels.luster.value * landing * landing,
-            recede = 0f,
+            recede = channels.recede.value,
             calm = channels.calm.value,
             // Streaks follow the animated wear, so a coin visibly cleans up as its ring fills. Pits do not:
             // a payment happened or it did not.
@@ -143,6 +155,28 @@ object CoinageScene {
             streaks = channels.wear.value,
             seed = member.seed
         )
+    }
+
+    /**
+     * Which coin is under a touch, in field coordinates, against where each one has actually got to — mid-flight
+     * included. The nearest the viewer wins where two overlap.
+     */
+    fun coinAt(x: Float, y: Float, field: CoinageCoinField): String? = field.members
+        .filter { contains(it, x, y) }
+        .maxByOrNull { it.channels.lift.value }
+        ?.coin
+        ?.id
+
+    /** An edge-on coin covers a point or two, so the touch is taken against a floor a finger can land on. */
+    private const val TOUCH_FLOOR = 16f
+
+    private fun contains(member: CoinageCoinField.Member, x: Float, y: Float): Boolean {
+        val channels = member.channels
+        val half = channels.height.value / 2
+        val visible = half * geometry(member.coin.exponent).faceWidth * abs(cos(channels.turn.value))
+        val reach = maxOf(visible, TOUCH_FLOOR / 2)
+
+        return abs(x - channels.centreX.value) <= reach && abs(y - channels.centreY.value) <= half
     }
 
     /**

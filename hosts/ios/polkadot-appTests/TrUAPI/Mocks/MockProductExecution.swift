@@ -15,6 +15,9 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     /// `.notDetermined` so existing tests are unaffected.
     var permissionStatus: PermissionAuthorizationStatus = .notDetermined
     private(set) var permissionRequests: [PermissionAuthorizationRequest] = []
+    /// Answer returned by `authorizeDevicePermission`.
+    var devicePermissionGranted = false
+    private(set) var devicePermissionRequests: [HostDevicePermissionRequest] = []
 
     /// Card lists pushed to the product, in order, so a test can assert the
     /// worker was told what it holds rather than only that it started.
@@ -75,6 +78,11 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     ) async throws -> PermissionAuthorizationStatus {
         permissionRequests.append(request)
         return permissionStatus
+    }
+
+    func authorizeDevicePermission(_ request: HostDevicePermissionRequest) async throws -> Bool {
+        devicePermissionRequests.append(request)
+        return devicePermissionGranted
     }
 
     func setPermissionAuthorizationStatus(

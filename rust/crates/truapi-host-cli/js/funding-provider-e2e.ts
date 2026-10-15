@@ -111,6 +111,7 @@ function serve(client: TrUApiClient): Served {
               providerFee: 0n,
               networkFee: 0n,
               etaSecs: 60n,
+              assetDecimals: 2,
             },
           },
         },

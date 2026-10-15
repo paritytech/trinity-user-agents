@@ -79,6 +79,9 @@ pub struct FundingQuote {
 	pub eta_secs: Option<u64>,
 	/// When the provider stops honouring the quote, in Unix milliseconds.
 	pub expires_at: Option<u64>,
+	/// Decimals of the ask's asset, so the host shows its amounts without
+	/// knowing the asset.
+	pub asset_decimals: u8,
 }
 
 /// Why a provider will not price an ask.
@@ -395,8 +398,8 @@ pub struct HostFundingPresentFrameResponse {
 pub enum HostFundingPresentFrameError {
 	/// No open session with this id is assigned to the caller.
 	NotFound,
-	/// A page or return URL that is not an https URL with a host, or that
-	/// carries credentials.
+	/// An App route that leaves the provider's App, or a page or return URL
+	/// that is not an https URL with a host, or that carries credentials.
 	InvalidUrl,
 	/// Catch-all.
 	Unknown {
