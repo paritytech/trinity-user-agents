@@ -1168,10 +1168,12 @@ async function drive(chat) {
     await paced();
     await chat.command("host", "/call ring");
     await chat.until(() => shown("#callbanner"), "the third ringing banner");
-    await sleep(60_500);
-    if (await shown("#callbanner")) throw new Error("the banner still rings after 60 s");
+    const rang = Date.now();
+    await chat.until(async () => !(await shown("#callbanner")), "the banner cleared", 65_000);
+    const seconds = (Date.now() - rang) / 1000;
+    if (seconds < 58) throw new Error(`the banner cleared after ${seconds} s`);
     await chat.command("host", "/call end");
-    return `${ringingShot}; Accept and Decline sent CallAnswered; the banner cleared after 60 s`;
+    return `${ringingShot}; Accept and Decline sent CallAnswered; the banner cleared after ${Math.round(seconds)} s`;
   });
 
   // S74: the call bar of a call without a media session.
