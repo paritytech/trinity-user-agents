@@ -13,18 +13,21 @@ import type {
   ProductChatQueryError,
   ProductChatReactionsQueryItem,
   ProductChatReactionsQueryRequest,
+  ProductChatSearchQueryItem,
+  ProductChatSearchQueryRequest,
 } from "@parity/truapi";
-import type { RoomId } from "./clock";
+import { isThreadRoom, type RoomId } from "./clock";
 import {
   ACTION_MENTION,
   ACTION_PIN,
   ACTION_REPORT,
+  ACTION_THREAD,
   actionOpenApp,
   participantAt,
   participantCount,
   participantIndex,
 } from "./fixtures";
-import type { RoomSettings } from "./state";
+import type { ProductState } from "./state";
 import { StoreError, type SourceStore } from "./store";
 
 export type Answer<Item> = { ok: Item } | { error: ProductChatQueryError };
@@ -36,8 +39,11 @@ export const MAX_PARTICIPANT_PAGE = 100;
 /** The most ids one `ByIds` question holds, the bound of the RFC. */
 export const MAX_BY_IDS = 100;
 
-export function knownRoom(roomId: string): RoomId | undefined {
-  return ROOMS.find((room) => room === roomId);
+/** A room of the product: a fixed one, or a thread room it created. */
+export function knownRoom(roomId: string, rooms?: Partial<Record<RoomId, unknown>>): RoomId | undefined {
+  const fixed = ROOMS.find((room) => room === roomId);
+  if (fixed) return fixed;
+  return isThreadRoom(roomId) && rooms?.[roomId] !== undefined ? roomId : undefined;
 }
 
 const UNKNOWN_ROOM: { error: ProductChatQueryError } = { error: { tag: "UnknownRoom" } };
@@ -48,7 +54,7 @@ function unknown(reason: string): { error: ProductChatQueryError } {
 }
 
 export interface QueryContext {
-  rooms: Record<RoomId, RoomSettings>;
+  rooms: ProductState["rooms"];
   store: SourceStore;
   product?: string;
 }
@@ -70,9 +76,9 @@ export function answerReactions(
   context: QueryContext,
   request: ProductChatReactionsQueryRequest,
 ): Answer<ProductChatReactionsQueryItem> {
-  const room = knownRoom(request.roomId);
+  const room = knownRoom(request.roomId, context.rooms);
   if (!room) return UNKNOWN_ROOM;
-  const settings = context.rooms[room];
+  const settings = context.rooms[room]!;
   if (settings.reactions !== "on") return NOT_AVAILABLE;
   if (room !== "source") {
     return { ok: { reactions: [...(settings.reactionBook[request.messageId] ?? [])] } };
@@ -89,9 +95,9 @@ export function answerParticipants(
   context: QueryContext,
   request: ProductChatParticipantsQueryRequest,
 ): Answer<ProductChatParticipantsQueryItem> {
-  const room = knownRoom(request.roomId);
+  const room = knownRoom(request.roomId, context.rooms);
   if (!room) return UNKNOWN_ROOM;
-  const guests = context.rooms[room].guests;
+  const guests = context.rooms[room]!.guests;
   const total = participantCount(guests);
   const { query } = request;
   switch (query.tag) {
@@ -122,9 +128,9 @@ export function answerMessageActions(
   context: QueryContext,
   request: ProductChatMessageActionsQueryRequest,
 ): Answer<ProductChatMessageActionsQueryItem> {
-  const room = knownRoom(request.roomId);
+  const room = knownRoom(request.roomId, context.rooms);
   if (!room) return UNKNOWN_ROOM;
-  const settings = context.rooms[room];
+  const settings = context.rooms[room]!;
   if (settings.deeplinkMessages.includes(request.message.messageId)) {
     return { ok: { menu: { tag: "Custom", value: { actions: [actionOpenApp(context.product)] } } } };
   }
@@ -135,6 +141,8 @@ export function answerMessageActions(
       return { ok: { menu: { tag: "ExtendBuiltIn", value: { actions: [ACTION_PIN], hidden: [] } } } };
     case "hide-edit":
       return { ok: { menu: { tag: "ExtendBuiltIn", value: { actions: [ACTION_PIN], hidden: ["Edit"] } } } };
+    case "thread":
+      return { ok: { menu: { tag: "ExtendBuiltIn", value: { actions: [ACTION_THREAD], hidden: [] } } } };
     case "none":
       // The host asks only after `/deeplink` turned the menu on: answer the
       // host's own menu.
@@ -142,10 +150,27 @@ export function answerMessageActions(
   }
 }
 
+/** The page of `search_query`: newest first, with the cursor `<index>`. */
+export function answerSearch(
+  context: QueryContext,
+  request: ProductChatSearchQueryRequest,
+): Answer<ProductChatSearchQueryItem> {
+  if (request.roomId !== "source") return UNKNOWN_ROOM;
+  const settings = context.rooms.source;
+  if (!settings.features.search || settings.search === "na") return NOT_AVAILABLE;
+  try {
+    const page = context.store.search(request.text, request.cursor, request.pageSize);
+    return { ok: { hits: page.messages, ...(page.next === undefined ? {} : { next: page.next }) } };
+  } catch (error) {
+    if (error instanceof StoreError) return unknown(error.message);
+    throw error;
+  }
+}
+
 export function answerParticipantActions(
-  _context: QueryContext,
+  context: QueryContext,
   request: { roomId: string },
 ): Answer<ProductChatParticipantActionsQueryItem> {
-  if (!knownRoom(request.roomId)) return UNKNOWN_ROOM;
+  if (!knownRoom(request.roomId, context.rooms)) return UNKNOWN_ROOM;
   return { ok: { menu: { tag: "ExtendBuiltIn", value: { actions: [ACTION_MENTION] } } } };
 }

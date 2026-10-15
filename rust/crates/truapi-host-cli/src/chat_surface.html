@@ -135,7 +135,24 @@ nav h2 { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: upp
 .avatar.sm { width: 28px; height: 28px; border-radius: 8px; font-size: 12px; }
 .bots { margin-top: 18px; }
 .bot { display: flex; align-items: center; gap: 10px; padding: 6px 18px; color: var(--muted); font-size: 13px; }
-section { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
+section { display: grid; grid-template-rows: auto auto auto 1fr auto; min-height: 0; }
+#callarea > div { display: flex; align-items: center; gap: 10px; padding: 8px 22px; border-bottom: 1px solid var(--line); font: 13px var(--ui); }
+#callbanner { background: rgba(92, 224, 160, 0.12); }
+#callbar { background: rgba(214, 255, 92, 0.1); }
+#callarea .spacer { flex: 1; }
+#searchbar { padding: 8px 22px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
+#searchbar input { font: 13px var(--ui); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+#searchresults .hit { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; padding: 5px 2px; font: 12px var(--ui); }
+#searchresults .hit small { display: block; font: 10px var(--mono); color: var(--faint); }
+#searchresults mark { background: var(--accent); color: var(--accent-ink); }
+.threadchip { display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 3px 8px; font: 11px var(--mono); border-radius: 999px; }
+.threadchip .avatar { width: 16px; height: 16px; font-size: 9px; border-radius: 5px; }
+.branch { display: flex; align-items: center; gap: 6px; margin-top: 6px; font: 11px var(--mono); color: var(--muted); }
+.branch button { padding: 1px 7px; }
+.msg.reasoning .bubble { background: transparent; border-style: dashed; font-size: 12px; color: var(--muted); cursor: pointer; }
+.msg.reasoning .reasontext { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
+#threadroot { align-self: stretch; border-left: 3px solid var(--accent); padding: 4px 10px; font-size: 12px; color: var(--muted); }
+#speaking { display: flex; gap: 8px; align-items: center; font: 12px var(--ui); color: var(--ok); }
 .roomhead { padding: 12px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
 .roomhead h1 { font: 500 19px var(--sans); margin: 0; }
 .roomhead code { font: 11px var(--mono); color: var(--faint); }
@@ -221,6 +238,14 @@ aside[hidden], section[hidden] { display: none; }
 .roomhead .titles { flex: 1; min-width: 0; }
 .roomhead .titles p { margin: 2px 0 0; font: 12px var(--ui); color: var(--muted); white-space: pre-wrap; }
 .caps { padding: 10px 14px; border-top: 1px solid var(--line); }
+.notes { padding: 10px 14px; border-top: 1px solid var(--line); }
+.notes .note-row { display: block; width: 100%; text-align: left; margin: 0 0 6px; padding: 6px 8px; font: 12px var(--ui); }
+.notes .note-row small { display: block; font: 10px var(--mono); color: var(--faint); }
+.room .muted { font: 11px var(--mono); color: var(--faint); }
+.badge.muted { background: var(--faint); color: var(--bg); }
+.archived-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 18px; border: 0; border-radius: 0; background: none; text-align: left; font: 12px var(--mono); color: var(--muted); }
+.room.archived { padding-left: 30px; }
+.userstate { display: flex; gap: 6px; }
 .caps p { margin: 0; font: 11px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .roomhead .features { display: block; font: 11px var(--mono); color: var(--muted); }
 .roomhead .people { font: 11px var(--mono); color: var(--muted); background: none; border: 0; padding: 0; text-decoration: underline dotted; }
@@ -303,20 +328,30 @@ aside[hidden], section[hidden] { display: none; }
     <div id="rooms"></div>
     <div class="bots" id="botsBox" hidden><h2>Bots</h2><div id="bots"></div></div>
     <div class="caps"><h2>Capabilities</h2><p id="capabilities">unknown</p></div>
+    <div class="notes" id="notesBox" hidden><h2>Notifications</h2><div id="notifications"></div></div>
   </nav>
   <div class="gutter" id="gutter-rooms" title="Drag to resize"></div>
   <section id="chat-pane">
     <div class="roomhead" id="roomhead"></div>
+    <div id="callarea"></div>
+    <div id="searchbar" hidden>
+      <input id="searchtext" type="search" placeholder="Search this room" spellcheck="false">
+      <div id="searchresults"></div>
+    </div>
     <div id="thread"></div>
     <footer id="footer">
       <div class="composer">
         <div id="activity" hidden></div>
+        <div id="speaking" hidden><span id="spokentext"></span><button id="stop-speaking" type="button">Stop</button></div>
         <div id="banner" class="banner" hidden></div>
         <div id="catalogue" class="catalogue" hidden></div>
         <div id="suggestions" class="chips" hidden></div>
         <div id="customfooter" class="customfooter" hidden>Custom footer: the product draws it through Renderer::render, which this page does not run.</div>
         <form class="compose" id="compose">
           <span class="attach" id="attach"></span>
+          <input type="file" id="attach-photo" accept="image/*" hidden data-kind="Image">
+          <input type="file" id="attach-video" accept="video/*" hidden data-kind="Video">
+          <input type="file" id="attach-file" hidden data-kind="File">
           <textarea id="input" rows="1" placeholder="Message" disabled></textarea>
           <button id="send" type="submit" disabled>Send</button>
         </form>
@@ -346,6 +381,8 @@ aside[hidden], section[hidden] { display: none; }
 // for the product's answer.
 const USER = "user";
 const PRODUCT = "product";
+// A product speaks as its persona `<id>` with the participant id `bot:<id>`.
+const PERSONA = "bot:";
 const PAGE_SIZE = 40;
 const PEOPLE_PAGE = 100;
 const REACTIONS = ["\u{1F44D}", "❤️", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F64F}"];
@@ -377,7 +414,25 @@ const state = {
   drawn: new Set(),
   replyTo: null,
   editing: null,
+  // Whether the archived rooms show under their row.
+  showArchived: false,
+  // The notifications the host delivered, newest first.
+  notifications: [],
+  // The search of the open room: { roomId, text, hits, next, loading, unavailable }.
+  search: null,
+  // messageId -> { index, timer } of a branch arrow waiting for the product.
+  pendingBranches: new Map(),
+  // Reasoning rows the person expanded, as "roomId\nmessageId".
+  expandedReasoning: new Set(),
+  // What "Read aloud" speaks now: { roomId, text }.
+  speaking: null,
+  // The message a thread room opened from: { roomId, messageId }.
+  threadReturn: null,
+  // callId -> when the page first saw it ring, in ms.
+  ringingSince: new Map(),
 };
+// A ringing call clears from the screen after 60 s without an answer.
+const RINGING_MS = 60000;
 const $ = (id) => document.getElementById(id);
 let statusTimer = null;
 let reqSeq = 0;
@@ -758,35 +813,75 @@ function badgeNode(badge) {
   return null;
 }
 
+// The user's mute and archive state of a room; a mute whose end passed is
+// no mute.
+function isMuted(room) {
+  const until = room.userState && room.userState.mutedUntil;
+  return until != null && Number(until) > Date.now();
+}
+function isArchived(room) { return !!(room.userState && room.userState.archived); }
+
+function setUserState(room, change) {
+  const current = { mutedUntil: isMuted(room) ? room.userState.mutedUntil : null, archived: isArchived(room) };
+  const next = Object.assign(current, change);
+  const forever = next.mutedUntil === "forever" || (next.mutedUntil != null && Number(next.mutedUntil) >= Number.MAX_SAFE_INTEGER);
+  send({ op: "userState", roomId: room.roomId, mutedUntil: forever || next.mutedUntil == null ? null : Number(next.mutedUntil), mutedForever: forever, archived: next.archived });
+}
+
+// An "Archived" row at the top opens the rooms the user archived; a room
+// stays archived when a message arrives.
 function renderRooms() {
   const list = $("rooms");
   list.textContent = "";
-  for (const room of sortedRooms()) {
-    const button = el("button", room.roomId === state.selected ? "room active" : "room");
-    button.type = "button";
-    button.dataset.roomId = room.roomId;
-    if (room.list && room.list.pinned) button.dataset.pinned = "true";
-    button.appendChild(roomAvatar(room));
-    const text = el("span", "rowtext");
-    const name = el("span", "rowname");
-    name.appendChild(el("b", null, room.name));
-    if (room.list && room.list.pinned) name.appendChild(el("span", "pin", "PIN"));
-    text.appendChild(name);
-    const line = room.list && room.list.text;
-    if (line) {
-      const node = el("span", line.ongoing ? "line ongoing dots" : "line", line.text);
-      node.dataset.preview = line.text;
-      if (line.ongoing) node.dataset.ongoing = "true";
-      text.appendChild(node);
-    } else {
-      text.appendChild(el("span", "line", room.description || room.roomId));
-    }
-    button.appendChild(text);
-    const badge = badgeNode(room.list && room.list.badge);
-    if (badge) button.appendChild(badge);
-    button.onclick = () => selectRoom(room.roomId);
-    list.appendChild(button);
+  const rooms = sortedRooms().filter((room) => !isThread(room));
+  const archived = rooms.filter(isArchived);
+  if (archived.length) {
+    const row = el("button", "archived-row", `${state.showArchived ? "▾" : "▸"} Archived (${archived.length})`);
+    row.type = "button";
+    row.id = "archived";
+    row.onclick = () => { state.showArchived = !state.showArchived; renderRooms(); };
+    list.appendChild(row);
+    if (state.showArchived) for (const room of archived) list.appendChild(roomRow(room));
   }
+  for (const room of rooms.filter((room) => !isArchived(room))) list.appendChild(roomRow(room));
+  renderBots();
+}
+
+// A thread room is not in the list: its root's chip opens it.
+function isThread(room) { return !!(room && room.features && room.features.threadOf); }
+
+function roomRow(room) {
+  const button = el("button", room.roomId === state.selected ? "room active" : "room");
+  button.type = "button";
+  button.dataset.roomId = room.roomId;
+  if (isArchived(room)) { button.dataset.archived = "true"; button.classList.add("archived"); }
+  if (isMuted(room)) button.dataset.muted = "true";
+  if (room.list && room.list.pinned) button.dataset.pinned = "true";
+  button.appendChild(roomAvatar(room));
+  const text = el("span", "rowtext");
+  const name = el("span", "rowname");
+  name.appendChild(el("b", null, room.name));
+  if (room.list && room.list.pinned) name.appendChild(el("span", "pin", "PIN"));
+  if (isMuted(room)) name.appendChild(el("span", "muted", "\u{1F507}"));
+  text.appendChild(name);
+  const line = ringing(room) ? { text: "Incoming call", ongoing: true } : room.list && room.list.text;
+  if (line) {
+    const node = el("span", line.ongoing ? "line ongoing dots" : "line", line.text);
+    node.dataset.preview = line.text;
+    if (line.ongoing) node.dataset.ongoing = "true";
+    text.appendChild(node);
+  } else {
+    text.appendChild(el("span", "line", room.description || room.roomId));
+  }
+  button.appendChild(text);
+  const badge = badgeNode(room.list && room.list.badge);
+  if (badge && isMuted(room)) badge.classList.add("muted");
+  if (badge) button.appendChild(badge);
+  button.onclick = () => selectRoom(room.roomId);
+  return button;
+}
+
+function renderBots() {
   const bots = $("bots");
   bots.textContent = "";
   $("botsBox").hidden = !state.bots.length;
@@ -798,9 +893,34 @@ function renderRooms() {
   }
 }
 
+// The room a notification's deeplink `polkadot://<product>/-/chat/<room>`
+// opens, or null.
+function roomOfLink(deeplink) {
+  const match = /^polkadot:\/\/([^/?#]+)\/-\/chat\/([^?#]+)/.exec(String(deeplink || ""));
+  if (!match || match[1].toLowerCase() !== String(state.productId).toLowerCase()) return null;
+  try { return decodeURIComponent(match[2]); } catch (_) { return null; }
+}
+
+function renderNotifications() {
+  const box = $("notifications");
+  box.textContent = "";
+  $("notesBox").hidden = !state.notifications.length;
+  for (const note of state.notifications) {
+    const row = el("button", "note-row", note.text);
+    row.type = "button";
+    row.dataset.notification = String(note.id);
+    const roomId = roomOfLink(note.deeplink);
+    if (roomId) row.dataset.room = roomId;
+    row.appendChild(el("small", null, `#${note.id} · ${clock(note.at)}${note.deeplink ? ` · ${note.deeplink}` : ""}`));
+    row.onclick = () => { if (roomId && state.rooms.has(roomId)) selectRoom(roomId); };
+    box.appendChild(row);
+  }
+}
+
 function selectRoom(roomId) {
   state.picked = true;
   if (state.selected === roomId && state.opened === roomId) return;
+  stopSpeaking();
   state.selected = roomId;
   state.replyTo = null;
   state.editing = null;
@@ -873,7 +993,7 @@ function resolveAuthors(roomId, ids) {
   const room = roomOf(roomId);
   if (!room || !room.config.participants) return;
   const people = peopleOf(roomId);
-  const wanted = ids.filter((id) => id !== USER && id !== PRODUCT && !people.byId.has(id) && !people.asked.has(id));
+  const wanted = ids.filter((id) => id !== USER && id !== PRODUCT && !persona(id) && !people.byId.has(id) && !people.asked.has(id));
   if (!wanted.length) return;
   wanted.forEach((id) => people.asked.add(id));
   ask("participants", { roomId, query: { type: "ByIds", participantIds: wanted.slice(0, 100) } }, (frame) => {
@@ -882,10 +1002,20 @@ function resolveAuthors(roomId, ids) {
   });
 }
 
+// The persona a `bot:<id>` participant names, which the host draws with no
+// participants query. A persona the product lists in its participants too
+// still draws as the persona.
+function persona(id) {
+  if (!String(id).startsWith(PERSONA)) return null;
+  const botId = id.slice(PERSONA.length);
+  return state.bots.find((bot) => bot.botId === botId) || { botId, name: botId, icon: "" };
+}
+
 function participantName(roomId, id) {
   if (id === USER) return "You";
   const room = roomOf(roomId);
   if (id === PRODUCT) return room ? room.name : state.productId;
+  if (persona(id)) return persona(id).name;
   const entry = state.people.has(roomId) ? state.people.get(roomId).byId.get(id) : null;
   if (!entry) return id;
   const p = entry.participant;
@@ -905,8 +1035,77 @@ function statusTick(status) {
   return { Preparing: "◷", Sent: "✓", Delivered: "✓✓", Read: "✓✓", Failed: "⚠ failed" }[status] || status;
 }
 
+function metaOf(room, messageId) { return (room.meta && room.meta[messageId]) || {}; }
+
+// A reasoning row: "Thinking…" with the streamed text while `Preparing`,
+// then "Thought for N s", which a click expands.
+function reasoningRow(room, msg, reasoning) {
+  const row = el("div", "msg reasoning");
+  row.dataset.messageId = msg.messageId;
+  row.dataset.origin = msg.origin;
+  row.dataset.status = msg.status;
+  const key = `${room.roomId}\n${msg.messageId}`;
+  const thinking = msg.status === "Preparing";
+  const expanded = !thinking && state.expandedReasoning.has(key);
+  row.dataset.reasoning = thinking ? "thinking" : expanded ? "expanded" : "collapsed";
+  const bubble = el("div", "bubble");
+  const seconds = reasoning.durationMs != null ? Math.round(reasoning.durationMs / 1000) : null;
+  bubble.appendChild(el("div", thinking ? "dots" : null, thinking ? "Thinking" : seconds != null ? `Thought for ${seconds} s` : "Thought"));
+  bubble.setAttribute("role", "button");
+  bubble.setAttribute("aria-expanded", String(thinking || expanded));
+  bubble.setAttribute("aria-label", `Reasoning, ${thinking || expanded ? "expanded" : "collapsed"}`);
+  if (thinking || expanded) bubble.appendChild(el("div", "reasontext", msg.body && msg.body.text != null ? msg.body.text : msg.preview));
+  if (!thinking) bubble.onclick = () => { if (expanded) state.expandedReasoning.delete(key); else state.expandedReasoning.add(key); renderRoom(false); };
+  row.appendChild(bubble);
+  return row;
+}
+
+// The chip under a message that has a thread.
+function threadChip(room, msg, thread) {
+  const chip = el("button", "threadchip");
+  chip.type = "button";
+  chip.dataset.threadChip = thread.roomId;
+  for (const id of thread.participantIds || []) {
+    const bot = persona(id);
+    chip.appendChild(avatar(bot ? bot.icon : null, participantName(room.roomId, id), true));
+  }
+  chip.appendChild(document.createTextNode(`${thread.replyCount} ${thread.replyCount === 1 ? "reply" : "replies"}${thread.lastReplyAt != null ? ` · ${clock(thread.lastReplyAt)}` : ""}`));
+  chip.onclick = () => { state.threadReturn = { roomId: room.roomId, messageId: msg.messageId }; selectRoom(thread.roomId); };
+  return chip;
+}
+
+// "‹ i/n ›": an arrow asks the product for another alternative and waits
+// 5 s for its answer, then the control stays where it was.
+function branchControl(room, msg, branch) {
+  const box = el("div", "branch");
+  box.dataset.branch = `${branch.index}/${branch.count}`;
+  const pending = state.pendingBranches.get(msg.messageId);
+  if (pending && pending.index === branch.index) { clearTimeout(pending.timer); state.pendingBranches.delete(msg.messageId); }
+  const waiting = state.pendingBranches.get(msg.messageId);
+  const arrow = (label, index, name) => {
+    const b = el("button", null, label);
+    b.type = "button";
+    b.dataset[name] = "true";
+    b.disabled = !!waiting || index < 1 || index > branch.count;
+    b.onclick = () => {
+      send({ op: "branch", roomId: room.roomId, messageId: msg.messageId, index });
+      const timer = setTimeout(() => { state.pendingBranches.delete(msg.messageId); setStatus("no alternative came; the message stays", "warn"); renderRoom(false); }, 5000);
+      state.pendingBranches.set(msg.messageId, { index, timer });
+      renderRoom(false);
+    };
+    return b;
+  };
+  box.appendChild(arrow("‹", branch.index - 1, "branchPrev"));
+  box.appendChild(el("span", null, `${branch.index}/${branch.count}`));
+  box.appendChild(arrow("›", branch.index + 1, "branchNext"));
+  if (waiting) { const spin = el("span", "dots", "…"); spin.dataset.branchPending = String(waiting.index); box.appendChild(spin); }
+  return box;
+}
+
 function renderMessage(room, msg, temp) {
   const roomId = room.roomId;
+  const decoration = temp ? {} : metaOf(room, msg.messageId);
+  if (decoration.reasoning && !msg.deleted) return reasoningRow(room, msg, decoration.reasoning);
   const mine = msg.origin === USER;
   const row = el("div", `msg ${mine ? "person" : msg.origin === PRODUCT ? "product" : "other"}${msg.deleted ? " deleted" : ""}`);
   // Only a message drawn for the first time rises in; a redraw stays still.
@@ -919,7 +1118,12 @@ function renderMessage(room, msg, temp) {
   if (temp) row.dataset.temp = "true";
   if (!mine) {
     if (msg.origin === PRODUCT) row.appendChild(roomAvatar(room, true));
-    else {
+    else if (persona(msg.origin)) {
+      const bot = persona(msg.origin);
+      const icon = avatar(bot.icon, bot.name, true);
+      icon.dataset.persona = bot.botId;
+      row.appendChild(icon);
+    } else {
       const entry = state.people.has(roomId) ? state.people.get(roomId).byId.get(msg.origin) : null;
       const custom = entry && entry.participant.kind === "Custom" ? entry.participant.avatar : null;
       row.appendChild(avatar(custom, participantName(roomId, msg.origin), true));
@@ -959,6 +1163,8 @@ function renderMessage(room, msg, temp) {
     meta.appendChild(tick);
   }
   bubble.appendChild(meta);
+  if (!msg.deleted && decoration.branch && state.capabilities.features.includes("branches")) bubble.appendChild(branchControl(room, msg, decoration.branch));
+  if (!msg.deleted && decoration.thread && state.capabilities.features.includes("threads")) bubble.appendChild(threadChip(room, msg, decoration.thread));
   row.appendChild(bubble);
   if (!msg.deleted) {
     const tools = el("span", "tools");
@@ -982,9 +1188,18 @@ function renderHeader2() {
     head.appendChild(el("h1", null, "No room"));
     return;
   }
+  const parent = isThread(room) ? roomOf(room.features.threadOf.roomId) : null;
+  if (isThread(room)) {
+    const back = el("button", null, "‹");
+    back.type = "button";
+    back.id = "thread-back";
+    back.title = "Back to the message";
+    back.onclick = () => { const root = room.features.threadOf; selectRoom(root.roomId); setTimeout(() => jumpTo(root.roomId, root.messageId), 50); };
+    head.appendChild(back);
+  }
   head.appendChild(roomAvatar(room, true));
   const titles = el("div", "titles");
-  const h1 = el("h1", null, room.name);
+  const h1 = el("h1", null, isThread(room) ? `Thread · ${parent ? parent.name : room.features.threadOf.roomId}` : room.name);
   h1.id = "roomname";
   titles.appendChild(h1);
   if (room.description) { const p = el("p", null, room.description); p.id = "roomdescription"; titles.appendChild(p); }
@@ -1004,7 +1219,192 @@ function renderHeader2() {
     titles.appendChild(line);
   }
   head.appendChild(titles);
+  if (searchable(room)) {
+    const toggle = el("button", state.search && state.search.roomId === room.roomId ? "on" : null, "Search");
+    toggle.type = "button";
+    toggle.id = "search-toggle";
+    toggle.onclick = () => toggleSearch(room);
+    head.appendChild(toggle);
+  }
+  const calls = room.features && room.features.calls;
+  if (calls && state.capabilities.features.includes("call_buttons")) {
+    for (const [video, shown, label, id] of [[false, calls.audio, "\u{1F4DE}", "call-audio"], [true, calls.video, "\u{1F3A5}", "call-video"]]) {
+      if (!shown) continue;
+      const b = el("button", null, label);
+      b.type = "button";
+      b.id = id;
+      b.title = video ? "Video call" : "Audio call";
+      b.onclick = () => send({ op: "callRequest", roomId: room.roomId, video });
+      head.appendChild(b);
+    }
+  }
+  const wake = el("button", null, "Wake");
+  wake.type = "button";
+  wake.id = "wake";
+  wake.title = "Wake the product as a notification on watch dev for this room does";
+  wake.onclick = () => ask("wake", { roomId: room.roomId }, (frame) => {
+    const outcome = frame.ok ? frame.ok.type : describeError(frame.error);
+    document.body.dataset.wakeOutcome = outcome;
+    if (frame.ok && frame.ok.type === "Held") setStatus(`woken: the worker is held until ${clock(frame.ok.untilMs)}`, "ok");
+    else if (frame.ok) setStatus("not woken: the product used its 12 notification wakes of this hour", "warn");
+    else setStatus(`wake: ${outcome}`, "err");
+  });
+  head.appendChild(wake);
+  head.appendChild(userStateNode(room));
   head.appendChild(toolbarNode(room));
+}
+
+// The call that rings in a room, until 60 s after the page first saw it.
+function ringing(room) {
+  const call = room && room.call;
+  if (!call || call.type !== "Ringing" || !state.capabilities.features.includes("call_buttons")) return null;
+  if (!state.ringingSince.has(call.callId)) state.ringingSince.set(call.callId, Date.now());
+  return Date.now() - state.ringingSince.get(call.callId) < RINGING_MS ? call : null;
+}
+
+function elapsed(ms) {
+  const seconds = Math.max(0, Math.floor((Date.now() - Number(ms)) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+// The ringing banner with Accept and Decline, or the call bar with its
+// timer, Open (for a call without a media session) and End.
+function renderCall() {
+  const area = $("callarea");
+  area.textContent = "";
+  const room = roomOf(state.selected);
+  if (!room || !state.capabilities.features.includes("call_buttons")) return;
+  const call = room.call;
+  const answer = (accept) => send({ op: "callAnswer", roomId: room.roomId, callId: call.callId, accept });
+  const button = (label, id, onClick) => { const b = el("button", null, label); b.type = "button"; b.id = id; b.onclick = onClick; return b; };
+  if (ringing(room)) {
+    const banner = el("div");
+    banner.id = "callbanner";
+    banner.dataset.callId = call.callId;
+    const caller = call.caller || PRODUCT;
+    banner.append(avatar(persona(caller) ? persona(caller).icon : null, participantName(room.roomId, caller), true),
+      el("span", null, `${participantName(room.roomId, caller)} is calling${call.video ? " (video)" : ""}`), el("span", "spacer"),
+      button("Accept", "call-accept", () => answer(true)), button("Decline", "call-decline", () => answer(false)));
+    area.appendChild(banner);
+  } else if (call && call.type === "Active") {
+    const bar = el("div");
+    bar.id = "callbar";
+    bar.dataset.callId = call.callId;
+    bar.append(el("span", null, `${call.video ? "Video" : "Audio"} call`), el("span", "dots", elapsed(call.startedAt)), el("span", "spacer"));
+    if (!call.mediaSession) bar.appendChild(button("Open", "call-open", () => send({ op: "callOpen", roomId: room.roomId, callId: call.callId })));
+    bar.appendChild(button("End", "call-end", () => send({ op: "callEnd", roomId: room.roomId, callId: call.callId })));
+    area.appendChild(bar);
+  }
+}
+setInterval(() => { renderCall(); if ([...state.rooms.values()].some((room) => room.call)) renderRooms(); }, 1000);
+
+// A room the host keeps is searched by the host. A room the product keeps
+// shows search only when it declares `search` and the host serves it.
+function searchable(room) {
+  if (!isSource(room)) return true;
+  return !!(room.features && room.features.search) && state.capabilities.features.includes("search");
+}
+
+function toggleSearch(room) {
+  state.search = state.search && state.search.roomId === room.roomId ? null : { roomId: room.roomId, text: "", hits: [], next: null, loading: false, unavailable: false };
+  $("searchtext").value = "";
+  renderSearch();
+  renderHeader2();
+  if (state.search) $("searchtext").focus();
+}
+
+let searchTimer = null;
+// The matches of the open room, asked 300 ms after the user stops typing.
+function runSearch(cursor) {
+  const search = state.search;
+  if (!search) return;
+  const text = $("searchtext").value.trim();
+  search.text = text;
+  if (!text) { search.hits = []; search.next = null; search.unavailable = false; renderSearch(); return; }
+  search.loading = true;
+  renderSearch();
+  ask("search", { roomId: search.roomId, text, cursor }, (frame) => {
+    if (state.search !== search || search.text !== text) return;
+    search.loading = false;
+    if (frame.error) {
+      search.unavailable = true;
+      search.hits = [];
+      search.next = null;
+    } else {
+      search.unavailable = false;
+      search.hits = cursor ? search.hits.concat(frame.ok.hits) : frame.ok.hits;
+      search.next = frame.ok.next;
+    }
+    renderSearch();
+  });
+}
+
+// The match highlighted in the line it is in.
+function highlighted(line, text) {
+  const box = el("span");
+  const fold = (value) => value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  const at = fold(line).indexOf(fold(text));
+  if (at < 0 || line.normalize("NFD").length !== line.length) { box.textContent = line; return box; }
+  box.append(document.createTextNode(line.slice(0, at)), el("mark", null, line.slice(at, at + text.length)), document.createTextNode(line.slice(at + text.length)));
+  return box;
+}
+
+function renderSearch() {
+  const bar = $("searchbar");
+  const search = state.search && state.search.roomId === state.selected ? state.search : null;
+  bar.hidden = !search;
+  const results = $("searchresults");
+  results.textContent = "";
+  delete results.dataset.unavailable;
+  delete results.dataset.answered;
+  if (!search) return;
+  if (search.loading) results.appendChild(el("span", "note", "searching…"));
+  // The text whose answer is on screen.
+  else results.dataset.answered = search.text;
+  if (search.unavailable) {
+    results.dataset.unavailable = "true";
+    results.appendChild(el("span", "note", "Search is not available"));
+    return;
+  }
+  for (const hit of search.hits) {
+    const row = el("button", "hit");
+    row.type = "button";
+    row.dataset.hit = hit.messageId;
+    row.appendChild(el("small", null, `${participantName(search.roomId, hit.origin)} · ${clock(hit.timestamp)}`));
+    row.appendChild(highlighted(String(hit.preview || "").split("\n")[0], search.text));
+    row.onclick = () => jumpTo(search.roomId, hit.messageId);
+    results.appendChild(row);
+  }
+  if (search.text && !search.loading && !search.hits.length) results.appendChild(el("span", "note", "no matches"));
+  if (search.next) {
+    const more = el("button", null, "Older matches");
+    more.type = "button";
+    more.id = "search-more";
+    more.onclick = () => runSearch(search.next);
+    results.appendChild(more);
+  }
+}
+
+// Mute and archive, kept by the host and told to the product with
+// `UserStateChanged`.
+function userStateNode(room) {
+  const box = el("div", "userstate");
+  if (!state.capabilities.features.includes("mute_archive")) return box;
+  const mute = el("button", null, isMuted(room) ? "Unmute" : "Mute");
+  mute.type = "button";
+  mute.id = "mute";
+  mute.onclick = (event) => {
+    if (isMuted(room)) { setUserState(room, { mutedUntil: null }); return; }
+    const hour = 60 * 60 * 1000;
+    showMenu(event, [["1 hour", hour], ["8 hours", 8 * hour], ["1 week", 7 * 24 * hour], ["Always", null]].map(([label, span]) =>
+      menuItem(label, () => setUserState(room, { mutedUntil: span == null ? "forever" : Date.now() + span }), { id: `mute-${label.replace(/\s+/g, "-").toLowerCase()}` })));
+  };
+  const archive = el("button", null, isArchived(room) ? "Unarchive" : "Archive");
+  archive.type = "button";
+  archive.id = "archive";
+  archive.onclick = () => setUserState(room, { archived: !isArchived(room) });
+  box.append(mute, archive);
+  return box;
 }
 
 // The optional features a room declares, each marked when this host does not
@@ -1071,6 +1471,8 @@ function toolbarNode(room) {
 
 function renderRoom(forceBottom) {
   renderHeader2();
+  renderCall();
+  renderSearch();
   const thread = $("thread");
   const pinned = forceBottom || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60;
   thread.textContent = "";
@@ -1100,6 +1502,14 @@ function renderRoom(forceBottom) {
       line.onclick = () => loadPage(room.roomId, paging.next);
     } else if (paging.next === null && messages.length) line = el("div", "paging", "start of the conversation");
     if (line) thread.appendChild(line);
+  }
+  if (isThread(room)) {
+    const root = room.features.threadOf;
+    const quoted = messagesOf(root.roomId).find((m) => m.messageId === root.messageId);
+    const pinned = el("div", null, quoted ? quoteText(quoted) : "Earlier message");
+    pinned.id = "threadroot";
+    pinned.dataset.root = root.messageId;
+    thread.appendChild(pinned);
   }
   if (!messages.length && !temps.length) {
     const empty = emptyState(room.config.placeholder != null ? room.config.placeholder : "No messages yet");
@@ -1172,8 +1582,8 @@ function renderFooter(room) {
       const b = el("button", null, glyph);
       b.type = "button";
       b.dataset.attach = key;
-      b.title = `${label}: the dev page sends no attachments`;
-      b.onclick = () => setStatus(`${label} attachments are sent from a phone, not from the dev page`, "warn");
+      b.title = `${label}: inline up to ${humanSize(state.capabilities.inlineAttachmentMaxBytes)}, staged as a preimage above it where the room declares it`;
+      b.onclick = () => { const input = $(`attach-${key}`); input.value = ""; input.click(); };
       attach.appendChild(b);
     }
     if (footer.payment) {
@@ -1187,7 +1597,9 @@ function renderFooter(room) {
   }
   const activity = $("activity");
   activity.hidden = !(room && room.activity);
-  activity.textContent = room && room.activity ? room.activity.text : "";
+  const speaker = room && room.activity && room.activity.participantId;
+  activity.textContent = room && room.activity ? `${speaker ? `${participantName(room.roomId, speaker)}: ` : ""}${room.activity.text}` : "";
+  if (speaker) activity.dataset.participant = speaker; else delete activity.dataset.participant;
   activity.className = "dots";
   const banner = $("banner");
   banner.textContent = "";
@@ -1244,6 +1656,32 @@ function renderCatalogue(room) {
 }
 
 // ------------------------------------------------------------------ send
+
+// A photo, video or file of the user. Up to the inline bound it travels in
+// the message; above it the host stages it as a preimage, which the product
+// pays for, where the room declares `preimageAttachments`. The core refuses
+// the rest, and then nothing is uploaded.
+function sendAttachment(room, kind, file) {
+  const caps = state.capabilities;
+  const staged = file.size > caps.inlineAttachmentMaxBytes;
+  const bound = caps.features.includes("preimage_attachments") ? caps.preimageAttachmentMaxBytes : caps.inlineAttachmentMaxBytes;
+  if (file.size > bound) {
+    setStatus(`not sent: ${file.name} is ${humanSize(file.size)}, above ${humanSize(bound)}`, "err");
+    return;
+  }
+  setStatus(`${staged ? "staging" : "sending"} ${file.name} (${humanSize(file.size)})…`, "ok");
+  file.arrayBuffer().then((buffer) => {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    ask("attach", { roomId: room.roomId, kind, mimeType: file.type || "application/octet-stream", fileName: file.name, data: btoa(binary) }, (frame) => {
+      if (frame.error) { setStatus(`not sent: ${describeError(frame.error)}`, "err"); return; }
+      if (frame.ok && frame.ok.message) upsertMessage(room.roomId, frame.ok.message);
+      setStatus(`${file.name} sent ${staged ? "as a preimage" : "inline"}`, "ok");
+      if (room.roomId === state.selected) renderRoom(true);
+    });
+  });
+}
 
 function postText(room, text, replyTo) {
   if (isSource(room)) {
@@ -1376,7 +1814,47 @@ function builtInItems(room, msg, temp, hidden) {
     items.push(picker);
   }
   if (room.config.reactionDetails && (msg.reactions || []).length) items.push(menuItem("Who reacted", () => whoReacted(room.roomId, msg.messageId), { id: "WhoReacted" }));
+  const spoken = readAloudText(room, msg);
+  if (spoken) items.push(menuItem("Read aloud", () => speak(room, spoken), { id: "ReadAloud" }));
   return items;
+}
+
+// "Read aloud" is offered on text, Markdown read as plain text, and a custom
+// body's preview, where the room declares it and the host serves it.
+function readAloudText(room, msg) {
+  if (!(room.features && room.features.readAloud) || !state.capabilities.features.includes("read_aloud")) return null;
+  const b = msg.body || {};
+  if (b.type === "Text") return b.text;
+  if (b.type === "RichText" && b.text) return markdown(b.text).textContent;
+  if (b.type === "Custom") return b.previewText || null;
+  return null;
+}
+
+function speak(room, text) {
+  stopSpeaking();
+  state.speaking = { roomId: room.roomId, text };
+  document.body.dataset.lastSpoken = text;
+  if (window.speechSynthesis) {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = navigator.language;
+    utterance.onend = () => { if (state.speaking && state.speaking.text === text) { state.speaking = null; renderSpeaking(); } };
+    window.speechSynthesis.speak(utterance);
+  }
+  renderSpeaking();
+}
+
+function stopSpeaking() {
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  state.speaking = null;
+  renderSpeaking();
+}
+
+// A "Stop" line in the footer while the host speaks.
+function renderSpeaking() {
+  const line = $("speaking");
+  line.hidden = !state.speaking;
+  $("spokentext").textContent = state.speaking ? `Reading aloud: ${state.speaking.text}` : "";
+  line.dataset.spoken = state.speaking ? state.speaking.text : "";
 }
 
 // The built-in entries, then the product's own when the room asks for them.
@@ -1553,7 +2031,7 @@ function strip(frame) {
 function ensureSelection() {
   const wanted = params.get("room");
   if (!state.picked && wanted && state.rooms.has(wanted)) state.selected = wanted;
-  else if (!state.rooms.has(state.selected)) state.selected = (sortedRooms()[0] || {}).roomId || null;
+  else if (!state.rooms.has(state.selected)) state.selected = (sortedRooms().filter((room) => !isThread(room))[0] || {}).roomId || null;
   openSelected();
 }
 
@@ -1595,9 +2073,15 @@ function handle(frame) {
       ensureSelection();
       renderRooms(); renderRoom(true);
       break;
+    case "notification":
+      state.notifications.unshift(Object.assign(strip(frame), { at: Date.now() }));
+      state.notifications.splice(20);
+      renderNotifications();
+      break;
     case "bot":
       state.bots = state.bots.filter((b) => b.botId !== frame.botId).concat([strip(frame)]);
       renderRooms();
+      renderRoom(false);
       break;
     case "message": {
       const room = state.rooms.get(frame.roomId);
@@ -1639,6 +2123,12 @@ function handle(frame) {
 }
 
 $("compose").onsubmit = (event) => { event.preventDefault(); submit(); };
+$("stop-speaking").onclick = () => stopSpeaking();
+$("searchtext").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => runSearch(null), 300); };
+for (const key of ["photo", "video", "file"]) {
+  const input = $(`attach-${key}`);
+  input.onchange = () => { const room = roomOf(state.selected); if (room && input.files.length) sendAttachment(room, input.dataset.kind, input.files[0]); };
+}
 $("input").onkeydown = (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); submit(); }
   if (event.key === "Escape") { state.editing = null; state.replyTo = null; renderFooter(roomOf(state.selected)); }

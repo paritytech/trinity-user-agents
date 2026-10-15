@@ -55,6 +55,17 @@ export function base64ToBytes(base64: string): Uint8Array {
   return out.subarray(0, index);
 }
 
+/** Encode bytes as base64 without `btoa`, which some worker runtimes do not have. */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const chunk = (bytes[i] << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);
+    const count = Math.min(3, bytes.length - i);
+    for (let j = 0; j < 4; j++) out += j <= count ? BASE64[(chunk >> (18 - j * 6)) & 63] : "=";
+  }
+  return out;
+}
+
 /** The bytes of a base64 `data:` URL, as Vite inlines an asset. */
 export function dataUrlToHex(dataUrl: string): HexString {
   const comma = dataUrl.indexOf(",");

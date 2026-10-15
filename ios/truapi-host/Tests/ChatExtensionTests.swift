@@ -118,7 +118,7 @@ struct ChatAdditionsTests {
     }
 
     @Test
-    func wakeHoldsTheWorkerAndStagingIsNotServed() async throws {
+    func wakeHoldsTheWorkerAndStagingNeedsADeclaredRoom() async throws {
         let runtime = try TrUAPIHostRuntime(
             bridge: StubHostBridge(),
             runtimeConfig: TrUAPIWsBridgeTests.makeHostRuntimeConfig()

@@ -242,9 +242,10 @@ export interface TrUApiProductProvider
 
   /**
    * Store a user attachment of a room as a preimage that the Bulletin
-   * allowance of the product pays for, and give its key. The core does not
-   * stage attachments yet: this always rejects, and `capabilities` never
-   * lists `preimage_attachments`.
+   * allowance of the product pays for, and give its key. The core rejects a
+   * room whose features do not declare `preimageAttachments`, an attachment
+   * above 8 MiB or above the Bulletin chain's per-transaction bound, and a
+   * product the user refused `PreimageSubmit`; the reason names which.
    *
    * Present only on runtimes that keep a live channel to the core.
    */

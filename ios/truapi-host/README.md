@@ -281,8 +281,12 @@ and archive, call buttons and answers, branch selection) and the core keeps the
 newest 64 of a product until its worker subscribes; `wakeProduct(productId:reason:)`
 holds the worker for 30 seconds for a `ChatWakeReason` and answers
 `ChatWakeOutcome`, at most 12 notification wakes for each product in one hour;
-`stageChatAttachment` refuses each attachment until the core stages
-preimages.
+`stageChatAttachment(productId:roomId:mimeType:bytes:)` stores a user
+attachment above the inline bound as one Bulletin preimage that the product's
+own allowance pays for, and returns its key, or throws
+`NativeChatStageRejection` (the room does not declare `preimage_attachments`,
+the file is above 8 MiB or the chain's per-transaction bound, the user refused
+`PreimageSubmit`, no allowance, or the submission failed).
 
 ## Pocket
 

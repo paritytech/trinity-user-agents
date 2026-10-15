@@ -282,7 +282,7 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   participant (`participant_actions_query`), and the toolbar: two actions
   inline, the rest behind an overflow button. A deeplink asks before it opens.
 - **Footer.** `Input` with its hint and the photo, video, file and payment
-  buttons it declares (the page sends no attachments), `Empty`, or `Custom` as a
+  buttons it declares, `Empty`, or `Custom` as a
   placeholder box; above it the activity line, the quick replies (hidden while
   you type), and the `/` catalogue of the room's commands. Only a declared
   command name becomes a `Command`; any other text is a message. An empty room
@@ -290,13 +290,67 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
 - **Chat Extension v2 additions.** The rooms pane ends with a **Capabilities**
   line: the feature names this host lists in `capabilities`
   (`product_source_rooms`, `reaction_details`, `participants`, `message_menus`,
-  `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`) and
-  both attachment bounds. The host keeps what a product declares with
+  `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`,
+  `inline_attachments`, `preimage_attachments`, `search`, `bot_personas`,
+  `mute_archive`, `threads`, `branches`, `reasoning_rows`, `read_aloud`,
+  `call_buttons`) and both attachment bounds. The host keeps what a product declares with
   `set_room_features` whole, and the room header lists each declared feature,
   marked "not served" where the host does not serve it. The host also keeps the
   meta of each message (`set_message_meta`), the call of each room
   (`set_room_call`), the personas of the product (`register_bot`, where a repeat
   replaces the name and icon) and the mute and archive state of each room.
+- **Attachments.** The photo, video and file buttons pick a file. Up to 1 MiB
+  it travels inline. Above it, in a room whose features declare
+  `preimage_attachments`, the core stages it as one Bulletin preimage that the
+  product's own allowance pays for, and the message carries the key; the core
+  refuses an undeclared room, and the page refuses a file above 8 MiB before
+  it reads it. The live Bulletin chain stores at most 2 MiB in one
+  transaction, which the core reads and enforces.
+- **Search.** **Search** in the room header opens a field above the messages.
+  300 ms after you stop typing, a room the host keeps is searched in the host's
+  store (case and diacritics ignored, 50 matches a page); a room the product
+  keeps that declares `search` asks the product with `search_query` (30 a page,
+  10 s), and shows "Search is not available" when it does not answer. Each
+  match shows its author, time and line with the match marked, and a click
+  jumps to the message. A room the product keeps without `search` shows no
+  search.
+- **Threads, branches, reasoning rows, read aloud.** A room whose features
+  carry `thread_of` is not in the list: the root message shows a chip with the
+  reply count, the repliers and the last reply time, which opens the thread
+  room with "Thread" and the parent's name in the header, the root quoted at
+  the top, and a back button to the root. Deleting a room deletes its thread
+  rooms. A message with a branch position shows "‹ i/n ›"; an arrow sends
+  `BranchSelected` and waits 5 s for the product's answer, then stays where it
+  was. A message with `reasoning` draws as a reasoning row: "Thinking" and the
+  streamed text while `Preparing`, then "Thought for N s", which a click
+  expands; it is never the list preview. With `read_aloud` the message menu
+  offers **Read aloud** on text, Markdown read as plain text and a custom
+  body's preview, spoken by the browser, with a **Stop** line in the footer
+  until it ends or you leave the room.
+- **Calls.** A room that declares `calls` shows an audio and a video button
+  in the header, which send `CallRequested`. A `Ringing` call shows a banner
+  with the caller, **Accept** and **Decline** (`CallAnswered`), and "Incoming
+  call" in the list, until the product clears it or 60 s pass. An `Active`
+  call shows a bar with its timer, **Open** for a call without a media session
+  (`CallOpened`) and **End** (`CallEnded`). No media path: the host does not
+  list `room_calls`.
+- **Wake.** **Wake** in the room header stands in for an authenticated
+  notification on watch `dev` for the room: the core holds the product's
+  worker for 30 s and sends `Woken`, at most 12 times for each product in one
+  hour (then the page says the budget is spent). The host does not list
+  `wake`, which needs a push route to the device.
+- **Bot personas.** A message or an activity line from `bot:<id>` draws with
+  the name and icon of the persona `<id>` the product registered, with no
+  `participants_query`; the **Bots** list of the rooms pane shows each persona.
+- **Mute and archive.** The room header has **Mute** (1 hour, 8 hours, 1 week
+  or always) or **Unmute**, and **Archive** or **Unarchive**. A muted row shows
+  a speaker mark and a grey badge; an archived room moves under an **Archived**
+  row at the top of the list and stays there when a message arrives. Each change
+  goes to the product as `UserStateChanged`. The core shows nothing for a
+  notification the product sends at once into a muted room, and the
+  **Notifications** list of the rooms pane shows every notification the host
+  delivered, so the missing one is visible; a click opens the room its deeplink
+  names.
 
 A room the host keeps stores what you send and tells the product with the
 events of `chat.actionSubscribe()` (`MessagePosted` with the host's id,
@@ -322,12 +376,15 @@ remembered across reloads.
 On `/chat/ws` the host sends a `snapshot` (rooms with their declarations,
 features, meta, call, user state and list row, bots, the messages of rooms the
 host keeps, the time-outs and the capabilities) first,
-then a `room`, `roomDeleted`, `bot` or `message` event as each lands, and
+then a `room`, `roomDeleted`, `bot`, `message` or `notification` event as each lands, and
 `workers` whenever a worker connects or disconnects. The page sends one
 operation per thing a person does: `post`, `edit`, `delete`, `react`, `seen`,
 `retry`, `trigger`, `command`, `messageAction`, `participantAction`, `toolbar`,
-`suggestion`, `open`, `close` and `userState` (which mutes or archives a room
-and sends `UserStateChanged` to `chat.roomEventsSubscribe()`), and the queries
+`suggestion`, `open`, `close`, `attach` (a photo, video or file in base64,
+inline or staged), `search`, `branch` (sends `BranchSelected`), `wake`,
+`callRequest`, `callAnswer`, `callOpen`, `callEnd` and `userState` (which mutes or archives a room
+and sends `UserStateChanged` to `chat.roomEventsSubscribe()`; `mutedForever`
+mutes with no end), and the queries
 `messages`, `reactions`, `participants`, `messageActions` and
 `participantActions`. An event is answered
 with `delivered` and the number of workers that took it, where 0 means none is

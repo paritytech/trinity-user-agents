@@ -82,8 +82,9 @@ export async function startOnTestHost(options: { host?: MockHost } = {}): Promis
   const { createMockClient } = await import("@parity/truapi-host/testing/client");
   const mock = await createMockClient({
     ...(options.host ? { host: options.host } : {}),
-    // Chat is a Worker service.
-    runtimeConfig: { executionKind: "Worker" },
+    // Chat is a Worker service. The core knows the product by the name its
+    // room links carry.
+    runtimeConfig: { executionKind: "Worker", productId: PRODUCT },
     // The product submits a preimage at start, for `/post rich`. The mock
     // chain never answers, so the core keeps the preimage and grants the
     // Bulletin allowance itself.

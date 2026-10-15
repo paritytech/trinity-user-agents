@@ -7,6 +7,7 @@ import type {
   CallErrorValue,
   ChatEvent,
   ChatMessageBody,
+  ChatRoomEvent,
   ChatUserAction,
   HostChatActionSubscribeItem,
   HostChatRoomEventsSubscribeItem,
@@ -21,14 +22,26 @@ import type {
   VersionedProductRendererRenderError,
 } from "@parity/truapi";
 import type { HexString } from "@parity/truapi/scale";
-import { hexToUtf8, utf8ToHex } from "./bytes";
+import { hexLength, hexToUtf8, utf8ToHex } from "./bytes";
 import { Clock, type RoomId } from "./clock";
 import { parseCommand, parseCommandEvent, type ParsedCommand } from "./commands";
 import type { ProductContext, SampleClient } from "./context";
-import { call, describeCallError } from "./errors";
-import { helpCommand, runCommand, setActivity, setPreview } from "./execute";
+import { call, describeCallError, reasonOf } from "./errors";
+import {
+  activeCall,
+  answerWoken,
+  createThread,
+  helpCommand,
+  nextCallId,
+  runCommand,
+  selectBranch,
+  setActivity,
+  setCall,
+  setPreview,
+} from "./execute";
 import { Feed } from "./feed";
 import {
+  ACTION_THREAD,
   CARD_MESSAGE_TYPE,
   MISSING_PREIMAGE_KEY,
   pickedBody,
@@ -38,7 +51,7 @@ import {
   sourcePreview,
   type Assets,
 } from "./fixtures";
-import { PRODUCT } from "./links";
+import { PRODUCT, roomLink } from "./links";
 import { EventLog, type LogSink, type QueryName } from "./log";
 import {
   answerMessageActions,
@@ -46,6 +59,7 @@ import {
   answerParticipantActions,
   answerParticipants,
   answerReactions,
+  answerSearch,
   knownRoom,
   type Answer,
   type QueryContext,
@@ -56,6 +70,7 @@ import {
   encodeState,
   initialState,
   memoryStorage,
+  roomSettings,
   type ProductState,
   type ProductStorage,
   type RoomSettings,
@@ -121,6 +136,48 @@ function bodyText(body: ChatMessageBody): string | undefined {
   if (body.tag === "Text") return body.value.text;
   if (body.tag === "RichText") return body.value.text;
   return undefined;
+}
+
+/** How long the product waits for the bytes of a preimage the user sent. */
+export const MEDIA_FETCH_TIMEOUT_MS = 10_000;
+
+/** One media item of a user message: its kind, its size and its resource. */
+export interface MediaSummary {
+  kind: "Image" | "Video" | "File";
+  size: number;
+  resource: "Inline" | "Preimage";
+  /** The preimage key, for a `Preimage` resource. */
+  key?: HexString;
+}
+
+/** The media items of a body. */
+export function mediaOf(body: ChatMessageBody): MediaSummary[] {
+  if (body.tag !== "RichText") return [];
+  return body.value.media.map((item) => {
+    const { resource, meta } = item.value;
+    const size =
+      meta.sizeBytes !== undefined
+        ? Number(meta.sizeBytes)
+        : resource.tag === "Inline"
+          ? hexLength(resource.value.bytes)
+          : 0;
+    return resource.tag === "Preimage"
+      ? { kind: item.tag, size, resource: "Preimage", key: resource.value.key }
+      : { kind: item.tag, size, resource: "Inline" };
+  });
+}
+
+/** The summary of an echoed room event. */
+export function roomEventSummary(event: ChatRoomEvent): string {
+  switch (event.tag) {
+    case "UserStateChanged": {
+      const until = event.value.mutedUntil;
+      const muted = until === undefined ? "none" : until >= 2n ** 64n - 1n ? "forever" : String(until);
+      return `muted=${muted} archived=${event.value.archived}`;
+    }
+    default:
+      return "";
+  }
 }
 
 /** The summary of an echo: the event and what it names. */
@@ -196,7 +253,8 @@ export class SampleProduct {
     //    during the registration, and that handler waits for `ready`, so
     //    `ready` exists before the first handler does.
     this.ready = this.#load();
-    // 1. The handlers, before the first `await`, so no query is lost.
+    // 1. The handlers, before the first `await`, so no query is lost. A host
+    //    before the Chat additions never asks `search_query`.
     this.#registerQueries();
     this.#client.renderer.onRender((request, send, interrupt) => this.#render(request, send, interrupt));
     // 2. The subscriptions.
@@ -334,13 +392,15 @@ export class SampleProduct {
 
   // ------------------------------------------------------------- plumbing
 
+  /** The settings of a room; a thread room gets its own on first use. */
   #settings(room: RoomId): RoomSettings {
-    return this.#state.rooms[room];
+    return (this.#state.rooms[room] ??= roomSettings(room));
   }
 
   #context(): ProductContext {
     return {
       chat: this.#client.chat,
+      notifications: this.#client.notifications,
       assets: this.#assets,
       product: this.#product,
       state: this.#state,
@@ -397,6 +457,45 @@ export class SampleProduct {
     await this.#feed.reply(room, `echo ${event.tag}${summary === "" ? "" : ` ${summary}`}`, { echo: true });
   }
 
+  /**
+   * Log each media item of a user message as `<kind> <size> <Inline|Preimage>`
+   * and, with `/echo`, answer `echo media <kind> <size> <resource>`. The
+   * product reads the bytes of a preimage back with `lookup_subscribe` and
+   * logs whether they came.
+   */
+  async #media(room: RoomId, body: ChatMessageBody): Promise<void> {
+    for (const item of mediaOf(body)) {
+      const line = `${item.kind} ${item.size} ${item.resource}`;
+      this.#record({ via: "media", room, kind: item.kind, data: { ...item, line } });
+      if (this.#settings(room).echo) await this.#feed.reply(room, `echo media ${line}`, { echo: true });
+      if (item.key !== undefined) void this.#fetchPreimage(room, item.key);
+    }
+  }
+
+  /** Read a preimage the user sent and log `Fetched` with its size, or `NotFetched`. */
+  #fetchPreimage(room: RoomId, key: HexString): Promise<void> {
+    return new Promise((resolve) => {
+      let done = false;
+      let subscription: { unsubscribe(): void } | undefined;
+      const finish = (kind: "Fetched" | "NotFetched", size: number | null) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        subscription?.unsubscribe();
+        this.#record({ via: "preimage", room, kind, data: { key, size } });
+        resolve();
+      };
+      const timer = setTimeout(() => finish("NotFetched", null), MEDIA_FETCH_TIMEOUT_MS);
+      subscription = this.#client.preimage.lookupSubscribe({ request: { key } }).subscribe({
+        next: (item) => {
+          if (item.value !== undefined) finish("Fetched", hexLength(item.value));
+        },
+        error: () => finish("NotFetched", null),
+      });
+      if (done) subscription.unsubscribe();
+    });
+  }
+
   // -------------------------------------------------------------- queries
 
   #registerQueries(): void {
@@ -425,6 +524,11 @@ export class SampleProduct {
       this.#query("participant_actions_query", request.roomId, "ParticipantActions", request, send, interrupt, () =>
         answerParticipantActions(this.#queryContext(), request),
       (item) => item.menu.tag),
+    );
+    chat.onSearchQuery((request, send, interrupt) =>
+      this.#query("search_query", request.roomId, "Search", request, send, interrupt, () =>
+        answerSearch(this.#queryContext(), request),
+      () => "Hits"),
     );
     chat.onUserAction((request, send, interrupt) => this.#userAction(request, send, interrupt));
   }
@@ -568,6 +672,7 @@ export class SampleProduct {
       const text = bodyText(action.value.body);
       return async () => {
         await echo();
+        await this.#media(room, action.value.body);
         await this.#run(room, text === undefined ? undefined : parseCommand(text));
       };
     }
@@ -620,7 +725,7 @@ export class SampleProduct {
   #received(item: HostChatActionSubscribeItem): void {
     void this.ready.then(() => {
       this.#record({ via: "action_subscribe", room: item.roomId, kind: item.event.tag, data: item.event.value ?? null });
-      const room = knownRoom(item.roomId);
+      const room = knownRoom(item.roomId, this.#state.rooms);
       if (room) void this.#enqueue(() => this.#handleEvent(room, item.event));
     });
   }
@@ -629,6 +734,7 @@ export class SampleProduct {
     switch (event.tag) {
       case "MessagePosted": {
         await this.#echo(room, event);
+        await this.#media(room, event.value.body);
         const text = bodyText(event.value.body);
         return this.#run(room, text === undefined ? undefined : parseCommand(text));
       }
@@ -653,7 +759,9 @@ export class SampleProduct {
       case "RoomClosed":
         return this.#echo(room, event);
       case "MessageActionTriggered":
-        return this.#feed.reply(room, `MessageActionTriggered ${event.value.actionId} on ${event.value.messageId}`);
+        await this.#feed.reply(room, `MessageActionTriggered ${event.value.actionId} on ${event.value.messageId}`);
+        if (event.value.actionId === ACTION_THREAD.actionId) await this.#replyInThread(room, event.value.messageId);
+        return;
       case "ParticipantActionTriggered":
         return this.#feed.reply(room, `ParticipantActionTriggered ${event.value.actionId} on ${event.value.participantId}`);
       case "ToolbarActionTriggered":
@@ -676,7 +784,73 @@ export class SampleProduct {
   #roomEvent(item: HostChatRoomEventsSubscribeItem): void {
     void this.ready.then(() => {
       this.#record({ via: "room_events", room: item.roomId, kind: item.event.tag, data: item.event.value ?? null });
+      const room = knownRoom(item.roomId, this.#state.rooms);
+      if (room) void this.#enqueue(() => this.#handleRoomEvent(room, item.event));
     });
+  }
+
+  async #handleRoomEvent(room: RoomId, event: ChatRoomEvent): Promise<void> {
+    switch (event.tag) {
+      case "UserStateChanged":
+        return this.#echoRoomEvent(room, event);
+      case "Woken":
+        try {
+          await answerWoken(this.#context(), room, event.value.watchId);
+        } catch (error) {
+          console.error("chat-v2: the answer to Woken failed", error);
+        }
+        return;
+      case "CallRequested":
+        return this.#answerCall(room, async (ctx) => {
+          await setCall(ctx, room, activeCall(nextCallId(ctx), event.value.video));
+          await this.#feed.reply(room, `call requested video=${event.value.video}`);
+        });
+      case "CallAnswered":
+        return this.#answerCall(room, async (ctx) => {
+          const ringing = ctx.settings(room).call;
+          if (ringing?.tag !== "Ringing" || ringing.value.callId !== event.value.callId) return;
+          await setCall(ctx, room, event.value.accept ? activeCall(ringing.value.callId, ringing.value.video) : undefined);
+        });
+      case "CallEnded":
+        return this.#answerCall(room, async (ctx) => {
+          if (ctx.settings(room).call?.value.callId === event.value.callId) await setCall(ctx, room, undefined);
+        });
+      case "BranchSelected":
+        // `/slow` holds this answer too, so a host can show its time-out.
+        if (this.#state.slowMs > 0) await delay(this.#state.slowMs);
+        try {
+          await selectBranch(this.#context(), room, event.value.messageId, event.value.index);
+        } catch (error) {
+          await this.#feed.reply(room, `error BranchSelected: ${reasonOf(error)}`);
+        }
+        return;
+    }
+  }
+
+  /** Answer a call event; a failure posts `error <event>`. */
+  async #answerCall(room: RoomId, answer: (ctx: ProductContext) => Promise<void>): Promise<void> {
+    try {
+      await answer(this.#context());
+    } catch (error) {
+      await this.#feed.reply(room, `error call: ${reasonOf(error)}`);
+    }
+  }
+
+  /** "Reply in thread": create the thread of the message and open it. */
+  async #replyInThread(room: RoomId, messageId: string): Promise<void> {
+    try {
+      const thread = await createThread(this.#context(), room, messageId);
+      const opened = await this.#client.system.navigateTo({ url: roomLink(thread, this.#product) });
+      if (opened.isErr()) console.error(`chat-v2: opening ${thread} failed: ${describeCallError(opened.error)}`);
+    } catch (error) {
+      await this.#feed.reply(room, `error act-thread: ${reasonOf(error)}`);
+    }
+  }
+
+  /** Echo a room event while `/echo` is on: `echo <event> <summary>`. */
+  async #echoRoomEvent(room: RoomId, event: ChatRoomEvent): Promise<void> {
+    if (!this.#settings(room).echo) return;
+    await this.#feed.reply(room, `echo ${event.tag} ${roomEventSummary(event)}`.trimEnd(), { echo: true });
   }
 
   // ------------------------------------------------------------- renderer
@@ -711,7 +885,7 @@ export class SampleProduct {
       const { context } = item;
       const roomId = context.tag === "ChatMessage" || context.tag === "ChatFooter" ? context.value.roomId : null;
       this.#record({ via: "renderer_action", room: roomId, kind: context.tag, data: item });
-      const room = roomId === null ? undefined : knownRoom(roomId);
+      const room = roomId === null ? undefined : knownRoom(roomId, this.#state.rooms);
       if (!room) return;
       if (item.actionId === CARD_LIKE_ACTION) void this.#enqueue(() => this.#feed.reply(room, "card liked"));
       if (item.actionId === FOOTER_PING_ACTION) void this.#enqueue(() => this.#feed.reply(room, "footer ping"));

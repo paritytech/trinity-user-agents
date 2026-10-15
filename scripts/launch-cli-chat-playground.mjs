@@ -21,7 +21,13 @@
 // bundle is not there, or always with `--build`.
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join, relative, resolve } from "node:path";
@@ -62,11 +68,19 @@ function freePort() {
   });
 }
 
+/**
+ * Build the product for `PRODUCT_ID`, so the room links it sends name the
+ * product the host runs. A bundle built for another name is built again.
+ */
 function buildProduct() {
-  if (existsSync(WORKER_BUNDLE) && !process.argv.includes("--build")) return;
+  const built =
+    existsSync(WORKER_BUNDLE) &&
+    readFileSync(WORKER_BUNDLE, "utf8").includes(JSON.stringify(PRODUCT_ID));
+  if (built && !process.argv.includes("--build")) return;
   for (const args of [["install", "--frozen-lockfile"], ["build"]]) {
     const result = spawnSync("yarn", args, {
       cwd: PRODUCT_DIR,
+      env: { ...process.env, CHAT_V2_DOTNS_NAME: PRODUCT_ID },
       stdio: "inherit",
     });
     if (result.status !== 0)
@@ -202,6 +216,22 @@ class ChatPage {
           (line.kind === "MessagePosted" || line.kind === "Command")) ||
           (line.via === "user_action" && line.kind === "NewMessage")),
       since,
+    );
+  }
+
+  /** Wait for the newest product message to match `text`, and give it. */
+  async lastProductText(text, timeoutMs = 10_000) {
+    const matches = (value) =>
+      typeof text === "string" ? value === text : text.test(value);
+    return this.until(
+      async () => {
+        const last = (await this.messages())
+          .filter((message) => message.origin === "product")
+          .at(-1);
+        return last && matches(last.text.split("\n")[0].trim()) ? last : null;
+      },
+      `a product message ${text}`,
+      timeoutMs,
     );
   }
 
@@ -578,7 +608,7 @@ async function drive(chat) {
       throw new Error(
         `the product read ${read.join(",")}, the page lists ${listed.join(",")}`,
       );
-    if (match[2] !== String(1024 * 1024) || match[3] !== "0")
+    if (match[2] !== String(1024 * 1024) || match[3] !== String(8 * 1024 * 1024))
       throw new Error(`bounds inline ${match[2]} B, preimage ${match[3]} B`);
     return `${await chat.shot("s49-host.png")}; ${read.length} features, inline ${match[2]} B, preimage ${match[3]} B`;
   });
@@ -592,8 +622,10 @@ async function drive(chat) {
         : "";
     await chat.command("host", "/features readaloud on");
     await chat.command("host", "/features calls audio");
-    const declared =
-      "features: calls audio (not served), read aloud (not served)";
+    // The page serves every feature a room can declare now, so none shows
+    // "not served" here; the core test and the test host cover an unserved
+    // one.
+    const declared = "features: calls audio, read aloud";
     await chat.until(
       async () => (await features()) === declared,
       `"${declared}"`,
@@ -621,6 +653,548 @@ async function drive(chat) {
       "no declared feature",
     );
     return `${await chat.shot("s51-host.png")}; ${declared} kept across the restart`;
+  });
+
+  // S53: a persona draws with its name and icon and no participants query.
+  await scenario(rows, byId.S53, async () => {
+    await chat.command("host", "/bot add helper Helper");
+    await chat.lastProductText(/^bot helper (New|Exists)$/);
+    await chat.command("host", "/bot post helper Hello from the persona");
+    const spoken = await chat.until(async () => {
+      const messages = await chat.messages();
+      return messages
+        .filter((message) => message.origin === "bot:helper")
+        .find((message) => message.text.includes("Hello from the persona"));
+    }, "the persona message");
+    const drawn = async () =>
+      page.$eval(
+        `[data-message-id="${spoken.id}"]`,
+        (node) => ({
+          who: node.querySelector(".who")?.innerText ?? "",
+          icon: !!node.querySelector('[data-persona="helper"] img'),
+        }),
+      );
+    await chat.until(
+      async () => {
+        const { who, icon } = await drawn();
+        return who === "Helper" && icon;
+      },
+      "the persona name and icon",
+    );
+    const asked = chat.log.filter(
+      (line) => line.via === "participants_query" && line.room === "host",
+    );
+    if (asked.length > 0)
+      throw new Error(`the page asked participants_query ${asked.length} time(s)`);
+    await chat.command("host", "/bot add helper Helper Two");
+    await chat.lastProductText("bot helper Exists");
+    await chat.until(
+      async () => (await drawn()).who === "Helper Two",
+      "the replaced persona name",
+    );
+    await chat.command("host", "/bot typing helper");
+    await chat.until(
+      async () =>
+        (await page.$eval("#activity", (node) => node.innerText)).startsWith(
+          "Helper Two: ",
+        ),
+      "the activity line of the persona",
+    );
+    const shot = await chat.shot("s53-host.png");
+    await chat.command("host", "/activity off");
+    await chat.command("host", "/bot post ghost Boo");
+    await chat.lastProductText(/unknown bot ghost/);
+    return `${shot}; ${spoken.id} drawn as Helper with its icon, renamed to Helper Two, ghost refused`;
+  });
+
+  // S54: a muted room greys its badge and shows no notification of the
+  // product; the product hears UserStateChanged.
+  await scenario(rows, byId.S54, async () => {
+    const roomEvent = (since, muted) =>
+      chat.logLine(
+        (line) =>
+          line.via === "room_events" &&
+          line.room === "host" &&
+          line.kind === "UserStateChanged" &&
+          (line.data.mutedUntil !== null) === muted,
+        since,
+      );
+    const shown = () =>
+      page.$$eval('[data-notification][data-room="host"]', (nodes) => nodes.length);
+    await chat.command("host", "/preview badge 2");
+    let since = chat.log.length;
+    await page.click("#mute");
+    await page.click('[data-item="mute-1-hour"]');
+    await roomEvent(since, true);
+    await chat.until(
+      async () =>
+        (await page.$('[data-room-id="host"][data-muted="true"] .badge.muted')) !== null,
+      "the muted row with a grey badge",
+    );
+    const before = await shown();
+    await chat.command("host", "/notify");
+    await chat.lastProductText("ok /notify");
+    await sleep(1_000);
+    if ((await shown()) !== before)
+      throw new Error("a notification into the muted room was shown");
+    const muted = await chat.shot("s54-muted.png");
+    since = chat.log.length;
+    await page.click("#mute");
+    await roomEvent(since, false);
+    await chat.command("host", "/notify");
+    await chat.until(
+      async () => (await shown()) === before + 1,
+      "the notification once the room is unmuted",
+    );
+    await chat.command("host", "/preview none");
+    return `${muted}, ${await chat.shot("s54-unmuted.png")}; no notification while muted, one after`;
+  });
+
+  // S55: an archived room stays archived when a message arrives.
+  await scenario(rows, byId.S55, async () => {
+    const archivedRow = () => page.$("#archived");
+    const since = chat.log.length;
+    await page.click("#archive");
+    await chat.logLine(
+      (line) =>
+        line.via === "room_events" &&
+        line.room === "host" &&
+        line.data.archived === true,
+      since,
+    );
+    await chat.until(async () => (await archivedRow()) !== null, "the Archived row");
+    await chat.command("host", "/post text");
+    await chat.lastProductText(/^Plain text message/);
+    if ((await page.$('#rooms > [data-room-id="host"]:not([data-archived])')) !== null)
+      throw new Error("the room left the archived list when a message arrived");
+    await page.click("#archived");
+    await chat.until(
+      async () =>
+        (await page.$('[data-room-id="host"][data-archived="true"]')) !== null,
+      "the room in the archived list",
+    );
+    const shot = await chat.shot("s55-archived.png");
+    await page.click("#archive");
+    await chat.until(
+      async () =>
+        (await archivedRow()) === null &&
+        (await page.$('[data-room-id="host"]:not([data-archived])')) !== null,
+      "the room back in the list",
+    );
+    return `${shot}; archived through /post text, unarchived`;
+  });
+
+  // S56: the snapshot of the user state comes first on the room events of
+  // a restarted worker.
+  await scenario(rows, byId.S56, async () => {
+    await page.click("#mute");
+    await page.click('[data-item="mute-always"]');
+    await chat.room("source");
+    await page.click("#archive");
+    await chat.until(async () => (await page.$("#archived")) !== null, "source archived");
+    const boot = Math.max(...chat.log.map((line) => line.boot));
+    await page.click("#restart");
+    await page.waitForSelector('[data-room-id="host"]', { timeout: 30_000 });
+    const lines = await chat.until(
+      async () => {
+        const events = chat.log.filter(
+          (line) => line.boot > boot && line.via === "room_events",
+        );
+        return events.length >= 2 ? events : null;
+      },
+      "the room events of the restarted worker",
+      30_000,
+    );
+    const first = lines.slice(0, 2).map((line) => `${line.room} ${line.kind}`);
+    if (first.join(",") !== "host UserStateChanged,source UserStateChanged")
+      throw new Error(`the restarted worker heard ${first.join(", ")} first`);
+    if (lines[0].data.mutedUntil === null || lines[1].data.archived !== true)
+      throw new Error(`snapshot ${JSON.stringify(lines.slice(0, 2).map((line) => line.data))}`);
+    // Back to a plain start for the next run.
+    await chat.room("host");
+    await page.click("#mute");
+    await page.click("#archived");
+    await chat.room("source");
+    await page.click("#archive");
+    await chat.until(async () => (await page.$("#archived")) === null, "no archived room");
+    await chat.room("host");
+    return `the restarted worker (boot ${boot + 1}) heard ${first.join(", ")} first`;
+  });
+
+  // S57 needs a Bulletin chain that stores 3 MiB and 6 MiB in one
+  // transaction. The dev page stages on the live chain, whose
+  // `MaxTransactionSize` is 2 MiB, so the core refuses those sizes there
+  // (open item O32). The test host, which keeps preimages in the core, runs
+  // S57; here the row is a skip with that reason.
+  const MIB = 1024 * 1024;
+  const upload = async (input, name, mimeType, size) => {
+    const buffer = Buffer.alloc(size);
+    for (let index = 0; index < size; index++) buffer[index] = index % 251;
+    await page.setInputFiles(input, { name, mimeType, buffer });
+  };
+  rows.push({
+    ...byId.S57,
+    result: "skip",
+    durationMs: 0,
+    evidence:
+      "the live Bulletin chain stores at most 2 MiB in one transaction (O32); S57 runs on the test host",
+  });
+  console.log(`skip ${byId.S57.id} ${byId.S57.title}`);
+
+  // S58: no declaration, or a file above 8 MiB, uploads and sends nothing.
+  await scenario(rows, byId.S58, async () => {
+    await chat.room("host");
+    await chat.command("host", "/footer photo");
+    await chat.command("host", "/features preimage off");
+    const status = () => page.$eval("#status", (node) => node.innerText);
+    const since = chat.log.length;
+    await upload("#attach-file", "undeclared.pdf", "application/pdf", 3 * MIB);
+    await chat.until(
+      async () => /not sent: .*does not declare preimage attachments/.test(await status()),
+      "the refusal of an undeclared room",
+    );
+    const undeclared = await status();
+    await chat.command("host", "/features preimage on");
+    await upload("#attach-file", "huge.pdf", "application/pdf", 8 * MIB + 1);
+    await chat.until(
+      async () => /not sent: huge\.pdf .* above 8\.0 MB/.test(await status()),
+      "the refusal above 8 MiB",
+    );
+    const huge = await status();
+    await sleep(500);
+    const sent = chat.log.slice(since).filter((entry) => entry.via === "media");
+    if (sent.length > 0) throw new Error(`the product received ${sent.length} media item(s)`);
+    await chat.command("host", "/features preimage off");
+    await chat.command("host", "/footer input");
+    return `"${undeclared}"; "${huge}"`;
+  });
+
+  const searchFor = async (text) => {
+    await page.fill("#searchtext", text);
+    return chat.until(
+      async () => {
+        const state = await page.$eval("#searchresults", (node) => ({
+          answered: node.dataset.answered,
+          unavailable: node.dataset.unavailable === "true",
+          hits: [...node.querySelectorAll("[data-hit]")].map((hit) => hit.dataset.hit),
+        }));
+        return state.answered === text ? state : null;
+      },
+      `the results for "${text}"`,
+    );
+  };
+
+  // S61: the host searches a room it keeps itself.
+  await scenario(rows, byId.S61, async () => {
+    await chat.room("host");
+    await chat.type("Crème brûlée for the search");
+    await chat.until(
+      async () => (await chat.messages()).some((message) => message.text.includes("Crème brûlée")),
+      "the message to find",
+    );
+    await page.click("#search-toggle");
+    const found = await searchFor("CREME BRULEE");
+    if (found.hits.length === 0) throw new Error("no match with case and diacritics ignored");
+    await page.click(`[data-hit="${found.hits[0]}"]`);
+    await chat.until(
+      async () => (await page.$(`[data-message-id="${found.hits[0]}"].flash`)) !== null,
+      "the jump to the match",
+    );
+    const asked = chat.log.filter((line) => line.via === "search_query");
+    if (asked.length > 0) throw new Error("the host asked the product to search its own store");
+    const shot = await chat.shot("s61-host.png");
+    await page.click("#search-toggle");
+    return `${shot}; ${found.hits.length} match(es), jumped to ${found.hits[0]}`;
+  });
+
+  // S62: a room the product keeps asks the product, and shows search only
+  // when it declares it.
+  await scenario(rows, byId.S62, async () => {
+    await chat.room("source");
+    await chat.command("source", "/history 30");
+    await chat.reopen("source", "host");
+    await chat.command("source", "/search on");
+    await chat.until(async () => (await page.$("#search-toggle")) !== null, "the search action");
+    await page.click("#search-toggle");
+    const since = chat.log.length;
+    const found = await searchFor("message 0001");
+    const expected = Array.from({ length: 10 }, (_, index) => `source-h-${String(19 - index).padStart(5, "0")}`);
+    if (found.hits.join(",") !== expected.join(","))
+      throw new Error(`hits ${found.hits.join(", ")}`);
+    await chat.logLine((line) => line.via === "search_query" && line.room === "source", since);
+    await page.click('[data-hit="source-h-00012"]');
+    await chat.until(
+      async () => (await page.$('[data-message-id="source-h-00012"].flash')) !== null,
+      "the jump to source-h-00012",
+    );
+    const shot = await chat.shot("s62-source.png");
+    await chat.command("source", "/search na");
+    const na = await searchFor("message 0002");
+    if (!na.unavailable) throw new Error("search na did not show not available");
+    await chat.command("source", "/search off");
+    await chat.until(async () => (await page.$("#search-toggle")) === null, "no search action without search");
+    return `${shot}; ${found.hits.length} hits from search_query, jumped to source-h-00012; na not available; off hides search`;
+  });
+
+  const lastProductId = async () => {
+    const last = (await chat.messages())
+      .filter((message) => message.origin === "product")
+      .at(-1);
+    return last.id;
+  };
+
+  // S64: the root's chip opens the thread room, which the list hides.
+  await scenario(rows, byId.S64, async () => {
+    await chat.room("host");
+    await chat.command("host", "/bot add helper Helper");
+    await chat.command("host", "/post text");
+    await chat.lastProductText(/^Plain text message/);
+    const root = await lastProductId();
+    await chat.command("host", `/thread ${root}`);
+    const thread = `thread-host-${root}`;
+    const chip = await chat.until(
+      async () => {
+        const node = await page.$(`[data-thread-chip="${thread}"]`);
+        return node ? node.innerText() : null;
+      },
+      "the thread chip",
+    );
+    if (!chip.includes("3 replies")) throw new Error(`the chip says "${chip}"`);
+    if ((await page.$(`#rooms [data-room-id="${thread}"]`)) !== null)
+      throw new Error("the thread room is in the list");
+    const listed = await chat.shot("s64-root.png");
+    await page.click(`[data-thread-chip="${thread}"]`);
+    await chat.until(
+      async () =>
+        (await page.$eval("#roomname", (node) => node.innerText)).startsWith("Thread") &&
+        (await page.$eval("#threadroot", (node) => node.innerText)).includes("Plain text message"),
+      "the thread header and the pinned root",
+    );
+    const origins = await chat.until(async () => {
+      const replies = (await chat.messages()).map((message) => message.origin);
+      return replies.length === 3 ? replies : null;
+    }, "three replies");
+    if (origins.join(",") !== "p1,p2,bot:helper") throw new Error(`replies from ${origins.join(", ")}`);
+    const opened = await chat.shot("s64-thread.png");
+    await page.click("#thread-back");
+    await chat.until(
+      async () => (await page.$('[data-room-id="host"].active')) !== null,
+      "back in the parent room",
+    );
+    return `${listed}, ${opened}; ${thread} with 3 replies from ${origins.join(", ")}`;
+  });
+
+  // S65: the product moves the branch; with no answer the control reverts.
+  await scenario(rows, byId.S65, async () => {
+    await chat.command("host", "/post text");
+    await chat.lastProductText(/^Plain text message/);
+    const id = await lastProductId();
+    await chat.command("host", `/branches ${id} 3`);
+    const control = (value) => page.$(`[data-message-id="${id}"] [data-branch="${value}"]`);
+    await chat.until(async () => (await control("1/3")) !== null, "the branch control 1/3");
+    let since = chat.log.length;
+    await page.click(`[data-message-id="${id}"] [data-branch-next]`);
+    await chat.logLine(
+      (line) => line.via === "room_events" && line.kind === "BranchSelected" && line.data.index === 2,
+      since,
+    );
+    await chat.until(
+      async () =>
+        (await control("2/3")) !== null &&
+        (await page.$eval(`[data-message-id="${id}"]`, (node) => node.innerText)).includes("Branch 2 of 3"),
+      "the product's answer at 2/3",
+    );
+    // An answer later than 5 s: the control reverts, then the late answer
+    // moves it.
+    await chat.command("host", "/slow 6000");
+    since = chat.log.length;
+    await page.click(`[data-message-id="${id}"] [data-branch-next]`);
+    await chat.until(
+      async () => (await page.$(`[data-message-id="${id}"] [data-branch-pending]`)) !== null,
+      "the arrow waiting for the product",
+    );
+    await sleep(5_300);
+    if ((await page.$(`[data-message-id="${id}"] [data-branch-pending]`)) !== null || (await control("2/3")) === null)
+      throw new Error("the control did not revert after 5 s");
+    const reverted = await chat.shot("s65-reverted.png");
+    await chat.until(async () => (await control("3/3")) !== null, "the late answer at 3/3", 15_000);
+    await chat.command("host", "/slow 0");
+    return `${reverted}; 1/3 to 2/3 on the product's answer; reverted after 5 s; 3/3 on the late answer`;
+  });
+
+  // S66: a reasoning row streams, then collapses with its duration.
+  await scenario(rows, byId.S66, async () => {
+    await chat.command("host", "/reason");
+    const row = await chat.until(async () => {
+      const node = await page.$('[data-reasoning="thinking"]');
+      return node ? node.getAttribute("data-message-id") : null;
+    }, "a reasoning row thinking");
+    const thinking = await chat.shot("s66-thinking.png");
+    await chat.until(
+      async () =>
+        (await page.$(`[data-message-id="${row}"][data-reasoning="collapsed"]`)) !== null &&
+        (await page.$eval(`[data-message-id="${row}"]`, (node) => node.innerText)).includes("Thought for 4 s"),
+      "the collapsed row with its duration",
+      10_000,
+    );
+    await page.click(`[data-message-id="${row}"] .bubble`);
+    await chat.until(
+      async () => (await page.$(`[data-message-id="${row}"][data-reasoning="expanded"]`)) !== null,
+      "the expanded row",
+    );
+    const preview = await page.$eval('[data-room-id="host"]', (node) => node.innerText);
+    if (preview.includes("The user asked")) throw new Error("the reasoning row is the list preview");
+    return `${thinking}, ${await chat.shot("s66-expanded.png")}; Thinking, Thought for 4 s, expanded`;
+  });
+
+  // S67: Read aloud comes with read_aloud, and leaving the room stops it.
+  await scenario(rows, byId.S67, async () => {
+    const readAloud = async (id) => {
+      await page.click(`[data-menu="${id}"]`, { force: true });
+      await page.waitForSelector("#menu:not([hidden])");
+      const item = await page.$('#menu [data-item="ReadAloud"]');
+      if (!item) await page.keyboard.press("Escape");
+      return item;
+    };
+    await chat.command("host", "/features readaloud off");
+    await chat.command("host", "/post rich");
+    await chat.until(async () => (await chat.messages()).filter((message) => message.origin === "product").at(-1)?.body === "RichText", "the rich message");
+    const rich = await lastProductId();
+    if (await readAloud(rich)) throw new Error("Read aloud without read_aloud");
+    await chat.command("host", "/features readaloud on");
+    await chat.until(async () => (await page.$eval("#roomfeatures", (node) => node.innerText)).includes("read aloud"), "read aloud declared");
+    const item = await readAloud(rich);
+    if (!item) throw new Error("no Read aloud with read_aloud");
+    await item.click();
+    const spoken = await page.evaluate(() => document.body.dataset.lastSpoken || "");
+    if (!spoken || spoken.includes("**") || spoken.includes("`")) throw new Error(`spoke "${spoken.slice(0, 80)}"`);
+    const shot = await chat.shot("s67-speaking.png");
+    await chat.room("source");
+    if (!(await page.$eval("#speaking", (node) => node.hidden)))
+      throw new Error("still speaking after leaving the room");
+    await chat.room("host");
+    await chat.command("host", "/features readaloud off");
+    return `${shot}; spoke ${spoken.length} characters of plain text; stopped on leaving`;
+  });
+
+  // S70: the page's Wake stands in for a notification on watch `dev`.
+  await scenario(rows, byId.S70, async () => {
+    await chat.room("host");
+    const shown = () =>
+      page.$$eval('[data-notification][data-room="host"]', (nodes) =>
+        nodes.filter((node) => node.innerText.includes("woken")).length,
+      );
+    const wake = async () => {
+      const since = chat.log.length;
+      await page.evaluate(() => delete document.body.dataset.wakeOutcome);
+      await page.click("#wake");
+      const outcome = await chat.until(
+        () => page.evaluate(() => document.body.dataset.wakeOutcome),
+        "the wake outcome",
+      );
+      if (outcome !== "Held") throw new Error(`the wake answered ${outcome}`);
+      await chat.logLine(
+        (line) => line.via === "room_events" && line.room === "host" && line.kind === "Woken" && line.data.watchId === "dev",
+        since,
+      );
+      return since;
+    };
+    const before = await shown();
+    await wake();
+    await chat.until(
+      async () => (await page.$('[data-room-id="host"] [data-preview="Woken by dev"]')) !== null,
+      "the woken preview",
+    );
+    await chat.until(async () => (await shown()) === before + 1, "the woken notification");
+    const woken = await chat.shot("s70-woken.png");
+    await page.click("#mute");
+    await page.click('[data-item="mute-1-hour"]');
+    await chat.until(async () => (await page.$('[data-room-id="host"][data-muted="true"]')) !== null, "the muted room");
+    await wake();
+    await chat.lastProductText("woken");
+    await sleep(1_000);
+    if ((await shown()) !== before + 1) throw new Error("a woken notification into the muted room was shown");
+    await page.click("#mute");
+    await chat.command("host", "/preview none");
+    return `${woken}; Woken by dev, one notification, none while muted`;
+  });
+
+  const roomEvent = (kind, since, match = () => true) =>
+    chat.logLine(
+      (line) => line.via === "room_events" && line.room === "host" && line.kind === kind && match(line.data),
+      since,
+    );
+  const shown = async (selector) => (await page.$(selector)) !== null;
+  // The core takes two call changes a second in a room.
+  const paced = () => sleep(1_100);
+
+  // S72: the call buttons follow the declaration and send CallRequested.
+  await scenario(rows, byId.S72, async () => {
+    await chat.room("host");
+    await chat.command("host", "/features calls off");
+    await chat.until(async () => !(await shown("#call-audio")) && !(await shown("#call-video")), "no call buttons");
+    await chat.command("host", "/features calls both");
+    await chat.until(async () => (await shown("#call-audio")) && (await shown("#call-video")), "both call buttons");
+    const since = chat.log.length;
+    await page.click("#call-video");
+    await roomEvent("CallRequested", since, (data) => data.video === true);
+    await chat.lastProductText("call requested video=true");
+    await chat.until(() => shown("#callbar"), "the call bar of the requested call");
+    const shot = await chat.shot("s72-host.png");
+    await paced();
+    await chat.command("host", "/call end");
+    await chat.until(async () => !(await shown("#callbar")), "no call bar");
+    return `${shot}; CallRequested video=true answered with the call bar`;
+  });
+
+  // S73: a ringing call rings in the room and the list, and clears after 60 s.
+  await scenario(rows, byId.S73, async () => {
+    await paced();
+    await chat.command("host", "/call ring video");
+    await chat.until(() => shown("#callbanner"), "the ringing banner");
+    await chat.until(() => shown('[data-room-id="host"] [data-preview="Incoming call"]'), "Incoming call in the list");
+    const ringingShot = await chat.shot("s73-ringing.png");
+    let since = chat.log.length;
+    await page.click("#call-accept");
+    await roomEvent("CallAnswered", since, (data) => data.accept === true);
+    await chat.until(() => shown("#callbar"), "the accepted call's bar");
+    await paced();
+    await chat.command("host", "/call ring");
+    await chat.until(() => shown("#callbanner"), "the second ringing banner");
+    since = chat.log.length;
+    await page.click("#call-decline");
+    await roomEvent("CallAnswered", since, (data) => data.accept === false);
+    await chat.until(async () => !(await shown("#callbanner")) && !(await shown("#callbar")), "the declined call cleared");
+    await paced();
+    await chat.command("host", "/call ring");
+    await chat.until(() => shown("#callbanner"), "the third ringing banner");
+    const rang = Date.now();
+    await chat.until(async () => !(await shown("#callbanner")), "the banner cleared", 65_000);
+    const seconds = (Date.now() - rang) / 1000;
+    if (seconds < 58) throw new Error(`the banner cleared after ${seconds} s`);
+    await chat.command("host", "/call end");
+    return `${ringingShot}; Accept and Decline sent CallAnswered; the banner cleared after ${Math.round(seconds)} s`;
+  });
+
+  // S74: the call bar of a call without a media session.
+  await scenario(rows, byId.S74, async () => {
+    await paced();
+    await chat.command("host", "/call active");
+    await chat.until(() => shown("#callbar #call-open"), "the call bar with Open");
+    // The bar redraws its timer each second.
+    await sleep(2_500);
+    const timer = await page.$eval("#callbar .dots", (node) => node.innerText);
+    if (!/^0:0[1-9]$/.test(timer)) throw new Error(`the timer shows ${timer}`);
+    let since = chat.log.length;
+    await page.click("#call-open");
+    await roomEvent("CallOpened", since);
+    const shot = await chat.shot("s74-host.png");
+    since = chat.log.length;
+    await page.click("#call-end");
+    await roomEvent("CallEnded", since);
+    await chat.until(async () => !(await shown("#callbar")), "the ended call cleared");
+    await chat.command("host", "/features calls off");
+    return `${shot}; timer ${timer}; CallOpened, then CallEnded cleared the bar`;
   });
 
   return rows;
@@ -679,7 +1253,10 @@ async function main() {
       `cli chat: ${failures.length} scenario row(s) failed or are missing:\n${failures.join("\n")}`,
     );
   }
-  console.log(`cli chat: ${rows.length} scenarios passed`);
+  const skipped = rows.filter((row) => row.result === "skip").length;
+  console.log(
+    `cli chat: ${rows.length - skipped} scenarios passed, ${skipped} skipped`,
+  );
 }
 
 main().then(

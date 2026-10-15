@@ -81,6 +81,8 @@ export interface FakeClientOptions {
   fail?: (method: string, index: number, request: unknown) => FakeFailure | undefined;
   /** The product local storage; share it to play a worker restart. */
   storage?: Map<string, `0x${string}`>;
+  /** The preimages `lookupSubscribe` finds, by key. */
+  preimages?: Map<string, `0x${string}`>;
 }
 
 export function createFakeClient(options: FakeClientOptions = {}) {
@@ -94,6 +96,7 @@ export function createFakeClient(options: FakeClientOptions = {}) {
   const storage = options.storage ?? new Map<string, `0x${string}`>();
   let hostIds = 0;
   const counts = new Map<string, number>();
+  const bots = new Set<string>();
 
   const unary =
     (method: string, answer: (request: never) => unknown = () => undefined) =>
@@ -140,10 +143,18 @@ export function createFakeClient(options: FakeClientOptions = {}) {
           },
       ),
       setRoomFeatures: unary("setRoomFeatures"),
+      setMessageMeta: unary("setMessageMeta"),
+      setRoomCall: unary("setRoomCall"),
+      registerBot: unary("registerBot", (request: { botId: string }) => {
+        const status = bots.has(request.botId) ? "Exists" : "New";
+        bots.add(request.botId);
+        return { status };
+      }),
       actionSubscribe: () => actions.observable,
       roomEventsSubscribe: () => roomEvents.observable,
       onMessagesQuery: register("messages_query"),
       onUserAction: register("user_action"),
+      onSearchQuery: register("search_query"),
       onReactionsQuery: register("reactions_query"),
       onParticipantsQuery: register("participants_query"),
       onMessageActionsQuery: register("message_actions_query"),
@@ -162,6 +173,19 @@ export function createFakeClient(options: FakeClientOptions = {}) {
     },
     preimage: {
       submit: unary("preimageSubmit", () => `0x${"ab".repeat(32)}`),
+      lookupSubscribe: ({ request }: { request: { key: string } }) => ({
+        subscribe(observer: Observer<{ value?: `0x${string}` }> = {}) {
+          calls.push({ method: "preimageLookup", request });
+          queueMicrotask(() => observer.next?.({ value: options.preimages?.get(request.key) }));
+          return { unsubscribe: () => {}, subscriptionId: "fake" };
+        },
+      }),
+    },
+    system: {
+      navigateTo: unary("navigateTo"),
+    },
+    notifications: {
+      sendPushNotification: unary("sendPushNotification", () => ({ id: 7 })),
     },
   };
 

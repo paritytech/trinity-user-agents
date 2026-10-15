@@ -247,6 +247,8 @@ impl Chat for ProductRuntimeHost {
 					limits.feed.forget(&self.product.product_id, &room_id);
 					limits.preview.forget(&self.product.product_id, &room_id);
 					limits.call.forget(&self.product.product_id, &room_id);
+					self.forget_chat_staging(&room_id);
+					self.services.hold_chat_call(&self.product.product_id, &room_id, None);
 					request.room_id = room_id;
 					platform.delete_chat_room(&self.product, request).await.map_err(room_host_error)
 				},
@@ -394,10 +396,14 @@ impl Chat for ProductRuntimeHost {
 				self.check_thread_parent(&platform, &room_id, parent).await?;
 			}
 			request.room_id = room_id;
+			let features = request.features.clone();
+			let room_id = request.room_id.clone();
 			platform
 				.set_chat_room_features(&self.product, request)
 				.await
-				.map_err(room_host_error)
+				.map_err(room_host_error)?;
+			self.record_chat_staging(&room_id, &features);
+			Ok(())
 		};
 		answer_room_change(result.await, version, HostChatSetRoomFeaturesResponse::from_latest)
 	}
@@ -446,11 +452,14 @@ impl Chat for ProductRuntimeHost {
 					return Err(room_failure(format!("this host does not serve {feature}")));
 				}
 			}
-			request.room_id = room_id;
+			request.room_id = room_id.clone();
+			let call = request.call.clone();
 			platform
 				.set_chat_room_call(&self.product, request)
 				.await
-				.map_err(room_host_error)
+				.map_err(room_host_error)?;
+			self.services.hold_chat_call(&self.product.product_id, &room_id, call.as_ref());
+			Ok(())
 		};
 		answer_room_change(result.await, version, HostChatSetRoomCallResponse::from_latest)
 	}
@@ -635,15 +644,15 @@ fn post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMess
 }
 
 /// Whether the core can back a feature a host lists. The core cannot back a
-/// product-drawn body without a renderer. It does not stage attachments or
-/// serve the Media service yet, and no host draws the payment button yet.
+/// product-drawn body without a renderer. It does not serve the Media
+/// service yet, and no host draws the payment button yet.
 fn core_backs_chat_feature(
 	name: &str,
 	execution_kind: crate::platform::ProductExecutionKind,
 ) -> bool {
 	match name {
 		"custom_bodies" | "custom_footer" => renderer_access_for(execution_kind).is_ok(),
-		"preimage_attachments" | "room_calls" | "payment_button" => false,
+		"room_calls" | "payment_button" => false,
 		_ => true,
 	}
 }
@@ -1234,6 +1243,15 @@ mod tests {
 	}
 
 	fn chat_runtime(chat: Arc<RecordingHost>) -> ProductRuntimeHost {
+		chat_runtime_on(stub_platform(), chat)
+	}
+
+	/// [`chat_runtime`] over `platform`, so that a test reads what the core
+	/// handed the host platform.
+	fn chat_runtime_on(
+		platform: Arc<crate::test_support::StubPlatform>,
+		chat: Arc<RecordingHost>,
+	) -> ProductRuntimeHost {
 		let (host_config, _) = runtime_config("chat.dot");
 		let product = ProductContext::new_with_execution(
 			"chat.dot".to_string(),
@@ -1241,7 +1259,7 @@ mod tests {
 		)
 		.expect("test chat product context is valid");
 		let services = RuntimeServices::new(
-			stub_platform(),
+			platform,
 			host_config.host.host_info.clone(),
 			host_config.people_chain_genesis_hash,
 			host_config.bulletin_chain_genesis_hash,
@@ -1700,9 +1718,11 @@ mod tests {
 		assert_eq!(
 			capabilities(&runtime),
 			latest::HostChatCapabilitiesResponse {
-				features: ["custom_footer", "search", "call_buttons"].map(str::to_string).to_vec(),
+				features: ["custom_footer", "preimage_attachments", "search", "call_buttons"]
+					.map(str::to_string)
+					.to_vec(),
 				inline_attachment_max_bytes: 1024 * 1024,
-				preimage_attachment_max_bytes: 0,
+				preimage_attachment_max_bytes: 8 * 1024 * 1024,
 			}
 		);
 	}
@@ -1902,6 +1922,35 @@ mod tests {
 			set_call(&runtime, "main", Some(ringing())),
 			Err(CallError::Domain(HostChatRoomError::V1(latest::HostChatRoomError::RateLimited)))
 		);
+	}
+
+	// D31: a call the core accepted holds the worker; a cleared call and a
+	// deleted room release it, and a refused call holds nothing.
+	#[test]
+	fn the_call_of_a_room_holds_the_worker() {
+		let chat = RecordingHost::with_rooms(&[hosted("main"), hosted("other")]);
+		let runtime = chat_runtime(chat.clone());
+		let references = || runtime.services.worker_ledger.count("chat.dot");
+
+		assert!(set_call(&runtime, "main", Some(ringing())).is_err());
+		assert_eq!(references(), 0);
+		*chat.capabilities.lock().unwrap() = vec!["call_buttons".to_string()];
+		set_call(&runtime, "main", Some(ringing())).expect("served");
+		assert_eq!(references(), 1);
+		set_call(&runtime, "other", Some(ringing())).expect("served");
+		assert_eq!(references(), 2);
+		std::thread::sleep(core::time::Duration::from_millis(1_000));
+		set_call(&runtime, "main", None).expect("cleared");
+		assert_eq!(references(), 1);
+		block_on(Chat::delete_room(
+			&runtime,
+			&CallContext::default(),
+			HostChatDeleteRoomRequest::V1(latest::HostChatDeleteRoomRequest {
+				room_id: "other".to_string(),
+			}),
+		))
+		.expect("deleted");
+		assert_eq!(references(), 0);
 	}
 
 	fn room_events(
@@ -2119,6 +2168,46 @@ mod tests {
 		assert!(!block_on(runtime.chat_room_muted("polkadot://chat.dot/-/chat/other")));
 		chat.user_states.lock().unwrap()[0].muted_until = Some(1);
 		assert!(!block_on(runtime.chat_room_muted("polkadot://chat.dot/-/chat/main")));
+	}
+
+	// D34, S54: an immediate notification into a muted room gets an id and
+	// shows nothing. A scheduled one, which the OS may fire, and one into
+	// another room still reach the host.
+	#[test]
+	fn the_host_shows_no_immediate_notification_into_a_muted_room() {
+		use truapi::{api::Notifications, versioned::notifications::HostPushNotificationRequest};
+
+		let platform = stub_platform();
+		let chat = RecordingHost::with_rooms(&[hosted("main"), hosted("other")]);
+		*chat.user_states.lock().unwrap() = vec![crate::platform::ChatRoomUserState {
+			room_id: "main".to_string(),
+			muted_until: Some(u64::MAX),
+			archived: true,
+		}];
+		let runtime = chat_runtime_on(platform.clone(), chat);
+		let notification =
+			|room_id: &str, scheduled_at: Option<u64>| latest::HostPushNotificationRequest {
+				text: "Ping".to_string(),
+				deeplink: Some(format!("polkadot://chat.dot/-/chat/{room_id}")),
+				scheduled_at,
+			};
+		let send = |request: latest::HostPushNotificationRequest| {
+			block_on(Notifications::send_push_notification(
+				&runtime,
+				&CallContext::default(),
+				HostPushNotificationRequest::V1(request),
+			))
+			.expect("a notification gets an id")
+		};
+
+		send(notification("main", None));
+		assert!(platform.pushed_notifications.lock().unwrap().is_empty());
+		send(notification("main", Some(1_776_144_000_000)));
+		send(notification("other", None));
+		assert_eq!(
+			*platform.pushed_notifications.lock().unwrap(),
+			[notification("main", Some(1_776_144_000_000)), notification("other", None)]
+		);
 	}
 
 	#[test]

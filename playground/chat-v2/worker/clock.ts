@@ -11,8 +11,20 @@ export const LIVE_STEP_MS = 1_000n;
 /** The time between two messages of the generated history. */
 export const HISTORY_STEP_MS = 60_000n;
 
+/** A thread room of the product: `thread-<room>-<message id>`. */
+export type ThreadRoomId = `thread-${string}`;
+
 /** The rooms of the product. */
-export type RoomId = "host" | "source" | "host-empty";
+export type RoomId = "host" | "source" | "host-empty" | ThreadRoomId;
+
+/** The thread room of message `messageId` of `room`. */
+export function threadRoomId(room: RoomId, messageId: string): ThreadRoomId {
+  return `thread-${room}-${messageId}`;
+}
+
+export function isThreadRoom(room: string): room is ThreadRoomId {
+  return room.startsWith("thread-");
+}
 
 /** The counters, as the product keeps them in local storage. */
 export interface ClockState {

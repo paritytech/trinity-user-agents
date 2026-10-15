@@ -607,6 +607,8 @@ export interface MockHost {
    * product that starts later gets the state in its room event snapshot.
    */
   setRoomUserState(roomId: string, state: MockChatRoomUserState): Promise<void>;
+  /** The mute and archive state of a room, or `undefined` for none. */
+  roomUserState(roomId: string): MockChatRoomUserState | undefined;
   /**
    * The user and the host screen of the chat rooms. It asks the product the
    * chat queries and sends the chat events, through the host runtime that
@@ -1531,6 +1533,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     roomEvents: () => chat.roomEvents(),
     setRoomUserState: (roomId: string, state: MockChatRoomUserState) =>
       chat.setRoomUserState(roomId, state),
+    roomUserState: (roomId: string) => chat.roomUserState(roomId),
     chatUser: chat.user,
     seedPreimage(value) {
       const key = preimageKey(value);

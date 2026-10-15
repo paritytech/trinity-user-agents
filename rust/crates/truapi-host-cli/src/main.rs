@@ -1782,6 +1782,9 @@ fn build_signing_runtime(
 		network.network_suffix.to_string(),
 	)
 	.context("invalid signing host config")?;
+	if let Some(chat) = &chat {
+		platform.show_notifications_on(chat.clone());
+	}
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
 	let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
 		platform.clone(),

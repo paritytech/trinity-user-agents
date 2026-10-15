@@ -68,6 +68,7 @@ describe("start", () => {
       "participants_query",
       "reactions_query",
       "render",
+      "search_query",
       "user_action",
     ]);
     expect(fake.callsOf("createRoom")).toEqual([

@@ -1447,7 +1447,9 @@ export interface ChatPlatform {
 
   /**
    * Delete a room with its messages, cache and declarations, and close its
-   * screen. The core calls it only for a room the product hosts.
+   * screen. Delete also, in the same change, each room whose features name
+   * this room in `thread_of`, so that no thread stays hidden for ever. The
+   * core calls it only for a room the product hosts.
    */
   deleteChatRoom?(
     product: ProductContext,

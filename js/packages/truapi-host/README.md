@@ -218,8 +218,13 @@ subscriber, and starts each subscription with the rooms the host reports as
 muted or archived (`readChatRoomUserStates`). `wakeProduct` holds the
 product's worker for 30 s for a reason (`ProductStart`, `MessageInFlight`,
 `Notification`) and resolves with `Held { untilMs }`, or `BudgetSpent` after
-12 notification wakes in one hour. `stageChatAttachment` is the seam for
-attachments stored as preimages; the core does not stage yet, so it rejects.
+12 notification wakes in one hour. `stageChatAttachment(roomId, mimeType,
+bytes)` stores a user attachment above the inline bound as one Bulletin
+preimage that the product's own allowance pays for and resolves with its key;
+it rejects for a room whose features do not declare `preimageAttachments`, an
+attachment above 8 MiB or above the chain's per-transaction bound, and a
+product the user refused `PreimageSubmit`. The test host keeps the preimage
+in the core.
 
 ### Chat queries
 
@@ -268,7 +273,8 @@ feature name of the additions RFC (or `chatFeatures` of the config), and the
 mock keeps per room the features, the meta of each message and the call, and
 one persona per bot id (a repeat replaces its name and icon).
 `setRoomUserState(roomId, { mutedUntil, archived })` plays the user's mute and
-archive; an attached product gets `UserStateChanged`, and `roomEvents()` gives
+archive and `roomUserState(roomId)` reads it back; an attached product gets
+`UserStateChanged`, deleting a room drops its state and its thread rooms, and `roomEvents()` gives
 the room events the mock sent.
 
 `host.chatUser` plays the person and the host screen against the product
@@ -277,7 +283,9 @@ deletes, reacts, reports seen, retries, presses buttons, toolbar entries and
 quick replies, opens menus and asks for participants and reaction details. It
 also presses the call buttons (`pressCall`), answers, opens and ends a call
 (`answerCall`, `openCall`, `endCall`), picks a branch (`selectBranch`), searches
-a room (`search`) and wakes the product (`wake`). In
+a room (`search`), wakes the product (`wake`) and sends a photo, video or file
+(`sendAttachment`: inline up to 1 MiB, else staged through
+`stageChatAttachment`, with `Refused` and nothing sent when the core refuses). In
 a room the product keeps it asks the chat queries and applies the host rules:
 the optimistic message, `Rejected` and `Failed`, one retry after
 `NotAvailable`, and the host default after a refusal or a time-out. In a room

@@ -4640,7 +4640,9 @@ pub trait ChatPlatform: Send + Sync {
 	}
 
 	/// Delete a room with its messages, cache and declarations, and close its
-	/// screen. The core calls it only for a room the product hosts.
+	/// screen. Delete also, in the same change, each room whose features name
+	/// this room in `thread_of`, so that no thread stays hidden for ever. The
+	/// core calls it only for a room the product hosts.
 	async fn delete_chat_room(
 		&self,
 		_product: &ProductContext,

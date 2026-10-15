@@ -15,7 +15,7 @@ import type {
   ChatToolbarAction,
 } from "@parity/truapi";
 import type { HexString } from "@parity/truapi/scale";
-import { hexLength, repeatedByte, utf8ToHex } from "./bytes";
+import { bytesToBase64, hexLength, hexToBytes, repeatedByte, utf8ToHex } from "./bytes";
 import { historyId, historyTimestamp, pad, type RoomId } from "./clock";
 import { appDeeplink } from "./links";
 import type { StoredMessage } from "./store";
@@ -45,6 +45,16 @@ export function png(bytes: HexString): ChatResource {
   return inline("image/png", bytes);
 }
 
+/** A PNG as a `data:` URL, the form `register_bot` takes for an icon. */
+export function pngDataUrl(bytes: HexString): string {
+  return `data:image/png;base64,${bytesToBase64(hexToBytes(bytes))}`;
+}
+
+/** The participant id a product speaks as for its persona `botId`. */
+export function personaId(botId: string): string {
+  return `bot:${botId}`;
+}
+
 /** The preimage key the product uses when the host refuses the submit. */
 export const MISSING_PREIMAGE_KEY = repeatedByte(0, 32);
 
@@ -54,14 +64,14 @@ export const BLURHASH_VIDEO = "L6Pj0^jE.AyE_3t7t7R**0o#DgR4";
 
 // ---------------------------------------------------------------- rooms
 
-export const ROOM_NAMES: Record<RoomId, string> = {
+export const ROOM_NAMES: Record<"host" | "source" | "host-empty", string> = {
   host: "Sample: host store",
   source: "Sample: product source",
   "host-empty": "Sample: empty",
 };
 
-export function roomMetadata(room: RoomId, assets: Assets): ChatRoomMetadata {
-  const descriptions: Record<RoomId, string> = {
+export function roomMetadata(room: "host" | "source" | "host-empty", assets: Assets): ChatRoomMetadata {
+  const descriptions: Record<"host" | "source" | "host-empty", string> = {
     host: "The host stores the messages of this room.",
     source: "The sample product keeps the messages of this room.",
     "host-empty": "A host-store room with no messages, for the placeholder.",
@@ -83,6 +93,20 @@ export function throwawayMetadata(assets: Assets): ChatRoomMetadata {
     description: "A host-store room that /room delete removes.",
   };
 }
+
+/** The metadata of the thread of message `messageId` of `room`. */
+export function threadMetadata(room: RoomId, messageId: string, assets: Assets): ChatRoomMetadata {
+  return { name: "Thread", avatar: png(assets.avatar), description: `Replies to ${messageId} in ${room}` };
+}
+
+/** The participants who answer in a thread `/thread` creates, in order. */
+export const THREAD_REPLIERS: readonly string[] = ["p1", "p2"];
+
+/** The twenty-one words a reasoning row `/reason` streams. */
+export const REASONING_WORDS: readonly string[] = (
+  "The user asked for a sample so I first check the room then pick a message " +
+  "and finally write an answer"
+).split(" ");
 
 /** The configuration of a host-store room: every field at its default. */
 export function hostStoreConfig(): ChatRoomConfig {
@@ -159,6 +183,7 @@ const CALLBACK: ChatActionHandler = { tag: "Callback" };
 export const ACTION_PIN: ChatProductAction = { actionId: "act-pin", label: "Pin", destructive: false, handler: CALLBACK };
 export const ACTION_REPORT: ChatProductAction = { actionId: "act-report", label: "Report", destructive: true, handler: CALLBACK };
 export const ACTION_MENTION: ChatProductAction = { actionId: "act-mention", label: "Mention", destructive: false, handler: CALLBACK };
+export const ACTION_THREAD: ChatProductAction = { actionId: "act-thread", label: "Reply in thread", destructive: false, handler: CALLBACK };
 
 export function actionOpenApp(product?: string): ChatProductAction {
   return {

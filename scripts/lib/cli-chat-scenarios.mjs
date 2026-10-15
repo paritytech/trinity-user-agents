@@ -47,6 +47,102 @@ export const CLI_CHAT_SCENARIOS = Object.freeze([
       "room features survive a worker restart; an unserved feature is stored and ignored",
     mode: "host",
   },
+  {
+    id: "S53",
+    title:
+      "register_bot answers New, then Exists and replaces the persona; a bot message draws its name and icon; an unknown persona is refused",
+    mode: "host",
+  },
+  {
+    id: "S54",
+    title:
+      "mute greys the badge, suppresses /notify into the room, and the product receives UserStateChanged",
+    mode: "host",
+  },
+  {
+    id: "S55",
+    title:
+      "archive moves the room to the archived list, where it stays after /post text; unarchive restores it",
+    mode: "host",
+  },
+  {
+    id: "S56",
+    title:
+      "a restarted worker receives UserStateChanged for every muted or archived room before live events",
+    mode: "host",
+  },
+  {
+    id: "S57",
+    title:
+      "a 3 MiB photo and a 6 MiB file are staged and arrive as Preimage media in both modes; the product reads them",
+    mode: "host, source",
+  },
+  {
+    id: "S58",
+    title:
+      "without preimage_attachments or above 8 MiB the attachment is refused and nothing is uploaded",
+    mode: "host",
+  },
+  {
+    id: "S61",
+    title:
+      "in-room search in a host-store room finds by text, case and diacritics ignored, and jumps to the match",
+    mode: "host",
+  },
+  {
+    id: "S62",
+    title:
+      "a product-source room with search pages search_query hits and jumps to one; /search na shows not available; no search without it",
+    mode: "source",
+  },
+  {
+    id: "S64",
+    title:
+      "a root shows 3 replies and opens the thread room, which is not in the list",
+    mode: "host",
+  },
+  {
+    id: "S65",
+    title:
+      "branch arrows send BranchSelected; the product's answer moves the position; without an answer the control reverts after 5 s",
+    mode: "host",
+  },
+  {
+    id: "S66",
+    title:
+      "a reasoning row streams with Thinking, collapses to Thought for 4 s, expands on a tap, and is never the list preview",
+    mode: "host",
+  },
+  {
+    id: "S67",
+    title:
+      "Read aloud appears only with read_aloud, speaks RichText as plain text, and stops on leaving the room",
+    mode: "host",
+  },
+  {
+    id: "S70",
+    title:
+      "a notification wake delivers Woken, refreshes the preview and shows the product's notification unless the room is muted",
+    mode: "host",
+  },
+  {
+    id: "S72",
+    title:
+      "calls shows the header buttons and a press sends CallRequested; no buttons without the declaration",
+    mode: "host",
+  },
+  {
+    id: "S73",
+    title:
+      "Ringing rings in the room and the list; Accept and Decline send CallAnswered; the banner clears after 60 s",
+    mode: "host",
+  },
+  {
+    id: "S74",
+    title:
+      "Active without a session shows the call bar with its timer; Open and End send CallOpened and CallEnded",
+    mode: "host",
+  },
 ]);
 
 function cell(value) {

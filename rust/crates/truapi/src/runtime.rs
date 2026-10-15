@@ -15,8 +15,10 @@ pub mod auth_state;
 mod authority;
 /// In-core Bulletin preimage submission over the shared Subxt client.
 pub mod bulletin_rpc;
+mod call_holds;
 mod capabilities;
 mod chat;
+mod chat_staging;
 pub mod contacts;
 mod dotns_lookup;
 mod host_session;
@@ -58,7 +60,9 @@ use std::{
 pub use actions::ActionChannel;
 use authority::{AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
+pub use call_holds::{CHAT_RINGING_HOLD_MS, ChatCallHolds};
 pub use chat::{ChatEventChannel, ChatHandler, ChatRoomEventHub, chat_platform_for};
+pub use chat_staging::{ChatStageRejection, ChatStagingDeclarations};
 pub use contacts::ContactResolutionError;
 pub use host_session::HostSession;
 
@@ -96,7 +100,9 @@ use crate::platform::{
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::TrackedStatementRenewalTarget;
-use tracing::{instrument, warn};
+use statement_allowance::{fetch_bulletin_allowance, rpc::RpcClient, wait_bulletin_authorization};
+use subxt::tx::Signer;
+use tracing::{info, instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
 	api::{Contacts, Pocket, Renderer},
@@ -122,7 +128,7 @@ use crate::subscription::Spawner;
 use crate::{
 	chain_runtime::RuntimeFailure,
 	host_internal::{
-		bulletin::preimage_key,
+		bulletin::{allowance_signer, preimage_key},
 		permissions::{PermissionsService, TemporaryPermissions, cross_product_signature_key},
 		product_manifest::Granted,
 		sso_messages::RingVrfError,
@@ -1426,7 +1432,154 @@ fn pocket_field_error(error: ChatFieldError) -> CallError<HostPocketRemoveCardEr
 	}))
 }
 
+/// Why the core did not store a preimage for a product.
+#[derive(Debug, PartialEq, Eq)]
+enum ProductPreimageError {
+	/// No Bulletin allowance could be had for the product.
+	Allowance(String),
+	/// The Bulletin chain did not store the value.
+	Submit(String),
+}
+
 impl ProductRuntimeHost {
+	/// Store `value` as a Bulletin preimage that the product's own allowance
+	/// for `session` pays for, by `submission_deadline`, and answer its key.
+	/// The allowance is extended first when it cannot hold `value`, and
+	/// refreshed once when the chain refuses it. A stored value goes to the
+	/// lookup cache, so a lookup right after it hits. The caller checks
+	/// `PreimageSubmit` first.
+	async fn store_product_preimage(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		value: Vec<u8>,
+		submission_deadline: Instant,
+	) -> Result<Vec<u8>, ProductPreimageError> {
+		let bulletin = &self.connection.services.bulletin;
+		let authority_cx = remote_authority_context_until(
+			cx,
+			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+			submission_deadline,
+		);
+		let allowance = remote_authority_call(
+			&authority_cx,
+			self.accounts.bulletin_allowance_key(&authority_cx, session),
+		)
+		.await
+		.map_err(|err| ProductPreimageError::Allowance(bulletin_allowance_error_reason(err)))?;
+
+		#[cfg(feature = "test-host")]
+		if self.accounts.submits_preimages_locally() {
+			let key = preimage_key(&value);
+			self.connection.services.keep_local_preimage(key, value);
+			return Ok(key.to_vec());
+		}
+
+		let allowance = self
+			.bulletin_allowance_for(cx, submission_deadline, session, allowance, value.len() as u64)
+			.await
+			.map_err(ProductPreimageError::Allowance)?;
+		let key = match bulletin.submit_preimage(cx, submission_deadline, &allowance, &value).await
+		{
+			Ok(key) => key,
+			Err(bulletin_rpc::BulletinSubmitError::AllowanceRejected { phase }) => {
+				warn!(
+					product = %self.connection.product_id(),
+					%phase,
+					"Bulletin rejected the preimage allowance; extending it and resubmitting once"
+				);
+				let authority_cx = remote_authority_context_until(
+					cx,
+					PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+					submission_deadline,
+				);
+				let allowance = remote_authority_call(
+					&authority_cx,
+					self.accounts.refresh_bulletin_allowance_key(&authority_cx, session),
+				)
+				.await
+				.map_err(|err| {
+					ProductPreimageError::Allowance(bulletin_allowance_error_reason(err))
+				})?;
+				bulletin
+					.submit_preimage(cx, submission_deadline, &allowance, &value)
+					.await
+					.map_err(|err| ProductPreimageError::Submit(err.to_string()))?
+			},
+			Err(err) => return Err(ProductPreimageError::Submit(err.to_string())),
+		};
+		// Move the owned body into the lookup cache (no extra copy) so an
+		// immediate product lookup hits before the content backend has it.
+		self.prime_preimage_cache(&key, value);
+		Ok(key)
+	}
+
+	/// Extend the product's Bulletin authorization before signing a payload it
+	/// cannot hold, so the chain never rejects a submission the host could see coming.
+	async fn bulletin_allowance_for(
+		&self,
+		cx: &CallContext,
+		deadline: Instant,
+		session: &AuthoritySession,
+		allowance: BulletinAllowanceKey,
+		size: u64,
+	) -> Result<BulletinAllowanceKey, String> {
+		let rpc = RpcClient::new(
+			self.connection
+				.services
+				.bulletin
+				.client("Bulletin authorization")
+				.await
+				.map_err(|error| error.to_string())?,
+		);
+		let target = allowance_signer(&allowance)?.account_id().0;
+		let current = fetch_bulletin_allowance(&rpc, &target)
+			.await
+			.map_err(|error| error.to_string())?;
+		if current.is_some_and(|info| info.can_store(size)) {
+			info!(
+				product = %self.connection.product_id(),
+				size,
+				"Bulletin authorization sufficient for the preimage"
+			);
+			return Ok(allowance);
+		}
+		info!(
+			product = %self.connection.product_id(),
+			size,
+			?current,
+			"extending Bulletin authorization before submitting the preimage"
+		);
+		let authority_cx = remote_authority_context_until(
+			cx,
+			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+			deadline,
+		);
+		let allowance = remote_authority_call(
+			&authority_cx,
+			self.accounts.refresh_bulletin_allowance_key(&authority_cx, session),
+		)
+		.await
+		.map_err(bulletin_allowance_error_reason)?;
+		let replacement = allowance_signer(&allowance)?.account_id().0;
+		let baseline = (replacement == target).then_some(current).flatten();
+		let timeout = PREIMAGE_BULLETIN_AUTHORIZATION_WAIT
+			.min(deadline.saturating_duration_since(Instant::now()));
+		wait_bulletin_authorization(&rpc, &replacement, baseline, size, timeout)
+			.await
+			.map_err(|error| error.to_string())?;
+		Ok(allowance)
+	}
+
+	/// Whether this host keeps a stored preimage in the core instead of
+	/// sending it to the Bulletin chain.
+	fn submits_preimages_locally(&self) -> bool {
+		#[cfg(feature = "test-host")]
+		return self.accounts.submits_preimages_locally();
+		#[cfg(not(feature = "test-host"))]
+		false
+	}
+
 	/// Cache a just-submitted preimage under its key for immediate lookups.
 	fn prime_preimage_cache(&self, key: &[u8], value: Vec<u8>) {
 		if let Ok(key_bytes) = <[u8; 32]>::try_from(key) {

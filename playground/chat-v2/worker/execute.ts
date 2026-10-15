@@ -4,14 +4,16 @@
  * `error <command>: <reason>` in the room it came from.
  */
 import type {
+  ChatMessageMeta,
   ChatMessageStatus,
+  ChatRoomCall,
   ChatRoomCalls,
   ChatRoomConfig,
   ChatRoomFeatures,
   ChatRoomPreview,
   HostChatSetRoomFooterRequest,
 } from "@parity/truapi";
-import type { RoomId } from "./clock";
+import { isThreadRoom, pad, threadRoomId, type RoomId, type ThreadRoomId } from "./clock";
 import { commandSpecs, findCommand, helpMarkdown, parseCommand, type ParsedCommand } from "./commands";
 import type { ProductContext } from "./context";
 import { call, CommandError, describeCallError, reasonOf } from "./errors";
@@ -26,6 +28,11 @@ import {
   FOOTER_PLACEHOLDER,
   hostStoreConfig,
   LEGACY_TEXT,
+  personaId,
+  pngDataUrl,
+  REASONING_WORDS,
+  THREAD_REPLIERS,
+  threadMetadata,
   METADATA_DESCRIPTION,
   PAYMENT_DESTINATION,
   png,
@@ -41,10 +48,20 @@ import {
   videoBody,
 } from "./fixtures";
 import { splitGraphemes } from "./graphemes";
-import type { MenuMode, ReactionsMode } from "./state";
+import { roomLink } from "./links";
+import { defaultFeatures, type MenuMode, type ReactionsMode, type SearchMode } from "./state";
 
 /** The interval between two `/stream` edits: 20 edits a second. */
 export const STREAM_INTERVAL_MS = 50;
+/**
+ * The interval between two `/reason` edits. The edits share the feed budget
+ * of the room with the meta, so they stay under 20 a second.
+ */
+export const REASON_INTERVAL_MS = 60;
+/** How long `/reason` says the product thought. */
+export const REASON_DURATION_MS = 4000;
+/** The most alternatives `/branches` declares, the bound of the RFC. */
+export const MAX_BRANCHES = 64;
 /** The upper bounds of numeric arguments. */
 export const MAX_HISTORY = 100_000;
 export const MAX_GUESTS = 100_000;
@@ -59,6 +76,8 @@ export const MAX_FLOOD = 200;
  * second fills an empty budget, and the rest is a margin.
  */
 export const FLOOD_SETTLE_MS = 1_100;
+/** The longest delay of `/notify`: one day. */
+export const MAX_NOTIFY_SECONDS = 86_400;
 
 const POST_KINDS = ["text", "rich", "video", "file", "actions", "custom", "legacy"] as const;
 type PostKind = (typeof POST_KINDS)[number];
@@ -87,7 +106,7 @@ export async function runCommand(ctx: ProductContext, room: RoomId, command: Par
   }
 }
 
-/** `source` keeps its own messages; the other rooms are host-store rooms. */
+/** `source` keeps its own messages; the other rooms, threads too, are host-store rooms. */
 function modeOf(room: RoomId): "host" | "source" {
   return room === "source" ? "source" : "host";
 }
@@ -133,8 +152,12 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
     await call("set_room_suggestions", ctx.chat.setRoomSuggestions({ roomId: room, suggestions: off ? [] : [...SUGGESTIONS] }));
   },
   commands: async (ctx, room, command) => {
-    const off = expectSwitch(command, "[off]", true);
-    await call("set_room_commands", ctx.chat.setRoomCommands({ roomId: room, commands: off ? [] : commandSpecs() }));
+    const [which] = command.args;
+    if (command.args.length > 1 || (which !== undefined && which !== "additions" && which !== "off")) {
+      throw usage(command, "[additions|off]");
+    }
+    const commands = which === "off" ? [] : commandSpecs(which === "additions" ? "additions" : "v2");
+    await call("set_room_commands", ctx.chat.setRoomCommands({ roomId: room, commands }));
   },
   activity: async (ctx, room, command) => {
     const off = expectSwitch(command, "on|off", false);
@@ -171,6 +194,22 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
   },
   caps: runCaps,
   features: runFeatures,
+  bot: runBot,
+  notify: runNotify,
+  search: runSearch,
+  thread: async (ctx, room, command) => {
+    const [id] = expectArgs(command, 1, "<id>");
+    await createThread(ctx, room, resolveId(ctx, room, id));
+  },
+  branches: runBranches,
+  reason: runReason,
+  call: runCall,
+  wake: async (_ctx, _room, command) => {
+    if (command.args.length !== 1 || command.args[0] !== "watch") throw usage(command, "watch");
+    // A watch routed to `/-/chat/<room>` needs the receiving API of the
+    // Notifications service, which no host serves yet (O28).
+    throw new CommandError("this host has no receiving API for a watch");
+  },
 };
 
 /** The names of the commands this module runs, for the tests. */
@@ -314,7 +353,7 @@ async function runRoom(ctx: ProductContext, _room: RoomId, command: ParsedComman
 }
 
 async function runMenu(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
-  const modes: readonly MenuMode[] = ["custom", "extend", "hide-edit", "none"];
+  const modes: readonly MenuMode[] = ["custom", "extend", "hide-edit", "thread", "none"];
   const mode = modes.find((candidate) => candidate === command.args[0]);
   if (!mode || command.args.length !== 1) throw usage(command, modes.join("|"));
   await setConfig(ctx, room, { messageActions: mode !== "none" });
@@ -443,6 +482,228 @@ async function runFeatures(ctx: ProductContext, room: RoomId, command: ParsedCom
   }
   await call("set_room_features", ctx.chat.setRoomFeatures({ roomId: room, features }));
   ctx.settings(room).features = features;
+}
+
+/**
+ * `/bot add <id> <name>` registers a persona and posts `bot <id> New` or
+ * `bot <id> Exists`; `/bot post <id> <text>` posts as `bot:<id>`;
+ * `/bot typing <id>` shows the activity line of `bot:<id>`.
+ */
+async function runBot(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const hint = "add <id> <name>|post <id> <text>|typing <id>";
+  const [sub, botId] = command.args;
+  if (botId === undefined) throw usage(command, hint);
+  switch (sub) {
+    case "add": {
+      const name = textAfter(command, 2);
+      if (name === "") throw usage(command, "add <id> <name>");
+      const registered = await call(
+        "register_bot",
+        ctx.chat.registerBot({ botId, name, icon: pngDataUrl(ctx.assets.avatarAlt) }),
+      );
+      if (!ctx.state.bots.includes(botId)) ctx.state.bots.push(botId);
+      await ctx.feed.post(room, textBody(`bot ${botId} ${registered.status}`));
+      return;
+    }
+    case "post": {
+      const text = textAfter(command, 2);
+      if (text === "") throw usage(command, "post <id> <text>");
+      await ctx.feed.post(room, textBody(text), { origin: personaId(botId) });
+      return;
+    }
+    case "typing":
+      if (command.args.length !== 2) throw usage(command, "typing <id>");
+      await call(
+        "set_room_activity",
+        ctx.chat.setRoomActivity({ roomId: room, activity: { text: ACTIVITY_TEXT, participantId: personaId(botId) } }),
+      );
+      await ctx.feed.reply(room, `ok ${command.line}`);
+      return;
+    default:
+      throw usage(command, hint);
+  }
+}
+
+/**
+ * `/search on|na|off`: declare `search` in the features of the room, and
+ * answer `search_query` from the stored messages (`on`) or with
+ * `NotAvailable` (`na`, which keeps `search` declared).
+ */
+async function runSearch(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const modes: readonly SearchMode[] = ["on", "na", "off"];
+  const mode = modes.find((candidate) => candidate === command.args[0]);
+  if (!mode || command.args.length !== 1) throw usage(command, modes.join("|"));
+  const features: ChatRoomFeatures = { ...ctx.settings(room).features, search: mode !== "off" };
+  await call("set_room_features", ctx.chat.setRoomFeatures({ roomId: room, features }));
+  ctx.settings(room).features = features;
+  ctx.settings(room).search = mode;
+}
+
+/** The text of the notification `/notify` sends from `room`. */
+export function notificationText(room: RoomId): string {
+  return `Sample notification from ${room}`;
+}
+
+/** The text of the notification the product sends when a watch wakes it. */
+export function wokenNotificationText(room: RoomId, watchId: string): string {
+  return `Sample woken in ${room} by ${watchId}`;
+}
+
+/**
+ * The answer to `Woken`: the preview "Woken by <watch>", the message "woken"
+ * in a room the host keeps, and a notification into the room, which the host
+ * does not show while the room is muted.
+ */
+export async function answerWoken(ctx: ProductContext, room: RoomId, watchId: string): Promise<void> {
+  await setPreview(ctx, room, { text: { text: `Woken by ${watchId}`, ongoing: false } });
+  if (modeOf(room) === "host") await ctx.feed.post(room, textBody("woken"));
+  await call(
+    "send_push_notification",
+    ctx.notifications.sendPushNotification({ text: wokenNotificationText(room, watchId), deeplink: roomLink(room, ctx.product) }),
+  );
+}
+
+/**
+ * `/notify [<seconds>]`: a notification whose deeplink opens the room, now
+ * or after `<seconds>`. The host shows nothing for an immediate one into a
+ * room the user muted. The delay is the one value the product takes from
+ * the clock.
+ */
+async function runNotify(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const seconds = command.args.length === 0 ? 0 : expectCount(command, MAX_NOTIFY_SECONDS, "[<seconds>]");
+  await call(
+    "send_push_notification",
+    ctx.notifications.sendPushNotification({
+      text: notificationText(room),
+      deeplink: roomLink(room, ctx.product),
+      ...(seconds > 0 ? { scheduledAt: BigInt(Date.now() + seconds * 1000) } : {}),
+    }),
+  );
+}
+
+// ----------------------------------------------------- threads and meta
+
+/**
+ * Replace the meta of one message with one change, the other fields as set
+ * last, and keep it.
+ */
+export async function setMeta(
+  ctx: ProductContext,
+  room: RoomId,
+  messageId: string,
+  change: Partial<ChatMessageMeta>,
+): Promise<void> {
+  const meta: ChatMessageMeta = { ...ctx.settings(room).meta[messageId], ...change };
+  for (const key of ["thread", "branch", "reasoning"] as const) if (meta[key] === undefined) delete meta[key];
+  await call("set_message_meta", ctx.chat.setMessageMeta({ roomId: room, messageId, meta }));
+  ctx.settings(room).meta[messageId] = meta;
+}
+
+/**
+ * The thread of message `messageId` of `room`: a host-store room
+ * `thread-<room>-<id>` whose features name the message, three replies from
+ * `p1`, `p2` and `bot:helper` (the product while no `helper` persona is
+ * registered), and the summary of the root.
+ */
+export async function createThread(ctx: ProductContext, room: RoomId, messageId: string): Promise<ThreadRoomId> {
+  if (isThreadRoom(room)) throw new CommandError("a thread has no thread of its own");
+  const thread = threadRoomId(room, messageId);
+  const created = await call(
+    "create_room",
+    ctx.chat.createRoom({ roomId: thread, metadata: threadMetadata(room, messageId, ctx.assets), config: hostStoreConfig() }),
+  );
+  if (created.status === "Exists") throw new CommandError(`${thread} exists`);
+  const features = { ...defaultFeatures(), threadOf: { roomId: room, messageId } };
+  await call("set_room_features", ctx.chat.setRoomFeatures({ roomId: thread, features }));
+  ctx.settings(thread).features = features;
+  const persona = ctx.state.bots.includes("helper") ? personaId("helper") : "product";
+  const repliers = [...THREAD_REPLIERS, persona];
+  for (const [index, origin] of repliers.entries()) {
+    await ctx.feed.post(thread, textBody(`Reply ${index + 1} from ${origin}`), { origin });
+  }
+  await setMeta(ctx, room, messageId, {
+    thread: {
+      roomId: thread,
+      replyCount: repliers.length,
+      lastReplyAt: ctx.clock.now(),
+      participantIds: repliers.filter((origin) => origin !== "product"),
+    },
+  });
+  return thread;
+}
+
+/** `/branches <id> <n>`: message `<id>` shows alternative 1 of `n`. */
+async function runBranches(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const [id, count] = expectArgs(command, 2, "<id> <n>");
+  if (!/^[1-9][0-9]*$/.test(count) || Number(count) > MAX_BRANCHES) throw usage(command, `<id> <n>, 1 to ${MAX_BRANCHES}`);
+  await setMeta(ctx, room, resolveId(ctx, room, id), { branch: { index: 1, count: Number(count) } });
+}
+
+/** The answer to `BranchSelected`: the alternative's text, then its position. */
+export async function selectBranch(ctx: ProductContext, room: RoomId, messageId: string, index: number): Promise<void> {
+  const branch = ctx.settings(room).meta[messageId]?.branch;
+  if (!branch) throw new CommandError(`${messageId} has no branches`);
+  if (index < 1 || index > branch.count) throw new CommandError(`${messageId} has no branch ${index}`);
+  await ctx.feed.edit(room, messageId, textBody(`Branch ${index} of ${branch.count}`));
+  await setMeta(ctx, room, messageId, { branch: { index, count: branch.count } });
+}
+
+/**
+ * `/reason`: a reasoning row that streams twenty edits while `Preparing`,
+ * then is `Sent` with the time the product thought.
+ */
+async function runReason(ctx: ProductContext, room: RoomId): Promise<void> {
+  const id = await ctx.feed.post(room, textBody(REASONING_WORDS[0]), { status: "Preparing" });
+  await setMeta(ctx, room, id, { reasoning: {} });
+  for (let words = 2; words <= REASONING_WORDS.length; words++) {
+    await delay(REASON_INTERVAL_MS);
+    await ctx.feed.edit(room, id, textBody(REASONING_WORDS.slice(0, words).join(" ")));
+  }
+  await ctx.feed.status(room, id, "Sent");
+  await setMeta(ctx, room, id, { reasoning: { durationMs: REASON_DURATION_MS } });
+}
+
+// ------------------------------------------------------------------ calls
+
+/** Set the call of the room, or clear it with `undefined`, and keep it. */
+export async function setCall(ctx: ProductContext, room: RoomId, roomCall: ChatRoomCall | undefined): Promise<void> {
+  await call("set_room_call", ctx.chat.setRoomCall(roomCall ? { roomId: room, call: roomCall } : { roomId: room }));
+  ctx.settings(room).call = roomCall;
+}
+
+/**
+ * A call without a media session, which the host shows as a call bar. The
+ * start is the clock's time, so the host's timer counts from now.
+ */
+export function activeCall(callId: string, video: boolean): ChatRoomCall {
+  return { tag: "Active", value: { callId, video, startedAt: BigInt(Date.now()) } };
+}
+
+/** The id of the next call the product starts: `call-<n>`. */
+export function nextCallId(ctx: ProductContext): string {
+  ctx.state.calls += 1;
+  return `call-${pad(ctx.state.calls, 4)}`;
+}
+
+/**
+ * `/call ring [video]` rings from `p1`, `/call active [video]` shows a call
+ * bar, `/call end` clears the call.
+ */
+async function runCall(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const hint = "ring [video]|active [video]|end";
+  const [state, kind] = command.args;
+  const video = kind === "video";
+  if (command.args.length > 2 || (kind !== undefined && (kind !== "video" || state === "end"))) throw usage(command, hint);
+  switch (state) {
+    case "ring":
+      return setCall(ctx, room, { tag: "Ringing", value: { callId: nextCallId(ctx), video, caller: "p1" } });
+    case "active":
+      return setCall(ctx, room, activeCall(nextCallId(ctx), video));
+    case "end":
+      return setCall(ctx, room, undefined);
+    default:
+      throw usage(command, hint);
+  }
 }
 
 // ---------------------------------------------------------------- messages

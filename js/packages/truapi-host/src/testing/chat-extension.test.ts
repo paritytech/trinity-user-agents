@@ -327,13 +327,13 @@ suite("chat extension v2 on the test host", () => {
     const { client, dispose } = await workerClient();
     try {
       const caps = (await client.chat.capabilities())._unsafeUnwrap();
-      expect(caps.features).not.toContain("preimage_attachments");
+      expect(caps.features).toContain("preimage_attachments");
       expect(caps.features).not.toContain("room_calls");
       expect(caps.features).not.toContain("payment_button");
       expect(caps.features).toContain("call_buttons");
       expect(caps.features).toContain("custom_bodies");
       expect(caps.inlineAttachmentMaxBytes).toBe(1024 * 1024);
-      expect(caps.preimageAttachmentMaxBytes).toBe(0);
+      expect(caps.preimageAttachmentMaxBytes).toBe(8 * 1024 * 1024);
     } finally {
       dispose();
     }
@@ -424,14 +424,59 @@ suite("chat extension v2 on the test host", () => {
     }
   });
 
-  it("wakes the product, and refuses to stage an attachment", async () => {
+  it("wakes the product", async () => {
     const { chat, dispose } = await workerClient();
     try {
       const outcome = await chat.wakeProduct({ tag: "ProductStart" });
       expect(outcome.tag).toBe("Held");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("stages an attachment only in a room that declares it, and the product reads it back (S57, S58)", async () => {
+    const { client, chat, dispose } = await createMockClient({
+      runtimeConfig: { executionKind: "Worker" },
+      submitPreimagesLocally: true,
+      grantAllowances: true,
+    });
+    try {
+      await createRoom(client, "main", HOST_CONFIG);
+      const bytes = new Uint8Array(3 * 1024 * 1024).map((_, index) => index % 251);
       await expect(
-        chat.stageChatAttachment("main", "image/png", new Uint8Array([1])),
-      ).rejects.toThrow("does not stage");
+        chat.stageChatAttachment("main", "application/pdf", bytes),
+      ).rejects.toThrow("does not declare preimage attachments");
+      await expect(
+        chat.stageChatAttachment(
+          "main",
+          "application/pdf",
+          new Uint8Array(8 * 1024 * 1024 + 1),
+        ),
+      ).rejects.toThrow("larger than 8388608 bytes");
+      (
+        await client.chat.setRoomFeatures({
+          roomId: "main",
+          features: {
+            preimageAttachments: true,
+            search: false,
+            readAloud: false,
+          },
+        })
+      )._unsafeUnwrap();
+
+      const key = await chat.stageChatAttachment("main", "application/pdf", bytes);
+      expect(key.length).toBe(32);
+      const value = await new Promise<Uint8Array | undefined>((resolve) => {
+        const subscription = client.preimage
+          .lookupSubscribe({ request: { key: `0x${Buffer.from(key).toString("hex")}` } })
+          .subscribe({
+            next: (item) => {
+              subscription.unsubscribe();
+              resolve(item.value === undefined ? undefined : Buffer.from(item.value.slice(2), "hex"));
+            },
+          });
+      });
+      expect(value).toEqual(Buffer.from(bytes));
     } finally {
       dispose();
     }

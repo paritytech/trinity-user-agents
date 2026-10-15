@@ -121,6 +121,9 @@ pub struct CliPlatform {
 	/// Serializes interactive CLI prompts so concurrent confirmations don't
 	/// interleave on stdin.
 	prompt_lock: AsyncMutex<()>,
+	/// The chat host of the development page, which also shows each delivered
+	/// notification.
+	chat_page: std::sync::OnceLock<Arc<crate::chat::CliChatHost>>,
 }
 
 impl CliPlatform {
@@ -197,7 +200,14 @@ impl CliPlatform {
 			navigations_log: std::env::var_os("TRUAPI_NAVIGATIONS_LOG").map(PathBuf::from),
 			ui,
 			prompt_lock: AsyncMutex::new(()),
+			chat_page: std::sync::OnceLock::new(),
 		})
+	}
+
+	/// Show each notification this host delivers on the development chat
+	/// page of `chat` too. Set once; answers whether this call set it.
+	pub fn show_notifications_on(&self, chat: Arc<crate::chat::CliChatHost>) -> bool {
+		self.chat_page.set(chat).is_ok()
 	}
 
 	/// Return the policy used by future confirmation requests.
@@ -612,10 +622,18 @@ impl Notifications for CliPlatform {
 			);
 			let pending = self.scheduled_notifications.clone();
 			let ui = self.ui.clone();
+			let chat_page = self.chat_page.get().cloned();
 			tokio::spawn(async move {
 				tokio::time::sleep(Duration::from_millis(scheduled_at.saturating_sub(now))).await;
 				let notification = pending.lock().expect("notification mutex poisoned").remove(&id);
 				if let Some(notification) = notification {
+					if let Some(chat) = chat_page {
+						chat.notification_shown(
+							id,
+							&notification.text,
+							notification.deeplink.as_deref(),
+						);
+					}
 					emit_notification_event(
 						ui.as_ref(),
 						SystemEvent::NotificationDelivered {
@@ -627,6 +645,9 @@ impl Notifications for CliPlatform {
 				}
 			});
 		} else {
+			if let Some(chat) = self.chat_page.get() {
+				chat.notification_shown(id, &notification.text, notification.deeplink.as_deref());
+			}
 			emit_notification_event(
 				self.ui.as_ref(),
 				SystemEvent::NotificationDelivered {

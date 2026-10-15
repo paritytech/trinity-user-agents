@@ -700,6 +700,19 @@ impl MockPlatform {
 		);
 	}
 
+	/// The mute and archive state of `room_id`, or `None` for a room the user
+	/// neither muted nor archived.
+	pub fn chat_room_user_state(
+		&self,
+		room_id: &str,
+	) -> Option<crate::platform::ChatRoomUserState> {
+		self.chat_user_states
+			.lock()
+			.expect("chat user states poisoned")
+			.get(room_id)
+			.cloned()
+	}
+
 	/// Apply `change` to the declarations of `room_id`, or fail with the
 	/// injected chat fault.
 	fn declare_chat_room(
@@ -1454,16 +1467,41 @@ impl ChatPlatform for MockPlatform {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		self.chat_declarations
-			.lock()
-			.expect("chat declarations poisoned")
-			.remove(&request.room_id);
+		// The thread rooms of the room go with it: no list shows them.
+		let mut deleted = vec![request.room_id.clone()];
+		{
+			let mut declarations =
+				self.chat_declarations.lock().expect("chat declarations poisoned");
+			declarations.remove(&request.room_id);
+			let threads: Vec<String> = declarations
+				.iter()
+				.filter(|(_, room)| {
+					room.features
+						.as_ref()
+						.and_then(|features| features.thread_of.as_ref())
+						.is_some_and(|parent| parent.room_id == request.room_id)
+				})
+				.map(|(room_id, _)| room_id.clone())
+				.collect();
+			for thread in threads {
+				declarations.remove(&thread);
+				deleted.push(thread);
+			}
+		}
+		// The user's mute and archive state goes with each room.
+		let mut states = self.chat_user_states.lock().expect("chat user states poisoned");
+		for room_id in &deleted {
+			states.remove(room_id);
+		}
+		drop(states);
 		self.chat_messages
 			.lock()
 			.expect("chat messages poisoned")
-			.retain(|message| message.room_id != request.room_id);
-		let removed = self.chat_rooms.lock().expect("chat rooms poisoned").remove(&request.room_id);
-		if removed.is_some() {
+			.retain(|message| !deleted.contains(&message.room_id));
+		let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
+		let removed = deleted.iter().filter(|room_id| rooms.remove(*room_id).is_some()).count();
+		drop(rooms);
+		if removed > 0 {
 			self.publish_chat_rooms();
 		}
 		Ok(())
@@ -2682,6 +2720,29 @@ mod tests {
 				archived: true,
 			}]
 		);
+		// Deleting a room drops the state the user gave it, and its threads.
+		block_on(p.set_chat_room_features(
+			&product,
+			latest::HostChatSetRoomFeaturesRequest {
+				room_id: "lobby-thread".to_string(),
+				features: latest::ChatRoomFeatures {
+					thread_of: Some(latest::ChatThreadParent {
+						room_id: "lobby".to_string(),
+						message_id: "m1".to_string(),
+					}),
+					..Default::default()
+				},
+			},
+		))
+		.unwrap();
+		assert!(p.chat_room_user_state("lobby").is_some());
+		block_on(p.delete_chat_room(
+			&product,
+			latest::HostChatDeleteRoomRequest { room_id: "lobby".to_string() },
+		))
+		.unwrap();
+		assert_eq!(p.chat_room_user_state("lobby"), None);
+		assert!(p.chat_room_declarations("lobby-thread").is_none());
 
 		let register = |name: &str| {
 			block_on(p.register_chat_bot(

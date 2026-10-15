@@ -12,7 +12,8 @@ export type QueryName =
   | "reactions_query"
   | "participants_query"
   | "message_actions_query"
-  | "participant_actions_query";
+  | "participant_actions_query"
+  | "search_query";
 
 export type LogVia =
   | "action_subscribe"
@@ -30,7 +31,9 @@ export type LogVia =
   /** A `create_room` or `delete_room` call of `/room`. */
   | "room"
   /** The result of `/flood`. */
-  | "flood";
+  | "flood"
+  /** One media item of a message the user sent. */
+  | "media";
 
 export interface LogEntry {
   via: LogVia;

@@ -46,12 +46,23 @@ describe("the command table", () => {
     expect([...RUNNABLE_COMMANDS].sort()).toEqual(COMMANDS.map((c) => c.name).sort());
   });
 
-  test("fits the RFC bound of 32 commands with unique names", () => {
-    const specs = commandSpecs();
-    expect(specs.length).toBeLessThanOrEqual(32);
-    expect(new Set(specs.map((spec) => spec.name)).size).toBe(specs.length);
-    expect(specs.find((spec) => spec.name === "help")?.argumentHint).toBeUndefined();
-    expect(specs.find((spec) => spec.name === "edit")?.argumentHint).toBe("<id> <text>");
+  test("each catalogue fits the RFC bound of 32 commands with unique names", () => {
+    for (const catalogue of ["v2", "additions"] as const) {
+      const specs = commandSpecs(catalogue);
+      expect(specs.length).toBeLessThanOrEqual(32);
+      expect(new Set(specs.map((spec) => spec.name)).size).toBe(specs.length);
+      // The user changes the catalogue from either one.
+      expect(specs.map((spec) => spec.name)).toEqual(expect.arrayContaining(["help", "commands"]));
+    }
+    const v2 = commandSpecs();
+    expect(v2.find((spec) => spec.name === "help")?.argumentHint).toBeUndefined();
+    expect(v2.find((spec) => spec.name === "edit")?.argumentHint).toBe("<id> <text>");
+    expect(commandSpecs("additions").find((spec) => spec.name === "caps")).toBeDefined();
+  });
+
+  test("every command is in a catalogue", () => {
+    const declared = new Set([...commandSpecs("v2"), ...commandSpecs("additions")].map((spec) => spec.name));
+    expect([...declared].sort()).toEqual(COMMANDS.map((c) => c.name).sort());
   });
 
   test("help lists every command in bold", () => {
@@ -60,8 +71,8 @@ describe("the command table", () => {
     expect(help).toContain("`<id> <text>`");
   });
 
-  test("history is the only source-only command", () => {
-    expect(COMMANDS.filter((c) => c.rooms !== "both").map((c) => c.name)).toEqual(["history"]);
+  test("search and history are the only source-only commands", () => {
+    expect(COMMANDS.filter((c) => c.rooms !== "both").map((c) => c.name)).toEqual(["search", "history"]);
     expect(findCommand("history")?.posts).toBe(true);
     expect(findCommand("meta")?.posts).toBe(false);
   });

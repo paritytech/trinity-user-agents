@@ -42,14 +42,15 @@ use truapi::{
 		ChatCommandSpec, ChatFeedUpdate, ChatMediaItem, ChatMediaMeta, ChatMessage,
 		ChatMessageBody, ChatMessageContent, ChatMessageMeta, ChatMessageOrigin, ChatMessageStatus,
 		ChatParticipantEntry, ChatReactionSummary, ChatResource, ChatRoom, ChatRoomBadge,
-		ChatRoomCall, ChatRoomConfig, ChatRoomFeatures, ChatRoomFooter, ChatRoomMetadata,
-		ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview, ChatRoomRegistrationStatus,
-		ChatSuggestion, ChatToolbarAction, ChatUserAction, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatDeleteRoomRequest,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetMessageMetaRequest, HostChatSetRoomActivityRequest,
-		HostChatSetRoomCallRequest, HostChatSetRoomCommandsRequest, HostChatSetRoomConfigRequest,
+		ChatRoomCall, ChatRoomCalls, ChatRoomConfig, ChatRoomFeatures, ChatRoomFooter,
+		ChatRoomMetadata, ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview,
+		ChatRoomRegistrationStatus, ChatSuggestion, ChatToolbarAction, ChatUserAction,
+		GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
+		HostChatCreateRoomResponse, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetMessageMetaRequest, HostChatSetRoomActivityRequest, HostChatSetRoomCallRequest,
+		HostChatSetRoomCommandsRequest, HostChatSetRoomConfigRequest,
 		HostChatSetRoomFeaturesRequest, HostChatSetRoomFooterRequest,
 		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest,
 		HostChatSetRoomSuggestionsRequest, HostChatSetRoomToolbarRequest, HostChatUpdateFeedError,
@@ -71,11 +72,10 @@ pub const PRODUCT: &str = "product";
 const SENT_A_MESSAGE: &str = "Sent a message";
 
 /// The Chat features this host serves from end to end, from
-/// `CHAT_FEATURE_NAMES`. The page has no attachment input, no renderer and no
-/// room links, so `inline_attachments`, `custom_bodies`, `custom_footer` and
-/// `room_links` are not here. A P10 item adds its name when the page serves
-/// it.
-pub const CLI_CHAT_FEATURES: [&str; 9] = [
+/// `CHAT_FEATURE_NAMES`. The page has no renderer and no room links, so
+/// `custom_bodies`, `custom_footer` and `room_links` are not here. A P10 item
+/// adds its name when the page serves it.
+pub const CLI_CHAT_FEATURES: [&str; 19] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -85,6 +85,16 @@ pub const CLI_CHAT_FEATURES: [&str; 9] = [
 	"suggestions",
 	"commands",
 	"activity",
+	"inline_attachments",
+	"preimage_attachments",
+	"search",
+	"bot_personas",
+	"mute_archive",
+	"threads",
+	"branches",
+	"reasoning_rows",
+	"read_aloud",
+	"call_buttons",
 ];
 
 /// A room this host created, with everything the product declared about it.
@@ -184,9 +194,18 @@ impl RoomRecord {
 
 	/// The message the chat list shows: the newest to arrive in a room the
 	/// host keeps, the newest by time in the page cache of a room the
-	/// product keeps.
+	/// product keeps. A reasoning row is never the list preview.
 	fn last_message(&self) -> Option<&ChatMessage> {
-		let mut live = self.messages.iter().filter(|stored| !stored.deleted);
+		let reasoning = |stored: &&StoredMessage| {
+			self.meta
+				.get(&stored.message.message_id)
+				.is_some_and(|meta| meta.reasoning.is_some())
+		};
+		let mut live = self
+			.messages
+			.iter()
+			.filter(|stored| !stored.deleted)
+			.filter(|stored| !reasoning(stored));
 		if self.host_store() {
 			live.next_back().map(|stored| &stored.message)
 		} else {
@@ -425,6 +444,13 @@ impl CliChatHost {
 		Ok(())
 	}
 
+	/// Show one notification the host delivered on every page, as a phone
+	/// shows it in its notification list.
+	pub fn notification_shown(&self, id: u32, text: &str, deeplink: Option<&str>) {
+		let event = json!({ "kind": "notification", "id": id, "text": text, "deeplink": deeplink });
+		Self::broadcast(&mut self.lock(), event);
+	}
+
 	/// The state of each room the user muted or archived, in room-id order.
 	pub fn user_states(&self) -> Vec<ChatRoomUserState> {
 		self.lock()
@@ -445,6 +471,18 @@ impl CliChatHost {
 		self.lock().rooms.get(room_id).map(|room| room.config.clone())
 	}
 
+	/// The call buttons `room_id` declares and the call it shows, if the
+	/// room exists.
+	pub fn room_call(
+		&self,
+		room_id: &str,
+	) -> Option<(Option<ChatRoomCalls>, Option<ChatRoomCall>)> {
+		self.lock()
+			.rooms
+			.get(room_id)
+			.map(|room| (room.features.calls, room.call.clone()))
+	}
+
 	/// Whether `room_id` declared the command `name`. Only a declared name
 	/// after `/` becomes a `Command` event; any other text is a message.
 	pub fn declares_command(&self, room_id: &str, name: &str) -> bool {
@@ -459,6 +497,35 @@ impl CliChatHost {
 		let state = self.lock();
 		let room = state.rooms.get(room_id)?;
 		room.position(message_id).map(|index| room.messages[index].message.clone())
+	}
+
+	/// The messages of a room the host keeps whose list text holds `text`,
+	/// case and diacritics ignored, newest first: `page_size` of them after
+	/// the first `skip`, and whether more follow.
+	pub fn search_messages(
+		&self,
+		room_id: &str,
+		text: &str,
+		skip: usize,
+		page_size: usize,
+	) -> Result<(Vec<ChatMessage>, bool), String> {
+		let state = self.lock();
+		let room = state.rooms.get(room_id).ok_or_else(|| unknown_room(room_id))?;
+		if !room.host_store() {
+			return Err("the room keeps its messages in the product".to_string());
+		}
+		let needle = search_form(text);
+		let mut matches = room
+			.messages
+			.iter()
+			.rev()
+			.filter(|stored| {
+				!stored.deleted && search_form(&preview_text(&stored.message)).contains(&needle)
+			})
+			.skip(skip);
+		let page: Vec<ChatMessage> =
+			matches.by_ref().take(page_size).map(|stored| stored.message.clone()).collect();
+		Ok((page, matches.next().is_some()))
 	}
 
 	/// A participant the product resolved for `room_id`.
@@ -937,6 +1004,15 @@ fn legacy_body(content: &ChatMessageContent, alt: Option<&str>) -> ChatMessageBo
 fn with_kind(kind: &str, mut body: Value) -> Value {
 	body["kind"] = Value::from(kind);
 	body
+}
+
+/// The form search compares: lower case, without diacritics.
+fn search_form(text: &str) -> String {
+	use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
+	text.nfd()
+		.filter(|character| !is_combining_mark(*character))
+		.collect::<String>()
+		.to_lowercase()
 }
 
 /// The chat-list text of one message: its text, its `preview_text`, the
@@ -1457,13 +1533,27 @@ impl ChatPlatform for CliChatHost {
 		request: HostChatDeleteRoomRequest,
 	) -> Result<(), GenericError> {
 		let mut state = self.lock();
-		// Idempotent: a room that is gone is deleted.
+		// Idempotent: a room that is gone is deleted. Its thread rooms, which
+		// no list shows, go with it.
 		if state.rooms.remove(&request.room_id).is_some() {
+			let threads: Vec<String> = state
+				.rooms
+				.iter()
+				.filter(|(_, room)| {
+					room.features
+						.thread_of
+						.as_ref()
+						.is_some_and(|parent| parent.room_id == request.room_id)
+				})
+				.map(|(room_id, _)| room_id.clone())
+				.collect();
+			for thread in &threads {
+				state.rooms.remove(thread);
+			}
 			Self::republish(&mut state);
-			Self::broadcast(
-				&mut state,
-				json!({ "kind": "roomDeleted", "roomId": request.room_id }),
-			);
+			for room_id in std::iter::once(&request.room_id).chain(&threads) {
+				Self::broadcast(&mut state, json!({ "kind": "roomDeleted", "roomId": room_id }));
+			}
 		}
 		drop(state);
 		self.record_declaration("deleteRoom", &request.room_id, &request);
@@ -2684,6 +2774,13 @@ mod tests {
 			.expect("the host lists its features");
 
 		assert_eq!(listed.names, CLI_CHAT_FEATURES.map(str::to_string));
+		// In the order of the RFC, as the core gives them to the product, so
+		// the page's line and the product's read compare as they are.
+		let order: Vec<_> = truapi::platform::CHAT_FEATURE_NAMES
+			.iter()
+			.filter(|name| CLI_CHAT_FEATURES.contains(name))
+			.collect();
+		assert_eq!(order, CLI_CHAT_FEATURES.iter().collect::<Vec<_>>());
 		assert!(
 			CLI_CHAT_FEATURES
 				.iter()
@@ -2854,6 +2951,80 @@ mod tests {
 		host.set_user_state("support", None, false).expect("the room exists");
 		assert_eq!(host.user_states().len(), 1);
 		assert!(host.set_user_state("gone", None, true).is_err());
+	}
+
+	// S54: the page lists what the host delivered, so it can show that a
+	// notification into a muted room never came.
+	#[test]
+	fn a_delivered_notification_reaches_every_page() {
+		let host = CliChatHost::new(None);
+		let (_, mut page) = host.observe();
+
+		host.notification_shown(3, "Ping", Some("polkadot://chat.dot/-/chat/main"));
+
+		assert_eq!(
+			page.try_recv().expect("an event"),
+			json!({
+				"kind": "notification",
+				"id": 3,
+				"text": "Ping",
+				"deeplink": "polkadot://chat.dot/-/chat/main",
+			})
+		);
+	}
+
+	// S64: deleting a parent room deletes its thread rooms, which no list
+	// shows, so none stays hidden for ever.
+	#[test]
+	fn deleting_a_room_deletes_its_threads() {
+		let host = host_with_rooms(None);
+		create(&host, room("support-thread"));
+		futures::executor::block_on(host.set_chat_room_features(
+			&product(),
+			HostChatSetRoomFeaturesRequest {
+				room_id: "support-thread".to_string(),
+				features: ChatRoomFeatures {
+					thread_of: Some(truapi::latest::ChatThreadParent {
+						room_id: "support".to_string(),
+						message_id: "m1".to_string(),
+					}),
+					..ChatRoomFeatures::default()
+				},
+			},
+		))
+		.expect("the thread room exists");
+
+		futures::executor::block_on(host.delete_chat_room(
+			&product(),
+			HostChatDeleteRoomRequest { room_id: "support".to_string() },
+		))
+		.expect("deleted");
+
+		let rooms: Vec<_> =
+			host.observe().0.rooms.iter().map(|room| room["roomId"].clone()).collect();
+		assert_eq!(rooms, [json!("kept")]);
+	}
+
+	// S66: a reasoning row is never the list preview.
+	#[test]
+	fn a_reasoning_row_is_not_the_list_preview() {
+		let host = host_with_rooms(None);
+		feed(&host, "support", ChatFeedUpdate::New(message("m1", PRODUCT, "the answer")), true)
+			.expect("stored");
+		feed(&host, "support", ChatFeedUpdate::New(message("m2", PRODUCT, "thinking")), true)
+			.expect("stored");
+		set_meta(
+			&host,
+			"support",
+			"m2",
+			ChatMessageMeta {
+				reasoning: Some(truapi::latest::ChatReasoning { duration_ms: Some(4000) }),
+				..ChatMessageMeta::default()
+			},
+		)
+		.expect("kept");
+
+		assert_eq!(room_view(&host, "support")["list"]["text"]["text"], "the answer");
 	}
 
 	// D30: a repeat registration keeps the persona and replaces its name.

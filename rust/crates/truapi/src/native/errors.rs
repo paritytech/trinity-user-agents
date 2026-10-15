@@ -70,6 +70,20 @@ pub enum NativeChatStageRejection {
 	},
 }
 
+impl From<crate::ChatStageRejection> for NativeChatStageRejection {
+	fn from(rejection: crate::ChatStageRejection) -> Self {
+		match rejection {
+			crate::ChatStageRejection::NotDeclared => Self::NotDeclared,
+			crate::ChatStageRejection::TooLarge { max_bytes } => Self::TooLarge { max_bytes },
+			crate::ChatStageRejection::PermissionDenied => Self::PermissionDenied,
+			crate::ChatStageRejection::AllowanceUnavailable { reason } => {
+				Self::AllowanceUnavailable { reason }
+			},
+			crate::ChatStageRejection::SubmitFailed { reason } => Self::SubmitFailed { reason },
+		}
+	}
+}
+
 impl From<NativeChatFeedRejection> for truapi::latest::HostChatUpdateFeedError {
 	fn from(rejection: NativeChatFeedRejection) -> Self {
 		match rejection {

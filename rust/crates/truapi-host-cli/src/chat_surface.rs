@@ -22,6 +22,7 @@ use std::{
 };
 
 use anyhow::Result;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::future::BoxFuture;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -33,24 +34,36 @@ use tokio::{
 };
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use truapi::{
-	CallError, ProductRuntime, ProductRuntimeError, Subscription,
+	CallError, ChatStageRejection, ChatWakeOutcome, ChatWakeReason, ProductRuntime,
+	ProductRuntimeError, Subscription,
 	latest::{
-		ActionTrigger, ChatBuiltInMessageAction, ChatCommand, ChatEvent, ChatMessageBody,
-		ChatMessageMenu, ChatPageAnchor, ChatParticipant, ChatParticipantEntry,
-		ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction, ChatRoomEvent,
+		ActionTrigger, ChatBuiltInMessageAction, ChatCommand, ChatEvent, ChatMediaItem,
+		ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageMenu, ChatPageAnchor,
+		ChatParticipant, ChatParticipantEntry, ChatParticipantMenu, ChatParticipantsQuery,
+		ChatProductAction, ChatResource, ChatRoomCall, ChatRoomCalls, ChatRoomEvent,
 		ChatUserAction, HostChatActionSubscribeItem, HostChatRoomEventsSubscribeItem,
 		ProductChatMessageActionsQueryItem, ProductChatMessageActionsQueryRequest,
 		ProductChatMessagesQueryItem, ProductChatMessagesQueryRequest,
 		ProductChatParticipantActionsQueryItem, ProductChatParticipantActionsQueryRequest,
 		ProductChatParticipantsQueryItem, ProductChatParticipantsQueryRequest,
 		ProductChatQueryError, ProductChatReactionsQueryItem, ProductChatReactionsQueryRequest,
-		ProductChatUserActionError, ProductChatUserActionItem, ProductChatUserActionRequest,
+		ProductChatSearchQueryItem, ProductChatSearchQueryRequest, ProductChatUserActionError,
+		ProductChatUserActionItem, ProductChatUserActionRequest,
 	},
 };
 
 use crate::chat::{
 	ChatSnapshot, CliChatHost, PRODUCT, USER, UserChange, handler_json, message_json, resource_json,
 };
+
+/// The watch a wake from the page names.
+const DEV_WATCH: &str = "dev";
+
+/// Matches of a room the host keeps on one search page.
+const HOST_SEARCH_PAGE: usize = 50;
+
+/// Matches the host asks a product for on one search page.
+const PRODUCT_SEARCH_PAGE: u32 = 30;
 
 /// Path of the chat surface page.
 pub const PAGE_PATH: &str = "/chat";
@@ -141,6 +154,26 @@ pub trait ChatWorker: Send + Sync {
 		&self,
 		item: HostChatRoomEventsSubscribeItem,
 	) -> Result<(), ProductRuntimeError>;
+
+	/// Hold the product's worker for a wake; see
+	/// `ProductRuntimeControl::wake_product`.
+	fn wake_product(&self, reason: ChatWakeReason) -> Result<ChatWakeOutcome, ProductRuntimeError>;
+
+	/// Ask the product for the messages of a room it keeps that match what
+	/// the user typed.
+	fn search_query(
+		&self,
+		request: ProductChatSearchQueryRequest,
+	) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError>;
+
+	/// Stage a user attachment of `room_id` as a preimage that the product's
+	/// Bulletin allowance pays for, through the core, and give its key.
+	fn stage_chat_attachment(
+		&self,
+		room_id: String,
+		mime_type: String,
+		bytes: Vec<u8>,
+	) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>>;
 }
 
 impl ChatWorker for ProductRuntime {
@@ -200,6 +233,27 @@ impl ChatWorker for ProductRuntime {
 	) -> Result<(), ProductRuntimeError> {
 		self.control().publish_chat_room_event(item)
 	}
+
+	fn wake_product(&self, reason: ChatWakeReason) -> Result<ChatWakeOutcome, ProductRuntimeError> {
+		self.control().wake_product(reason)
+	}
+
+	fn search_query(
+		&self,
+		request: ProductChatSearchQueryRequest,
+	) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError> {
+		self.control().chat_search_query(request)
+	}
+
+	fn stage_chat_attachment(
+		&self,
+		room_id: String,
+		mime_type: String,
+		bytes: Vec<u8>,
+	) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
+		let control = self.control();
+		Box::pin(async move { control.stage_chat_attachment(&room_id, &mime_type, bytes).await })
+	}
 }
 
 /// How long the host waits for each answer (RFC "Timeouts and failure
@@ -216,6 +270,8 @@ pub struct Timeouts {
 	pub query: Duration,
 	/// The wait before the one retry of an `unavailable` interrupt.
 	pub retry: Duration,
+	/// `search_query`.
+	pub search: Duration,
 }
 
 impl Default for Timeouts {
@@ -226,6 +282,7 @@ impl Default for Timeouts {
 			action: Duration::from_secs(10),
 			query: Duration::from_secs(5),
 			retry: Duration::from_secs(1),
+			search: Duration::from_secs(10),
 		}
 	}
 }
@@ -387,14 +444,85 @@ enum PageOp {
 		room_id: String,
 		participant_id: String,
 	},
+	/// The user pressed the audio or the video call button of the header.
+	CallRequest {
+		room_id: String,
+		video: bool,
+	},
+	/// The user accepted or declined the call that rings.
+	CallAnswer {
+		room_id: String,
+		call_id: String,
+		accept: bool,
+	},
+	/// The user tapped the call bar of a call without a media session.
+	CallOpen {
+		room_id: String,
+		call_id: String,
+	},
+	/// The user pressed "End" on the call bar.
+	CallEnd {
+		room_id: String,
+		call_id: String,
+	},
+	/// The development stand-in for a notification that arrived on watch
+	/// `dev` for the room: a notification wake of the product.
+	Wake {
+		req_id: u64,
+		room_id: String,
+	},
+	/// The user picked alternative `index` of a message with a branch
+	/// position.
+	Branch {
+		room_id: String,
+		message_id: String,
+		index: u16,
+	},
+	/// The user searches a room: the host's own store, or `search_query` to
+	/// a room the product keeps that declares `search`.
+	Search {
+		req_id: u64,
+		room_id: String,
+		text: String,
+		#[serde(default)]
+		cursor: Option<String>,
+	},
+	/// The user sends a photo, a video or a file. One above the inline bound
+	/// is staged as a preimage through the core first.
+	Attach {
+		req_id: u64,
+		room_id: String,
+		kind: AttachmentKind,
+		mime_type: String,
+		#[serde(default)]
+		file_name: Option<String>,
+		/// The bytes, in base64.
+		data: String,
+		#[serde(default)]
+		width: Option<u32>,
+		#[serde(default)]
+		height: Option<u32>,
+	},
 	/// The user muted, unmuted, archived or unarchived the room.
+	/// `muted_forever` mutes the room with no end, a time a page cannot write
+	/// as a JSON number.
 	UserState {
 		room_id: String,
 		#[serde(default)]
 		muted_until: Option<u64>,
 		#[serde(default)]
+		muted_forever: bool,
+		#[serde(default)]
 		archived: bool,
 	},
+}
+
+/// What kind of media item an attachment is.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+enum AttachmentKind {
+	Image,
+	Video,
+	File,
 }
 
 /// The reply to one page operation: at once, or once the product answered.
@@ -587,7 +715,7 @@ impl ChatSurface {
 			"capabilities": {
 				"features": crate::chat::CLI_CHAT_FEATURES,
 				"inlineAttachmentMaxBytes": truapi::platform::CHAT_INLINE_MEDIA_MAX_BYTES,
-				"preimageAttachmentMaxBytes": 0,
+				"preimageAttachmentMaxBytes": truapi::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES,
 			},
 			"rooms": snapshot.rooms,
 			"bots": snapshot.bots,
@@ -619,34 +747,131 @@ impl ChatSurface {
 		let source = config.product_source;
 		let event = |event: ChatEvent| Applied::Now(self.deliver(op_name(op), &room_id, event));
 		match op {
-			PageOp::Post { req_id, text, reply_to, .. } => {
-				let body = ChatMessageBody::Text { text: text.clone() };
-				if source {
-					let action = ChatUserAction::NewMessage { body, reply_to: reply_to.clone() };
-					return self.later_action("post", *req_id, room_id, action);
-				}
-				// Stored first, so the user's message precedes any reply the
-				// worker posts to it.
-				match self.chat.post_user_message(&room_id, body.clone(), reply_to.clone()) {
-					Ok(message) => {
-						let posted = ChatEvent::MessagePosted {
-							message_id: message.message_id.clone(),
-							body,
-							reply_to: reply_to.clone(),
-						};
-						let delivered = self.deliver("post", &room_id, posted);
-						Applied::Now(answer_ok(
-							"post",
-							*req_id,
-							json!({
-								"type": "Posted",
-								"message": message_json(&message),
-								"workers": delivered["workers"],
-							}),
-						))
+			PageOp::Post { req_id, text, reply_to, .. } => self.post_body(
+				"post",
+				*req_id,
+				room_id,
+				ChatMessageBody::Text { text: text.clone() },
+				reply_to.clone(),
+				source,
+			),
+			PageOp::CallRequest { .. } |
+			PageOp::CallAnswer { .. } |
+			PageOp::CallOpen { .. } |
+			PageOp::CallEnd { .. } => {
+				let (buttons, call) = self.chat.room_call(&room_id).unwrap_or_default();
+				match call_event(op, buttons, call.as_ref()) {
+					Ok(event) => {
+						Applied::Now(self.deliver_room_event(op_name(op), &room_id, event))
 					},
 					Err(reason) => Applied::Now(error_reply(reason)),
 				}
+			},
+			PageOp::Wake { req_id, .. } => {
+				let Some(worker) = self.newest_worker() else {
+					return Applied::Now(error_reply("no worker is connected to wake".to_string()));
+				};
+				let reason = ChatWakeReason::Notification {
+					room_id: room_id.clone(),
+					watch_id: DEV_WATCH.to_string(),
+				};
+				Applied::Now(match worker.wake_product(reason) {
+					Ok(ChatWakeOutcome::Held { until_ms }) => {
+						answer_ok("wake", *req_id, json!({ "type": "Held", "untilMs": until_ms }))
+					},
+					Ok(ChatWakeOutcome::BudgetSpent) => {
+						answer_ok("wake", *req_id, json!({ "type": "BudgetSpent" }))
+					},
+					Err(error) => error_reply(error.to_string()),
+				})
+			},
+			PageOp::Branch { message_id, index, .. } => {
+				let event =
+					ChatRoomEvent::BranchSelected { message_id: message_id.clone(), index: *index };
+				Applied::Now(self.deliver_room_event("branch", &room_id, event))
+			},
+			PageOp::Search { req_id, text, cursor, .. } => {
+				if !source {
+					let skip =
+						cursor.as_deref().and_then(|cursor| cursor.parse().ok()).unwrap_or(0);
+					return Applied::Now(
+						match self.chat.search_messages(&room_id, text, skip, HOST_SEARCH_PAGE) {
+							Ok((hits, more)) => answer_ok(
+								"search",
+								*req_id,
+								search_json(
+									&hits,
+									more.then(|| (skip + HOST_SEARCH_PAGE).to_string()),
+								),
+							),
+							Err(reason) => error_reply(reason),
+						},
+					);
+				}
+				let request = ProductChatSearchQueryRequest {
+					room_id,
+					text: text.clone(),
+					cursor: cursor.clone(),
+					page_size: PRODUCT_SEARCH_PAGE,
+				};
+				let surface = Arc::clone(self);
+				let req_id = *req_id;
+				Applied::Later(Box::pin(async move {
+					let answer = surface
+						.ask(surface.timeouts.search, move |worker| {
+							worker.search_query(request.clone())
+						})
+						.await;
+					answer_json(
+						"search",
+						req_id,
+						answer,
+						|item: &ProductChatSearchQueryItem| {
+							search_json(&item.hits, item.next.clone())
+						},
+						query_error_json,
+					)
+				}))
+			},
+			PageOp::Attach { req_id, kind, mime_type, file_name, data, width, height, .. } => {
+				let bytes = match BASE64.decode(data) {
+					Ok(bytes) => bytes,
+					Err(error) => {
+						return Applied::Now(error_reply(format!("attachment data: {error}")));
+					},
+				};
+				let surface = Arc::clone(self);
+				let (req_id, kind, mime_type) = (*req_id, *kind, mime_type.clone());
+				let (file_name, width, height) = (file_name.clone(), *width, *height);
+				Applied::Later(Box::pin(async move {
+					let meta = ChatMediaMeta {
+						mime_type: mime_type.clone(),
+						size_bytes: Some(bytes.len() as u64),
+						width,
+						height,
+						placeholder: None,
+						alt: None,
+					};
+					let resource =
+						match surface.attachment_resource(&room_id, &mime_type, bytes).await {
+							Ok(resource) => resource,
+							Err(reason) => return answer_refused("attach", req_id, reason),
+						};
+					let item = match kind {
+						AttachmentKind::Image => ChatMediaItem::Image { resource, meta },
+						AttachmentKind::Video => ChatMediaItem::Video { resource, meta },
+						AttachmentKind::File => ChatMediaItem::File {
+							resource,
+							meta,
+							file_name: file_name.unwrap_or_else(|| "file".to_string()),
+						},
+					};
+					let body = ChatMessageBody::RichText { text: None, media: vec![item] };
+					match surface.post_body("attach", req_id, room_id, body, None, source) {
+						Applied::Now(reply) => reply,
+						Applied::Later(answer) => answer.await,
+					}
+				}))
 			},
 			PageOp::Trigger { message_id, action_id, .. } => {
 				event(ChatEvent::ActionTriggered(ActionTrigger {
@@ -904,14 +1129,12 @@ impl ChatSurface {
 					)
 				}))
 			},
-			PageOp::UserState { muted_until, archived, .. } => {
-				if let Err(reason) = self.chat.set_user_state(&room_id, *muted_until, *archived) {
+			PageOp::UserState { muted_until, muted_forever, archived, .. } => {
+				let muted_until = if *muted_forever { Some(u64::MAX) } else { *muted_until };
+				if let Err(reason) = self.chat.set_user_state(&room_id, muted_until, *archived) {
 					return Applied::Now(error_reply(reason));
 				}
-				let event = ChatRoomEvent::UserStateChanged {
-					muted_until: *muted_until,
-					archived: *archived,
-				};
+				let event = ChatRoomEvent::UserStateChanged { muted_until, archived: *archived };
 				Applied::Now(self.deliver_room_event("userState", &room_id, event))
 			},
 		}
@@ -954,6 +1177,68 @@ impl ChatSurface {
 			},
 			Err(reason) => Applied::Now(error_reply(reason)),
 		}
+	}
+
+	/// Send a message of the user: a user action of a room the product keeps,
+	/// or a stored message and `MessagePosted` in a room the host keeps.
+	fn post_body(
+		self: &Arc<Self>,
+		name: &'static str,
+		req_id: u64,
+		room_id: String,
+		body: ChatMessageBody,
+		reply_to: Option<String>,
+		source: bool,
+	) -> Applied {
+		if source {
+			let action = ChatUserAction::NewMessage { body, reply_to };
+			return self.later_action(name, req_id, room_id, action);
+		}
+		// Stored first, so the user's message precedes any reply the worker
+		// posts to it.
+		match self.chat.post_user_message(&room_id, body.clone(), reply_to.clone()) {
+			Ok(message) => {
+				let posted = ChatEvent::MessagePosted {
+					message_id: message.message_id.clone(),
+					body,
+					reply_to,
+				};
+				let delivered = self.deliver(name, &room_id, posted);
+				Applied::Now(answer_ok(
+					name,
+					req_id,
+					json!({
+						"type": "Posted",
+						"message": message_json(&message),
+						"workers": delivered["workers"],
+					}),
+				))
+			},
+			Err(reason) => Applied::Now(error_reply(reason)),
+		}
+	}
+
+	/// The resource of an attachment: inline up to the inline bound, else a
+	/// preimage the core stages through the newest worker connection. A
+	/// refusal names why, and then nothing was uploaded.
+	async fn attachment_resource(
+		&self,
+		room_id: &str,
+		mime_type: &str,
+		bytes: Vec<u8>,
+	) -> Result<ChatResource, String> {
+		if bytes.len() <= truapi::platform::CHAT_INLINE_MEDIA_MAX_BYTES {
+			return Ok(ChatResource::Inline { mime_type: mime_type.to_string(), bytes });
+		}
+		let worker = self
+			.worker_by(Instant::now() + self.timeouts.send)
+			.await
+			.ok_or_else(|| "no worker is connected to stage the attachment".to_string())?;
+		worker
+			.stage_chat_attachment(room_id.to_string(), mime_type.to_string(), bytes)
+			.await
+			.map(|key| ChatResource::Preimage { key })
+			.map_err(|rejection| format!("not staged: {rejection}"))
 	}
 
 	/// Send one user action of a room the product keeps, and apply the answer
@@ -1077,6 +1362,14 @@ fn op_room(op: &PageOp) -> &str {
 		PageOp::Participants { room_id, .. } |
 		PageOp::MessageActions { room_id, .. } |
 		PageOp::ParticipantActions { room_id, .. } |
+		PageOp::Attach { room_id, .. } |
+		PageOp::Search { room_id, .. } |
+		PageOp::Branch { room_id, .. } |
+		PageOp::Wake { room_id, .. } |
+		PageOp::CallRequest { room_id, .. } |
+		PageOp::CallAnswer { room_id, .. } |
+		PageOp::CallOpen { room_id, .. } |
+		PageOp::CallEnd { room_id, .. } |
 		PageOp::UserState { room_id, .. } => room_id,
 	}
 }
@@ -1093,7 +1386,10 @@ fn op_req_id(op: &PageOp) -> Option<u64> {
 		PageOp::Reactions { req_id, .. } |
 		PageOp::Participants { req_id, .. } |
 		PageOp::MessageActions { req_id, .. } |
-		PageOp::ParticipantActions { req_id, .. } => Some(*req_id),
+		PageOp::ParticipantActions { req_id, .. } |
+		PageOp::Attach { req_id, .. } |
+		PageOp::Search { req_id, .. } |
+		PageOp::Wake { req_id, .. } => Some(*req_id),
 		_ => None,
 	}
 }
@@ -1119,6 +1415,14 @@ fn op_name(op: &PageOp) -> &'static str {
 		PageOp::Participants { .. } => "participants",
 		PageOp::MessageActions { .. } => "messageActions",
 		PageOp::ParticipantActions { .. } => "participantActions",
+		PageOp::Attach { .. } => "attach",
+		PageOp::Search { .. } => "search",
+		PageOp::Branch { .. } => "branch",
+		PageOp::Wake { .. } => "wake",
+		PageOp::CallRequest { .. } => "callRequest",
+		PageOp::CallAnswer { .. } => "callAnswer",
+		PageOp::CallOpen { .. } => "callOpen",
+		PageOp::CallEnd { .. } => "callEnd",
 		PageOp::UserState { .. } => "userState",
 	}
 }
@@ -1137,6 +1441,11 @@ fn unknown_room(room_id: &str) -> Value {
 
 fn answer_ok(op: &str, req_id: u64, ok: Value) -> Value {
 	json!({ "kind": "answer", "op": op, "reqId": req_id, "ok": ok })
+}
+
+/// The `answer` reply of an operation the host refused, with why.
+fn answer_refused(op: &str, req_id: u64, reason: String) -> Value {
+	json!({ "kind": "answer", "op": op, "reqId": req_id, "error": { "tag": "Refused", "reason": reason } })
 }
 
 /// The `answer` reply of one query.
@@ -1186,6 +1495,49 @@ fn user_action_error_json(error: &ProductChatUserActionError) -> Value {
 			json!({ "tag": "Unknown", "reason": reason })
 		},
 	}
+}
+
+/// The room event of a call operation, when the room shows what it presses:
+/// the call button, the ringing call, or the call bar of an active call.
+fn call_event(
+	op: &PageOp,
+	buttons: Option<ChatRoomCalls>,
+	call: Option<&ChatRoomCall>,
+) -> Result<ChatRoomEvent, String> {
+	match (op, call) {
+		(PageOp::CallRequest { video, .. }, _) => {
+			let shown =
+				buttons.is_some_and(|buttons| if *video { buttons.video } else { buttons.audio });
+			if !shown {
+				return Err(format!(
+					"the room shows no {} call button",
+					if *video { "video" } else { "audio" }
+				));
+			}
+			Ok(ChatRoomEvent::CallRequested { video: *video })
+		},
+		(
+			PageOp::CallAnswer { call_id, accept, .. },
+			Some(ChatRoomCall::Ringing { call_id: ringing, .. }),
+		) if call_id == ringing => {
+			Ok(ChatRoomEvent::CallAnswered { call_id: call_id.clone(), accept: *accept })
+		},
+		(
+			PageOp::CallOpen { call_id, .. },
+			Some(ChatRoomCall::Active { call_id: active, media_session: None, .. }),
+		) if call_id == active => Ok(ChatRoomEvent::CallOpened { call_id: call_id.clone() }),
+		(PageOp::CallEnd { call_id, .. }, Some(ChatRoomCall::Active { call_id: active, .. }))
+			if call_id == active =>
+		{
+			Ok(ChatRoomEvent::CallEnded { call_id: call_id.clone() })
+		},
+		_ => Err("the room shows no such call".to_string()),
+	}
+}
+
+/// One page of search matches, newest first, and the cursor of the next.
+fn search_json(hits: &[ChatMessage], next: Option<String>) -> Value {
+	json!({ "hits": hits.iter().map(message_json).collect::<Vec<_>>(), "next": next })
 }
 
 fn page_json(page: &ProductChatMessagesQueryItem) -> Value {
@@ -1327,7 +1679,12 @@ mod tests {
 		participants: Scripted<ProductChatParticipantsQueryItem>,
 		message_menus: Scripted<ProductChatMessageActionsQueryItem>,
 		participant_menus: Scripted<ProductChatParticipantActionsQueryItem>,
+		searches: Scripted<ProductChatSearchQueryItem>,
 		room_events: Mutex<Vec<HostChatRoomEventsSubscribeItem>>,
+		/// What the worker staged, as `(room, size)`, and the refusal it
+		/// answers instead of a key.
+		staged: Mutex<Vec<(String, usize)>>,
+		stage_refusal: Mutex<Option<ChatStageRejection>>,
 	}
 
 	fn scripted<Item: Send + 'static, Error: Send + 'static>(
@@ -1429,6 +1786,35 @@ mod tests {
 			self.room_events.lock().expect("not poisoned").push(item);
 			Ok(())
 		}
+
+		fn wake_product(
+			&self,
+			reason: ChatWakeReason,
+		) -> Result<ChatWakeOutcome, ProductRuntimeError> {
+			self.ask(reason);
+			Ok(ChatWakeOutcome::Held { until_ms: 30_000 })
+		}
+
+		fn search_query(
+			&self,
+			request: ProductChatSearchQueryRequest,
+		) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError> {
+			self.ask(request);
+			Ok(scripted(&self.searches))
+		}
+
+		fn stage_chat_attachment(
+			&self,
+			room_id: String,
+			_mime_type: String,
+			bytes: Vec<u8>,
+		) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
+			let refusal = self.stage_refusal.lock().expect("not poisoned").clone();
+			if refusal.is_none() {
+				self.staged.lock().expect("not poisoned").push((room_id, bytes.len()));
+			}
+			Box::pin(async move { refusal.map_or(Ok(vec![7; 32]), Err) })
+		}
 	}
 
 	/// A worker connection the core refuses Chat to.
@@ -1491,6 +1877,29 @@ mod tests {
 		) -> Result<(), ProductRuntimeError> {
 			Err(ProductRuntimeError::Denied)
 		}
+
+		fn wake_product(
+			&self,
+			_reason: ChatWakeReason,
+		) -> Result<ChatWakeOutcome, ProductRuntimeError> {
+			Err(ProductRuntimeError::Denied)
+		}
+
+		fn search_query(
+			&self,
+			_request: ProductChatSearchQueryRequest,
+		) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError> {
+			Err(ProductRuntimeError::Denied)
+		}
+
+		fn stage_chat_attachment(
+			&self,
+			_room_id: String,
+			_mime_type: String,
+			_bytes: Vec<u8>,
+		) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
+			Box::pin(async { Err(ChatStageRejection::NotDeclared) })
+		}
 	}
 
 	const SHORT: Timeouts = Timeouts {
@@ -1499,6 +1908,7 @@ mod tests {
 		action: Duration::from_millis(300),
 		query: Duration::from_millis(300),
 		retry: Duration::from_millis(20),
+		search: Duration::from_millis(300),
 	};
 
 	fn product() -> ProductContext {
@@ -2280,8 +2690,220 @@ mod tests {
 			json!({
 				"features": crate::chat::CLI_CHAT_FEATURES,
 				"inlineAttachmentMaxBytes": 1024 * 1024,
-				"preimageAttachmentMaxBytes": 0,
+				"preimageAttachmentMaxBytes": 8 * 1024 * 1024,
 			})
+		);
+	}
+
+	// S57: an attachment up to the inline bound travels inline; one above it
+	// is staged through the worker's core and travels as its preimage key.
+	#[tokio::test]
+	async fn an_attachment_above_the_inline_bound_is_staged() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+		let attach_op = |size: usize| {
+			json!({
+				"op": "attach", "reqId": 4, "roomId": "daily", "kind": "File",
+				"mimeType": "application/pdf", "fileName": "big.pdf",
+				"data": BASE64.encode(vec![1u8; size]),
+			})
+		};
+
+		let small = run(&surface, attach_op(1024)).await;
+		let large = run(&surface, attach_op(3 * 1024 * 1024)).await;
+
+		assert_eq!(small["ok"]["message"]["body"]["media"][0]["resource"]["type"], "Inline");
+		assert_eq!(
+			large["ok"]["message"]["body"]["media"][0]["resource"],
+			json!({ "type": "Preimage", "key": format!("0x{}", "07".repeat(32)) })
+		);
+		assert_eq!(
+			large["ok"]["message"]["body"]["media"][0]["meta"]["sizeBytes"],
+			3 * 1024 * 1024
+		);
+		assert_eq!(
+			*worker.staged.lock().expect("not poisoned"),
+			[("daily".to_string(), 3 * 1024 * 1024)]
+		);
+		let posted: Vec<_> = worker
+			.events()
+			.into_iter()
+			.filter(|event| matches!(event, ChatEvent::MessagePosted { .. }))
+			.collect();
+		assert_eq!(posted.len(), 2, "both attachments reach the product");
+	}
+
+	// S61: the host searches a room it keeps itself, case and diacritics
+	// ignored, newest first; S62: a room the product keeps asks the product.
+	#[tokio::test]
+	async fn a_search_reads_the_store_or_asks_the_product() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+		for text in ["Café au lait", "plain", "CAFE noir"] {
+			surface
+				.chat()
+				.post_user_message("daily", ChatMessageBody::Text { text: text.to_string() }, None)
+				.expect("stored");
+		}
+
+		let stored = now(&surface, json!({"op":"search","reqId":1,"roomId":"daily","text":"cafe"}));
+		let texts: Vec<_> = stored["ok"]["hits"]
+			.as_array()
+			.expect("hits")
+			.iter()
+			.map(|hit| hit["body"]["text"].clone())
+			.collect();
+		assert_eq!(texts, [json!("CAFE noir"), json!("Café au lait")]);
+		assert_eq!(stored["ok"]["next"], Value::Null);
+		assert!(worker.asked().is_empty(), "the host asks no product for its own store");
+
+		FakeWorker::script(
+			&worker.searches,
+			Ok(ProductChatSearchQueryItem {
+				hits: vec![product_message("kept-9", "product")],
+				next: Some("8".to_string()),
+			}),
+		);
+		let kept = run(&surface, json!({"op":"search","reqId":2,"roomId":"kept","text":"x"})).await;
+		assert_eq!(kept["ok"]["hits"][0]["messageId"], "kept-9");
+		assert_eq!(kept["ok"]["next"], "8");
+		assert_eq!(
+			worker.asked(),
+			vec![format!(
+				"{:?}",
+				ProductChatSearchQueryRequest {
+					room_id: "kept".to_string(),
+					text: "x".to_string(),
+					cursor: None,
+					page_size: 30,
+				}
+			)]
+		);
+	}
+
+	// S58: a staging refusal posts nothing and tells the page why.
+	#[tokio::test]
+	async fn a_refused_staging_posts_nothing() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+		*worker.stage_refusal.lock().expect("not poisoned") = Some(ChatStageRejection::NotDeclared);
+		let op = json!({
+			"op": "attach", "reqId": 5, "roomId": "daily", "kind": "Image",
+			"mimeType": "image/png", "data": BASE64.encode(vec![1u8; 2 * 1024 * 1024]),
+		});
+
+		let reply = run(&surface, op).await;
+
+		assert_eq!(
+			reply["error"],
+			json!({ "tag": "Refused", "reason": "not staged: the room does not declare preimage attachments" })
+		);
+		assert!(worker.events().is_empty());
+		assert!(surface.chat().observe().0.messages.is_empty());
+	}
+
+	// S70: the page's Wake is a notification wake of watch `dev`.
+	#[test]
+	fn the_wake_button_wakes_the_product_for_the_room() {
+		let surface = surface(None);
+		assert_eq!(now(&surface, json!({"op":"wake","reqId":3,"roomId":"daily"}))["kind"], "error");
+		let (worker, _attachment) = attach(&surface);
+
+		let reply = now(&surface, json!({"op":"wake","reqId":3,"roomId":"daily"}));
+
+		assert_eq!(reply["ok"], json!({ "type": "Held", "untilMs": 30_000 }));
+		assert_eq!(
+			worker.asked(),
+			[format!(
+				"{:?}",
+				ChatWakeReason::Notification {
+					room_id: "daily".to_string(),
+					watch_id: "dev".to_string()
+				}
+			)]
+		);
+	}
+
+	// S72 to S74: a call button, an answer, the call bar and End reach the
+	// product only where the room shows them.
+	#[test]
+	fn the_call_controls_of_a_room_reach_the_product() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+		let op = |value: Value| now(&surface, value)["kind"].clone();
+		let declare = |call: Option<ChatRoomCall>| {
+			futures::executor::block_on(surface.chat().set_chat_room_call(
+				&product(),
+				truapi::latest::HostChatSetRoomCallRequest { room_id: "daily".to_string(), call },
+			))
+			.expect("the room exists");
+		};
+
+		assert_eq!(op(json!({"op":"callRequest","roomId":"daily","video":false})), "error");
+		futures::executor::block_on(surface.chat().set_chat_room_features(
+			&product(),
+			truapi::latest::HostChatSetRoomFeaturesRequest {
+				room_id: "daily".to_string(),
+				features: truapi::latest::ChatRoomFeatures {
+					calls: Some(ChatRoomCalls { audio: true, video: false }),
+					..Default::default()
+				},
+			},
+		))
+		.expect("the room exists");
+		assert_eq!(op(json!({"op":"callRequest","roomId":"daily","video":true})), "error");
+		assert_eq!(op(json!({"op":"callRequest","roomId":"daily","video":false})), "delivered");
+		declare(Some(ChatRoomCall::Ringing {
+			call_id: "c1".to_string(),
+			video: false,
+			caller: None,
+		}));
+		assert_eq!(
+			op(json!({"op":"callAnswer","roomId":"daily","callId":"c1","accept":true})),
+			"delivered"
+		);
+		declare(Some(ChatRoomCall::Active {
+			call_id: "c1".to_string(),
+			video: false,
+			started_at: 1,
+			media_session: None,
+		}));
+		assert_eq!(op(json!({"op":"callOpen","roomId":"daily","callId":"c1"})), "delivered");
+		assert_eq!(op(json!({"op":"callEnd","roomId":"daily","callId":"c2"})), "error");
+		assert_eq!(op(json!({"op":"callEnd","roomId":"daily","callId":"c1"})), "delivered");
+
+		let events: Vec<_> = worker
+			.room_events
+			.lock()
+			.expect("not poisoned")
+			.iter()
+			.map(|item| item.event.clone())
+			.collect();
+		assert_eq!(
+			events,
+			[
+				ChatRoomEvent::CallRequested { video: false },
+				ChatRoomEvent::CallAnswered { call_id: "c1".to_string(), accept: true },
+				ChatRoomEvent::CallOpened { call_id: "c1".to_string() },
+				ChatRoomEvent::CallEnded { call_id: "c1".to_string() },
+			]
+		);
+	}
+
+	// S65: a branch arrow is a room event for the product.
+	#[test]
+	fn a_branch_arrow_reaches_the_product() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+
+		let op = json!({"op":"branch","roomId":"kept","messageId":"m4","index":2});
+		assert_eq!(now(&surface, op)["kind"], "delivered");
+		assert_eq!(
+			*worker.room_events.lock().expect("not poisoned"),
+			[HostChatRoomEventsSubscribeItem {
+				room_id: "kept".to_string(),
+				event: ChatRoomEvent::BranchSelected { message_id: "m4".to_string(), index: 2 },
+			}]
 		);
 	}
 
@@ -2297,12 +2919,27 @@ mod tests {
 
 		let (worker, _attachment) = attach(&surface);
 		assert_eq!(now(&surface, op)["kind"], "delivered");
+		// A page cannot write `u64::MAX` as a JSON number, so it asks for a
+		// mute with no end by name.
+		let forever =
+			json!({"op":"userState","roomId":"daily","mutedForever":true,"archived":false});
+		assert_eq!(now(&surface, forever)["kind"], "delivered");
+		assert_eq!(surface.chat().user_states()[0].muted_until, Some(u64::MAX));
 		assert_eq!(
 			*worker.room_events.lock().expect("not poisoned"),
-			[HostChatRoomEventsSubscribeItem {
-				room_id: "daily".to_string(),
-				event: ChatRoomEvent::UserStateChanged { muted_until: Some(5), archived: true },
-			}]
+			[
+				HostChatRoomEventsSubscribeItem {
+					room_id: "daily".to_string(),
+					event: ChatRoomEvent::UserStateChanged { muted_until: Some(5), archived: true },
+				},
+				HostChatRoomEventsSubscribeItem {
+					room_id: "daily".to_string(),
+					event: ChatRoomEvent::UserStateChanged {
+						muted_until: Some(u64::MAX),
+						archived: false,
+					},
+				},
+			]
 		);
 	}
 }

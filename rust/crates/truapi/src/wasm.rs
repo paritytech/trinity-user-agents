@@ -1940,8 +1940,10 @@ impl WasmProductRuntime {
 	}
 
 	/// Stage a user attachment of a room as a preimage that the Bulletin allowance of the
-	/// product pays for, and answer its key. The core does not stage attachments yet, so that
-	/// `capabilities` never lists `preimage_attachments`, and each call rejects.
+	/// product pays for, and answer its key. The core refuses a room whose features do not
+	/// declare `preimageAttachments`, an attachment above 8 MiB or above the per-transaction
+	/// bound of the Bulletin runtime, and a product the user refused `PreimageSubmit`; the
+	/// rejection names which.
 	#[wasm_bindgen(js_name = stageChatAttachment)]
 	pub async fn stage_chat_attachment(
 		&self,
@@ -1949,14 +1951,12 @@ impl WasmProductRuntime {
 		mime_type: String,
 		bytes: Vec<u8>,
 	) -> Result<Vec<u8>, JsValue> {
-		tracing::debug!(%room_id, %mime_type, size = bytes.len(), "chat attachment staging is not served");
-		if bytes.len() > crate::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES {
-			return Err(JsValue::from_str(&format!(
-				"the attachment is larger than {} bytes",
-				crate::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES
-			)));
-		}
-		Err(JsValue::from_str("this core does not stage chat attachments yet"))
+		self.inner
+			.core
+			.control()
+			.stage_chat_attachment(&room_id, &mime_type, bytes)
+			.await
+			.map_err(|rejection| JsValue::from_str(&rejection.to_string()))
 	}
 
 	/// Publish one host-authored Chat action into this connection's action

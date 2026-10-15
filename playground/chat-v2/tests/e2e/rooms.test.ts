@@ -177,7 +177,11 @@ suite("rooms on the test host", () => {
     // before the product code runs, as a host that starts a worker for a
     // query does.
     const { createMockClient } = await import("@parity/truapi-host/testing/client");
-    const mock = await createMockClient({ host: first.host, runtimeConfig: { executionKind: "Worker" } });
+    const { PRODUCT } = await import("../support/test-host");
+    const mock = await createMockClient({
+      host: first.host,
+      runtimeConfig: { executionKind: "Worker", productId: PRODUCT },
+    });
     const answer = mock.chat.chatMessagesQuery(
       { roomId: "source", anchor: { tag: "Before", value: {} }, pageSize: 40 },
       { timeoutMs: 5_000 },

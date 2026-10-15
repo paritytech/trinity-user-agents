@@ -177,3 +177,26 @@ describe("SourceStore changes", () => {
     ]);
   });
 });
+
+describe("search", () => {
+  test("pages the matches newest first with the slot cursor, case ignored", () => {
+    const store = new SourceStore();
+    store.replaceHistory(30);
+    // History texts are "History message 000NN"; every message matches "history".
+    const first = store.search("HISTORY message 0001", undefined, 3);
+    expect(first.messages.map((m) => m.messageId)).toEqual(["source-h-00019", "source-h-00018", "source-h-00017"]);
+    expect(first.next).toBeDefined();
+    const second = store.search("history message 0001", first.next, 10);
+    expect(second.messages.map((m) => m.messageId)).toEqual([
+      "source-h-00016",
+      "source-h-00015",
+      "source-h-00014",
+      "source-h-00013",
+      "source-h-00012",
+      "source-h-00011",
+      "source-h-00010",
+    ]);
+    expect(second.next).toBeUndefined();
+    expect(store.search("nothing like this", undefined, 10)).toEqual({ messages: [] });
+  });
+});

@@ -47,6 +47,7 @@ const ALIASES: Record<string, string> = {
   posted_chat_messages: "getChatMessageLog",
   chat_room_declarations: "room",
   set_chat_room_user_state: "setRoomUserState",
+  chat_room_user_state: "roomUserState",
   product_storage: "getProductStorage",
 };
 
