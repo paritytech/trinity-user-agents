@@ -22,6 +22,8 @@
 // The launcher fails when a driven scenario fails or has no row.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
 import { relative, resolve } from "node:path";
 import {
   DEFAULT_AVD,
@@ -41,6 +43,7 @@ import {
   installApk,
   isDeviceOnline,
   killEmulator,
+  pushFile,
   removeForward,
   removeReversePort,
   reversePort,
@@ -55,7 +58,10 @@ import {
 } from "./lib/android-emulator.mjs";
 import {
   ANDROID_CHAT_V2_SCENARIOS,
+  MIB,
   blockedRows,
+  noisePng,
+  stagingBoundSkip,
   byScenarioNumber,
   consoleMessages,
   parseEventLog,
@@ -161,7 +167,9 @@ async function runScenario(scenario) {
   const evidence = [];
   const note = (text) => evidence.push(text);
   try {
-    await driver({ scenario, note });
+    // A driver gives `{ skip }` when the emulator cannot carry the row; the evidence keeps what it proved.
+    const outcome = await driver({ scenario, note });
+    if (outcome?.skip) return row(scenario, "skip", Date.now() - started, [outcome.skip, ...evidence].join("; "));
     return row(scenario, "pass", Date.now() - started, evidence.join("; "));
   } catch (error) {
     const shot = await screenshot(scenario, "fail").catch(() => undefined);
@@ -184,6 +192,7 @@ const FEATURE_ROWS = {
   custom_bodies: "S7",
   mute_archive: "S54 to S56",
   search: "S61 to S63",
+  preimage_attachments: "S57 to S60 (S57 with a file under the chain bound, O32)",
 };
 
 const DRIVERS = {
@@ -628,7 +637,9 @@ const DRIVERS = {
       [...read].sort().join(",") === [...listed].sort().join(","),
       `the product read ${read.join(",") || "none"}, the app lists ${listed.join(",") || "none"}`,
     );
-    expect(match[2] === String(1024 * 1024) && match[3] === "0", `bounds inline ${match[2]} B, preimage ${match[3]} B`);
+    // The core gives the staging bound of 8 MiB only when the app lists preimage_attachments.
+    const preimageBound = listed.includes("preimage_attachments") ? String(8 * MIB) : "0";
+    expect(match[2] === String(MIB) && match[3] === preimageBound, `bounds inline ${match[2]} B, preimage ${match[3]} B`);
     const unbacked = listed.filter((name) => !FEATURE_ROWS[name]);
     expect(unbacked.length === 0, `the app lists ${unbacked.join(", ")} without a row of the launcher that passes for it`);
     await waitScreen((screen) => findText(screen, /^caps: /), "the capabilities message");
@@ -1127,6 +1138,193 @@ const DRIVERS = {
     );
   },
 
+  // S60: the first staged attachment of the product shows the public-storage
+  // notice. Cancel keeps it unsent; Send stages it; a later attachment of the
+  // same product, in the other room, shows no notice.
+  async S60({ note }) {
+    await prepareStaging(note);
+    for (const room of ["host", "source"]) await declareStaging(room, true);
+    preimageAnswer = "Allow always";
+
+    await openRoom("host");
+    let mark = logMark();
+    let notice = await pickFile(stagingFile("s60-photo.png", () => noisePng(1024, 500, RUN_SEED + 60)), { notice: true });
+    expect(findText(notice, /^Files over 1 MB sent in .* are stored on the public Bulletin chain/), "the notice names no product");
+    note(`\`${await screenshot(scenarioById("S60"), "notice")}\``);
+    tapText(notice, "Cancel");
+    await delay(3_000);
+    expect(outboxEntries().length === 0, `Cancel kept ${outboxEntries().length} outbox entries`);
+    expect(!stageLines(mark).length, "Cancel staged the attachment");
+    note("Cancel: no outbox entry and no staging");
+
+    mark = logMark();
+    notice = await pickFile(stagingFile("s60-photo.png", () => noisePng(1024, 500, RUN_SEED + 60)), { notice: true });
+    note("the notice shows again after Cancel");
+    tapText(notice, "Send");
+    const staged = await waitStage(mark, "the staging after Send");
+    note(`Send: ${staged.message}`);
+    await deleteOutboxBubbles();
+
+    await openRoom("source");
+    mark = logMark();
+    await pickFile(stagingFile("s60-file.pdf", () => bytesOf(1.2 * MIB)), { notice: false });
+    const second = await waitStage(mark, "the staging in the source room", { failOnNotice: true });
+    note(`no notice for the second attachment of the product (source room): ${second.message}`);
+    note(`\`${await screenshot(scenarioById("S60"), "source")}\``);
+    await deleteOutboxBubbles();
+  },
+
+  // S57: a 3 MiB photo and a 6 MiB file. The Bulletin chain of the emulator
+  // decides the bound (O32); the path is then proved with files under it.
+  async S57({ note }) {
+    await prepareStaging(note);
+    preimageAnswer = "Allow always";
+    const bounds = [];
+    for (const [name, make] of [
+      ["s57-photo-3mib.png", () => noisePng(1024, 1024, RUN_SEED + 57)],
+      ["s57-file-6mib.pdf", () => bytesOf(6 * MIB)],
+    ]) {
+      await openRoom("host");
+      const mark = logMark();
+      await pickFile(stagingFile(name, make), { notice: false });
+      const line = await waitStage(mark, `the staging of ${name}`);
+      note(`${name}: ${line.message.replace(/^truapi\.chat\.stage outbox:\S+ /, "")}`);
+      const tooLarge = /TooLarge \(the attachment is larger than (\d+) bytes\)/.exec(line.message);
+      if (tooLarge) {
+        bounds.push(Number(tooLarge[1]));
+        note(`the room says: ${await attachmentBanner(mark, "This file is too large to send. Choose one under 2 MB.", /TooLarge\(maxBytes=2097152\)/, line.banner)}`);
+      }
+      await deleteOutboxBubbles();
+    }
+
+    // Under the bound: a photo in the host-store room and a file in the product-source room.
+    const proof = [];
+    for (const [room, name, make] of [
+      ["host", "s57-photo-under.png", () => noisePng(1024, 600, RUN_SEED + 157)],
+      ["source", "s57-file-under.pdf", () => bytesOf(1.9 * MIB)],
+    ]) {
+      await openRoom(room);
+      const mark = logMark();
+      const events = eventMark();
+      await pickFile(stagingFile(name, make), { notice: false });
+      const line = await waitStage(mark, `the staging of ${name}`);
+      const outcome = line.message.replace(/^truapi\.chat\.stage outbox:\S+ /, "");
+      if (/: Staged$/.test(line.message)) {
+        const media = await waitEvent(events, (entry) => entry.via === "media" && entry.room === room, `the media item in ${room}`, ANSWER_TIMEOUT_MS);
+        expect(/ Preimage$/.test(media.data.line), `the product got ${media.data.line}`);
+        const fetched = await waitEvent(events, (entry) => entry.via === "preimage" && entry.room === room, `the preimage read back in ${room}`, ANSWER_TIMEOUT_MS);
+        proof.push(`${room}: ${name} ${outcome}, the product got "${media.data.line}" and read it back: ${fetched.kind} ${fetched.data.size} B`);
+      } else {
+        proof.push(`${room}: ${name} ${outcome}`);
+        await deleteOutboxBubbles();
+      }
+      note(`\`${await screenshot(scenarioById("S57"), `${room}-under`)}\``);
+    }
+    note(proof.join("; "));
+
+    // B7: 1 B gives the time of the call without the bytes.
+    note(`B7: ${await probeStaging(1)}; ${await probeStaging(8 * MIB)}`);
+
+    const failed = proof.filter((line) => !/Fetched/.test(line));
+    const boundSkip = bounds.length > 0 ? stagingBoundSkip(Math.min(...bounds), [3 * MIB, 6 * MIB]) : undefined;
+    if (!boundSkip && failed.length === 0) return undefined;
+    const allowance = failed.find((line) => /AllowanceUnavailable/.test(line));
+    expect(failed.length === 0 || allowance, `the files under the bound did not arrive: ${failed.join("; ")}`);
+    const reasons = [
+      boundSkip,
+      allowance && "the emulator account is not a personhood ring member, so the core has no Bulletin allowance for the product (AllowanceUnavailable) and nothing under the bound can arrive either",
+    ].filter(Boolean);
+    return { skip: reasons.length > 0 ? reasons.join("; ") : "skip" };
+  },
+
+  // S59: a refused submit marks the attachment Failed and keeps its bytes;
+  // Retry stages it again; Delete removes the kept bytes.
+  async S59({ note }) {
+    await prepareStaging(note);
+    await openRoom("source");
+    await resetPreimagePermission();
+    preimageAnswer = "Don't allow";
+    let mark = logMark();
+    await pickFile(stagingFile("s59-retry.pdf", () => bytesOf(1.2 * MIB)), { notice: false });
+    const failed = await waitStage(mark, "the refused staging");
+    expect(/PermissionDenied/.test(failed.message), `the first staging gave ${failed.message}`);
+    note(`the room says: ${await attachmentBanner(mark, PERMISSION_BANNER, /AttachmentPermissionPresentationError/, failed.banner)}`);
+    const entryId = /outbox:\S+/.exec(failed.message)[0];
+    expect(outboxEntries().length === 1, `the outbox keeps ${outboxEntries().length} entries`);
+    note(`\`${await screenshot(scenarioById("S59"), "failed")}\``);
+    note(`refused: ${failed.message}; the bubble is Failed and the outbox keeps the bytes`);
+
+    await resetPreimagePermission();
+    preimageAnswer = "Allow always";
+    mark = logMark();
+    const events = eventMark();
+    let menu = await openMessageMenu("s59-retry.pdf");
+    expect(findText(menu, "Retry"), `the menu of the failed attachment offers ${menuLabels(menu).join(", ")}`);
+    tapText(menu, "Retry");
+    const retried = await waitStage(mark, "the staging after Retry", { entryId });
+    note(`Retry stages again: ${retried.message}`);
+    let blocked;
+    if (/: Staged$/.test(retried.message)) {
+      const media = await waitEvent(events, (entry) => entry.via === "media" && entry.room === "source", "the media item after Retry", ANSWER_TIMEOUT_MS);
+      note(`the product got "${media.data.line}"`);
+    } else {
+      expect(/AllowanceUnavailable/.test(retried.message), `Retry gave ${retried.message}`);
+      blocked = "skip: Retry stages again, but the emulator account is not a personhood ring member, so the core has no Bulletin allowance for the product (AllowanceUnavailable) and the retry cannot succeed";
+    }
+
+    await resetPreimagePermission();
+    preimageAnswer = "Don't allow";
+    mark = logMark();
+    await pickFile(stagingFile("s59-delete.pdf", () => bytesOf(1.1 * MIB)), { notice: false });
+    await waitStage(mark, "the staging of the attachment to delete");
+    const before = outboxEntries().length;
+    menu = await openMessageMenu("s59-delete.pdf");
+    tapText(menu, "Delete");
+    const confirm = await waitScreen((screen) => screen.filter((node) => node.text === "Delete").at(-1), "the delete confirmation");
+    inputTap(serial, confirm.center.x, confirm.center.y);
+    await waitFor(() => outboxEntries().length === before - 1, { timeoutMs: COMMAND_TIMEOUT_MS, message: "Delete kept the bytes" });
+    await waitScreen((screen) => !findText(screen, "s59-delete.pdf") && screen, "the deleted bubble to go");
+    note(`Delete removes the bubble and the kept bytes (${before} to ${before - 1} outbox entries)`);
+    await deleteOutboxBubbles();
+    preimageAnswer = "Don't allow";
+    return blocked ? { skip: blocked } : undefined;
+  },
+
+  // S58: no upload without the declaration, above 8 MiB, or with
+  // PreimageSubmit refused.
+  async S58({ note }) {
+    await prepareStaging(note);
+    await declareStaging("host", false);
+    await openRoom("host");
+    const kept = outboxEntries().length;
+    let mark = logMark();
+    let events = eventMark();
+    await pickFile(stagingFile("s58-undeclared.pdf", () => bytesOf(1.5 * MIB)), { notice: false });
+    note(`without preimage_attachments: ${await attachmentBanner(mark, "This file is too large to send. Choose one under 1 MB.", /attachment exceeds 1MB/)}`);
+
+    await declareStaging("host", true);
+    const huge = logMark();
+    await pickFile(stagingFile("s58-huge.pdf", () => bytesOf(8 * MIB + 1)), { notice: false });
+    note(`above 8 MiB: ${await attachmentBanner(huge, "This file is too large to send. Choose one under 8 MB.", /attachment exceeds 8MB/)}`);
+    expect(stageLines(mark).length === 0 && outboxEntries().length === kept, "a refused attachment reached the outbox");
+
+    await resetPreimagePermission();
+    preimageAnswer = "Don't allow";
+    await pickFile(stagingFile("s58-refused.pdf", () => bytesOf(1.5 * MIB)), { notice: false });
+    const refused = await waitStage(mark, "the refused staging");
+    expect(/PermissionDenied/.test(refused.message), `the staging gave ${refused.message}`);
+    note(`the room says: ${await attachmentBanner(mark, PERMISSION_BANNER, /AttachmentPermissionPresentationError/, refused.banner)}`);
+    note(`PreimageSubmit refused: ${refused.message.replace(/^truapi\.chat\.stage outbox:\S+ /, "")}`);
+    note(`\`${await screenshot(scenarioById("S58"), "refused")}\``);
+    await delay(2_000);
+    const uploaded = eventsSince(events).filter((entry) => entry.via === "media");
+    expect(uploaded.length === 0, `the product received ${uploaded.length} media item(s)`);
+    expect(!stageLines(mark).some((line) => /: Staged$/.test(line.message)), "an attachment was staged");
+    note("nothing staged and no media item reached the product");
+    await deleteOutboxBubbles();
+    for (const room of ["host", "source"]) await declareStaging(room, false);
+  },
+
   async S4({ note }) {
     // The source room has the oldest messages, so it is the last row until it is pinned.
     const variants = [
@@ -1429,6 +1627,13 @@ async function showChatList() {
  * notifications prompt of `/notify` gets "Allow always": a "Don't allow" there is a stored refusal of the product.
  */
 function dismissPrompts(screen) {
+  if (screen.some((node) => PREIMAGE_PROMPT.test(node.text))) {
+    const answer = findText(screen, preimageAnswer);
+    if (answer) {
+      inputTap(serial, answer.center.x, answer.center.y);
+      return true;
+    }
+  }
   const allow = findText(screen, "Allow always");
   if (allow && screen.some((node) => / would like to send notifications$/.test(node.text))) {
     inputTap(serial, allow.center.x, allow.center.y);
@@ -1590,6 +1795,252 @@ async function screenshot(scenario, suffix, settleMs = 800) {
   const name = `s${number}-${suffix}.png`;
   screencap(serial, resolve(outDir, name));
   return name;
+}
+
+// ------------------------------------------------- staged attachments (P10.3)
+
+/** How the launcher answers the PreimageSubmit prompt of the product. */
+let preimageAnswer = "Don't allow";
+const PREIMAGE_PROMPT = / would like to submit preimages$/;
+const stagingDir = resolve(tmpdir(), `truapi-android-staging-${process.pid}`);
+let stagingServed = false;
+
+/**
+ * Turn staging on for the rows of P10.3. A debug build serves
+ * preimage_attachments for the launcher also while the app does not list
+ * the feature. The camera permission is granted, so the attachment picker
+ * opens without a system prompt.
+ */
+async function prepareStaging(note) {
+  grantPermission(serial, packageName, "android.permission.CAMERA");
+
+  const mark = logMark();
+  hook([["--ez", "serve_preimage_attachments", "true"]]);
+  await waitForLog(mark, (line) => line.tag === E2E_TAG && line.message === "preimage attachments served", "the staging hook");
+  if (!stagingServed) {
+    const listed = logLines(0).filter((line) => line.message.startsWith("truapi.chat.capabilities ")).at(-1);
+    note(listed?.message.includes("preimage_attachments")
+      ? "the app lists preimage_attachments"
+      : "the app does not list preimage_attachments; the debug hook serves it for this run");
+    stagingServed = true;
+  }
+  // The first start of the product stored "Don't allow" for PreimageSubmit; each row decides again.
+  await openRoom("host");
+  await resetPreimagePermission();
+}
+
+async function declareStaging(room, on) {
+  await command(room, "/footer photo", { reply: true });
+  await command(room, `/features preimage ${on ? "on" : "off"}`, { reply: true });
+}
+
+/** Clear the stored PreimageSubmit decision of the product, as a user does in its settings. The worker must run. */
+function resetPreimagePermission() {
+  const mark = logMark();
+  hook([
+    ["--es", "product_id", productHost],
+    ["--ez", "reset_preimage_permission", "true"],
+  ]);
+  return waitForLog(mark, (line) => line.tag === E2E_TAG && /^(preimage permission reset|error preimage_permission)/.test(line.message), "the permission reset")
+    .then((line) => expect(line.message === "preimage permission reset", line.message));
+}
+
+/** Write a file of the run and copy it into the Download folder of the device. */
+function stagingFile(name, make) {
+  mkdirSync(stagingDir, { recursive: true });
+  const local = resolve(stagingDir, name);
+  if (!existsSync(local)) writeFileSync(local, make());
+  const remote = `/sdcard/Download/${name}`;
+  pushFile(serial, local, remote);
+  shell(serial, ["touch", remote]);
+  shell(serial, ["content", "call", "--uri", "content://media/external/file", "--method", "scan_file", "--arg", remote]);
+  return name;
+}
+
+/** Random bytes, so no two runs stage the same preimage. */
+function bytesOf(size) {
+  return randomBytes(Math.round(size));
+}
+
+/** A seed for each run, so the noise images of two runs differ. */
+const RUN_SEED = randomBytes(4).readUInt32BE(0);
+
+/**
+ * Pick `name` with the attachment button of the open room: the chooser,
+ * then the file in the recent files of the system picker. With `notice`,
+ * waits for the public-storage notice and gives the screen; without, fails
+ * when the notice shows.
+ */
+async function pickFile(name, { notice }) {
+  // A configuration change of the emulator while the picker shows can recreate the room screen, and the picked file
+  // then does not reach it. The launcher picks once more and notes it.
+  for (let attempt = 1; ; attempt += 1) {
+    const mark = logMark();
+    const screen = await pickFileOnce(name, { notice });
+    // The worker starts again when the room shows again, and its PreimageSubmit prompt can cover the room. The room
+    // gets the file only after the prompt closes.
+    const picked = await waitFor(
+      () => {
+        dismissPrompts(parseUiNodes(uiDump(serial)));
+        return logLines(mark).find((line) => line.message.startsWith("truapi.chat.attachment picked "));
+      },
+      { timeoutMs: 30_000, intervalMs: 500, message: "no picked file" },
+    ).catch(() => undefined);
+    if (picked) return screen ?? (notice ? waitScreen((nodes) => findText(nodes, "Files over 1 MB are public") && nodes, "the public-storage notice") : undefined);
+    if (attempt >= 3) throw new Error(`the room did not get ${name} from the picker`);
+    observations.push(`${new Date().toISOString().slice(11, 19)} ${name} did not reach the room from the picker; the launcher picked it again`);
+    await openRoom(currentRoom);
+  }
+}
+
+async function pickFileOnce(name, { notice }) {
+  const room = currentRoom;
+  // The caption is the name of the file, so the launcher finds a photo bubble too.
+  await typeCaption(name);
+  const screen = await waitScreen((nodes) => nodes.find((node) => node.description === "Attach") && nodes, "the attachment button");
+  const attach = screen.find((node) => node.description === "Attach");
+  inputTap(serial, attach.center.x, attach.center.y);
+  // The room and the clipboard preview show the caption too, so the launcher takes only the rows of the system
+  // chooser (`text1`) and of the document picker (`title`).
+  const pickerFile = (node) => node.text === name && node.tag === "title";
+  const chooserItem = (node) => node.tag === "text1" && /^(Photos & videos|Files)$/.test(node.text);
+  // The chooser can take a tap while it still slides in and ignore it, so the launcher taps it again until the
+  // document picker shows.
+  let tapped = 0;
+  const file = await waitFor(
+    () => {
+      const nodes = parseUiNodes(uiDump(serial));
+      const found = nodes.find(pickerFile);
+      if (found) return found;
+      const item = nodes.find(chooserItem);
+      if (item && Date.now() - tapped > 3_000) {
+        inputTap(serial, item.center.x, item.center.y);
+        tapped = Date.now();
+      }
+      return undefined;
+    },
+    { timeoutMs: COMMAND_TIMEOUT_MS, intervalMs: 500, message: `no ${name} in the picker` },
+  );
+  inputTap(serial, file.center.x, file.center.y);
+  currentRoom = room;
+  if (notice) {
+    return waitScreen((nodes) => findText(nodes, "Files over 1 MB are public") && nodes, "the public-storage notice", 15_000)
+      .catch(() => undefined);
+  }
+  return undefined;
+}
+
+/**
+ * Put `text` into the input of the open room. The launcher does not send it.
+ * The names of the files are plain ASCII, so `input text` types them: the
+ * clipboard preview of a paste covers the attachment button.
+ */
+async function typeCaption(text) {
+  expect(/^[A-Za-z0-9._-]+$/.test(text), `"${text}" is not a plain caption`);
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const screen = await waitScreen((nodes) => findTag(nodes, "chat_message_input") && nodes, "the message input");
+    if (findTag(screen, "chat_message_input")?.text === text) return;
+    const input = findTag(screen, "chat_message_input");
+    inputTap(serial, input.center.x, input.center.y);
+    inputKeyCombination(serial, KEY.ctrlLeft, KEY.a);
+    inputKeyEvent(serial, KEY.del);
+    // One key at a time: the app can lose or reorder the keys of a fast `input text`.
+    for (const char of text) shell(serial, ["input", "text", char]);
+    const typed = await waitScreen((nodes) => findTag(nodes, "chat_message_input")?.text === text && nodes, `"${text}" in the input`, 5_000)
+      .catch(() => undefined);
+    if (typed) {
+      hideKeyboard();
+      return;
+    }
+  }
+  throw new Error(`could not type "${text}" into the input`);
+}
+
+/**
+ * The banner of an attachment that the room did not send. The banner shows
+ * for about 3 s, so a slow screen dump can miss it; the app then proves it
+ * with the error that it logs as it shows the banner (`BaseViewModel`).
+ */
+async function attachmentBanner(mark, text, logged, seen) {
+  if (seen === text) return `"${text}"`;
+  const proof = await waitFor(
+    () => {
+      if (findText(parseUiNodes(uiDump(serial)), text)) return `"${text}"`;
+      const line = logLines(mark).find((entry) => entry.tag === "BaseViewModel" && logged.test(entry.message));
+      return line && `"${text}" (the banner went before the screen dump; the app logged ${line.message.split(": ").slice(-2).join(": ")})`;
+    },
+    { timeoutMs: COMMAND_TIMEOUT_MS, intervalMs: 300, message: `no "${text}" on screen or in the app log` },
+  );
+  return proof;
+}
+
+/** The lines of the stager since `mark`. */
+function stageLines(mark) {
+  return logLines(mark).filter((line) => /^truapi\.chat\.stage outbox:\S+ \d+ B in \d+ ms: /.test(line.message));
+}
+
+const PERMISSION_BANNER = "The file was not sent. Allow the app to store files on the Bulletin chain, then retry.";
+const ATTACHMENT_BANNER = /^(The file was not sent|This file is too large to send)/;
+
+/**
+ * Wait for the next staging outcome, and give its logcat line with the
+ * banner that the room shows for a failure (`banner`). The banner shows for
+ * a few seconds only, so the launcher reads it while it waits. With
+ * `failOnNotice`, the public-storage notice must not show meanwhile.
+ */
+async function waitStage(mark, what, { entryId, failOnNotice = false } = {}) {
+  let banner;
+  const look = () => {
+    const screen = parseUiNodes(uiDump(serial));
+    if (failOnNotice && findText(screen, "Files over 1 MB are public")) throw new Error("the notice showed again");
+    banner ??= findText(screen, ATTACHMENT_BANNER)?.text;
+    dismissPrompts(screen);
+  };
+  const line = await waitFor(
+    () => {
+      look();
+      return stageLines(mark).find((entry) => !entryId || entry.message.includes(entryId));
+    },
+    { timeoutMs: 6 * 60_000, intervalMs: 500, message: `no ${what} in logcat` },
+  );
+  if (!/: Staged$/.test(line.message)) {
+    await waitFor(() => (look(), banner), { timeoutMs: 8_000, intervalMs: 300, message: "no banner" }).catch(() => undefined);
+  }
+  return { ...line, banner };
+}
+
+/** The entries of the attachment outbox of the app. */
+function outboxEntries() {
+  const result = shell(serial, ["run-as", packageName, "ls", "files/product_attachment_outbox"]);
+  return result.status === 0 ? result.stdout.split(/\s+/).filter(Boolean) : [];
+}
+
+/** Delete each failed attachment that the open room shows, from its menu. */
+async function deleteOutboxBubbles() {
+  for (let attempt = 0; attempt < 6 && outboxEntries().length > 0; attempt += 1) {
+    const screen = parseUiNodes(uiDump(serial));
+    dismissPrompts(screen);
+    const bubble = screen.find((node) => /^s(5[7-9]|60)-.*\.(pdf|png)$/.test(node.text) && !node.tag);
+    if (!bubble) break;
+    inputLongPress(serial, bubble.center.x, bubble.center.y);
+    const menu = await waitScreen((nodes) => findText(nodes, "Delete") && nodes, "the menu of the attachment").catch(() => undefined);
+    if (!menu) continue;
+    tapText(menu, "Delete");
+    const confirm = await waitScreen((nodes) => nodes.filter((node) => node.text === "Delete").at(-1), "the delete confirmation");
+    inputTap(serial, confirm.center.x, confirm.center.y);
+    await delay(1_500);
+  }
+}
+
+/** B7: the time that the bytes of an attachment take to cross the binding into the core. */
+async function probeStaging(size) {
+  const mark = logMark();
+  hook([
+    ["--es", "product_id", productHost],
+    ["--ei", "stage_probe", String(size)],
+  ]);
+  const line = await waitForLog(mark, (entry) => entry.tag === E2E_TAG && entry.message.startsWith(`stage_probe bytes=${size} `), "the staging probe", 120_000);
+  return line.message;
 }
 
 // ----------------------------------------------- mute, archive and search
@@ -2064,6 +2515,7 @@ async function main() {
     );
     rows.push(...blockedRows(failure, remaining));
   } finally {
+    rmSync(stagingDir, { recursive: true, force: true });
     if (serial) shell(serial, ["am", "force-stop", packageName]);
     cleanup();
   }

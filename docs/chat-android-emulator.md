@@ -73,7 +73,7 @@ row format of the iOS report.
 
 | Kind       | Scenarios                                                                        | Row                                           |
 | ---------- | -------------------------------------------------------------------------------- | --------------------------------------------- |
-| Driven     | S1 to S4, S6 to S14, S49, S54, S55 and S61 (`host` room), S11, S15 to S24 and S46 (`source` room), S56 and S63 (both rooms) | `pass`, or `fail` with the first failed check |
+| Driven     | S1 to S4, S6 to S14, S49, S54, S55, S58 and S61 (`host` room), S11, S15 to S24, S46 and S59 (`source` room), S56, S57, S60 and S63 (both rooms) | `pass`, or `fail` with the first failed check; S57 and S59 give `skip` with the reason when the emulator chain cannot carry them |
 | Not driven | S62                                                                              | `skip: needs P10.5.1 sample`                  |
 | Not driven | S5 (the sample has no command that calls `delete_room`)                          | `skip` with that reason                       |
 | Not driven | S25 to S41                                                                       | `skip: needs P8.6`                            |
@@ -97,11 +97,15 @@ the app. The launcher fails when a driven row fails or has no row.
 | S7–S10   | `/post all` and `/help` stored and drawn; `/stream` and `/edit` with one revision row; `/delete` tombstone; reactions table                  |
 | S12–S14  | `/echo`, then send, reply, edit, react, delete from the menu; the Actions press; `/commands`, then `/help` as `Command`                      |
 | S4, S6   | `/preview` variants in the chat list rows; the list with the product server stopped                                                          |
-| S49      | `/caps`: the stored answer has the names that the app logs (`truapi.chat.capabilities`), each with a row above, and the bounds 1 MiB and 0 |
+| S49      | `/caps`: the stored answer has the names that the app logs (`truapi.chat.capabilities`), each with a row above, and the bounds 1 MiB and 0 (8 MiB when the app lists `preimage_attachments`) |
 | S61      | the user sends "Crème brûlée at the CAFÉ", `/post all` pushes it out of the screen; the search action of the header finds it for "creme BRULEE" and "café", and a tap shows it in the feed |
 | S54      | a swipe to the end and "For 1 hour": `mutedUntil` in `chat_room_declarations`, `UserStateChanged` in the event log (the core keeps it until a message starts the worker), the speaker icon and the grey count in the row; `/notify` and `/notify 3` show nothing (`dumpsys notification`); after the unmute `/notify` shows one. The launcher answers the notifications prompt of the first `/notify` with "Allow always": the core keeps a "Don't allow" for the product, and the mute rule then never runs |
 | S55      | a swipe to the start: the "Archived" row and no room row; the room stays archived after `/post text`; the archived section shows it, and a swipe there brings it back |
 | S56      | the host room muted always and the source room archived, the app restarted: the first room events of the new worker are both `UserStateChanged` |
+| S60      | `/footer photo` and `/features preimage on` in both rooms; a 1.5 MB photo picked through the system picker (the file goes to `Download` with `adb push`) shows the public-storage notice; Cancel stages nothing and keeps no outbox entry; the notice shows again, Send stages; a file in the `source` room shows no notice |
+| S57      | a 3 MiB photo and a 6 MiB file in the `host` room: the stage line of the app (`truapi.chat.stage`) and the banner; then a photo and a file under 2 MiB in both rooms: `media` and `preimage` `Fetched` in the event log. B7: the `stage_probe` hook times 8 MiB across the binding. `skip` when the chain bound refuses the S57 sizes (O32) or the core has no Bulletin allowance for the product |
+| S59      | PreimageSubmit refused: the bubble is Failed with the banner, the outbox keeps the bytes; after a reset of the decision, Retry in the message menu stages again; Delete removes the bubble and the folder of the entry in `files/product_attachment_outbox` |
+| S58      | `/features preimage off`: "Choose one under 1 MB"; a file of 8 MiB + 1 B: "Choose one under 8 MB"; PreimageSubmit refused: `PermissionDenied`, no `media` line in the event log |
 | S63      | with no worker page, the list search shows both rooms for "Sample", the host message for "crème", nothing for a text that only the source product keeps, and no worker starts |
 
 ## Troubleshooting
@@ -112,5 +116,10 @@ the app. The launcher fails when a driven row fails or has no row.
 - The app shows "The environment has been reset" after `pm clear`, and the product asks to submit a preimage at its
   first start. The launcher answers "Dismiss" and "Don't allow"; `/post rich` then shows the missing-preimage
   placeholder.
+- The P10.3 rows use two debug-only hooks of `E2EHookReceiver`: `serve_preimage_attachments` makes the app stage the
+  attachments of a room that declares `preimage_attachments` also while the app does not list the feature, and
+  `reset_preimage_permission` clears the stored PreimageSubmit decision of the product (the launcher answers "Don't
+  allow" at the first start). The launcher answers each later PreimageSubmit prompt as the row needs it. The core does
+  all staging; the hooks hold no key and open no connection.
 - `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY=S15,S17` runs some scenarios only, and `TRUAPI_ANDROID_E2E_CHAT_V2_REUSE=1` keeps the
   installed app and its data. Both are for work on the launcher; a report from them is not a full run.

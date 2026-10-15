@@ -8,11 +8,15 @@ import {
   blockedRows,
   byScenarioNumber,
   consoleMessages,
+  MIB,
+  noisePng,
   parseEventLog,
   parseLogcatLine,
   parseUiNodes,
   skipRow,
+  stagingBoundSkip,
 } from "./android-chat-v2-scenarios.mjs";
+import { inflateSync } from "node:zlib";
 
 const console = (tid, message) =>
   `10-14 20:14:38.393  9539  ${tid} D ProductWebChromeClientKt: ${message}`;
@@ -50,6 +54,36 @@ test("the P10.10 and P10.5 rows are driven, and S62 waits for the sample", () =>
     assert.equal(byId(id).drive, true, id);
   }
   assert.match(skipRow(byId("S62")).evidence, /^skip: needs P10\.5\.1 sample/);
+});
+
+test("the P10.3 rows are driven, and S60 runs before the others", () => {
+  const ids = ANDROID_CHAT_V2_SCENARIOS.map((scenario) => scenario.id);
+  for (const id of ["S57", "S58", "S59", "S60"]) {
+    assert.equal(ANDROID_CHAT_V2_SCENARIOS.find((scenario) => scenario.id === id).drive, true, id);
+  }
+  assert.ok(ids.indexOf("S60") < Math.min(ids.indexOf("S57"), ids.indexOf("S58"), ids.indexOf("S59")));
+  assert.ok(ids.indexOf("S58") < ids.indexOf("S4"));
+});
+
+test("S57 is a skip only when the chain bound refuses one of its files", () => {
+  const sizes = [3 * MIB, 6 * MIB];
+  assert.equal(stagingBoundSkip(8 * MIB, sizes), undefined);
+  assert.equal(
+    stagingBoundSkip(2 * MIB, sizes),
+    "skip: the Bulletin chain of the emulator stores at most 2097152 B (2 MiB) in one transaction (O32), so the core refuses the 3 MiB and 6 MiB file(s) of S57 with TooLarge",
+  );
+  assert.match(stagingBoundSkip(4 * MIB, sizes), /refuses the 6 MiB file\(s\)/);
+});
+
+test("a noise PNG has the size of its pixels and decodes", () => {
+  const png = noisePng(64, 32);
+  assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assert.equal(png.readUInt32BE(16), 64);
+  assert.equal(png.readUInt32BE(20), 32);
+  const idatLength = png.readUInt32BE(33);
+  assert.equal(png.subarray(37, 41).toString("ascii"), "IDAT");
+  assert.equal(inflateSync(png.subarray(41, 41 + idatLength)).length, (64 * 3 + 1) * 32);
+  assert.ok(noisePng(1024, 500).length > 1.4 * MIB);
 });
 
 test("a scenario with its own skip reason keeps it", () => {

@@ -367,6 +367,11 @@ export function removeReversePort(serial, port) {
   return adb(["reverse", "--remove", `tcp:${port}`], { serial });
 }
 
+/** Copy a file of the host to the device. */
+export function pushFile(serial, source, destination) {
+  return adbOrThrow(["push", source, destination], { serial, timeoutMs: INSTALL_TIMEOUT_MS });
+}
+
 export function grantPermission(serial, packageName, permission) {
   const result = adbShell(serial, ["pm", "grant", packageName, permission]);
   return { granted: result.status === 0, output: `${result.stdout}${result.stderr}`.trim() };

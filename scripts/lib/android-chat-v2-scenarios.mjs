@@ -1,6 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { deflateSync } from "node:zlib";
+
 /**
  * The scenarios of the Chat Extension v2 test plan (04-TESTING section 4)
  * that name the Android layer, in the order the Android launcher runs them.
@@ -12,7 +14,9 @@
  *
  * The launcher runs the product-source scenarios before the host-store ones,
  * so that S14 can show the `Seen` reports of the product-source room, and it
- * runs S4 and S6 last, because they leave the room screen.
+ * runs S4 and S6 last, because they leave the room screen. S60 runs before
+ * the other rows of P10.3, because only the first staged attachment of the
+ * product shows the public-storage notice.
  */
 export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
   {
@@ -219,6 +223,34 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S60",
+    title: "the public-storage notice shows once per product; Cancel sends nothing",
+    mode: "both",
+    phase: "P10.3",
+    drive: true,
+  },
+  {
+    id: "S57",
+    title: "a 3 MiB photo and a 6 MiB file are staged and arrive as Preimage media in both modes; the receiving side draws them",
+    mode: "both",
+    phase: "P10.3",
+    drive: true,
+  },
+  {
+    id: "S59",
+    title: "a failed submit marks the message Failed; Retry stages again and succeeds; Delete removes the kept bytes",
+    mode: "source",
+    phase: "P10.3",
+    drive: true,
+  },
+  {
+    id: "S58",
+    title: "without preimage_attachments, above 8 MiB, or with PreimageSubmit refused, nothing is uploaded",
+    mode: "host",
+    phase: "P10.3",
+    drive: true,
+  },
+  {
     id: "S4",
     title: "every preview variant in the chat list",
     mode: "host",
@@ -284,6 +316,77 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     phase: "P8.8",
   },
 ]);
+
+/** One mebibyte, the unit of the attachment bounds of P10.3. */
+export const MIB = 1024 * 1024;
+
+/**
+ * The reason to keep S57 a skip, or undefined. S57 stages a 3 MiB photo and
+ * a 6 MiB file. A Bulletin chain that stores at most `maxBytes` in one
+ * transaction refuses the larger ones (open item O32), and the core then
+ * answers `TooLarge` with that bound.
+ */
+export function stagingBoundSkip(maxBytes, sizes) {
+  const refused = sizes.filter((size) => size > maxBytes);
+  if (refused.length === 0) return undefined;
+  const mib = (bytes) => `${(bytes / MIB).toFixed(bytes % MIB === 0 ? 0 : 1)} MiB`;
+  return (
+    `skip: the Bulletin chain of the emulator stores at most ${maxBytes} B (${mib(maxBytes)}) in one transaction ` +
+    `(O32), so the core refuses the ${refused.map(mib).join(" and ")} file(s) of S57 with TooLarge`
+  );
+}
+
+/**
+ * A PNG image of `width` x `height` pixels of noise. Noise does not
+ * compress, so the file is about `3 * width * height` bytes, and the app can
+ * still read its size and draw it.
+ */
+export function noisePng(width, height, seed = 1) {
+  let state = seed >>> 0 || 1;
+  const random = () => {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return state & 0xff;
+  };
+  const raw = Buffer.alloc((width * 3 + 1) * height);
+  for (let row = 0; row < height; row += 1) {
+    const start = row * (width * 3 + 1);
+    raw[start] = 0;
+    for (let index = 1; index <= width * 3; index += 1) raw[start + index] = random();
+  }
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", deflateSync(raw, { level: 0 })),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function pngChunk(type, data) {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body), 0);
+  return Buffer.concat([length, body, crc]);
+}
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
 
 /** The logcat tag of the console lines of a product WebView. */
 export const CONSOLE_TAG = "ProductWebChromeClientKt";
