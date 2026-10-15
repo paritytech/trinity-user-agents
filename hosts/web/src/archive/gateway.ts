@@ -119,7 +119,8 @@ export interface LoadedArchive {
 
 /**
  * Load a product's executable: a UnixFS file, bound by the DotNS record, that
- * holds a CARv1 archive of the site's directory.
+ * holds a CARv1 archive of the site's directory. It must hold `entry` at its
+ * root: `index.html` for an app, the entry module for a worker.
  *
  * Integrity is checked in two steps. The bytes of the archive file are checked
  * block by block against the record's CID. The blocks inside the archive are
@@ -133,6 +134,7 @@ export async function loadArchive(
   getBlock: GetBlock,
   limits: ArchiveLimits = ARCHIVE_LIMITS,
   signal?: AbortSignal,
+  entry = "index.html",
 ): Promise<LoadedArchive> {
   const within = deadline(limits, signal);
   const outer = await readFile(
@@ -160,21 +162,22 @@ export async function loadArchive(
     limits,
     within,
   );
-  if (!files.has("index.html"))
-    throw new Error("the archive has no index.html at its root");
+  if (!files.has(entry)) throw new Error(`the archive has no ${entry}`);
   return { files, innerRoot };
 }
 
 /**
  * Load a website: a UnixFS directory the DotNS record binds directly. Every
  * block is checked against the identifier that names it, from the record's own
- * CID down, so the whole site is tied to the name.
+ * CID down, so the whole site is tied to the name. It must hold `entry`, as
+ * {@link loadArchive}'s must.
  */
 export async function loadSite(
   contentCid: string,
   getBlock: GetBlock,
   limits: ArchiveLimits = ARCHIVE_LIMITS,
   signal?: AbortSignal,
+  entry = "index.html",
 ): Promise<LoadedArchive> {
   const innerRoot = parseCidString(contentCid);
   const files = await unpackDirectory(
@@ -183,8 +186,7 @@ export async function loadSite(
     limits,
     deadline(limits, signal),
   );
-  if (!files.has("index.html"))
-    throw new Error("the site has no index.html at its root");
+  if (!files.has(entry)) throw new Error(`the site has no ${entry}`);
   return { files, innerRoot };
 }
 

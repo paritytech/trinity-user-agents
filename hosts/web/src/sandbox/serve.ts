@@ -95,3 +95,25 @@ export function responseFor(file: ServedFile): Response {
     },
   });
 }
+
+/**
+ * The page a worker executable runs in, at the root of its mount. A worker
+ * archive is JavaScript only, so the service worker answers this one reserved
+ * path itself, with a page that loads the entry module and nothing else.
+ */
+export const WORKER_SHELL = "__truapi-worker.html";
+
+/**
+ * The shell page for `entry`, or null when `entry` is not a module path
+ * inside the archive. The path is checked like any other request and encoded
+ * segment by segment, so it cannot leave the attribute or the mount.
+ */
+export function workerShellHtml(entry: string): string | null {
+  if (archivePath(`/${entry}`) !== entry || !/\.m?js$/.test(entry)) return null;
+  const src = entry.split("/").map(encodeURIComponent).join("/");
+  return `<!doctype html>
+<meta charset="utf-8">
+<title>worker</title>
+<script type="module" src="./${src}"></script>
+`;
+}

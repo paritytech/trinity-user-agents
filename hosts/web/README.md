@@ -271,6 +271,40 @@ yet known to interoperate with the app in every respect.
   only against this code: the request, message, session and statement codecs and the engine, by round trips between two
   copies of it. No captured app traffic and no exchange with a Polkadot app.
 
+### Product chats
+
+A product can chat through its worker executable, as a game product's weekly bot does. The Chat screen lists the rooms
+workers keep under **Product chats**, apart from the person-to-person conversations above. These rooms are TrUAPI Chat:
+the worker's calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
+
+- **Adding a worker.** **Workers** on the Chat screen takes a product name, such as `myapp.paseo`. The host reads
+  `worker.<name>`: its `executable` text record must be a worker manifest (`$v` 1, `kind` `worker`, an `entrypoint`
+  module inside the directory) whose `includes.chat` is true, and its `contenthash` locates the files. The archive is
+  fetched and verified like a product opened by name, and the entry module is loaded in a hidden frame under the
+  product's mount, connected to the core as the product's `Worker` execution. The product id is the name, the one its
+  app opens under, so the two share the product's storage and accounts.
+- **Lifetime.** The list of workers is kept per network and wallet. A worker runs while its wallet is signed in and the
+  tab is open, whichever screen is in front. Signing out, switching wallet or network, or a reload stops every worker
+  and ends its frames and render streams; signing in starts the saved ones. **Remove** stops a worker and takes it off
+  the list; the rooms it made stay.
+- **Rooms and messages.** The host serves TrUAPI Chat (`src/product-chat.ts`): a worker creates rooms, posts `Text` and
+  `Custom` messages and sets each room's footer. `registerBot` is refused, as the iOS host refuses it. Other message
+  kinds (rich text, actions, files, reactions) are refused with a reason. Rooms and the last 200 messages of each are
+  kept per network and wallet in `localStorage` (`truapi-web-signing-host:network:<id>:product-chat:<wallet>:v1`).
+- **Custom messages.** A custom message is drawn by asking the worker to render it (`RenderContext::ChatMessage`); each
+  tree the worker sends replaces the card. `src/product-render.ts` draws the tree as DOM: text as text, never markup,
+  sizes clamped, colors and type from the host's tokens. Images are shown from the worker's verified archive or from the
+  network's Bulletin gateway by CID, and from no other address. A button press and a text field change go back to the
+  worker as renderer actions. A tree deeper than 48 or larger than 2000 nodes is not drawn. A text field loses focus
+  when the worker sends a new tree.
+- **The room's text input.** A room whose footer is `TextInput` shows a composer. What the user types is kept in the
+  room and sent to the worker as a `MessagePosted` chat action from the peer `native`, as the iOS host names the user.
+- **Trust.** A worker runs on this host's origin, as a product opened by name does, and is trusted like one: it can
+  reach the page and the saved wallets. Its own requests follow the browser. Its notifications, permission requests and
+  navigation go through the same callbacks as an app's.
+- **Not served yet.** Pocket and input surfaces of a worker, worker demand from the core (a worker runs whenever its
+  wallet is signed in), bot registration, and the core's `beginOperation` lifetime hints.
+
 ### Differences from the native hosts
 
 These are accepted for a development host.
@@ -474,7 +508,11 @@ opens, so the light client reaches no chain. It checks that:
 - Chat does not run or store anything for the public development phrase;
 - Chat starts at sign-in while another screen is in front, with no chain connection, derives the same identity account
   and chat key as the core, has no on or off controls, and stops at sign-out;
-- Pocket is drawn by the host as the native two cards, and gives the digital dollar no amount.
+- Pocket is drawn by the host as the native two cards, and gives the digital dollar no amount;
+- a product worker, built from `browser/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs from its
+  manifest, creates a room, posts text and a custom card, redraws the card when its button is pressed, answers what the
+  user types, makes no request outside this host, shows in the inspector, stops at sign-out, is not seen by another
+  wallet, and starts again when its wallet signs back in.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -496,6 +534,9 @@ and layout on narrow screens.
   `protocol.ts` and `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC, `directory.ts` the chain
   reads, `store.ts` the saved conversations and `engine.ts` ties them together, and `diagnostics.ts` holds its events.
   `src/chat-screen.ts` draws the Chat screen and `src/chat-diagnostics-view.ts` the inspector's Chat tab.
+- `src/worker-manifest.ts`, `src/product-workers.ts`: finding a product's worker and running it. `src/product-chat.ts`:
+  the host side of TrUAPI Chat. `src/product-room-view.ts`, `src/product-render.ts`: a product room and the cards its
+  worker draws.
 - `src/archive/`: CAR, UnixFS and CID verification and unpacking.
 - `src/sandbox/`, `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The plugin
   bundles them as static files, which the build emits and the dev server also answers.
@@ -509,13 +550,14 @@ and layout on narrow screens.
 - Byte-range requests and non-UTF-8 HTML from a name's archive.
 - Versioned hosted releases of this host, which would let a product be tested against a chosen TrUAPI version.
 - Contacts, a Coinage engine, and Chat beyond one device and text. The Pocket screen has no digital dollar balance and
-  opens no card. The host's Chat is not offered to products: the host passes no `chat`, `contacts`, `pocket` or payment
-  callbacks, so the core answers those calls `Unsupported`. Chat has no phone pairing, history sync, multi-device
-  envelopes, attachments, reactions or calls. A contact picker needs `ContactsPlatform` (`contacts` and `pickContact`)
-  and a list of contacts the host owns. Live OS permission status is not provided either.
+  opens no card. The host passes no `contacts`, `pocket` or payment callbacks, so the core answers those calls
+  `Unsupported`. Chat has no phone pairing, history sync, multi-device envelopes, attachments, reactions or calls. A
+  contact picker needs `ContactsPlatform` (`contacts` and `pickContact`) and a list of contacts the host owns. Live OS
+  permission status is not provided either.
 - Several products in front at once. One product is in front, and the others run hidden behind it.
 - Keeping held products across a reload or a session change.
-- Worker products. Products run as `App`.
+- Worker products beyond chat. A product opened in the address bar runs as `App`; a worker runs only from the Chat
+  screen's **Workers**, and only for chat.
 - Preimage lookup. Every lookup is a miss. The core submits preimages to Bulletin itself.
 - Dialling an external wire debugger. `VITE_TRUAPI_DEBUGGER_URL` connects and receives no frames, because the signing
   core's product runtime does not install the debug tap the dial reads. The in-page inspector does not depend on it.

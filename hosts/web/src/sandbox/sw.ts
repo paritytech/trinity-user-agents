@@ -1,6 +1,11 @@
 import { archiveCacheName, completeKey, fileKey } from "./files.js";
 import { SANDBOX_DIR, parseMountScope } from "./mount.js";
-import { archiveRequestPath, responseFor } from "./serve.js";
+import {
+  WORKER_SHELL,
+  archiveRequestPath,
+  responseFor,
+  workerShellHtml,
+} from "./serve.js";
 
 /** The parts of a service worker scope this file uses; the host build has no worker types. */
 interface FetchEvent extends Event {
@@ -66,6 +71,14 @@ async function serve(
   if ((await cache.match(completeKey(url.origin))) === undefined)
     return notFound("This product's archive is not loaded. Open it again.");
   let path = archiveRequestPath(url.pathname, scope.pathname);
+  if (path === WORKER_SHELL) {
+    const html = workerShellHtml(url.searchParams.get("entry") ?? "");
+    if (html === null) return notFound("Not a worker entry module.");
+    return responseFor({
+      path: WORKER_SHELL,
+      bytes: new TextEncoder().encode(html),
+    });
+  }
   let stored =
     path === null ? undefined : await cache.match(fileKey(url.origin, path));
   if (stored === undefined && request.mode === "navigate") {

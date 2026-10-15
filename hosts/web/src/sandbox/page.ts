@@ -6,6 +6,7 @@ import {
   loadSite,
 } from "../archive/gateway.js";
 import { hostBase, parseMountScope } from "./mount.js";
+import { archivePath } from "./serve.js";
 import { storeArchive } from "./store.js";
 
 /** What the loader tells the host that embeds it, so the host can show why a product is not up. */
@@ -91,6 +92,9 @@ async function load(): Promise<void> {
   );
   if (!start.href.startsWith(new URL(scope, location.origin).href))
     throw new Error("The start path must stay inside the product's mount.");
+  const entry = params.get("entry") ?? "index.html";
+  if (archivePath(`/${entry}`) !== entry)
+    throw new Error("The entry is not a path inside the content.");
 
   report("loading", "Starting the product worker.");
   await startWorker(scope);
@@ -104,6 +108,9 @@ async function load(): Promise<void> {
       const { files } = await (kind === "car" ? loadArchive : loadSite)(
         cid,
         blocks,
+        ARCHIVE_LIMITS,
+        undefined,
+        entry,
       );
       report("loading", `Verified ${files.size} files.`);
       return files;

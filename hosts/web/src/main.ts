@@ -73,6 +73,9 @@ import {
 } from "./shell.js";
 import { drawPocket } from "./pocket-screen.js";
 import { ChatScreen } from "./chat-screen.js";
+import { ProductChat, productChatKey } from "./product-chat.js";
+import { ProductWorkers } from "./product-workers.js";
+import { resolveWorker } from "./worker-manifest.js";
 import { mountChatDiagnostics } from "./chat-diagnostics-view.js";
 import { ChatDiagnostics } from "./chat/diagnostics.js";
 import { openProduct, type OpenProduct } from "./product.js";
@@ -164,6 +167,24 @@ const chatBadge = document.querySelector<HTMLElement>(
   '#dock [data-destination="chat"] [data-badge]',
 );
 const chatDiagnostics = new ChatDiagnostics();
+/** Rooms that product workers keep, and the workers that keep them. */
+const productChat = new ProductChat(localStorage);
+const workerFrames = document.createElement("div");
+workerFrames.id = "worker-frames";
+workerFrames.hidden = true;
+document.body.append(workerFrames);
+const productWorkers = new ProductWorkers({
+  runtime: () => runtime,
+  resolve: resolveWorker,
+  container: workerFrames,
+  base: BASE,
+  storage: localStorage,
+  tap: (channel) =>
+    runtime === null
+      ? undefined
+      : createFrameTap(inspector, channel, runtime.coreWireSchemaHash),
+  log,
+});
 const chatScreen = new ChatScreen(
   element("chat-screen"),
   localStorage,
@@ -172,6 +193,15 @@ const chatScreen = new ChatScreen(
     if (chatBadge === null) return;
     chatBadge.hidden = pendingRequests === 0;
     chatBadge.textContent = String(pendingRequests);
+  },
+  {
+    chat: productChat,
+    workers: productWorkers,
+    provider: (productId) => productWorkers.provider(productId),
+    archiveImage: (productId, path) =>
+      productWorkers.archiveImage(productId, path),
+    gateway: activeNetwork.dotns.contentGateway,
+    log,
   },
 );
 const dockButtons = DESTINATIONS.map((destination) => ({
@@ -615,9 +645,13 @@ function syncChatSession(): void {
   const access = chainAccess;
   const wallet = activeWallet;
   if (lastAuthState.tag !== "Connected" || access === null || wallet === null) {
+    productWorkers.setSession(null);
+    productChat.setScope(null);
     chatScreen.setSession(null);
     return;
   }
+  productChat.setScope(productChatKey(activeNetwork.id, wallet.id));
+  productWorkers.setSession({ walletId: wallet.id, network: activeNetwork });
   const { identityAccountId, chatPublicKey, fullUsername, liteUsername } =
     lastAuthState.value;
   chatScreen.setSession({
@@ -1597,6 +1631,7 @@ async function boot(): Promise<void> {
       askedDomains = [...new Set([...askedDomains, ...domains])];
     },
     onPermissionDecided: refreshPermissionsSoon,
+    chat: productChat.platform,
   });
   const worker = new Worker(new URL("./core-worker.ts", import.meta.url), {
     type: "module",
@@ -1616,6 +1651,7 @@ async function boot(): Promise<void> {
   });
   coreStatus.textContent = `Core ready on ${activeNetwork.displayName} · wire schema ${runtime.coreWireSchemaHash?.slice(0, 12) ?? "unknown"}`;
   log("core ready");
+  productWorkers.resume();
   renderVersions(runtime.coreWireSchemaHash);
   if (runtime.coreWireSchemaHash !== TRUAPI_WIRE_SCHEMA_HASH)
     log(

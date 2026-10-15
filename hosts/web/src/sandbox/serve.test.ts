@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  workerShellHtml,
   archivePath,
   archiveRequestPath,
   contentTypeOf,
@@ -77,5 +78,33 @@ describe("archiveRequestPath", () => {
   test("never resolves a path that climbs out of the archive", () => {
     expect(archiveRequestPath(`${scope}../../secret`, scope)).toBeNull();
     expect(archiveRequestPath("/a/../b", scope)).toBeNull();
+  });
+});
+
+describe("workerShellHtml", () => {
+  test("loads the entry module relative to the mount, and only that", () => {
+    const html = workerShellHtml("dist/main.mjs");
+    expect(html).toContain(
+      '<script type="module" src="./dist/main.mjs"></script>',
+    );
+    expect(html?.match(/<script/g)?.length).toBe(1);
+  });
+
+  test("encodes each segment, so a name cannot leave the attribute", () => {
+    expect(workerShellHtml('a"b.js')).toContain('src="./a%22b.js"');
+    expect(workerShellHtml("a b/c<d.js")).toContain('src="./a%20b/c%3Cd.js"');
+  });
+
+  test("refuses what is not a module path inside the archive", () => {
+    for (const entry of [
+      "",
+      "../x.js",
+      "/x.js",
+      "x/../../y.js",
+      "index.html",
+      "x.js?y",
+      "a\\b.js",
+    ])
+      expect(workerShellHtml(entry)).toBeNull();
   });
 });

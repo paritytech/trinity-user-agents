@@ -38,6 +38,11 @@ export interface DotnsEndpoints {
   /** Slot of the `contenthash` mapping in that contract. */
   contenthashSlot: number;
   /**
+   * Slot of the `text` mapping in that contract, `node => key => value`,
+   * which holds a name's text records such as `executable`.
+   */
+  textSlot: number;
+  /**
    * The Bulletin IPFS gateway base. The host appends the `/ipfs/<cid>/` path
    * form to it, so this is a gateway origin (with any deployment path), not a
    * content URL. On Paseo Next v2 that is dotkit's `ipfs_gateway`; on
@@ -83,6 +88,7 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
       assetHubRpc: "wss://paseo-asset-hub-next-rpc.polkadot.io",
       contentResolver: "7f74d7cd50f5a834270e2ad395a01b01891ab37d",
       contenthashSlot: 0,
+      textSlot: 1,
       contentGateway: "https://paseo-bulletin-next-ipfs.polkadot.io",
     },
   },
@@ -96,6 +102,7 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
       assetHubRpc: "wss://previewnet.substrate.dev/asset-hub",
       contentResolver: "7f74d7cd50f5a834270e2ad395a01b01891ab37d",
       contenthashSlot: 0,
+      textSlot: 1,
       contentGateway: "https://previewnet.substrate.dev",
     },
   },

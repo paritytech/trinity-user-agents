@@ -42,6 +42,9 @@ const CHILD_STORAGE_PREFIX = new TextEncoder().encode(
 /** A contenthash is tens of bytes; anything larger is not one. */
 const MAX_CONTENTHASH_BYTES = 1024;
 
+/** An executable manifest is about 200 bytes; a text record past this is not read. */
+const MAX_TEXT_RECORD_BYTES = 4096;
+
 /** `0xe3 0x01`: EIP-1577 contenthash of an IPFS content identifier. */
 const IPFS_CONTENTHASH_TAG = [0xe3, 0x01];
 
@@ -222,6 +225,7 @@ async function readSolidityBytes(
   rpc: RpcCall,
   childKey: Uint8Array,
   slotKey: Uint8Array,
+  maxBytes = MAX_CONTENTHASH_BYTES,
 ): Promise<Uint8Array | null> {
   const slot = await childWord(rpc, childKey, slotKey);
   if (slot === null) return null;
@@ -231,7 +235,7 @@ async function readSolidityBytes(
     return length === 0 ? null : slot.subarray(0, length);
   }
   const length = (bigEndian(slot) - 1) / 2;
-  if (length <= 0 || length > MAX_CONTENTHASH_BYTES) return null;
+  if (length <= 0 || length > maxBytes) return null;
 
   const out = new Uint8Array(length);
   let base: Uint8Array = keccak_256(slotKey);
@@ -263,6 +267,41 @@ export async function resolveContentCid(
     slotKey,
   );
   return record === null ? null : contenthashToCid(record);
+}
+
+/**
+ * A DotNS name's text record `key`, read from Asset Hub through `rpc`, such as
+ * the `executable` manifest a `worker.<name>` publishes. The record sits in
+ * the resolver's `text` mapping, `node => key => value`, so its slot is
+ * `keccak256(key ++ keccak256(namehash ++ uint256(textSlot)))`. Null when the
+ * name has no such record, or it is not UTF-8.
+ */
+export async function resolveTextRecord(
+  name: string,
+  key: string,
+  rpc: RpcCall,
+  dotns: DotnsEndpoints = DEFAULT_NETWORK_CONFIG.dotns,
+): Promise<string | null> {
+  const trieId = await resolverTrieId(rpc, dotns.contentResolver);
+  if (trieId === null) return null;
+  const slotKey = keccak_256(
+    concat(
+      new TextEncoder().encode(key),
+      mappingSlot(namehash(name), dotns.textSlot),
+    ),
+  );
+  const value = await readSolidityBytes(
+    rpc,
+    concat(CHILD_STORAGE_PREFIX, trieId),
+    slotKey,
+    MAX_TEXT_RECORD_BYTES,
+  );
+  if (value === null) return null;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(value);
+  } catch {
+    return null;
+  }
 }
 
 /**

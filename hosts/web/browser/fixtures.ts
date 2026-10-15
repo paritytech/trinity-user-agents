@@ -161,26 +161,36 @@ export function publishApp(files: Record<string, string>): PublishedApp {
   };
 }
 
-/**
- * Asset Hub as the host reads a name: the resolver's child trie id, and one
- * Solidity `bytes` value under `keccak256(namehash ++ slot)`, spread over words
- * from `keccak256(slotKey)` on. Nothing else is answered.
- */
-function contenthashStore(record: string, contenthash: Uint8Array) {
-  const trieId = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
-  const store = new Map<string, Uint8Array>();
-  const put = (key: Uint8Array, value: Uint8Array) =>
-    store.set(bytesToHex(blake2b(key, { dkLen: 32 })), value);
-  const slotKey = keccak_256(
-    Uint8Array.from([...namehash(record), ...new Uint8Array(32)]),
-  );
+/** One dotNS record the stand-in Asset Hub answers for. */
+export interface NameRecord {
+  /** The full name, such as `app.smoke.paseo`. */
+  record: string;
+  /** Content the record points at. */
+  app?: PublishedApp;
+  /** Text records, by key. */
+  text?: Record<string, string>;
+}
+
+/** Store a Solidity `bytes` value under `slotKey`, inline or spread over words. */
+function putBytes(
+  put: (key: Uint8Array, value: Uint8Array) => void,
+  slotKey: Uint8Array,
+  value: Uint8Array,
+): void {
+  if (value.length < 32) {
+    const word = new Uint8Array(32);
+    word.set(value);
+    word[31] = value.length * 2;
+    put(slotKey, word);
+    return;
+  }
   const lengthWord = new Uint8Array(32);
-  new DataView(lengthWord.buffer).setUint32(28, contenthash.length * 2 + 1);
+  new DataView(lengthWord.buffer).setUint32(28, value.length * 2 + 1);
   put(slotKey, lengthWord);
   let base: Uint8Array = keccak_256(slotKey);
-  for (let at = 0; at < contenthash.length; at += 32) {
+  for (let at = 0; at < value.length; at += 32) {
     const word = new Uint8Array(32);
-    word.set(contenthash.subarray(at, at + 32));
+    word.set(value.subarray(at, at + 32));
     put(base, word);
     base = Uint8Array.from(base);
     for (let i = 31; i >= 0; i -= 1) {
@@ -190,6 +200,40 @@ function contenthashStore(record: string, contenthash: Uint8Array) {
         break;
       }
     }
+  }
+}
+
+/** `keccak256(key ++ uint256(slot))`, a Solidity mapping slot. */
+function mappingSlot(key: Uint8Array, slot: number): Uint8Array {
+  const word = new Uint8Array(32);
+  new DataView(word.buffer).setUint32(28, slot);
+  return keccak_256(Uint8Array.from([...key, ...word]));
+}
+
+/**
+ * Asset Hub as the host reads names: the resolver's child trie id, and in it
+ * each record's `contenthash` (slot 0, `node => bytes`) and text records
+ * (slot 1, `node => key => string`). Nothing else is answered.
+ */
+function recordStore(records: NameRecord[]) {
+  const trieId = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+  const store = new Map<string, Uint8Array>();
+  const put = (key: Uint8Array, value: Uint8Array) =>
+    store.set(bytesToHex(blake2b(key, { dkLen: 32 })), value);
+  for (const { record, app, text } of records) {
+    const node = namehash(record);
+    if (app) putBytes(put, mappingSlot(node, 0), app.contenthash);
+    for (const [key, value] of Object.entries(text ?? {}))
+      putBytes(
+        put,
+        keccak_256(
+          Uint8Array.from([
+            ...new TextEncoder().encode(key),
+            ...mappingSlot(node, 1),
+          ]),
+        ),
+        new TextEncoder().encode(value),
+      );
   }
   const accountKey =
     "0x735f040a5d490f1107ad9c56f5ca00d2ae37ff0591fdbbcd9c2406df7147a9dc" +
@@ -216,12 +260,21 @@ function contenthashStore(record: string, contenthash: Uint8Array) {
  * Asset Hub's JSON-RPC socket, which holds `app.<name>`'s record, and the
  * Bulletin gateway, which serves the archive. Nothing leaves the machine.
  */
-export async function serveName(
+export function serveName(
   context: BrowserContext,
   name: string,
   app: PublishedApp,
 ): Promise<void> {
-  const read = contenthashStore(`app.${name}`, app.contenthash);
+  return serveNames(context, [{ record: `app.${name}`, app }]);
+}
+
+/** As {@link serveName}, for any set of records. */
+export async function serveNames(
+  context: BrowserContext,
+  records: NameRecord[],
+): Promise<void> {
+  const read = recordStore(records);
+  const apps = records.flatMap(({ app }) => (app ? [app] : []));
   const cors = {
     "access-control-allow-origin": "*",
     "access-control-allow-headers": "*",
@@ -255,7 +308,9 @@ export async function serveName(
     const url = new URL(request.url());
     const cid = url.pathname.split("/").filter(Boolean)[1] ?? "";
     if (url.searchParams.get("format") === "raw") {
-      const block = app.block(cid);
+      const block = apps
+        .map((app) => app.block(cid))
+        .find((found) => found !== undefined);
       return block === undefined
         ? route.fulfill({ status: 404, headers: cors })
         : route.fulfill({
@@ -264,7 +319,8 @@ export async function serveName(
             body: Buffer.from(block),
           });
     }
-    return cid === app.contentCid
+    const app = apps.find((candidate) => candidate.contentCid === cid);
+    return app !== undefined
       ? route.fulfill({
           status: 206,
           headers: { ...cors, "content-type": "application/octet-stream" },
@@ -272,6 +328,22 @@ export async function serveName(
         })
       : route.fulfill({ status: 404, headers: cors });
   });
+}
+
+/**
+ * A worker that chats, built from `browser/chat-worker.ts` into the one
+ * module a worker archive holds. It reaches the host only through TrUAPI.
+ */
+export async function buildChatWorker(): Promise<string> {
+  const built = await Bun.build({
+    entrypoints: [fileURLToPath(new URL("./chat-worker.ts", import.meta.url))],
+    format: "esm",
+    target: "browser",
+    minify: false,
+  });
+  if (!built.success)
+    throw new Error(built.logs.map((entry) => String(entry)).join("\n"));
+  return built.outputs[0].text();
 }
 
 /** A product served by URL, on loopback and on a port of its own. */
