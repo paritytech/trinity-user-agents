@@ -38,6 +38,9 @@ type HexString = `0x${string}`;
 const IN_AMOUNT = 1_000n;
 const OUT_AMOUNT = 500n;
 const CANCEL_AMOUNT = 300n;
+const OFFER_AMOUNT = 250n;
+const LATE_AMOUNT = 200n;
+const CANCEL_FEE = 3n;
 
 function randomId(): HexString {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -295,6 +298,87 @@ export async function runProviderStart(
       throw new Error(`ended as ${stringify(last)}`);
     }
     return "the user's cancel reached the provider, which ended the session";
+  });
+
+  await check("provider_cancel_offer_accepted", async () => {
+    const intent = await requestFunding(client, "In", OFFER_AMOUNT);
+    await served.next(assignedTo(intent), `the session ${intent}`);
+    await report(client, intent, {
+      tag: "PaymentReceived",
+      value: { finalized: true },
+    });
+    await served.next(
+      (item) => item.tag === "Cancel" && item.value.intent === intent,
+      `a cancel of ${intent}`,
+    );
+    await report(client, intent, {
+      tag: "CancelOffer",
+      value: { fee: CANCEL_FEE, refund: OFFER_AMOUNT - CANCEL_FEE },
+    });
+    await served.next(
+      (item) => item.tag === "CancelAccepted" && item.value.intent === intent,
+      `the user accepting the offer on ${intent}`,
+    );
+    await report(client, intent, {
+      tag: "Failed",
+      value: { reason: { tag: "Cancelled" } },
+    });
+    const last = await lastStatus(client, intent);
+    if (last?.tag !== "Failed" || last.value.reason.tag !== "Cancelled") {
+      throw new Error(`ended as ${stringify(last)}`);
+    }
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "cancel" &&
+        line.intent === intent &&
+        line.outcome === "Requested",
+      `the host's cancel of ${intent}`,
+    );
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "cancel-confirm" &&
+        line.intent === intent &&
+        line.answer === "Accepted",
+      `the host accepting the offer on ${intent}`,
+    );
+    return "after the payment arrived, the user accepted the provider's offer and it settled the cancel";
+  });
+
+  await check("provider_cancel_too_late", async () => {
+    const intent = await requestFunding(client, "In", LATE_AMOUNT);
+    await served.next(assignedTo(intent), `the session ${intent}`);
+    const topUpId = randomId();
+    const toppedUp = await client.payment.topUp({
+      amount: LATE_AMOUNT,
+      source: {
+        tag: "ProductAccount",
+        value: { derivationIndex: { tag: "Index", value: 0 } },
+      },
+      id: topUpId,
+    });
+    if (toppedUp.isErr()) {
+      throw new Error(`payment.topUp failed: ${stringify(toppedUp.error)}`);
+    }
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "cancel" &&
+        line.intent === intent &&
+        line.outcome === "TooLate",
+      `the host's cancel of ${intent} refused as too late`,
+    );
+    await report(client, intent, {
+      tag: "Crediting",
+      value: { topUpId, amount: LATE_AMOUNT },
+    });
+    await report(client, intent, { tag: "Delivered" });
+    const last = await lastStatus(client, intent);
+    if (last?.tag !== "Delivered" || last.value.credited !== LATE_AMOUNT) {
+      throw new Error(`ended as ${stringify(last)}`);
+    }
+    return "a cancel after the credit started was too late, and the session was delivered";
   });
 
   served.close();

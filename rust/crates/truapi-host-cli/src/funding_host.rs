@@ -10,7 +10,11 @@
 //!
 //! `provide` and `provide-cancel` instead hand the session to the product that
 //! asked, so a provider worker can serve its own request; `provide-cancel`
-//! then cancels it, as a user would. Top-ups and payment requests that worker
+//! then cancels it, as a user would. `provide-cancel-moved` cancels once money
+//! moved for the session and accepts the offer the provider answers with, so
+//! a battery can drive a negotiated cancel; each cancel's outcome and each
+//! answer to an offer is written to the transcript. Top-ups and payment
+//! requests that worker
 //! starts are accepted and complete in full, recorded in the ledger named by
 //! `TRUAPI_FUNDING_LEDGER` so their statuses outlive a restart.
 //!
@@ -31,7 +35,7 @@ use std::{
 use futures::stream::{self, BoxStream, StreamExt};
 use truapi::{
 	SigningHostRuntime, current_unix_millis,
-	host_logic::funding::FundingStage,
+	host_logic::funding::{FundingCancel, FundingSession, FundingStage},
 	latest::{
 		FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget, GenericError,
 		HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
@@ -66,6 +70,9 @@ enum Outcome {
 	Provide,
 	/// As `Provide`, then the user cancels.
 	ProvideThenCancel,
+	/// As `Provide`, then once money moved the user cancels and accepts the
+	/// provider's offer.
+	ProvideThenCancelOnceMoved,
 }
 
 /// Parse `deliver:900,release:500,fail,dismiss`.
@@ -79,6 +86,7 @@ fn parse_outcomes(spec: &str) -> VecDeque<Outcome> {
 			None if entry == "dismiss" => Some(Outcome::Dismiss),
 			None if entry == "provide" => Some(Outcome::Provide),
 			None if entry == "provide-cancel" => Some(Outcome::ProvideThenCancel),
+			None if entry == "provide-cancel-moved" => Some(Outcome::ProvideThenCancelOnceMoved),
 			_ => None,
 		})
 		.collect()
@@ -87,7 +95,7 @@ fn parse_outcomes(spec: &str) -> VecDeque<Outcome> {
 /// A funding overlay and provider that follow a script.
 pub struct CliFundingHost {
 	outcomes: Mutex<VecDeque<Outcome>>,
-	transcript: Transcript,
+	transcript: Arc<Transcript>,
 	runtime: Weak<SigningHostRuntime>,
 }
 
@@ -100,7 +108,7 @@ impl CliFundingHost {
 		};
 		runtime.set_funding_platform(Arc::new(Self {
 			outcomes: Mutex::new(parse_outcomes(&spec)),
-			transcript: Transcript::from_env("TRUAPI_FUNDING_LOG", "funding"),
+			transcript: Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding")),
 			runtime: Arc::downgrade(runtime),
 		}));
 		if let Some(ledger) = std::env::var_os("TRUAPI_FUNDING_LEDGER").map(PathBuf::from) {
@@ -110,30 +118,34 @@ impl CliFundingHost {
 		}
 	}
 
-	/// Hand session `intent` to the product that asked for it, and cancel it
-	/// shortly after when `cancel` is set.
+	/// Hand session `intent` to the product that asked for it, then cancel
+	/// it as `outcome` says.
 	async fn provide(
 		&self,
 		runtime: Weak<SigningHostRuntime>,
 		product: Option<&ProductContext>,
 		intent: String,
-		cancel: bool,
+		outcome: Outcome,
 	) -> Result<FundingPresentOutcome, GenericError> {
 		let (Some(runtime), Some(product)) = (runtime.upgrade(), product) else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
 		runtime.select_funding_provider(&intent, &product.product_id).await?;
-		if cancel {
-			let runtime = Arc::downgrade(&runtime);
-			tokio::spawn(async move {
-				tokio::time::sleep(SETTLE_AFTER).await;
-				let Some(runtime) = runtime.upgrade() else {
-					return;
-				};
-				if let Err(error) = runtime.cancel_funding(&intent).await {
-					tracing::warn!(%intent, reason = %error.reason, "cancelling a scripted funding session failed");
-				}
-			});
+		let runtime = Arc::downgrade(&runtime);
+		let transcript = self.transcript.clone();
+		match outcome {
+			Outcome::ProvideThenCancel => {
+				tokio::spawn(async move {
+					tokio::time::sleep(SETTLE_AFTER).await;
+					cancel(&runtime, &transcript, &intent).await;
+				});
+			},
+			Outcome::ProvideThenCancelOnceMoved => {
+				tokio::spawn(async move {
+					cancel_once_moved(&runtime, &transcript, &intent).await;
+				});
+			},
+			_ => {},
 		}
 		Ok(FundingPresentOutcome::Started)
 	}
@@ -144,6 +156,85 @@ impl CliFundingHost {
 			.unwrap_or_else(|poisoned| poisoned.into_inner())
 			.pop_front()
 			.unwrap_or(Outcome::Dismiss)
+	}
+}
+
+/// How often a scripted cancel looks at its session again.
+const POLL_EVERY: Duration = Duration::from_millis(100);
+/// How long a scripted cancel waits for its session to reach the next point.
+const POLL_FOR: Duration = Duration::from_secs(30);
+
+/// Cancel session `intent` as the user would, recording what that did.
+async fn cancel(runtime: &Weak<SigningHostRuntime>, transcript: &Transcript, intent: &str) {
+	let Some(runtime) = runtime.upgrade() else {
+		return;
+	};
+	match runtime.cancel_funding(intent).await {
+		Ok(outcome) => transcript.record(serde_json::json!({
+			"kind": "cancel",
+			"intent": intent,
+			"outcome": format!("{outcome:?}"),
+		})),
+		Err(error) => {
+			tracing::warn!(%intent, reason = %error.reason, "cancelling a scripted funding session failed")
+		},
+	}
+}
+
+/// Wait until money moved for session `intent`, cancel it, and accept the
+/// offer its provider answers with, recording the cancel and the answer.
+async fn cancel_once_moved(
+	runtime: &Weak<SigningHostRuntime>,
+	transcript: &Transcript,
+	intent: &str,
+) {
+	let moved = |session: &FundingSession| session.money_moved() || session.is_terminal();
+	if !wait_for(runtime, intent, moved).await {
+		return;
+	}
+	cancel(runtime, transcript, intent).await;
+	let offered = |session: &FundingSession| {
+		matches!(session.cancel, Some(FundingCancel::Offered { .. })) || session.is_terminal()
+	};
+	if !wait_for(runtime, intent, offered).await {
+		return;
+	}
+	let Some(runtime) = runtime.upgrade() else {
+		return;
+	};
+	match runtime.confirm_funding_cancel(intent, true).await {
+		Ok(answer) => transcript.record(serde_json::json!({
+			"kind": "cancel-confirm",
+			"intent": intent,
+			"answer": format!("{answer:?}"),
+		})),
+		Err(error) => {
+			tracing::warn!(%intent, reason = %error.reason, "accepting a scripted cancel offer failed")
+		},
+	}
+}
+
+/// Wait until session `intent` meets `reached`, up to [`POLL_FOR`]. Returns
+/// whether it did.
+async fn wait_for(
+	runtime: &Weak<SigningHostRuntime>,
+	intent: &str,
+	reached: impl Fn(&FundingSession) -> bool,
+) -> bool {
+	let deadline = tokio::time::Instant::now() + POLL_FOR;
+	loop {
+		let Some(live) = runtime.upgrade() else {
+			return false;
+		};
+		if live.funding_session(intent).is_some_and(|session| reached(&session)) {
+			return true;
+		}
+		drop(live);
+		if tokio::time::Instant::now() >= deadline {
+			tracing::warn!(%intent, "a scripted cancel gave up waiting on its session");
+			return false;
+		}
+		tokio::time::sleep(POLL_EVERY).await;
 	}
 }
 
@@ -160,7 +251,10 @@ fn settled_stage(outcome: Outcome) -> Option<FundingStage> {
 			},
 			settled_at_ms,
 		}),
-		Outcome::Dismiss | Outcome::Provide | Outcome::ProvideThenCancel => None,
+		Outcome::Dismiss |
+		Outcome::Provide |
+		Outcome::ProvideThenCancel |
+		Outcome::ProvideThenCancelOnceMoved => None,
 	}
 }
 
@@ -185,10 +279,11 @@ impl FundingPlatform for CliFundingHost {
 		}));
 		let runtime = self.runtime.clone();
 		let intent = session.intent;
-		if matches!(outcome, Outcome::Provide | Outcome::ProvideThenCancel) {
-			return self
-				.provide(runtime, product, intent, outcome == Outcome::ProvideThenCancel)
-				.await;
+		if matches!(
+			outcome,
+			Outcome::Provide | Outcome::ProvideThenCancel | Outcome::ProvideThenCancelOnceMoved
+		) {
+			return self.provide(runtime, product, intent, outcome).await;
 		}
 		let Some(stage) = settled_stage(outcome) else {
 			return Ok(FundingPresentOutcome::Dismissed);

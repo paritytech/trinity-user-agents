@@ -65,6 +65,25 @@ pub enum FundingUpdate {
 		/// Why it ended.
 		reason: FundingFailure,
 	},
+	/// The provider will not cancel a session the user asked to cancel once
+	/// money moved. The session carries on. Outside the order of steps.
+	CancelRefused {
+		/// Why, shown to the user.
+		reason: String,
+	},
+	/// The provider can cancel a session the user asked to cancel once money
+	/// moved, on these terms. The user accepts or declines in the host, and
+	/// the provider hears which on its serve stream. Outside the order of
+	/// steps.
+	CancelOffer {
+		/// What the provider keeps, in the user's payment balance units.
+		fee: u128,
+		/// What the user gets back, in the user's payment balance units.
+		refund: u128,
+		/// When the offer lapses, in Unix milliseconds. A lapsed offer is
+		/// declined.
+		expires_at: Option<u64>,
+	},
 }
 
 /// Item of [`crate::api::FundingProvider::serve_subscribe`].
@@ -76,10 +95,23 @@ pub enum HostFundingServeSubscribeItem {
 		/// The session.
 		session: FundingAssignment,
 	},
-	/// The user asked to cancel a session. The provider reports `Failed`
-	/// with `Cancelled` if it can still stop.
+	/// The user asked to cancel a session. Before money moved the provider
+	/// reports `Failed` with `Cancelled` if it can still stop. After, it
+	/// answers with `CancelOffer` or `CancelRefused`.
 	Cancel {
 		/// Session to cancel.
+		intent: String,
+	},
+	/// The user accepted the provider's `CancelOffer`. The provider settles
+	/// the cancel: it refunds the user and ends the session.
+	CancelAccepted {
+		/// The session.
+		intent: String,
+	},
+	/// The user declined the provider's `CancelOffer`, or it lapsed. The
+	/// session carries on.
+	CancelDeclined {
+		/// The session.
 		intent: String,
 	},
 }
