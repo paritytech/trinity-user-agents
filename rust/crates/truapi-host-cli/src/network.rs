@@ -24,13 +24,39 @@ pub enum Network {
 
 /// Env var overriding the identity backend base URL for every command. The URL
 /// includes `/api/v1`, for instance a local backend at
-/// `http://localhost:8080/api/v1`. Chain endpoints stay on the preset.
+/// `http://localhost:8080/api/v1`.
 pub const IDENTITY_BACKEND_BASE_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_BASE";
+
+/// Env vars overriding one chain's WebSocket URL, for a fork of the preset's
+/// network. The genesis hashes stay the preset's, which a fork keeps.
+pub const PEOPLE_WS_ENV: &str = "HOST_CLI_PEOPLE_WS";
+pub const ASSET_HUB_WS_ENV: &str = "HOST_CLI_ASSET_HUB_WS";
+pub const BULLETIN_WS_ENV: &str = "HOST_CLI_BULLETIN_WS";
+
+/// Chain URL overrides; `None` keeps the preset's URL.
+#[derive(Debug, Default)]
+struct ChainOverrides {
+	people_ws: Option<String>,
+	asset_hub_ws: Option<String>,
+	bulletin_ws: Option<String>,
+}
+
+impl ChainOverrides {
+	fn from_env() -> Self {
+		Self {
+			people_ws: std::env::var(PEOPLE_WS_ENV).ok(),
+			asset_hub_ws: std::env::var(ASSET_HUB_WS_ENV).ok(),
+			bulletin_ws: std::env::var(BULLETIN_WS_ENV).ok(),
+		}
+	}
+}
 
 impl Network {
 	/// Preset resolved with any environment overrides applied.
 	pub fn config(self) -> NetworkConfig {
-		apply_backend_override(self.preset(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok())
+		let config =
+			apply_backend_override(self.preset(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok());
+		apply_chain_overrides(config, ChainOverrides::from_env())
 	}
 
 	/// The unmodified preset values.
@@ -74,6 +100,43 @@ fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -> Ne
 			config.identity_backend_base = Box::leak(trimmed.to_string().into_boxed_str());
 		}
 	}
+	config
+}
+
+/// Points each overridden role at its new URL, in both the preset field and the
+/// genesis-keyed routing table, so the two cannot disagree. Blank values keep
+/// the preset. Overridden values are leaked like the backend override.
+fn apply_chain_overrides(mut config: NetworkConfig, overrides: ChainOverrides) -> NetworkConfig {
+	let leak = |value: Option<String>| {
+		value
+			.map(|url| url.trim().to_string())
+			.filter(|url| !url.is_empty())
+			.map(|url| &*Box::leak(url.into_boxed_str()))
+	};
+	let routes = [
+		(leak(overrides.people_ws), config.people_genesis),
+		(leak(overrides.asset_hub_ws), config.asset_hub_genesis),
+		(leak(overrides.bulletin_ws), config.bulletin_genesis),
+	];
+	if routes.iter().all(|(url, _)| url.is_none()) {
+		return config;
+	}
+	let [(people, _), (asset_hub, _), (bulletin, _)] = routes;
+	config.people_ws = people.unwrap_or(config.people_ws);
+	config.asset_hub_ws = asset_hub.unwrap_or(config.asset_hub_ws);
+	config.bulletin_ws = bulletin.unwrap_or(config.bulletin_ws);
+	let endpoints: Vec<ChainEndpoint> = config
+		.live_chain_endpoints
+		.iter()
+		.map(|endpoint| {
+			let ws = routes
+				.iter()
+				.find_map(|(url, genesis)| (*genesis == endpoint.genesis).then_some(*url).flatten())
+				.unwrap_or(endpoint.ws);
+			ChainEndpoint { ws, ..*endpoint }
+		})
+		.collect();
+	config.live_chain_endpoints = Box::leak(endpoints.into_boxed_slice());
 	config
 }
 
@@ -552,5 +615,39 @@ mod tests {
 			preset.identity_backend_base,
 			"a blank override keeps the preset"
 		);
+	}
+
+	#[test]
+	fn chain_overrides_move_the_field_and_the_route_together() {
+		let preset = Network::Previewnet.preset();
+		let overridden = apply_chain_overrides(
+			preset,
+			ChainOverrides {
+				people_ws: Some("ws://127.0.0.1:10010".to_string()),
+				asset_hub_ws: Some(" ".to_string()),
+				bulletin_ws: None,
+			},
+		);
+
+		assert_eq!(overridden.people_ws, "ws://127.0.0.1:10010");
+		assert_eq!(
+			overridden.asset_hub_ws, preset.asset_hub_ws,
+			"a blank override keeps the preset"
+		);
+		assert_eq!(overridden.bulletin_ws, preset.bulletin_ws);
+		assert_eq!(overridden.people_genesis, preset.people_genesis, "a fork keeps the genesis");
+		for endpoint in overridden.live_chain_endpoints {
+			let expected = if endpoint.genesis == preset.people_genesis {
+				"ws://127.0.0.1:10010"
+			} else {
+				preset
+					.live_chain_endpoints
+					.iter()
+					.find(|original| original.genesis == endpoint.genesis)
+					.expect("every route survives the override")
+					.ws
+			};
+			assert_eq!(endpoint.ws, expected);
+		}
 	}
 }
