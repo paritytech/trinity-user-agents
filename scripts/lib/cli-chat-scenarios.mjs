@@ -119,6 +119,12 @@ export const CLI_CHAT_SCENARIOS = Object.freeze([
       "Read aloud appears only with read_aloud, speaks RichText as plain text, and stops on leaving the room",
     mode: "host",
   },
+  {
+    id: "S70",
+    title:
+      "a notification wake delivers Woken, refreshes the preview and shows the product's notification unless the room is muted",
+    mode: "host",
+  },
 ]);
 
 function cell(value) {

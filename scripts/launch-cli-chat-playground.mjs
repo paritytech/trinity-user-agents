@@ -1074,6 +1074,48 @@ async function drive(chat) {
     return `${shot}; spoke ${spoken.length} characters of plain text; stopped on leaving`;
   });
 
+  // S70: the page's Wake stands in for a notification on watch `dev`.
+  await scenario(rows, byId.S70, async () => {
+    await chat.room("host");
+    const shown = () =>
+      page.$$eval('[data-notification][data-room="host"]', (nodes) =>
+        nodes.filter((node) => node.innerText.includes("woken")).length,
+      );
+    const wake = async () => {
+      const since = chat.log.length;
+      await page.evaluate(() => delete document.body.dataset.wakeOutcome);
+      await page.click("#wake");
+      const outcome = await chat.until(
+        () => page.evaluate(() => document.body.dataset.wakeOutcome),
+        "the wake outcome",
+      );
+      if (outcome !== "Held") throw new Error(`the wake answered ${outcome}`);
+      await chat.logLine(
+        (line) => line.via === "room_events" && line.room === "host" && line.kind === "Woken" && line.data.watchId === "dev",
+        since,
+      );
+      return since;
+    };
+    const before = await shown();
+    await wake();
+    await chat.until(
+      async () => (await page.$('[data-room-id="host"] [data-preview="Woken by dev"]')) !== null,
+      "the woken preview",
+    );
+    await chat.until(async () => (await shown()) === before + 1, "the woken notification");
+    const woken = await chat.shot("s70-woken.png");
+    await page.click("#mute");
+    await page.click('[data-item="mute-1-hour"]');
+    await chat.until(async () => (await page.$('[data-room-id="host"][data-muted="true"]')) !== null, "the muted room");
+    await wake();
+    await chat.lastProductText("woken");
+    await sleep(1_000);
+    if ((await shown()) !== before + 1) throw new Error("a woken notification into the muted room was shown");
+    await page.click("#mute");
+    await chat.command("host", "/preview none");
+    return `${woken}; Woken by dev, one notification, none while muted`;
+  });
+
   return rows;
 }
 
