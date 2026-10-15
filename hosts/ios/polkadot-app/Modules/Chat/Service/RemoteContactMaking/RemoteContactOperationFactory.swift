@@ -39,15 +39,28 @@ extension RemoteContactOperationFactory: RemoteContactOperationMaking {
             .searchUsernameWrapper(for: UsernameRequestModel(prefix: query))
             .asyncExecute()
 
-        let accountIds = try models
+        let usernamesByAccountId = try models
             .filter { $0.status != .failed }
-            .map { try $0.accountId.toAccountId() }
-            .distinct()
+            .reduce(into: [AccountId: Set<Data>]()) { usernamesByAccountId, model in
+                let accountId = try model.accountId.toAccountId()
+                usernamesByAccountId[accountId, default: []].insert(Data(model.username.value.utf8))
+            }
 
-        let accountNames = try await dotnsGatewayOperationMaker.accountNames(for: accountIds, blockHash: nil)
+        let accountNames = try await dotnsGatewayOperationMaker.accountNames(
+            for: Array(usernamesByAccountId.keys),
+            blockHash: nil
+        )
 
         // we could have broken records during mapping here
-        return accountNames.compactMap { try? Chat.RemoteContact(accountName: $0) }
+        return accountNames
+            .filter { accountName in
+                guard let usernames = usernamesByAccountId[accountName.accountId] else {
+                    return false
+                }
+
+                return accountName.record.hasAnyUsername(in: usernames)
+            }
+            .compactMap { try? Chat.RemoteContact(accountName: $0) }
     }
 
     func fetch(by accountId: AccountId) async throws -> Chat.RemoteContact? {
@@ -58,5 +71,12 @@ extension RemoteContactOperationFactory: RemoteContactOperationMaking {
         }
 
         return try Chat.RemoteContact(accountName: accountName)
+    }
+}
+
+private extension DotnsGatewayPallet.AccountNameRecord {
+    func hasAnyUsername(in usernames: Set<Data>) -> Bool {
+        let onChainUsernames = [lite?.label, full?.label].compactMap { $0 }
+        return onChainUsernames.contains { usernames.contains($0) }
     }
 }
