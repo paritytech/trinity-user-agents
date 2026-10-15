@@ -195,7 +195,15 @@ fn expand_guest(item_trait: &ItemTrait, bindings: &[Binding]) -> TokenStream2 {
 	let imports = bindings.iter().map(|binding| {
 		let name = &binding.import_name;
 		let method = &binding.method.sig.ident;
+		let shape = match binding.shape {
+			Shape::Request => "crate::guest::RawCall",
+			Shape::Subscription => "crate::guest::RawSubscription",
+		};
+		let doc = format!(
+			"Import `{name}`: start the call with an encoded versioned request. Give it to [`{shape}::start`]."
+		);
 		quote! {
+			#[doc = #doc]
 			#[link_name = #name]
 			pub safe fn #method(request: *const u8, request_len: u32) -> u32;
 		}
@@ -230,8 +238,10 @@ fn expand_guest(item_trait: &ItemTrait, bindings: &[Binding]) -> TokenStream2 {
 		pub mod guest {
 			use super::*;
 
+			/// The raw imports of the methods, one [`crate::guest::StartImport`]
+			/// for each method.
 			#[allow(unsafe_code)]
-			mod imports {
+			pub mod imports {
 				#[link(wasm_import_module = #IMPORT_MODULE)]
 				unsafe extern "C" {
 					#(#imports)*
