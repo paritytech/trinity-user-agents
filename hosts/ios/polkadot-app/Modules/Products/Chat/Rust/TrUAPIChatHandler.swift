@@ -38,6 +38,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     private let context: ProductWorkerContext
     private let renderStartupWindow: Duration
     private let activityStore: ChatRoomActivityStoring
+    private let firstRoomHold: ProductFirstRoomHold.Limits?
+    private let roomsOfProduct: ProductFirstRoomHold.RoomsOfProduct
     private let logger: LoggerProtocol
 
     /// How often a cell asks again while the product is still coming up. The
@@ -52,6 +54,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     /// close gives one back.
     private var openRooms: [String: Int] = [:]
     private var roomsForwardingTask: Task<Void, Never>?
+    private var firstRoomHoldTask: Task<Void, Never>?
     private var started = false
     private var disposed = false
 
@@ -60,12 +63,16 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         workers: any TrUAPIWorkerManaging,
         renderStartupWindow: Duration = .seconds(5),
         activityStore: ChatRoomActivityStoring = ChatRoomActivityStore.shared,
+        firstRoomHold: ProductFirstRoomHold.Limits? = ProductFirstRoomHold.Limits(),
+        roomsOfProduct: @escaping ProductFirstRoomHold.RoomsOfProduct = { try await $0.chat.subscribeRooms() },
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productId = productId
         self.workers = workers
         self.renderStartupWindow = renderStartupWindow
         self.activityStore = activityStore
+        self.firstRoomHold = firstRoomHold
+        self.roomsOfProduct = roomsOfProduct
         self.logger = logger
         context = workers.context(of: productId)
     }
@@ -79,14 +86,16 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         assert(!started || disposed, "TrUAPIChatHandler dropped without dispose()")
     }
 
-    /// Binds the chat surface of the product, so the core can reach it whenever the worker runs. It holds no
-    /// worker: the worker starts when a room screen opens (``open(roomId:)``) or a query is due.
+    /// Binds the chat surface of the product, so the core can reach it whenever the worker runs. The worker starts
+    /// when a room screen opens (``open(roomId:)``) or a query is due. A product that has no room yet gets a
+    /// short hold of its worker (``ProductFirstRoomHold``).
     func start(messagingSupport: ProductsNativeApi.MessagingSupport) async throws {
         guard !started, !disposed else { throw CancellationError() }
         started = true
 
         context.chat.bind(messagingSupport, owner: self)
         startRoomsForwarding()
+        startFirstRoomHold()
 
         logger.debug("Rust chat runtime started for: \(productId)")
     }
@@ -322,6 +331,10 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         roomsForwardingTask?.cancel()
         roomsForwardingTask = nil
 
+        // The hold gives back its own request when it ends.
+        firstRoomHoldTask?.cancel()
+        await firstRoomHoldTask?.value
+
         // The core keeps the bridge, and the bridge keeps the surface: unbinding
         // is what releases the chat context. Only this runtime's own binding,
         // because the surface is the product's and another runtime may hold it.
@@ -431,6 +444,19 @@ private extension TrUAPIChatHandler {
             throw ChatSeamError.notStarted
         }
         return execution
+    }
+
+    func startFirstRoomHold() {
+        guard let firstRoomHold else { return }
+
+        let hold = ProductFirstRoomHold(
+            productId: productId,
+            workers: workers,
+            limits: firstRoomHold,
+            rooms: { [roomsOfProduct, context] in try await roomsOfProduct(context) },
+            logger: logger
+        )
+        firstRoomHoldTask = Task { await hold.run() }
     }
 
     /// Mirror the native room list into the core so product-side
