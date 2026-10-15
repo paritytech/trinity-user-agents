@@ -20,6 +20,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionPromptUnavailableException
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
@@ -237,17 +238,21 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             throw HostNavigateToException.Unknown("navigation unavailable at host level")
         }
 
+        // The host runtime has no product screen that can show a prompt. The error is not a refusal, so the core
+        // keeps no decision and asks again through an open product execution.
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
             request: HostDevicePermissionRequest,
         ): PermissionDecision =
-            PermissionDecision.DENY
+            throw PermissionPromptUnavailableException(NO_PROMPT_AT_HOST_LEVEL)
 
+        // The core asks here when the product has no open execution, for example when it stages a chat attachment
+        // after the worker stopped. As for a device permission, the error is not a refusal.
         override suspend fun remotePermission(
             product: ProductExecutionConfig,
             request: RemotePermission,
         ): PermissionDecision =
-            PermissionDecision.DENY
+            throw PermissionPromptUnavailableException(NO_PROMPT_AT_HOST_LEVEL)
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
             confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER)
@@ -283,6 +288,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private companion object {
         const val HOST_NAME = "Polkadot"
         const val HOST_REQUESTER = "host"
+        const val NO_PROMPT_AT_HOST_LEVEL = "no product screen can show a permission prompt at host level"
 
         /**
          * Ceiling on resolving the network's dotNS TLD while booting the runtime.
