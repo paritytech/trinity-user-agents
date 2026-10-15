@@ -399,10 +399,13 @@ A worker compiled to wasm runs in the host instead of the page:
 `--worker-wasm <path>` (not with `--worker-bundle`) runs the module as the
 `Worker` of the product, with the signer of the session, against the same chat
 host. The page and `/chat/ws` show its rooms and send what a person does to its
-`chat.actionSubscribe()`; each line it logs prints as `[worker] <line>`. A wasm
-worker cannot answer the queries the host starts yet, so it keeps only rooms
-the host stores. The host keeps serving the chat when the worker ends. With a
-`--session` for each user, two hosts are two users on the live network:
+`chat.actionSubscribe()`; each line it logs prints as `[worker] <line>`. The
+queries and user actions the host starts reach the handlers the worker
+registers (`truapi::chat::on_messages_query`, `on_user_action`, ...), as they
+reach a script worker, so a wasm worker can keep the messages of a room
+(`productSource`); a query with no handler gets `Unsupported`. The host keeps
+serving the chat when the worker ends. With a `--session` for each user, two
+hosts are two users on the live network:
 
 ```bash
 cargo build --manifest-path rust/guests/Cargo.toml --target wasm32-unknown-unknown --release
@@ -412,9 +415,14 @@ node scripts/lib/cli-chat-socket.mjs 9971 messages actions
 node scripts/lib/cli-chat-socket.mjs 9971 press actions m1 yes
 ```
 
+The example `chat-source` keeps the room `notes` itself: `page notes` asks the
+worker for its messages, and `post notes hello` is a user action the worker
+stores.
+
 [`scripts/lib/cli-chat-socket.mjs`](../../../scripts/lib/cli-chat-socket.mjs)
 is the person on `/chat/ws` for a test or a terminal: it lists the rooms, reads
-the messages of a room, types a message, presses a button and runs a command.
+the messages of a room, reads a page of a room the worker keeps, types a
+message, presses a button and runs a command.
 
 `make e2e-chat-cli` runs the sample product on this page in headless Chromium
 after the content-screening phase (`scripts/launch-cli-chat-playground.mjs`):

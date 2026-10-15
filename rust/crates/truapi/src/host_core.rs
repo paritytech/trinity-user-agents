@@ -1663,6 +1663,14 @@ impl ProductRuntimeControl {
 }
 
 impl ProductRuntimeControl {
+	/// Route one answer of a product that runs in process, such as a wasm
+	/// worker, to a call that the host started into it: a `Receive` or an
+	/// `Interrupt` frame of a host-initiated subscription.
+	#[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
+	pub fn receive_host_call_answer(&self, message: crate::frame::ProtocolMessage) {
+		let _ = self.host_subscriptions.handle_message(message);
+	}
+
 	/// Ask the product for one page of messages of a room it keeps. The
 	/// subscription yields at most one item and then ends; the core answers
 	/// `NotAvailable` itself for a room that does not set `product_source`.

@@ -1279,7 +1279,8 @@ impl NativeProductExecution {
 impl NativeProductExecution {
 	/// Run `wasm`, a product worker compiled to wasm, in the core in place of
 	/// a bridge. The worker gets the chat connection, the renderer connection
-	/// and the permissions of this execution. Its log lines go to
+	/// and the permissions of this execution, and answers `render` and the
+	/// chat queries of this execution as a script worker does. Its log lines go to
 	/// `on_core_log` with the marker `wasm-worker`. `observer` receives the end
 	/// of the worker one time. `stop_ws_bridge` and `shutdown` stop the worker.
 	pub fn start_wasm_worker(
@@ -1287,7 +1288,7 @@ impl NativeProductExecution {
 		wasm: Vec<u8>,
 		observer: Box<dyn super::wasm_worker::NativeWasmWorkerObserver>,
 	) -> Result<(), crate::ProductRuntimeError> {
-		use super::wasm_worker::{DiscardedFrames, RunningWasmWorker, WASM_WORKER_LOG_MARKER};
+		use super::wasm_worker::{RunningWasmWorker, WASM_WORKER_LOG_MARKER};
 
 		if self.closed.load(Ordering::Acquire) {
 			return Err(crate::ProductRuntimeError::Closed);
@@ -1299,18 +1300,14 @@ impl NativeProductExecution {
 				reason: "a worker already runs for this execution".to_string(),
 			});
 		}
-		let product_runtime = self.runtime.product_runtime_with(
-			self.product.clone(),
-			self.adapters(),
-			Arc::new(DiscardedFrames),
-		);
-		let env = super::wasm_worker::product_env(&product_runtime);
+		let (worker, product_runtime) = crate::WasmWorker::for_product_runtime(&wasm, |sink| {
+			self.runtime.product_runtime_with(self.product.clone(), self.adapters(), sink)
+		})
+		.map_err(|error| crate::ProductRuntimeError::Rejected { reason: error.to_string() })?;
 		let callbacks = self.callbacks.clone();
-		let worker = crate::WasmWorker::new(env, &wasm)
-			.map_err(|error| crate::ProductRuntimeError::Rejected { reason: error.to_string() })?
-			.with_log(move |line| {
-				callbacks.on_core_log(WASM_WORKER_LOG_MARKER.to_string(), line.to_string());
-			});
+		let worker = worker.with_log(move |line| {
+			callbacks.on_core_log(WASM_WORKER_LOG_MARKER.to_string(), line.to_string());
+		});
 		*self.product_control.lock().expect("native product control mutex poisoned") =
 			Some(product_runtime.control());
 		*slot =

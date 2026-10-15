@@ -1,8 +1,10 @@
-//! `truapi-host dev --worker-wasm` runs the example worker `chat-actions` of
-//! `rust/guests` as the `Worker` of its product. The test acts as the person
-//! on the chat socket `/chat/ws`: it reads the rooms and the messages, types
-//! a message, presses a button and runs a command, and reads the answers of
-//! the worker.
+//! `truapi-host dev --worker-wasm` runs an example worker of `rust/guests` as
+//! the `Worker` of its product. The tests act as the person on the chat socket
+//! `/chat/ws`. With `chat-actions`, a room that the host stores: they read the
+//! rooms and the messages, type a message, press a button and run a command,
+//! and read the answers of the worker. With `chat-source`, a room that the
+//! worker keeps: they read a page of it and type a message, which the host asks
+//! of the worker.
 
 use std::{
 	io::{BufRead, BufReader},
@@ -25,12 +27,13 @@ const PRODUCT_ID: &str = "chat-actions.dot";
 
 const ROOM: &str = "actions";
 
-fn guest() -> PathBuf {
+/// Build the example worker `name` of `rust/guests`, and give its path.
+fn guest(name: &str) -> PathBuf {
 	let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests/Cargo.toml");
 	let target_dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("guests");
 	let status = Command::new(env!("CARGO"))
 		.args(["build", "--release", "--target", "wasm32-unknown-unknown"])
-		.args(["-p", "chat-actions-guest"])
+		.args(["-p", &format!("{name}-guest")])
 		.arg("--manifest-path")
 		.arg(manifest)
 		.arg("--target-dir")
@@ -38,7 +41,7 @@ fn guest() -> PathBuf {
 		.status()
 		.expect("cargo runs");
 	assert!(status.success(), "the guest worker failed to build");
-	target_dir.join("wasm32-unknown-unknown/release/chat_actions_guest.wasm")
+	target_dir.join(format!("wasm32-unknown-unknown/release/{}_guest.wasm", name.replace('-', "_")))
 }
 
 fn free_port() -> u16 {
@@ -56,9 +59,9 @@ struct Host {
 }
 
 impl Host {
-	fn start(base_path: &Path, port: u16, wasm: &Path) -> Self {
+	fn start(base_path: &Path, port: u16, product_id: &str, wasm: &Path) -> Self {
 		let mut child = Command::new(env!("CARGO_BIN_EXE_truapi-host"))
-			.args(["dev", "--port", &port.to_string(), "--product-id", PRODUCT_ID])
+			.args(["dev", "--port", &port.to_string(), "--product-id", product_id])
 			.arg("--worker-wasm")
 			.arg(wasm)
 			.arg("--base-path")
@@ -176,10 +179,10 @@ fn message_in_room(frame: &Value, origin: &str, text: &str) -> bool {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_person_acts_in_the_rooms_of_a_wasm_worker_on_the_chat_socket() {
-	let wasm = guest();
+	let wasm = guest("chat-actions");
 	let state = tempfile::tempdir().unwrap();
 	let port = free_port();
-	let mut host = Host::start(state.path(), port, &wasm);
+	let mut host = Host::start(state.path(), port, PRODUCT_ID, &wasm);
 	host.wait_for_line("Wasm worker started", Duration::from_secs(120));
 	let ready = host.wait_for_line("[worker] room actions ready", Duration::from_secs(60));
 	let menu_id = ready.rsplit(' ').next().unwrap().to_string();
@@ -247,5 +250,67 @@ async fn a_person_acts_in_the_rooms_of_a_wasm_worker_on_the_chat_socket() {
 			format!("pressed yes on {menu_id}"),
 			"command /ping a b".to_string(),
 		]
+	);
+}
+
+/// The id and the text of each message of a page answer, as the page reads
+/// them.
+fn page_texts(answer: &Value) -> Vec<(String, String)> {
+	answer["ok"]["messages"]
+		.as_array()
+		.expect("the answer is a page")
+		.iter()
+		.map(|message| {
+			let body = &message["body"];
+			let text = body["text"].as_str().or(body["previewText"].as_str()).unwrap_or_default();
+			(message["messageId"].as_str().unwrap().to_string(), text.to_string())
+		})
+		.collect()
+}
+
+/// A room that a wasm worker keeps works on the chat socket as one that a
+/// script worker keeps: the host asks the worker for a page and for each
+/// message the person types, and shows what the worker answers.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_reads_and_writes_a_room_that_a_wasm_worker_keeps() {
+	let wasm = guest("chat-source");
+	let state = tempfile::tempdir().unwrap();
+	let port = free_port();
+	let mut host = Host::start(state.path(), port, "chat-source.dot", &wasm);
+	host.wait_for_line("[worker] room notes ready", Duration::from_secs(120));
+	let mut person = Person::connect(port).await;
+	let snapshot = person.until("the snapshot", |frame| frame["kind"] == "snapshot").await;
+	let room = snapshot["rooms"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|room| room["roomId"] == "notes");
+	assert_eq!(room.map(|room| &room["name"]), Some(&json!("Notes")));
+	let page = |req_id: u64| {
+		json!({
+			"op": "messages", "reqId": req_id, "roomId": "notes",
+			"before": true, "cursor": null, "pageSize": 20,
+		})
+	};
+
+	person.send(page(1)).await;
+	let first = person.until("the first page", |frame| frame["reqId"] == 1).await;
+	person
+		.send(json!({ "op": "post", "reqId": 2, "roomId": "notes", "text": "hello" }))
+		.await;
+	let posted = person.until("the post answer", |frame| frame["reqId"] == 2).await;
+	host.wait_for_line("[worker] stored n1: hello", Duration::from_secs(10));
+	person.send(page(3)).await;
+	let second = person.until("the second page", |frame| frame["reqId"] == 3).await;
+
+	assert_eq!(page_texts(&first), [("n0".to_string(), "Welcome card".to_string())]);
+	assert_eq!(
+		(&posted["ok"]["type"], &posted["ok"]["message"]["messageId"]),
+		(&json!("MessageCreated"), &json!("n1"))
+	);
+	assert_eq!(
+		page_texts(&second),
+		[("n0", "Welcome card"), ("n1", "hello"), ("n2", "noted: hello")]
+			.map(|(id, text)| (id.to_string(), text.to_string()))
 	);
 }

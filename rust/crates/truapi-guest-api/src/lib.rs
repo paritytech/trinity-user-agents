@@ -13,6 +13,24 @@
 //! latest protocol types. The host runs the worker for one product, so every
 //! call is made as that product.
 //!
+//! The host also calls the worker: it asks for a rendered body, a page of the
+//! messages of a room the product keeps, or the answer to what the user did.
+//! For each such host-initiated method, the service module has an `on_<method>`
+//! function that registers the handler, as the TypeScript client's
+//! `truapi.chat.onUserAction(...)` does:
+//!
+//! ```ignore
+//! truapi::chat::on_user_action(|request, sink| async move {
+//!     truapi::log!("user action in {}", request.room_id);
+//!     sink.send(ProductChatUserActionItem::Acknowledged);
+//!     Ok(())
+//! });
+//! ```
+//!
+//! The handler runs as a task. It sends items through the [`Sink`], and its
+//! result ends the call. When the host stops the call, the task is dropped. A
+//! method with no handler ends at once with `Unsupported`.
+//!
 //! ```ignore
 //! #[truapi::main]
 //! async fn main() -> Result<(), truapi::Error> {
@@ -23,8 +41,8 @@
 //! ```
 //!
 //! [`spawn`] runs more tasks beside the entry point. [`time`] has the clocks
-//! and a timer, [`random`] has random bytes, and [`raw`] makes calls with
-//! requests and payloads that are already encoded.
+//! and a timer, [`random`] has random bytes, and [`raw`] makes and answers
+//! calls with requests and payloads that are already encoded.
 //!
 //! The crate is empty on targets other than wasm32.
 
@@ -49,6 +67,7 @@ pub use truapi::{
 		statement_store::guest as statement_store, system::guest as system, theme::guest as theme,
 		worker::guest as worker,
 	},
+	guest::Sink,
 	latest, v01, v02, versioned,
 };
 pub use truapi_macros::guest_main as main;
@@ -149,8 +168,11 @@ pub mod random {
 /// The import of a method is in the `imports` module of its service, for
 /// example `truapi::local_storage::imports::read`. Its name is
 /// `<trait>_<method>` in the `truapi` wasm module.
+///
+/// [`on_call`](raw::on_call) answers the calls of a host-initiated method,
+/// named `<trait>_<method>` too, such as `chat_user_action`.
 pub mod raw {
-	pub use truapi::guest::{RawCall, RawEvent, RawSubscription, StartImport};
+	pub use truapi::guest::{RawCall, RawEvent, RawSink, RawSubscription, StartImport};
 
 	/// Start a request through `import` with an encoded versioned request.
 	pub fn call(import: StartImport, request: &[u8]) -> RawCall {
@@ -161,6 +183,19 @@ pub mod raw {
 	/// request.
 	pub fn subscribe(import: StartImport, request: &[u8]) -> RawSubscription {
 		RawSubscription::start(import, request)
+	}
+
+	/// Answer each call of the host-initiated `method`, such as
+	/// `chat_user_action`, with `handler`. The handler gets the SCALE
+	/// versioned request and the sink of the call. Its result is the end of
+	/// the call: a SCALE `Result<(), CallError<Error>>` in the version of the
+	/// request.
+	pub fn on_call<Handler, Answer>(method: &'static str, handler: Handler)
+	where
+		Handler: Fn(Vec<u8>, RawSink) -> Answer + 'static,
+		Answer: core::future::Future<Output = Vec<u8>> + 'static,
+	{
+		truapi::guest::on_raw_call(method, handler);
 	}
 }
 
@@ -202,6 +237,16 @@ macro_rules! export_entry {
 		#[unsafe(no_mangle)]
 		pub extern "C" fn truapi_on_event(handle: u32, kind: u32, len: u32) {
 			$crate::exports::on_event(handle, kind, len);
+		}
+
+		#[unsafe(no_mangle)]
+		pub extern "C" fn truapi_on_call(call: u32, method_len: u32, request_len: u32) {
+			$crate::exports::on_call(call, method_len, request_len);
+		}
+
+		#[unsafe(no_mangle)]
+		pub extern "C" fn truapi_on_cancel(call: u32) {
+			$crate::exports::on_cancel(call);
 		}
 	};
 }

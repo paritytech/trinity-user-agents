@@ -8,7 +8,7 @@ use std::sync::{
 
 use futures::future::{AbortHandle, Abortable};
 
-use crate::{FrameSink, ProductRuntime, WasmEnv, WasmWorker, subscription::Spawner};
+use crate::{ProductRuntime, WasmWorker, subscription::Spawner};
 
 /// The marker of the log lines of a wasm worker in `HostCallbacks::on_core_log`.
 pub const WASM_WORKER_LOG_MARKER: &str = "wasm-worker";
@@ -78,22 +78,6 @@ impl RunningWasmWorker {
 	}
 }
 
-/// The frame output of the product runtime of a wasm worker. The worker
-/// cannot answer a call that the host starts, so the core discards those
-/// frames, and such a call gets no answer.
-pub struct DiscardedFrames;
-
-impl FrameSink for DiscardedFrames {
-	fn emit_frame(&self, _frame: Vec<u8>) {}
-}
-
-/// The `truapi` imports of a worker, bound to the product of `product_runtime`.
-pub fn product_env(
-	product_runtime: &ProductRuntime,
-) -> WasmEnv<crate::runtime::ProductRuntimeHost> {
-	WasmEnv::for_product(product_runtime.host().clone())
-}
-
 #[cfg(test)]
 mod tests {
 	use std::{
@@ -107,8 +91,11 @@ mod tests {
 
 	use super::*;
 	use crate::{
-		ProductRuntimeError,
-		native::{NativeProductExecution, NativeTrUApiHostRuntime, WsBridgeStartError, tests::*},
+		NativeRendererObserver, ProductRuntimeError,
+		native::{
+			NativeChatQueryAnswer, NativeChatQueryObserver, NativeChatQueryRefusal,
+			NativeProductExecution, NativeTrUApiHostRuntime, WsBridgeStartError, tests::*,
+		},
 		platform::ProductExecutionKind,
 	};
 
@@ -327,6 +314,134 @@ mod tests {
 		assert!(matches!(started, Err(ProductRuntimeError::Rejected { .. })), "{started:?}");
 		assert_eq!(ends.all(), vec![], "a module that never ran has no end");
 		let _ends = start(&execution, "hello");
+	}
+
+	/// What a host hears of its chat queries and renders, one line each.
+	#[derive(Default)]
+	struct Heard(Mutex<Vec<String>>);
+
+	impl Heard {
+		fn wait_for(&self, count: usize) -> Vec<String> {
+			wait_until("the host hears the product", || self.0.lock().unwrap().len() >= count);
+			self.0.lock().unwrap().clone()
+		}
+
+		fn push(&self, line: String) {
+			self.0.lock().unwrap().push(line);
+		}
+	}
+
+	impl NativeChatQueryObserver for Arc<Heard> {
+		fn on_answer(&self, answer: NativeChatQueryAnswer) {
+			let line = match answer {
+				NativeChatQueryAnswer::Messages { page } => format!(
+					"page {}",
+					page.messages.iter().map(describe).collect::<Vec<_>>().join(", ")
+				),
+				NativeChatQueryAnswer::UserAction {
+					answer: truapi::latest::ProductChatUserActionItem::MessageCreated(message),
+				} => format!("created {}", describe(&message)),
+				other => format!("{other:?}"),
+			};
+			self.push(line);
+		}
+
+		fn on_refusal(&self, refusal: NativeChatQueryRefusal) {
+			self.push(format!("refused {refusal:?}"));
+		}
+
+		fn on_complete(&self) {
+			self.push("complete".to_string());
+		}
+	}
+
+	impl NativeRendererObserver for Arc<Heard> {
+		fn on_update(&self, node: v01::RendererNode) {
+			self.push(format!("drawn {node:?}"));
+		}
+
+		fn on_complete(&self) {
+			self.push("render complete".to_string());
+		}
+
+		fn on_error(&self, reason: String) {
+			self.push(format!("render failed: {reason}"));
+		}
+	}
+
+	fn describe(message: &v01::ChatMessage) -> String {
+		let text = match &message.body {
+			v01::ChatMessageBody::Text { text } => text.clone(),
+			v01::ChatMessageBody::Custom { message_type, .. } => format!("<{message_type}>"),
+			other => format!("{other:?}"),
+		};
+		format!("{} {}: {text}", message.message_id, message.origin.participant_id)
+	}
+
+	fn notes_page() -> v01::ProductChatMessagesQueryRequest {
+		v01::ProductChatMessagesQueryRequest {
+			room_id: "notes".to_string(),
+			anchor: v01::ChatPageAnchor::Before { cursor: None },
+			page_size: 20,
+		}
+	}
+
+	/// A wasm worker keeps the messages of a room as a script worker does: the
+	/// host reads a page, sends what the user writes, and draws the custom body
+	/// of a message through the entry points of the execution. A render that
+	/// the host cancels stops in the worker.
+	#[test]
+	fn a_wasm_worker_keeps_a_room_and_draws_its_body_for_the_host() {
+		let (callbacks, execution) = worker_execution();
+		let _ends = start(&execution, "chat_source");
+		wait_until("the worker creates its room", || {
+			worker_log(&callbacks).iter().any(|line| line == "room notes ready")
+		});
+		let heard = Arc::new(Heard::default());
+
+		let _first = execution.chat_messages_query(notes_page(), Box::new(heard.clone())).unwrap();
+		heard.wait_for(1);
+		let action = v01::ProductChatUserActionRequest {
+			room_id: "notes".to_string(),
+			action: v01::ChatUserAction::NewMessage {
+				body: v01::ChatMessageBody::Text { text: "hello".to_string() },
+				reply_to: None,
+			},
+		};
+		let _sent = execution.chat_user_action(action, Box::new(heard.clone())).unwrap();
+		heard.wait_for(2);
+		let _second = execution.chat_messages_query(notes_page(), Box::new(heard.clone())).unwrap();
+		heard.wait_for(3);
+		let render = execution
+			.render(
+				v01::ProductRendererRenderRequest {
+					context: v01::RenderContext::ChatMessage {
+						room_id: "notes".to_string(),
+						message_id: "n0".to_string(),
+						message_type: "card".to_string(),
+					},
+					payload: b"welcome".to_vec(),
+				},
+				Box::new(heard.clone()),
+			)
+			.unwrap();
+		heard.wait_for(4);
+		render.cancel();
+		drop(render);
+		wait_until("the worker stops the render", || {
+			worker_log(&callbacks).iter().any(|line| line == "render n0 stopped")
+		});
+
+		assert_eq!(
+			heard.wait_for(4),
+			[
+				"page n0 product: <card>",
+				"created n1 user: hello",
+				"page n0 product: <card>, n1 user: hello, n2 product: noted: hello",
+				"drawn String { text: \"card: welcome\" }",
+			]
+		);
+		execution.stop_ws_bridge();
 	}
 
 	/// A closed execution has no chat or permissions left to give a worker.

@@ -8,12 +8,22 @@ use std::{
 };
 
 use futures::{StreamExt, executor::block_on, stream};
+use parity_scale_codec::{Decode, Encode};
 use truapi::{
-	CallContext, CallError, CancellationToken, Subscription, WasmEnv, WasmWorker, WasmWorkerError,
-	api::{Account, LocalStorage, Preimage},
+	CallContext, CallError, CancellationToken, HostCallEvent, HostCalls, Subscription, WasmEnv,
+	WasmWorker, WasmWorkerError,
+	api::{Account, Chat, LocalStorage, Preimage},
 	v01,
 	versioned::{
+		FromLatest, Versioned,
 		account::{HostGetUserIdError, HostGetUserIdRequest, HostGetUserIdResponse},
+		chat::{
+			HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
+			ProductChatMessagesQueryItem, ProductChatMessagesQueryRequest,
+			ProductChatParticipantsQueryItem, ProductChatParticipantsQueryRequest,
+			ProductChatQueryError, ProductChatReactionsQueryRequest, ProductChatUserActionError,
+			ProductChatUserActionItem, ProductChatUserActionRequest,
+		},
 		local_storage::{
 			HostLocalStorageClearError, HostLocalStorageClearRequest,
 			HostLocalStorageClearResponse, HostLocalStorageReadError, HostLocalStorageReadRequest,
@@ -25,6 +35,7 @@ use truapi::{
 			RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitError,
 			RemotePreimageSubmitRequest, RemotePreimageSubmitResponse,
 		},
+		renderer::{ProductRendererRenderItem, ProductRendererRenderRequest},
 	},
 };
 
@@ -35,6 +46,25 @@ struct TestHost {
 	lookup_cancel: Mutex<Option<CancellationToken>>,
 	lookup_cancelled_when_user_id_asked: Mutex<Option<bool>>,
 	storage: Mutex<HashMap<String, Vec<u8>>>,
+	rooms: Mutex<Vec<String>>,
+}
+
+#[truapi::async_trait]
+impl Chat for TestHost {
+	async fn create_room(
+		&self,
+		_cx: &CallContext,
+		request: HostChatCreateRoomRequest,
+	) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
+		let version = request.version();
+		self.rooms
+			.lock()
+			.unwrap()
+			.push(truapi::versioned::IntoLatest::into_latest(request).room_id);
+		let created =
+			v01::HostChatCreateRoomResponse { status: v01::ChatRoomRegistrationStatus::New };
+		Ok(HostChatCreateRoomResponse::from_latest(created, version))
+	}
 }
 
 #[truapi::async_trait]
@@ -148,9 +178,77 @@ fn guest(name: &str) -> Vec<u8> {
 fn env(host: impl Into<Arc<TestHost>>) -> WasmEnv<TestHost> {
 	let mut env = WasmEnv::new(host.into());
 	env.link_account();
+	env.link_chat();
 	env.link_local_storage();
 	env.link_preimage();
 	env
+}
+
+/// Run `worker` on a thread of its own, writing its log lines to `lines`.
+fn spawn(
+	worker: WasmWorker,
+	lines: &Arc<Mutex<Vec<String>>>,
+) -> std::thread::JoinHandle<Result<(), WasmWorkerError>> {
+	let log = lines.clone();
+	let worker = worker.with_log(move |line| log.lock().unwrap().push(line.to_string()));
+	std::thread::spawn(move || block_on(worker.run()))
+}
+
+/// Every answer of one call of the host, up to its end.
+fn ask(calls: &HostCalls, method: &str, request: impl Encode) -> Vec<HostCallEvent> {
+	block_on(calls.stream(method, request.encode()).collect())
+}
+
+fn item<T: Decode>(event: &HostCallEvent) -> T {
+	let HostCallEvent::Item(payload) = event else { panic!("not an item: {event:?}") };
+	T::decode(&mut &payload[..]).unwrap()
+}
+
+fn end<E: Decode>(event: &HostCallEvent) -> Result<(), CallError<E>> {
+	let HostCallEvent::End(payload) = event else { panic!("not an end: {event:?}") };
+	Decode::decode(&mut &payload[..]).unwrap()
+}
+
+/// The id, the participant and the text of each message of a page.
+fn page_of(event: &HostCallEvent) -> Vec<(String, String, String)> {
+	let ProductChatMessagesQueryItem::V1(page) = item(event);
+	page.messages
+		.into_iter()
+		.map(|message| {
+			let text = match message.body {
+				v01::ChatMessageBody::Text { text } => text,
+				v01::ChatMessageBody::Custom { message_type, .. } => format!("<{message_type}>"),
+				other => format!("{other:?}"),
+			};
+			(message.message_id, message.origin.participant_id, text)
+		})
+		.collect()
+}
+
+fn notes_page() -> ProductChatMessagesQueryRequest {
+	ProductChatMessagesQueryRequest::V1(v01::ProductChatMessagesQueryRequest {
+		room_id: "notes".to_string(),
+		anchor: v01::ChatPageAnchor::Before { cursor: None },
+		page_size: 10,
+	})
+}
+
+fn new_message(room_id: &str, text: &str) -> ProductChatUserActionRequest {
+	ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
+		room_id: room_id.to_string(),
+		action: v01::ChatUserAction::NewMessage {
+			body: v01::ChatMessageBody::Text { text: text.to_string() },
+			reply_to: None,
+		},
+	})
+}
+
+fn wait_for_line(lines: &Mutex<Vec<String>>, line: &str) {
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+	while !lines.lock().unwrap().iter().any(|seen| seen == line) {
+		assert!(std::time::Instant::now() < deadline, "no line {line:?} in {lines:?}");
+		std::thread::sleep(std::time::Duration::from_millis(10));
+	}
 }
 
 #[test]
@@ -237,4 +335,117 @@ fn a_worker_that_never_yields_traps_when_its_fuel_ends() {
 	let outcome = block_on(worker.run());
 
 	assert!(matches!(outcome, Err(WasmWorkerError::Trapped { .. })), "{outcome:?}");
+}
+
+/// A worker keeps the messages of a room: the host reads them page by page and
+/// sends what the user writes, and the worker answers in the version of each
+/// request, as a script worker answers over frames.
+#[test]
+fn the_host_reads_and_writes_a_room_that_the_worker_keeps() {
+	let lines = Arc::new(Mutex::new(Vec::new()));
+	let worker = WasmWorker::new(env(TestHost::default()), &guest("chat_source")).unwrap();
+	let calls = worker.host_calls();
+	let running = spawn(worker, &lines);
+
+	let first = ask(&calls, "chat_messages_query", notes_page());
+	let sent = ask(&calls, "chat_user_action", new_message("notes", "hello"));
+	let second = ask(&calls, "chat_messages_query", notes_page());
+	let elsewhere = ask(&calls, "chat_user_action", new_message("elsewhere", "hello"));
+
+	assert_eq!(
+		(first.len(), page_of(&first[0]), end::<ProductChatQueryError>(&first[1])),
+		(2, vec![("n0".to_string(), "product".to_string(), "<card>".to_string())], Ok(()))
+	);
+	let ProductChatUserActionItem::V1(v01::ProductChatUserActionItem::MessageCreated(created)) =
+		item(&sent[0])
+	else {
+		panic!("the worker stores the message: {sent:?}");
+	};
+	assert_eq!(
+		(sent.len(), created.message_id, end::<ProductChatUserActionError>(&sent[1])),
+		(2, "n1".to_string(), Ok(()))
+	);
+	assert_eq!(
+		page_of(&second[0]),
+		[("n0", "product", "<card>"), ("n1", "user", "hello"), ("n2", "product", "noted: hello")]
+			.map(|(id, participant, text)| (id.into(), participant.into(), text.into()))
+	);
+	assert_eq!(
+		end::<ProductChatUserActionError>(&elsewhere[0]),
+		Err(CallError::Domain(ProductChatUserActionError::V1(
+			v01::ProductChatUserActionError::UnknownRoom
+		)))
+	);
+	drop(calls);
+	assert!(matches!(running.join().unwrap(), Err(WasmWorkerError::Stalled)));
+}
+
+/// A raw handler answers with its own codec, and a method with no handler ends
+/// at once with `Unsupported`, so the host never waits on a worker that cannot
+/// answer.
+#[test]
+fn a_raw_handler_answers_and_a_method_with_no_handler_is_unsupported() {
+	let lines = Arc::new(Mutex::new(Vec::new()));
+	let worker = WasmWorker::new(env(TestHost::default()), &guest("chat_source")).unwrap();
+	let calls = worker.host_calls();
+	let _running = spawn(worker, &lines);
+	let participants =
+		ProductChatParticipantsQueryRequest::V1(v01::ProductChatParticipantsQueryRequest {
+			room_id: "notes".to_string(),
+			query: v01::ChatParticipantsQuery::Count,
+		});
+	let reactions = ProductChatReactionsQueryRequest::V1(v01::ProductChatReactionsQueryRequest {
+		room_id: "notes".to_string(),
+		message_id: "n0".to_string(),
+	});
+
+	let counted = ask(&calls, "chat_participants_query", participants);
+	let unanswered = ask(&calls, "chat_reactions_query", reactions);
+
+	assert_eq!(
+		(
+			item::<ProductChatParticipantsQueryItem>(&counted[0]),
+			end::<ProductChatQueryError>(&counted[1])
+		),
+		(
+			ProductChatParticipantsQueryItem::V1(v01::ProductChatParticipantsQueryItem::Count {
+				count: 2
+			}),
+			Ok(())
+		)
+	);
+	assert_eq!(unanswered.len(), 1);
+	assert_eq!(end::<ProductChatQueryError>(&unanswered[0]), Err(CallError::Unsupported));
+}
+
+/// A render stays open while the body is on screen. When the host stops it,
+/// the worker drops the task that draws it, so a body off screen costs the
+/// worker nothing.
+#[test]
+fn the_host_stops_a_render_and_the_worker_drops_its_task() {
+	let lines = Arc::new(Mutex::new(Vec::new()));
+	let worker = WasmWorker::new(env(TestHost::default()), &guest("chat_source")).unwrap();
+	let calls = worker.host_calls();
+	let _running = spawn(worker, &lines);
+	let request = ProductRendererRenderRequest::V1(v01::ProductRendererRenderRequest {
+		context: v01::RenderContext::ChatMessage {
+			room_id: "notes".to_string(),
+			message_id: "n0".to_string(),
+			message_type: "card".to_string(),
+		},
+		payload: b"welcome".to_vec(),
+	});
+
+	let mut render = calls.stream("renderer_render", request.encode());
+	let drawn = block_on(render.next()).expect("the worker draws the body");
+	wait_for_line(&lines, "render n0 drawn");
+	drop(render);
+	wait_for_line(&lines, "render n0 stopped");
+
+	assert_eq!(
+		item::<ProductRendererRenderItem>(&drawn),
+		ProductRendererRenderItem::V1(v01::RendererNode::String {
+			text: "card: welcome".to_string()
+		})
+	);
 }

@@ -9,6 +9,14 @@
 //! A guest also gets random bytes, the time of two clocks, and timers. A
 //! timer has a handle and answers through the same events as a call.
 //!
+//! The host also starts calls into the guest: the host-initiated methods,
+//! such as `renderer_render` and `chat_user_action`. The host calls the
+//! guest's [`ON_CALL_EXPORT`] with a call id of its own and the lengths of
+//! the method name and the request. The guest copies both through
+//! [`READ_EVENT_IMPORT`]. The guest answers through [`CALL_ITEM_IMPORT`] and
+//! [`CALL_END_IMPORT`], and [`ON_CANCEL_EXPORT`] tells the guest that the
+//! host stopped the call.
+//!
 //! The host only touches guest memory behind a pointer an import passes, within
 //! the length the guest gave or was told, which is why guests declare those
 //! imports safe.
@@ -46,11 +54,32 @@ pub const MONOTONIC_MILLIS_IMPORT: &str = "monotonic_millis";
 /// with an empty payload. [`RELEASE_IMPORT`] cancels the timer.
 pub const SLEEP_IMPORT: &str = "sleep";
 
+/// Import a guest sends one item of a call that the host started through:
+/// `(call, item_pointer, item_len)`. The item is SCALE in the version of the
+/// request.
+pub const CALL_ITEM_IMPORT: &str = "call_item";
+
+/// Import a guest ends a call that the host started through:
+/// `(call, end_pointer, end_len)`. The end is a SCALE
+/// `Result<(), CallError<Error>>` in the version of the request. No item
+/// follows it.
+pub const CALL_END_IMPORT: &str = "call_end";
+
 /// Export the host calls once to run the guest's entry point.
 pub const START_EXPORT: &str = "truapi_start";
 
 /// Export delivering one event: `(handle, kind, payload_len)`.
 pub const ON_EVENT_EXPORT: &str = "truapi_on_event";
+
+/// Export starting one call into the guest: `(call, method_len, request_len)`.
+/// The payload that [`READ_EVENT_IMPORT`] copies is the UTF-8 method name,
+/// such as `chat_user_action`, then the SCALE versioned request. The call id
+/// is the host's own, apart from the handles of the guest's calls.
+pub const ON_CALL_EXPORT: &str = "truapi_on_call";
+
+/// Export telling the guest that the host stopped a call it started:
+/// `(call)`. The host drops each answer that comes after it.
+pub const ON_CANCEL_EXPORT: &str = "truapi_on_cancel";
 
 /// What one event carries for a call handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

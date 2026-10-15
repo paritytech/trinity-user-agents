@@ -1,11 +1,13 @@
 //! What the exports [`main`](crate::main) emits run: an executor for the
-//! entry point and the tasks of [`spawn`](crate::spawn).
+//! entry point, the tasks of [`spawn`](crate::spawn), and one task for each
+//! call that the host starts.
 //!
 //! Each task has its own waker. The executor polls a task only when its
 //! waker is woken: at start, after a host event for one of its calls, or
 //! after a different task wakes it. One entry from the host polls until no task
-//! is woken. When the entry point returns, the executor reports the outcome
-//! to the host and polls nothing again.
+//! is woken. When the host stops a call, the executor drops its task. When the
+//! entry point returns, the executor reports the outcome to the host and polls
+//! nothing again.
 
 use core::{
 	cell::{Cell, RefCell},
@@ -20,7 +22,10 @@ use std::{
 	task::Wake,
 };
 
-use truapi::{guest::deliver, wasm_abi::EventKind};
+use truapi::{
+	guest::{answer_host_call, deliver},
+	wasm_abi::EventKind,
+};
 
 use crate::{Error, imports};
 
@@ -37,6 +42,8 @@ thread_local! {
 	static NEXT_TASK: Cell<u64> = const { Cell::new(ENTRY + 1) };
 	/// The entry point returned, so the worker ended.
 	static ENDED: Cell<bool> = const { Cell::new(false) };
+	/// The task that answers each call the host started and did not stop.
+	static HOST_CALLS: RefCell<HashMap<u32, u64>> = RefCell::new(HashMap::new());
 }
 
 /// Tasks woken and not yet polled, in the order of their wakes.
@@ -76,9 +83,14 @@ pub fn spawn(future: impl Future<Output = ()> + 'static) {
 	if ENDED.get() {
 		return;
 	}
+	spawn_task(Box::pin(future));
+}
+
+fn spawn_task(future: Task) -> u64 {
 	let task = NEXT_TASK.get();
 	NEXT_TASK.set(task + 1);
-	insert(task, Box::pin(future));
+	insert(task, future);
+	task
 }
 
 /// Run `entry` until no task is woken, reporting its outcome to the host
@@ -104,6 +116,42 @@ pub fn on_event(handle: u32, kind: u32, len: u32) {
 		return;
 	}
 	deliver(handle, kind, payload);
+	run_woken();
+}
+
+/// Read the method name and the request of a call that the host starts,
+/// start its handler as a task, then poll the tasks that are woken.
+pub fn on_call(call: u32, method_len: u32, request_len: u32) {
+	let mut payload = vec![0u8; method_len as usize + request_len as usize];
+	imports::read_event(payload.as_mut_ptr());
+	if ENDED.get() {
+		return;
+	}
+	let request = payload.split_off(method_len as usize);
+	let method = String::from_utf8_lossy(&payload);
+	let Some(answer) = answer_host_call(call, &method, request) else {
+		return;
+	};
+	let task = spawn_task(Box::pin(async move {
+		answer.await;
+		HOST_CALLS.with_borrow_mut(|calls| calls.remove(&call));
+	}));
+	HOST_CALLS.with_borrow_mut(|calls| calls.insert(call, task));
+	run_woken();
+}
+
+/// Drop the task that answers a call the host stopped, which releases the
+/// calls the task holds, then poll the tasks that are woken.
+pub fn on_cancel(call: u32) {
+	if ENDED.get() {
+		return;
+	}
+	let Some(task) = HOST_CALLS.with_borrow_mut(|calls| calls.remove(&call)) else {
+		return;
+	};
+	WAKERS.with_borrow_mut(|wakers| wakers.remove(&task));
+	let future = TASKS.with_borrow_mut(|tasks| tasks.remove(&task));
+	drop(future);
 	run_woken();
 }
 
@@ -143,5 +191,6 @@ fn end() {
 	let tasks = TASKS.with_borrow_mut(core::mem::take);
 	drop(tasks);
 	WAKERS.with_borrow_mut(HashMap::clear);
+	HOST_CALLS.with_borrow_mut(HashMap::clear);
 	WOKEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
 }

@@ -24,10 +24,20 @@ enum Shape {
 	Subscription,
 }
 
+/// Which side starts the calls of a method.
+#[derive(Debug, PartialEq, Eq)]
+enum Initiator {
+	/// The guest starts the call through an import.
+	Product,
+	/// The host starts the call, and the guest answers it through a handler.
+	Host,
+}
+
 /// A trait method exposed to wasm guests.
 struct Binding<'a> {
 	method: &'a TraitItemFn,
 	import_name: String,
+	initiator: Initiator,
 	request: &'a Type,
 	shape: Shape,
 	response: &'a Type,
@@ -51,32 +61,40 @@ pub fn expand(args: TokenStream, item: TokenStream) -> TokenStream {
 fn expand_trait(item_trait: &ItemTrait) -> syn::Result<TokenStream2> {
 	let trait_prefix = snake_case(&item_trait.ident.to_string());
 	let mut bindings = Vec::new();
+	let mut handlers = Vec::new();
 	let mut excluded = Vec::new();
 	for item in &item_trait.items {
 		let TraitItem::Fn(method) = item else {
 			continue;
 		};
-		if let Some(binding) = Binding::parse(&trait_prefix, method)? {
-			bindings.push(binding);
-		} else if wire_args(&method.attrs)?.is_some() {
-			excluded.push(format!("{trait_prefix}_{}", method.sig.ident));
+		match Binding::parse(&trait_prefix, method)? {
+			Some(binding) if binding.initiator == Initiator::Product => bindings.push(binding),
+			Some(binding) => {
+				excluded.push(binding.import_name.clone());
+				handlers.push(binding);
+			},
+			None if wire_args(&method.attrs)?.is_some() => {
+				excluded.push(format!("{trait_prefix}_{}", method.sig.ident));
+			},
+			None => {},
 		}
 	}
 	let host = expand_host(item_trait, &trait_prefix, &bindings, &excluded);
-	let guest = expand_guest(item_trait, &bindings);
+	let guest = expand_guest(item_trait, &bindings, &handlers);
 	Ok(quote!(#host #guest))
 }
 
 impl<'a> Binding<'a> {
-	/// `None` for methods a guest cannot call: internal ones and those the
-	/// host starts.
+	/// `None` for methods a guest neither calls nor answers: the internal
+	/// ones.
 	fn parse(trait_prefix: &str, method: &'a TraitItemFn) -> syn::Result<Option<Self>> {
 		let Some(wire) = wire_args(&method.attrs)? else {
 			return Ok(None);
 		};
-		if wire.internal || wire.host_initiated {
+		if wire.internal {
 			return Ok(None);
 		}
+		let initiator = if wire.host_initiated { Initiator::Host } else { Initiator::Product };
 		let request = match method.sig.inputs.iter().nth(2) {
 			Some(FnArg::Typed(argument)) => &*argument.ty,
 			_ => {
@@ -87,10 +105,17 @@ impl<'a> Binding<'a> {
 			},
 		};
 		let (shape, response, call_error) = return_parts(&method.sig.output)?;
+		if initiator == Initiator::Host && shape != Shape::Subscription {
+			return Err(syn::Error::new_spanned(
+				&method.sig.output,
+				"a host-initiated method must return `Subscription<_, CallError<_>>`",
+			));
+		}
 		let error = single_generic(call_error, "CallError")?;
 		Ok(Some(Self {
 			method,
 			import_name: format!("{trait_prefix}_{}", method.sig.ident),
+			initiator,
 			request,
 			shape,
 			response,
@@ -190,7 +215,11 @@ fn expand_host(
 	}
 }
 
-fn expand_guest(item_trait: &ItemTrait, bindings: &[Binding]) -> TokenStream2 {
+fn expand_guest(
+	item_trait: &ItemTrait,
+	bindings: &[Binding],
+	handlers: &[Binding],
+) -> TokenStream2 {
 	let doc = format!("Wasm guest bindings for [`{}`].", item_trait.ident);
 	let imports = bindings.iter().map(|binding| {
 		let name = &binding.import_name;
@@ -232,6 +261,35 @@ fn expand_guest(item_trait: &ItemTrait, bindings: &[Binding]) -> TokenStream2 {
 			}
 		}
 	});
+	let registrations = handlers.iter().map(|binding| {
+		let name = &binding.import_name;
+		let register = format_ident!("on_{}", binding.method.sig.ident);
+		let request = binding.request;
+		let item = binding.response;
+		let error = binding.error;
+		let doc = format!(
+			"Answer each `{name}` call that the host starts with `handler`. The handler gets the \
+			 latest request and the sink of the call. `Ok(())` completes the call, and an error \
+			 interrupts it. Register it before the first `.await` of the entry point, so that no \
+			 call comes before it; a call with no handler ends with `Unsupported`."
+		);
+		quote! {
+			#[doc = #doc]
+			pub fn #register<Handler, Answer>(handler: Handler)
+			where
+				Handler: Fn(crate::latest::LatestOf<#request>, crate::guest::Sink<#item>) -> Answer
+					+ 'static,
+				Answer: ::core::future::Future<
+						Output = ::core::result::Result<
+							(),
+							crate::CallError<crate::latest::LatestOf<#error>>,
+						>,
+					> + 'static,
+			{
+				crate::guest::on_call::<#request, #item, #error, Handler, Answer>(#name, handler)
+			}
+		}
+	});
 	quote! {
 		#[cfg(all(feature = "guest", target_arch = "wasm32"))]
 		#[doc = #doc]
@@ -249,6 +307,8 @@ fn expand_guest(item_trait: &ItemTrait, bindings: &[Binding]) -> TokenStream2 {
 			}
 
 			#(#wrappers)*
+
+			#(#registrations)*
 		}
 	}
 }
@@ -269,7 +329,7 @@ fn snake_case(ident: &str) -> String {
 mod tests {
 	use super::*;
 
-	fn import_names(source: &str) -> Vec<(String, Shape)> {
+	fn import_names(source: &str) -> Vec<(String, Initiator, Shape)> {
 		let item_trait: ItemTrait = syn::parse_str(source).unwrap();
 		let prefix = snake_case(&item_trait.ident.to_string());
 		item_trait
@@ -279,12 +339,12 @@ mod tests {
 				TraitItem::Fn(method) => Binding::parse(&prefix, method).unwrap(),
 				_ => None,
 			})
-			.map(|binding| (binding.import_name, binding.shape))
+			.map(|binding| (binding.import_name, binding.initiator, binding.shape))
 			.collect()
 	}
 
 	#[test]
-	fn guests_see_public_product_initiated_methods_under_wire_table_names() {
+	fn guests_call_and_answer_the_public_methods_under_wire_table_names() {
 		let names = import_names(
 			"pub trait LocalStorage {
                 #[wire(id = 0)]
@@ -305,9 +365,30 @@ mod tests {
 		assert_eq!(
 			names,
 			[
-				("local_storage_read".to_string(), Shape::Request),
-				("local_storage_subscribe".to_string(), Shape::Subscription),
+				("local_storage_read".to_string(), Initiator::Product, Shape::Request),
+				("local_storage_subscribe".to_string(), Initiator::Product, Shape::Subscription),
+				("local_storage_render".to_string(), Initiator::Host, Shape::Subscription),
 			]
+		);
+	}
+
+	#[test]
+	fn a_host_initiated_method_must_stream_its_answer() {
+		let item_trait: ItemTrait = syn::parse_str(
+			"pub trait Renderer {
+                #[wire(id = 0, host_initiated)]
+                async fn render(&self, cx: &CallContext, request: RenderRequest)
+                    -> Result<RenderResponse, CallError<RenderError>>;
+            }",
+		)
+		.unwrap();
+		let TraitItem::Fn(method) = &item_trait.items[0] else { unreachable!() };
+
+		let error = Binding::parse("renderer", method).err().map(|error| error.to_string());
+
+		assert_eq!(
+			error.as_deref(),
+			Some("a host-initiated method must return `Subscription<_, CallError<_>>`")
 		);
 	}
 }

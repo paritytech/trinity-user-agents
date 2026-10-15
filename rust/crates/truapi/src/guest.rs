@@ -9,6 +9,11 @@
 //! [`RawCall`] and [`RawSubscription`] are the same calls without the codec:
 //! they take an encoded versioned request and give the encoded payloads. The
 //! typed calls use them. A timer from [`sleep`] is a [`RawCall`] too.
+//!
+//! The host also starts calls into the guest. [`on_call`] and [`on_raw_call`]
+//! register the handler of one host-initiated method. The executor gives each
+//! call to [`answer_host_call`], which starts the handler. The handler sends
+//! items through a [`Sink`] or a [`RawSink`], and its result ends the call.
 
 use core::{
 	cell::RefCell,
@@ -17,14 +22,17 @@ use core::{
 	pin::Pin,
 	task::{Context, Poll, Waker},
 };
-use std::collections::{HashMap, VecDeque};
+use std::{
+	collections::{HashMap, VecDeque},
+	rc::Rc,
+};
 
 use futures::Stream;
 use parity_scale_codec::{Decode, DecodeAll, Encode};
 
 use crate::{
 	CallError,
-	versioned::{IntoLatest, Versioned},
+	versioned::{FromLatest, IntoLatest, Versioned},
 	wasm_abi::EventKind,
 };
 
@@ -34,6 +42,8 @@ mod imports {
 	unsafe extern "C" {
 		pub safe fn release(handle: u32);
 		pub safe fn sleep(millis: u64) -> u32;
+		pub safe fn call_item(call: u32, item: *const u8, item_len: u32);
+		pub safe fn call_end(call: u32, end: *const u8, end_len: u32);
 	}
 }
 
@@ -280,5 +290,116 @@ where
 				Poll::Ready(end.err().map(|error| Err(error.map_domain(IntoLatest::into_latest))))
 			},
 		}
+	}
+}
+
+/// The task that answers one call the host started. It sends the end of the
+/// call when it completes. Dropping it before then sends nothing.
+pub type HostCallAnswer = Pin<Box<dyn Future<Output = ()>>>;
+
+type HostCallHandler = Rc<dyn Fn(u32, Vec<u8>) -> HostCallAnswer>;
+
+thread_local! {
+	static HANDLERS: RefCell<HashMap<&'static str, HostCallHandler>> = RefCell::new(HashMap::new());
+}
+
+/// The sending side of one call the host started, with no codec.
+#[derive(Debug, Clone)]
+pub struct RawSink {
+	call: u32,
+}
+
+impl RawSink {
+	/// Send one item: the SCALE item in the version of the request. The host
+	/// drops an item that comes after the call ended or the host stopped it.
+	pub fn send(&self, item: &[u8]) {
+		imports::call_item(self.call, item.as_ptr(), item.len() as u32);
+	}
+}
+
+/// The sending side of one call the host started. It encodes each latest
+/// item in the version of the request.
+pub struct Sink<Item> {
+	raw: RawSink,
+	version: u8,
+	item: PhantomData<fn(Item)>,
+}
+
+impl<Item> Clone for Sink<Item> {
+	fn clone(&self) -> Self {
+		Self { raw: self.raw.clone(), version: self.version, item: PhantomData }
+	}
+}
+
+impl<Item: Encode + FromLatest> Sink<Item> {
+	/// Send one item. The host drops an item that comes after the call ended
+	/// or the host stopped it.
+	pub fn send(&self, item: Item::Latest) {
+		self.raw.send(&Item::from_latest(item, self.version).encode());
+	}
+}
+
+/// Answer each call of `method` that the host starts with `handler`, with no
+/// codec. `method` is the wire name, such as `chat_user_action`. The handler
+/// gets the SCALE versioned request and the sink of the call. Its result is
+/// the end of the call, a SCALE `Result<(), CallError<Error>>` in the version
+/// of the request. A second handler for the same method replaces the first.
+pub fn on_raw_call<Handler, Answer>(method: &'static str, handler: Handler)
+where
+	Handler: Fn(Vec<u8>, RawSink) -> Answer + 'static,
+	Answer: Future<Output = Vec<u8>> + 'static,
+{
+	let handler: HostCallHandler = Rc::new(move |call, request| {
+		let answer = handler(request, RawSink { call });
+		Box::pin(async move {
+			let end = answer.await;
+			imports::call_end(call, end.as_ptr(), end.len() as u32);
+		})
+	});
+	HANDLERS.with_borrow_mut(|handlers| handlers.insert(method, handler));
+}
+
+/// Answer each call of `method` that the host starts with `handler`. The
+/// handler gets the latest request and the sink of the call. Its result ends
+/// the call: `Ok(())` completes it, and an error interrupts it. The items and
+/// the error go to the host in the version of the request.
+pub fn on_call<Request, Item, Error, Handler, Answer>(method: &'static str, handler: Handler)
+where
+	Request: Decode + IntoLatest,
+	Item: Encode + FromLatest,
+	Error: Encode + FromLatest + 'static,
+	Handler: Fn(Request::Latest, Sink<Item>) -> Answer + 'static,
+	Answer: Future<Output = Result<(), CallError<Error::Latest>>> + 'static,
+{
+	on_raw_call(method, move |request, raw| {
+		let started = decode::<Request, Error>(&request).map(|request| {
+			let version = request.version();
+			let sink = Sink { raw, version, item: PhantomData };
+			(version, handler(request.into_latest(), sink))
+		});
+		async move {
+			let end: Result<(), CallError<Error>> = match started {
+				Ok((version, answer)) => answer.await.map_err(|error| {
+					error.map_domain(|domain| Error::from_latest(domain, version))
+				}),
+				Err(error) => Err(error),
+			};
+			end.encode()
+		}
+	});
+}
+
+/// Start the handler of a call the host started. Gives the task that answers
+/// it. When no handler is registered for `method`, ends the call at once with
+/// `Unsupported` and gives `None`.
+pub fn answer_host_call(call: u32, method: &str, request: Vec<u8>) -> Option<HostCallAnswer> {
+	let handler = HANDLERS.with_borrow(|handlers| handlers.get(method).cloned());
+	match handler {
+		Some(handler) => Some(handler(call, request)),
+		None => {
+			let end = Result::<(), CallError<()>>::Err(CallError::Unsupported).encode();
+			imports::call_end(call, end.as_ptr(), end.len() as u32);
+			None
+		},
 	}
 }
