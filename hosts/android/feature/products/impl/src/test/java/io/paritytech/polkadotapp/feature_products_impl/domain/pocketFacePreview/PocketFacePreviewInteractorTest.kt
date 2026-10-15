@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocketFacePreview
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
@@ -7,17 +9,16 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 private const val FACE_URL = "http://127.0.0.1:5173/pocket/loyalty.json"
 private const val GATEWAY_LINK = "https://gateway.example/ipfs/bafy"
 
 class PocketFacePreviewInteractorTest {
-    private val gateway = object : IpfsContentLookup by mock(IpfsContentLookup::class.java) {
-        override suspend fun getIpfsLinkFor(cid: String): Result<String> = Result.success(GATEWAY_LINK)
+    private val gateway = mockk<IpfsContentLookup> {
+        coEvery { getIpfsLinkFor("bafy") } returns Result.success(GATEWAY_LINK)
     }
 
-    private val interactor = PocketFacePreviewInteractor(mock(RemoteFaceSource::class.java), gateway)
+    private val interactor = PocketFacePreviewInteractor(mockk<RemoteFaceSource>(), gateway)
 
     private suspend fun archiveImage(path: String, faceUrl: String = FACE_URL) =
         interactor.resolveImage(faceUrl, JsImageSource.Archive(path))

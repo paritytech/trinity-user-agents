@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview
 
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -40,7 +41,7 @@ class PocketFacePreviewViewModelTest {
     private val router: ProductsRouter = mock()
 
     private fun viewModel() = PocketFacePreviewViewModel(
-        PocketFacePreviewInteractor(remoteFaces, mock(IpfsContentLookup::class.java)),
+        PocketFacePreviewInteractor(remoteFaces, mockk<IpfsContentLookup>()),
         router,
     )
 
