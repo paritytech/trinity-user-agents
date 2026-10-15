@@ -1,5 +1,5 @@
 ---
-"@parity/truapi": patch
+"@parity/truapi": minor
 ---
 
 `truapi-host` gains a `polkadot` network preset for Polkadot mainnet: Polkadot People,
