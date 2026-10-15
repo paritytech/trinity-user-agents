@@ -413,8 +413,8 @@ class PocketViewModelTest {
         assertNull(viewModel.expandedProductSession.value)
     }
 
-    // A card opened again should ride up with the product it left. Handed over only once the card
-    // settled, the product was replaced by a spinner for the whole move.
+    // A card opened again rides up with the product it left, so the space under the moving card is
+    // never left to a spinner.
     @Test
     fun `a card opened again gets its held product at the tap`() = runTest(testDispatcher) {
         whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))

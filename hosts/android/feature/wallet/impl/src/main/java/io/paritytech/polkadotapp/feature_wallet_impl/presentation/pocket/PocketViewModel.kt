@@ -269,7 +269,8 @@ class PocketViewModel @Inject constructor(
     /**
      * A product not held yet is loaded only once the card has finished travelling. Building a WebView
      * while the card is still moving starves the animation, and the card is the part the user is
-     * watching. A held product was already shown by [selectCard], so it rides up with the card.
+     * watching. A held product was already shown by [selectCard], so it rides up with the card, and
+     * is resumed here once the card can hear its requests.
      * A card already left can still report itself settled while it fades out, so only the selected
      * one is hosted.
      */

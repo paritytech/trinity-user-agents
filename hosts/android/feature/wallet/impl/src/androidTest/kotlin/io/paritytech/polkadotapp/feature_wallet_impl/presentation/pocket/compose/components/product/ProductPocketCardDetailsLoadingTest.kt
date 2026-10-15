@@ -112,7 +112,7 @@ class ProductPocketCardDetailsLoadingTest {
 
     // A product opened again is on screen while its card is still moving. Asking for its face to
     // fold away then would move the card mid-flight, so its requests are heard only once the card
-    // has settled, as they were when the product arrived only then.
+    // has settled.
     @Test
     fun aProductIsHeardOnlyOnceItsCardHasSettled() {
         val session = FakeSession(DotNsLoadProgress.Completed)

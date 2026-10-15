@@ -30,7 +30,8 @@ class ExpandedProductPage(
     fun open(url: String) {
         val heldProduct = held
         if (heldProduct?.url == url) {
-            if (shownSession.value == null) heldProduct.session.resumeConnections()
+            if (heldProduct.paused) heldProduct.session.resumeConnections()
+            heldProduct.paused = false
             shownSession.value = heldProduct.session
             return
         }
@@ -43,18 +44,17 @@ class ExpandedProductPage(
         shownSession.value = product.session
     }
 
-    /**
-     * Shows the product held for [url], and does nothing for any other. It builds nothing, so it is
-     * safe to call while the card is still moving.
-     */
     fun showIfHeld(url: String) {
-        if (held?.url == url) open(url)
+        held?.takeIf { it.url == url }?.let { shownSession.value = it.session }
     }
 
     /** The product stays alive for the card being opened again, paused so it does nothing unseen. */
     fun close() {
         shownSession.value = null
-        held?.session?.pauseConnections()
+        held?.run {
+            session.pauseConnections()
+            paused = true
+        }
     }
 
     /**
@@ -76,5 +76,7 @@ class ExpandedProductPage(
         shownSession.value = null
     }
 
-    private class HeldProduct(val url: String, val scope: CoroutineScope, val session: SpaHostSession)
+    private class HeldProduct(val url: String, val scope: CoroutineScope, val session: SpaHostSession) {
+        var paused = false
+    }
 }

@@ -106,8 +106,8 @@ fun ProductPocketCardDetails(
     }
 
     // Products draw their own loading state, so the host's spinner is kept for one that is clearly
-    // late. Counted from the tap: the product is asked for only once the card has settled, which can
-    // wait on a chain read.
+    // late. Counted from the card opening, since the product is asked for only once the card has
+    // settled, which waits on a chain read.
     val slowToOpen by produceState(initialValue = false) {
         delay(PRODUCT_PROGRESS_DELAY)
         value = true
