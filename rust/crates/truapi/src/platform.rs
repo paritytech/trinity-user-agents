@@ -1128,7 +1128,7 @@ pub trait CoreAdmin: Send + Sync {
 	/// answer with `deriveProductAccountPublicKey`.
 	async fn get_product_subtree_public_key(
 		&self,
-		product_id: String,
+		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Bytes32>, GenericError>;
 }

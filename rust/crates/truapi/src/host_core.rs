@@ -22,7 +22,7 @@ use crate::platform::{
 	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, GamePlatform,
 	PairingHostAdmin, PairingHostConfig, PaymentPlatform, PermissionAuthorizationRequest,
 	PermissionAuthorizationStatus, PermissionStatusHost, Platform, PocketPlatform, ProductContext,
-	ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
+	ProductExecutionKind, ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -174,9 +174,8 @@ pub enum ProductRuntimeError {
 	BufferFull,
 }
 
-fn product_context(product_id: &str) -> Result<ProductContext, v01::GenericError> {
-	ProductContext::new(product_id.to_string())
-		.map_err(|err| v01::GenericError { reason: err.to_string() })
+fn product_context(product_id: &ProductId) -> ProductContext {
+	ProductContext::from_parts(product_id.clone(), ProductExecutionKind::App)
 }
 
 /// A seedless pairing host: the user's keys live in an external wallet reached
@@ -384,7 +383,10 @@ impl PairingHostRuntime {
 	/// Clear one product's capability state while preserving the active
 	/// session and unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
+	pub async fn clear_product_state(
+		&self,
+		product_id: &ProductId,
+	) -> Result<(), v01::GenericError> {
 		self.pairing_host
 			.clear_product_state(product_id)
 			.await
@@ -457,7 +459,7 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_subtree_public_key"))]
 	pub async fn product_subtree_public_key(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		product_subtree_public_key(self.pairing_host.as_ref(), product_id, timeout_ms).await
@@ -474,9 +476,9 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.login", %product_id))]
 	pub async fn login(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
-		let product = product_context(product_id)?;
+		let product = product_context(product_id);
 		match self.pairing_host.request_login(&product).await {
 			Ok(truapi::versioned::account::HostRequestLoginResponse::V1(response)) => Ok(response),
 			Err(error) => Err(v01::GenericError { reason: pairing_login_error_reason(error) }),
@@ -531,10 +533,10 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_status", product_id = %product_id))]
 	pub async fn permission_authorization_status(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.permission_authorization_status(request)
 			.await
 	}
@@ -547,10 +549,10 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
 	pub async fn permission_authorization_statuses(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.permission_authorization_statuses(requests)
 			.await
 	}
@@ -559,11 +561,11 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
 	pub async fn set_permission_authorization_status(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
 			.await
 	}
@@ -631,7 +633,7 @@ impl SigningHostRuntime {
 	/// pairing host has to ask the Account Holder.
 	pub fn product_subtree_public_key(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.signing_host
 			.derive_subtree_public_key(product_id)
@@ -929,10 +931,8 @@ impl SigningHostRuntime {
 	/// Revoke one product's grants from the current local activation while
 	/// preserving unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-		self.signing_host
-			.clear_product_state(product_id)
-			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	pub async fn clear_product_state(&self, product_id: &ProductId) {
+		self.signing_host.clear_product_state(product_id);
 	}
 
 	/// Read a stored permission authorization status for a product without prompting.
@@ -943,10 +943,10 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
 	pub async fn permission_authorization_status(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.permission_authorization_status(request)
 			.await
 	}
@@ -959,10 +959,10 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
 	pub async fn permission_authorization_statuses(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.permission_authorization_statuses(requests)
 			.await
 	}
@@ -971,11 +971,11 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
 	pub async fn set_permission_authorization_status(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
 			.await
 	}
@@ -1450,10 +1450,10 @@ impl CoreAdmin for HostAdmin {
 
 	async fn get_product_subtree_public_key(
 		&self,
-		product_id: String,
+		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		product_subtree_public_key(self.authority.as_ref(), &product_id, timeout_ms).await
+		product_subtree_public_key(self.authority.as_ref(), product_id, timeout_ms).await
 	}
 }
 
@@ -1471,11 +1471,9 @@ impl CoreAdmin for HostAdmin {
 /// cancel and would outlive any deadline that waited for it to finish.
 async fn product_subtree_public_key(
 	authority: &(impl ProductAuthority + ?Sized),
-	product_id: &str,
+	product_id: &ProductId,
 	timeout_ms: Option<u32>,
 ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-	let product_id = ProductId::parse(product_id)
-		.map_err(|reason| v01::GenericError { reason: reason.to_string() })?;
 	let Some(session) = authority.current_session() else {
 		return Ok(None);
 	};
@@ -1485,7 +1483,7 @@ async fn product_subtree_public_key(
 	let mut cx = CallContext::default();
 	cx.set_timeout(timeout);
 
-	let call = authority.product_subtree_public_key(&cx, &session, &product_id).fuse();
+	let call = authority.product_subtree_public_key(&cx, &session, product_id).fuse();
 	let deadline = futures_timer::Delay::new(timeout).fuse();
 	pin_mut!(call, deadline);
 	futures::select! {
@@ -2082,7 +2080,7 @@ mod tests {
 			let platform = Arc::new(StubPlatform::default());
 			let (config, _) = runtime_config("fetch.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context("fetch.dot").unwrap());
+			let admin = runtime.product_admin(product_context(&test_product_id("fetch.dot")));
 			let cx = CallContext::default();
 			let request = network_permission(&["api.example.com"]);
 			let granted = admin
@@ -2203,7 +2201,7 @@ mod tests {
 				Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
 			let (config, _) = runtime_config("fetch.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context("fetch.dot").unwrap());
+			let admin = runtime.product_admin(product_context(&test_product_id("fetch.dot")));
 			let cx = CallContext::default();
 			admin
 				.set_permission_authorization_status(
@@ -2246,7 +2244,7 @@ mod tests {
 						.unwrap(),
 				);
 			}
-			let other = runtime.product_admin(product_context("other.dot").unwrap());
+			let other = runtime.product_admin(product_context(&test_product_id("other.dot")));
 			for _ in 0..2 {
 				decisions.push(
 					other
@@ -2286,7 +2284,7 @@ mod tests {
 			let platform = Arc::new(StubPlatform::default());
 			let (config, _) = runtime_config("peopl.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context("peopl.dot").unwrap());
+			let admin = runtime.product_admin(product_context(&test_product_id("peopl.dot")));
 			let cx = CallContext::default();
 			let request = network_permission(&["api.example.com"]);
 			let allowed = admin
@@ -2341,9 +2339,10 @@ mod tests {
 			[9; 32],
 		);
 
-		let key =
-			futures::executor::block_on(runtime.product_subtree_public_key("myapp.dot", Some(1)))
-				.expect("a cached subtree resolves");
+		let key = futures::executor::block_on(
+			runtime.product_subtree_public_key(&test_product_id("myapp.dot"), Some(1)),
+		)
+		.expect("a cached subtree resolves");
 		assert_eq!(key, Some([9; 32]));
 
 		// The cache comes before the wallet. A one-millisecond deadline means
@@ -2363,9 +2362,10 @@ mod tests {
 		// only on a peer answer, a disconnect, or the caller's token. Without
 		// the timeout cancelling that token the call never returns, so this
 		// test would hang rather than fail.
-		let error =
-			futures::executor::block_on(runtime.product_subtree_public_key("myapp.dot", Some(1)))
-				.expect_err("an unanswered wallet request ends at its deadline");
+		let error = futures::executor::block_on(
+			runtime.product_subtree_public_key(&test_product_id("myapp.dot"), Some(1)),
+		)
+		.expect_err("an unanswered wallet request ends at its deadline");
 		assert!(error.reason.contains("timed out"), "expected a timeout, got {}", error.reason);
 	}
 

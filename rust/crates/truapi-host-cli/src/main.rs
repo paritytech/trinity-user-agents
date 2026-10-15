@@ -3253,7 +3253,7 @@ async fn run_pairing_login(
 	ui: &mut ActiveTerminalUi,
 ) -> Result<()> {
 	let checkpoint = ui.activity_checkpoint();
-	match ui.drive_pairing_login(label, runtime.login(product_id.as_str())).await? {
+	match ui.drive_pairing_login(label, runtime.login(product_id)).await? {
 		DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::Success)) => {},
 		DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::AlreadyConnected)) => {
 			ui.success("Already logged in", None);

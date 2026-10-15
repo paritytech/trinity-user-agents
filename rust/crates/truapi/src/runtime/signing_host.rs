@@ -448,30 +448,25 @@ impl SigningHost {
 
 	/// Fence in-flight grant work and revoke this product's grants from the
 	/// current local activation while preserving unrelated products.
-	pub fn clear_product_state(&self, product_id: &str) -> Result<(), AuthorityError> {
-		let product_id = ProductId::parse(product_id)
-			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })?;
+	pub fn clear_product_state(&self, product_id: &ProductId) {
 		self.local_grants
 			.lock()
 			.expect("local AutoSigning grant mutex poisoned")
-			.revoke_product(&product_id);
-		Ok(())
+			.revoke_product(product_id);
 	}
 
 	/// Derive the product's hard-subtree public key from the active session root.
 	/// Returns `None` when no session is active.
 	pub fn derive_subtree_public_key(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, AuthorityError> {
-		let product_id = ProductId::parse(product_id)
-			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
 		let Ok(entropy) = self.root_entropy() else {
 			return Ok(None);
 		};
 		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
 		let subtree =
-			derive_product_subtree_keypair(&root, &product_id).map_err(product_authority_error)?;
+			derive_product_subtree_keypair(&root, product_id).map_err(product_authority_error)?;
 		Ok(Some(subtree.public.to_bytes()))
 	}
 
@@ -3384,7 +3379,7 @@ mod tests {
 			.grant_auto_signing(&stale_session, &test_product_id("other.dot"))
 			.expect("other product grant succeeds");
 
-		authority.clear_product_state("myapp.dot").expect("product clear succeeds");
+		authority.clear_product_state(&test_product_id("myapp.dot"));
 
 		let current_session = authority.current_session().expect("session remains active");
 		let (_, current_generation) = authority

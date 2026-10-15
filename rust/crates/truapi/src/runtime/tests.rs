@@ -6339,7 +6339,8 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		.unwrap();
 	}
 
-	futures::executor::block_on(pairing_host.clear_product_state("myapp.dot")).unwrap();
+	futures::executor::block_on(pairing_host.clear_product_state(&test_product_id("myapp.dot")))
+		.unwrap();
 	let current_epoch = pairing_host.current_session_lifecycle_epoch();
 	assert_ne!(current_epoch, stale_epoch);
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (1, 1, 1, 1));

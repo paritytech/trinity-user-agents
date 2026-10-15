@@ -879,8 +879,10 @@ impl NativeProductExecution {
 		product_id: String,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Bytes32>, HostRejection> {
+		let product_id = ProductId::parse(&product_id)
+			.map_err(|error| v01::GenericError { reason: error.to_string() })?;
 		Ok(futures::executor::block_on(
-			self.admin().get_product_subtree_public_key(product_id, timeout_ms),
+			self.admin().get_product_subtree_public_key(&product_id, timeout_ms),
 		)?)
 	}
 

@@ -792,6 +792,12 @@ fn generic_error_to_js(err: v01::GenericError) -> JsValue {
 	JsValue::from_str(&err.reason)
 }
 
+/// Parse a product id the host passed, rejecting with the reason the way the
+/// runtime's own errors do.
+fn product_id_from_js(product_id: &str) -> Result<ProductId, JsValue> {
+	ProductId::parse(product_id).map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
 struct WasmCoreInner {
 	core: ProductRuntime,
 	dispose_fn: SendWrapper<Function>,
@@ -1007,7 +1013,7 @@ impl WasmPairingHostRuntime {
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Vec<u8>>, JsValue> {
 		self.runtime
-			.product_subtree_public_key(&product_id, timeout_ms)
+			.product_subtree_public_key(&product_id_from_js(&product_id)?, timeout_ms)
 			.await
 			.map(|key| key.map(|key| key.to_vec()))
 			.map_err(generic_error_to_js)
@@ -1053,7 +1059,7 @@ impl WasmPairingHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = self
 			.runtime
-			.permission_authorization_status(&product_id, request)
+			.permission_authorization_status(&product_id_from_js(&product_id)?, request)
 			.await
 			.map_err(generic_error_to_js)?;
 		Ok(permission_authorization_status_to_js(status))
@@ -1073,7 +1079,7 @@ impl WasmPairingHostRuntime {
 		let requests = decode_permission_authorization_requests(&payloads)?;
 		let statuses = self
 			.runtime
-			.permission_authorization_statuses(&product_id, requests)
+			.permission_authorization_statuses(&product_id_from_js(&product_id)?, requests)
 			.await
 			.map_err(generic_error_to_js)?;
 		let values = Array::new();
@@ -1094,7 +1100,7 @@ impl WasmPairingHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = permission_authorization_status_from_js(&status)?;
 		self.runtime
-			.set_permission_authorization_status(&product_id, request, status)
+			.set_permission_authorization_status(&product_id_from_js(&product_id)?, request, status)
 			.await
 			.map_err(generic_error_to_js)
 	}
@@ -1102,7 +1108,10 @@ impl WasmPairingHostRuntime {
 	/// Clear one product's durable and in-memory capability state.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
+		self.runtime
+			.clear_product_state(&product_id_from_js(&product_id)?)
+			.await
+			.map_err(generic_error_to_js)
 	}
 
 	/// Clear canonical paired-session state without notifying the peer.
@@ -1192,7 +1201,7 @@ impl WasmSigningHostRuntime {
 		product_id: String,
 	) -> Result<Option<Vec<u8>>, JsValue> {
 		self.runtime
-			.product_subtree_public_key(&product_id)
+			.product_subtree_public_key(&product_id_from_js(&product_id)?)
 			.map(|key| key.map(|key| key.to_vec()))
 			.map_err(generic_error_to_js)
 	}
@@ -1316,7 +1325,8 @@ impl WasmSigningHostRuntime {
 	/// Revoke one product's grants from the current local activation.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
+		self.runtime.clear_product_state(&product_id_from_js(&product_id)?).await;
+		Ok(())
 	}
 
 	/// Read a permission authorization status for a product.
@@ -1333,7 +1343,7 @@ impl WasmSigningHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = self
 			.runtime
-			.permission_authorization_status(&product_id, request)
+			.permission_authorization_status(&product_id_from_js(&product_id)?, request)
 			.await
 			.map_err(generic_error_to_js)?;
 		Ok(permission_authorization_status_to_js(status))
@@ -1353,7 +1363,7 @@ impl WasmSigningHostRuntime {
 		let requests = decode_permission_authorization_requests(&payloads)?;
 		let statuses = self
 			.runtime
-			.permission_authorization_statuses(&product_id, requests)
+			.permission_authorization_statuses(&product_id_from_js(&product_id)?, requests)
 			.await
 			.map_err(generic_error_to_js)?;
 		let values = Array::new();
@@ -1374,7 +1384,7 @@ impl WasmSigningHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = permission_authorization_status_from_js(&status)?;
 		self.runtime
-			.set_permission_authorization_status(&product_id, request, status)
+			.set_permission_authorization_status(&product_id_from_js(&product_id)?, request, status)
 			.await
 			.map_err(generic_error_to_js)
 	}

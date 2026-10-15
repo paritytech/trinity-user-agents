@@ -710,8 +710,7 @@ impl PairingHost {
 
 	/// Clear all capability material owned by one product while preserving the
 	/// active session and unrelated products.
-	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
-		let product_id = ProductId::parse(product_id).map_err(|error| error.to_string())?;
+	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), String> {
 		let session = {
 			let mut lifecycle =
 				self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
@@ -723,25 +722,25 @@ impl PairingHost {
 		self.statement_store_allowances
 			.lock()
 			.expect("statement-store allowance cache mutex poisoned")
-			.retain(|key, _| !key.is_for_product(&product_id));
+			.retain(|key, _| !key.is_for_product(product_id));
 		self.bulletin_allowances
 			.lock()
 			.expect("bulletin allowance cache mutex poisoned")
-			.retain(|key, _| !key.is_for_product(&product_id));
+			.retain(|key, _| !key.is_for_product(product_id));
 		self.product_subtrees
 			.lock()
 			.expect("product subtree cache mutex poisoned")
-			.retain(|(_, cached_product_id), _| cached_product_id != &product_id);
+			.retain(|(_, cached_product_id), _| cached_product_id != product_id);
 		self.auto_signing_keys
 			.lock()
 			.expect("AutoSigning key cache mutex poisoned")
-			.retain(|(_, cached_product_id), _| cached_product_id != &product_id);
+			.retain(|(_, cached_product_id), _| cached_product_id != product_id);
 
 		let mut first_error =
-			self.clear_auto_signing_product_under_storage_guard(&product_id).await.err();
+			self.clear_auto_signing_product_under_storage_guard(product_id).await.err();
 		if let Some(session) = session.as_ref() &&
 			let Err(error) =
-				allowances::clear_product_allowance_keys(&*self.platform, session, &product_id)
+				allowances::clear_product_allowance_keys(&*self.platform, session, product_id)
 					.await && first_error.is_none()
 		{
 			first_error = Some(error.to_string());
