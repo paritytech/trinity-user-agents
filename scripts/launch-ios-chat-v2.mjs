@@ -21,6 +21,7 @@
 // The launcher fails when a driven scenario fails or has no row.
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   cpSync,
   createWriteStream,
@@ -32,6 +33,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
 
 import {
   renderScenarioReport,
@@ -41,6 +43,7 @@ import { decodeTextMessage } from "./lib/chat-diagnosis-report.mjs";
 import {
   IOS_CHAT_V2_PERF,
   IOS_CHAT_V2_SCENARIOS,
+  IOS_STAGING_FILE_TAGS,
   appStartFailure,
   blockedRows,
   capabilityVerdict,
@@ -189,6 +192,18 @@ cpSync(
   resolve(fileDir, "sample.png"),
 );
 writeFileSync(resolve(fileDir, "large.bin"), Buffer.alloc(2 * 1024 * 1024, 7));
+// The attachments of P10.3. Each staging row has its own photo of random
+// pixels (about 1.5 MiB) and its own file of 1,900,000 random bytes, under
+// the 2 MiB that the live Bulletin chain stores in one transaction (O32).
+// Random bytes make each upload new, also across runs. S58 also sends a
+// file above that bound and one above the 8 MiB of the core.
+const MIB = 1024 * 1024;
+for (const tag of IOS_STAGING_FILE_TAGS) {
+  writeFileSync(resolve(fileDir, `photo-${tag}.png`), randomPng(720));
+  writeFileSync(resolve(fileDir, `file-${tag}.bin`), randomBytes(1_900_000));
+}
+writeFileSync(resolve(fileDir, "file-3m.bin"), randomBytes(3 * MIB));
+writeFileSync(resolve(fileDir, "file-8m1.bin"), Buffer.alloc(8 * MIB + 1, 9));
 
 const appLog = createWriteStream(appLogPath);
 const appConsole = spawn(
@@ -212,6 +227,9 @@ const appConsole = spawn(
       SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_COMMANDS: "1",
       SIMCTL_CHILD_TRUAPI_IOS_E2E_RUNTIME_MARKERS: "1",
       SIMCTL_CHILD_TRUAPI_IOS_E2E_NO_PUSH_PROMPT: "1",
+      // The app does not list `preimage_attachments` yet; the P10.3 rows
+      // drive the staging path with this switch.
+      SIMCTL_CHILD_TRUAPI_IOS_E2E_STAGING: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   },
@@ -367,8 +385,56 @@ async function runScenario(scenario) {
     return row(scenario, "skip", 0, "skip: not in TRUAPI_IOS_E2E_ONLY");
   }
   if (!scenario.drive) return skipRow(scenario);
+  await answerStrayPrompt();
   const result = await driveScenario(scenario);
   return scenario.capabilities ? capabilityVerdict(result, rows) : result;
+}
+
+/**
+ * A permission prompt that no scenario asked for, such as the one of the
+ * product's own preimage when its worker starts again while a room screen
+ * shows, would hold the permission lock of the core. The launcher allows it
+ * once, so the next scenario starts with no prompt on the screen.
+ */
+async function answerStrayPrompt() {
+  const prompts = parseUiMarkers(consoleText).filter(
+    (marker) =>
+      (marker.key === "prompt" || marker.key === "prompt-answer") &&
+      marker.room === productHost,
+  );
+  if (prompts.at(-1)?.key !== "prompt") return;
+  console.log(`answering a stray prompt: ${prompts.at(-1).value}`);
+  await sendHostAction({ room, host: "permission", argument: "once" });
+}
+
+/**
+ * A PNG of random pixels, `side` by `side`: it does not compress, so its
+ * size is about three bytes for each pixel.
+ */
+function randomPng(side) {
+  const chunk = (type, data) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(side, 0);
+  header.writeUInt32BE(side, 4);
+  header[8] = 8; // bit depth
+  header[9] = 2; // RGB
+  const rows = [];
+  for (let y = 0; y < side; y++) {
+    rows.push(Buffer.from([0]), randomBytes(side * 3));
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(Buffer.concat(rows))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 /**

@@ -17,7 +17,9 @@
  *   screen, which the app's simulator-only harness runs (`open`, `list`,
  *   `send`, `menu`, `toolbar`, `confirm`, `participants`, `participant`,
  *   `reactions`, `suggestion`, `type`, `attach`, `button`, `footer-action`,
- *   `older`, `jump`, `retry`, `retry-room`, `back`);
+ *   `older`, `jump`, `retry`, `retry-room`, `back`, and for P10.3 `notice`,
+ *   `notice-reset`, `permission`, `permission-reset`, `staging-fault`,
+ *   `delete`, `outbox-clear`, `b7`);
  * - `{ wait }`: a pause in milliseconds.
  *
  * An expectation is one of:
@@ -49,6 +51,25 @@
  * `{file:<name>}` a file the launcher put in the app's tmp directory.
  */
 const SOURCE = "source";
+
+/** How long a staged attachment has to reach the live Bulletin chain. */
+const STAGING_TIMEOUT_MS = 180_000;
+
+/**
+ * The rows that stage, by the tag of their files: each row stages its own
+ * photo and file, so that no two uploads of a run, or of two runs, hold the
+ * same bytes.
+ */
+export const IOS_STAGING_FILE_TAGS = Object.freeze([
+  "s60",
+  "s57h",
+  "s57s",
+  "s59",
+  "s58",
+]);
+
+/** The bound of the core for a staged attachment (`CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES`). */
+const PREIMAGE_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
  * The Chat features that the iOS app lists in `capabilities`
@@ -82,6 +103,11 @@ export const IOS_CHAT_FEATURE_ROWS = Object.freeze({
   custom_footer: ["S35"],
   inline_attachments: ["S36"],
   room_links: ["S27", "S24"],
+  // Not `preimage_attachments` (P10.3): no staged attachment can reach the
+  // product on the simulator. The harness identity has no Bulletin allowance
+  // (it is not a personhood ring member), and the live chain stores at most
+  // 2 MiB in one transaction (O32). S58 to S60 and S57u drive the rest of the
+  // path with `TRUAPI_IOS_E2E_STAGING`.
 });
 
 export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
@@ -560,6 +586,8 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
       phases: [
         {
           steps: [
+            // A run that stopped in a P10.3 row can leave the room staging.
+            "/features preimage off",
             { host: "attach", argument: "{file:sample.png}", target: "image" },
           ],
           expect: [
@@ -1226,6 +1254,280 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
       ],
     },
   },
+  // P10.3: attachments above 1 MiB staged as preimages of the product. The
+  // simulator stages on the live Paseo Next Bulletin chain. The harness
+  // identity is a new wallet with no personhood, so the core gets no Bulletin
+  // allowance for the product and every upload stops at that step; the rows
+  // check each step before it. S60 runs first: it shows the notice and
+  // answers the first `PreimageSubmit` prompt with Allow always.
+  {
+    id: "S60",
+    title: "the public-storage notice shows once per product",
+    mode: "host",
+    phase: "P10.3",
+    drive: {
+      phases: [
+        {
+          steps: [
+            { host: "list" },
+            { host: "open" },
+            { host: "outbox-clear" },
+            { wait: 500 },
+            "/features preimage on",
+            { host: "notice-reset" },
+            { host: "permission-reset" },
+            { host: "attach", argument: "{file:photo-s60.png}", target: "image" },
+          ],
+          expect: [{ ui: "notice", match: "^shown n=\\d+$" }],
+          shot: "notice",
+        },
+        {
+          steps: [{ host: "notice", argument: "accept" }],
+          expect: [
+            { ui: "staging", match: "sending image \\d+$" },
+            { console: "[e2e:ui] prompt truapi-chat-v2.dot" },
+          ],
+          shot: "prompt",
+        },
+        {
+          steps: [{ host: "permission", argument: "always" }],
+          expect: [
+            {
+              ui: "staging",
+              match: "(delivered|failed) image \\d+",
+              timeoutMs: STAGING_TIMEOUT_MS,
+            },
+          ],
+        },
+        {
+          // The second staged attachment of the product shows no notice.
+          steps: [
+            { host: "attach", argument: "{file:file-s60.bin}", target: "file" },
+          ],
+          expect: [
+            { ui: "staging", match: "(sending|delivered|failed) file 1900000" },
+            { uiNot: "notice", match: "^shown" },
+          ],
+        },
+      ],
+      after: [
+        { wait: 3_000 },
+        { host: "delete", target: "{lastUser}" },
+        { host: "delete", target: "{lastUser}" },
+        "/features preimage off",
+      ],
+    },
+  },
+  {
+    id: "S57",
+    title:
+      "a 3 MiB photo and a 6 MiB file are staged and arrive as Preimage media in both modes; the receiving side draws them",
+    mode: "host",
+    phase: "P10.3",
+    skip:
+      "the live Bulletin chain of the simulator stores at most 2 MiB in one transaction (O32), so the core refuses the 3 MiB photo and the 6 MiB file with TooLarge (S58 shows the bound); and the harness identity has no personhood, so the core gets no Bulletin allowance and no staged file reaches the product (S57u-host, S57u-source)",
+  },
+  {
+    id: "S57u-host",
+    title:
+      "under the 2 MiB bound, a 1.8 MiB file of a host-store room reaches the core, which declares the room, allows PreimageSubmit and checks the bound, and stops at the Bulletin allowance the harness identity lacks; the message stays Failed",
+    mode: "host",
+    phase: "P10.3",
+    drive: {
+      phases: [
+        {
+          steps: [
+            { host: "list" },
+            { host: "open" },
+            { host: "outbox-clear" },
+            { wait: 500 },
+            "/features preimage on",
+            { host: "attach", argument: "{file:file-s57h.bin}", target: "file" },
+          ],
+          expect: [
+            {
+              ui: "staging",
+              match: "failed file 1900000 allowance unavailable: ",
+              timeoutMs: STAGING_TIMEOUT_MS,
+            },
+            { ui: "window", match: ":out-failed:productBody" },
+            { ui: "outbox", match: "entries=1$" },
+          ],
+          shot: "failed",
+        },
+      ],
+      after: [
+        { host: "delete", target: "{lastUser}" },
+        "/features preimage off",
+      ],
+    },
+  },
+  {
+    id: "S57u-source",
+    title:
+      "under the 2 MiB bound, a 1.5 MiB photo of a product-source room shows at the end of the window and reaches the core, which stops at the Bulletin allowance; the entry stays Failed in the window",
+    mode: SOURCE,
+    phase: "P10.3",
+    drive: {
+      phases: [
+        {
+          steps: [
+            "/features preimage on",
+            { host: "list" },
+            { host: "open" },
+            { host: "outbox-clear" },
+            { wait: 500 },
+            { host: "attach", argument: "{file:photo-s57s.png}", target: "image" },
+          ],
+          expect: [
+            {
+              ui: "staging",
+              match: "failed image \\d+ allowance unavailable: ",
+              timeoutMs: STAGING_TIMEOUT_MS,
+            },
+            { ui: "window", match: "local:staged-[^:]+:out-failed:productBody" },
+          ],
+          shot: "failed",
+        },
+      ],
+      after: [
+        { host: "delete", target: "{lastUser}" },
+        "/features preimage off",
+        { host: "list" },
+        { host: "open", room: "host" },
+      ],
+    },
+  },
+  {
+    id: "S59",
+    title:
+      "a failed submit marks the message Failed; Retry stages again; Delete removes the kept bytes (the retried upload stops at the Bulletin allowance on the simulator)",
+    mode: "host",
+    phase: "P10.3",
+    drive: {
+      phases: [
+        {
+          steps: [
+            { host: "list" },
+            { host: "open" },
+            { host: "outbox-clear" },
+            { wait: 500 },
+            "/features preimage on",
+            { host: "staging-fault" },
+            { host: "attach", argument: "{file:photo-s59.png}", target: "image" },
+          ],
+          expect: [
+            {
+              ui: "staging",
+              match: "failed image \\d+ submit failed: E2E fault$",
+            },
+            { ui: "window", match: ":out-failed:productBody" },
+            { ui: "outbox", match: "entries=1$" },
+          ],
+          shot: "failed",
+        },
+        {
+          steps: [{ host: "retry", target: "{lastUser}" }],
+          expect: [
+            {
+              ui: "staging",
+              match: "(delivered image \\d+|failed image \\d+ allowance unavailable: .*)$",
+              timeoutMs: STAGING_TIMEOUT_MS,
+            },
+            { console: "[staging] host staged-" },
+          ],
+        },
+        {
+          steps: [{ host: "delete", target: "{lastUser}" }],
+          expect: [
+            { ui: "staging", match: "removed image \\d+ deleted$" },
+            { ui: "outbox", match: "entries=0$" },
+          ],
+        },
+      ],
+      after: ["/features preimage off"],
+    },
+  },
+  {
+    id: "S58",
+    title:
+      "without preimage_attachments, above 8 MiB, above the Bulletin bound, or with PreimageSubmit refused, the attachment is refused and nothing is uploaded",
+    mode: "host",
+    phase: "P10.3",
+    drive: {
+      phases: [
+        {
+          steps: [
+            { host: "list" },
+            { host: "open" },
+            { host: "outbox-clear" },
+            { wait: 500 },
+            "/features preimage off",
+            { host: "attach", argument: "{file:file-s58.bin}", target: "file" },
+          ],
+          expect: [{ ui: "failure", match: "^attachment too large 1900000$" }],
+        },
+        {
+          steps: [
+            "/features preimage on",
+            { host: "attach", argument: "{file:file-8m1.bin}", target: "file" },
+          ],
+          expect: [
+            {
+              ui: "failure",
+              match: "^attachment above staging limit 8388609 ",
+            },
+          ],
+        },
+        {
+          // The core reads the bound of the live chain before it uploads.
+          steps: [
+            { host: "attach", argument: "{file:file-3m.bin}", target: "file" },
+          ],
+          expect: [
+            {
+              ui: "staging",
+              match: "removed file 3145728 too large \\(max \\d+\\)$",
+              timeoutMs: STAGING_TIMEOUT_MS,
+            },
+          ],
+          shot: "bound",
+        },
+        {
+          // A refused bound lowers the limit of the room: the next file above
+          // it is refused before it goes to the core.
+          steps: [
+            { host: "attach", argument: "{file:file-3m.bin}", target: "file" },
+          ],
+          expect: [
+            {
+              ui: "failure",
+              match: "^attachment above staging limit 3145728 max=\\d+$",
+            },
+          ],
+        },
+        {
+          steps: [
+            { host: "permission-reset" },
+            { host: "attach", argument: "{file:file-s58.bin}", target: "file" },
+          ],
+          expect: [{ console: "[e2e:ui] prompt truapi-chat-v2.dot" }],
+        },
+        {
+          steps: [{ host: "permission", argument: "deny" }],
+          expect: [
+            {
+              ui: "staging",
+              match: "removed file 1900000 permission denied$",
+            },
+            { ui: "outbox", match: "entries=0$" },
+          ],
+        },
+      ],
+      // The core keeps the refusal for good; the next run must be asked again.
+      after: [{ host: "permission-reset" }, "/features preimage off"],
+    },
+  },
   {
     id: "S49",
     title: "capabilities lists exactly the features whose rows pass",
@@ -1336,6 +1638,26 @@ export const IOS_CHAT_V2_PERF = Object.freeze([
     },
   },
   {
+    id: "B7",
+    title:
+      "8 MiB crosses the binding into the core (target under 200 ms); upload time not measurable on the simulator (no Bulletin allowance)",
+    mode: "host",
+    phase: "P10.3",
+    perf: true,
+    drive: {
+      phases: [
+        {
+          // The core refuses a room that declares nothing after the bytes
+          // crossed, so the time is the crossing and one host callback.
+          steps: [{ host: "list" }, { host: "open" }, { host: "b7", argument: "7" }],
+          expect: [
+            { ui: "b7", match: "bytes=8388608 median=", timeoutMs: 60_000 },
+          ],
+        },
+      ],
+    },
+  },
+  {
     id: "B3",
     title: "/stream at 20 edits a second, and /flood",
     mode: "host",
@@ -1375,10 +1697,14 @@ export const IOS_CHAT_V2_PERF = Object.freeze([
 
 /**
  * The text that `/caps` posts for these feature names, with the bounds of
- * the core: 1 MiB inline, and 0 B for a preimage.
+ * the core: 1 MiB inline, and for a preimage 8 MiB when the host lists
+ * `preimage_attachments`, else 0 B.
  */
 export function capsLine(names) {
-  return `caps: ${names.length ? names.join(", ") : "none"}; inline ${1024 * 1024} B; preimage 0 B`;
+  const preimage = names.includes("preimage_attachments")
+    ? PREIMAGE_MAX_BYTES
+    : 0;
+  return `caps: ${names.length ? names.join(", ") : "none"}; inline ${1024 * 1024} B; preimage ${preimage} B`;
 }
 
 /**

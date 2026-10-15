@@ -41,10 +41,25 @@ test("every iOS scenario of the test plan has one entry", () => {
 });
 
 test("every scenario from S1 to S41 is driven", () => {
-  const skipped = IOS_CHAT_V2_SCENARIOS.filter((scenario) => scenario.skip).map(
-    (scenario) => scenario.id,
-  );
+  const skipped = IOS_CHAT_V2_SCENARIOS.filter(
+    (scenario) => scenario.skip && Number(scenario.id.slice(1)) <= 41,
+  ).map((scenario) => scenario.id);
   assert.deepEqual(skipped, []);
+});
+
+test("S57 is a skip that names the bound of the live chain, and rows under it prove staging", () => {
+  const byId = new Map(
+    IOS_CHAT_V2_SCENARIOS.map((scenario) => [scenario.id, scenario]),
+  );
+  assert.match(byId.get("S57").skip, /2 MiB.*O32.*allowance/);
+  for (const id of ["S57u-host", "S57u-source", "S58", "S59", "S60"]) {
+    assert.ok(byId.get(id)?.drive, `${id} is driven`);
+    assert.equal(byId.get(id).phase, "P10.3");
+  }
+  const modes = IOS_CHAT_V2_SCENARIOS.filter((scenario) =>
+    scenario.id.startsWith("S57u"),
+  ).map((scenario) => scenario.mode);
+  assert.deepEqual(modes, ["host", "source"]);
 });
 
 test("the harness markers come out of the app console", () => {
@@ -177,6 +192,10 @@ test("each listed feature names driven rows that run before S49", () => {
     "caps: toolbar, activity; inline 1048576 B; preimage 0 B",
   );
   assert.equal(capsLine([]), "caps: none; inline 1048576 B; preimage 0 B");
+  assert.equal(
+    capsLine(["room_links", "preimage_attachments"]),
+    "caps: room_links, preimage_attachments; inline 1048576 B; preimage 8388608 B",
+  );
 });
 
 test("S49 fails when a listed feature has a failed row", () => {
