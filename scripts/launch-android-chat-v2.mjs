@@ -41,6 +41,8 @@ import {
   installApk,
   isDeviceOnline,
   killEmulator,
+  onAdbServerRestart,
+  pushFile,
   removeForward,
   removeReversePort,
   reversePort,
@@ -139,7 +141,19 @@ const extensionId = `ProductBot_${productHost}`;
 const ROOMS = {
   host: { id: "host", name: "Sample: host store", chat: chatIdHex(extensionId, "host") },
   source: { id: "source", name: "Sample: product source", chat: chatIdHex(extensionId, "source") },
+  // The first `/placeholder` makes this room (S37).
+  "host-empty": { id: "host-empty", name: "Sample: empty", chat: chatIdHex(extensionId, "host-empty") },
 };
+/** The attachments of S36: an image under the inline limit, and a file over it. */
+const SMALL_ATTACHMENT = "sample.png";
+const LARGE_ATTACHMENT = "large.bin";
+
+/** A file of 2 MiB, over the inline limit of 1 MiB, in the output folder. */
+function largeAttachment() {
+  const path = resolve(outDir, LARGE_ATTACHMENT);
+  writeFileSync(path, Buffer.alloc(2 * 1024 * 1024, 0x5a));
+  return path;
+}
 const receiverComponent = `${packageName}/${RECEIVER}`;
 const launcherActivity = `${packageName}/${ACTIVITY}`;
 
@@ -199,7 +213,8 @@ const DRIVERS = {
     }
     expect(declarations.source.cfg !== "", "the source room has no stored config");
     expect(declarations.source.p !== "", "the source room has no stored preview");
-    expect(declarations.host.cfg === "" && declarations.host.p === "", "the host room stores a config or preview");
+    // The product declares the host room with the default configuration, which the host stores as zero bytes.
+    expect(/^0*$/.test(declarations.host.cfg) && declarations.host.p === "", `the host room stores config 0x${declarations.host.cfg} and preview 0x${declarations.host.p}`);
     await openRoom("host");
     const nodes = await waitScreen(
       (screen) => findText(screen, ROOMS.host.name) && findText(screen, declarations.host.description) && screen,
@@ -299,7 +314,7 @@ const DRIVERS = {
     note("Edited: the bubble shows the new text in place");
     await command("source", `/react ${id} 👍`, { reply: true });
     const reacted = await waitScreen((screen) => reactionChip(screen, "Edited in the source room", "👍"), "a 👍 chip");
-    note(`ReactionPlaced: chip "${reacted.text}"`);
+    note(`ReactionPlaced: chip "${reacted.text || reacted.description}"`);
     await screenshot(scenarioById("S18"), "react");
     await command("source", `/unreact ${id} 👍`, { reply: true });
     await waitScreen((screen) => !reactionChip(screen, "Edited in the source room", "👍") && screen, "no 👍 chip");
@@ -423,29 +438,43 @@ const DRIVERS = {
   },
 
   async S46({ note }) {
-    await openRoom("source");
+    // A reopen asks the participant count before the first page, and the count would take the interrupt. So the
+    // room stays open, and a scroll to older messages asks the next query.
+    await reopenRoom("source");
     await command("source", "/fail unavailable");
-    const opened = await reopenRoom("source");
-    const first = await waitEvent(opened, (entry) => entry.via === "messages_query", "a messages_query");
-    const refused = await waitAnswer(opened, first);
+    const mark = eventMark();
+    let first;
+    for (let attempt = 0; attempt < 20 && !first; attempt += 1) {
+      await scrollOlder(900, 300);
+      first = eventsSince(mark).find((entry) => entry.via.endsWith("_query"));
+    }
+    expect(first?.via === "messages_query", `the next query after /fail unavailable is ${first ? `${first.via} ${first.kind}` : "none"}`);
+    const refused = await waitAnswer(mark, first);
     expect(refused.kind === "NotAvailable", `the first answer is ${refused.kind}`);
     const second = await waitEvent(
-      opened,
+      mark,
       (entry) => entry.via === "messages_query" && entry.seq > first.seq,
       "the retry of the messages_query",
     );
-    const answer = await waitAnswer(opened, second);
+    const answer = await waitAnswer(mark, second);
     expect(answer.kind === "Page", `the retry was answered ${answer.kind}`);
     expect(describeAnchor(second) === describeAnchor(first), "the retry asked another page");
-    await waitScreen((screen) => findText(screen, "ok /fail unavailable"), "the newest page on screen");
     note(`\`${await screenshot(scenarioById("S46"), "source")}\``);
-    note(`${describeAnchor(first)} answered NotAvailable; the host asked the same page once more and got ${answer.kind}; the feed shows the newest page`);
+    await scrollToNewest();
+    note(
+      `with the room open, the scroll to older messages asked ${describeAnchor(first)}, answered NotAvailable; the host asked the same page once more and got ${answer.kind} with ${pageMessages(answer).length} messages`,
+    );
   },
 
   async S22({ note }) {
     await openRoom("source");
     await command("source", "/history 560");
     const opened = await reopenRoom("source");
+    // The new history is newer than the message that the user saw last, so the room opens at the "New messages"
+    // marker, not at the newest message. The launcher scrolls to the newest message first.
+    for (let attempt = 0; attempt < 10 && !findText(parseUiNodes(uiDump(serial)), "History message 00560"); attempt += 1) {
+      await scrollToNewest();
+    }
     await waitScreen((screen) => findText(screen, "History message 00560"), "History message 00560");
     let pages = [];
     for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -580,25 +609,16 @@ const DRIVERS = {
         message: "chat_rooms.name did not change",
       });
       note('chat_rooms.name became "Renamed by the launcher"');
-      const header = await waitScreen(
-        (screen) => findText(screen, "Renamed by /meta") && screen,
-        "the new description in the open header",
+      await waitScreen(
+        (screen) => findText(screen, "Renamed by the launcher") && findText(screen, "Renamed by /meta") && screen,
+        "the new name and description in the open header",
       );
-      note('the open header shows the new description "Renamed by /meta"');
+      note('the open header shows the new name and the description "Renamed by /meta" without a reopen');
       note(`\`${await screenshot(scenarioById("S3"), "host")}\``);
-      const named = await waitScreen(
-        (screen) => findText(screen, "Renamed by the launcher") && screen,
-        "the new name in the open header",
-        10_000,
-      ).catch(() => undefined);
-      expect(
-        named,
-        `the open header still shows "${header.find((node) => node.text === ROOMS.host.name)?.text ?? "?"}"; it reads the room name once (ChatEngine.observeChatDisplay)`,
-      );
       await showChatList();
       const list = await waitScreen((screen) => findText(screen, "Renamed by the launcher") && screen, "the new name in the chat list");
       expect(list, "the list row kept the old name");
-      note("the list row and the open header show the new name");
+      note("the list row shows the new name");
     } finally {
       await command("host", `/meta ${ROOMS.host.name}`, { reply: true });
     }
@@ -962,9 +982,10 @@ const DRIVERS = {
     const editRevisions = revisionCount(`ChatExtension:${extensionId}:host/${id}`);
     expect(editRevisions === 1, `${id} has ${editRevisions} revision rows`);
     const stored = messages("host").find((message) => message.id.endsWith(`/${id}`));
+    expect(stored?.text === "Edited by the launcher", `chat_messages.searchableContent reads "${stored?.text.slice(0, 40)}" after the edit`);
     note(`\`${streamedShot}\`, \`${await screenshot(scenarioById("S8"), "host")}\``);
     note(
-      `/stream: the edits ended in one bubble with the full sentence and ${revisions} revision row; /edit ${id}: the bubble shows "Edited by the launcher" in place with the mark "${mark.text}" and 1 revision row; chat_messages.searchableContent still reads "${stored?.text.slice(0, 40)}" (app gap: edits do not update it)`,
+      `/stream: the edits ended in one bubble with the full sentence and ${revisions} revision row; /edit ${id}: the bubble shows "Edited by the launcher" in place with the mark "${mark.text}" and 1 revision row; chat_messages.searchableContent reads "${stored.text}"`,
     );
   },
 
@@ -1013,7 +1034,7 @@ const DRIVERS = {
     });
     const chip = await waitScreen((screen) => reactionChip(screen, text, "👍"), "the 👍 chip");
     const both = await screenshot(scenarioById("S10"), "host");
-    const counted = /2/.test(chip.text) || parseUiNodes(uiDump(serial)).some((node) => node.text === "2" && Math.abs(node.center.y - chip.center.y) < 40);
+    const counted = /2/.test(chip.text) || /, 2 reactions/.test(chip.description) || parseUiNodes(uiDump(serial)).some((node) => node.text === "2" && Math.abs(node.center.y - chip.center.y) < 40);
     await command("host", `/unreact ${id} 👍`, { reply: true });
     await waitFor(() => !reactionRows(id).some((reaction) => reaction.origintype !== "USER"), {
       timeoutMs: COMMAND_TIMEOUT_MS,
@@ -1186,6 +1207,537 @@ const DRIVERS = {
       await startServer();
     }
   },
+  async S25({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/menu extend", { reply: true });
+      const text = "A message whose menu the product extends";
+      const mark = eventMark();
+      await typeAndSend(text);
+      const extended = await openMessageMenu(text);
+      const query = await waitEvent(
+        mark,
+        (entry) => entry.via === "message_actions_query" && entry.room === "host" && JSON.stringify(entry.data).includes(jsonText(text)),
+        "a message_actions_query of the message",
+      );
+      const extendedLabels = menuLabels(extended);
+      const extendedShot = await screenshot(scenarioById("S25"), "extend");
+      expect(["Reply", "Copy", "Edit", "Delete", "Pin"].every((label) => extendedLabels.includes(label)), `ExtendBuiltIn shows ${extendedLabels.join(", ")}`);
+      expect(findText(extended, "Pin").center.y > findText(extended, "Delete").center.y, "Pin is not below the built-in entries");
+      await closeMenu();
+
+      await command("host", "/menu hide-edit", { reply: true });
+      const hidden = menuLabels(await openMessageMenu(text));
+      const hiddenShot = await screenshot(scenarioById("S25"), "host");
+      await closeMenu();
+      expect(!hidden.includes("Edit") && hidden.includes("Pin") && hidden.includes("Reply"), `ExtendBuiltIn with hidden: [Edit] shows ${hidden.join(", ")}`);
+      note(`\`${extendedShot}\`, \`${hiddenShot}\``);
+      note(
+        `/menu extend: the menu of the user's message asked message_actions_query (seq ${query.seq}) and showed ${extendedLabels.join(", ")}, Pin below the built-in entries; /menu hide-edit: ${hidden.join(", ")}`,
+      );
+    } finally {
+      await closeMenu();
+      await command("host", "/menu none", { reply: true });
+    }
+  },
+
+  async S26({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/menu custom", { reply: true });
+      await command("host", "/post text");
+      const id = await newestPlainText("host");
+      const text = plainText(id);
+      await scrollToNewest();
+      const custom = menuLabels(await openMessageMenu(text));
+      const customShot = await screenshot(scenarioById("S26"), "custom");
+      await closeMenu();
+      expect(custom.join(",") === "Pin,Report", `Custom shows ${custom.join(", ")}`);
+
+      await command("host", "/slow 6000", { reply: true });
+      const mark = eventMark();
+      const node = await findInFeed(text);
+      inputLongPress(serial, node.bounds.left + 20, node.center.y);
+      const started = Date.now();
+      const fallback = await waitScreen(
+        (screen) => findText(screen, "Reply") && !findText(screen, "Loading…") && screen,
+        "the default menu after the query time-out",
+        20_000,
+      );
+      const waited = Math.round((Date.now() - started) / 1000);
+      const fallbackLabels = menuLabels(fallback);
+      const fallbackShot = await screenshot(scenarioById("S26"), "host");
+      await closeMenu();
+      expect(!fallbackLabels.includes("Pin") && !fallbackLabels.includes("Report"), `the late menu shows ${fallbackLabels.join(", ")}`);
+      const asked = eventsSince(mark).filter((entry) => entry.via === "message_actions_query");
+      expect(asked.length > 0, "the long press asked no message_actions_query");
+      note(`\`${customShot}\`, \`${fallbackShot}\``);
+      note(
+        `/menu custom: the menu of ${id} showed only ${custom.join(", ")}; under /slow 6000 the menu showed "Loading…", then the defaults ${fallbackLabels.join(", ")} after ${waited} s (the 5 s lookup time-out)`,
+      );
+    } finally {
+      await closeMenu();
+      await command("host", "/slow 0", { reply: true, timeoutMs: ANSWER_TIMEOUT_MS });
+      await command("host", "/menu none", { reply: true });
+    }
+  },
+
+  async S28({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/menu custom", { reply: true });
+      await command("host", "/post text");
+      const id = await newestPlainText("host");
+      await scrollToNewest();
+      const menu = await openMessageMenu(plainText(id));
+      const mark = eventMark();
+      tapText(menu, "Pin");
+      const triggered = await waitEvent(mark, (entry) => isRoomEvent(entry, "host", "MessageActionTriggered"), "MessageActionTriggered");
+      expect(triggered.data?.actionId === "act-pin" && triggered.data?.messageId === id, `MessageActionTriggered ${JSON.stringify(triggered.data)}`);
+      const stored = `MessageActionTriggered act-pin on ${id}`;
+      await waitFor(() => messages("host").some((message) => message.text === stored), {
+        timeoutMs: COMMAND_TIMEOUT_MS,
+        message: `no "${stored}" stored`,
+      });
+      await scrollToNewest();
+      await waitScreen((screen) => findText(screen, stored), `"${stored}" on screen`);
+      note(`\`${await screenshot(scenarioById("S28"), "host")}\``);
+      note(`Pin in the menu of ${id} sent MessageActionTriggered ${JSON.stringify(triggered.data)}; the product answered "${stored}" (chat_messages and screen)`);
+    } finally {
+      await closeMenu();
+      await command("host", "/menu none", { reply: true });
+    }
+  },
+
+  async S27({ note }) {
+    await openRoom("host");
+    const text = "Long-press this message to open the App";
+    try {
+      const before = messages("host");
+      await command("host", "/deeplink");
+      await waitFor(() => addedMessages("host", before).some((message) => message.text === text), {
+        timeoutMs: COMMAND_TIMEOUT_MS,
+        message: `no "${text}" stored`,
+      });
+      await scrollToNewest();
+      const menu = await openMessageMenu(text);
+      tapText(menu, "Open the App");
+      const sheet = await waitScreen(
+        (screen) => findText(screen, "Open this link?") && findText(screen, /^polkadot:\/\//) && screen,
+        "the link confirmation",
+      );
+      const url = findText(sheet, /^polkadot:\/\//).text;
+      const confirmShot = await screenshot(scenarioById("S27"), "confirm");
+      const mark = logMark();
+      tapText(sheet, "Open");
+      // The app gives the link to its deeplink handlers first, then to the system.
+      const started = await waitForLog(
+        mark,
+        (line) => /ActivityTaskManager/.test(line.tag) && line.message.includes("dat=polkadot://") && line.message.includes(productHost),
+        "the start of the product link",
+      );
+      await delay(1_500);
+      const after = parseUiNodes(uiDump(serial));
+      const shot = await screenshot(scenarioById("S27"), "host");
+      note(`\`${confirmShot}\`, \`${shot}\``);
+      note(
+        `"Open the App" asked "Open this link?" for ${url}; Open handed the link on (logcat "${started.message.slice(0, 90)}…"); ${findTag(after, "chat_message_input") ? "no app page took it" : "a page took it"}: the deeplink handlers of the app open only names of the emulator's network, and the sample product is a .dot name, so the system got it and has no handler`,
+      );
+    } finally {
+      await closeMenu();
+      await openRoom("host");
+      await command("host", "/menu none", { reply: true });
+    }
+  },
+
+  async S29({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/toolbar 4", { reply: true });
+      const bar = await waitScreen(
+        (screen) => findDesc(screen, "Button 1") && findDesc(screen, "Button 2") && findDesc(screen, "More actions") && screen,
+        "two toolbar buttons and More actions",
+      );
+      expect(!findDesc(bar, "Button 3") && !findText(bar, "Button 3"), "Button 3 is inline");
+      const barShot = await screenshot(scenarioById("S29"), "bar");
+      let mark = eventMark();
+      tapNode(findDesc(bar, "Button 2"));
+      const inline = await waitEvent(mark, (entry) => isRoomEvent(entry, "host", "ToolbarActionTriggered"), "ToolbarActionTriggered of Button 2");
+      expect(inline.data?.actionId === "tb-2", `Button 2 sent ${JSON.stringify(inline.data)}`);
+      tapNode(findDesc(parseUiNodes(uiDump(serial)), "More actions"));
+      const overflow = await waitScreen((screen) => findText(screen, "Button 3") && findText(screen, "Button 4") && screen, "Button 3 and 4 in the overflow");
+      const overflowShot = await screenshot(scenarioById("S29"), "overflow");
+      mark = eventMark();
+      tapText(overflow, "Button 3");
+      const more = await waitEvent(mark, (entry) => isRoomEvent(entry, "host", "ToolbarActionTriggered"), "ToolbarActionTriggered of Button 3");
+      expect(more.data?.actionId === "tb-3", `Button 3 sent ${JSON.stringify(more.data)}`);
+      note(`\`${barShot}\`, \`${overflowShot}\`, \`${await screenshot(scenarioById("S29"), "host")}\``);
+      note(
+        `/toolbar 4: Button 1 and Button 2 inline, Button 3 and Button 4 in More actions; Button 2 sent ToolbarActionTriggered tb-2, Button 3 from the overflow sent tb-3`,
+      );
+    } finally {
+      await closeMenu();
+      await command("host", "/toolbar 0", { reply: true });
+    }
+  },
+
+  async S33({ note }) {
+    await openRoom("host");
+    await command("host", "/footer input", { reply: true });
+    const input = await waitScreen(
+      (screen) => findText(screen, "Message the sample") && findTag(screen, "chat_message_input") && screen,
+      'the hint "Message the sample"',
+    );
+    expect(!findDesc(input, "Attach"), "the Input footer without attachments shows Attach");
+    const inputShot = await screenshot(scenarioById("S33"), "input");
+    await command("host", "/footer photo", { reply: true });
+    const photo = await waitScreen((screen) => findDesc(screen, "Attach") && screen, "the Attach button");
+    expect(!findText(photo, "Message the sample"), "the hint of the last footer stayed");
+    note(`\`${inputShot}\`, \`${await screenshot(scenarioById("S33"), "host")}\``);
+    note(
+      '/footer input: the input shows the hint "Message the sample" and no Attach button; /footer photo (photo, video, file): the Attach button shows, with the default hint',
+    );
+  },
+
+  async S36({ note }) {
+    await openRoom("host");
+    try {
+      await waitScreen((screen) => findDesc(screen, "Attach") && screen, "the Attach button of /footer photo");
+      const before = messages("host");
+      const mark = eventMark();
+      await attachFromDownloads(SMALL_ATTACHMENT);
+      const posted = await waitEvent(
+        mark,
+        (entry) => isRoomEvent(entry, "host", "MessagePosted") && JSON.stringify(entry.data).includes('"tag":"Image"'),
+        "MessagePosted with an image",
+      );
+      const media = posted.data?.body?.value?.media?.[0];
+      const inline = media?.value?.resource;
+      expect(inline?.tag === "Inline", `the image is not inline: ${JSON.stringify(inline)?.slice(0, 120)}`);
+      const stored = await waitFor(
+        () => addedMessages("host", before).find((message) => message.type === "PRODUCT_BODY"),
+        { timeoutMs: COMMAND_TIMEOUT_MS, message: "no product body of the user stored" },
+      );
+      const imageShot = await screenshot(scenarioById("S36"), "image");
+
+      const largeMark = eventMark();
+      await attachFromDownloads(LARGE_ATTACHMENT);
+      const refusal = await waitScreen(
+        (screen) => screen.find((node) => node.text.startsWith("This file is too large to send")),
+        "the too-large message",
+        15_000,
+      );
+      const refusedShot = await screenshot(scenarioById("S36"), "host", 0);
+      await delay(1_500);
+      const large = eventsSince(largeMark).filter((entry) => isRoomEvent(entry, "host", "MessagePosted") && JSON.stringify(entry.data).includes('"tag":"File"'));
+      expect(large.length === 0, "the large file reached the product");
+      note(`\`${imageShot}\`, \`${refusedShot}\``);
+      note(
+        `${SMALL_ATTACHMENT} (${media?.value?.meta?.sizeBytes ?? "?"} bytes, ${media?.value?.meta?.mimeType ?? "?"}, ${media?.value?.meta?.width ?? "?"}×${media?.value?.meta?.height ?? "?"}) went inline: MessagePosted RichText with an Inline Image and its metadata, chat_messages ${stored.type}; ${LARGE_ATTACHMENT} (2 MiB) was refused with "${refusal.text}" and did not reach the product`,
+      );
+    } finally {
+      await command("host", "/footer input", { reply: true });
+    }
+  },
+
+  async S34({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/footer empty", { reply: true });
+      await waitScreen((screen) => !findTag(screen, "chat_message_input") && findText(screen, "ok /footer empty") && screen, "the room without the input");
+      note(`\`${await screenshot(scenarioById("S34"), "host")}\``);
+      note('/footer empty: the input and the Attach button went; the feed shows "ok /footer empty"');
+    } finally {
+      await hookCommand("host", "/footer input");
+    }
+  },
+
+  async S35({ note }) {
+    await openRoom("host");
+    try {
+      const mark = eventMark();
+      await command("host", "/footer custom", { reply: true });
+      const footer = await waitScreen(
+        (screen) => findText(screen, "The sample product draws this footer") && findText(screen, "Ping") && screen,
+        "the footer of the product",
+      );
+      expect(!findTag(footer, "chat_message_input"), "the custom footer shows the input too");
+      const render = await waitEvent(mark, (entry) => entry.via === "render" && entry.kind === "ChatFooter", "a render of ChatFooter");
+      const drawnShot = await screenshot(scenarioById("S35"), "drawn");
+      const pressed = eventMark();
+      tapText(footer, "Ping");
+      const action = await waitEvent(pressed, (entry) => entry.via === "renderer_action" && entry.kind === "ChatFooter", "a renderer_action of ChatFooter");
+      await waitFor(() => messages("host").some((message) => message.text === "footer ping"), {
+        timeoutMs: COMMAND_TIMEOUT_MS,
+        message: 'no "footer ping" stored',
+      });
+      note(`\`${drawnShot}\`, \`${await screenshot(scenarioById("S35"), "host")}\``);
+      note(
+        `/footer custom: render ChatFooter (seq ${render.seq}) drew "The sample product draws this footer" and Ping in place of the input; Ping sent renderer_action ${JSON.stringify(action.data).slice(0, 100)}; the product posted "footer ping"`,
+      );
+    } finally {
+      await hookCommand("host", "/footer input");
+    }
+  },
+
+  async S37({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/placeholder Nothing here yet", { reply: true });
+      await waitFor(() => roomRow("host-empty"), { timeoutMs: COMMAND_TIMEOUT_MS, message: "no host-empty room" });
+      await openRoom("host-empty");
+      const empty = await waitScreen((screen) => findText(screen, "Nothing here yet") && screen, 'the placeholder "Nothing here yet"');
+      expect(!findText(empty, "No messages yet"), "the default placeholder shows too");
+      note(`\`${await screenshot(scenarioById("S37"), "host")}\``);
+      note('/placeholder Nothing here yet: the empty host-store room "Sample: empty" shows "Nothing here yet" in place of "No messages yet"');
+    } finally {
+      await openRoom("host");
+      await command("host", "/placeholder", { reply: true });
+    }
+  },
+
+  async S38({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/suggest", { reply: true });
+      await waitScreen((screen) => findText(screen, "Say hello") && findText(screen, "Show help") && screen, "the two chips");
+      const chipsShot = await screenshot(scenarioById("S38"), "chips");
+      await typeOnly("typing");
+      const typing = parseUiNodes(uiDump(serial));
+      expect(!findText(typing, "Say hello") && !findText(typing, "Show help"), "the chips stay while the user types");
+      await clearInput();
+      let screen = await waitScreen((nodes) => findText(nodes, "Show help") && nodes, "the chips after the input cleared");
+      let mark = eventMark();
+      tapText(screen, "Show help");
+      const selected = await waitEvent(mark, (entry) => isRoomEvent(entry, "host", "SuggestionSelected"), "SuggestionSelected");
+      expect(selected.data?.suggestionId === "sg-event", `SuggestionSelected ${JSON.stringify(selected.data)}`);
+      const sentAsEvent = eventsSince(mark).some((entry) => isRoomEvent(entry, "host", "MessagePosted") && JSON.stringify(entry.data).includes("Show help"));
+      expect(!sentAsEvent, "Show help was also sent as a message");
+      screen = await waitScreen((nodes) => findText(nodes, "Say hello") && nodes, "the Say hello chip");
+      mark = eventMark();
+      tapText(screen, "Say hello");
+      const posted = await waitEvent(mark, (entry) => isRoomEvent(entry, "host", "MessagePosted") && JSON.stringify(entry.data).includes("Say hello"), 'MessagePosted "Say hello"');
+      note(`\`${chipsShot}\`, \`${await screenshot(scenarioById("S38"), "host")}\``);
+      note(
+        `/suggest: chips "Say hello" and "Show help"; both hid while the input held text; Show help sent SuggestionSelected sg-event and no message; Say hello sent MessagePosted "Say hello" (${posted.data?.messageId})`,
+      );
+    } finally {
+      await clearInput().catch(() => {});
+      await command("host", "/suggest off", { reply: true });
+    }
+  },
+
+  async S39({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/commands", { reply: true });
+      await typeOnly("/h");
+      const catalogue = await waitScreen((screen) => findText(screen, "/help") && findText(screen, /^\/history/) && screen, "the / catalogue");
+      // The feed shows earlier commands too; the catalogue entries are the ones that start with the typed "/h".
+      const entries = catalogue.filter((node) => /^\/h/.test(node.text) && node.tag !== "chat_message_input").map((node) => node.text);
+      const catalogueShot = await screenshot(scenarioById("S39"), "catalogue");
+      tapText(catalogue, "/help");
+      await waitScreen((screen) => findTag(screen, "chat_message_input")?.text.trim() === "/help" && screen, 'the input "/help"');
+      const mark = eventMark();
+      const send = findTag(parseUiNodes(uiDump(serial)), "chat_send_button");
+      tapNode(send);
+      const commandEvent = await waitEvent(mark, (entry) => isRoomEvent(entry, "host", "Command"), "Command");
+      expect(commandEvent.data?.command === "help", `Command ${JSON.stringify(commandEvent.data)}`);
+      await delay(1_500);
+      expect(!eventsSince(mark).some((entry) => isRoomEvent(entry, "host", "MessagePosted")), "the command was also posted as a message");
+      note(`\`${catalogueShot}\`, \`${await screenshot(scenarioById("S39"), "host")}\``);
+      note(`/commands, then "/h" in the input: the catalogue offered ${entries.join(", ")}; a tap on /help put "/help" in the input, and the send arrived as Command ${JSON.stringify(commandEvent.data)} with no MessagePosted`);
+    } finally {
+      await clearInput().catch(() => {});
+      await command("host", "/commands off", { reply: true, asCommand: true });
+    }
+  },
+
+  async S40({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/activity on", { reply: true });
+      await waitScreen((screen) => findText(screen, "Sample is typing"), 'the activity line "Sample is typing"');
+      const lineShot = await screenshot(scenarioById("S40"), "line");
+      await command("host", "/activity off", { reply: true });
+      await waitScreen((screen) => !findText(screen, "Sample is typing") && screen, "no activity line");
+      await command("host", "/activity on", { reply: true });
+      await waitScreen((screen) => findText(screen, "Sample is typing"), "the activity line again");
+      const closed = eventMark();
+      await showChatList();
+      await waitEvent(closed, (entry) => isRoomEvent(entry, "host", "RoomClosed"), "RoomClosed");
+      const opened = eventMark();
+      await openRoom("host");
+      await waitEvent(opened, (entry) => isRoomEvent(entry, "host", "RoomOpened"), "RoomOpened");
+      await waitScreen((screen) => findText(screen, "Sample is typing"), "the line that the product restores on RoomOpened");
+      note(`\`${lineShot}\`, \`${await screenshot(scenarioById("S40"), "host")}\``);
+      note(
+        '/activity on showed "Sample is typing" above the input and /activity off cleared it; with the line on, leaving the room sent RoomClosed, and on RoomOpened the product set the line again',
+      );
+    } finally {
+      await command("host", "/activity off", { reply: true });
+    }
+  },
+
+  async S41({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/allowed 👍❤️", { reply: true });
+      await scrollToNewest();
+      const menu = await openMessageMenu("ok /allowed 👍❤️");
+      const picker = quickReactions(menu);
+      const more = findDesc(menu, "Show more reactions");
+      const shot = await screenshot(scenarioById("S41"), "host");
+      await closeMenu();
+      expect(picker.join("") === "👍❤️", `the picker offers ${picker.join(" ")}`);
+      expect(!more, "the picker offers more reactions");
+      await command("host", "/allowed", { reply: true });
+      await scrollToNewest();
+      const full = quickReactions(await openMessageMenu("ok /allowed"));
+      await closeMenu();
+      expect(full.length > 2, `after /allowed the picker offers ${full.join(" ")}`);
+      note(`\`${shot}\``);
+      note(`/allowed 👍❤️: the picker of the menu offered only ${picker.join(" ")} and no "Show more reactions"; after /allowed it offered ${full.join(" ")} again`);
+    } finally {
+      await closeMenu();
+    }
+  },
+
+  async S47({ note }) {
+    await openRoom("host");
+    const opened = eventMark();
+    try {
+      const before = generation("host");
+      await command("host", "/menu extend", { reply: true });
+      await waitFor(() => generation("host") > before, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the configuration generation did not change" });
+      const extended = generation("host");
+      await scrollToNewest();
+      const withPin = menuLabels(await openMessageMenu("ok /menu extend"));
+      const shot = await screenshot(scenarioById("S47"), "host");
+      await closeMenu();
+      expect(withPin.includes("Pin"), `after /menu extend the menu shows ${withPin.join(", ")}`);
+      await command("host", "/menu none", { reply: true });
+      await waitFor(() => generation("host") > extended, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the configuration generation did not change again" });
+      await scrollToNewest();
+      const withoutPin = menuLabels(await openMessageMenu("ok /menu none"));
+      await closeMenu();
+      expect(!withoutPin.includes("Pin"), `after /menu none the menu shows ${withoutPin.join(", ")}`);
+      const closed = eventsSince(opened).filter((entry) => isRoomEvent(entry, "host", "RoomClosed"));
+      expect(closed.length === 0, "the room closed while the policy changed");
+      note(`\`${shot}\``);
+      note(
+        `with the host room open, chat_room_declarations.configGeneration went ${before} → ${extended} → ${generation("host")} on /menu extend and /menu none; the open room took each policy without a reopen (no RoomClosed): menu ${withPin.join(", ")}, then ${withoutPin.join(", ")}. The sample product cannot move a room to the other store, so the source swap of a product_source change stays with ChatRoomSourceContextTest`,
+      );
+    } finally {
+      await closeMenu();
+    }
+  },
+
+  async S30({ note }) {
+    await openRoom("source");
+    const mark = eventMark();
+    await command("source", "/participants 6", { reply: true });
+    const header = await waitScreen((screen) => findText(screen, "10 participants") && screen, 'the header "10 participants"');
+    const count = await waitEvent(
+      mark,
+      (entry) => entry.via === "participants_query" && entry.kind === "Count",
+      "a participants_query Count after /participants 6",
+    );
+    const headerShot = await screenshot(scenarioById("S30"), "header");
+    // Every fifth history message comes from p1 to p4, whose names the host asks with `ByIds`.
+    const names = ["Person #1", "0x0202…0202", "Contact 0x0303…0303", "truapi-playground.dot"];
+    let authors = [];
+    await scrollToNewest();
+    for (let attempt = 0; attempt < 10 && authors.length === 0; attempt += 1) {
+      const screen = parseUiNodes(uiDump(serial));
+      authors = names.filter((name) => findText(screen, name));
+      if (authors.length === 0) await scrollOlder(700);
+    }
+    expect(authors.length > 0, "no author name of a participant in the feed");
+    const byIds = events().filter((entry) => entry.via === "participants_query" && entry.kind === "ByIds" && entry.room === "source");
+    expect(byIds.length > 0, "no participants_query ByIds");
+    await scrollToNewest();
+    tapNode(findDesc(header, "Participants"));
+    const list = await waitScreen(
+      (screen) => findText(screen, "Participants") && findText(screen, "Person #1") && findText(screen, "Guest 5") && screen,
+      "the participants list",
+    );
+    const rows = ["Person #1", "0x0202…0202", "Contact 0x0303…0303", "truapi-playground.dot", ...[5, 6, 7, 8, 9, 10].map((n) => `Guest ${n}`)]
+      .filter((name) => findText(list, name));
+    await waitEvent(mark, (entry) => entry.via === "participants_query" && entry.kind === "Page", "a participants_query Page");
+    const pages = eventsSince(mark).filter((entry) => entry.via === "participants_query" && entry.kind === "Page");
+    const kinds = ["Person", "Account", "Contact", "App", "Guest"].filter((kind) => findText(list, kind));
+    note(`\`${headerShot}\`, \`${await screenshot(scenarioById("S30"), "source")}\``);
+    note(
+      `/participants 6: participants_query Count (seq ${count.seq}) and the open header "10 participants" without a reopen; authors in the feed from ${byIds.length} participants_query ByIds: ${authors.join(", ")}; the list asked ${pages.length} page(s) and shows ${rows.length} rows (${rows.join(", ")}), with the kinds ${kinds.join(", ")}`,
+    );
+    inputKeyEvent(serial, KEY.back);
+    await delay(800);
+  },
+
+  async S31({ note }) {
+    await openRoom("source");
+    const header = await waitScreen((screen) => findDesc(screen, "Participants") && screen, "the Participants button");
+    tapNode(findDesc(header, "Participants"));
+    const list = await waitScreen((screen) => findText(screen, "truapi-playground.dot") && screen, "p4 in the participants list");
+    let mark = eventMark();
+    tapText(list, "truapi-playground.dot");
+    const sheet = await waitScreen((screen) => findText(screen, "Mention") && findText(screen, "Open app") && screen, "the sheet of p4");
+    const menuQuery = await waitEvent(mark, (entry) => entry.via === "participant_actions_query", "a participant_actions_query");
+    const entries = ["Copy address", "Open app", "Mention"].filter((label) => findText(sheet, label));
+    const sheetShot = await screenshot(scenarioById("S31"), "sheet");
+    mark = eventMark();
+    tapText(sheet, "Mention");
+    const triggered = await waitEvent(mark, (entry) => isRoomEvent(entry, "source", "ParticipantActionTriggered"), "ParticipantActionTriggered");
+    expect(triggered.data?.participantId === "p4" && triggered.data?.actionId === "act-mention", `ParticipantActionTriggered ${JSON.stringify(triggered.data)}`);
+    await scrollToNewest();
+    await waitScreen((screen) => findText(screen, "ParticipantActionTriggered act-mention on p4"), "the answer of the product");
+    note(`\`${sheetShot}\`, \`${await screenshot(scenarioById("S31"), "source")}\``);
+    note(
+      `p4 (App kind) in the list opened its sheet after participant_actions_query (seq ${menuQuery.seq}): ${entries.join(", ")}; Mention sent ParticipantActionTriggered ${JSON.stringify(triggered.data)}, and the product answered "ParticipantActionTriggered act-mention on p4"`,
+    );
+  },
+
+  async S32({ note }) {
+    await openRoom("source");
+    try {
+      await command("source", "/reactions on", { reply: true });
+      await command("source", "/post text");
+      const id = await newestPlainText("source");
+      await command("source", `/react ${id} 👍`, { reply: true });
+      let mark = eventMark();
+      const chip = await waitForChip(plainText(id), "👍");
+      inputLongPress(serial, chip.center.x, chip.center.y);
+      const dialog = await waitScreen((screen) => findText(screen, "Reactions") && findText(screen, "Person #1") && screen, "who reacted");
+      const query = await waitEvent(mark, (entry) => entry.via === "reactions_query", "a reactions_query");
+      const answer = await waitAnswer(mark, query);
+      const listShot = await screenshot(scenarioById("S32"), "list");
+      inputKeyEvent(serial, KEY.back);
+      await delay(800);
+      expect(answer.kind === "Reactions", `reactions_query answered ${answer.kind}`);
+
+      await command("source", "/reactions na", { reply: true });
+      mark = eventMark();
+      const again = await waitForChip(plainText(id), "👍");
+      inputLongPress(serial, again.center.x, again.center.y);
+      const refused = await waitEvent(mark, (entry) => entry.via === "answer" && entry.kind === "NotAvailable", "a NotAvailable answer");
+      await delay(2_500);
+      const after = parseUiNodes(uiDump(serial));
+      expect(!findText(after, "Reactions"), "who reacted showed after NotAvailable");
+      const hidden = eventMark();
+      const third = await waitForChip(plainText(id), "👍");
+      inputLongPress(serial, third.center.x, third.center.y);
+      await delay(2_500);
+      const asked = eventsSince(hidden).filter((entry) => entry.via === "reactions_query");
+      expect(asked.length === 0, "the hidden affordance asked again");
+      note(`\`${listShot}\`, \`${await screenshot(scenarioById("S32"), "source")}\``);
+      note(
+        `/reactions on: a long press on the 👍 chip of ${id} asked reactions_query (seq ${query.seq}), answered Reactions, and "Reactions" listed Person #1; /reactions na: the query was answered NotAvailable (seq ${refused.re}), no list showed, and the next long press asked nothing`,
+      );
+    } finally {
+      await command("source", "/reactions off", { reply: true });
+    }
+  },
 };
 
 const STREAM_SENTENCE =
@@ -1268,11 +1820,15 @@ async function command(room, text, { reply = false, timeoutMs = COMMAND_TIMEOUT_
 async function waitReply(room, text, timeoutMs) {
   const ok = `ok ${text}`;
   const error = `error ${text}`;
+  let polls = 0;
   const answer = await waitFor(
-    () => {
+    async () => {
       if (room === "host") {
         return messages("host").find((message) => message.text === ok || message.text.startsWith(error))?.text;
       }
+      // The product keeps the messages of the source room, so the reply is read from the screen, at the newest message.
+      polls += 1;
+      if (polls % 4 === 0) await scrollToNewest();
       return parseUiNodes(uiDump(serial)).find((node) => node.text === ok || node.text.startsWith(error))?.text;
     },
     { timeoutMs, intervalMs: 500, message: `no reply "${ok}"` },
@@ -1310,7 +1866,6 @@ async function openRoom(room) {
     const screen = parseUiNodes(uiDump(serial));
     if (findTag(screen, "chat_message_input")) return;
   }
-  const mark = logMark();
   disableKeyboards();
   amStart(serial, ["-a", "android.intent.action.VIEW", "-d", `polkadotapp://chat?chatId=${ROOMS[room].chat}`]);
   currentRoom = room;
@@ -1320,86 +1875,31 @@ async function openRoom(room) {
       (findText(screen, ROOMS[room].name) || findText(screen, roomRow(room)?.name ?? ROOMS[room].name)),
     `the ${room} room screen`,
   );
-  await waitWorkerSettled(mark);
-  await retryUnavailableRoom(room);
-}
-
-/**
- * Wait until the worker runs and its client is connected. A room screen
- * that opens soon after another one closed restarts the worker, and the
- * client of the restarted worker connects some time after the app reports that it runs.
- */
-async function waitWorkerSettled(mark, timeoutMs = 45_000) {
-  let seen = -1;
-  let quietSince = Date.now();
-  await waitFor(
-    () => {
-      const lines = logLines(mark);
-      const running = lines.filter((line) => /TrUAPI worker for .* is running/.test(line.message));
-      const connected = lines.filter((line) => line.message.includes("truapi.ws_bridge.connection_open"));
-      const count = running.length + connected.length;
-      if (count !== seen) {
-        seen = count;
-        quietSince = Date.now();
-      }
-      // The client of a new worker connects just before or after the app reports that the worker runs.
-      const lastRunning = running.at(-1);
-      const settled =
-        !lastRunning ||
-        connected.some((line) => logTime(line) >= logTime(lastRunning) - 5_000);
-      return settled && Date.now() - quietSince > 2_500;
-    },
-    { timeoutMs, intervalMs: 500, message: "the worker did not settle: it runs but its client is not connected" },
-  );
-}
-
-/** The time of a logcat line in milliseconds of its day. */
-function logTime(line) {
-  const [hours, minutes, seconds] = line.time.split(":").map(Number);
-  return ((hours * 60 + minutes) * 60 + seconds) * 1000;
 }
 
 /**
  * Wait until the worker logs its preimage line, which ends its start. At its
  * first start the product asks to submit a preimage, and the launcher
- * answers "Don't allow". When the prompt does not reach the screen, the start
- * of the product waits for an answer that never comes. Then the launcher
- * restarts the app once and notes it.
+ * answers "Don't allow".
  */
 async function waitProductStarted() {
-  const started = () => events().some((entry) => entry.via === "preimage");
-  const prompted = () =>
-    waitFor(
-      () => {
-        dismissPrompts(parseUiNodes(uiDump(serial)));
-        return started();
-      },
-      { timeoutMs: 60_000, intervalMs: 1_000, message: "the product did not finish its start" },
-    );
   if (reuseApp) return;
-  try {
-    await prompted();
-  } catch {
-    const request = logLines(0).find((line) => line.message.includes("remote_permission"));
-    observations.push(
-      `${new Date().toISOString().slice(11, 19)} the product's start waited 60 s on "${request?.message ?? "a permission request"}", whose prompt never reached the screen; the launcher restarted the app`,
-    );
-    shell(serial, ["am", "force-stop", packageName]);
-    amStart(serial, ["-n", launcherActivity]);
-    await waitForProcess(serial, packageName);
-    await prompted();
-  }
-}
-
-/** Tap Retry when the room shows that the product does not answer, and note it. */
-async function retryUnavailableRoom(room) {
-  const screen = parseUiNodes(uiDump(serial));
-  const line = screen.find((node) => node.text.startsWith("The app does not answer"));
-  if (!line) return;
-  observations.push(`${new Date().toISOString().slice(11, 19)} the ${room} room opened as unavailable ("${line.text}"); the launcher tapped Retry`);
-  const retry = screen.find((node) => node.text === "Retry" && Math.abs(node.center.y - line.center.y) < 120);
-  if (retry) inputTap(serial, retry.center.x, retry.center.y);
-  await waitScreen((nodes) => !nodes.some((node) => node.text.startsWith("The app does not answer")) && nodes, "the room after Retry", 45_000);
+  let last = [];
+  await waitFor(
+    () => {
+      last = parseUiNodes(uiDump(serial));
+      dismissPrompts(last);
+      return events().some((entry) => entry.via === "preimage");
+    },
+    {
+      timeoutMs: START_TIMEOUT_MS,
+      intervalMs: 1_000,
+      message: () => {
+        screencap(serial, resolve(outDir, "start-fail.png"));
+        return `the product did not finish its start (no preimage line); \`start-fail.png\` shows ${screenSummary(last)}`;
+      },
+    },
+  );
 }
 
 /** Leave the room for the chat list and open it again; gives the event mark before the reopen. */
@@ -1479,15 +1979,124 @@ function tapText(screen, text) {
   inputTap(serial, node.center.x, node.center.y);
 }
 
-/** Long-press the bubble that shows `text`, and give the screen with its menu. */
+/** The entries of a message menu: the built-in ones, then the ones of the sample product. */
+const MENU_LABELS = ["Reply", "Copy", "Edit", "Retry", "Delete", "Pin", "Report", "Open the App"];
+
+/** The emoji of the quick reaction bar of a message menu. */
+const QUICK_EMOJI = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "👏"];
+
+/** Long-press the bubble that shows `text`, and give the screen with its menu once the product answered. */
 async function openMessageMenu(text) {
   const node = await findInFeed(text);
   inputLongPress(serial, node.bounds.left + 20, node.center.y);
-  return waitScreen((nodes) => (findText(nodes, "Reply") || findText(nodes, "Copy") || findText(nodes, "Retry")) && nodes, `the menu of "${text}"`);
+  return waitScreen(
+    (nodes) => MENU_LABELS.some((label) => findText(nodes, label)) && !findText(nodes, "Loading…") && nodes,
+    `the menu of "${text}"`,
+  );
 }
 
 function menuLabels(screen) {
-  return ["Reply", "Copy", "Edit", "Retry", "Delete"].filter((label) => findText(screen, label));
+  return MENU_LABELS.filter((label) => findText(screen, label));
+}
+
+/** The emoji of the quick reaction bar, left first. */
+function quickReactions(screen) {
+  return screen
+    .filter((node) => QUICK_EMOJI.includes(node.text))
+    .sort((a, b) => a.center.x - b.center.x)
+    .map((node) => node.text);
+}
+
+/** Close a menu, a sheet or a dialog over the room; the room screen and the chat list stay. */
+async function closeMenu() {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const screen = parseUiNodes(uiDump(serial));
+    if (findTag(screen, "chat_message_input") || findTag(screen, "chats_title") || findText(screen, "ok /footer empty")) return;
+    if (!MENU_LABELS.some((label) => findText(screen, label)) && !findDesc(screen, "Close sheet") && !findText(screen, /^Button \d$/) && !findText(screen, "Reactions")) return;
+    inputKeyEvent(serial, KEY.back);
+    await delay(800);
+  }
+}
+
+function findDesc(screen, description) {
+  return screen.find((node) => node.description === description);
+}
+
+function tapNode(node) {
+  expect(node, "no node to tap");
+  inputTap(serial, node.center.x, node.center.y);
+}
+
+/** Put `text` into the input without a send. */
+async function typeOnly(text) {
+  const screen = await waitScreen((nodes) => findTag(nodes, "chat_message_input") && nodes, "the message input");
+  tapNode(findTag(screen, "chat_message_input"));
+  inputKeyCombination(serial, KEY.ctrlLeft, KEY.a);
+  inputKeyEvent(serial, KEY.del);
+  const mark = logMark();
+  hook([["--es", "clipboard", text]]);
+  await waitForLog(mark, (line) => line.tag === E2E_TAG && line.message === "clipboard set", "the clipboard hook");
+  inputKeyEvent(serial, KEY.paste);
+  await waitScreen((nodes) => findTag(nodes, "chat_message_input")?.text === text && nodes, `"${text}" in the input`, 5_000);
+}
+
+async function clearInput() {
+  const screen = parseUiNodes(uiDump(serial));
+  const input = findTag(screen, "chat_message_input");
+  if (!input) return;
+  tapNode(input);
+  inputKeyCombination(serial, KEY.ctrlLeft, KEY.a);
+  inputKeyEvent(serial, KEY.del);
+  await delay(800);
+}
+
+/** The chip of `emoji` under the bubble that shows `text`, found from the newest message up. */
+async function waitForChip(text, emoji) {
+  await scrollToNewest();
+  return waitFor(
+    async () => {
+      const bubble = await findInFeed(text);
+      const screen = parseUiNodes(uiDump(serial));
+      return screen.find(
+        (node) =>
+          node.description.startsWith(`${emoji},`) &&
+          node.center.y > bubble.center.y &&
+          node.center.y < bubble.bounds.bottom + 220,
+      );
+    },
+    { timeoutMs: COMMAND_TIMEOUT_MS, intervalMs: 1_000, message: `no ${emoji} chip under the message` },
+  );
+}
+
+/**
+ * Attach a file that the launcher put into the Download folder of the
+ * device: Attach, the document picker of the system, then the file.
+ */
+async function attachFromDownloads(fileName) {
+  const room = await waitScreen((nodes) => findDesc(nodes, "Attach") && nodes, "the Attach button");
+  tapNode(findDesc(room, "Attach"));
+  const chooser = await waitScreen(
+    (nodes) => (findText(nodes, "Photos & videos") || findText(nodes, "Files")) && nodes,
+    "the attachment chooser",
+    15_000,
+  );
+  tapNode(findText(chooser, "Photos & videos") ?? findText(chooser, "Files"));
+  let picker = await waitScreen(
+    (nodes) => (findText(nodes, fileName) || findDesc(nodes, "Show roots")) && nodes,
+    "the document picker",
+    15_000,
+  );
+  if (!findText(picker, fileName)) {
+    tapNode(findDesc(picker, "Show roots"));
+    const roots = await waitScreen((nodes) => findText(nodes, "Downloads") && nodes, "the Downloads root", 10_000);
+    tapNode(findText(roots, "Downloads"));
+    picker = await waitScreen((nodes) => findText(nodes, fileName) && nodes, `${fileName} in Downloads`, 10_000);
+  }
+  tapNode(findText(picker, fileName));
+}
+
+function generation(room) {
+  return Number(sql(`SELECT configGeneration AS g FROM chat_room_declarations WHERE chatId = X'${ROOMS[room].chat}'`)[0]?.g ?? 0);
 }
 
 /** The id-numbered text of a "Plain text message" of the product. */
@@ -1515,8 +2124,12 @@ async function findInFeed(text, maxScrolls = 15) {
 function reactionChip(screen, text, emoji) {
   const bubble = findText(screen, text);
   if (!bubble) return undefined;
+  // A chip reads "<emoji>, <n> reactions" for TalkBack, so its text sits in the content description.
   return screen.find(
-    (node) => node.text.includes(emoji) && node.center.y > bubble.center.y && node.center.y < bubble.bounds.bottom + 200,
+    (node) =>
+      (node.text.includes(emoji) || node.description.startsWith(`${emoji},`)) &&
+      node.center.y > bubble.center.y &&
+      node.center.y < bubble.bounds.bottom + 200,
   );
 }
 
@@ -1985,6 +2598,8 @@ async function main() {
     step(`serve ${relative(repoRoot, productRoot)}/out at ${productUrl}`);
     await startServer();
     reversePort(serial, productPort);
+    // A restart of the adb server drops the port; the logcat stream connects again by itself.
+    onAdbServerRestart(() => reversePort(serial, productPort));
 
     // The launcher pastes text from the clipboard, so it needs no on-screen
     // keyboard. A keyboard covers the feed in the screenshots.
@@ -1997,6 +2612,12 @@ async function main() {
       installApk(serial, apk);
       clearAppData(serial, packageName);
       grantPermission(serial, packageName, "android.permission.POST_NOTIFICATIONS");
+      // The Attach button asks for the camera first; S36 picks files from the Download folder.
+      grantPermission(serial, packageName, "android.permission.CAMERA");
+      pushFile(serial, resolve(productRoot, "assets", SMALL_ATTACHMENT), `/sdcard/Download/${SMALL_ATTACHMENT}`);
+      const large = largeAttachment();
+      pushFile(serial, large, `/sdcard/Download/${LARGE_ATTACHMENT}`);
+      rmSync(large);
 
       step("start the app, seed the identity and install the product");
       amStart(serial, ["-n", launcherActivity]);
@@ -2024,26 +2645,11 @@ async function main() {
     await waitForProcess(serial, packageName);
 
     step("wait for the product to create its rooms");
-    const roomsExist = () => roomRow("host") && roomRow("source");
-    const firstTry = await waitFor(roomsExist, {
-      timeoutMs: START_TIMEOUT_MS / 2,
+    await waitFor(() => roomRow("host") && roomRow("source"), {
+      timeoutMs: START_TIMEOUT_MS,
       intervalMs: 2_000,
-      message: "no rooms",
-    }).catch(() => false);
-    if (!firstTry) {
-      // When the WebView renderer of a worker stops during the boot, the worker does not start again until the next demand.
-      const crash = logLines(0).find((line) => /Renderer process \(\d+\) crash detected/.test(line.message));
-      observations.push(
-        `the product created no room in ${START_TIMEOUT_MS / 2000} s${crash ? ` after "${crash.message}"` : ""}; the launcher restarted the app`,
-      );
-      shell(serial, ["am", "force-stop", packageName]);
-      amStart(serial, ["-n", launcherActivity]);
-      await waitFor(roomsExist, {
-        timeoutMs: START_TIMEOUT_MS,
-        intervalMs: 2_000,
-        message: `the product did not create its rooms in ${START_TIMEOUT_MS} ms after a restart; see app.log`,
-      });
-    }
+      message: `the product did not create its rooms in ${START_TIMEOUT_MS} ms; see app.log`,
+    });
 
     step("wait for the product to finish its start");
     await waitProductStarted();

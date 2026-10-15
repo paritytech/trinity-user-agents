@@ -163,8 +163,8 @@ class ChatEngine @Inject constructor(
                         .map(::getContactChatDisplay)
                 }
 
-            is ChatVariant.Extension -> flowOf {
-                val roomMetadata = chatRoomRepository.getRoomMetadata(chatId)
+            // The product can rename an open room, so the header follows the stored name and icon.
+            is ChatVariant.Extension -> chatRoomRepository.subscribeRoomMetadata(chatId).map { roomMetadata ->
                 getDefaultChatExtensionDisplay(chatId)
                     .map { chatDisplayGenerator.applyRoomMetadata(roomMetadata, it) }
             }

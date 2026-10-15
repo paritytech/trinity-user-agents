@@ -31,16 +31,18 @@ test("every Android scenario of the test plan has one entry", () => {
   }
 });
 
-test("S1 to S24 and S46 are driven, the P8.6 scenarios are skips", () => {
+test("S1 to S41, S46 and S47 are driven, S5 and S44 are skips with a reason", () => {
   const driven = ANDROID_CHAT_V2_SCENARIOS.filter((scenario) => scenario.drive).map((scenario) => scenario.id);
-  for (let number = 1; number <= 24; number += 1) {
+  for (let number = 1; number <= 41; number += 1) {
     if (number === 5) continue;
     assert.ok(driven.includes(`S${number}`), `S${number}`);
   }
   assert.ok(driven.includes("S46"));
-  for (let number = 25; number <= 41; number += 1) {
-    const scenario = ANDROID_CHAT_V2_SCENARIOS.find((entry) => entry.id === `S${number}`);
-    assert.equal(skipRow(scenario).evidence, "skip: needs P8.6");
+  assert.ok(driven.includes("S47"));
+  for (const id of ["S5", "S44"]) {
+    const scenario = ANDROID_CHAT_V2_SCENARIOS.find((entry) => entry.id === id);
+    assert.ok(!scenario.drive, id);
+    assert.match(skipRow(scenario).evidence, /^skip: (the sample product|no command of the sample product)/);
   }
 });
 
@@ -50,6 +52,11 @@ test("the P10.10 and P10.5 rows are driven, and S62 waits for the sample", () =>
     assert.equal(byId(id).drive, true, id);
   }
   assert.match(skipRow(byId("S62")).evidence, /^skip: needs P10\.5\.1 sample/);
+});
+
+test("S4 and S6 run after every other driven scenario, because they leave the room screen", () => {
+  const driven = ANDROID_CHAT_V2_SCENARIOS.filter((scenario) => scenario.drive).map((scenario) => scenario.id);
+  assert.deepEqual(driven.slice(-2), ["S4", "S6"]);
 });
 
 test("a scenario with its own skip reason keeps it", () => {
@@ -133,7 +140,9 @@ test("a run that could not start fails the driven rows and keeps the skips", () 
   const rows = blockedRows("the app did not start");
   const s7 = rows.find((row) => row.id === "S7");
   const s25 = rows.find((row) => row.id === "S25");
+  const s44 = rows.find((row) => row.id === "S44");
   assert.equal(s7.result, "fail");
   assert.equal(s7.evidence, "not run: the app did not start");
-  assert.equal(s25.result, "skip");
+  assert.equal(s25.result, "fail");
+  assert.equal(s44.result, "skip");
 });

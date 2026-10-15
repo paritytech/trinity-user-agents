@@ -38,8 +38,9 @@ class PermissionPromptViewModel @Inject constructor(
         permissionContext?.deliver(decision)
     }
 
-    // The prompt left the screen for good: a navigation removed it, or the activity closed. With no answer, the
-    // request must not wait for a prompt that no longer shows.
+    // The prompt left the screen for good: the activity closed, or a navigation removed it. A navigation that clears
+    // the back stack can do this, such as the splash screen to the main screen or a chat link. With no answer, the
+    // request ends with an error, not with a refusal. The product can then ask again.
     override fun onCleared() {
         permissionContext?.abandon()
         super.onCleared()
