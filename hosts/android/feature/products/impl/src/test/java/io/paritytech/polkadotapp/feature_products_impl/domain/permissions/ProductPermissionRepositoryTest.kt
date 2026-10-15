@@ -53,7 +53,7 @@ class ProductPermissionRepositoryTest {
             PermissionAuthorizationRequest.StatementStoreAllowance(DerivationIndex.Index(UInt.MAX_VALUE)),
             PermissionAuthorizationRequest.StatementStoreAllowance(DerivationIndex.Raw(ByteArray(32) { it.toByte() })),
         )
-        val permissions = requests.map { it.legacyPermission() }
+        val permissions = requests.map { requireNotNull(it.legacyPermission()) }
         assertEquals(requests.size, permissions.toSet().size)
         permissions.forEach { permission ->
             val restored = ProductPermission.fromLocal(permission.typeName, permission.key)

@@ -37,7 +37,8 @@ internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationReques
     }))
 }
 
-internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermission = when (this) {
+/** `null` for a cross-product signature approval, which the core keeps per execution and never lists. */
+internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermission? = when (this) {
     is PermissionAuthorizationRequest.Device -> ProductPermission.DeviceCapability(DeviceCapabilityType.entries.single { it.native() == v1 })
     is PermissionAuthorizationRequest.AccountAccess -> ProductPermission.AccountAccess(targetProductId)
     PermissionAuthorizationRequest.IdentityDisclosure -> ProductPermission.UserIdentityAccess
@@ -62,6 +63,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
         RemotePermission.StatementSubmit -> ProductPermission.RemotePermission.StatementSubmitAccess
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess
     }
+    is PermissionAuthorizationRequest.CrossProductSignature -> null
 }
 
 private fun DeviceCapabilityType.native(): HostDevicePermissionRequest = when (this) {
