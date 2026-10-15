@@ -510,6 +510,13 @@ async function check(expectation, { room, mark, baseline }) {
     );
     return `metadata ${JSON.stringify(expectation.metadata)}`;
   }
+  if (expectation.gone) {
+    await waitFor(() => !chatExists(target), {
+      timeoutMs,
+      message: `the room ${target} is still stored`,
+    });
+    return `room ${target} gone`;
+  }
   if (expectation.contentType !== undefined) {
     const before = baseline.contentTypes[expectation.contentType] ?? 0;
     let now = before;
@@ -722,6 +729,15 @@ function metadataRow(roomId, columns) {
   return Object.fromEntries(
     columns.map((column, index) => [column, parts[index]]),
   );
+}
+
+/** True when the app stores the chat of a room. */
+function chatExists(roomId) {
+  const count = sql(`
+    SELECT count(*) FROM ZCDCHAT AS chat
+    WHERE chat.ZIDENTIFIER = ${sqlString(chatIdentifierOf(roomId))};
+  `);
+  return Number(count ?? 0) > 0;
 }
 
 /** The number of messages of each content type in a room. */

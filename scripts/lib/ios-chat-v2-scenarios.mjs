@@ -23,6 +23,7 @@
  * An expectation is one of:
  * - `{ stored }`: a text message the room stores (host-store rooms);
  * - `{ metadata }`: columns of the room's `CDChatRoomMetadata` row;
+ * - `{ gone: true }`: the app stores no chat for the room;
  * - `{ contentType, added }`: at least `added` more messages of this content
  *   kind in the room than when the scenario started;
  * - `{ reactions }`: the change of the reaction rows of the room in the phase;
@@ -133,7 +134,32 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     title: "delete_room removes the room",
     mode: "host",
     phase: "P3",
-    skip: "the sample product has no command that calls delete_room; ChatRoomDeletionTests cover it",
+    drive: {
+      phases: [
+        {
+          steps: ["/room create"],
+          expect: [
+            {
+              metadata: { ZNAME: "Sample: throwaway" },
+              room: "throwaway",
+            },
+          ],
+        },
+        {
+          // The screen of the room is open while the product deletes it.
+          steps: [
+            { host: "open", room: "throwaway" },
+            { text: "/room delete", room: "host" },
+          ],
+          expect: [
+            { event: { via: "room", kind: "Deleted", room: "throwaway" } },
+            { gone: true, room: "throwaway" },
+            { ui: "screen", room: "throwaway", match: "^removed$" },
+          ],
+        },
+      ],
+      after: [{ host: "list" }, { host: "open" }],
+    },
   },
   {
     id: "S6",

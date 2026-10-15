@@ -161,6 +161,7 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
     }
 
     func didRemoveChat() {
+        productRoom?.mark("screen", "removed")
         wireframe.dismissChat(from: view)
     }
 }
