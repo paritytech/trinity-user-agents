@@ -6,10 +6,11 @@ use truapi::{
 
 /// Supported live network presets for the headless hosts.
 ///
-/// Every preset must be a test network. The CLI account store keeps BIP-39
-/// mnemonics in plaintext (`accounts.rs`), which is only acceptable for
-/// disposable test identities, so adding a production preset means reworking
-/// that storage first. The `every_preset_is_a_test_network` test enforces it.
+/// The CLI account store keeps BIP-39 mnemonics in plaintext (`accounts.rs`),
+/// which is only acceptable for disposable test identities. A preset that sets
+/// [`NetworkConfig::disposable_identities`] may use that store; any other
+/// preset only signs with a mnemonic supplied per process, never writes one,
+/// and never approves a confirmation without a prompt.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum Network {
 	#[value(name = "paseo-next-v2")]
@@ -20,6 +21,13 @@ pub enum Network {
 	/// reads the same string a product sees everywhere else.
 	#[value(name = "previewnet")]
 	Previewnet,
+	/// Polkadot mainnet (People, Bulletin, Asset Hub). Identities are real:
+	/// pass the signer with --mnemonic; no stored accounts, no auto-accept
+	// It never sets `NetworkConfig::disposable_identities` and ships no
+	// identity backend; commands that need one read
+	// `IDENTITY_BACKEND_BASE_ENV`.
+	#[value(name = "polkadot")]
+	Polkadot,
 }
 
 /// Env var overriding the identity backend base URL for every command. The URL
@@ -39,7 +47,7 @@ impl Network {
 			Self::PaseoNextV2 => NetworkConfig {
 				id: "paseo-next-v2",
 				network_suffix: "paseo",
-				identity_backend_base: "https://identity.dotspark.app/api/v1",
+				identity_backend_base: Some("https://identity.dotspark.app/api/v1"),
 				people_ws: PASEO_PEOPLE.ws,
 				bulletin_ws: PASEO_BULLETIN.ws,
 				asset_hub_ws: PASEO_ASSET_HUB.ws,
@@ -47,11 +55,13 @@ impl Network {
 				bulletin_genesis: PASEO_BULLETIN.genesis,
 				asset_hub_genesis: PASEO_ASSET_HUB.genesis,
 				live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
+				dotns_pop_controller: None,
+				disposable_identities: true,
 			},
 			Self::Previewnet => NetworkConfig {
 				id: "previewnet",
 				network_suffix: "testnet",
-				identity_backend_base: "https://identity-previewnet.dotspark.app/api/v1",
+				identity_backend_base: Some("https://identity-previewnet.dotspark.app/api/v1"),
 				people_ws: PREVIEWNET_PEOPLE.ws,
 				bulletin_ws: PREVIEWNET_BULLETIN.ws,
 				asset_hub_ws: PREVIEWNET_ASSET_HUB.ws,
@@ -59,6 +69,22 @@ impl Network {
 				bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
 				asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
 				live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
+				dotns_pop_controller: None,
+				disposable_identities: true,
+			},
+			Self::Polkadot => NetworkConfig {
+				id: "polkadot",
+				network_suffix: "dot",
+				identity_backend_base: None,
+				people_ws: POLKADOT_PEOPLE.ws,
+				bulletin_ws: POLKADOT_BULLETIN.ws,
+				asset_hub_ws: POLKADOT_ASSET_HUB.ws,
+				people_genesis: POLKADOT_PEOPLE.genesis,
+				bulletin_genesis: POLKADOT_BULLETIN.genesis,
+				asset_hub_genesis: POLKADOT_ASSET_HUB.genesis,
+				live_chain_endpoints: POLKADOT_CHAIN_ENDPOINTS,
+				dotns_pop_controller: Some(POLKADOT_DOTNS_POP_CONTROLLER),
+				disposable_identities: false,
 			},
 		}
 	}
@@ -71,7 +97,7 @@ fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -> Ne
 	if let Some(base) = base {
 		let trimmed = base.trim().trim_end_matches('/');
 		if !trimmed.is_empty() {
-			config.identity_backend_base = Box::leak(trimmed.to_string().into_boxed_str());
+			config.identity_backend_base = Some(Box::leak(trimmed.to_string().into_boxed_str()));
 		}
 	}
 	config
@@ -131,11 +157,52 @@ const PREVIEWNET_BULLETIN: ChainEndpoint = ChainEndpoint {
 	required_for_host: true,
 };
 
+const POLKADOT_ASSET_HUB: ChainEndpoint = ChainEndpoint {
+	genesis: hex_literal_genesis(
+		"68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f",
+	),
+	ws: "wss://polkadot-asset-hub-rpc.polkadot.io",
+	required_for_host: true,
+};
+
+const POLKADOT_PEOPLE: ChainEndpoint = ChainEndpoint {
+	genesis: hex_literal_genesis(
+		"67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008",
+	),
+	ws: "wss://polkadot-people-rpc.polkadot.io",
+	required_for_host: true,
+};
+
+const POLKADOT_BULLETIN: ChainEndpoint = ChainEndpoint {
+	genesis: hex_literal_genesis(
+		"2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4",
+	),
+	ws: "wss://bulletin-rpc.polkadot.io",
+	required_for_host: true,
+};
+
+/// The dotNS deployment on Polkadot Asset Hub, copied verbatim from
+/// `deployments/polkadot/420420419.json` in paritytech/dotns at
+/// `c3b291d287a28874f14f906ed61fb43162fc7caa` (paritytech/dotns#340). Replace
+/// the file rather than editing it; the tests read the controller out of it.
+#[cfg(test)]
+const POLKADOT_DOTNS_DEPLOYMENT: &str = include_str!("../deployments/polkadot-420420419.json");
+
+/// `DotnsPopController` from [`POLKADOT_DOTNS_DEPLOYMENT`]. Discovery reads
+/// `DotnsGateway.DispatcherAddress`, which Polkadot Asset Hub leaves unset until
+/// referendum 1955 enacts, so the preset carries the controller until then.
+/// `polkadot_dotns_controller_matches_the_deployment_manifest` pins it.
+const POLKADOT_DOTNS_POP_CONTROLLER: [u8; 20] =
+	hex_literal_address("A06d1CB1e3FedFF7b5dFa779b4Cc61703F8A46A1");
+
 const PASEO_NEXT_V2_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 	&[PASEO_ASSET_HUB, PASEO_PEOPLE, PASEO_BULLETIN];
 
 const PREVIEWNET_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 	&[PREVIEWNET_ASSET_HUB, PREVIEWNET_PEOPLE, PREVIEWNET_BULLETIN];
+
+const POLKADOT_CHAIN_ENDPOINTS: &[ChainEndpoint] =
+	&[POLKADOT_ASSET_HUB, POLKADOT_PEOPLE, POLKADOT_BULLETIN];
 
 /// Resolved RPC/backend/genesis values for one network preset.
 #[derive(Debug, Clone, Copy)]
@@ -148,7 +215,9 @@ pub struct NetworkConfig {
 	/// this network. `live_people_chain::network_suffix_matches_the_preset`
 	/// holds it against the chain.
 	pub network_suffix: &'static str,
-	pub identity_backend_base: &'static str,
+	/// Identity backend base URL including `/api/v1`. `None` on a preset with
+	/// no published backend, where [`IDENTITY_BACKEND_BASE_ENV`] must supply it.
+	pub identity_backend_base: Option<&'static str>,
 	pub people_ws: &'static str,
 	pub bulletin_ws: &'static str,
 	/// Asset Hub RPC, where PGAS allowances are claimed.
@@ -163,6 +232,14 @@ pub struct NetworkConfig {
 	/// the chain does not report sends Asset Hub traffic to the fallback chain.
 	pub asset_hub_genesis: [u8; 32],
 	pub live_chain_endpoints: &'static [ChainEndpoint],
+	/// `DotnsPopController` to use when on-chain discovery finds none, for a
+	/// network whose gateway dispatcher is not set yet. Discovery wins when it
+	/// answers.
+	pub dotns_pop_controller: Option<[u8; 20]>,
+	/// Whether identities on this network are disposable test identities the
+	/// plaintext account store may keep and auto-accept may sign for. Only
+	/// test networks set it.
+	pub disposable_identities: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -175,6 +252,30 @@ pub struct ChainEndpoint {
 }
 
 impl NetworkConfig {
+	/// The identity backend base URL, or an error naming the override when the
+	/// preset has none.
+	pub fn identity_backend(&self) -> anyhow::Result<&'static str> {
+		self.identity_backend_base.ok_or_else(|| {
+			anyhow::anyhow!(
+				"{} has no published identity backend; set {IDENTITY_BACKEND_BASE_ENV} to its \
+				 base URL, including /api/v1",
+				self.id
+			)
+		})
+	}
+
+	/// Refuses to write a mnemonic for this network to the plaintext account
+	/// store unless its identities are disposable.
+	pub fn ensure_disposable_identities(&self) -> anyhow::Result<()> {
+		anyhow::ensure!(
+			self.disposable_identities,
+			"{} holds real identities, which the plaintext account store must not keep; \
+			 pass the signer with --mnemonic or HOST_CLI_SIGNER_MNEMONIC",
+			self.id
+		);
+		Ok(())
+	}
+
 	/// The chain set this preset serves, for `Features::supported_chains`.
 	///
 	/// One entry per role this struct names a genesis hash for. `ChainEndpoint`
@@ -236,10 +337,24 @@ const fn hex_literal_genesis(hex: &str) -> [u8; 32] {
 	out
 }
 
+/// Decode a 40-char hex H160 at compile time. Accepts the EIP-55 mixed case
+/// the dotNS manifests use.
+const fn hex_literal_address(hex: &str) -> [u8; 20] {
+	let bytes = hex.as_bytes();
+	let mut out = [0u8; 20];
+	let mut i = 0;
+	while i < 20 {
+		out[i] = hex_nibble(bytes[i * 2]) << 4 | hex_nibble(bytes[i * 2 + 1]);
+		i += 1;
+	}
+	out
+}
+
 const fn hex_nibble(c: u8) -> u8 {
 	match c {
 		b'0'..=b'9' => c - b'0',
 		b'a'..=b'f' => c - b'a' + 10,
+		b'A'..=b'F' => c - b'A' + 10,
 		_ => panic!("invalid hex digit in genesis literal"),
 	}
 }
@@ -340,11 +455,8 @@ mod tests {
 		}
 	}
 
-	/// Guards the invariant documented on [`Network`]: the plaintext mnemonic
-	/// store is only safe for disposable identities, so no preset may point at a
-	/// production network. If this fails because a real network was added,
-	/// rework the account store rather than relaxing the assertion.
-	/// Hosts a preset may route to. Every entry is a disposable test deployment:
+	/// Hosts a disposable-identity preset may route to. Every entry is a test
+	/// deployment:
 	/// `paseo`/`testnet` name the Paseo testnets,
 	/// `previewnet.substrate.dev` is the previewnet parachain set, and the two
 	/// exact dotSpark hosts are those test presets' identity backends.
@@ -374,17 +486,20 @@ mod tests {
 		}
 	}
 
+	/// Guards the invariant documented on [`Network`]: a preset that lets the
+	/// plaintext account store keep its identities must route only to test
+	/// networks. If this fails because a real network was added, clear its
+	/// `disposable_identities` rather than extending the allowlist.
 	#[test]
-	fn every_preset_is_a_test_network() {
+	fn every_disposable_preset_routes_to_a_test_network() {
 		for network in Network::value_variants() {
 			// Reading the raw preset. An exported backend override cannot leak in.
 			let config = network.preset();
-			let mut routes = vec![
-				config.identity_backend_base,
-				config.people_ws,
-				config.bulletin_ws,
-				config.asset_hub_ws,
-			];
+			if !config.disposable_identities {
+				continue;
+			}
+			let mut routes: Vec<&str> = config.identity_backend_base.into_iter().collect();
+			routes.extend([config.people_ws, config.bulletin_ws, config.asset_hub_ws]);
 			routes.extend(config.live_chain_endpoints.iter().map(|chain| chain.ws));
 
 			for route in routes {
@@ -536,6 +651,46 @@ mod tests {
 		);
 	}
 
+	/// The preset's controller is a copy of the vendored manifest's entry, so
+	/// replacing the manifest with a new deployment fails here until the
+	/// constant follows it.
+	#[test]
+	fn polkadot_dotns_controller_matches_the_deployment_manifest() {
+		let manifest: serde_json::Value =
+			serde_json::from_str(POLKADOT_DOTNS_DEPLOYMENT).expect("manifest is JSON");
+		let controller = manifest["DotnsPopController"]
+			.as_str()
+			.expect("manifest names a DotnsPopController");
+		assert_eq!(
+			hex::decode(controller.trim_start_matches("0x")).expect("controller is hex"),
+			POLKADOT_DOTNS_POP_CONTROLLER,
+		);
+		assert_eq!(
+			Network::Polkadot.preset().dotns_pop_controller,
+			Some(POLKADOT_DOTNS_POP_CONTROLLER)
+		);
+	}
+
+	/// Mainnet identities are real: they must never reach the plaintext account
+	/// store or auto-accept.
+	#[test]
+	fn polkadot_holds_real_identities() {
+		let config = Network::Polkadot.preset();
+		assert!(!config.disposable_identities);
+		assert!(config.ensure_disposable_identities().is_err());
+	}
+
+	#[test]
+	fn a_preset_without_a_backend_names_the_override() {
+		let preset = Network::Polkadot.preset();
+		let error = preset.identity_backend().expect_err("polkadot ships no backend");
+		assert!(error.to_string().contains(IDENTITY_BACKEND_BASE_ENV), "{error}");
+
+		let overridden =
+			apply_backend_override(preset, Some("http://localhost:8080/api/v1".to_string()));
+		assert_eq!(overridden.identity_backend().ok(), Some("http://localhost:8080/api/v1"));
+	}
+
 	#[test]
 	fn backend_override_replaces_only_the_backend_base() {
 		let preset = Network::PaseoNextV2.preset();
@@ -543,7 +698,8 @@ mod tests {
 			apply_backend_override(preset, Some("http://localhost:8080/api/v1/".to_string()));
 
 		assert_eq!(
-			overridden.identity_backend_base, "http://localhost:8080/api/v1",
+			overridden.identity_backend_base,
+			Some("http://localhost:8080/api/v1"),
 			"trailing slash is stripped"
 		);
 		assert_eq!(overridden.asset_hub_ws, preset.asset_hub_ws);

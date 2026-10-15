@@ -496,6 +496,7 @@ truapi-host dev [options] [-- <development-command>...]
 `dev` is the plain-browser development topology built on the signing host. It
 needs no TTY, ensures and activates a signer, auto-accepts confirmations, binds
 the loopback frame server and browser bridge, then starts the wrapped command.
+Because it auto-accepts, it refuses a preset whose identities are real (§14.1).
 When no command follows `--`, it serves the host until stopped.
 
 | Option | Default | Behavior |
@@ -1608,14 +1609,22 @@ core, product, and current selection files.
 
 ### 14.1 Network presets
 
-`--network` selects one of two presets. `paseo-next-v2` is the default. Every
-preset is a test network; the account store keeps BIP-39 entropy for
-disposable test identities only.
+`--network` selects one of three presets. `paseo-next-v2` is the default.
+`paseo-next-v2` and `previewnet` are test networks whose identities are
+disposable, so the account store may keep their BIP-39 entropy. `polkadot` is
+mainnet, and its identities are real. A preset whose identities are real never writes to
+the account store: it signs only with `--mnemonic` or
+`HOST_CLI_SIGNER_MNEMONIC`, and refuses auto accounts, stored accounts and
+mnemonic imports. It also refuses automatic approval (`--auto-accept`,
+`/approval automatic` and `dev`), so a local page cannot get a real identity's
+signature without a prompt.
 
 Auto-account onboarding (§12.3) needs an identity backend that records the
-lite username on the dotNS gateway. Each preset points at its matching dotSpark
-identity backend, and the CLI reports the complete backend response when
-registration fails.
+lite username on the dotNS gateway. Each test preset points at its matching
+dotSpark identity backend, and the CLI reports the complete backend response
+when registration fails. `polkadot` ships no identity backend: a command that
+needs one fails with an error naming `HOST_CLI_IDENTITY_BACKEND_BASE` until that
+variable supplies it.
 
 #### `paseo-next-v2`
 
@@ -1645,9 +1654,33 @@ on-chain testing.
 | Asset Hub RPC | `wss://previewnet.substrate.dev/asset-hub` |
 | Asset Hub genesis | `0xbac97e23fc8f4bccae72a98f8aeb2bcab20bf755862304e4b46ad6473456e896` |
 
+#### `polkadot`
+
+Polkadot mainnet. Identities here are real, so this preset never writes the
+account store and never auto-approves (above). Reserved identities derive under
+`.dot`.
+
+| Purpose | Value |
+| --- | --- |
+| Identity backend | none; set `HOST_CLI_IDENTITY_BACKEND_BASE` |
+| People RPC | `wss://polkadot-people-rpc.polkadot.io` |
+| People genesis | `0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008` |
+| Bulletin RPC | `wss://bulletin-rpc.polkadot.io` |
+| Bulletin genesis | `0x2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4` |
+| Asset Hub RPC | `wss://polkadot-asset-hub-rpc.polkadot.io` |
+| Asset Hub genesis | `0x68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f` |
+| `DotnsPopController` | `0xA06d1CB1e3FedFF7b5dFa779b4Cc61703F8A46A1` |
+
+The dotNS addresses come from `deployments/polkadot/420420419.json` in
+paritytech/dotns, vendored as `deployments/polkadot-420420419.json`. Username
+reads discover the controller from `DotnsGateway.DispatcherAddress` as on the
+test presets; while Polkadot Asset Hub leaves that unset (referendum 1955 sets
+it), the CLI's own reads fall back to the manifest's controller. The gateway
+cannot issue names until the dispatcher is set.
+
 Sessions are per network (`SessionCatalog::new` keys on the preset id), so a
-signer provisioned on one preset is not visible from the other. Two presets means
-two identities on one machine, which is deliberate: the lite username and the
+signer provisioned on one preset is not visible from another. Each preset means
+its own identity on one machine, which is deliberate: the lite username and the
 statement-store allowance are per chain.
 
 The backend's username routes are bearer-gated; the CLI mints the access token
@@ -1664,7 +1697,7 @@ People genesis, preimage submission, and PGAS claims plus dotNS username reads
 respectively. The SSO sentinel is
 a separate case — it is an unmapped genesis and reaches People through the fallback
 below, not through People's own route. `E2E_LIVE_CHAIN=1` only widens routing to endpoints the
-preset carries without serving them as a role, of which neither preset has any.
+preset carries without serving them as a role, of which no preset has any.
 
 The all-zero SSO sentinel and every genesis hash not present in the active
 route map fall back to the People RPC.
@@ -1914,7 +1947,8 @@ only product and message length.
   <redacted summary>
 ```
 
-It does not bypass product-id validation or core authorization rules.
+It does not bypass product-id validation or core authorization rules. It is
+refused on a preset whose identities are real (§14.1).
 
 ### 17.3 Sensitive state and output
 
@@ -1924,7 +1958,7 @@ Transcript copies and submitted-command dividers redact it.
 
 Mnemonics are never intentionally printed, but auto-managed mnemonics are
 stored in plaintext `accounts.json`. That file is local test secret material,
-not production custody.
+not production custody, so only disposable-identity presets (§14.1) write it.
 
 `debug` and especially `trace` can include decoded product payloads and
 transport metadata. Do not publish trace logs from sensitive test accounts
@@ -2030,7 +2064,8 @@ The command derives and queries two accounts:
 
 - root; and
 - RFC-0022 `//product//uid.<tld>/index_bytes(0)`, `<tld>` being the selected
-  network's dotNS TLD (`paseo` for `paseo-next-v2`, `testnet` for `previewnet`).
+  network's dotNS TLD (`paseo` for `paseo-next-v2`, `testnet` for `previewnet`,
+  `dot` for `polkadot`).
 
 For each it prints one of:
 
@@ -2168,7 +2203,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check` and `pgas-check` when `--mnemonic` is omitted. |
 | `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Chain endpoints stay on the preset. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
-| `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet; `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
+| `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet and `0xA06d1CB1e3FedFF7b5dFa779b4Cc61703F8A46A1` on polkadot, where discovery falls back to it while the dispatcher is unset (§14.1); `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
 | `HOME` | Fallback default state parent. |
 | `VISUAL` | Preferred script editor. |
