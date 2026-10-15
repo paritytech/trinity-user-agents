@@ -722,6 +722,18 @@ feed, and writes one diagnosis row per iOS scenario of the test plan to
 make ios-chat-v2-run
 ```
 
+A chat product compiled to wasm runs in the core with no web view. Its two-user
+launcher boots two simulators, restores on each a live account that
+`truapi-host signing-host` registered (username and People ring membership on
+`paseo-next-v2`), installs the module as the product's worker, and keeps both
+apps running; `scripts/ios-verbosity.mjs` then reads the rooms and messages of
+one user and types or presses in a room:
+
+```bash
+TRUAPI_IOS_E2E_VERBOSITY_WASM=/path/to/product.wasm make ios-verbosity-run
+node scripts/ios-verbosity.mjs a send home "hello"
+```
+
 Run every integration with one iOS build using `make ios-chat-all`.
 
 The Android twin of `make ios-chat-run` runs the TrUAPI Playground worker
