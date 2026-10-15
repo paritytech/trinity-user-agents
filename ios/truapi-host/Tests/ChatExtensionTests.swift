@@ -45,6 +45,101 @@ struct ChatHostBridgeDefaultsTests {
     }
 }
 
+struct ChatAdditionsTests {
+    /// A host that does not serve the additions lists no feature and reads
+    /// default declarations, so that a product falls back to what every v2
+    /// host serves.
+    @Test
+    func defaultsListNoFeatureAndReadDefaults() async throws {
+        let bridge: ChatHostBridge = FirstVersionChatHostBridge()
+
+        #expect(try await bridge.capabilities().isEmpty)
+        #expect(try await bridge.roomFeatures(roomId: "room") == .hostDefault)
+        #expect(try await bridge.roomUserStates().isEmpty)
+        #expect(try await bridge.bots().isEmpty)
+    }
+
+    /// A change that the host cannot keep must fail, not disappear.
+    @Test
+    func defaultsRefuseTheChangesOfTheAdditions() async {
+        let bridge: ChatHostBridge = FirstVersionChatHostBridge()
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.setRoomFeatures(roomId: "room", features: .hostDefault)
+        }
+        await #expect(throws: NativeChatFeedRejection.self) {
+            try await bridge.setMessageMeta(
+                roomId: "room",
+                messageId: "message",
+                meta: ChatMessageMeta(thread: nil, branch: nil, reasoning: nil)
+            )
+        }
+        await #expect(throws: HostRejection.self) {
+            try await bridge.setRoomCall(roomId: "room", call: nil)
+        }
+    }
+
+    @Test
+    func searchAnswerReachesTheCaller() async throws {
+        let hits = ProductChatSearchQueryItem(hits: [], next: "older")
+
+        let page = try await chatQuery(timeout: ChatQueryTimeout.search) { observer in
+            observer.onAnswer(answer: .search(page: hits))
+            return RecordingChatQuery()
+        } answer: { answer in
+            if case let .search(page) = answer { page } else { nil }
+        }
+
+        #expect(page == hits)
+        #expect(ChatQueryTimeout.search == .seconds(10))
+    }
+
+    /// The core screens a room event before the product sees it, and keeps
+    /// a valid one for a product that has no worker yet.
+    @Test
+    func roomEventIsScreenedAndKept() throws {
+        let runtime = try TrUAPIHostRuntime(
+            bridge: StubHostBridge(),
+            runtimeConfig: TrUAPIWsBridgeTests.makeHostRuntimeConfig()
+        )
+
+        try runtime.publishChatRoomEvent(
+            productId: "test.dot",
+            roomId: "room",
+            event: .callRequested(video: true)
+        )
+        #expect(throws: HostRejection.self) {
+            try runtime.publishChatRoomEvent(
+                productId: "test.dot",
+                roomId: "room",
+                event: .branchSelected(messageId: "message", index: 0)
+            )
+        }
+    }
+
+    @Test
+    func wakeHoldsTheWorkerAndStagingIsNotServed() async throws {
+        let runtime = try TrUAPIHostRuntime(
+            bridge: StubHostBridge(),
+            runtimeConfig: TrUAPIWsBridgeTests.makeHostRuntimeConfig()
+        )
+
+        let outcome = try runtime.wakeProduct(productId: "test.dot", reason: .productStart)
+        guard case .held = outcome else {
+            Issue.record("a first wake holds the worker, not \(outcome)")
+            return
+        }
+        await #expect(throws: NativeChatStageRejection.self) {
+            try await runtime.stageChatAttachment(
+                productId: "test.dot",
+                roomId: "room",
+                mimeType: "image/png",
+                bytes: Data([1])
+            )
+        }
+    }
+}
+
 struct ChatQueryTests {
     private static let page = ProductChatMessagesQueryItem(messages: [], next: nil)
 
