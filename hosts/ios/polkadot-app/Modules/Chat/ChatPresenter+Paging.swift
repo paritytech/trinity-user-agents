@@ -23,6 +23,7 @@ extension ChatPresenter {
     }
 
     func didJump(to messageId: Chat.MessageId, found: Bool) {
+        MainActor.assumeIsolated { productRoom?.markJump(to: messageId, found: found) }
         guard found else {
             return
         }

@@ -21,8 +21,8 @@ struct ChatHostCapabilitiesTests {
 
     @Test func theFeaturesThatTheAppDoesNotDrawYetAreNotListed() {
         let notDrawn = [
-            "payment_button", "preimage_attachments", "search", "bot_personas", "mute_archive", "threads",
-            "branches", "reasoning_rows", "read_aloud", "wake", "call_buttons", "room_calls"
+            "payment_button", "preimage_attachments", "bot_personas", "threads", "branches", "reasoning_rows",
+            "read_aloud", "wake", "call_buttons", "room_calls"
         ]
 
         #expect(!ChatHostCapabilities.served.contains(where: notDrawn.contains))

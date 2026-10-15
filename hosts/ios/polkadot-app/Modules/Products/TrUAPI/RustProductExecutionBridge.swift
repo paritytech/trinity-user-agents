@@ -92,32 +92,16 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         product _: ProductExecutionConfig,
         request: HostDevicePermissionRequest
     ) async throws -> TrUAPIPermissionDecision {
-        try await dependencies.permissionGuard.requestDevicePermissionDecision(
+        if request.isGrantedByE2EHarness { return .allowAlways }
+
+        return try await dependencies.permissionGuard.requestDevicePermissionDecision(
             productId: dependencies.productId,
             capability: request.deviceCapabilityType
         ).hostDecision
     }
 
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws -> DevicePermissionStatus {
-        switch request {
-        case .camera,
-             .microphone,
-             .notifications:
-            switch await dependencies.osPermissionAsker.checkPermission(for: request.deviceCapabilityType) {
-            case .allowed: .granted
-            case .denied: .denied
-            case .notDetermined: .notDetermined
-            }
-        case .location:
-            .notDetermined
-        case .bluetooth,
-             .nfc,
-             .clipboard,
-             .openUrl,
-             .biometrics,
-             .motion:
-            .notApplicable
-        }
+        request.isGrantedByE2EHarness ? .granted : await systemPermissionStatus(request)
     }
 
     func remotePermission(
@@ -273,6 +257,30 @@ extension RustProductExecutionBridge: GameHostBridge {
 
     func cancelReminder() async throws {
         await dependencies.gameReminders?.cancel(productId: dependencies.productId)
+    }
+}
+
+private extension RustProductExecutionBridge {
+    func systemPermissionStatus(_ request: HostDevicePermissionRequest) async -> DevicePermissionStatus {
+        switch request {
+        case .camera,
+             .microphone,
+             .notifications:
+            switch await dependencies.osPermissionAsker.checkPermission(for: request.deviceCapabilityType) {
+            case .allowed: .granted
+            case .denied: .denied
+            case .notDetermined: .notDetermined
+            }
+        case .location:
+            .notDetermined
+        case .bluetooth,
+             .nfc,
+             .clipboard,
+             .openUrl,
+             .biometrics,
+             .motion:
+            .notApplicable
+        }
     }
 }
 

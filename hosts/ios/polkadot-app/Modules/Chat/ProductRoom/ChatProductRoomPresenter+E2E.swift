@@ -120,6 +120,11 @@ extension ChatProductRoomPresenter {
                 e2eReadyWaitStart = .now
                 interactor?.retryRoom()
             case "frames": measureFrames(seconds: action.argument.flatMap(Double.init) ?? 3)
+            case "search-open": showSearch()
+            case "room-mute": applyUserState(.mute(Chat.MuteDuration(e2eName: action.argument)))
+            case "room-unmute": applyUserState(.unmute)
+            case "room-archive": applyUserState(.archive(true))
+            case "room-unarchive": applyUserState(.archive(false))
             case "bottom":
                 messages.values.max { ($0.order, $0.timestamp) < ($1.order, $1.timestamp) }
                     .map { view?.scrollToMessage($0.messageId) }

@@ -46,6 +46,11 @@ extension Chat.RoomUserStateUpdate: ChatRoomDeclarationUpdating {
     func apply(to entity: CDChatRoomMetadata) {
         entity.mutedUntil = state.storedMutedUntil
         entity.archived = state.archived
+
+        // The chat list observes `CDChat` only. This change of the chat makes the list draw the new state.
+        let key = #keyPath(CDChat.roomMetadata)
+        entity.chat?.willChangeValue(forKey: key)
+        entity.chat?.didChangeValue(forKey: key)
     }
 }
 

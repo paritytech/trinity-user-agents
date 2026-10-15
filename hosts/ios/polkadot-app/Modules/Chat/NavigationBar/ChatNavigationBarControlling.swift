@@ -9,6 +9,8 @@ protocol ChatNavigationBarControlling: AnyObject {
     func apply(contactMenu: UIMenu?)
     /// The buttons of a product room, before the call buttons (P6.2). The first item is the trailing item.
     func apply(productToolbar: [UIBarButtonItem])
+    /// The search action of a room (P10.5), after the buttons of the product. Nil shows none.
+    func apply(searchItem: UIBarButtonItem?)
     func update(headerConfiguration: ChatHeaderConfiguration)
 }
 

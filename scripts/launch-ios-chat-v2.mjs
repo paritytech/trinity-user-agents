@@ -96,6 +96,17 @@ const chatIdentifier = `1:${productHost}:${room}`;
 /** Names the command files in the order they are queued. */
 let commandCounter = 0;
 
+/** The actions of the harness that move to another screen. */
+const NAVIGATIONS = [
+  "open",
+  "list",
+  "back",
+  "participants",
+  "archived",
+  "search-open",
+  "search-select",
+];
+
 /** `TRUAPI_IOS_E2E_ONLY=S3,S4` drives these scenarios only, to work on one row. */
 const only = (process.env.TRUAPI_IOS_E2E_ONLY || undefined)
   ?.split(",")
@@ -212,6 +223,9 @@ const appConsole = spawn(
       SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_COMMANDS: "1",
       SIMCTL_CHILD_TRUAPI_IOS_E2E_RUNTIME_MARKERS: "1",
       SIMCTL_CHILD_TRUAPI_IOS_E2E_NO_PUSH_PROMPT: "1",
+      // `/notify` needs the notification permission, and the harness cannot
+      // answer the system prompt (S54).
+      SIMCTL_CHILD_TRUAPI_IOS_E2E_GRANT_NOTIFICATIONS: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   },
@@ -460,7 +474,7 @@ async function runStep(step, room) {
       target: step.target === undefined ? undefined : fill(step.target, target),
     });
     // The screen needs a moment to take a navigation.
-    if (["open", "list", "back", "participants"].includes(step.host)) {
+    if (NAVIGATIONS.includes(step.host)) {
       await delay(1_500);
     }
     return;
@@ -654,6 +668,14 @@ async function check(expectation, { room, mark, baseline }) {
       },
     );
     return `event ${found.via} ${found.kind} #${found.seq}`;
+  }
+  if (expectation.consoleNot) {
+    await delay(expectation.settleMs ?? 2_000);
+    const written = consoleText.slice(mark.console);
+    if (written.includes(expectation.consoleNot)) {
+      throw new Error(`"${expectation.consoleNot}" in the console`);
+    }
+    return `no "${expectation.consoleNot}" in the console`;
   }
   if (expectation.console) {
     await waitFor(

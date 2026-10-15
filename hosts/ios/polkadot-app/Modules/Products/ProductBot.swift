@@ -177,6 +177,15 @@ extension ProductBot: ProductChatQuerying {
     }
 }
 
+extension ProductBot: ProductChatSearching {
+    func searchPage(_ request: ProductChatSearchQueryRequest) async throws -> ProductChatSearchQueryItem {
+        guard let searching = runtime as? ProductChatSearching else {
+            throw ChatQueryError.refused(.notAvailable)
+        }
+        return try await searching.searchPage(request)
+    }
+}
+
 extension ProductBot: ChatRoomLifecycle {
     /// A runtime without room lifecycle, the native one, holds its worker for the whole session.
     func open(roomId: String) async throws {

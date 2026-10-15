@@ -126,6 +126,7 @@ extension ChatMessageEntityMapper {
         }
 
         try populateContent(model.content, to: entity, using: context)
+        entity.searchableText = ChatSearchText.stored(for: model.content)
 
         if shouldMarkModified {
             entity.markModified()

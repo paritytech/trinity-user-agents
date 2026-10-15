@@ -215,8 +215,15 @@ final class RecordingProductRoomView: ChatProductRoomViewProtocol {
     private(set) var toolbars: [[UIBarButtonItem]] = []
     private(set) var reactionDetails: [ReactionDetailsViewModel] = []
     private(set) var failures: [String] = []
+    /// The search actions of the header, nil for none (P10.5).
+    private(set) var searchItems: [UIBarButtonItem?] = []
+    private(set) var scrolledTo: [String] = []
 
     var isSetup: Bool { true }
+
+    func didReceive(searchItem: UIBarButtonItem?) {
+        searchItems.append(searchItem)
+    }
 
     func didReceive(productToolbar: [UIBarButtonItem]) {
         toolbars.append(productToolbar)
@@ -230,7 +237,9 @@ final class RecordingProductRoomView: ChatProductRoomViewProtocol {
         failures.append(message)
     }
 
-    func scrollToMessage(_: String) {}
+    func scrollToMessage(_ messageId: String) {
+        scrolledTo.append(messageId)
+    }
 }
 
 extension RecordingProductRoomWireframe {

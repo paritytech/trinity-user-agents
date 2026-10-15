@@ -187,6 +187,7 @@
 				"Modules/Chat/Model/CoreData/ChatMessageEntityMapper+Invariant.swift",
 				"Modules/Chat/Model/CoreData/ChatMessageEntityMapper+TransferState.swift",
 				Modules/Chat/Model/CoreData/ChatMessageOrderAllocator.swift,
+				Modules/Chat/Model/CoreData/ChatMessageSearchableText.swift,
 				Modules/Chat/Model/CoreData/ChatMessageStatusUpdateMapper.swift,
 				Modules/Chat/Model/CoreData/ChatRoomAdditionMappers.swift,
 				Modules/Chat/Model/CoreData/ChatRoomDeclarationMappers.swift,

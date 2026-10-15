@@ -60,6 +60,13 @@ extension RegistryProductRoom: ProductRoomFooterRendering {
     }
 }
 
+extension RegistryProductRoom: ProductChatSearching {
+    func searchPage(_ request: ProductChatSearchQueryRequest) async throws -> ProductChatSearchQueryItem {
+        guard let bot else { throw UnservedProductRoom.NotServed() }
+        return try await bot.searchPage(request)
+    }
+}
+
 extension RegistryProductRoom: ProductChatQuerying, ChatRoomLifecycle {
     func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryItem {
         guard let bot else { throw UnservedProductRoom.NotServed() }

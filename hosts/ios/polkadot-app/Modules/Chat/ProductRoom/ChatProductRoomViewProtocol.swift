@@ -12,10 +12,20 @@ protocol ChatProductRoomViewProtocol: ControllerBackedProtocol {
     func showActionFailure(_ message: String)
     /// Scrolls to the message now, or when it arrives in the window.
     func scrollToMessage(_ messageId: String)
+    /// The search action of the header (P10.5). Nil shows none.
+    func didReceive(searchItem: UIBarButtonItem?)
+}
+
+extension ChatProductRoomViewProtocol {
+    func didReceive(searchItem _: UIBarButtonItem?) {}
 }
 
 extension ChatViewController: ChatProductRoomViewProtocol {
     func didReceive(productToolbar: [UIBarButtonItem]) {
         navigationBarController.apply(productToolbar: productToolbar)
+    }
+
+    func didReceive(searchItem: UIBarButtonItem?) {
+        navigationBarController.apply(searchItem: searchItem)
     }
 }

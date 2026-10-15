@@ -11,6 +11,7 @@ final class LegacyChatNavigationBarController: ChatNavigationBarControlling {
 
     private var callItems: [UIBarButtonItem] = []
     private var productToolbar: [UIBarButtonItem] = []
+    private var searchItem: UIBarButtonItem?
 
     private lazy var menuButton: UIButton = {
         let button = UIButton(type: .custom)
@@ -45,8 +46,13 @@ final class LegacyChatNavigationBarController: ChatNavigationBarControlling {
         refreshRightBarButtonItems()
     }
 
+    func apply(searchItem: UIBarButtonItem?) {
+        self.searchItem = searchItem
+        refreshRightBarButtonItems()
+    }
+
     private func refreshRightBarButtonItems() {
-        let items = productToolbar + callItems
+        let items = productToolbar + [searchItem].compactMap { $0 } + callItems
         navigationItem?.rightBarButtonItems = items.isEmpty ? nil : items
     }
 
