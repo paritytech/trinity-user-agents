@@ -125,6 +125,24 @@ export const CLI_CHAT_SCENARIOS = Object.freeze([
       "a notification wake delivers Woken, refreshes the preview and shows the product's notification unless the room is muted",
     mode: "host",
   },
+  {
+    id: "S72",
+    title:
+      "calls shows the header buttons and a press sends CallRequested; no buttons without the declaration",
+    mode: "host",
+  },
+  {
+    id: "S73",
+    title:
+      "Ringing rings in the room and the list; Accept and Decline send CallAnswered; the banner clears after 60 s",
+    mode: "host",
+  },
+  {
+    id: "S74",
+    title:
+      "Active without a session shows the call bar with its timer; Open and End send CallOpened and CallEnded",
+    mode: "host",
+  },
 ]);
 
 function cell(value) {

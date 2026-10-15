@@ -622,7 +622,10 @@ async function drive(chat) {
         : "";
     await chat.command("host", "/features readaloud on");
     await chat.command("host", "/features calls audio");
-    const declared = "features: calls audio (not served), read aloud";
+    // The page serves every feature a room can declare now, so none shows
+    // "not served" here; the core test and the test host cover an unserved
+    // one.
+    const declared = "features: calls audio, read aloud";
     await chat.until(
       async () => (await features()) === declared,
       `"${declared}"`,
@@ -1114,6 +1117,82 @@ async function drive(chat) {
     await page.click("#mute");
     await chat.command("host", "/preview none");
     return `${woken}; Woken by dev, one notification, none while muted`;
+  });
+
+  const roomEvent = (kind, since, match = () => true) =>
+    chat.logLine(
+      (line) => line.via === "room_events" && line.room === "host" && line.kind === kind && match(line.data),
+      since,
+    );
+  const shown = async (selector) => (await page.$(selector)) !== null;
+  // The core takes two call changes a second in a room.
+  const paced = () => sleep(1_100);
+
+  // S72: the call buttons follow the declaration and send CallRequested.
+  await scenario(rows, byId.S72, async () => {
+    await chat.room("host");
+    await chat.command("host", "/features calls off");
+    await chat.until(async () => !(await shown("#call-audio")) && !(await shown("#call-video")), "no call buttons");
+    await chat.command("host", "/features calls both");
+    await chat.until(async () => (await shown("#call-audio")) && (await shown("#call-video")), "both call buttons");
+    const since = chat.log.length;
+    await page.click("#call-video");
+    await roomEvent("CallRequested", since, (data) => data.video === true);
+    await chat.lastProductText("call requested video=true");
+    await chat.until(() => shown("#callbar"), "the call bar of the requested call");
+    const shot = await chat.shot("s72-host.png");
+    await paced();
+    await chat.command("host", "/call end");
+    await chat.until(async () => !(await shown("#callbar")), "no call bar");
+    return `${shot}; CallRequested video=true answered with the call bar`;
+  });
+
+  // S73: a ringing call rings in the room and the list, and clears after 60 s.
+  await scenario(rows, byId.S73, async () => {
+    await paced();
+    await chat.command("host", "/call ring video");
+    await chat.until(() => shown("#callbanner"), "the ringing banner");
+    await chat.until(() => shown('[data-room-id="host"] [data-preview="Incoming call"]'), "Incoming call in the list");
+    const ringingShot = await chat.shot("s73-ringing.png");
+    let since = chat.log.length;
+    await page.click("#call-accept");
+    await roomEvent("CallAnswered", since, (data) => data.accept === true);
+    await chat.until(() => shown("#callbar"), "the accepted call's bar");
+    await paced();
+    await chat.command("host", "/call ring");
+    await chat.until(() => shown("#callbanner"), "the second ringing banner");
+    since = chat.log.length;
+    await page.click("#call-decline");
+    await roomEvent("CallAnswered", since, (data) => data.accept === false);
+    await chat.until(async () => !(await shown("#callbanner")) && !(await shown("#callbar")), "the declined call cleared");
+    await paced();
+    await chat.command("host", "/call ring");
+    await chat.until(() => shown("#callbanner"), "the third ringing banner");
+    await sleep(60_500);
+    if (await shown("#callbanner")) throw new Error("the banner still rings after 60 s");
+    await chat.command("host", "/call end");
+    return `${ringingShot}; Accept and Decline sent CallAnswered; the banner cleared after 60 s`;
+  });
+
+  // S74: the call bar of a call without a media session.
+  await scenario(rows, byId.S74, async () => {
+    await paced();
+    await chat.command("host", "/call active");
+    await chat.until(() => shown("#callbar #call-open"), "the call bar with Open");
+    // The bar redraws its timer each second.
+    await sleep(2_500);
+    const timer = await page.$eval("#callbar .dots", (node) => node.innerText);
+    if (!/^0:0[1-9]$/.test(timer)) throw new Error(`the timer shows ${timer}`);
+    let since = chat.log.length;
+    await page.click("#call-open");
+    await roomEvent("CallOpened", since);
+    const shot = await chat.shot("s74-host.png");
+    since = chat.log.length;
+    await page.click("#call-end");
+    await roomEvent("CallEnded", since);
+    await chat.until(async () => !(await shown("#callbar")), "the ended call cleared");
+    await chat.command("host", "/features calls off");
+    return `${shot}; timer ${timer}; CallOpened, then CallEnded cleared the bar`;
   });
 
   return rows;
