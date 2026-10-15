@@ -312,7 +312,8 @@ pub trait NativeChatCallbacks: Send + Sync {
 	) -> Result<(), HostRejection>;
 
 	/// Delete a room with its messages, cache and declarations, and close its
-	/// screen.
+	/// screen. Delete also, in the same change, each room whose features name
+	/// this room in `thread_of`.
 	async fn delete_room(&self, room_id: String) -> Result<(), HostRejection>;
 
 	/// Apply one change to the messages of a room. With `persist` the host

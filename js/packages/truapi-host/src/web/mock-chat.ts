@@ -920,6 +920,13 @@ export function createMockChat(options: MockChatOptions): MockChat {
       rooms.delete(request.roomId);
       // The user's mute and archive state goes with the room.
       userStates.delete(request.roomId);
+      // So do its thread rooms, which no list shows (additions RFC).
+      for (const [threadId, thread] of [...rooms]) {
+        if (thread.features.threadOf?.roomId === request.roomId) {
+          rooms.delete(threadId);
+          userStates.delete(threadId);
+        }
+      }
       if (room.open) {
         noticeLog.push({ roomId: request.roomId, text: "room deleted" });
       }

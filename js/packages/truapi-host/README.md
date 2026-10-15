@@ -274,7 +274,7 @@ mock keeps per room the features, the meta of each message and the call, and
 one persona per bot id (a repeat replaces its name and icon).
 `setRoomUserState(roomId, { mutedUntil, archived })` plays the user's mute and
 archive and `roomUserState(roomId)` reads it back; an attached product gets
-`UserStateChanged`, deleting a room drops its state, and `roomEvents()` gives
+`UserStateChanged`, deleting a room drops its state and its thread rooms, and `roomEvents()` gives
 the room events the mock sent.
 
 `host.chatUser` plays the person and the host screen against the product
