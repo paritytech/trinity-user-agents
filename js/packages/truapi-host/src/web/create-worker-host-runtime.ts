@@ -13,6 +13,7 @@ import type {
   Bytes32,
   GenericError,
   HostChatActionSubscribeItem,
+  HostChatRoomEventsSubscribeItem,
   HostRendererActionSubscribeItem,
   RendererNode,
   V01HostChatActionSubscribeItem,
@@ -32,6 +33,9 @@ import { createWasmRawCallbacks } from "../generated/host-callbacks-adapter.js";
 import {
   createChatHostQueries,
   encodeChatEvent,
+  encodeChatRoomEvent,
+  wakeArguments,
+  wakeOutcome,
   type ChatQuerySink,
 } from "../chat-queries.js";
 import type { RawCallbacks } from "../generated/host-callbacks-adapter.js";
@@ -281,6 +285,19 @@ interface RuntimeState {
     number,
     { resolve: () => void; reject: (error: Error) => void }
   >;
+  /** Wakes awaiting the worker's response. */
+  pendingWakes: Map<
+    number,
+    {
+      resolve: (untilMs: number | undefined) => void;
+      reject: (error: Error) => void;
+    }
+  >;
+  /** Attachment stagings awaiting the worker's response. */
+  pendingStages: Map<
+    number,
+    { resolve: (key: Uint8Array) => void; reject: (error: Error) => void }
+  >;
   /** Sinks for live renders, keyed by render id. */
   renders: Map<number, RenderEntry>;
   /** Sinks for open chat queries, keyed by query id. */
@@ -307,6 +324,8 @@ let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
 let nextSessionActivationRequestId = 0;
 let nextActionRequestId = 0;
+let nextWakeRequestId = 0;
+let nextStageRequestId = 0;
 let nextRenderId = 0;
 let nextChatQueryId = 0;
 
@@ -901,6 +920,8 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingDeviceEncryptionKeys, error);
   rejectAll(state.pendingProductSubtreePublicKeys, error);
   rejectAll(state.pendingActions, error);
+  rejectAll(state.pendingWakes, error);
+  rejectAll(state.pendingStages, error);
   for (const renderId of [...state.renders.keys()]) {
     const sink = takeRender(state, renderId);
     if (sink) reportRenderFailure(sink, error);
@@ -1082,6 +1103,8 @@ export function createWebWorkerPairingHostRuntime(
       pendingDeviceStatementKeys: new Map(),
       pendingDeviceEncryptionKeys: new Map(),
       pendingActions: new Map(),
+      pendingWakes: new Map(),
+      pendingStages: new Map(),
       renders: new Map(),
       chatQueries: new Map(),
       wantedWorkers: new Set(),
@@ -1166,12 +1189,31 @@ export function createWebWorkerPairingHostRuntime(
           break;
         case "publishChatActionResponse":
         case "publishChatEventResponse":
+        case "publishChatRoomEventResponse":
         case "publishRendererActionResponse":
           settlePending(
             state.pendingActions,
             msg.requestId,
             msg.ok
               ? { ok: true, value: undefined }
+              : { ok: false, error: msg.error },
+          );
+          break;
+        case "wakeProductResponse":
+          settlePending(
+            state.pendingWakes,
+            msg.requestId,
+            msg.ok
+              ? { ok: true, value: msg.untilMs }
+              : { ok: false, error: msg.error },
+          );
+          break;
+        case "stageChatAttachmentResponse":
+          settlePending(
+            state.pendingStages,
+            msg.requestId,
+            msg.ok
+              ? { ok: true, value: msg.key }
               : { ok: false, error: msg.error },
           );
           break;
@@ -1744,7 +1786,11 @@ function failChatQueriesForCore(
 function publishAction(
   state: RuntimeState,
   core: CoreState,
-  kind: "publishChatAction" | "publishChatEvent" | "publishRendererAction",
+  kind:
+    | "publishChatAction"
+    | "publishChatEvent"
+    | "publishChatRoomEvent"
+    | "publishRendererAction",
   encode: () => Uint8Array,
 ): Promise<void> {
   if (state.disposed || core.disposed) {
@@ -1892,6 +1938,50 @@ function buildProvider(
     publishChatEvent(item: HostChatActionSubscribeItem): Promise<void> {
       return publishAction(state, core, "publishChatEvent", () =>
         encodeChatEvent(item),
+      );
+    },
+    publishChatRoomEvent(item: HostChatRoomEventsSubscribeItem): Promise<void> {
+      return publishAction(state, core, "publishChatRoomEvent", () =>
+        encodeChatRoomEvent(item),
+      );
+    },
+    async wakeProduct(reason) {
+      if (state.disposed || core.disposed) {
+        throw new Error("product connection is closed");
+      }
+      const [roomId, watchId] = wakeArguments(reason);
+      const untilMs = await sendWorkerRequest<number | undefined>(
+        state,
+        state.pendingWakes,
+        () => nextWakeRequestId++,
+        undefined,
+        (requestId) => ({
+          kind: "wakeProduct",
+          coreId: core.coreId,
+          requestId,
+          roomId,
+          watchId,
+        }),
+      );
+      return wakeOutcome(untilMs);
+    },
+    stageChatAttachment(roomId, mimeType, bytes) {
+      if (state.disposed || core.disposed) {
+        return Promise.reject(new Error("product connection is closed"));
+      }
+      return sendWorkerRequest<Uint8Array>(
+        state,
+        state.pendingStages,
+        () => nextStageRequestId++,
+        new Uint8Array(),
+        (requestId) => ({
+          kind: "stageChatAttachment",
+          coreId: core.coreId,
+          requestId,
+          roomId,
+          mimeType,
+          bytes,
+        }),
       );
     },
     publishRendererAction(

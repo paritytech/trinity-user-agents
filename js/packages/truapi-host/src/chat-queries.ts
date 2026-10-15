@@ -11,6 +11,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import {
   HostChatActionSubscribeItem as HostChatActionSubscribeItemCodec,
+  HostChatRoomEventsSubscribeItem as HostChatRoomEventsSubscribeItemCodec,
   ProductChatMessageActionsQueryItem as MessageActionsItemCodec,
   ProductChatMessageActionsQueryRequest as MessageActionsRequestCodec,
   ProductChatMessagesQueryItem as MessagesItemCodec,
@@ -22,12 +23,15 @@ import {
   ProductChatQueryError as QueryErrorCodec,
   ProductChatReactionsQueryItem as ReactionsItemCodec,
   ProductChatReactionsQueryRequest as ReactionsRequestCodec,
+  ProductChatSearchQueryItem as SearchItemCodec,
+  ProductChatSearchQueryRequest as SearchRequestCodec,
   ProductChatUserActionError as UserActionErrorCodec,
   ProductChatUserActionItem as UserActionItemCodec,
   ProductChatUserActionRequest as UserActionRequestCodec,
 } from "@parity/truapi";
 import type {
   HostChatActionSubscribeItem,
+  HostChatRoomEventsSubscribeItem,
   ProductChatMessageActionsQueryItem,
   ProductChatMessageActionsQueryRequest,
   ProductChatMessagesQueryItem,
@@ -39,6 +43,8 @@ import type {
   ProductChatQueryError,
   ProductChatReactionsQueryItem,
   ProductChatReactionsQueryRequest,
+  ProductChatSearchQueryItem,
+  ProductChatSearchQueryRequest,
   ProductChatUserActionError,
   ProductChatUserActionItem,
   ProductChatUserActionRequest,
@@ -52,7 +58,7 @@ import {
 import { errorMessage } from "./error.js";
 
 /**
- * The six chat queries. Each name is also the name of the method on the WASM
+ * The chat queries. Each name is also the name of the method on the WASM
  * product runtime that starts the query.
  */
 export type ChatQueryName =
@@ -61,9 +67,10 @@ export type ChatQueryName =
   | "chatReactionsQuery"
   | "chatParticipantsQuery"
   | "chatMessageActionsQuery"
-  | "chatParticipantActionsQuery";
+  | "chatParticipantActionsQuery"
+  | "chatSearchQuery";
 
-/** Every chat query name, in wire order (method ids 16 to 21). */
+/** Every chat query name, in wire order (method ids 16 to 21, then 27). */
 export const CHAT_QUERY_NAMES: readonly ChatQueryName[] = [
   "chatMessagesQuery",
   "chatUserAction",
@@ -71,6 +78,7 @@ export const CHAT_QUERY_NAMES: readonly ChatQueryName[] = [
   "chatParticipantsQuery",
   "chatMessageActionsQuery",
   "chatParticipantActionsQuery",
+  "chatSearchQuery",
 ];
 
 /**
@@ -112,6 +120,8 @@ export const CHAT_QUERY_TIMEOUTS_MS = {
   userAction: 10_000,
   /** The reactions, participants and menu queries. */
   details: 5_000,
+  /** `search_query`. */
+  search: 10_000,
 } as const;
 
 /** The default time limit of a query, from RFC §3.6. */
@@ -122,6 +132,8 @@ export function chatQueryTimeoutMs(
   switch (name) {
     case "chatMessagesQuery":
       return CHAT_QUERY_TIMEOUTS_MS.messages;
+    case "chatSearchQuery":
+      return CHAT_QUERY_TIMEOUTS_MS.search;
     case "chatUserAction":
       return (request as ProductChatUserActionRequest).action.tag ===
         "NewMessage"
@@ -201,12 +213,60 @@ export interface ChatHostQueries {
       ProductChatQueryError
     >
   >;
+  /**
+   * The messages of a room the product keeps that match what the user
+   * typed, newest first. The core answers `NotAvailable` itself for a room
+   * whose features do not set `search`.
+   */
+  chatSearchQuery(
+    request: ProductChatSearchQueryRequest,
+    options?: ChatQueryOptions,
+  ): Promise<
+    ChatQueryResult<ProductChatSearchQueryItem, ProductChatQueryError>
+  >;
+}
+
+/** Why a host wakes a product. */
+export type ChatWakeReason =
+  /** The product started and has no room yet. */
+  | { tag: "ProductStart" }
+  /** A user message or a room event is on its way to the room. */
+  | { tag: "MessageInFlight"; value: { roomId: string } }
+  /** A notification on watch `watchId` arrived for the room. */
+  | { tag: "Notification"; value: { roomId: string; watchId: string } };
+
+/** What a wake did. */
+export type ChatWakeOutcome =
+  /** The core holds the worker until `untilMs`, milliseconds since the epoch. */
+  | { tag: "Held"; value: { untilMs: number } }
+  /** The product used its notification wakes of this hour. */
+  | { tag: "BudgetSpent" };
+
+/** The arguments of `wakeProduct` on a WASM product runtime. */
+export function wakeArguments(
+  reason: ChatWakeReason,
+): [roomId: string | undefined, watchId: string | undefined] {
+  switch (reason.tag) {
+    case "ProductStart":
+      return [undefined, undefined];
+    case "MessageInFlight":
+      return [reason.value.roomId, undefined];
+    case "Notification":
+      return [reason.value.roomId, reason.value.watchId];
+  }
+}
+
+/** The outcome of `wakeProduct` on a WASM product runtime. */
+export function wakeOutcome(untilMs: number | undefined): ChatWakeOutcome {
+  return untilMs === undefined
+    ? { tag: "BudgetSpent" }
+    : { tag: "Held", value: { untilMs } };
 }
 
 /**
- * The chat surface of a host runtime: the six queries and the event
- * publication. A test host attaches it to the mock host, so that the mock
- * host can play the user.
+ * The chat surface of a host runtime: the queries, the event publication,
+ * wakes and attachment staging. A test host attaches it to the mock host, so
+ * that the mock host can play the user.
  */
 export interface ChatHostRuntime extends ChatHostQueries {
   /**
@@ -215,6 +275,27 @@ export interface ChatHostRuntime extends ChatHostQueries {
    * first protocol version only the events that version can carry.
    */
   publishChatEvent(item: HostChatActionSubscribeItem): Promise<void>;
+  /**
+   * Give one event to the product's `room_events_subscribe` stream: mute and
+   * archive, a call button, a call answer, a branch. The core keeps the
+   * newest 64 events of a product that has no subscriber.
+   */
+  publishChatRoomEvent(item: HostChatRoomEventsSubscribeItem): Promise<void>;
+  /**
+   * Hold the worker of the product for 30 s. A notification wake also sends
+   * `Woken` to the room, at most 12 times in one hour.
+   */
+  wakeProduct(reason: ChatWakeReason): Promise<ChatWakeOutcome>;
+  /**
+   * Store a user attachment of a room as a preimage that the Bulletin
+   * allowance of the product pays for, and give its key. The core does not
+   * stage attachments yet, so this always rejects.
+   */
+  stageChatAttachment(
+    roomId: string,
+    mimeType: string,
+    bytes: Uint8Array,
+  ): Promise<Uint8Array>;
 }
 
 interface QueryCodecs {
@@ -256,11 +337,23 @@ const QUERY_CODECS: Record<ChatQueryName, QueryCodecs> = {
     item: ParticipantActionsItemCodec as Codec<unknown>,
     error: queryError,
   },
+  chatSearchQuery: {
+    request: SearchRequestCodec as Codec<unknown>,
+    item: SearchItemCodec as Codec<unknown>,
+    error: queryError,
+  },
 };
 
 /** Encode one chat event for `publishChatEvent` on a core. */
 export function encodeChatEvent(item: HostChatActionSubscribeItem): Uint8Array {
   return HostChatActionSubscribeItemCodec.enc(item);
+}
+
+/** Encode one room event for `publishChatRoomEvent` on a core. */
+export function encodeChatRoomEvent(
+  item: HostChatRoomEventsSubscribeItem,
+): Uint8Array {
+  return HostChatRoomEventsSubscribeItemCodec.enc(item);
 }
 
 /**
@@ -366,7 +459,7 @@ export function runChatQuery(
   });
 }
 
-/** The six typed queries over one way to start a query on a core. */
+/** The typed queries over one way to start a query on a core. */
 export function createChatHostQueries(start: StartChatQuery): ChatHostQueries {
   const ask =
     <Request, Item, E>(name: ChatQueryName) =>
@@ -381,6 +474,7 @@ export function createChatHostQueries(start: StartChatQuery): ChatHostQueries {
     chatParticipantsQuery: ask("chatParticipantsQuery"),
     chatMessageActionsQuery: ask("chatMessageActionsQuery"),
     chatParticipantActionsQuery: ask("chatParticipantActionsQuery"),
+    chatSearchQuery: ask("chatSearchQuery"),
   };
 }
 

@@ -210,9 +210,20 @@ sits behind its own service's access policy: the renderer refuses a connection
 that is not a `Worker` execution, and chat additionally requires a live
 session.
 
+`publishChatRoomEvent` gives one event to the product's
+`room_events_subscribe` stream: the user muted or archived a room, pressed a
+call button, answered, opened or ended a call, or picked another alternative
+of a message. The core keeps the newest 64 events of a product that has no
+subscriber, and starts each subscription with the rooms the host reports as
+muted or archived (`readChatRoomUserStates`). `wakeProduct` holds the
+product's worker for 30 s for a reason (`ProductStart`, `MessageInFlight`,
+`Notification`) and resolves with `Held { untilMs }`, or `BudgetSpent` after
+12 notification wakes in one hour. `stageChatAttachment` is the seam for
+attachments stored as preimages; the core does not stage yet, so it rejects.
+
 ### Chat queries
 
-A host asks a product that keeps a room's messages six questions. Each is a
+A host asks a product that keeps a room's messages seven questions. Each is a
 host-initiated stream the product answers with one item, and the provider
 gives each as a function that resolves with a `neverthrow` `Result`:
 
@@ -227,16 +238,18 @@ else if (page.error.tag === "Domain" && page.error.value.tag === "NotAvailable")
 }
 ```
 
-The six are `chatMessagesQuery`, `chatUserAction`, `chatReactionsQuery`,
-`chatParticipantsQuery`, `chatMessageActionsQuery` and
-`chatParticipantActionsQuery`. The refusal is the `CallError` of the query
+The seven are `chatMessagesQuery`, `chatUserAction`, `chatReactionsQuery`,
+`chatParticipantsQuery`, `chatMessageActionsQuery`,
+`chatParticipantActionsQuery` and `chatSearchQuery`. The refusal is the `CallError` of the query
 (`Domain` carries `ProductChatQueryError`, or `ProductChatUserActionError` for
 `chatUserAction`), `Timeout` when no answer came in `timeoutMs`, or `NoAnswer`
 when the product ended the query with no item. The default `timeoutMs` is the
 limit of the RFC: 10 s for a page, 30 s for a new message, 10 s for another
-user action, 5 s for the rest (`CHAT_QUERY_TIMEOUTS_MS`); an `AbortSignal` in
+user action, 10 s for a search, 5 s for the rest (`CHAT_QUERY_TIMEOUTS_MS`); an `AbortSignal` in
 `signal` stops the query with `Cancelled`. The core answers `NotAvailable`
-itself for a room whose configuration does not declare the handler, and the
+itself for a room whose configuration does not declare the handler (for a
+search: a room that does not keep its messages, or whose features do not set
+`search`), and the
 product's client keeps a query that arrives before the product registers its
 handler, up to 64 a route, so a handler registered at start misses none.
 
@@ -250,10 +263,21 @@ page cache of a room the product keeps, where a feed update shows but is not
 stored. `preview(roomId)` gives the chat list row with the host defaults of the
 RFC, and `events()` the events the mock sent.
 
+It serves the Chat Extension v2 additions too: `chatCapabilities` lists every
+feature name of the additions RFC (or `chatFeatures` of the config), and the
+mock keeps per room the features, the meta of each message and the call, and
+one persona per bot id (a repeat replaces its name and icon).
+`setRoomUserState(roomId, { mutedUntil, archived })` plays the user's mute and
+archive; an attached product gets `UserStateChanged`, and `roomEvents()` gives
+the room events the mock sent.
+
 `host.chatUser` plays the person and the host screen against the product
 under test. It opens and closes rooms, pages older, sends, replies, edits,
 deletes, reacts, reports seen, retries, presses buttons, toolbar entries and
-quick replies, opens menus and asks for participants and reaction details. In
+quick replies, opens menus and asks for participants and reaction details. It
+also presses the call buttons (`pressCall`), answers, opens and ends a call
+(`answerCall`, `openCall`, `endCall`), picks a branch (`selectBranch`), searches
+a room (`search`) and wakes the product (`wake`). In
 a room the product keeps it asks the chat queries and applies the host rules:
 the optimistic message, `Rejected` and `Failed`, one retry after
 `NotAvailable`, and the host default after a refusal or a time-out. In a room

@@ -9,7 +9,9 @@
 //                   │ MainToWorker: init, createCore, frame,
 //                   │               callbackResponse, subscriptionItem,
 //                   │               chainResponse, renderStart,
-//                   │               chatQueryStart, publishChatEvent
+//                   │               chatQueryStart, publishChatEvent,
+//                   │               publishChatRoomEvent, wakeProduct,
+//                   │               stageChatAttachment
 //                   v
 //   Dedicated Worker
 //   ┌─────────────────────────────────────────────────────────────────┐
@@ -173,11 +175,35 @@ export type MainToWorker =
       action: Uint8Array;
     }
   | {
+      kind: "publishChatRoomEvent";
+      coreId: number;
+      requestId: number;
+      /** SCALE-encoded `HostChatRoomEventsSubscribeItem`. */
+      action: Uint8Array;
+    }
+  | {
       kind: "publishRendererAction";
       coreId: number;
       requestId: number;
       /** SCALE-encoded `HostRendererActionSubscribeItem`. */
       action: Uint8Array;
+    }
+  /** Hold the worker of the product of `coreId`. See `wakeProduct` of the core. */
+  | {
+      kind: "wakeProduct";
+      coreId: number;
+      requestId: number;
+      roomId: string | undefined;
+      watchId: string | undefined;
+    }
+  /** Store a user attachment as a preimage. See `stageChatAttachment`. */
+  | {
+      kind: "stageChatAttachment";
+      coreId: number;
+      requestId: number;
+      roomId: string;
+      mimeType: string;
+      bytes: Uint8Array;
     }
   /**
    * Ask the product one chat query. The worker answers with exactly one of
@@ -362,6 +388,33 @@ export type WorkerToMain =
   | { kind: "chatQueryEnd"; queryId: number }
   /** The core could not start a chat query. */
   | { kind: "chatQueryFailure"; queryId: number; error: string }
+  | { kind: "publishChatRoomEventResponse"; requestId: number; ok: true }
+  | {
+      kind: "publishChatRoomEventResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  /** `untilMs` is `undefined` when the product used its notification wakes. */
+  | {
+      kind: "wakeProductResponse";
+      requestId: number;
+      ok: true;
+      untilMs: number | undefined;
+    }
+  | { kind: "wakeProductResponse"; requestId: number; ok: false; error: string }
+  | {
+      kind: "stageChatAttachmentResponse";
+      requestId: number;
+      ok: true;
+      key: Uint8Array;
+    }
+  | {
+      kind: "stageChatAttachmentResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
   | { kind: "publishRendererActionResponse"; requestId: number; ok: true }
   | {
       kind: "publishRendererActionResponse";

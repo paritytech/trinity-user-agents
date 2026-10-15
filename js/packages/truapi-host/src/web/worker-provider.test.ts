@@ -3,6 +3,7 @@ import { err, ok } from "neverthrow";
 
 import {
   HostChatActionSubscribeItem,
+  HostChatRoomEventsSubscribeItem,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
   ProductChatMessagesQueryItem,
@@ -1646,6 +1647,53 @@ describe("createWebWorkerPairingHostRuntime", () => {
     });
 
     await expect(published).resolves.toBeUndefined();
+  });
+
+  it("publishes a room event, wakes the product and stages through the worker", async () => {
+    const worker = new FakeWorker();
+    const provider = await readyProvider(worker);
+    const item = {
+      roomId: "room",
+      event: { tag: "CallRequested" as const, value: { video: true } },
+    };
+
+    const published = provider.publishChatRoomEvent!(item);
+    const event = lastMessageOfKind(worker, "publishChatRoomEvent");
+    expect(HostChatRoomEventsSubscribeItem.dec(event.action)).toEqual(item);
+    worker.emit({
+      kind: "publishChatRoomEventResponse",
+      requestId: event.requestId,
+      ok: true,
+    });
+    await expect(published).resolves.toBeUndefined();
+
+    const woken = provider.wakeProduct!({
+      tag: "Notification",
+      value: { roomId: "room", watchId: "dev" },
+    });
+    const wake = lastMessageOfKind(worker, "wakeProduct");
+    expect([wake.roomId, wake.watchId]).toEqual(["room", "dev"]);
+    worker.emit({
+      kind: "wakeProductResponse",
+      requestId: wake.requestId,
+      ok: true,
+      untilMs: undefined,
+    });
+    expect(await woken).toEqual({ tag: "BudgetSpent" });
+
+    const staged = provider.stageChatAttachment!(
+      "room",
+      "image/png",
+      new Uint8Array([1]),
+    );
+    const stage = lastMessageOfKind(worker, "stageChatAttachment");
+    worker.emit({
+      kind: "stageChatAttachmentResponse",
+      requestId: stage.requestId,
+      ok: false,
+      error: "this core does not stage chat attachments yet",
+    });
+    await expect(staged).rejects.toThrow("does not stage");
   });
 
   it("asks a chat query in the worker and decodes the answer", async () => {

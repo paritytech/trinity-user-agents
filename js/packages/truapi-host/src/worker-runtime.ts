@@ -33,11 +33,14 @@ import { errorMessage } from "./error.js";
 import {
   CHAT_ACTION_ENTRY_POINT,
   CHAT_EVENT_ENTRY_POINT,
+  CHAT_ROOM_EVENT_ENTRY_POINT,
   RENDERER_ACTION_ENTRY_POINT,
   handlePublishAction,
 } from "./worker-actions.js";
 import {
   handleChatQueryStart,
+  handleStageChatAttachment,
+  handleWakeProduct,
   stopChatQueriesForCore,
   stopChatQuery,
   type ChatQueries,
@@ -963,6 +966,37 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         msg.coreId,
         msg.requestId,
         msg.action,
+      );
+      break;
+    case "publishChatRoomEvent":
+      handlePublishAction(
+        CHAT_ROOM_EVENT_ENTRY_POINT,
+        cores.get(msg.coreId),
+        postToMain,
+        msg.coreId,
+        msg.requestId,
+        msg.action,
+      );
+      break;
+    case "wakeProduct":
+      handleWakeProduct(
+        cores.get(msg.coreId),
+        postToMain,
+        msg.coreId,
+        msg.requestId,
+        msg.roomId,
+        msg.watchId,
+      );
+      break;
+    case "stageChatAttachment":
+      void handleStageChatAttachment(
+        cores.get(msg.coreId),
+        postToMain,
+        msg.coreId,
+        msg.requestId,
+        msg.roomId,
+        msg.mimeType,
+        msg.bytes,
       );
       break;
     case "chatQueryStart":

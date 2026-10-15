@@ -1,5 +1,5 @@
 // The Chat Extension v2 surface of the test host, against the real core: the
-// declarations reach the mock host, the host asks the six queries, and the
+// declarations reach the mock host, the host asks the queries, and the
 // events reach the product. The sample product of `playground/chat-v2` has
 // its own end-to-end suite over this host; this suite covers what that
 // product cannot show, such as a subscriber at the first protocol version.
@@ -8,6 +8,7 @@ import { describe, expect, it } from "bun:test";
 import type {
   ChatRoomConfig,
   HostChatActionSubscribeItem,
+  HostChatRoomEventsSubscribeItem,
   ProductChatMessagesQueryRequest,
   TrUApiClient,
   V01HostChatActionSubscribeItem,
@@ -319,6 +320,144 @@ suite("chat extension v2 on the test host", () => {
       expect((await answer)._unsafeUnwrap()).toEqual({ messages: [] });
     } finally {
       second.dispose();
+    }
+  });
+
+  it("lists the features the mock serves less what the core cannot back (S49)", async () => {
+    const { client, dispose } = await workerClient();
+    try {
+      const caps = (await client.chat.capabilities())._unsafeUnwrap();
+      expect(caps.features).not.toContain("preimage_attachments");
+      expect(caps.features).not.toContain("room_calls");
+      expect(caps.features).not.toContain("payment_button");
+      expect(caps.features).toContain("call_buttons");
+      expect(caps.features).toContain("custom_bodies");
+      expect(caps.inlineAttachmentMaxBytes).toBe(1024 * 1024);
+      expect(caps.preimageAttachmentMaxBytes).toBe(0);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps the features of a room across a product restart (S51)", async () => {
+    const first = await workerClient();
+    await createRoom(first.client, "main", HOST_CONFIG);
+    const features = {
+      preimageAttachments: true,
+      search: false,
+      readAloud: true,
+    };
+    (
+      await first.client.chat.setRoomFeatures({ roomId: "main", features })
+    )._unsafeUnwrap();
+    first.dispose();
+
+    const second = await workerClient({ host: first.host });
+    try {
+      expect(second.host.room("main")?.features).toEqual(features);
+    } finally {
+      second.dispose();
+    }
+  });
+
+  it("starts the room events with the muted and archived rooms, then live events", async () => {
+    const { client, host, chat, dispose } = await workerClient();
+    try {
+      await createRoom(client, "main", HOST_CONFIG);
+      await host.setRoomUserState("main", { archived: true });
+      const items: HostChatRoomEventsSubscribeItem[] = [];
+      client.chat.roomEventsSubscribe().subscribe({
+        next: (item) => items.push(item),
+      });
+      await delay(100);
+      await chat.publishChatRoomEvent({
+        roomId: "main",
+        event: { tag: "CallRequested", value: { video: false } },
+      });
+      await delay(100);
+
+      // The snapshot, then the event kept from before the subscription,
+      // then the live one.
+      expect(items).toEqual([
+        {
+          roomId: "main",
+          event: { tag: "UserStateChanged", value: { archived: true } },
+        },
+        {
+          roomId: "main",
+          event: { tag: "UserStateChanged", value: { archived: true } },
+        },
+        {
+          roomId: "main",
+          event: { tag: "CallRequested", value: { video: false } },
+        },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("asks a search of a room that keeps its messages and declares search", async () => {
+    const { client, host, dispose } = await workerClient();
+    try {
+      await createRoom(client, "source", SOURCE_CONFIG);
+      client.chat.onSearchQuery((request, send) => {
+        send({ hits: [], next: `after-${request.text}` });
+      });
+      expect(await host.chatUser.search("source", "hi")).toBeUndefined();
+      (
+        await client.chat.setRoomFeatures({
+          roomId: "source",
+          features: {
+            preimageAttachments: false,
+            search: true,
+            readAloud: false,
+          },
+        })
+      )._unsafeUnwrap();
+      expect(await host.chatUser.search("source", " hi ")).toEqual({
+        hits: [],
+        next: "after-hi",
+      });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("wakes the product, and refuses to stage an attachment", async () => {
+    const { chat, dispose } = await workerClient();
+    try {
+      const outcome = await chat.wakeProduct({ tag: "ProductStart" });
+      expect(outcome.tag).toBe("Held");
+      await expect(
+        chat.stageChatAttachment("main", "image/png", new Uint8Array([1])),
+      ).rejects.toThrow("does not stage");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("shows nothing for a notification into a room the user muted (D34)", async () => {
+    const { client, host, dispose } = await workerClient();
+    try {
+      await createRoom(client, "main", HOST_CONFIG);
+      await host.setRoomUserState("main", {
+        mutedUntil: 18_446_744_073_709_551_615n,
+        archived: false,
+      });
+      const send = (room: string) =>
+        client.notifications.sendPushNotification({
+          text: "news",
+          deeplink: `polkadot://mock.dot/-/chat/${room}`,
+        });
+      expect((await send("main")).isOk()).toBe(true);
+      expect(host.getNotificationLog()).toEqual([]);
+      expect((await send("other")).isOk()).toBe(true);
+      expect(host.getNotificationLog().map(({ deeplink }) => deeplink)).toEqual(
+        ["polkadot://mock.dot/-/chat/other"],
+      );
+    } finally {
+      dispose();
     }
   });
 });

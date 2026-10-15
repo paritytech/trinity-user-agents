@@ -11,7 +11,11 @@ type PostToMain = (msg: WorkerToMain) => void;
 /** One host-authored action stream, as the worker sees it. */
 export interface ActionEntryPoint {
   /** Request kind the host posts; the response kind is this plus `Response`. */
-  name: "publishChatAction" | "publishChatEvent" | "publishRendererAction";
+  name:
+    | "publishChatAction"
+    | "publishChatEvent"
+    | "publishChatRoomEvent"
+    | "publishRendererAction";
   publish: (core: WorkerProductRuntime, item: Uint8Array) => void;
 }
 
@@ -25,6 +29,12 @@ export const CHAT_ACTION_ENTRY_POINT: ActionEntryPoint = {
 export const CHAT_EVENT_ENTRY_POINT: ActionEntryPoint = {
   name: "publishChatEvent",
   publish: (core, item) => core.publishChatEvent(item),
+};
+
+/** The room event stream, carrying a `HostChatRoomEventsSubscribeItem`. */
+export const CHAT_ROOM_EVENT_ENTRY_POINT: ActionEntryPoint = {
+  name: "publishChatRoomEvent",
+  publish: (core, item) => core.publishChatRoomEvent(item),
 };
 
 /** The Renderer action stream, carrying a `HostRendererActionSubscribeItem`. */

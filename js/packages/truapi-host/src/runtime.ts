@@ -1,12 +1,17 @@
 import type {
   HostChatActionSubscribeItem,
+  HostChatRoomEventsSubscribeItem,
   HostRendererActionSubscribeItem,
   ProductRendererRenderRequest,
   RendererNode,
   V01HostChatActionSubscribeItem,
   WireProvider,
 } from "@parity/truapi";
-import type { ChatHostQueries } from "./chat-queries.js";
+import type {
+  ChatHostQueries,
+  ChatWakeOutcome,
+  ChatWakeReason,
+} from "./chat-queries.js";
 import { CoreStorageKey as GeneratedCoreStorageKey } from "./generated/host-callbacks.js";
 import type {
   CoreAdmin,
@@ -26,6 +31,7 @@ export {
   CHAT_QUERY_TIMEOUTS_MS,
   chatQueryTimeoutMs,
 } from "./chat-queries.js";
+export type { ChatWakeOutcome, ChatWakeReason } from "./chat-queries.js";
 export type {
   ChatHostQueries,
   ChatHostRuntime,
@@ -213,6 +219,40 @@ export interface TrUApiProductProvider
    * Present only on runtimes that keep a live channel to the core.
    */
   publishChatEvent?(item: HostChatActionSubscribeItem): Promise<void>;
+
+  /**
+   * Give one event to the product's `room_events_subscribe` stream: the user
+   * muted or archived a room, pressed a call button, answered or ended a
+   * call, or picked another alternative of a message. The core keeps the
+   * newest 64 events of a product that has no subscriber. Rejects when this
+   * connection may not reach Chat, or the core refuses the event.
+   *
+   * Present only on runtimes that keep a live channel to the core.
+   */
+  publishChatRoomEvent?(item: HostChatRoomEventsSubscribeItem): Promise<void>;
+
+  /**
+   * Hold the worker of the provider's product for 30 s. A new wake moves the
+   * end of the hold. A notification wake also sends `Woken` to the room, at
+   * most 12 times in one rolling hour; after that it answers `BudgetSpent`.
+   *
+   * Present only on runtimes that keep a live channel to the core.
+   */
+  wakeProduct?(reason: ChatWakeReason): Promise<ChatWakeOutcome>;
+
+  /**
+   * Store a user attachment of a room as a preimage that the Bulletin
+   * allowance of the product pays for, and give its key. The core does not
+   * stage attachments yet: this always rejects, and `capabilities` never
+   * lists `preimage_attachments`.
+   *
+   * Present only on runtimes that keep a live channel to the core.
+   */
+  stageChatAttachment?(
+    roomId: string,
+    mimeType: string,
+    bytes: Uint8Array,
+  ): Promise<Uint8Array>;
 
   /**
    * Publish one action triggered inside a product-rendered body. Buffered

@@ -29,6 +29,7 @@ import type {
   ChatRoom,
   GenericError,
   HostChatActionSubscribeItem,
+  HostChatRoomEventsSubscribeItem,
   HostChatListSubscribeItem,
   HostChatRegisterBotRequest,
   HostLocaleSubscribeItem,
@@ -53,6 +54,7 @@ import {
   type ChatMessageRecord,
   type MockChatListRow,
   type MockChatRoom,
+  type MockChatRoomUserState,
   type MockChatUser,
 } from "./mock-chat.js";
 
@@ -440,6 +442,12 @@ export interface MockHostConfig {
    * override this only to assert that failure.
    */
   supportedChains?: HostChainSet;
+  /**
+   * The Chat feature names the host lists through `chatCapabilities`.
+   * Defaults to every name of the additions RFC; the core removes the names
+   * it cannot back.
+   */
+  chatFeatures?: readonly string[];
 }
 
 /** A mock host: the callbacks to wire into a provider, plus assertion oracles. */
@@ -591,6 +599,14 @@ export interface MockHost {
   preview(roomId: string): MockChatListRow | undefined;
   /** Every chat event the mock sent to the product, in order. */
   events(): HostChatActionSubscribeItem[];
+  /** Every room event the mock sent to the product, in order. */
+  roomEvents(): HostChatRoomEventsSubscribeItem[];
+  /**
+   * Play the user: mute a room until `mutedUntil` and archive it or not. A
+   * product attached to `chatUser` gets `UserStateChanged` at once, and a
+   * product that starts later gets the state in its room event snapshot.
+   */
+  setRoomUserState(roomId: string, state: MockChatRoomUserState): Promise<void>;
   /**
    * The user and the host screen of the chat rooms. It asks the product the
    * chat queries and sends the chat events, through the host runtime that
@@ -948,6 +964,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   // the Rust mock sends for the same rooms.
   const chat = createMockChat({
     ...(faults.chatError === undefined ? {} : { chatError: faults.chatError }),
+    ...(config.chatFeatures === undefined
+      ? {}
+      : { chatFeatures: config.chatFeatures }),
     liveRooms: (first, register) =>
       liveSubscription<HostChatListSubscribeItem>(
         first,
@@ -1509,6 +1528,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     feed: (roomId: string) => chat.feed(roomId),
     preview: (roomId: string) => chat.preview(roomId),
     events: () => chat.events(),
+    roomEvents: () => chat.roomEvents(),
+    setRoomUserState: (roomId: string, state: MockChatRoomUserState) =>
+      chat.setRoomUserState(roomId, state),
     chatUser: chat.user,
     seedPreimage(value) {
       const key = preimageKey(value);

@@ -6,9 +6,11 @@
 // only the messages on its screen, the pages the host asked for and the feed
 // updates the product pushed. The user half plays the person and the host
 // screen: it opens rooms, sends, edits, reacts, opens menus and presses
-// buttons. In a room the product keeps, it asks the product through the six
+// buttons. In a room the product keeps, it asks the product through the
 // chat queries; in a room the host stores, it changes the store and sends the
-// matching event. It applies the host rules of RFC §3.6, §4 and §5.3: time
+// matching event. It also plays the user of the optional room features: the
+// call buttons and the call bar, the branch control, the search field, mute
+// and archive, and wakes. It applies the host rules of RFC §3.6, §4 and §5.3: time
 // limits, one retry after `NotAvailable`, the host defaults, the optimistic
 // message and its `Failed` and `Rejected` ends.
 //
@@ -23,6 +25,7 @@ import type {
   ChatMessage,
   ChatMessageBody,
   ChatMessageContent,
+  ChatMessageMeta,
   ChatParticipantEntry,
   ChatParticipantsQuery,
   ChatProductAction,
@@ -30,7 +33,10 @@ import type {
   ChatReactionSummary,
   ChatRoom,
   ChatRoomBadge,
+  ChatRoomCall,
   ChatRoomConfig,
+  ChatRoomEvent,
+  ChatRoomFeatures,
   ChatRoomMetadata,
   ChatRoomOrder,
   ChatRoomPreview,
@@ -43,6 +49,7 @@ import type {
   HostChatListSubscribeItem,
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
+  HostChatRoomEventsSubscribeItem,
   ProductChatParticipantsQueryItem,
   ProductChatQueryError,
   ProductChatUserActionError,
@@ -55,6 +62,8 @@ import type {
   ChatQueryName,
   ChatQueryRefusal,
   ChatQueryResult,
+  ChatWakeOutcome,
+  ChatWakeReason,
 } from "../chat-queries.js";
 import { CHAT_QUERY_TIMEOUTS_MS } from "../chat-queries.js";
 import type { ChatPlatform } from "../generated/host-callbacks.js";
@@ -69,6 +78,53 @@ export const MOCK_CHAT_PEER = "native";
 export const MOCK_CHAT_PAGE_SIZE = 40;
 /** The participant page size the mock host asks for (RFC §3.5). */
 export const MOCK_CHAT_PARTICIPANT_PAGE_SIZE = 100;
+
+/**
+ * The Chat feature names of the additions RFC. The mock lists every one; the
+ * core removes the names it cannot back.
+ */
+export const MOCK_CHAT_FEATURE_NAMES: readonly string[] = [
+  "product_source_rooms",
+  "reaction_details",
+  "participants",
+  "message_menus",
+  "participant_menus",
+  "toolbar",
+  "suggestions",
+  "commands",
+  "activity",
+  "custom_bodies",
+  "custom_footer",
+  "inline_attachments",
+  "payment_button",
+  "room_links",
+  "preimage_attachments",
+  "search",
+  "bot_personas",
+  "mute_archive",
+  "threads",
+  "branches",
+  "reasoning_rows",
+  "read_aloud",
+  "wake",
+  "call_buttons",
+  "room_calls",
+];
+
+/** The page of search matches the host asks for (additions RFC limits). */
+export const MOCK_CHAT_SEARCH_PAGE_SIZE = 30;
+
+/** The features of a room that declared none. */
+export function defaultChatRoomFeatures(): ChatRoomFeatures {
+  return { preimageAttachments: false, search: false, readAloud: false };
+}
+
+/** The mute and archive state the user gave one room. */
+export interface MockChatRoomUserState {
+  /** Milliseconds since the epoch when the mute ends; `undefined`: not muted. */
+  mutedUntil?: bigint;
+  archived: boolean;
+}
 
 /** The configuration of a room that declared nothing (RFC §4). */
 export function defaultChatRoomConfig(): ChatRoomConfig {
@@ -119,6 +175,12 @@ export interface MockChatRoom {
   activity?: ChatActivity;
   /** Every feed update, in order. */
   updates: MockChatFeedUpdate[];
+  /** The optional features in use: the last ones declared, or the default. */
+  features: ChatRoomFeatures;
+  /** The meta of each message, by message id. */
+  meta: Record<string, ChatMessageMeta>;
+  /** The call of the room, or `undefined` for none. */
+  call?: ChatRoomCall;
 }
 
 /** The chat list row of a room, as the host draws it. */
@@ -212,6 +274,8 @@ export interface MockChatTimings {
   details: number;
   /** The wait before the one retry after `NotAvailable` (RFC §5.1: 1 s). */
   retryDelay: number;
+  /** `search_query` (10 s). */
+  search: number;
 }
 
 /** The default timings, from RFC §3.6 and §5.1. */
@@ -221,6 +285,7 @@ export const MOCK_CHAT_TIMINGS: MockChatTimings = {
   userAction: CHAT_QUERY_TIMEOUTS_MS.userAction,
   details: CHAT_QUERY_TIMEOUTS_MS.details,
   retryDelay: 1_000,
+  search: CHAT_QUERY_TIMEOUTS_MS.search,
 };
 
 /**
@@ -335,6 +400,38 @@ export interface MockChatUser {
   ): Promise<ChatReactionDetail[] | undefined>;
   /** Send one event as it is. */
   publish(roomId: string, event: ChatEvent): Promise<void>;
+  /**
+   * Press the audio or the video call button of the header. Throws when the
+   * room declares no such button.
+   */
+  pressCall(roomId: string, video: boolean): Promise<void>;
+  /** Accept or decline the call that rings in the room. */
+  answerCall(roomId: string, accept: boolean): Promise<void>;
+  /** Tap the call bar of an active call without a media session. */
+  openCall(roomId: string): Promise<void>;
+  /** Press "End" on the call bar of an active call. */
+  endCall(roomId: string): Promise<void>;
+  /**
+   * Pick the alternative `index` of a message with a branch position. Throws
+   * when the message has no branch or `index` is out of its range.
+   */
+  selectBranch(roomId: string, messageId: string, index: number): Promise<void>;
+  /**
+   * Search the room. The host searches a room it stores itself. It asks a
+   * room the product keeps through `search_query` when the room features
+   * set `search`. Gives the matches newest first, or `undefined` when the
+   * room shows no search or the product gives no matches ("Search is not
+   * available").
+   */
+  search(
+    roomId: string,
+    text: string,
+    cursor?: string,
+  ): Promise<{ hits: ChatMessage[]; next?: string } | undefined>;
+  /** Wake the product, as a host does for a message or a notification. */
+  wake(reason: ChatWakeReason): Promise<ChatWakeOutcome>;
+  /** Send one room event as it is. */
+  publishRoomEvent(roomId: string, event: ChatRoomEvent): Promise<void>;
   /** The queries the user half asked, in order. Needs no product. */
   queries(): MockChatQueryRecord[];
   /** The lines the host showed, in order. Needs no product. */
@@ -365,6 +462,18 @@ export interface MockChat {
   preview(roomId: string): MockChatListRow | undefined;
   /** Every event the user half sent to the product, in order. */
   events(): HostChatActionSubscribeItem[];
+  /** Every room event the user half sent to the product, in order. */
+  roomEvents(): HostChatRoomEventsSubscribeItem[];
+  /** The Chat feature names the host lists, from its configuration. */
+  features(): string[];
+  /**
+   * Play the user: mute a room until `mutedUntil` and archive it or not. A
+   * product attached gets `UserStateChanged` at once. A product that starts
+   * later gets the state when its room event subscription starts.
+   */
+  setRoomUserState(roomId: string, state: MockChatRoomUserState): Promise<void>;
+  /** The mute and archive state of a room, or `undefined` for none. */
+  roomUserState(roomId: string): MockChatRoomUserState | undefined;
   /** Remove every room, bot, message, event and recording. */
   clear(): void;
 }
@@ -489,6 +598,11 @@ export interface MockChatOptions {
   /** When set, every chat call fails with this reason. */
   chatError?: string;
   /**
+   * The Chat feature names the host lists. Defaults to every name of
+   * {@link MOCK_CHAT_FEATURE_NAMES}.
+   */
+  chatFeatures?: readonly string[];
+  /**
    * Open a live room list: `first`, then every item `register` pushes. The
    * mock host gives the helper it uses for every live subscription.
    */
@@ -509,6 +623,9 @@ export function createMockChat(options: MockChatOptions): MockChat {
   const bots = new Map<string, HostChatRegisterBotRequest>();
   const posted: ChatMessageRecord[] = [];
   const events: HostChatActionSubscribeItem[] = [];
+  const roomEventLog: HostChatRoomEventsSubscribeItem[] = [];
+  const userStates = new Map<string, MockChatRoomUserState>();
+  const featureNames = [...(options.chatFeatures ?? MOCK_CHAT_FEATURE_NAMES)];
   const queryLog: MockChatQueryRecord[] = [];
   const noticeLog: MockChatNotice[] = [];
   const deeplinkLog: string[] = [];
@@ -653,6 +770,8 @@ export function createMockChat(options: MockChatOptions): MockChat {
         suggestions: [],
         commands: [],
         updates: [],
+        features: defaultChatRoomFeatures(),
+        meta: {},
         messages: [],
         pagesAsked: new Set(),
         open: false,
@@ -662,9 +781,10 @@ export function createMockChat(options: MockChatOptions): MockChat {
     },
     async registerChatBot(_product, request) {
       fail();
-      if (bots.has(request.botId)) return { status: "Exists" };
-      bots.set(request.botId, request);
-      return { status: "New" };
+      // A repeat keeps the persona and replaces its name and icon.
+      const exists = bots.has(request.botId);
+      bots.set(request.botId, structuredClone(request));
+      return { status: exists ? "Exists" : "New" };
     },
     async postChatMessage(
       _product,
@@ -799,6 +919,58 @@ export function createMockChat(options: MockChatOptions): MockChat {
         else room.activity = structuredClone(request.activity);
       });
     },
+    async chatCapabilities() {
+      fail();
+      return { names: [...featureNames] };
+    },
+    async readChatRoomFeatures(_product, roomId) {
+      fail();
+      return structuredClone(
+        rooms.get(roomId)?.features ?? defaultChatRoomFeatures(),
+      );
+    },
+    async setChatRoomFeatures(_product, request) {
+      // The host keeps the declaration whole, a feature it does not serve
+      // included.
+      declare(request.roomId, (room) => {
+        room.features = structuredClone(request.features);
+      });
+    },
+    async setChatMessageMeta(_product, request) {
+      declare(request.roomId, (room) => {
+        // A room the host stores answers `UnknownMessage` for a message it
+        // does not hold. A room the product keeps keeps the meta for later.
+        if (!room.config.productSource && find(room, request.messageId) < 0) {
+          throw new Error("UnknownMessage");
+        }
+        room.meta[request.messageId] = structuredClone(request.meta);
+      });
+    },
+    async setChatRoomCall(_product, request) {
+      declare(request.roomId, (room) => {
+        if (request.call === undefined) delete room.call;
+        else room.call = structuredClone(request.call);
+      });
+    },
+    async readChatRoomUserStates() {
+      fail();
+      return {
+        rooms: [...userStates.keys()].sort().map((roomId) => {
+          const state = userStates.get(roomId)!;
+          return {
+            roomId,
+            ...(state.mutedUntil === undefined
+              ? {}
+              : { mutedUntil: state.mutedUntil }),
+            archived: state.archived,
+          };
+        }),
+      };
+    },
+    async readChatBots() {
+      fail();
+      return { botIds: byKey(bots).map((bot) => bot.botId) };
+    },
   };
 
   // ------------------------------------------------------------ user half
@@ -826,6 +998,15 @@ export function createMockChat(options: MockChatOptions): MockChat {
     };
     events.push(item);
     await attached().publishChatEvent(item);
+  };
+
+  const publishRoomEvent = async (
+    roomId: string,
+    event: ChatRoomEvent,
+  ): Promise<void> => {
+    const item: HostChatRoomEventsSubscribeItem = { roomId, event };
+    roomEventLog.push(item);
+    await attached().publishChatRoomEvent(item);
   };
 
   const delay = (ms: number) =>
@@ -1337,6 +1518,98 @@ export function createMockChat(options: MockChatOptions): MockChat {
       return result.isOk() ? result.value.reactions : undefined;
     },
     publish,
+    async pressCall(roomId, video) {
+      const calls = room(roomId).features.calls;
+      if (!calls || !(video ? calls.video : calls.audio)) {
+        throw new Error(
+          `the room ${roomId} shows no ${video ? "video" : "audio"} call button`,
+        );
+      }
+      await publishRoomEvent(roomId, {
+        tag: "CallRequested",
+        value: { video },
+      });
+    },
+    async answerCall(roomId, accept) {
+      const call = room(roomId).call;
+      if (call?.tag !== "Ringing") {
+        throw new Error(`no call rings in the room ${roomId}`);
+      }
+      await publishRoomEvent(roomId, {
+        tag: "CallAnswered",
+        value: { callId: call.value.callId, accept },
+      });
+    },
+    async openCall(roomId) {
+      const call = room(roomId).call;
+      if (call?.tag !== "Active" || call.value.mediaSession !== undefined) {
+        throw new Error(
+          `the room ${roomId} shows no call bar of a call without a media session`,
+        );
+      }
+      await publishRoomEvent(roomId, {
+        tag: "CallOpened",
+        value: { callId: call.value.callId },
+      });
+    },
+    async endCall(roomId) {
+      const call = room(roomId).call;
+      if (call?.tag !== "Active") {
+        throw new Error(`the room ${roomId} shows no call bar`);
+      }
+      await publishRoomEvent(roomId, {
+        tag: "CallEnded",
+        value: { callId: call.value.callId },
+      });
+    },
+    async selectBranch(roomId, messageId, index) {
+      const branch = room(roomId).meta[messageId]?.branch;
+      if (!branch) {
+        throw new Error(`the message ${messageId} shows no branch control`);
+      }
+      if (index < 1 || index > branch.count) {
+        throw new Error(
+          `the message ${messageId} has no alternative ${index} of ${branch.count}`,
+        );
+      }
+      await publishRoomEvent(roomId, {
+        tag: "BranchSelected",
+        value: { messageId, index },
+      });
+    },
+    async search(roomId, text, cursor) {
+      const state = room(roomId);
+      if (!state.config.productSource) {
+        // The host searches its own store, case insensitive, newest first.
+        const needle = text.trim().toLowerCase();
+        const hits = state.messages
+          .filter((each) => previewLine(each).toLowerCase().includes(needle))
+          .reverse();
+        return { hits: structuredClone(hits) };
+      }
+      if (!state.features.search) return undefined;
+      const result = await ask<
+        { hits: ChatMessage[]; next?: string },
+        ProductChatQueryError
+      >(
+        "chatSearchQuery",
+        {
+          roomId,
+          text,
+          ...(cursor === undefined ? {} : { cursor }),
+          pageSize: MOCK_CHAT_SEARCH_PAGE_SIZE,
+        },
+        timings.search,
+        false,
+      );
+      if (result.isErr()) {
+        noticeLog.push({ roomId, text: "Search is not available" });
+        return undefined;
+      }
+      return result.value;
+    },
+    wake: (reason) => attached().wakeProduct(reason),
+    publishRoomEvent,
     queries: () => [...queryLog],
     notices: () => [...noticeLog],
     deeplinks: () => [...deeplinkLog],
@@ -1384,11 +1657,33 @@ export function createMockChat(options: MockChatOptions): MockChat {
       };
     },
     events: () => [...events],
+    roomEvents: () => [...roomEventLog],
+    features: () => [...featureNames],
+    async setRoomUserState(roomId, state) {
+      if (state.mutedUntil === undefined && !state.archived) {
+        userStates.delete(roomId);
+      } else {
+        userStates.set(roomId, structuredClone(state));
+      }
+      if (!product) return;
+      await publishRoomEvent(roomId, {
+        tag: "UserStateChanged",
+        value: {
+          ...(state.mutedUntil === undefined
+            ? {}
+            : { mutedUntil: state.mutedUntil }),
+          archived: state.archived,
+        },
+      });
+    },
+    roomUserState: (roomId) => structuredClone(userStates.get(roomId)),
     clear() {
       rooms.clear();
       bots.clear();
       posted.length = 0;
       events.length = 0;
+      roomEventLog.length = 0;
+      userStates.clear();
       queryLog.length = 0;
       noticeLog.length = 0;
       deeplinkLog.length = 0;

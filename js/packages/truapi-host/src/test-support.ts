@@ -124,6 +124,17 @@ export function makeHostCallbacks(
             setChatRoomSuggestions: async () => {},
             setChatRoomCommands: async () => {},
             setChatRoomActivity: async () => {},
+            chatCapabilities: async () => ({ names: [] }),
+            readChatRoomFeatures: async () => ({
+              preimageAttachments: false,
+              search: false,
+              readAloud: false,
+            }),
+            setChatRoomFeatures: async () => {},
+            setChatMessageMeta: async () => {},
+            setChatRoomCall: async () => {},
+            readChatRoomUserStates: async () => ({ rooms: [] }),
+            readChatBots: async () => ({ botIds: [] }),
             ...overrides.chat,
           },
         }
