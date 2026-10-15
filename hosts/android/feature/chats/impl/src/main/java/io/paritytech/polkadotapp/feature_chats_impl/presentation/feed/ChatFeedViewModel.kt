@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.awaitLoaded
+import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.presentation.ui.errors.UnexpectedPresentationError
@@ -73,6 +74,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toR
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.RoomSearchAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentExecutor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentKind
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentResult
@@ -122,7 +125,8 @@ class ChatFeedViewModel @Inject constructor(
     private val resourceResolver: ChatResourceResolver,
     productRoomFactory: ChatProductRoomController.Factory,
     draftControllerFactory: ChatDraftController.Factory,
-    callStateTracker: CallStateTracker
+    callStateTracker: CallStateTracker,
+    roomSearchFactory: ChatRoomSearchController.Factory,
 ) : BaseViewModel(), ChatFeedContract {
     private val payload: ChatFeedPayload = savedStateHandle.getPayload()
 
@@ -336,6 +340,16 @@ class ChatFeedViewModel @Inject constructor(
         .stateIn(CoroutineScope(coroutineContext + dispatchers.computation), SharingStarted.Eagerly, LoadingState.Loading)
 
     private val feedPaging = ChatFeedPaging(chatId, interactor, chatMessagesState)
+
+    private val roomSearch = roomSearchFactory.create(
+        scope = this,
+        chatId = chatId,
+        roomPolicy = roomPolicy,
+        roomName = chatDisplay.map { it.dataOrNull?.username },
+        onJump = { messageId -> launchUnit { jumpToMessage(messageId) } },
+    )
+
+    override val roomSearchState = roomSearch.uiState
 
     override val menuState = MutableStateFlow(ChatMenuState())
 
@@ -625,6 +639,8 @@ class ChatFeedViewModel @Inject constructor(
     }
 
     override fun onProductRoomAction(action: ProductRoomAction) = productRoom.handle(action)
+
+    override fun onRoomSearchAction(action: RoomSearchAction) = roomSearch.handle(action)
 
     override fun onDeleteMessageConfirm(messageId: ChatMessageId) = launchUnit {
         onCloseMenu()

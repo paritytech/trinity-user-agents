@@ -8,6 +8,7 @@ import androidx.room.Transaction
 import androidx.room.Update
 import io.paritytech.polkadotapp.database.model.ChatMessageLocal
 import io.paritytech.polkadotapp.database.model.ChatMessagePendingExpansionLocal
+import io.paritytech.polkadotapp.database.model.ChatMessageRoomSearchRow
 import io.paritytech.polkadotapp.database.model.ChatMessageSearchRow
 import io.paritytech.polkadotapp.database.model.TransferRetryStateLocal
 import kotlinx.coroutines.flow.Flow
@@ -174,6 +175,31 @@ abstract class ChatMessageDao {
         chatIds: List<ByteArray>,
         limit: Int
     ): List<ChatMessageSearchRow>
+
+    /**
+     * The messages of one chat that can match an in-room search, newest first, older than the cursor
+     * ([beforeTimestamp], [beforeId]). A message matches the escaped [likeQuery] without ASCII case, or has a char
+     * outside printable ASCII; the caller then compares without case and diacritics. An edit row is not a message
+     * of the feed, so it is not a result.
+     */
+    @Query("""
+        SELECT id, timestamp, searchableContent, origintype AS originType, originParticipantId FROM chat_messages
+        WHERE chatId = :chatId
+            AND isInternal = 0
+            AND type != 'EDITED'
+            AND searchableContent != ''
+            AND (timestamp < :beforeTimestamp OR (timestamp = :beforeTimestamp AND id < :beforeId))
+            AND (searchableContent LIKE '%' || :likeQuery || '%' ESCAPE '\' OR searchableContent GLOB '*[^ -~]*')
+        ORDER BY timestamp DESC, id DESC
+        LIMIT :limit
+    """)
+    abstract suspend fun searchMessageCandidatesInChat(
+        chatId: ByteArray,
+        likeQuery: String,
+        beforeTimestamp: Long,
+        beforeId: String,
+        limit: Int,
+    ): List<ChatMessageRoomSearchRow>
 
     @Query("UPDATE chat_messages SET status = :newStatus, updatedAt = :updatedAt WHERE id = :messageId")
     abstract suspend fun updateStatus(messageId: String, newStatus: ChatMessageLocal.Status, updatedAt: Long): Int

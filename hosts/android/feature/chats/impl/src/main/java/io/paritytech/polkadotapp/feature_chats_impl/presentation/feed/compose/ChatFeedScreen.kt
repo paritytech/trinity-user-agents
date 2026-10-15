@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,6 +61,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoo
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.catalogueFor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.inputText
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchBar
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchResults
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.RoomSearchAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.LocalChatMessageTimeFormatter
@@ -85,6 +90,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
     val revealingMessageId by contract.revealingMessageId.collectAsStateWithLifecycle()
     val roomState by contract.roomState.collectAsStateWithLifecycle()
     val productRoomState by contract.productRoomState.collectAsStateWithLifecycle()
+    val roomSearchState by contract.roomSearchState.collectAsStateWithLifecycle()
     val popupState = contract.popupState.collectAsStateWithLifecycle().value
     var menuLayoutInfo by remember { mutableStateOf<MessageLayoutInfo?>(null) }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -115,6 +121,8 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         }
     }
 
+    BackHandler(enabled = roomSearchState.isActive) { contract.onRoomSearchAction(RoomSearchAction.Close) }
+
     ChatFeedScreenInternal(
         displayState = displayState,
         config = config,
@@ -129,6 +137,8 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         roomState = roomState,
         productRoomState = productRoomState,
         onProductRoomAction = contract::onProductRoomAction,
+        roomSearchState = roomSearchState,
+        onRoomSearchAction = contract::onRoomSearchAction,
         highlightEvents = contract.highlightEvents,
         scrollToPosition = contract.scrollToPosition,
         onBackClick = contract::onBackClick,
@@ -208,6 +218,8 @@ private fun ChatFeedScreenInternal(
     productRoomState: ProductRoomUiState,
     onProductRoomAction: (ProductRoomAction) -> Unit,
     highlightEvents: Flow<HighlightedMessage>,
+    roomSearchState: ChatRoomSearchUiState = ChatRoomSearchUiState(),
+    onRoomSearchAction: (RoomSearchAction) -> Unit = {},
     scrollToPosition: Flow<Int>,
     onBackClick: () -> Unit,
     onMessageChange: (String) -> Unit,
@@ -249,21 +261,34 @@ private fun ChatFeedScreenInternal(
                 .blur(feedBlur)
         ) {
             ChatToolbarThemeScope(palette = customAppearance?.toolbarPalette) {
-                ChatFeedToolbar(
-                    displayState = displayState,
-                    toolbarActions = toolbarActions,
-                    subtitle = productRoomState.participants.count
-                        ?.let { pluralStringResource(RCommon.plurals.chat_participants_count, it, it) }
-                        ?: roomState.subtitle,
-                    showAvatar = config.showAvatar,
-                    productToolbar = productRoomState.toolbar,
-                    showsParticipants = productRoomState.participants.declared,
-                    onBack = onBackClick,
-                    onStartCallClick = onStartCallClick,
-                    onMenuClick = onMenuClick,
-                    onProductToolbarClick = { onProductRoomAction(ProductRoomAction.Toolbar(it)) },
-                    onParticipantsClick = { onProductRoomAction(ProductRoomAction.ShowParticipants) },
-                )
+                if (roomSearchState.isActive) {
+                    ChatRoomSearchBar(
+                        query = roomSearchState.query,
+                        onQueryChange = { onRoomSearchAction(RoomSearchAction.QueryChanged(it)) },
+                        onClose = { onRoomSearchAction(RoomSearchAction.Close) },
+                    )
+                } else {
+                    ChatFeedToolbar(
+                        displayState = displayState,
+                        toolbarActions = toolbarActions,
+                        subtitle = productRoomState.participants.count
+                            ?.let { pluralStringResource(RCommon.plurals.chat_participants_count, it, it) }
+                            ?: roomState.subtitle,
+                        showAvatar = config.showAvatar,
+                        productToolbar = productRoomState.toolbar,
+                        showsParticipants = productRoomState.participants.declared,
+                        onBack = onBackClick,
+                        onStartCallClick = onStartCallClick,
+                        onMenuClick = onMenuClick,
+                        onProductToolbarClick = { onProductRoomAction(ProductRoomAction.Toolbar(it)) },
+                        onParticipantsClick = { onProductRoomAction(ProductRoomAction.ShowParticipants) },
+                        onSearchClick = if (roomSearchState.isAvailable) {
+                            { onRoomSearchAction(RoomSearchAction.Open) }
+                        } else {
+                            null
+                        },
+                    )
+                }
             }
 
             val readiness = chatMessagesLoadingState.dataOrNull?.readiness
@@ -309,6 +334,14 @@ private fun ChatFeedScreenInternal(
                             onAuthorClick = { onProductRoomAction(ProductRoomAction.SelectParticipant(it)) },
                         )
                     }
+                }
+
+                if (roomSearchState.isActive && roomSearchState.results != ChatRoomSearchUiState.Results.Idle) {
+                    ChatRoomSearchResults(
+                        results = roomSearchState.results,
+                        onSelect = { onRoomSearchAction(RoomSearchAction.Select(it.messageId)) },
+                        onLoadMore = { onRoomSearchAction(RoomSearchAction.LoadMore) },
+                    )
                 }
 
                 val density = LocalDensity.current

@@ -14,6 +14,9 @@ object ChatHostCapabilities {
     /** `Custom` bodies that the product draws through its renderer: S7. */
     const val CUSTOM_BODIES = "custom_bodies"
 
+    /** The in-room search, and `search_query` for a room whose product keeps the messages: S61 to S63. */
+    const val SEARCH = "search"
+
     /** The mute and the archive of the user, which the product reads through `UserStateChanged`: S54 to S56. */
     const val MUTE_ARCHIVE = "mute_archive"
 

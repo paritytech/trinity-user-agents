@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMes
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductSearchPage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -71,6 +72,7 @@ import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatParticipantActionsQueryRequest
 import uniffi.truapi.ProductChatParticipantsQueryRequest
 import uniffi.truapi.ProductChatReactionsQueryRequest
+import uniffi.truapi.ProductChatSearchQueryRequest
 import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
@@ -193,6 +195,11 @@ class TrUAPIChatWorker(
     override suspend fun participantMenu(roomId: ProductChatIdParameter, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =
         query { execution ->
             execution.chatParticipantActionsQuery(ProductChatParticipantActionsQueryRequest(roomId.value, entry.toCore())).menu.toModel()
+        }
+
+    override suspend fun searchPage(roomId: ProductChatIdParameter, text: String, cursor: String?, pageSize: Int): Result<ProductSearchPage> =
+        query { execution ->
+            execution.chatSearchQuery(ProductChatSearchQueryRequest(roomId.value, text, cursor, pageSize.toUInt())).toModel(rendererId)
         }
 
     // The core holds the worker for each open query. A worker that is not running yet starts first, and an

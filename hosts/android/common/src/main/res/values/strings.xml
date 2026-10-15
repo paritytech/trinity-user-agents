@@ -648,6 +648,12 @@
     <string name="chat_search_recents_clear">CLEAR</string>
     <string name="chat_search_recent_menu_remove">Remove from Recents</string>
     <string name="chat_search_error_message">Search failed. Please try again</string>
+    <string name="chat_room_search">Search in chat</string>
+    <string name="chat_room_search_close">Close search</string>
+    <string name="chat_room_search_placeholder">Search messages</string>
+    <string name="chat_room_search_no_results">No messages found</string>
+    <string name="chat_room_search_not_available">Search is not available</string>
+    <string name="chat_search_author_you">You</string>
 
     <string name="search_section_recent">RECENT</string>
     <string name="search_section_contacts">CONTACTS</string>

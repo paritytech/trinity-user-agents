@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.chatSearch.models
 
 import androidx.compose.runtime.Immutable
+import io.paritytech.polkadotapp.feature_chats_impl.domain.chatSearch.searchMatches
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -20,7 +21,18 @@ internal fun buildSearchExcerpt(source: String, query: String): SearchExcerpt {
     val collapsed = source.collapseWhitespace()
     if (query.isEmpty()) return SearchExcerpt(collapsed, persistentListOf())
 
-    val matches = collapsed.allMatchRanges(query)
+    return collapsed.windowAround(collapsed.allMatchRanges(query))
+}
+
+/** As [buildSearchExcerpt], but the match ignores case and diacritics, as the in-room search does (S61). */
+internal fun buildFoldedSearchExcerpt(source: String, foldedQuery: String): SearchExcerpt {
+    val collapsed = source.collapseWhitespace()
+
+    return collapsed.windowAround(searchMatches(collapsed, foldedQuery))
+}
+
+private fun String.windowAround(matches: List<IntRange>): SearchExcerpt {
+    val collapsed = this
     val firstMatchStart = matches.firstOrNull()?.first ?: return SearchExcerpt(collapsed, persistentListOf())
 
     if (firstMatchStart <= LEADING_CONTEXT_THRESHOLD) {

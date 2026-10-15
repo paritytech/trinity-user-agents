@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductCha
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductSearchPage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -104,6 +105,9 @@ class DeferredProductWorker : ProductWorker {
 
     override suspend fun participantMenu(roomId: ProductChatIdParameter, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =
         withWorker { it.participantMenu(roomId, entry) }
+
+    override suspend fun searchPage(roomId: ProductChatIdParameter, text: String, cursor: String?, pageSize: Int): Result<ProductSearchPage> =
+        withWorker { it.searchPage(roomId, text, cursor, pageSize) }
 
     private suspend fun <T> withWorker(query: suspend (ProductWorker) -> Result<T>): Result<T> = awaitWorker().fold(
         onSuccess = { query(it) },

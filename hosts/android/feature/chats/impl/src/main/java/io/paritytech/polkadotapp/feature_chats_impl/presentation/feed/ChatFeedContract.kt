@@ -19,6 +19,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatToolbarAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.RoomSearchAction
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
@@ -48,6 +50,9 @@ interface ChatFeedContract {
     val productRoomState: StateFlow<ProductRoomUiState>
 
     val highlightEvents: Flow<HighlightedMessage>
+
+    /** The in-room search: the header action, the field and the results (07-LATER §8.2). */
+    val roomSearchState: StateFlow<ChatRoomSearchUiState>
 
     fun onBackClick()
     fun onMessageChange(message: String)
@@ -80,6 +85,8 @@ interface ChatFeedContract {
 
     /** An action on a part of a product room that its product declares. */
     fun onProductRoomAction(action: ProductRoomAction)
+
+    fun onRoomSearchAction(action: RoomSearchAction)
 
     fun onClearEdit()
 

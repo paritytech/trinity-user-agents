@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatMessageSearchHit
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.RecentChat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.StartChatData
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.search.CompoundChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.StartChatDataUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.SubscribeActiveChatsUseCase
@@ -50,7 +51,7 @@ class RealChatSearchInteractor @Inject constructor(
     override fun subscribeChats(): Flow<List<Chat>> = subscribeActiveChats()
 
     override suspend fun search(query: String, chats: List<Chat>): Result<List<ChatListSearchResult>> = coroutineScope {
-        val messagesDeferred = async { searchMessages(query, chats.map { it.id }) }
+        val messagesDeferred = async { searchMessages(query, chats.hostStoreChatIds()) }
         val appsDeferred = async { searchApps(query) }
 
         val messageHits = messagesDeferred.await().logFailure("ChatSearch.messages")
@@ -91,6 +92,13 @@ class RealChatSearchInteractor @Inject constructor(
         return compoundChatSearchResultProvider.search(query)
     }
 }
+
+/**
+ * The chats whose messages the host keeps. A room whose product keeps the messages matches by its title only, so
+ * the list search never asks a product and never starts its worker (D29).
+ */
+internal fun List<Chat>.hostStoreChatIds(): List<ChatId> =
+    filter { it.roomPolicy?.messageStore != ChatRoomPolicy.MessageStore.PRODUCT }.map { it.id }
 
 internal fun mergeChatSearchResults(
     query: String,

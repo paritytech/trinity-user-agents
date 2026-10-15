@@ -33,4 +33,14 @@ interface ProductChatQuerying {
     /** The menu of one participant of the room. */
     suspend fun participantMenu(chatId: ChatId, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =
         Result.failure(ProductChatQueryException.NotAvailable())
+
+    /**
+     * The messages of the room that match [text], newest first (`search_query`, 07-LATER §8.2). A null [cursor]
+     * asks for the newest matches. The host asks it only inside the open room, never from the chat list (D29).
+     */
+    suspend fun searchPage(chatId: ChatId, text: String, cursor: String?, pageSize: Int): Result<ProductSearchPage> =
+        Result.failure(ProductChatQueryException.NotAvailable())
 }
+
+/** One page of the search hits of a product, the newest first. A null [next] ends the older matches. */
+data class ProductSearchPage(val hits: List<ProductRoomMessage>, val next: String?)
