@@ -109,6 +109,7 @@ class TrUAPIWorkerSupervisorTest {
         },
         bootstrapInstaller = mockk(relaxed = true),
         refCounter = { mockk(relaxed = true) },
+        chatStoredState = mockk(),
         dispatchers = testDispatchers(),
     )
 

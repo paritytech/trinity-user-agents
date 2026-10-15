@@ -36,7 +36,7 @@ class ProductChatHostBridgeFeedTest {
     private val productId = ProductId.fromStoredValue("game.dot")
     private val room = ProductChatIdParameter(ROOM)
     private val messaging: ProductChatMessaging = mockk()
-    private val bridge = ProductChatHostBridge(productId, messaging)
+    private val bridge = ProductChatHostBridge(productId, messaging, mockk())
 
     @Test
     fun `a stored new message keeps its product id, participant, time and status`() = runTest {

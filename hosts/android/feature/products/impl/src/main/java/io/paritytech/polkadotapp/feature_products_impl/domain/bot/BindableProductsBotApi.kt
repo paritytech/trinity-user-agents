@@ -2,9 +2,12 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
@@ -93,6 +96,18 @@ class BindableProductsBotApi(
 
     override suspend fun deliverLiveFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Boolean =
         chatSlot.tryUse().getOrNull()?.deliverLiveFeedUpdate(chatIdParameter, update) ?: false
+
+    override suspend fun setRoomFeatures(chatIdParameter: ProductChatIdParameter, features: ChatRoomFeaturesModel): Result<Unit> =
+        withChat { it.setRoomFeatures(chatIdParameter, features) }
+
+    override suspend fun setMessageMeta(
+        chatIdParameter: ProductChatIdParameter,
+        messageId: String,
+        meta: ChatMessageMetaModel,
+    ): Result<Unit> = withChat { it.setMessageMeta(chatIdParameter, messageId, meta) }
+
+    override suspend fun setRoomCall(chatIdParameter: ProductChatIdParameter, call: ChatRoomCallModel?): Result<Unit> =
+        withChat { it.setRoomCall(chatIdParameter, call) }
 
     private suspend fun <T> withChat(call: suspend (ProductChatMessaging) -> Result<T>): Result<T> =
         chatSlot.tryUse().fold(
