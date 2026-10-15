@@ -138,7 +138,8 @@ see the same messages.
   toolbar buttons `tb-1` onward; quick replies `sg-send`, `sg-event`; the custom footer button `footer-ping`; the custom
   message button `card-like`.
 - `<id>` in a command is a message id or `last`, the newest message of the product in the room.
-- The product never reads the clock or a random source for anything it sends. Ids the host assigns, the user's messages
+- The product never reads the clock or a random source for anything it sends, except the `scheduled_at` of
+  `/notify <seconds>`. Ids the host assigns, the user's messages
   in `host`, are the only values that differ between hosts, and the diagnosis compares them by kind, not by value.
 
 The one exception is the preimage image of `/post rich`. At first start the Worker submits `assets/sample.png` through
@@ -229,7 +230,7 @@ on (S52).
 | `/bot add <id> <name>`                     | P10.6 | `register_bot` with `icon` the `data:image/png;base64` URL of `avatar-alt.png`; posts `bot <id> New` or `bot <id> Exists`; a repeat replaces the name and icon        | S53              | Implemented |
 | `/bot post <id> <text>`                    | P10.6 | `update_feed` `New` with `Text <text>` and `origin: bot:<id>`; the core refuses a persona the product did not register with `Unknown { "unknown bot <id>" }`            | S53              | Implemented |
 | `/bot typing <id>`                         | P10.6 | `set_room_activity` with `{ text: "Sample is typing", participant_id: "bot:<id>" }`; `/activity off` clears it                                                       | S53              | Implemented |
-| `/notify [<seconds>]`                      | P10.10 | `send_push_notification` with the room link `polkadot://<product>/-/chat/<room>` as deeplink, now or after `<seconds>`; `UserStateChanged` is logged and echoed     | S54 to S56       | Planned     |
+| `/notify [<seconds>]`                      | P10.10 | `send_push_notification` with `text: "Sample notification from <room>"` and the room link `polkadot://<product>/-/chat/<room>` as deeplink, now or with `scheduled_at` `<seconds>` (up to 86400) from now; the host shows nothing for an immediate one into a muted room. `UserStateChanged` is logged, and with `/echo` answered `echo UserStateChanged muted=<none\|forever\|ms> archived=<bool>` | S54 to S56       | Implemented |
 | `/features preimage on`                    | P10.3 | As above; then the Worker logs each received media item as `<kind> <size> <Inline\|Preimage>`, and with `/echo` answers `echo media <kind> <size> <resource kind>`  | S57 to S60, B7   | Planned     |
 | `/search on\|na\|off`                    | P10.5 | `set_room_features { search }`; `na` keeps it declared and interrupts `NotAvailable`; `search_query` pages the stored messages newest first with the cursor `<index>` | S61 to S63, B8   | Planned     |
 | `/thread <id>`                             | P10.9 | Creates `thread-<room>-<id>` with `thread_of`, posts three replies from `p1`, `p2` and `bot:helper` when present, and sets the summary of the root                    | S64              | Planned     |

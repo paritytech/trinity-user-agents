@@ -146,6 +146,9 @@ export function createFakeClient(options: FakeClientOptions = {}) {
     preimage: {
       submit: unary("preimageSubmit", () => `0x${"ab".repeat(32)}`),
     },
+    notifications: {
+      sendPushNotification: unary("sendPushNotification", () => ({ id: 7 })),
+    },
   };
 
   return {

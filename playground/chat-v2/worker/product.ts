@@ -7,6 +7,7 @@ import type {
   CallErrorValue,
   ChatEvent,
   ChatMessageBody,
+  ChatRoomEvent,
   ChatUserAction,
   HostChatActionSubscribeItem,
   HostChatRoomEventsSubscribeItem,
@@ -121,6 +122,19 @@ function bodyText(body: ChatMessageBody): string | undefined {
   if (body.tag === "Text") return body.value.text;
   if (body.tag === "RichText") return body.value.text;
   return undefined;
+}
+
+/** The summary of an echoed room event. */
+export function roomEventSummary(event: ChatRoomEvent): string {
+  switch (event.tag) {
+    case "UserStateChanged": {
+      const until = event.value.mutedUntil;
+      const muted = until === undefined ? "none" : until >= 2n ** 64n - 1n ? "forever" : String(until);
+      return `muted=${muted} archived=${event.value.archived}`;
+    }
+    default:
+      return "";
+  }
 }
 
 /** The summary of an echo: the event and what it names. */
@@ -304,6 +318,7 @@ export class SampleProduct {
   #context(): ProductContext {
     return {
       chat: this.#client.chat,
+      notifications: this.#client.notifications,
       assets: this.#assets,
       product: this.#product,
       state: this.#state,
@@ -638,7 +653,22 @@ export class SampleProduct {
   #roomEvent(item: HostChatRoomEventsSubscribeItem): void {
     void this.ready.then(() => {
       this.#record({ via: "room_events", room: item.roomId, kind: item.event.tag, data: item.event.value ?? null });
+      const room = knownRoom(item.roomId);
+      if (room) void this.#enqueue(() => this.#handleRoomEvent(room, item.event));
     });
+  }
+
+  async #handleRoomEvent(room: RoomId, event: ChatRoomEvent): Promise<void> {
+    switch (event.tag) {
+      case "UserStateChanged":
+        return this.#echoRoomEvent(room, event);
+    }
+  }
+
+  /** Echo a room event while `/echo` is on: `echo <event> <summary>`. */
+  async #echoRoomEvent(room: RoomId, event: ChatRoomEvent): Promise<void> {
+    if (!this.#settings(room).echo) return;
+    await this.#feed.reply(room, `echo ${event.tag} ${roomEventSummary(event)}`.trimEnd(), { echo: true });
   }
 
   // ------------------------------------------------------------- renderer

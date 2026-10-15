@@ -7,13 +7,14 @@ import type { ProductState, RoomSettings } from "./state";
 import type { SourceStore } from "./store";
 
 /** The parts of the client the Worker uses. Tests give a fake of it. */
-export type SampleClient = Pick<TrUApiClient, "chat" | "renderer" | "localStorage" | "preimage">;
+export type SampleClient = Pick<TrUApiClient, "chat" | "renderer" | "localStorage" | "preimage" | "notifications">;
 
 export type ChatSurface = SampleClient["chat"];
 
 /** What a command needs to run. */
 export interface ProductContext {
   chat: ChatSurface;
+  notifications: SampleClient["notifications"];
   assets: Assets;
   /** The DotNS name of the product, for the links. */
   product: string;

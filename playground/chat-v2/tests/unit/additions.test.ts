@@ -228,3 +228,39 @@ describe("/commands", () => {
     expect(names[2]).toEqual([]);
   });
 });
+
+describe("/notify and the user state", () => {
+  test("sends a notification that opens the room, now or later (S54)", async () => {
+    const running = start();
+    await command(running, "/notify");
+    const before = Date.now();
+    await command(running, "/notify 60");
+
+    const [now, later] = running.fake.callsOf("sendPushNotification") as {
+      text: string;
+      deeplink: string;
+      scheduledAt?: bigint;
+    }[];
+    expect(now).toEqual({ text: "Sample notification from host", deeplink: "polkadot://sample.dot/-/chat/host" });
+    expect(later.deeplink).toBe("polkadot://sample.dot/-/chat/host");
+    expect(Number(later.scheduledAt) - before).toBeGreaterThanOrEqual(60_000);
+    expect(posted(running.fake)).toEqual(["ok /notify", "ok /notify 60"]);
+  });
+
+  test("echoes UserStateChanged while /echo is on (S54, S55)", async () => {
+    const running = start();
+    await running.product.idle();
+    running.fake.emitRoomEvent({ roomId: "host", event: { tag: "UserStateChanged", value: { archived: true } } });
+    await running.product.idle();
+    await command(running, "/echo");
+    running.fake.emitRoomEvent({
+      roomId: "host",
+      event: { tag: "UserStateChanged", value: { mutedUntil: 2n ** 64n - 1n, archived: false } },
+    });
+    await running.product.idle();
+
+    expect(posted(running.fake).filter((line) => line.startsWith("echo UserStateChanged"))).toEqual([
+      "echo UserStateChanged muted=forever archived=false",
+    ]);
+  });
+});

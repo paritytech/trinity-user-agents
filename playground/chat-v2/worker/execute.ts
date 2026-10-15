@@ -39,6 +39,7 @@ import {
   videoBody,
 } from "./fixtures";
 import { splitGraphemes } from "./graphemes";
+import { roomLink } from "./links";
 import type { MenuMode, ReactionsMode } from "./state";
 
 /** The interval between two `/stream` edits: 20 edits a second. */
@@ -48,6 +49,8 @@ export const MAX_HISTORY = 100_000;
 export const MAX_GUESTS = 100_000;
 export const MAX_TOOLBAR = 16;
 export const MAX_SLOW_MS = 60_000;
+/** The longest delay of `/notify`: one day. */
+export const MAX_NOTIFY_SECONDS = 86_400;
 
 const POST_KINDS = ["text", "rich", "video", "file", "actions", "custom", "legacy"] as const;
 type PostKind = (typeof POST_KINDS)[number];
@@ -163,6 +166,7 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
   caps: runCaps,
   features: runFeatures,
   bot: runBot,
+  notify: runNotify,
 };
 
 /** The names of the commands this module runs, for the tests. */
@@ -450,6 +454,29 @@ async function runBot(ctx: ProductContext, room: RoomId, command: ParsedCommand)
     default:
       throw usage(command, hint);
   }
+}
+
+/** The text of the notification `/notify` sends from `room`. */
+export function notificationText(room: RoomId): string {
+  return `Sample notification from ${room}`;
+}
+
+/**
+ * `/notify [<seconds>]`: a notification whose deeplink opens the room, now
+ * or after `<seconds>`. The host shows nothing for an immediate one into a
+ * room the user muted. The delay is the one value the product takes from
+ * the clock.
+ */
+async function runNotify(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const seconds = command.args.length === 0 ? 0 : expectCount(command, MAX_NOTIFY_SECONDS, "[<seconds>]");
+  await call(
+    "send_push_notification",
+    ctx.notifications.sendPushNotification({
+      text: notificationText(room),
+      deeplink: roomLink(room, ctx.product),
+      ...(seconds > 0 ? { scheduledAt: BigInt(Date.now() + seconds * 1000) } : {}),
+    }),
+  );
 }
 
 // ---------------------------------------------------------------- messages

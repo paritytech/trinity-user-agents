@@ -59,6 +59,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   { name: "caps", args: "", description: "Post the Chat features this host serves", rooms: "both", posts: true, scenarios: "S49, S50", catalogue: "additions" },
   { name: "features", args: "preimage|search|readaloud on|off, calls audio|video|both|off", description: "Declare one optional feature of the room", rooms: "both", posts: false, scenarios: "S51", catalogue: "additions" },
   { name: "bot", args: "add <id> <name>|post <id> <text>|typing <id>", description: "Register a bot persona, post or type as it", rooms: "both", posts: true, scenarios: "S53", catalogue: "additions" },
+  { name: "notify", args: "[<seconds>]", description: "Send a notification that opens the room, now or later", rooms: "both", posts: false, scenarios: "S54, S70", catalogue: "additions" },
   { name: "history", args: "<n>", description: "Replace the messages with n generated ones", rooms: "source", posts: true, scenarios: "S15 to S17, S22, B2", catalogue: "v2" },
   { name: "slow", args: "<ms>", description: "Delay every later answer", rooms: "both", posts: false, scenarios: "S21, S46", catalogue: "v2" },
   { name: "fail", args: "reject|timeout|crash|unavailable", description: "Make the next answer fail", rooms: "both", posts: false, scenarios: "S20, S21, S23, S32, S46", catalogue: "v2" },

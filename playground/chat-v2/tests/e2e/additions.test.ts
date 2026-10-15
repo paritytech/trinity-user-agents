@@ -128,3 +128,72 @@ suite("bot personas on the test host", () => {
     expect(spoken.origin).toEqual({ participantId: "bot:helper" });
   });
 });
+
+suite("mute and archive on the test host", () => {
+  const HOUR_MS = 60 * 60 * 1000;
+  const notifies = (host: Running["host"]) =>
+    host.feed("host").filter((message) => message.body.tag === "Text" && message.body.value.text === "ok /notify");
+
+  test("S54: a muted room gets no /notify, the product hears UserStateChanged, unmute shows the next one", async () => {
+    const { host } = await start();
+    await host.chatUser.send("host", "/echo");
+    await waitForText(host, "host", "ok /echo");
+    await host.setRoomUserState("host", { mutedUntil: BigInt(Date.now() + HOUR_MS), archived: false });
+    await waitForText(host, "host", /^echo UserStateChanged muted=\d+ archived=false$/);
+
+    host.clearNotificationLog();
+    await host.chatUser.send("host", "/notify");
+    await until(() => notifies(host).length === 1, "the first ok /notify");
+    expect(host.getNotificationLog()).toEqual([]);
+
+    await host.setRoomUserState("host", { archived: false });
+    await waitForText(host, "host", "echo UserStateChanged muted=none archived=false");
+    await host.chatUser.send("host", "/notify");
+    await until(() => notifies(host).length === 2, "the second ok /notify");
+    expect(host.getNotificationLog()).toEqual([
+      expect.objectContaining({ text: "Sample notification from host", deeplink: "polkadot://sample.dot/-/chat/host" }),
+    ]);
+  });
+
+  test("S55: an archived room stays archived when a message arrives, unarchives, and is still deleted", async () => {
+    const { host, client } = await start();
+    await host.setRoomUserState("host", { archived: true });
+    await host.chatUser.send("host", "/post text");
+    await waitForText(host, "host", /^Plain text message/);
+    expect(host.roomUserState("host")).toEqual({ archived: true });
+
+    await host.setRoomUserState("host", { archived: false });
+    expect(host.roomUserState("host")).toBeUndefined();
+
+    await host.chatUser.send("host", "/placeholder Nothing here");
+    await waitForText(host, "host", "ok /placeholder Nothing here");
+    await host.setRoomUserState("host-empty", { archived: true });
+    const deleted = await client.chat.deleteRoom({ roomId: "host-empty" });
+    expect(deleted.isOk()).toBe(true);
+    expect(host.room("host-empty")).toBeUndefined();
+    expect(host.roomUserState("host-empty")).toBeUndefined();
+  });
+
+  test("S56: a restarted worker hears every muted or archived room first", async () => {
+    const first = await start();
+    const { host } = first;
+    await host.setRoomUserState("host", { mutedUntil: BigInt(Date.now() + HOUR_MS), archived: false });
+    await host.setRoomUserState("source", { archived: true });
+    await first.product.idle();
+    first.dispose();
+    running = [];
+
+    const second = await start({ host });
+    await host.chatUser.publishRoomEvent("host", { tag: "CallRequested", value: { video: false } });
+    const roomEvents = await until(() => {
+      const lines = second.log().filter((line) => line.via === "room_events");
+      return lines.length === 3 ? lines : undefined;
+    }, "the snapshot and the live event");
+    expect(roomEvents.map((line) => [line.room, line.kind])).toEqual([
+      ["host", "UserStateChanged"],
+      ["source", "UserStateChanged"],
+      ["host", "CallRequested"],
+    ]);
+    expect(roomEvents[1].data).toEqual({ mutedUntil: null, archived: true });
+  });
+});
