@@ -10,10 +10,16 @@ import Foundation
 ///
 /// Not listed, and why:
 /// - `payment_button`: the input draws no payment button (P10.2).
-/// - `preimage_attachments` (P10.3): the host keeps what the product declares for it, but it does not draw it yet.
+/// - `preimage_attachments` (P10.3): the stager stages an attachment above 1 MiB through the core, but no staged
+///   attachment reached a product on the simulator. The identity of the E2E harness is a new wallet with no
+///   personhood, so the core gets no Bulletin allowance for the product, and the live chain stores at most 2 MiB
+///   in one transaction (O32). The harness drives the path with `TRUAPI_IOS_E2E_STAGING`.
 /// - `wake` (P10.4): no push route wakes a product yet.
 /// - `room_calls` (P10.7): the runtime has no Media service.
 enum ChatHostCapabilities {
+    /// A user attachment above the inline limit is staged as a preimage (P10.3).
+    static let preimageAttachments = "preimage_attachments"
+
     static let served: [String] = [
         "product_source_rooms",
         "reaction_details",

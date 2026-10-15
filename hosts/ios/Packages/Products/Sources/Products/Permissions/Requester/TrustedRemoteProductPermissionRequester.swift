@@ -31,23 +31,23 @@ public struct TrustedRemoteProductPermissionRequester: ProductPermissionRequesti
     public func prompt(
         productId: String,
         permission: ProductPermission
-    ) async -> PermissionDecision {
+    ) async throws -> PermissionDecision {
         guard !grantsWithoutPrompting(productId: productId, permissions: [permission]) else {
             return .allowAlways
         }
 
-        return await wrapped.prompt(productId: productId, permission: permission)
+        return try await wrapped.prompt(productId: productId, permission: permission)
     }
 
     public func promptBatched(
         productId: String,
         permissions: [ProductPermission]
-    ) async -> PermissionDecision {
+    ) async throws -> PermissionDecision {
         guard !grantsWithoutPrompting(productId: productId, permissions: permissions) else {
             return .allowAlways
         }
 
-        return await wrapped.promptBatched(productId: productId, permissions: permissions)
+        return try await wrapped.promptBatched(productId: productId, permissions: permissions)
     }
 }
 

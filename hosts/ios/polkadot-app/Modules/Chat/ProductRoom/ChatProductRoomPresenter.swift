@@ -69,6 +69,8 @@ final class ChatProductRoomPresenter {
     weak var interactor: ChatInteractorInputProtocol?
     /// The personas, the message meta and the threads of the room (Chat Extension v2 additions).
     let additions: ChatRoomAdditionsState
+    /// The attachments that the room stages above the inline limit (P10.3).
+    var staging = ProductRoomStaging()
 
     init?(
         chatId: Chat.Id,

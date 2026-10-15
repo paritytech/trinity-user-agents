@@ -7,6 +7,8 @@ final class MockConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecked 
     var receivedRequesterName: String?
     var verdictToReturn: Bool = true
     var permissionDecisionToReturn: TrUAPIPermissionDecision = .allowAlways
+    /// When set, `confirmPermission` throws it, as a prompt that no screen answers.
+    var permissionError: Error?
 
     func confirm(review: UserConfirmationReview, from requesterName: String) async -> Bool {
         receivedReview = review
@@ -17,9 +19,10 @@ final class MockConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecked 
     func confirmPermission(
         review: UserConfirmationReview,
         from requesterName: String
-    ) async -> TrUAPIPermissionDecision {
+    ) async throws -> TrUAPIPermissionDecision {
         receivedReview = review
         receivedRequesterName = requesterName
+        if let permissionError { throw permissionError }
         return permissionDecisionToReturn
     }
 }

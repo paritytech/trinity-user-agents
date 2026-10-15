@@ -128,6 +128,9 @@ enum ChatViewFactory {
             productRoom?.sendContent = { [engine = interactor.engine] content in
                 try await engine.sendUserMessage(with: content)
             }
+            // The stager sends the staged attachments of every room through the bots of this registry (P10.3).
+            ProductOutboxDelivery.shared.attach(registry: flowState.extensionsRegistry)
+            productRoom?.followStaging()
             productRoom?.backgroundObserver = ChatRoomBackgroundObserver(
                 openRoom: { [weak interactor] in interactor?.openRoom() },
                 closeRoom: { [weak interactor] in interactor?.closeRoom() }

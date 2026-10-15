@@ -315,7 +315,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This attachment is larger than 1 MB. This app cannot send it to a product yet."
+            "value": "This attachment is larger than 1 MB, and this room does not accept larger files."
           }
         }
       }
@@ -702,6 +702,83 @@
           "stringUnit": {
             "state": "translated",
             "value": "Stop reading"
+          }
+        }
+      }
+    },
+    "attachment.above.staging.limit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This attachment is larger than %1$(limit)@, the most that this room can send."
+          }
+        }
+      }
+    },
+    "attachment.staging.sending": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uploading…"
+          }
+        }
+      }
+    },
+    "attachment.staging.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not sent. Open the menu to retry or delete it."
+          }
+        }
+      }
+    },
+    "attachment.staging.permission.denied": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(product)@ may not store files. You can allow it in the settings of the app."
+          }
+        }
+      }
+    },
+    "attachment.staging.notice.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Files go to public storage"
+          }
+        }
+      }
+    },
+    "attachment.staging.notice.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Files over 1 MB that you send in %1$(product)@ are stored on the public Bulletin chain without encryption. Anyone who has the link can read them."
+          }
+        }
+      }
+    },
+    "attachment.staging.notice.send": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send"
           }
         }
       }

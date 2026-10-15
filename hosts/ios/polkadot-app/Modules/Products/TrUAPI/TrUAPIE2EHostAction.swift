@@ -7,7 +7,8 @@ import UIKit
     /// command feed (P6.10). Each action runs the code path of the gesture that it stands for, from the point after
     /// the gesture: the harness cannot tap the simulator.
     ///
-    /// `open` and `list` act on the navigation. Every other action goes to the room screen that shows the room.
+    /// `open`, `list` and `permission` act on the app. Every other action goes to the room screen that shows the
+    /// room.
     struct TrUAPIE2EHostAction {
         static let notification = Notification.Name("TrUAPIE2EHostAction")
         static let inputTextNotification = Notification.Name("TrUAPIE2ESetInputText")
@@ -42,8 +43,33 @@ import UIKit
                     productId: productId,
                     reason: .notification(roomId: room, watchId: argument ?? "dev")
                 )
+            case "permission":
+                // The answer of the user to the permission prompt on the screen: `always`, `once` or `deny`.
+                TrUAPIE2EPendingPermission.answer(argument)
+            case "permission-reset":
+                // The core keeps a refusal of `PreimageSubmit` for good. The harness clears it after S58, so that
+                // the next run asks again.
+                resetPreimageSubmit(productId: productId)
+            case "staging-fault":
+                // S59: the next stage fails as a failed submit.
+                TrUAPIE2EStagingFault.set(.submitFailed(reason: "E2E fault"))
             default:
                 NotificationCenter.default.post(name: Self.notification, object: self)
+            }
+        }
+    }
+
+    extension TrUAPIE2EHostAction {
+        private func resetPreimageSubmit(productId: String) {
+            let execution = ProductPocketService.current?.workers?.currentExecution(of: productId)
+            do {
+                try execution?.setPermissionAuthorizationStatus(
+                    request: .remote(RemotePermissionRequest(permission: .preimageSubmit)),
+                    status: .notDetermined
+                )
+                Logger.shared.debug("[e2e:ui] permission-reset \(productId) \(execution == nil ? "no-worker" : "done")")
+            } catch {
+                Logger.shared.warning("[e2e:ui] permission-reset \(productId) failed: \(error)")
             }
         }
     }

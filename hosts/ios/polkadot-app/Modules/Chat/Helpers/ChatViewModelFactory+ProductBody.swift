@@ -161,26 +161,33 @@ private extension ChatViewModelFactory {
 
     /// Reply when the room has an input, Copy for a body with text, then Delete when the room offers it.
     /// Delete is the last host entry. A room that asks its product adds the product entries (P6.1).
+    ///
+    /// A failed attachment of the user is an attachment that the host could not stage or send (P10.3). It offers
+    /// Retry and Delete in every room, and no Copy: its text tells only its state.
     func setProductMenu(
         on configuration: inout ChatMessageContainerConfiguration,
         text: String?,
         context: ProductBodyRenderContext
     ) {
         let asksProduct = MainActor.assumeIsolated { productRoom?.asksMessageMenus == true }
+        let failed = context.status == .outgoing(.failed)
         guard
             let actions = context.actions,
-            context.canReply || text != nil || context.offersDelete || asksProduct else {
+            context.canReply || text != nil || context.offersDelete || asksProduct || failed else {
             return
         }
 
         var hostActions: [ChatMessageBubbleAction] = []
-        if context.canReply {
+        if context.canReply, !failed {
             hostActions.append(.reply)
         }
-        if text != nil {
+        if text != nil, !failed {
             hostActions.append(.copy)
         }
-        if context.offersDelete {
+        if failed {
+            hostActions.append(.retry)
+        }
+        if context.offersDelete || failed {
             hostActions.append(.delete)
         }
 

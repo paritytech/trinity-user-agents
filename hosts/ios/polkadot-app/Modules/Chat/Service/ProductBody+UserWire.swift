@@ -6,16 +6,25 @@ import UIKit
 
 extension Chat.LocalMessage.Content.ProductBody {
     /// The body that the user sends to the product: the inline media of a rich text, or an inline file (P6.7).
-    /// Nil for a body that the user does not send, or for media that is not inline.
+    /// A media item that the host staged goes as its preimage key, with the facts that the stager kept (P10.3).
+    /// Nil for a body that the user does not send, or for media that is not inline and not staged.
     var userWireBody: ChatMessageBody? {
+        userWireBody(staged: .shared)
+    }
+
+    func userWireBody(staged: ProductStagedMediaRegistry) -> ChatMessageBody? {
         switch self {
         case let .richText(richText):
-            let media = richText.media.compactMap { InlineDataURL($0)?.mediaItem }
+            let media = richText.media.compactMap { source in
+                InlineDataURL(source)?.mediaItem ?? staged.mediaItem(source: source, fileName: nil)
+            }
             guard !media.isEmpty || richText.text != nil else { return nil }
             return .richText(text: richText.text, media: media)
         case let .file(file):
-            guard let inline = InlineDataURL(file.url) else { return nil }
-            return .richText(text: file.text, media: [inline.fileItem(name: file.fileName)])
+            let item = InlineDataURL(file.url)?.fileItem(name: file.fileName)
+                ?? staged.mediaItem(source: file.url, fileName: file.fileName)
+            guard let item else { return nil }
+            return .richText(text: file.text, media: [item])
         case .actions:
             return nil
         }
@@ -25,7 +34,7 @@ extension Chat.LocalMessage.Content.ProductBody {
 extension InlineDataURL {
     /// The size of the bytes, the dimensions and the BlurHash of an image, and the size of a video.
     var mediaMeta: ChatMediaMeta {
-        let image = mimeType.hasPrefix("image/") ? Self.imageFacts(of: data) : nil
+        let image = mimeType.hasPrefix("image/") ? ProductImageFacts(data) : nil
 
         return ChatMediaMeta(
             mimeType: mimeType,
@@ -51,14 +60,15 @@ extension InlineDataURL {
     func fileItem(name: String) -> ChatMediaItem {
         .file(resource: .inline(mimeType: mimeType, bytes: data), meta: mediaMeta, fileName: name)
     }
+}
 
-    private struct ImageFacts {
-        let width: UInt32
-        let height: UInt32
-        let blurHash: String?
-    }
+/// The dimensions and the BlurHash of an image, for the media facts that the product receives.
+struct ProductImageFacts: Equatable {
+    let width: UInt32
+    let height: UInt32
+    let blurHash: String?
 
-    private static func imageFacts(of data: Data) -> ImageFacts? {
+    init?(_ data: Data) {
         guard
             let source = CGImageSourceCreateWithData(data as CFData, nil),
             let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -72,9 +82,9 @@ extension InlineDataURL {
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceThumbnailMaxPixelSize: 32
         ]
-        let blurHash = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary)
+        self.width = UInt32(clamping: width)
+        self.height = UInt32(clamping: height)
+        blurHash = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary)
             .flatMap { UIImage(cgImage: $0).blurHash(numberOfComponents: (4, 3)) }
-
-        return ImageFacts(width: UInt32(clamping: width), height: UInt32(clamping: height), blurHash: blurHash)
     }
 }

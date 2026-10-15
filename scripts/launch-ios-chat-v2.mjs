@@ -21,6 +21,7 @@
 // The launcher fails when a driven scenario fails or has no row.
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   cpSync,
   createWriteStream,
@@ -32,6 +33,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
 
 import {
   renderScenarioReport,
@@ -41,6 +43,7 @@ import { decodeTextMessage } from "./lib/chat-diagnosis-report.mjs";
 import {
   IOS_CHAT_V2_PERF,
   IOS_CHAT_V2_SCENARIOS,
+  IOS_STAGING_FILE_TAGS,
   appStartFailure,
   blockedRows,
   capabilityVerdict,
@@ -124,6 +127,12 @@ const scenarios =
 /** The values that a step filled in, for the expectations after it. */
 const memory = {};
 
+/**
+ * True while the launcher answers a stray permission prompt. The scenarios
+ * run in the top-level await below, so this is set before they start.
+ */
+let answeringPrompt = false;
+
 /** How long the app has to start the product and create its room. */
 const START_TIMEOUT_MS = 120_000;
 /** How long one command has to reach the product and take effect. */
@@ -200,6 +209,18 @@ cpSync(
   resolve(fileDir, "sample.png"),
 );
 writeFileSync(resolve(fileDir, "large.bin"), Buffer.alloc(2 * 1024 * 1024, 7));
+// The attachments of P10.3. Each staging row has its own photo of random
+// pixels (about 1.5 MiB) and its own file of 1,900,000 random bytes, under
+// the 2 MiB that the live Bulletin chain stores in one transaction (O32).
+// Random bytes make each upload new, also across runs. S58 also sends a
+// file above that bound and one above the 8 MiB of the core.
+const MIB = 1024 * 1024;
+for (const tag of IOS_STAGING_FILE_TAGS) {
+  writeFileSync(resolve(fileDir, `photo-${tag}.png`), randomPng(720));
+  writeFileSync(resolve(fileDir, `file-${tag}.bin`), randomBytes(1_900_000));
+}
+writeFileSync(resolve(fileDir, "file-3m.bin"), randomBytes(3 * MIB));
+writeFileSync(resolve(fileDir, "file-8m1.bin"), Buffer.alloc(8 * MIB + 1, 9));
 
 const appLog = createWriteStream(appLogPath);
 const appConsole = spawn(
@@ -226,6 +247,9 @@ const appConsole = spawn(
       // `/notify` needs the notification permission, and the harness cannot
       // answer the system prompt (S54).
       SIMCTL_CHILD_TRUAPI_IOS_E2E_GRANT_NOTIFICATIONS: "1",
+      // The app does not list `preimage_attachments` yet; the P10.3 rows
+      // drive the staging path with this switch.
+      SIMCTL_CHILD_TRUAPI_IOS_E2E_STAGING: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   },
@@ -381,8 +405,72 @@ async function runScenario(scenario) {
     return row(scenario, "skip", 0, "skip: not in TRUAPI_IOS_E2E_ONLY");
   }
   if (!scenario.drive) return skipRow(scenario);
-  const result = await driveScenario(scenario);
+  await answerStrayPrompt();
+  // A row that answers prompts itself (P10.3) gets no answer from the launcher.
+  const answersPrompts = JSON.stringify(scenario.drive).includes(
+    '"host":"permission"',
+  );
+  const watcher = answersPrompts
+    ? undefined
+    : setInterval(() => answerStrayPrompt().catch(() => {}), 1_000);
+  const result = await driveScenario(scenario).finally(() =>
+    clearInterval(watcher),
+  );
   return scenario.capabilities ? capabilityVerdict(result, rows) : result;
+}
+
+/**
+ * A permission prompt that no scenario asked for, such as the one of the
+ * product's own preimage (`/post rich`, or a worker that starts again while
+ * a room screen shows), would hold the permission lock of the core and the
+ * post that waits for it. The launcher allows it once, before each scenario
+ * and every second while a scenario that answers no prompt runs.
+ */
+async function answerStrayPrompt() {
+  if (answeringPrompt) return;
+  const prompts = parseUiMarkers(consoleText).filter(
+    (marker) =>
+      (marker.key === "prompt" || marker.key === "prompt-answer") &&
+      marker.room === productHost,
+  );
+  if (prompts.at(-1)?.key !== "prompt") return;
+  console.log(`answering a stray prompt: ${prompts.at(-1).value}`);
+  answeringPrompt = true;
+  try {
+    await sendHostAction({ room, host: "permission", argument: "once" });
+  } finally {
+    answeringPrompt = false;
+  }
+}
+
+/**
+ * A PNG of random pixels, `side` by `side`: it does not compress, so its
+ * size is about three bytes for each pixel.
+ */
+function randomPng(side) {
+  const chunk = (type, data) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(side, 0);
+  header.writeUInt32BE(side, 4);
+  header[8] = 8; // bit depth
+  header[9] = 2; // RGB
+  const rows = [];
+  for (let y = 0; y < side; y++) {
+    rows.push(Buffer.from([0]), randomBytes(side * 3));
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(Buffer.concat(rows))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 /**

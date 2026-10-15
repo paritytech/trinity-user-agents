@@ -80,6 +80,9 @@ final class RecordingProductRoom: ProductRoomInteracting, @unchecked Sendable {
 @MainActor
 final class RecordingProductRoomWireframe: ChatProductRoomWireframing {
     var confirms = true
+    /// The answer to the public-storage notice (P10.3).
+    var acceptsNotice = true
+    private(set) var notices: [String] = []
     private(set) var confirmed: [URL] = []
     private(set) var opened: [URL] = []
 
@@ -270,4 +273,13 @@ extension RecordingProductRoomWireframe {
         from _: ControllerBackedProtocol?,
         completion _: @escaping (PickedAttachment) -> Void
     ) {}
+
+    func confirmPublicStorage(
+        productName: String,
+        from _: ControllerBackedProtocol?,
+        onAnswer: @escaping (Bool) -> Void
+    ) {
+        notices.append(productName)
+        onAnswer(acceptsNotice)
+    }
 }
