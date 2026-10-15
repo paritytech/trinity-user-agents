@@ -283,7 +283,9 @@ deletes, reacts, reports seen, retries, presses buttons, toolbar entries and
 quick replies, opens menus and asks for participants and reaction details. It
 also presses the call buttons (`pressCall`), answers, opens and ends a call
 (`answerCall`, `openCall`, `endCall`), picks a branch (`selectBranch`), searches
-a room (`search`) and wakes the product (`wake`). In
+a room (`search`), wakes the product (`wake`) and sends a photo, video or file
+(`sendAttachment`: inline up to 1 MiB, else staged through
+`stageChatAttachment`, with `Refused` and nothing sent when the core refuses). In
 a room the product keeps it asks the chat queries and applies the host rules:
 the optimistic message, `Rejected` and `Failed`, one retry after
 `NotAvailable`, and the host default after a refusal or a time-out. In a room

@@ -24,6 +24,7 @@ export {
   defaultChatRoomConfig,
   defaultChatRoomFeatures,
   MOCK_CHAT_FEATURE_NAMES,
+  MOCK_CHAT_INLINE_MAX_BYTES,
   MOCK_CHAT_PAGE_SIZE,
   MOCK_CHAT_PARTICIPANT_PAGE_SIZE,
   MOCK_CHAT_PEER,
@@ -32,6 +33,8 @@ export {
 } from "./web/mock-chat.js";
 export type {
   MockActionOutcome,
+  MockAttachmentOutcome,
+  MockChatAttachment,
   MockChatFeedUpdate,
   MockChatListRow,
   MockChatNotice,

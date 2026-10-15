@@ -22,6 +22,7 @@ import type {
   ChatCommand,
   ChatEvent,
   ChatFeedUpdate,
+  ChatMediaItem,
   ChatMessage,
   ChatMessageBody,
   ChatMessageContent,
@@ -31,6 +32,7 @@ import type {
   ChatProductAction,
   ChatReactionDetail,
   ChatReactionSummary,
+  ChatResource,
   ChatRoom,
   ChatRoomBadge,
   ChatRoomCall,
@@ -56,6 +58,7 @@ import type {
   V02ChatRoomFooter,
 } from "@parity/truapi";
 import type { GenericError, Result } from "@parity/truapi";
+import { bytesToHex as toHex } from "@parity/truapi/scale";
 
 import type {
   ChatHostRuntime,
@@ -110,6 +113,24 @@ export const MOCK_CHAT_FEATURE_NAMES: readonly string[] = [
   "call_buttons",
   "room_calls",
 ];
+
+/** The largest media item the host sends inline (RFC §3.5: 1 MiB). */
+export const MOCK_CHAT_INLINE_MAX_BYTES = 1024 * 1024;
+
+/** A photo, video or file the user sends. */
+export interface MockChatAttachment {
+  kind: "Image" | "Video" | "File";
+  mimeType: string;
+  bytes: Uint8Array;
+  /** The name a file shows; the default is `file`. */
+  fileName?: string;
+}
+
+/** What sending an attachment did. */
+export type MockAttachmentOutcome =
+  | MockSendOutcome
+  /** The core did not stage it: nothing was uploaded and nothing sent. */
+  | { tag: "Refused"; reason: string };
 
 /** The page of search matches the host asks for (additions RFC limits). */
 export const MOCK_CHAT_SEARCH_PAGE_SIZE = 30;
@@ -400,6 +421,16 @@ export interface MockChatUser {
   ): Promise<ChatReactionDetail[] | undefined>;
   /** Send one event as it is. */
   publish(roomId: string, event: ChatEvent): Promise<void>;
+  /**
+   * Send a photo, a video or a file. Up to the inline bound it travels in the
+   * message; above it the host stages it as a preimage through the core
+   * (`stageChatAttachment`) and sends the key. A refused staging sends
+   * nothing.
+   */
+  sendAttachment(
+    roomId: string,
+    attachment: MockChatAttachment,
+  ): Promise<MockAttachmentOutcome>;
   /**
    * Press the audio or the video call button of the header. Throws when the
    * room declares no such button.
@@ -1520,6 +1551,39 @@ export function createMockChat(options: MockChatOptions): MockChat {
       return result.isOk() ? result.value.reactions : undefined;
     },
     publish,
+    async sendAttachment(roomId, attachment) {
+      const { kind, mimeType, bytes } = attachment;
+      let resource: ChatResource;
+      if (bytes.length <= MOCK_CHAT_INLINE_MAX_BYTES) {
+        resource = { tag: "Inline", value: { mimeType, bytes: toHex(bytes) } };
+      } else {
+        try {
+          const key = await attached().stageChatAttachment(roomId, mimeType, bytes);
+          resource = { tag: "Preimage", value: { key: toHex(key) } };
+        } catch (error) {
+          return {
+            tag: "Refused",
+            reason: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+      const meta = { mimeType, sizeBytes: BigInt(bytes.length) };
+      const item: ChatMediaItem =
+        kind === "File"
+          ? {
+              tag: "File",
+              value: {
+                resource,
+                meta,
+                fileName: attachment.fileName ?? "file",
+              },
+            }
+          : { tag: kind, value: { resource, meta } };
+      return this.send(roomId, {
+        tag: "RichText",
+        value: { media: [item] },
+      });
+    },
     async pressCall(roomId, video) {
       const calls = room(roomId).features.calls;
       if (!calls || !(video ? calls.video : calls.audio)) {
