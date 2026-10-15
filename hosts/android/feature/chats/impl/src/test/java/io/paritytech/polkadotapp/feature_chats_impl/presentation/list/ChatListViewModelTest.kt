@@ -142,7 +142,11 @@ class ChatListViewModelTest {
         assertNull(viewModel.mutePicker.value)
         coVerify { userStateService.mute(roomId, ChatMuteDuration.EIGHT_HOURS) }
 
-        viewModel.onMuteToggle(row.copy(userState = ChatListUiState.UserState(isMuted = true, isArchived = false)))
+        // The list decides from the row as it shows it now, not from the row that the gesture started on.
+        val muted = ChatRoomUserStateModel(mutedUntil = ChatRoomUserStateModel.MUTED_WITHOUT_END, archived = false)
+        chats.value = listOf(productRoom(productText = null, ongoing = false, userState = muted))
+        viewModel.loaded { it.chats.single().isMuted }
+        viewModel.onMuteToggle(row)
         coVerify { userStateService.unmute(roomId) }
 
         viewModel.onArchiveToggle(row)

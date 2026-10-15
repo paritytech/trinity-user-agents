@@ -7,10 +7,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxState
 import androidx.compose.material3.SwipeToDismissBoxValue
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -34,6 +37,9 @@ import io.paritytech.polkadotapp.common.R as RCommon
 /** The test tag of a list row that has swipe actions; the launcher finds the row of a room with it. */
 internal const val CHAT_LIST_SWIPE_ROW_TAG = "chat_list_swipe_row"
 
+/** The part of the row width that a swipe must pass to run its action. */
+private const val SWIPE_THRESHOLD = 0.35f
+
 /**
  * A row of the chat list. A product room has two swipe actions (07-LATER §6.2): a swipe to the end mutes or
  * unmutes it, and a swipe to the start archives or unarchives it. The same actions are custom accessibility
@@ -56,8 +62,15 @@ internal fun ChatListRow(
 
     val muteLabel = stringResource(if (userState.isMuted) RCommon.string.chat_room_unmute else RCommon.string.chat_room_mute)
     val archiveLabel = stringResource(if (userState.isArchived) RCommon.string.chat_room_unarchive else RCommon.string.chat_room_archive)
-    val swipeState = rememberSwipeToDismissBoxState()
+    // Not saveable: a row that leaves the list during the swipe (an archive) must not come back as dismissed in the
+    // other section, because a dismissed state runs onDismiss again.
+    val swipeState = remember(chat.chatId, userState) {
+        SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, positionalThreshold = { distance -> distance * SWIPE_THRESHOLD })
+    }
     val scope = rememberCoroutineScope()
+    // SwipeToDismissBox keeps the first onDismiss in an effect, so the actions of the current row go through state.
+    val currentMuteToggle by rememberUpdatedState(onMuteToggle)
+    val currentArchiveToggle by rememberUpdatedState(onArchiveToggle)
 
     SwipeToDismissBox(
         modifier = modifier
@@ -88,12 +101,12 @@ internal fun ChatListRow(
         },
         onDismiss = { direction ->
             when (direction) {
-                SwipeToDismissBoxValue.StartToEnd -> onMuteToggle()
-                SwipeToDismissBoxValue.EndToStart -> onArchiveToggle()
+                SwipeToDismissBoxValue.StartToEnd -> currentMuteToggle()
+                SwipeToDismissBoxValue.EndToStart -> currentArchiveToggle()
                 SwipeToDismissBoxValue.Settled -> Unit
             }
             // The row stays in place: the action changes the state of the room, not the list of rows.
-            scope.launch { swipeState.reset() }
+            scope.launch { swipeState.snapTo(SwipeToDismissBoxValue.Settled) }
         },
     ) {
         PolkadotChatListItem(

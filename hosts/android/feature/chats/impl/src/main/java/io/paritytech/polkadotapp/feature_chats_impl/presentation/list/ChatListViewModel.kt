@@ -133,7 +133,7 @@ class ChatListViewModel @Inject constructor(
 
     /** A muted room unmutes at once. Another room asks the user how long to mute it. */
     fun onMuteToggle(chat: ChatListUiState.ChatItem) {
-        val userState = chat.userState ?: return
+        val userState = currentUserState(chat) ?: return
         if (userState.isMuted) {
             changeUserState { userStateService.unmute(chat.chatId) }
         } else {
@@ -152,8 +152,14 @@ class ChatListViewModel @Inject constructor(
     }
 
     fun onArchiveToggle(chat: ChatListUiState.ChatItem) {
-        val userState = chat.userState ?: return
+        val userState = currentUserState(chat) ?: return
         changeUserState { userStateService.setArchived(chat.chatId, archived = !userState.isArchived) }
+    }
+
+    /** The state of the row as the list shows it now: a gesture can name a row that the list drew before a change. */
+    private fun currentUserState(chat: ChatListUiState.ChatItem): ChatListUiState.UserState? {
+        val shown = (state.value as? LoadingState.Loaded)?.data?.chats?.find { it.chatId == chat.chatId }
+        return shown?.userState ?: chat.userState
     }
 
     private fun changeUserState(change: suspend () -> Result<Unit>) = launchUnit {
