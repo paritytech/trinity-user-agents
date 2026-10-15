@@ -45,7 +45,7 @@ impl ResourceAllocation for ProductRuntimeHost {
 				cx,
 				self.confirm_product_action(UserConfirmationReview::ResourceAllocation(
 					ResourceAllocationReview {
-						calling_product_id: self.product_id(),
+						calling_product_id: self.product_id().to_string(),
 						resources: inner.resources.clone(),
 					},
 				)),
@@ -70,7 +70,12 @@ impl ResourceAllocation for ProductRuntimeHost {
 			);
 			remote_authority_call(
 				&cx,
-				self.authority.allocate_resources(&cx, &session, self.product_id(), inner),
+				self.authority.allocate_resources(
+					&cx,
+					&session,
+					self.product_id().to_string(),
+					inner,
+				),
 			)
 			.await
 			.map_err(|err| {
@@ -106,7 +111,7 @@ impl Entropy for ProductRuntimeHost {
 			};
 			let entropy = self
 				.authority
-				.derive_entropy(&session, &self.product_id(), &context)
+				.derive_entropy(&session, self.product_id().as_str(), &context)
 				.map_err(|err| {
 					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
 						reason: err.to_string(),

@@ -1,6 +1,6 @@
 //! Product-facing platform capability adapters.
 
-use crate::platform::PermissionAuthorizationStatus;
+use crate::platform::{PermissionAuthorizationStatus, ProductId};
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
@@ -147,7 +147,9 @@ impl System for ProductRuntimeHost {
 		let version = request.version();
 		let () = request.into_latest();
 		Ok(HostGetProductContextResponse::from_latest(
-			latest::HostGetProductContextResponse { product_id: self.product.product_id.clone() },
+			latest::HostGetProductContextResponse {
+				product_id: self.product.product_id.to_string(),
+			},
 			version,
 		))
 	}
@@ -259,19 +261,23 @@ impl LocalStorage for ProductRuntimeHost {
 		// would make this call a probe for which products exist and which hold
 		// data. A prompt is not the fallback either, since stored values are
 		// opaque bytes nobody could inspect to approve.
+		let access_not_granted = || {
+			CallError::Domain(HostLocalStorageReadError::from_latest(
+				latest::HostLocalStorageReadError::AccessNotGranted,
+				version,
+			))
+		};
 		let owner = match product {
 			Some(target) => {
-				match self.cross_product_scope_target(&target, Granted::Storage).await {
-					Some(owner) => owner,
-					None => {
-						return Err(CallError::Domain(HostLocalStorageReadError::from_latest(
-							latest::HostLocalStorageReadError::AccessNotGranted,
-							version,
-						)));
-					},
+				let Ok(target) = ProductId::parse(&target) else {
+					return Err(access_not_granted());
+				};
+				if !self.holds_cross_product_scope(&target, Granted::Storage).await {
+					return Err(access_not_granted());
 				}
+				target
 			},
-			None => self.product_id(),
+			None => self.product_id().clone(),
 		};
 
 		self.platform
@@ -296,7 +302,7 @@ impl LocalStorage for ProductRuntimeHost {
 	) -> Result<HostLocalStorageWriteResponse, CallError<HostLocalStorageWriteError>> {
 		let version = request.version();
 		let latest::HostLocalStorageWriteRequest { key, value } = request.into_latest();
-		let storage_key = self.product_storage_key(self.product.product_id.as_str(), key);
+		let storage_key = self.product_storage_key(self.product_id(), key);
 		self.platform
 			.write(storage_key, value)
 			.await
@@ -313,7 +319,7 @@ impl LocalStorage for ProductRuntimeHost {
 		let version = request.version();
 		let latest::HostLocalStorageClearRequest { key } = request.into_latest();
 		self.platform
-			.clear(self.product_storage_key(self.product.product_id.as_str(), key))
+			.clear(self.product_storage_key(self.product_id(), key))
 			.await
 			.map(|()| HostLocalStorageClearResponse::from_latest((), version))
 			.map_err(|err| CallError::Domain(HostLocalStorageClearError::from_latest(err, version)))
@@ -334,7 +340,7 @@ impl LocalStorage for ProductRuntimeHost {
 		let mut delivered: Option<Option<Vec<u8>>> = None;
 		let stream = self
 			.platform
-			.subscribe_storage(self.product_storage_key(self.product.product_id.as_str(), key))
+			.subscribe_storage(self.product_storage_key(self.product_id(), key))
 			.filter_map(move |item| {
 				let next = match item {
 					Ok(item) if delivered.as_ref() == Some(&item.value) => None,

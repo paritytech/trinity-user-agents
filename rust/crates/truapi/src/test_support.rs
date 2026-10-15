@@ -1004,7 +1004,7 @@ impl PlatformProductOperations for StubPlatform {
 		// call and hands back its position as the id.
 		let id = {
 			let mut begun = self.begun_operations.lock().expect("begun operations mutex poisoned");
-			begun.push((product.product_id.clone(), label));
+			begun.push((product.product_id.to_string(), label));
 			begun.len() as u32
 		};
 		// The operation exists host-side from here on, so a test holding the
@@ -1028,7 +1028,7 @@ impl PlatformProductOperations for StubPlatform {
 		self.ended_operations
 			.lock()
 			.expect("ended operations mutex poisoned")
-			.push((product.product_id.clone(), id));
+			.push((product.product_id.to_string(), id));
 		match self.end_operation_error {
 			Some(reason) => {
 				Err(v01::HostWorkerOperationError::Unknown { reason: reason.to_string() })

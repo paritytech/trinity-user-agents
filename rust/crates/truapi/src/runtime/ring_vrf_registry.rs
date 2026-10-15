@@ -5,7 +5,7 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use crate::platform::{CoreStorageKey, Platform, normalize_product_identifier};
+use crate::platform::{CoreStorageKey, Platform, ProductId};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation};
 
@@ -314,9 +314,9 @@ fn decode_snapshot(blob: &[u8]) -> Result<RegistrySnapshot, RingVrfError> {
 fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
 	let mut handles = HashSet::new();
 	for entry in &snapshot.entries {
-		let owner = normalize_product_identifier(&entry.handle.dot_ns_identifier)
+		let owner = ProductId::parse(&entry.handle.dot_ns_identifier)
 			.map_err(|error| invalid_registry(error.to_string()))?;
-		if owner != entry.handle.dot_ns_identifier {
+		if owner.as_str() != entry.handle.dot_ns_identifier {
 			return Err(invalid_registry("non-canonical key owner"));
 		}
 		if entry.public_key.is_none() {
@@ -335,9 +335,9 @@ fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
 	}
 	let mut owners = HashSet::new();
 	for owner in &snapshot.complete_owners {
-		let canonical = normalize_product_identifier(owner)
-			.map_err(|error| invalid_registry(error.to_string()))?;
-		if canonical != *owner || !owners.insert(owner) {
+		let canonical =
+			ProductId::parse(owner).map_err(|error| invalid_registry(error.to_string()))?;
+		if canonical.as_str() != owner || !owners.insert(owner) {
 			return Err(invalid_registry("invalid complete owner"));
 		}
 	}
@@ -361,9 +361,9 @@ pub fn validate_owner_listing(
 	owner: &str,
 	entries: &[RegisteredRingVrfKey],
 ) -> Result<(), RingVrfError> {
-	let canonical_owner = normalize_product_identifier(owner)
-		.map_err(|error| invalid_registry_listing(error.to_string()))?;
-	if canonical_owner != owner {
+	let canonical_owner =
+		ProductId::parse(owner).map_err(|error| invalid_registry_listing(error.to_string()))?;
+	if canonical_owner.as_str() != owner {
 		return Err(invalid_registry_listing("non-canonical listing owner"));
 	}
 	let mut handles = HashSet::new();

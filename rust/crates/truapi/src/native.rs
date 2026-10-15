@@ -286,7 +286,7 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 /// normalize, so an unknown spelling is never read as trusted.
 #[uniffi::export]
 pub fn has_trusted_remote_permissions(product_id: String) -> bool {
-	crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
+	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&product_id)
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for

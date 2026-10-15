@@ -21,7 +21,7 @@ use crate::host_logic::statement_store::{
 };
 
 use crate::platform::{
-	CrossProductSignatureKind, StatementStoreProductSignReview, UserConfirmationReview,
+	CrossProductSignatureKind, ProductId, StatementStoreProductSignReview, UserConfirmationReview,
 };
 use serde_json::Value;
 use subxt_rpcs::client::RpcSubscription;
@@ -68,23 +68,24 @@ impl StatementStore for ProductRuntimeHost {
 		CallError<RemoteStatementStoreCreateProofError>,
 	> {
 		let RemoteStatementStoreCreateProofRequest::V1(mut inner) = request;
-		inner.product_account_id = Self::normalize_product_account_id(inner.product_account_id)
-			.map_err(|()| {
+		let owner =
+			Self::normalize_product_account_id(&mut inner.product_account_id).map_err(|()| {
 				CallError::Domain(RemoteStatementStoreCreateProofError::V1(
 					latest::RemoteStatementStoreCreateProofError::UnknownAccount,
 				))
 			})?;
-		let Some(owner) = self
-			.authorized_product_account(&inner.product_account_id.dot_ns_identifier, cx)
-			.await
-		else {
+		if !self.may_use_product_account(&owner, cx).await {
 			return Err(CallError::Domain(RemoteStatementStoreCreateProofError::V1(
 				latest::RemoteStatementStoreCreateProofError::UnknownAccount,
 			)));
-		};
-		inner.product_account_id.dot_ns_identifier = owner;
+		}
 		let proof = self
-			.create_product_statement_proof(cx, inner.product_account_id, inner.statement)
+			.create_product_statement_proof(
+				cx,
+				owner,
+				inner.product_account_id.derivation_index,
+				inner.statement,
+			)
 			.await
 			.map_err(statement_proof_error)?;
 		Ok(RemoteStatementStoreCreateProofResponse::V1(
@@ -140,7 +141,8 @@ impl StatementStore for ProductRuntimeHost {
 				if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
 					statement_store_rpc::is_no_allowance_rejection(&reason)
 				{
-					self.authority.forget_statement_store_allowance_key(&self.product_id(), signer);
+					self.authority
+						.forget_statement_store_allowance_key(self.product_id().as_str(), signer);
 				}
 				CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
 					reason: format!("statement-store submit failed: {reason}"),
@@ -321,9 +323,12 @@ impl ProductRuntimeHost {
 	async fn create_product_statement_proof(
 		&self,
 		cx: &CallContext,
-		product_account_id: latest::ProductAccountId,
+		owner: ProductId,
+		derivation_index: latest::DerivationIndex,
 		statement: latest::Statement,
 	) -> Result<latest::StatementProof, StatementProofFailure> {
+		let product_account_id =
+			latest::ProductAccountId { dot_ns_identifier: owner.to_string(), derivation_index };
 		let session = self.authority.current_session().ok_or(StatementProofFailure::NoSession)?;
 		let signer = self
 			.product_account_public_key(cx, &session, &product_account_id)
@@ -333,21 +338,17 @@ impl ProductRuntimeHost {
 			.map_err(StatementProofFailure::InvalidStatement)?;
 		let payload = unsigned_statement_signing_payload(fields)
 			.map_err(StatementProofFailure::UnableToSign)?;
-		if product_account_id.dot_ns_identifier != self.product_id() {
+		if &owner != self.product_id() {
 			let confirmed = self
-				.confirm_signature(
-					CrossProductSignatureKind::StatementProof,
-					&product_account_id,
-					|| {
-						UserConfirmationReview::StatementStoreProductSign(
-							StatementStoreProductSignReview {
-								calling_product_id: Some(self.product_id()),
-								account: product_account_id.clone(),
-								payload: payload.clone(),
-							},
-						)
-					},
-				)
+				.confirm_signature(CrossProductSignatureKind::StatementProof, &owner, || {
+					UserConfirmationReview::StatementStoreProductSign(
+						StatementStoreProductSignReview {
+							calling_product_id: Some(self.product_id().to_string()),
+							account: product_account_id.clone(),
+							payload: payload.clone(),
+						},
+					)
+				})
 				.await
 				.map_err(|err| StatementProofFailure::UnableToSign(err.reason))?;
 			if !confirmed {
@@ -379,7 +380,11 @@ impl ProductRuntimeHost {
 		let cx = remote_authority_context(cx);
 		let allowance = remote_authority_call(
 			&cx,
-			self.authority.statement_store_allowance_key(&cx, &session, self.product_id()),
+			self.authority.statement_store_allowance_key(
+				&cx,
+				&session,
+				self.product_id().to_string(),
+			),
 		)
 		.await
 		.map_err(statement_authority_failure)?;
@@ -503,7 +508,9 @@ mod tests {
 		};
 		futures::executor::block_on(crate::platform::CoreStorage::write_core_storage(
 			platform,
-			crate::runtime::product_manifest::manifest_cache_key(owner),
+			ProductId::parse(owner)
+				.expect("test product identifier is valid")
+				.manifest_cache_key(),
 			entry.encode(),
 		))
 		.expect("stub core storage accepts the entry");

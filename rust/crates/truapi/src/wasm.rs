@@ -948,7 +948,7 @@ impl WasmPairingHostRuntime {
 		let product = product_context_from_js(&product)?;
 		let channel = CoreChannel::from_js(&core_callbacks)?;
 		let debug_emit = get_optional_function(&core_callbacks, "debugEmit")?;
-		let channel_id = product.product_id.clone();
+		let channel_id = product.product_id.to_string();
 		let sink = Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
 		let runtime = self.runtime.product_runtime(product, sink);
 		if let Some(debug_emit) = debug_emit {
@@ -1137,7 +1137,7 @@ impl WasmPairingHostRuntime {
 /// normalize, so an unknown spelling is never read as trusted.
 #[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
 pub fn has_trusted_remote_permissions_for_wasm(product_id: String) -> bool {
-	crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
+	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&product_id)
 }
 
 /// Strictly decode a SCALE-encoded core-storage key for host storage policy.
@@ -1406,9 +1406,9 @@ pub fn derive_product_subtree_public_key(
 ) -> Result<Vec<u8>, JsValue> {
 	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&root_entropy)
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
-	let product_id = crate::platform::normalize_product_identifier(&product_id)
+	let product_id = crate::platform::ProductId::parse(&product_id)
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
-	crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
+	crate::host_logic::product_account::derive_product_subtree_keypair(&root, product_id.as_str())
 		.map(|keypair| keypair.public.to_bytes().to_vec())
 		.map_err(|err| JsValue::from_str(&err.to_string()))
 }

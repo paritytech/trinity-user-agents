@@ -22,7 +22,7 @@ use crate::platform::{
 	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, GamePlatform,
 	PairingHostAdmin, PairingHostConfig, PaymentPlatform, PermissionAuthorizationRequest,
 	PermissionAuthorizationStatus, PermissionStatusHost, Platform, PocketPlatform, ProductContext,
-	ScannerPlatform, SigningHostConfig, TopUpPlatform, normalize_product_identifier,
+	ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -1474,7 +1474,7 @@ async fn product_subtree_public_key(
 	product_id: &str,
 	timeout_ms: Option<u32>,
 ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-	let product_id = normalize_product_identifier(product_id)
+	let product_id = ProductId::parse(product_id)
 		.map_err(|reason| v01::GenericError { reason: reason.to_string() })?;
 	let Some(session) = authority.current_session() else {
 		return Ok(None);
@@ -1485,7 +1485,7 @@ async fn product_subtree_public_key(
 	let mut cx = CallContext::default();
 	cx.set_timeout(timeout);
 
-	let call = authority.product_subtree_public_key(&cx, &session, product_id).fuse();
+	let call = authority.product_subtree_public_key(&cx, &session, product_id.into()).fuse();
 	let deadline = futures_timer::Delay::new(timeout).fuse();
 	pin_mut!(call, deadline);
 	futures::select! {

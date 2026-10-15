@@ -83,7 +83,7 @@ impl ProductSelection {
 
 	/// Return the normalized current product id.
 	pub fn current(&self) -> String {
-		self.current.borrow().product_id.clone()
+		self.current.borrow().product_id.to_string()
 	}
 
 	/// Select a validated product, returning whether the selection changed.
@@ -1082,7 +1082,7 @@ mod tests {
 
 		assert!(product.select("second.dot".to_string())?);
 		connection.changed().await?;
-		assert_eq!(connection.borrow().product_id, "second.dot");
+		assert_eq!(connection.borrow().product_id.as_str(), "second.dot");
 		assert!(!product.select("SECOND.DOT".to_string())?);
 		assert!(!connection.has_changed()?);
 		Ok(())

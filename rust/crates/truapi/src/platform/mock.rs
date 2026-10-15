@@ -1165,7 +1165,7 @@ impl ProductOperations for MockPlatform {
 		self.open_operations
 			.lock()
 			.expect("open operations poisoned")
-			.push(OpenOperation { product_id: product.product_id.clone(), id, label });
+			.push(OpenOperation { product_id: product.product_id.to_string(), id, label });
 		Ok(latest::HostWorkerBeginOperationResponse { id })
 	}
 
@@ -1178,7 +1178,7 @@ impl ProductOperations for MockPlatform {
 		self.open_operations
 			.lock()
 			.expect("open operations poisoned")
-			.retain(|open| open.id != id || open.product_id != product.product_id);
+			.retain(|open| open.id != id || open.product_id != product.product_id.as_str());
 		Ok(())
 	}
 }

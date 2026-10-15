@@ -76,8 +76,8 @@ use sso_replay::SsoReplayLocks;
 const TEST_NETWORK_SUFFIX: &str = "dot";
 
 use crate::platform::{
-	PermissionAuthorizationStatus, Platform, ProductContext, SignVrfReview, UserConfirmationReview,
-	normalize_product_identifier,
+	PermissionAuthorizationStatus, Platform, ProductContext, ProductId, SignVrfReview,
+	UserConfirmationReview,
 };
 use truapi::{
 	CallContext, CallError, v01,
@@ -88,7 +88,7 @@ use zeroize::Zeroizing;
 #[derive(Default)]
 struct LocalGrantState {
 	activation_generation: u64,
-	auto_signing_grants: HashSet<([u8; 32], String)>,
+	auto_signing_grants: HashSet<([u8; 32], ProductId)>,
 	/// Per product, the period its statement-store allowance was last seen
 	/// registered in, and its key.
 	// TODO(#1159): persist in core.sqlite3 allowance_records.
@@ -105,14 +105,14 @@ impl LocalGrantState {
 		self.statement_allowance_keys.clear();
 	}
 
-	fn revoke_product(&mut self, product_id: &str) {
+	fn revoke_product(&mut self, product_id: &ProductId) {
 		self.activation_generation = self
 			.activation_generation
 			.checked_add(1)
 			.expect("local activation generation exhausted");
 		self.auto_signing_grants
 			.retain(|(_, granted_product_id)| granted_product_id != product_id);
-		self.statement_allowance_keys.remove(product_id);
+		self.statement_allowance_keys.remove(product_id.as_str());
 	}
 
 	fn statement_allowance_key(
@@ -366,9 +366,9 @@ impl SigningHost {
 	fn product_subtree_secret(&self, product_id: &str) -> Result<[u8; 64], AuthorityError> {
 		let entropy = self.root_entropy()?;
 		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-		let product_id = normalize_product_identifier(product_id)
+		let product_id = ProductId::parse(product_id)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
-		derive_product_subtree_keypair(&root, &product_id)
+		derive_product_subtree_keypair(&root, product_id.as_str())
 			.map(|keypair| keypair.secret.to_bytes())
 			.map_err(product_authority_error)
 	}
@@ -393,9 +393,10 @@ impl SigningHost {
 		if owner != session.public_key {
 			return Err(AuthorityError::Disconnected);
 		}
-		let product_id = normalize_product_identifier(product_id)
+		let product_id = ProductId::parse(product_id)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
-		derive_product_subtree_keypair(&root, &product_id).map_err(product_authority_error)?;
+		derive_product_subtree_keypair(&root, product_id.as_str())
+			.map_err(product_authority_error)?;
 
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		if state.activation_generation != activation_generation {
@@ -440,10 +441,9 @@ impl SigningHost {
 		calling_product_id: &str,
 		account_product_id: &str,
 	) -> bool {
-		let (Ok(calling_product_id), Ok(account_product_id)) = (
-			normalize_product_identifier(calling_product_id),
-			normalize_product_identifier(account_product_id),
-		) else {
+		let (Ok(calling_product_id), Ok(account_product_id)) =
+			(ProductId::parse(calling_product_id), ProductId::parse(account_product_id))
+		else {
 			return false;
 		};
 		if calling_product_id != account_product_id {
@@ -458,7 +458,7 @@ impl SigningHost {
 	/// Fence in-flight grant work and revoke this product's grants from the
 	/// current local activation while preserving unrelated products.
 	pub fn clear_product_state(&self, product_id: &str) -> Result<(), AuthorityError> {
-		let product_id = normalize_product_identifier(product_id)
+		let product_id = ProductId::parse(product_id)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })?;
 		self.local_grants
 			.lock()
@@ -473,14 +473,14 @@ impl SigningHost {
 		&self,
 		product_id: &str,
 	) -> Result<Option<[u8; 32]>, AuthorityError> {
-		let product_id = normalize_product_identifier(product_id)
+		let product_id = ProductId::parse(product_id)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
 		let Ok(entropy) = self.root_entropy() else {
 			return Ok(None);
 		};
 		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-		let subtree =
-			derive_product_subtree_keypair(&root, &product_id).map_err(product_authority_error)?;
+		let subtree = derive_product_subtree_keypair(&root, product_id.as_str())
+			.map_err(product_authority_error)?;
 		Ok(Some(subtree.public.to_bytes()))
 	}
 
@@ -496,11 +496,11 @@ impl SigningHost {
 		let entropy = self.root_entropy()?;
 		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
 		let owner = root.public.to_bytes();
-		let product_id = normalize_product_identifier(&account.dot_ns_identifier)
+		let product_id = ProductId::parse(&account.dot_ns_identifier)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
 		derive_product_keypair(
 			&root,
-			&product_id,
+			product_id.as_str(),
 			derivation_index_bytes(&account.derivation_index),
 		)
 		.map(|keypair| (owner, keypair))
@@ -743,7 +743,7 @@ impl SigningHost {
 		.await?;
 		Ok((
 			v01::ProductAccountId {
-				dot_ns_identifier: access.owner.clone(),
+				dot_ns_identifier: access.owner.to_string(),
 				derivation_index: handle.derivation_index.clone(),
 			},
 			access,
@@ -916,11 +916,11 @@ impl ProductAuthority for SigningHost {
 		product_id: String,
 	) -> Result<[u8; 32], AuthorityError> {
 		self.require_current_session(session)?;
-		let product_id = normalize_product_identifier(&product_id)
+		let product_id = ProductId::parse(&product_id)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
 		let entropy = self.root_entropy()?;
 		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-		derive_product_subtree_keypair(&root, &product_id)
+		derive_product_subtree_keypair(&root, product_id.as_str())
 			.map(|keypair| keypair.public.to_bytes())
 			.map_err(product_authority_error)
 	}
@@ -1123,11 +1123,10 @@ impl ProductAuthority for SigningHost {
 			},
 			None => {
 				// Permission lookups and prompts must use the same canonical identifiers.
-				let requester = normalize_product_identifier(&request.calling_product_id)
+				let requester = ProductId::parse(&request.calling_product_id)
 					.map_err(|_| RingVrfError::NotAllowlisted)?;
-				let owner =
-					normalize_product_identifier(&request.payload.key_handle.dot_ns_identifier)
-						.map_err(|_| RingVrfError::NotAllowlisted)?;
+				let owner = ProductId::parse(&request.payload.key_handle.dot_ns_identifier)
+					.map_err(|_| RingVrfError::NotAllowlisted)?;
 				match super::account_access_authorization(
 					self.services.platform.as_ref(),
 					&requester,
@@ -1145,7 +1144,7 @@ impl ProductAuthority for SigningHost {
 					},
 				}
 				v01::ProductAccountId {
-					dot_ns_identifier: owner,
+					dot_ns_identifier: owner.into(),
 					derivation_index: request.payload.key_handle.derivation_index.clone(),
 				}
 			},
@@ -1219,8 +1218,9 @@ impl ProductAuthority for SigningHost {
 		self.ring_resolver.validate(&request.payload.ring).await?;
 
 		let handle = v01::ProductAccountId {
-			dot_ns_identifier: normalize_product_identifier(&request.calling_product_id)
-				.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?,
+			dot_ns_identifier: ProductId::parse(&request.calling_product_id)
+				.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?
+				.into(),
 			derivation_index: request.payload.index,
 		};
 		let entropy = self.ring_vrf_entropy(session, &handle)?;
@@ -1238,10 +1238,10 @@ impl ProductAuthority for SigningHost {
 		request: ProductRequest<HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
 		self.require_current_session(session)?;
-		let owner = normalize_product_identifier(&request.payload.owner)
+		let owner = ProductId::parse(&request.payload.owner)
 			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?;
 		// Ownership checks and permission decisions must use canonical identifiers.
-		let caller = normalize_product_identifier(&request.calling_product_id)
+		let caller = ProductId::parse(&request.calling_product_id)
 			.map_err(|_| RingVrfError::NotAllowlisted)?;
 		if caller != owner {
 			match super::account_access_authorization(
@@ -1262,8 +1262,9 @@ impl ProductAuthority for SigningHost {
 			}
 		}
 
-		self.register_builtin_personhood_keys_if_needed(session, &owner).await?;
-		let mut entries = self.ring_vrf_registry.owner_entries(session.public_key, &owner).await?;
+		self.register_builtin_personhood_keys_if_needed(session, owner.as_str()).await?;
+		let mut entries =
+			self.ring_vrf_registry.owner_entries(session.public_key, owner.as_str()).await?;
 		self.require_current_session(session)?;
 		if request.payload.disclosure == v01::RingVrfKeyDisclosure::Anonymized {
 			for entry in &mut entries {
@@ -1546,7 +1547,9 @@ mod tests {
 			SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_product_keypair,
 			derive_ring_vrf_entropy, derive_root_keypair_from_entropy, index_bytes,
 		},
-		platform::{HostInfo, Platform, PlatformInfo, ProductContext, SigningHostConfig},
+		platform::{
+			HostInfo, Platform, PlatformInfo, ProductContext, ProductId, SigningHostConfig,
+		},
 		runtime::statement_allowance::collection::PersonhoodCollection,
 		test_support::{StubPlatform, test_spawner},
 	};
@@ -1569,6 +1572,10 @@ mod tests {
 	};
 
 	const ENTROPY: [u8; 16] = [0xAB; 16];
+
+	fn test_product_id(product_id: &str) -> ProductId {
+		ProductId::parse(product_id).expect("test product identifier is valid")
+	}
 
 	#[derive(Clone)]
 	struct StubRingResolver {
@@ -1626,8 +1633,8 @@ mod tests {
 		let granted = futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
 			&services,
 			platform.as_ref(),
-			"dim2.dot",
-			"peopl.dot",
+			&test_product_id("dim2.dot"),
+			&test_product_id("peopl.dot"),
 			crate::host_internal::product_manifest::Granted::Context,
 		));
 		// Documentation, not a guard, and labelled so nobody reads it as one:
@@ -1757,7 +1764,7 @@ mod tests {
 		futures::executor::block_on(
 			<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
 				platform,
-				crate::runtime::product_manifest::manifest_cache_key(owner),
+				test_product_id(owner).manifest_cache_key(),
 				parity_scale_codec::Encode::encode(&entry),
 			),
 		)
@@ -1771,8 +1778,8 @@ mod tests {
 			// writes it in production.
 			crate::host_internal::permissions::set_account_access_status(
 				platform,
-				crate::host_internal::product_manifest::bare_product_label(caller),
-				crate::host_internal::product_manifest::bare_product_label(target),
+				test_product_id(caller).bare_label(),
+				test_product_id(target).bare_label(),
 				crate::platform::PermissionAuthorizationStatus::Denied,
 			),
 		)
@@ -2044,7 +2051,7 @@ mod tests {
 			None => futures::executor::block_on(
 				<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
 					&platform,
-					crate::runtime::product_manifest::manifest_cache_key("dim2.dot"),
+					test_product_id("dim2.dot").manifest_cache_key(),
 					crate::runtime::product_manifest::encode_cached_root_manifest(
 						None,
 						crate::unix_time::current_unix_secs(),
@@ -2377,8 +2384,8 @@ mod tests {
 			!futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
 				&services,
 				platform.as_ref(),
-				"ordinary.dot",
-				"peopl.dot",
+				&test_product_id("ordinary.dot"),
+				&test_product_id("peopl.dot"),
 				Granted::Context,
 			)),
 			"a decision stored under the previous key shape must still be honoured"
@@ -2413,8 +2420,8 @@ mod tests {
 		cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
 		futures::executor::block_on(crate::runtime::account_access_authorization(
 			platform.as_ref(),
-			"ordinary.dot",
-			"peopl.dot",
+			&test_product_id("ordinary.dot"),
+			&test_product_id("peopl.dot"),
 		))
 		.expect("the stub records the declined decision");
 		let (services, _authority) =
@@ -2424,8 +2431,8 @@ mod tests {
 				!futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
 					&services,
 					platform.as_ref(),
-					"ordinary.dot",
-					target,
+					&test_product_id("ordinary.dot"),
+					&test_product_id(target),
 					Granted::Context,
 				)),
 				"{target} is the refused product wearing another name"
@@ -2562,8 +2569,8 @@ mod tests {
 			futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
 				&services,
 				platform.as_ref(),
-				caller,
-				"peopl.dot",
+				&test_product_id(caller),
+				&test_product_id("peopl.dot"),
 				Granted::Context,
 			))
 		};
@@ -2583,8 +2590,8 @@ mod tests {
 			futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
 				&services,
 				clean.as_ref(),
-				"app.ordinary.dot",
-				"peopl.dot",
+				&test_product_id("app.ordinary.dot"),
+				&test_product_id("peopl.dot"),
 				Granted::Context,
 			)),
 			"control: with no refusal recorded the same subname is granted"
@@ -2670,8 +2677,8 @@ mod tests {
 		let granted = futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
 			&services,
 			platform.as_ref(),
-			"ordinary.dot",
-			"peopl.dot",
+			&test_product_id("ordinary.dot"),
+			&test_product_id("peopl.dot"),
 			crate::host_internal::product_manifest::Granted::Context,
 		));
 		assert!(
@@ -2690,8 +2697,8 @@ mod tests {
 			futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
 				&services,
 				readable.as_ref(),
-				"ordinary.dot",
-				"peopl.dot",
+				&test_product_id("ordinary.dot"),
+				&test_product_id("peopl.dot"),
 				crate::host_internal::product_manifest::Granted::Context,
 			)),
 			"control: the same grant must be honoured when the store reads cleanly"
@@ -2721,8 +2728,8 @@ mod tests {
 		let granted = futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
 			&services,
 			platform.as_ref(),
-			"dim2.dot",
-			"peopl.dot",
+			&test_product_id("dim2.dot"),
+			&test_product_id("peopl.dot"),
 			crate::host_internal::product_manifest::Granted::Context,
 		));
 		assert!(!granted, "the stub answers no RPC, so the lookup must fail closed");

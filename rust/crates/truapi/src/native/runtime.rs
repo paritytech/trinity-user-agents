@@ -8,7 +8,7 @@ use std::{
 
 use crate::platform::{
 	CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
-	ProductExecutionKind,
+	ProductExecutionKind, ProductId,
 };
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
@@ -64,7 +64,7 @@ pub struct NativeTrUApiHostRuntime {
 	spawner: Spawner,
 	ws_bridge: Arc<SharedWsBridge>,
 	/// The one Worker execution per product; opening another replaces it.
-	worker_executions: Mutex<HashMap<String, Weak<NativeProductExecution>>>,
+	worker_executions: Mutex<HashMap<ProductId, Weak<NativeProductExecution>>>,
 	/// The host's top-up engine, once installed, which later statuses are
 	/// pushed through.
 	top_up: OnceLock<Arc<TopUpCallbackPlatform>>,

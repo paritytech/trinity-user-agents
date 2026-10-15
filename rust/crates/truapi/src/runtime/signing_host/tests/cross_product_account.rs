@@ -8,9 +8,7 @@
 use super::*;
 
 use crate::{
-	platform::CoreStorage,
-	runtime::product_manifest::{CachedManifest, manifest_cache_key},
-	test_support::account_id,
+	platform::CoreStorage, runtime::product_manifest::CachedManifest, test_support::account_id,
 	unix_time::current_unix_secs,
 };
 use futures::FutureExt as _;
@@ -27,7 +25,7 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};
 	futures::executor::block_on(
-		platform.write_core_storage(manifest_cache_key(owner), entry.encode()),
+		platform.write_core_storage(test_product_id(owner).manifest_cache_key(), entry.encode()),
 	)
 	.expect("stub core storage accepts the entry");
 }

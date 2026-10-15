@@ -163,7 +163,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 
 impl From<&ProductContext> for ProductExecutionConfig {
 	fn from(product: &ProductContext) -> Self {
-		Self { product_id: product.product_id.clone(), execution_kind: product.execution_kind }
+		Self { product_id: product.product_id.to_string(), execution_kind: product.execution_kind }
 	}
 }
 

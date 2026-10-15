@@ -27,8 +27,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
-use truapi::{encode_cached_root_manifest, platform::CoreStorage};
+use serde::{Deserialize, Deserializer, de::Error as _};
+use truapi::{
+	encode_cached_root_manifest,
+	platform::{CoreStorage, ProductId},
+};
 
 /// The developer-authored config for one product.
 ///
@@ -39,9 +42,10 @@ use truapi::{encode_cached_root_manifest, platform::CoreStorage};
 #[derive(Debug, Clone, Deserialize)]
 pub struct LocalProductConfig {
 	/// The product's dotNS base name, e.g. `peopl.paseo`. The id its grants and
-	/// its storage are resolved under.
-	#[serde(rename = "productName")]
-	pub product_name: String,
+	/// its storage are resolved under. A name that is not a product id fails
+	/// the read.
+	#[serde(rename = "productName", deserialize_with = "product_id_from_name")]
+	pub product_id: ProductId,
 	/// Human-readable name, carried into the seeded manifest so what the host
 	/// resolves looks like what the publisher will write.
 	#[serde(rename = "displayName", default)]
@@ -69,7 +73,7 @@ impl LocalProductConfig {
 	fn root_manifest_json(&self) -> String {
 		let trusted = serde_json::to_string(&self.trusted_products)
 			.expect("a map of strings to strings always serializes");
-		let display = self.display_name.as_deref().unwrap_or(&self.product_name);
+		let display = self.display_name.as_deref().unwrap_or(self.product_id.as_str());
 		let display = serde_json::to_string(display).expect("a string always serializes");
 		format!(
 			r#"{{"$v":1,"displayName":{display},"description":"Served locally by truapi-host.","icon":{{"cid":"","format":"png"}},"trustedProducts":{trusted}}}"#
@@ -79,7 +83,7 @@ impl LocalProductConfig {
 	/// One line naming what this config grants, for the startup transcript.
 	fn transcript_line(&self) -> String {
 		if self.trusted_products.is_empty() {
-			return format!("{}: grants nothing", self.product_name);
+			return format!("{}: grants nothing", self.product_id);
 		}
 		let grants = self
 			.trusted_products
@@ -87,8 +91,14 @@ impl LocalProductConfig {
 			.map(|(product, scopes)| format!("{product} -> [{}]", scopes.join(", ")))
 			.collect::<Vec<_>>()
 			.join(", ");
-		format!("{}: {grants}", self.product_name)
+		format!("{}: {grants}", self.product_id)
 	}
+}
+
+fn product_id_from_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ProductId, D::Error> {
+	let name = String::deserialize(deserializer)?;
+	ProductId::parse(&name)
+		.map_err(|_| D::Error::custom(format!("productName {name:?} is not a product id")))
 }
 
 /// What [`apply`] seeded, so a caller can report it before serving anything.
@@ -122,12 +132,12 @@ pub async fn apply(
 	for config in configs {
 		platform
 			.write_core_storage(
-				truapi::manifest_cache_key(&config.product_name),
+				config.product_id.manifest_cache_key(),
 				encode_cached_root_manifest(Some(&config.root_manifest_json()), now_secs),
 			)
 			.await
 			.map_err(|error| anyhow::anyhow!("{error:?}"))
-			.with_context(|| format!("seeding the local manifest for {}", config.product_name))?;
+			.with_context(|| format!("seeding the local manifest for {}", config.product_id))?;
 		lines.push(config.transcript_line());
 	}
 	Ok(AppliedGrants { lines })
@@ -140,6 +150,8 @@ pub fn read_all(paths: &[PathBuf]) -> Result<Vec<LocalProductConfig>> {
 
 #[cfg(test)]
 mod tests {
+	use truapi::{latest::GenericError, platform::CoreStorageKey};
+
 	use super::*;
 
 	fn config(json: &str) -> LocalProductConfig {
@@ -149,7 +161,7 @@ mod tests {
 	#[test]
 	fn a_config_carrying_no_grants_still_reads() {
 		let parsed = config(r#"{"productName":"dim2.paseo"}"#);
-		assert_eq!(parsed.product_name, "dim2.paseo");
+		assert_eq!(parsed.product_id.as_str(), "dim2.paseo");
 		assert!(parsed.trusted_products.is_empty());
 	}
 
@@ -195,5 +207,55 @@ mod tests {
 
 		let silent = config(r#"{"productName":"dim2.paseo"}"#);
 		assert_eq!(silent.transcript_line(), "dim2.paseo: grants nothing");
+	}
+
+	/// Core storage that records the keys written to it.
+	#[derive(Default)]
+	struct WrittenKeys(std::sync::Mutex<Vec<CoreStorageKey>>);
+
+	#[async_trait::async_trait]
+	impl CoreStorage for WrittenKeys {
+		async fn read_core_storage(
+			&self,
+			_key: CoreStorageKey,
+		) -> Result<Option<Vec<u8>>, GenericError> {
+			Ok(None)
+		}
+
+		async fn write_core_storage(
+			&self,
+			key: CoreStorageKey,
+			_value: Vec<u8>,
+		) -> Result<(), GenericError> {
+			self.0.lock().expect("written keys mutex poisoned").push(key);
+			Ok(())
+		}
+
+		async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), GenericError> {
+			Ok(())
+		}
+	}
+
+	#[tokio::test]
+	async fn a_product_name_in_another_spelling_seeds_the_entry_the_core_reads() {
+		// The core reads a manifest under its normalized product id, so seeding
+		// the spelling the developer typed would leave every grant unseen.
+		let storage = WrittenKeys::default();
+		apply(&storage, &[config(r#"{"productName":"Peopl.Paseo"}"#)], 0)
+			.await
+			.expect("the config applies");
+		let expected = ProductId::parse("peopl.paseo").expect("valid").manifest_cache_key();
+		assert_eq!(*storage.0.lock().expect("written keys mutex poisoned"), vec![expected]);
+	}
+
+	#[test]
+	fn a_product_name_that_names_no_product_is_refused_when_read() {
+		// Refused before `apply` can see it, so nothing is seeded for it. A
+		// bare label is not a product id either, because an id names its
+		// network.
+		for name in ["example.com", "peopl"] {
+			let json = format!(r#"{{"productName":"{name}"}}"#);
+			assert!(serde_json::from_str::<LocalProductConfig>(&json).is_err(), "{name}");
+		}
 	}
 }

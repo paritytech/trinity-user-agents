@@ -87,31 +87,19 @@ impl RootManifest {
 	}
 }
 
-/// The segment above the TLD of a normalized product identifier, which is the
-/// bare label a `trustedProducts` key is written with.
-///
-/// A product's executables are published beneath its own name, so
-/// `app.dim2.dot` and `worker.dim2.dot` both yield `dim2` and carry the grants
-/// published for it — they are that product, not neighbours of it. Reading the
-/// first segment instead would look for a key named after the executable, and
-/// reading everything below the TLD would make each executable its own product.
-///
-/// A subname under a different domain resolves to that domain: `dim2.attacker.dot`
-/// yields `attacker`, so it collects nothing published for `dim2`.
-///
-/// A localhost development identifier has no TLD and is returned unchanged.
-pub fn bare_product_label(product_id: &str) -> &str {
-	product_id.rsplit_once('.').map_or(product_id, |(above_tld, _tld)| {
-		above_tld.rsplit_once('.').map_or(above_tld, |(_prefix, label)| label)
-	})
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
 
 	fn manifest(trusted: &str) -> RootManifest {
 		RootManifest::parse(&test_manifest_json(trusted)).expect("fixture parses")
+	}
+
+	fn label(product_id: &str) -> String {
+		crate::platform::ProductId::parse(product_id)
+			.expect("test product identifier is valid")
+			.bare_label()
+			.to_string()
 	}
 
 	#[test]
@@ -205,34 +193,18 @@ mod tests {
 	}
 
 	#[test]
-	fn the_bare_label_drops_the_tld() {
-		assert_eq!(bare_product_label("dim2.dot"), "dim2");
-		assert_eq!(bare_product_label("dim2.paseo"), "dim2");
-		assert_eq!(bare_product_label("localhost"), "localhost");
-	}
-
-	#[test]
-	fn an_executable_carries_the_label_of_the_product_it_belongs_to() {
-		assert_eq!(bare_product_label("app.dim2.dot"), "dim2");
-		assert_eq!(bare_product_label("widget.dim2.dot"), "dim2");
-		assert_eq!(bare_product_label("worker.dim2.paseo"), "dim2");
-		assert_eq!(bare_product_label("funding.dim2.dot"), "dim2");
-	}
-
-	#[test]
 	fn an_executable_inherits_the_grants_published_for_its_product() {
 		let manifest = RootManifest::parse(r#"{"$v":1,"trustedProducts":{"dim2":["storage"]}}"#)
 			.expect("parses");
-		assert!(manifest.grants(bare_product_label("dim2.dot"), Granted::Storage));
-		assert!(manifest.grants(bare_product_label("app.dim2.dot"), Granted::Storage));
-		assert!(manifest.grants(bare_product_label("worker.dim2.dot"), Granted::Storage));
+		assert!(manifest.grants(&label("dim2.dot"), Granted::Storage));
+		assert!(manifest.grants(&label("app.dim2.dot"), Granted::Storage));
+		assert!(manifest.grants(&label("worker.dim2.dot"), Granted::Storage));
 	}
 
 	#[test]
 	fn a_subname_of_another_domain_collects_nothing_published_for_its_first_segment() {
-		assert_eq!(bare_product_label("dim2.attacker.dot"), "attacker");
 		let manifest = RootManifest::parse(r#"{"$v":1,"trustedProducts":{"dim2":["storage"]}}"#)
 			.expect("parses");
-		assert!(!manifest.grants(bare_product_label("dim2.attacker.dot"), Granted::Storage));
+		assert!(!manifest.grants(&label("dim2.attacker.dot"), Granted::Storage));
 	}
 }

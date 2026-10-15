@@ -59,8 +59,8 @@ use crate::{
 };
 
 use crate::platform::{
-	CoreStorageKey, PairingHostConfig, Platform, ProductContext, SignVrfReview,
-	UserConfirmationReview, normalize_product_identifier,
+	CoreStorageKey, PairingHostConfig, Platform, ProductContext, ProductId, SignVrfReview,
+	UserConfirmationReview,
 };
 use futures::StreamExt;
 use tracing::{instrument, warn};
@@ -711,8 +711,8 @@ impl PairingHost {
 	/// Clear all capability material owned by one product while preserving the
 	/// active session and unrelated products.
 	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
-		let product_id =
-			normalize_product_identifier(product_id).map_err(|error| error.to_string())?;
+		let normalized = ProductId::parse(product_id).map_err(|error| error.to_string())?;
+		let product_id = normalized.as_str();
 		let session = {
 			let mut lifecycle =
 				self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
@@ -724,25 +724,25 @@ impl PairingHost {
 		self.statement_store_allowances
 			.lock()
 			.expect("statement-store allowance cache mutex poisoned")
-			.retain(|key, _| !key.is_for_product(&product_id));
+			.retain(|key, _| !key.is_for_product(product_id));
 		self.bulletin_allowances
 			.lock()
 			.expect("bulletin allowance cache mutex poisoned")
-			.retain(|key, _| !key.is_for_product(&product_id));
+			.retain(|key, _| !key.is_for_product(product_id));
 		self.product_subtrees
 			.lock()
 			.expect("product subtree cache mutex poisoned")
-			.retain(|(_, cached_product_id), _| cached_product_id != &product_id);
+			.retain(|(_, cached_product_id), _| cached_product_id != product_id);
 		self.auto_signing_keys
 			.lock()
 			.expect("AutoSigning key cache mutex poisoned")
-			.retain(|(_, cached_product_id), _| cached_product_id != &product_id);
+			.retain(|(_, cached_product_id), _| cached_product_id != product_id);
 
 		let mut first_error =
-			self.clear_auto_signing_product_under_storage_guard(&product_id).await.err();
+			self.clear_auto_signing_product_under_storage_guard(product_id).await.err();
 		if let Some(session) = session.as_ref() &&
 			let Err(error) =
-				allowances::clear_product_allowance_keys(&*self.platform, session, &product_id)
+				allowances::clear_product_allowance_keys(&*self.platform, session, product_id)
 					.await && first_error.is_none()
 		{
 			first_error = Some(error.to_string());
@@ -1853,7 +1853,7 @@ impl PairingHost {
 		.await?;
 		Ok((
 			latest::ProductAccountId {
-				dot_ns_identifier: access.owner.clone(),
+				dot_ns_identifier: access.owner.to_string(),
 				derivation_index: handle.derivation_index.clone(),
 			},
 			access,
@@ -1950,7 +1950,7 @@ impl PairingHost {
 	/// for it.
 	///
 	/// A caller may name an account belonging to another product —
-	/// `authorized_product_account` admits that for a `localhost` caller, and
+	/// `may_use_product_account` admits that for a `localhost` caller, and
 	/// for one the owner granted `context` — and the grant covers the owning
 	/// product's subtree, not the caller's. Serving one locally would sign with a key the caller
 	/// was never granted and skip the confirmation the signing host raises for a
@@ -2216,8 +2216,9 @@ impl PairingHost {
 	) -> Result<[u8; 32], RingVrfError> {
 		let private_session = self.current_private_session(session)?;
 		let handle = latest::ProductAccountId {
-			dot_ns_identifier: normalize_product_identifier(&request.calling_product_id)
-				.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?,
+			dot_ns_identifier: ProductId::parse(&request.calling_product_id)
+				.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?
+				.into(),
 			derivation_index: request.payload.index.clone(),
 		};
 		if let Some(auto_signing) = self
@@ -2261,12 +2262,12 @@ impl PairingHost {
 		request: ProductRequest<HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<latest::RegisteredRingVrfKey>, RingVrfError> {
 		let private_session = self.current_private_session(session)?;
-		let owner = normalize_product_identifier(&request.payload.owner)
+		let owner = ProductId::parse(&request.payload.owner)
 			.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?;
-		if request.calling_product_id == owner &&
+		if request.calling_product_id == owner.as_str() &&
 			let Some(mut entries) = self
 				.ring_vrf_registry
-				.complete_owner_entries(private_session.public_key, &owner)
+				.complete_owner_entries(private_session.public_key, owner.as_str())
 				.await?
 		{
 			self.current_private_session(session)?;
@@ -2275,16 +2276,16 @@ impl PairingHost {
 		}
 		let requested_disclosure = request.payload.disclosure;
 		let mut remote_request = request;
-		if remote_request.calling_product_id == owner {
+		if remote_request.calling_product_id == owner.as_str() {
 			remote_request.payload.disclosure = latest::RingVrfKeyDisclosure::PublicKey;
 		}
 		let mut entries =
 			self.remote_list_ring_vrf_keys(cx, &private_session, remote_request).await?;
-		validate_owner_listing(&owner, &entries)?;
+		validate_owner_listing(owner.as_str(), &entries)?;
 		if entries.iter().all(|entry| entry.public_key.is_some()) {
 			entries = self
 				.ring_vrf_registry
-				.reconcile_owner(private_session.public_key, &owner, entries)
+				.reconcile_owner(private_session.public_key, owner.as_str(), entries)
 				.await?;
 		}
 		self.current_private_session(session)?;

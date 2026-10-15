@@ -107,16 +107,19 @@ fn test_product_subtree(product_id: &str) -> [u8; 32] {
 		.to_bytes()
 }
 
+fn test_product_id(product_id: &str) -> ProductId {
+	ProductId::parse(product_id).expect("test product identifier is valid")
+}
+
 fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 	derive_product_public_key(test_product_subtree(product_id), index_bytes(index))
 		.expect("test subtree derives an account")
 }
 
 fn install_pairing_session(host: &ProductRuntimeHost, session: SessionInfo) {
-	let product_id =
-		normalize_product_identifier(&host.product_id()).expect("test product identifier is valid");
+	let product_id = host.product_id().as_str();
 	if session.sso.is_some() {
-		host.test_cache_product_subtree(&session, &product_id, test_product_subtree(&product_id));
+		host.test_cache_product_subtree(&session, product_id, test_product_subtree(product_id));
 	}
 	host.test_session_state().set_session(session);
 }
@@ -213,7 +216,7 @@ fn local_storage_read_success_preserves_the_request_version() {
 		.local_storage
 		.lock()
 		.expect("mutex")
-		.insert(host.product_storage_key(&host.product_id(), "k".to_string()), b"value".to_vec());
+		.insert(host.product_storage_key(host.product_id(), "k".to_string()), b"value".to_vec());
 	let response = v01::HostLocalStorageReadResponse { value: Some(b"value".to_vec()) };
 	for (request, expected) in [
 		(
@@ -298,9 +301,9 @@ fn a_storage_key_is_namespaced_under_its_owner() {
 	// The owner is an argument, not `self`: keying off the caller would hand a
 	// granted foreign read the caller's own values under the target's name.
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	let key = host.product_storage_key("wallet.dot", "k".to_string());
+	let key = host.product_storage_key(&test_product_id("wallet.dot"), "k".to_string());
 	let decoded = ProductStorageKey::decode(&key).expect("the key round-trips");
-	assert_eq!(decoded.product_id(), "wallet.dot");
+	assert_eq!(decoded.product_id().as_str(), "wallet.dot");
 	assert_ne!(decoded.product_id(), host.product_id());
 }
 
@@ -312,9 +315,9 @@ fn a_read_naming_the_caller_however_it_is_spelled_reaches_its_own_storage() {
 	let platform = stub_platform();
 	let storage = platform.clone();
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	let own = host.product_id();
+	let own = host.product_id().to_string();
 	storage.local_storage.lock().expect("mutex").insert(
-		ProductStorageKey::new(&own, "k").expect("the owner normalizes").encode(),
+		ProductStorageKey::new(host.product_id().clone(), "k").encode(),
 		b"my own value".to_vec(),
 	);
 
@@ -366,7 +369,7 @@ fn granted_value(host: &ProductRuntimeHost, owner: &str) -> Option<Vec<u8>> {
 /// Seeds `owner`'s storage with a value only a granted read can reach.
 fn seed_owner_value(platform: &StubPlatform, owner: &str) {
 	platform.local_storage.lock().expect("mutex").insert(
-		ProductStorageKey::new(owner, "k").expect("the owner normalizes").encode(),
+		ProductStorageKey::new(test_product_id(owner), "k").encode(),
 		b"wallet's own value".to_vec(),
 	);
 }
@@ -384,10 +387,9 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
 	let entry = CachedManifest { fetched_at_secs, json: Some(json) };
-	futures::executor::block_on(platform.write_core_storage(
-		crate::runtime::product_manifest::manifest_cache_key(owner),
-		entry.encode(),
-	))
+	futures::executor::block_on(
+		platform.write_core_storage(test_product_id(owner).manifest_cache_key(), entry.encode()),
+	)
 	.expect("stub core storage accepts the entry");
 }
 
@@ -395,10 +397,9 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
 	let entry =
 		CachedManifest { fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
-	futures::executor::block_on(platform.write_core_storage(
-		crate::runtime::product_manifest::manifest_cache_key(owner),
-		entry.encode(),
-	))
+	futures::executor::block_on(
+		platform.write_core_storage(test_product_id(owner).manifest_cache_key(), entry.encode()),
+	)
 	.expect("stub core storage accepts the entry");
 }
 
@@ -436,8 +437,10 @@ fn a_grant_to_another_product_does_not_admit_this_caller() {
 /// The account gate, which decides whether a signature may be made with
 /// another product's account. The caller is `unknown.dot` throughout, so a
 /// manifest names the bare label `unknown`.
-fn account_target(host: &ProductRuntimeHost, target: &str) -> Option<String> {
-	futures::executor::block_on(host.authorized_product_account(target, &CallContext::default()))
+fn may_use_account_of(host: &ProductRuntimeHost, owner: &str) -> bool {
+	futures::executor::block_on(
+		host.may_use_product_account(&test_product_id(owner), &CallContext::default()),
+	)
 }
 
 #[test]
@@ -445,7 +448,7 @@ fn the_callers_own_account_needs_no_grant_and_no_manifest() {
 	// No manifest is cached for anyone: reaching for one here would be a
 	// chain read in front of every signature a product makes for itself.
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	assert_eq!(account_target(&host, "unknown.dot").as_deref(), Some("unknown.dot"));
+	assert!(may_use_account_of(&host, "unknown.dot"));
 }
 
 #[test]
@@ -453,7 +456,7 @@ fn a_context_grant_admits_the_granting_products_account() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["context"]}"#, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "wallet.dot").as_deref(), Some("wallet.dot"));
+	assert!(may_use_account_of(&host, "wallet.dot"));
 }
 
 #[test]
@@ -461,7 +464,7 @@ fn all_admits_the_granting_products_account() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["all"]}"#, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "wallet.dot").as_deref(), Some("wallet.dot"));
+	assert!(may_use_account_of(&host, "wallet.dot"));
 }
 
 #[test]
@@ -471,7 +474,7 @@ fn a_storage_grant_alone_does_not_admit_the_account() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["storage"]}"#, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "wallet.dot"), None);
+	assert!(!may_use_account_of(&host, "wallet.dot"));
 }
 
 #[test]
@@ -479,7 +482,7 @@ fn a_context_grant_to_another_product_does_not_admit_this_caller() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "wallet.dot", r#"{"stash":["context"]}"#, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "wallet.dot"), None);
+	assert!(!may_use_account_of(&host, "wallet.dot"));
 }
 
 #[test]
@@ -487,7 +490,7 @@ fn a_product_publishing_no_manifest_admits_nobody() {
 	let platform = stub_platform();
 	cache_manifest_entry(&platform, "wallet.dot", None, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "wallet.dot"), None);
+	assert!(!may_use_account_of(&host, "wallet.dot"));
 }
 
 /// A subname of the granting product is that product, as it is for every
@@ -497,7 +500,7 @@ fn a_subname_of_the_granting_product_is_admitted_under_its_base_grant() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "app.wallet.dot", r#"{"unknown":["context"]}"#, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "app.wallet.dot").as_deref(), Some("app.wallet.dot"));
+	assert!(may_use_account_of(&host, "app.wallet.dot"));
 }
 
 /// What `sign_payload` answers for an account owned by `wallet.dot`.
@@ -628,7 +631,7 @@ fn with_no_session_a_proof_refusal_never_discloses_whether_a_grant_exists() {
 
 	assert_eq!(proof_refusal(&host, "granting.dot"), sessionless);
 	assert_eq!(proof_refusal(&host, "silent.dot"), sessionless);
-	assert_eq!(proof_refusal(&host, &host.product_id()), sessionless);
+	assert_eq!(proof_refusal(&host, host.product_id().as_str()), sessionless);
 }
 
 fn proof_refusal(
@@ -646,7 +649,7 @@ fn a_proof_naming_the_caller_in_another_spelling_is_still_its_own() {
 	// Normalized before comparison, so casing cannot turn a product's own
 	// key into a cross-product refusal.
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	let shouted = host.product_id().to_uppercase();
+	let shouted = host.product_id().as_str().to_uppercase();
 	assert_eq!(
 		proof_refusal(&host, &shouted),
 		Some(CallError::Domain(HostAccountCreateProofError::V1(
@@ -769,7 +772,7 @@ impl crate::platform::ContactsPlatform for StubContactsPlatform {
 		self.asked_for
 			.lock()
 			.expect("asked_for mutex poisoned")
-			.push(product.product_id.clone());
+			.push(product.product_id.to_string());
 		match self.failure {
 			Some(reason) => Err(truapi::latest::GenericError { reason: reason.to_string() }),
 			None => Ok(self.pick),
@@ -2531,7 +2534,7 @@ impl crate::platform::GamePlatform for RecordingGamePlatform {
 		self.scheduled
 			.lock()
 			.expect("scheduled mutex poisoned")
-			.push((product.product_id.clone(), starts_at));
+			.push((product.product_id.to_string(), starts_at));
 		Ok(())
 	}
 
@@ -2543,7 +2546,7 @@ impl crate::platform::GamePlatform for RecordingGamePlatform {
 		self.cancelled
 			.lock()
 			.expect("cancelled mutex poisoned")
-			.push(product.product_id.clone());
+			.push(product.product_id.to_string());
 		Ok(())
 	}
 }
@@ -2811,13 +2814,9 @@ fn bare_localhost_product_allows_dev_product_accounts() {
 	let host =
 		ProductRuntimeHost::new(stub_platform(), runtime_config("localhost"), test_spawner());
 
-	assert_eq!(
-		futures::executor::block_on(
-			host.authorized_product_account("myapp.dot", &CallContext::default())
-		)
-		.as_deref(),
-		Some("myapp.dot")
-	);
+	assert!(futures::executor::block_on(
+		host.may_use_product_account(&test_product_id("myapp.dot"), &CallContext::default())
+	));
 }
 
 /// A product destination reaches the platform as a `polkadot://` URL, whatever
@@ -4716,7 +4715,7 @@ fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
 	assert_eq!(futures::executor::block_on(subscription.next()), Some(storage_item(None)));
 
 	platform.fail_storage_subscriptions(
-		&host.product_storage_key("myapp.dot", "progress".to_string()),
+		&host.product_storage_key(&test_product_id("myapp.dot"), "progress".to_string()),
 		"store unavailable",
 	);
 
@@ -7480,7 +7479,10 @@ impl crate::platform::ScannerPlatform for StubScannerPlatform {
 		product: &crate::platform::ProductContext,
 		request: &truapi::latest::HostScannerScanRequest,
 	) -> Result<HostScan, truapi::latest::GenericError> {
-		self.asked.lock().unwrap().push((product.product_id.clone(), request.clone()));
+		self.asked
+			.lock()
+			.unwrap()
+			.push((product.product_id.to_string(), request.clone()));
 		if self.park {
 			let _abandoned = SetOnDrop(self.abandoned.clone());
 			futures::future::pending::<()>().await;
@@ -7817,7 +7819,7 @@ impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 		self.started
 			.lock()
 			.expect("started mutex poisoned")
-			.push((product.product_id.clone(), request));
+			.push((product.product_id.to_string(), request));
 		Ok(())
 	}
 
@@ -7835,7 +7837,7 @@ impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 		self.followed
 			.lock()
 			.expect("followed mutex poisoned")
-			.push((product.product_id.clone(), id));
+			.push((product.product_id.to_string(), id));
 		Box::pin(futures::stream::iter([
 			Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claiming),
 			Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
@@ -7984,7 +7986,7 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 		self.requested
 			.lock()
 			.expect("requested mutex poisoned")
-			.push((product.product_id.clone(), request));
+			.push((product.product_id.to_string(), request));
 		Ok(())
 	}
 
@@ -8002,7 +8004,7 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 		self.followed
 			.lock()
 			.expect("followed mutex poisoned")
-			.push((product.product_id.clone(), id));
+			.push((product.product_id.to_string(), id));
 		Box::pin(futures::stream::iter([
 			Ok(v01::HostPaymentStatusSubscribeItem::Processing),
 			Ok(v01::HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: 600 }),
@@ -8141,8 +8143,8 @@ impl crate::platform::BalancePlatform for RecordingBalancePlatform {
 		self.asked
 			.lock()
 			.expect("asked mutex poisoned")
-			.push((product.product_id.clone(), purse));
-		let shared = if product.product_id == "private.dot" {
+			.push((product.product_id.to_string(), purse));
+		let shared = if product.product_id.as_str() == "private.dot" {
 			Err(v01::HostPaymentBalanceSubscribeError::PermissionDenied)
 		} else {
 			Ok(v01::HostPaymentBalanceSubscribeItem { available: 4_000_000 })

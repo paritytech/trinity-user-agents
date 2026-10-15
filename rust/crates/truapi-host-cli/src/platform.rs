@@ -32,8 +32,9 @@ use truapi::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
 		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 		PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-		ProductOperations, ProductStorage, ProductStorageKey, ProviderError, SessionUiInfo,
-		SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+		ProductId, ProductOperations, ProductStorage, ProductStorageKey, ProviderError,
+		SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
+		UserConfirmationReview,
 	},
 	v01,
 };
@@ -420,7 +421,7 @@ impl ProductStorage for CliPlatform {
 			.product_storage
 			.lock()
 			.expect("product storage mutex poisoned")
-			.get(scoped.product_id())
+			.get(scoped.product_id().as_str())
 			.and_then(|values| values.get(scoped.key()))
 			.cloned())
 	}
@@ -435,7 +436,7 @@ impl ProductStorage for CliPlatform {
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
 		let values = storage.entry(scoped.product_id().to_string()).or_default();
 		values.insert(scoped.key().to_string(), value);
-		self.persist_product_storage(scoped.product_id(), values)
+		self.persist_product_storage(scoped.product_id().as_str(), values)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
 	}
 
@@ -445,7 +446,7 @@ impl ProductStorage for CliPlatform {
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
 		let values = storage.entry(scoped.product_id().to_string()).or_default();
 		values.remove(scoped.key());
-		self.persist_product_storage(scoped.product_id(), values)
+		self.persist_product_storage(scoped.product_id().as_str(), values)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
 	}
 
@@ -459,7 +460,7 @@ impl ProductStorage for CliPlatform {
 			self.product_storage
 				.lock()
 				.expect("product storage mutex poisoned")
-				.get(scoped.product_id())
+				.get(scoped.product_id().as_str())
 				.and_then(|values| values.get(scoped.key()))
 				.cloned()
 		});
@@ -1002,8 +1003,8 @@ fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec
 			return None;
 		},
 	};
-	let normalized = match ProductStorageKey::new(&document.product_id, "") {
-		Ok(scoped) => scoped.product_id().to_string(),
+	let normalized = match ProductId::parse(&document.product_id) {
+		Ok(product_id) => String::from(product_id),
 		Err(error) => {
 			tracing::warn!(
 				path = %path.display(),
@@ -1423,8 +1424,10 @@ mod tests {
 		// writes a session before it knows the username. Product KV is the state
 		// the comment there promises stays with its own user, so that is what
 		// isolation is asserted on.
-		let alice_key =
-			ProductStorageKey::new("demo-product.dot", "secret").expect("product storage key");
+		let alice_key = ProductStorageKey::new(
+			ProductId::parse("demo-product.dot").expect("product storage key"),
+			"secret",
+		);
 		platform
 			.write(alice_key.encode(), b"alice-only".to_vec())
 			.await
@@ -1585,8 +1588,10 @@ mod tests {
 			ApprovalPolicy::AutoAccept,
 			None,
 		);
-		let product_key =
-			ProductStorageKey::new("product.dot", "theme").expect("product storage key");
+		let product_key = ProductStorageKey::new(
+			ProductId::parse("product.dot").expect("product storage key"),
+			"theme",
+		);
 
 		platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 		futures::executor::block_on(platform.write(product_key.encode(), b"dark".to_vec()))
@@ -1681,8 +1686,10 @@ mod tests {
 	fn product_storage_written_before_the_username_carries_into_the_resolved_user() {
 		let temporary = tempdir().expect("create pairing storage root");
 		let network_dir = temporary.path().join("testnet");
-		let product_key =
-			ProductStorageKey::new("product.dot", "theme").expect("product storage key");
+		let product_key = ProductStorageKey::new(
+			ProductId::parse("product.dot").expect("product storage key"),
+			"theme",
+		);
 		save_product_storage(
 			&network_dir.join("pairing-host/storage"),
 			"product.dot",
@@ -1799,9 +1806,14 @@ mod tests {
 	#[test]
 	fn product_storage_uses_safe_per_product_files() {
 		let temporary = tempdir().expect("create product storage root");
-		let first = ProductStorageKey::new("first.dot", "theme").expect("first product key");
-		let localhost =
-			ProductStorageKey::new("localhost:3000", "theme").expect("localhost product key");
+		let first = ProductStorageKey::new(
+			ProductId::parse("first.dot").expect("first product key"),
+			"theme",
+		);
+		let localhost = ProductStorageKey::new(
+			ProductId::parse("localhost:3000").expect("localhost product key"),
+			"theme",
+		);
 		let platform = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "test")),
@@ -1855,7 +1867,8 @@ mod tests {
 	#[test]
 	fn product_storage_is_isolated_by_session_then_product() {
 		let temporary = tempdir().expect("create session storage root");
-		let key = ProductStorageKey::new("same.dot", "value").expect("product key");
+		let key =
+			ProductStorageKey::new(ProductId::parse("same.dot").expect("product key"), "value");
 		let first = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "first")),

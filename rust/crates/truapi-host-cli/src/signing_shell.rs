@@ -5,7 +5,7 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-use truapi::platform::normalize_product_identifier;
+use truapi::platform::ProductId;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{LogLevel, sessions};
@@ -270,9 +270,8 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 			if argument.is_empty() {
 				return Ok(ShellCommand::Product(ProductCommand::Current));
 			}
-			let product_id =
-				normalize_product_identifier(argument).map_err(|error| error.to_string())?;
-			Ok(ShellCommand::Product(ProductCommand::Switch(product_id)))
+			let product_id = ProductId::parse(argument).map_err(|error| error.to_string())?;
+			Ok(ShellCommand::Product(ProductCommand::Switch(product_id.into())))
 		},
 		"/session" => {
 			if argument.is_empty() {
