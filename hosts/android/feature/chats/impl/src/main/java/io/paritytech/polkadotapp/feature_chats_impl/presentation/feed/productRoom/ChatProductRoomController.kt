@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
@@ -28,8 +29,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductRo
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.MessagePopUpSelection
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.readAloud.ChatReadAloudController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.readAloud.ChatReadAloudController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -42,6 +43,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.dropWhile
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
@@ -76,6 +78,7 @@ class ChatProductRoomController(
     private val readAloud: ChatReadAloudController,
     private val router: ChatsRouter,
     callFactory: ProductRoomCallController.Factory,
+    opensOverParent: Boolean = false,
 ) {
     /** What the controller asks of the room screen. */
     interface Screen {
@@ -192,6 +195,21 @@ class ChatProductRoomController(
             val removed = interactor.observeRoomExists(chatId).dropWhile { exists -> !exists }.firstOrNull { exists -> !exists }
             if (removed != null) screen.leave()
         }
+        // A thread room that opens from a link or a notification gets the room of its root under it, so Back returns
+        // to the root as after a tap on the thread chip (07-LATER §9.2).
+        if (!opensOverParent) scope.launch { openOverParent() }
+    }
+
+    private suspend fun openOverParent() {
+        val parent = roomPolicy.filterNotNull().first().features?.threadOf ?: return
+        if (ChatHostCapabilities.THREADS !in ChatHostCapabilities.features) return
+        val extensionId = chatId.extensionOrNull()?.extensionId ?: return
+        val parentChatId = ChatId.forExtensionRoom(extensionId, parent.roomId)
+        if (parentChatId == chatId) return
+
+        readAloud.stop(chatId)
+        router.openChatFeed(ChatFeedPayload.existingChat(parentChatId))
+        router.openThreadFeed(ChatFeedPayload.threadChat(chatId))
     }
 
     private val _messageMenu = MutableStateFlow<ProductMessageMenuState?>(null)
@@ -267,7 +285,7 @@ class ChatProductRoomController(
             // The thread room opens on top of this room, so Back returns to the root (07-LATER §9.2).
             is ProductRoomAction.OpenThread -> {
                 readAloud.stop(chatId)
-                router.openThreadFeed(ChatFeedPayload.existingChat(action.threadChatId))
+                router.openThreadFeed(ChatFeedPayload.threadChat(action.threadChatId))
             }
             is ProductRoomAction.SelectBranch -> decorations.selectBranch(action.messageId, action.index)
             ProductRoomAction.StopReadAloud -> readAloud.stop(chatId)
@@ -431,6 +449,7 @@ class ChatProductRoomController(
             feedSnapshot: Flow<ChatFeedSnapshot>,
             origins: Flow<MessageOriginDisplayResolver>,
             screen: Screen,
+            opensOverParent: Boolean = false,
         ): ChatProductRoomController where S : ComputationalScope, S : MessageDisplay = ChatProductRoomController(
             scope = scope,
             messageDisplay = scope,
@@ -448,6 +467,7 @@ class ChatProductRoomController(
             readAloud = readAloud,
             router = router,
             callFactory = callFactory,
+            opensOverParent = opensOverParent,
         )
     }
 }

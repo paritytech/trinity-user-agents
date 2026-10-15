@@ -16,6 +16,8 @@ import kotlinx.parcelize.Parcelize
 class ChatFeedPayload private constructor(
     val openChatRequest: OpenChatRequestParcelable,
     val targetMessageId: ChatMessageId?,
+    /** The screen opens on top of the room of its thread root, so Back already returns to that room. */
+    val opensOverParent: Boolean = false,
 ) : Parcelable {
     companion object {
         fun existingChat(
@@ -24,6 +26,12 @@ class ChatFeedPayload private constructor(
         ): ChatFeedPayload {
             val request = OpenChatRequestParcelable.ExistingChat(chatId.toParcelable())
             return ChatFeedPayload(request, targetMessageId)
+        }
+
+        /** A thread room that opens from the thread chip of its root, on top of the room of the root (07-LATER §9.2). */
+        fun threadChat(chatId: ChatId): ChatFeedPayload {
+            val request = OpenChatRequestParcelable.ExistingChat(chatId.toParcelable())
+            return ChatFeedPayload(request, targetMessageId = null, opensOverParent = true)
         }
 
         fun existingContactChat(contactAccountId: AccountId): ChatFeedPayload {

@@ -157,6 +157,7 @@ class ChatFeedViewModel @Inject constructor(
         roomPolicy = roomPolicy,
         feedSnapshot = feedSnapshot,
         origins = originDisplayResolver,
+        opensOverParent = payload.opensOverParent,
         screen = object : ChatProductRoomController.Screen {
             override fun showPopup(selection: MessagePopUpSelection) = messagePopupSection.update { selection }
 

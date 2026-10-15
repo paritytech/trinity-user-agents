@@ -7,6 +7,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.mockk.verifyOrder
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatBotPersonaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -16,6 +17,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigi
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatReasoningModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatThreadParentModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.computeChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.AllowedMessageMenuAction
@@ -195,6 +197,29 @@ class ChatFeedViewModelAdditionsTest {
         verify { router.openThreadFeed(match { it.toOpenChatRequest().computeChatId() == thread }) }
     }
 
+    @Test
+    fun `a thread room that opens from a link gets the room of its root under it`() = runBlocking<Unit> {
+        val parent = ChatId.forExtensionRoom("ProductBot_sample.dot", "lobby")
+        policy.value = ChatRoomPolicy.Defaults.copy(features = ChatRoomFeaturesModel.HOST_DEFAULT.copy(threadOf = ChatThreadParentModel("lobby", "m1")))
+
+        viewModel()
+
+        verifyOrder {
+            router.openChatFeed(match { it.toOpenChatRequest().computeChatId() == parent && !it.opensOverParent })
+            router.openThreadFeed(match { it.toOpenChatRequest().computeChatId() == roomId && it.opensOverParent })
+        }
+    }
+
+    @Test
+    fun `a thread room that opens from its chip stays where it is`() = runBlocking<Unit> {
+        policy.value = ChatRoomPolicy.Defaults.copy(features = ChatRoomFeaturesModel.HOST_DEFAULT.copy(threadOf = ChatThreadParentModel("lobby", "m1")))
+
+        viewModel(ChatFeedPayload.threadChat(roomId))
+
+        verify(exactly = 0) { router.openChatFeed(any()) }
+        verify(exactly = 0) { router.openThreadFeed(any()) }
+    }
+
     private fun uiMessage() = ChatMessageUiModel.Text(
         id = "message-1",
         timestamp = 1_000L,
@@ -208,10 +233,10 @@ class ChatFeedViewModelAdditionsTest {
         isMarkdown = false,
     )
 
-    private fun viewModel() = createViewModel().also { models += it }
+    private fun viewModel(payload: ChatFeedPayload = ChatFeedPayload.existingChat(roomId)) = createViewModel(payload).also { models += it }
 
-    private fun createViewModel() = ChatFeedViewModel(
-        savedStateHandle = SavedStateHandle(mapOf(ChatFeedPayload::class.java.name to ChatFeedPayload.existingChat(roomId))),
+    private fun createViewModel(payload: ChatFeedPayload) = ChatFeedViewModel(
+        savedStateHandle = SavedStateHandle(mapOf(ChatFeedPayload::class.java.name to payload)),
         router = router,
         interactor = interactor,
         messageUiMapper = messageUiMapper,
