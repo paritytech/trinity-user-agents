@@ -18,6 +18,12 @@ extension Chat {
         let suggestions: [RoomSuggestion]?
         let commands: [RoomCommand]?
         let footerConfig: RoomFooterConfig?
+        /// The optional features of the Chat Extension v2 additions. A feature that this build does not serve
+        /// stays here, and the host ignores it.
+        var features: RoomFeatures = .hostDefault
+        /// The mute and the archive state that the user set. The product does not declare it, but the host
+        /// keeps it in the same row, so the chat list reads it with the declarations.
+        var userState: RoomUserState = .default
 
         /// The configuration that applies: the declared one, or the host default.
         var effectiveConfig: RoomConfig {

@@ -159,9 +159,10 @@ private extension UserDataModel55MigrationTests {
         }
     }
 
-    /// Reads the attributes inside the context: a managed object has no values once its context is gone.
+    /// Reads the attributes inside the context: a managed object has no values once its context is gone. The
+    /// migrator moves a store to the current model, so the read opens that model.
     func readRoomMetadata(from storeURL: URL) throws -> [String: Any] {
-        let coordinator = try openStore(.version55, storeURL: storeURL)
+        let coordinator = try openStore(UserStorageParams.modelVersion, storeURL: storeURL)
         let context = NSManagedObjectContext(concurrencyType: .privateQueueConcurrencyType)
         context.persistentStoreCoordinator = coordinator
 

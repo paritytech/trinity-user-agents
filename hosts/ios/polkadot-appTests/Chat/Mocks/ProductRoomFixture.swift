@@ -10,6 +10,7 @@ final class ProductRoomFixture {
     let storageFacade = UserDataStorageTestFacade()
     let bot = ProductRoomBotStub()
     let activities = ChatRoomActivityStore()
+    let calls = ChatRoomCallStore()
     let context: ChatExtensionDiscoverContext
     let surface = ProductChatSurface()
 
@@ -20,7 +21,8 @@ final class ProductRoomFixture {
             operationQueue: OperationQueue(),
             logger: StubLogger(),
             messageOrderAllocator: InMemoryChatMessageOrderAllocator(),
-            activities: activities
+            activities: activities,
+            calls: calls
         )
         surface.bind(.init(bot: bot, context: context), owner: self)
     }

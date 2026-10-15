@@ -24,6 +24,9 @@
  * - `{ stored }`: a text message the room stores (host-store rooms);
  * - `{ storedMatch }`: a stored text message that matches the pattern;
  * - `{ metadata }`: columns of the room's `CDChatRoomMetadata` row;
+ * - `{ metadataHex }`: the same, for binary columns, as upper-case hex;
+ * - `{ storedText }`: a message of the room whose stored bytes hold this
+ *   UTF-8 text, of any body kind (a `RichText` too);
  * - `{ gone: true }`: the app stores no chat for the room;
  * - `{ contentType, added }`: at least `added` more messages of this content
  *   kind in the room than when the scenario started;
@@ -46,6 +49,40 @@
  * `{file:<name>}` a file the launcher put in the app's tmp directory.
  */
 const SOURCE = "source";
+
+/**
+ * The Chat features that the iOS app lists in `capabilities`
+ * (`ChatHostCapabilities.served`), in the order of the core, each with the
+ * rows that prove it on the simulator. S49 passes when `/caps` names exactly
+ * these features and each of their rows passed in the same run. A P10 item
+ * adds its name here and in `ChatHostCapabilities` when its rows pass.
+ */
+export const IOS_CHAT_FEATURE_ROWS = Object.freeze({
+  product_source_rooms: [
+    "S15",
+    "S16",
+    "S17",
+    "S18",
+    "S19",
+    "S20",
+    "S21",
+    "S22",
+    "S24",
+  ],
+  reaction_details: ["S32"],
+  participants: ["S30"],
+  message_menus: ["S25", "S26", "S28"],
+  participant_menus: ["S31"],
+  toolbar: ["S29"],
+  suggestions: ["S38"],
+  commands: ["S39"],
+  activity: ["S40"],
+  // S49 itself also checks that a Custom body reaches the renderer.
+  custom_bodies: ["S7"],
+  custom_footer: ["S35"],
+  inline_attachments: ["S36"],
+  room_links: ["S27", "S24"],
+});
 
 export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
   {
@@ -1166,6 +1203,52 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
       after: ["/allowed"],
     },
   },
+  // The rows of the Chat Extension v2 additions (P10) come last: S49 reads
+  // the rows of the features that the app lists.
+  {
+    id: "S51",
+    title:
+      "set_room_features is stored whole, a feature the app does not serve included",
+    mode: "host",
+    phase: "P10.8",
+    drive: {
+      phases: [
+        {
+          steps: ["/features readaloud on", "/features calls audio"],
+          // Version 1 | no preimage, no search | Some(audio, no video) |
+          // no thread | read aloud.
+          expect: [{ metadataHex: { ZFEATURES: "0100000101000001" } }],
+        },
+        {
+          steps: ["/features readaloud off", "/features calls off"],
+          expect: [{ metadataHex: { ZFEATURES: "010000000000" } }],
+        },
+      ],
+    },
+  },
+  {
+    id: "S49",
+    title: "capabilities lists exactly the features whose rows pass",
+    mode: "host",
+    phase: "P10.8",
+    capabilities: true,
+    drive: {
+      phases: [
+        {
+          // `custom_bodies`: the app draws a Custom body through the
+          // renderer. The body draws only on the screen of its room.
+          steps: [{ host: "open" }, "/post custom"],
+          expect: [{ event: { via: "render", kind: "ChatMessage" } }],
+        },
+        {
+          steps: ["/caps"],
+          expect: [
+            { storedText: capsLine(Object.keys(IOS_CHAT_FEATURE_ROWS)) },
+          ],
+        },
+      ],
+    },
+  },
 ]);
 
 /**
@@ -1289,6 +1372,51 @@ export const IOS_CHAT_V2_PERF = Object.freeze([
     },
   },
 ]);
+
+/**
+ * The text that `/caps` posts for these feature names, with the bounds of
+ * the core: 1 MiB inline, and 0 B for a preimage.
+ */
+export function capsLine(names) {
+  return `caps: ${names.length ? names.join(", ") : "none"}; inline ${1024 * 1024} B; preimage 0 B`;
+}
+
+/**
+ * S49 checks the row of `/caps` against the rows of the same run: the app
+ * lists a feature only when each row that proves it passed. A row that the
+ * run did not drive (`TRUAPI_IOS_E2E_ONLY`) is named as not checked.
+ */
+export function capabilityVerdict(
+  capsRow,
+  rows,
+  featureRows = IOS_CHAT_FEATURE_ROWS,
+) {
+  if (capsRow.result !== "pass") return capsRow;
+  const results = new Map(rows.map((entry) => [entry.id, entry.result]));
+  const failed = [];
+  const unchecked = [];
+  for (const [name, ids] of Object.entries(featureRows)) {
+    for (const id of ids) {
+      const result = results.get(id);
+      if (result === "pass") continue;
+      (result === "fail" ? failed : unchecked).push(
+        `${name} (${id} ${result ?? "has no row"})`,
+      );
+    }
+  }
+  if (failed.length > 0) {
+    return {
+      ...capsRow,
+      result: "fail",
+      evidence: `the app lists ${failed.join(", ")}; ${capsRow.evidence}`,
+    };
+  }
+  const note =
+    unchecked.length > 0
+      ? `not checked in this run: ${unchecked.join(", ")}`
+      : "the rows of each listed feature passed";
+  return { ...capsRow, evidence: `${capsRow.evidence}; ${note}` };
+}
 
 /** The prefix the app's logger puts before each console line of a product. */
 const JS_LINE = /JS: (\{"t":"chat-v2".*\})\s*$/;

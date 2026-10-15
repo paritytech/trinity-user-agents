@@ -161,7 +161,9 @@ extension Chat.RoomDeclarations {
             toolbar: entity?.toolbar.flatMap([Chat.RoomToolbarAction].decodedIfValid),
             suggestions: entity?.suggestions.flatMap([Chat.RoomSuggestion].decodedIfValid),
             commands: entity?.commands.flatMap([Chat.RoomCommand].decodedIfValid),
-            footerConfig: entity?.footerConfig.flatMap(Chat.RoomFooterConfig.decodedIfValid)
+            footerConfig: entity?.footerConfig.flatMap(Chat.RoomFooterConfig.decodedIfValid),
+            features: entity?.features.flatMap(Chat.RoomFeatures.decodedIfStored) ?? .hostDefault,
+            userState: entity.map(Chat.RoomUserState.init(entity:)) ?? .default
         )
     }
 }
@@ -253,7 +255,7 @@ private extension Chat.RoomPreview {
 // Each value has the SCALE layout of its Chat Extension v2 wire type (`v01` and, for the footer, `v02`), so
 // the stored bytes are the bytes that the core encodes. The field and variant order is a wire contract.
 
-private extension ScaleDecodable {
+extension ScaleDecodable {
     /// The value that `data` holds, or nil when the bytes are not a complete value of this type.
     static func decodedIfValid(_ data: Data) -> Self? {
         guard let decoder = try? ScaleDecoder(data: data), let value = try? Self(scaleDecoder: decoder) else {

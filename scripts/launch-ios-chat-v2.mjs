@@ -43,6 +43,7 @@ import {
   IOS_CHAT_V2_SCENARIOS,
   appStartFailure,
   blockedRows,
+  capabilityVerdict,
   eventMatches,
   lastProductMessage,
   lastUserMessage,
@@ -365,7 +366,9 @@ async function runScenario(scenario) {
   if (only && !only.includes(scenario.id)) {
     return row(scenario, "skip", 0, "skip: not in TRUAPI_IOS_E2E_ONLY");
   }
-  return scenario.drive ? driveScenario(scenario) : skipRow(scenario);
+  if (!scenario.drive) return skipRow(scenario);
+  const result = await driveScenario(scenario);
+  return scenario.capabilities ? capabilityVerdict(result, rows) : result;
 }
 
 /**
@@ -528,23 +531,32 @@ async function check(expectation, { room, mark, baseline }) {
     );
     return `stored "${found}"`;
   }
-  if (expectation.metadata) {
-    const columns = Object.keys(expectation.metadata);
+  if (expectation.storedText !== undefined) {
+    const wanted = fill(expectation.storedText, target);
+    await waitFor(() => roomDataContains(target, wanted), {
+      timeoutMs,
+      message: `no message holding "${wanted}" stored in ${target}`,
+    });
+    return `stored "${wanted}"`;
+  }
+  if (expectation.metadata || expectation.metadataHex) {
+    const wanted = expectation.metadata ?? expectation.metadataHex;
+    const columns = Object.keys(wanted);
     let found;
     await waitFor(
       () => {
-        found = metadataRow(target, columns);
-        return columns.every(
-          (column) => found?.[column] === expectation.metadata[column],
-        );
+        found = metadataRow(target, columns, {
+          hex: Boolean(expectation.metadataHex),
+        });
+        return columns.every((column) => found?.[column] === wanted[column]);
       },
       {
         timeoutMs,
         message: () =>
-          `room metadata ${JSON.stringify(found)} is not ${JSON.stringify(expectation.metadata)}`,
+          `room metadata ${JSON.stringify(found)} is not ${JSON.stringify(wanted)}`,
       },
     );
-    return `metadata ${JSON.stringify(expectation.metadata)}`;
+    return `metadata ${JSON.stringify(wanted)}`;
   }
   if (expectation.gone) {
     await waitFor(() => !chatExists(target), {
@@ -754,9 +766,9 @@ function roomName() {
 }
 
 /** Columns of the metadata row of a room, as strings. */
-function metadataRow(roomId, columns) {
+function metadataRow(roomId, columns, { hex = false } = {}) {
   const value = sql(`
-    SELECT ${columns.map((column) => `metadata.${column}`).join(", ")}
+    SELECT ${columns.map((column) => (hex ? `hex(metadata.${column})` : `metadata.${column}`)).join(", ")}
     FROM ZCDCHAT AS chat
     JOIN ZCDCHATROOMMETADATA AS metadata ON metadata.ZCHAT = chat.Z_PK
     WHERE chat.ZIDENTIFIER = ${sqlString(chatIdentifierOf(roomId))};
@@ -819,6 +831,19 @@ function messageTexts(roomId = room) {
     .filter(Boolean)
     .map((value) => decodeTextMessage(value))
     .filter((text) => text !== undefined);
+}
+
+/** True when a stored message of a room holds `text` as UTF-8 bytes. */
+function roomDataContains(roomId, text) {
+  const hex = Buffer.from(text, "utf8").toString("hex").toUpperCase();
+  const count = sql(`
+    SELECT count(*) FROM ZCDCHATMESSAGE AS message
+    JOIN ZCDCHAT AS chat ON chat.Z_PK = message.ZCHAT
+    JOIN ZCDMESSAGECONTENT AS content ON content.Z_PK = message.ZCONTENT
+    WHERE chat.ZIDENTIFIER = ${sqlString(chatIdentifierOf(roomId))}
+    AND instr(hex(content.ZDATA), '${hex}') > 0;
+  `);
+  return Number(count ?? 0) > 0;
 }
 
 /** One query against the app's user-data store; undefined when it has none. */

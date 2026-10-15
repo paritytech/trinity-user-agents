@@ -172,6 +172,50 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             activity: activity.map(Chat.RoomActivity.init)
         )
     }
+
+    // MARK: - Chat Extension v2 additions
+
+    func capabilities() async throws -> [String] {
+        ChatHostCapabilities.served
+    }
+
+    func roomFeatures(roomId: String) async throws -> ChatRoomFeatures {
+        try await chatMessaging.roomFeatures(roomId: requireRoomId(roomId)).wireValue
+    }
+
+    /// The store keeps a feature that this build does not serve, so a later build applies it.
+    func setRoomFeatures(roomId: String, features: ChatRoomFeatures) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomFeatures \(roomId)")
+        try await chatMessaging.setRoomFeatures(roomId: requireRoomId(roomId), features: Chat.RoomFeatures(features))
+    }
+
+    func setMessageMeta(roomId: String, messageId: String, meta: ChatMessageMeta) async throws {
+        guard let roomId = roomId.nilIfEmpty else {
+            throw NativeChatFeedRejection.Rejected(reason: "a chat room needs an id")
+        }
+
+        do {
+            try await chatMessaging.setMessageMeta(roomId: roomId, messageId: messageId, meta: Chat.MessageMeta(meta))
+        } catch let error as Chat.ProductFeedError {
+            throw error.rejection
+        } catch let ChatRoomError.unknownRoom(roomId) {
+            throw NativeChatFeedRejection.Rejected(reason: "no chat room \(roomId)")
+        }
+    }
+
+    /// The core calls it only when this host lists `call_buttons`. The call stays in memory for the room screen.
+    func setRoomCall(roomId: String, call: ChatRoomCall?) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomCall \(roomId)")
+        try await chatMessaging.setRoomCall(roomId: requireRoomId(roomId), call: call.map(Chat.RoomCall.init))
+    }
+
+    func roomUserStates() async throws -> [ChatRoomUserState] {
+        try await chatMessaging.roomUserStates().map(\.wireValue)
+    }
+
+    func bots() async throws -> [String] {
+        try await chatMessaging.personaIds()
+    }
 }
 
 private extension RustChatExecutionBridge {

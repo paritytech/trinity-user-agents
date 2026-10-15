@@ -78,9 +78,16 @@ the checks of each row are in `scripts/lib/ios-chat-v2-scenarios.mjs`. Every row
 | S6                                   | The list screen and `release-worker` let the core stop the worker (`[truapi] worker stopped`); `list-render` draws the product rooms from Core Data                                                                                          |
 | S23                                  | `/fail crash` makes the product throw outside a promise; the worker ends, the room shows `unavailable` with its window, and the next request (`retry-room`, or a `Seen` report that comes first) starts a new worker that hears `RoomOpened` |
 | S44                                  | `/flood` sends 25 edits at once; the core refuses the edits past 20 (`refused>=1`), the last edit is stored, and the `frames` marker gives the dropped frames and the number of list updates                                                 |
+| S49, S51                             | The rows of the Chat Extension v2 additions (P10); they run last, as below                                                                               |
 | S47                                  | S47 changes `allowed_reactions` twice on an open room; each change writes a new `policy` generation marker without a reopen                                                                                                                  |
 
 The launcher fails when a driven row fails or has no row.
+
+S51 and S49 are the rows of the Chat Extension v2 additions (P10) and run last. S51 declares two features that the app
+does not serve and reads the stored bytes in `CDChatRoomMetadata.ZFEATURES`; the run does not restart the app. S49 posts
+`/caps` and expects exactly the names of `ChatHostCapabilities.served` (`IOS_CHAT_FEATURE_ROWS` in the scenario
+library), then checks that every row of each listed feature passed in the same run. With `TRUAPI_IOS_E2E_ONLY` the row
+names the feature rows that the run did not drive.
 
 ## Performance rows
 

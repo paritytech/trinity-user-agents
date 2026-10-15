@@ -3,8 +3,9 @@ import Foundation
 /// What a product room offers. The value comes from the declarations of the product and, for each aspect
 /// that the product does not declare, from the host defaults of 02-DESIGN §4.
 ///
-/// The policy reads the footer, the chat-list preview, the configuration, the toolbar, the suggestions and the
-/// commands of a room. The activity line lives in ``ChatRoomActivityStore``, because the host does not keep it.
+/// The policy reads the footer, the chat-list preview, the configuration and the toolbar of a room. It also reads
+/// the suggestions, the commands, the features and the user state. The activity line lives in
+/// ``ChatRoomActivityStore``, and the call in ``ChatRoomCallStore``, because the host does not keep them.
 struct ChatRoomPolicy: Equatable {
     enum MessageStore: Equatable {
         /// The host database keeps the messages. `post_message` and feed updates write to it.
@@ -123,6 +124,14 @@ struct ChatRoomPolicy: Equatable {
     var roomSuggestions: [Chat.RoomSuggestion] = []
     /// The slash commands that the product declares (`set_room_commands`), for the catalogue of the input.
     var roomCommands: [Chat.RoomCommand] = []
+    /// The optional features that the product declared (`set_room_features`). The value keeps a feature that this
+    /// build does not serve. Read ``ChatHostCapabilities`` before you draw a feature.
+    var features: Chat.RoomFeatures = .hostDefault
+    /// The mute and the archive state that the user set for the room.
+    var userState: Chat.RoomUserState = .default
+    /// The meta of the messages of the room (`set_message_meta`). The policy of the store has none. The room
+    /// screen adds the index from `ChatMessageMetaStoring`.
+    var messageMeta: Chat.MessageMetaIndex = .empty
 }
 
 extension ChatRoomPolicy {
@@ -190,8 +199,27 @@ extension ChatRoomPolicy {
             configGeneration: declarations?.configGeneration ?? 0,
             toolbarActions: declarations?.toolbar ?? [],
             roomSuggestions: declarations?.suggestions ?? [],
-            roomCommands: declarations?.commands ?? []
+            roomCommands: declarations?.commands ?? [],
+            features: declarations?.features ?? .hostDefault,
+            userState: declarations?.userState ?? .default
         )
+    }
+
+    /// A thread room answers a message of another room. The chat list does not show it (07-LATER §9.2).
+    var isThreadRoom: Bool {
+        features.threadOf != nil
+    }
+
+    /// The meta of a message, by the id under which the product knows it.
+    func meta(for productMessageId: String) -> Chat.MessageMeta? {
+        messageMeta.meta(for: productMessageId)
+    }
+
+    /// The same policy with the meta of the messages of the room.
+    func with(messageMeta: Chat.MessageMetaIndex) -> ChatRoomPolicy {
+        var policy = self
+        policy.messageMeta = messageMeta
+        return policy
     }
 
     /// The input that the room screen shows.

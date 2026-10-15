@@ -5,7 +5,8 @@ import AsyncExtensions
 import AsyncAlgorithms
 import Products
 
-protocol ChatExtensionDiscoverContextProtocol: ChatProductRoomDeclaring, ChatProductFeedApplying {
+protocol ChatExtensionDiscoverContextProtocol: ChatProductRoomDeclaring, ChatProductFeedApplying,
+    ChatProductRoomAdditions {
     @discardableResult
     func sendNewMessage(
         from chatBot: ChatExtensionBotProtocol,
@@ -110,6 +111,7 @@ actor ChatExtensionDiscoverContext {
     let chatsProviderFactory: ChatContactDataProviderMaking
     let roomRemover: ChatRoomRemoving
     let activities: ChatRoomActivityStoring
+    let calls: ChatRoomCallStoring
     let messageOrderAllocator: ChatMessageOrderAllocating
 
     init(
@@ -118,11 +120,13 @@ actor ChatExtensionDiscoverContext {
         operationQueue: OperationQueue,
         logger: LoggerProtocol,
         messageOrderAllocator: ChatMessageOrderAllocating = FileChatMessageOrderAllocator.shared,
-        activities: ChatRoomActivityStoring = ChatRoomActivityStore.shared
+        activities: ChatRoomActivityStoring = ChatRoomActivityStore.shared,
+        calls: ChatRoomCallStoring = ChatRoomCallStore.shared
     ) {
         self.settings = settings
         self.storageFacade = storageFacade
         self.activities = activities
+        self.calls = calls
         self.messageOrderAllocator = messageOrderAllocator
 
         messageRepository = AnyDataProviderRepository(
@@ -426,6 +430,7 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
     func deleteRoom(for chatBot: ChatExtensionBotProtocol, roomId: String) async throws {
         let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
         activities.set(nil, for: chatId)
+        calls.set(nil, for: chatId)
 
         guard try await roomRemover.removeRoom(chatId) else {
             throw ChatRoomError.unknownRoom(roomId)
