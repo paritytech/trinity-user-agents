@@ -168,7 +168,7 @@ internal fun KClass<out ChatMessage.Content>.toLocalType(): ChatMessageLocal.Typ
     }
 }
 
-private fun ChatMessage.Content.toSearchableContent(): String {
+internal fun ChatMessage.Content.toSearchableContent(): String {
     return when (this) {
         is ChatMessage.Content.Text -> text
         is ChatMessage.Content.RichText -> text.orEmpty()

@@ -324,7 +324,9 @@ abstract class ChatMessageDao {
         val id: String,
         val content: ByteArray?,
         val type: ChatMessageLocal.Type,
-        val updatedAt: Long
+        val updatedAt: Long,
+        // The search reads this column, so a new body replaces it too.
+        val searchableContent: String,
     )
 
     companion object {
