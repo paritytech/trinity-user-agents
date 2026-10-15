@@ -246,7 +246,7 @@ pub enum BlendingMode {
 pub enum Modifier {
     /// Outer spacing.
     Margin(Dimensions),
-    /// Inner spacing.
+    /// Inner spacing, around the content: a fixed or minimum size is the content's.
     Padding(Dimensions),
     Background(Background),
     Border(BorderStyle),
@@ -296,6 +296,7 @@ pub struct ButtonProps {
 }
 
 /// Where image bytes come from. The host fetches them; the tree carries no URL.
+/// The bytes are PNG, JPEG, WebP or SVG.
 pub enum ImageSource {
     /// A Bulletin chain blob, addressed by its CID.
     Bulletin(String),
