@@ -197,6 +197,30 @@ product opens on any address. The product frame is a secure context only when ev
 A browser that does not offer service workers in the frame, or Web Locks, cannot open a name. An embedded web view often
 lacks them: open the host in the system browser.
 
+### The dock
+
+A dock inside the product rectangle opens **Chat**, **Browse** and **Pocket**, as a phone host's tab bar does. Each
+destination is an ordinary product opened the way the address bar opens it. This is a first step towards a full host
+shell: the three are product SPAs today, and none of them is a host-owned surface.
+
+- **What each opens.** On Paseo Next v2, Chat opens `chat-spa-verbosity.paseo` and Browse opens `browse.paseo`. Pocket
+  has no published name, so it starts empty: serve a Pocket SPA, or enter its name, in the address bar while Pocket is
+  selected. An address opened while a destination is selected becomes that destination's product, kept per network in
+  this browser (`truapi-web-signing-host:dock:v1`, addresses only, none that carry a secret).
+- **Products keep running behind.** Choosing another destination hides the product in front and keeps its frame, its
+  channel to the core and its page state. The dock marks a destination with a green dot while its product runs. A hidden
+  product can still raise a permission prompt, which names the product that asks. A reload, and any change of session
+  (sign-in, sign-out, a wallet switch, the first username sync for a wallet), ends every held product, because a product
+  belongs to the session that opened it. Only the one in front is opened again.
+- **Opening one product from another.** A product's `navigateTo` for a name of this network, as `https://name.tld`,
+  `polkadot://name.tld` or `polkadotapp://name.tld`, opens that product in front of the destination it came from. The
+  destination keeps running. Choosing a destination ends a product opened this way. A name that is already a
+  destination's product resumes that destination instead of running a second copy. Any other `http` or `https` address
+  goes to the browser, and anything else is refused.
+- **Pocket's balance.** A Pocket SPA reads its username through the standard identity call, which works here. Its
+  balance needs a host payment platform, which this host does not provide, so the card reads "Unavailable". See
+  [Not supported](#not-supported).
+
 ### Differences from the native hosts
 
 These are accepted for a development host.
@@ -281,8 +305,8 @@ in DevTools.
   press Refresh. It reads `Resources.Consumers` and `PeopleLite.LitePeople` for the identity account and for the root
   key, at the finalized block, through the host's light client. It shows the username and the Lite or Person
   credibility. "Not found" means only that no record exists for that account. The layouts follow the product SDK's
-  committed People chain metadata, so a runtime that changed them shows "Unreadable". **Ring** rows
-  show where `Members.Members` holds the ring key that the account's own `PeopleLite.LitePeople` record (lite), or
+  committed People chain metadata, so a runtime that changed them shows "Unreadable". **Ring** rows show where
+  `Members.Members` holds the ring key that the account's own `PeopleLite.LitePeople` record (lite), or
   `People.AccountToPersonalId` and `People.People` records (full), name: Onboarding, Included with its ring index, or
   Suspended, read on the same finalized block. "No Members entry" means a key is named and unlisted. "No ring key on
   record" means no record names one, which is not a finding that the person is outside the rings. The key is the
@@ -305,14 +329,13 @@ in DevTools.
   not product accounts, so `getAccount` does not return them, and no exported call does. PGAS needs its asset id and
   decimals from the runtime's metadata, which this page cannot decode without a new dependency.
 
-The core gives a local session only the lite username it is activated with and never looks one up, so this host
-supplies it. After sign-in it reads `Resources.Consumers` for the identity account, then the root key, once per
-account, and on Refresh. When the record's lite username differs from the session's, the host activates the session
-again with it, which closes and reopens the open product, and `account.getUserId` then answers with that name. The
-name is kept with the wallet's public facts, so the next sign-in starts the session with it. A full username is not
-passed on: local activation takes a lite one only. With no record the session has no username, and
-`account.getUserId` answers `Unknown` ("No primary username for this session"). A record that cannot be decoded
-leaves the session as it is.
+The core gives a local session only the lite username it is activated with and never looks one up, so this host supplies
+it. After sign-in it reads `Resources.Consumers` for the identity account, then the root key, once per account, and on
+Refresh. When the record's lite username differs from the session's, the host activates the session again with it, which
+closes and reopens the open product, and `account.getUserId` then answers with that name. The name is kept with the
+wallet's public facts, so the next sign-in starts the session with it. A full username is not passed on: local
+activation takes a lite one only. With no record the session has no username, and `account.getUserId` answers `Unknown`
+("No primary username for this session"). A record that cannot be decoded leaves the session as it is.
 
 A failed read changes nothing about the session.
 
@@ -387,7 +410,9 @@ live chain and no real wallet. It checks that:
 - a product's own requests reach the target, counted there, because the host does not gate them;
 - a URL product opens on its own origin, and the host refuses its own origin;
 - opening the menu or inspector, or resizing the product, does not reload it;
-- an entered product id is shown as entered.
+- an entered product id is shown as entered;
+- the dock keeps a destination's product running while another is in front, resumes it with its page state, and ends
+  every held product when the wallet changes.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -403,6 +428,7 @@ and layout on narrow screens.
 - `src/wallets.ts`, `src/storage.ts`: wallet and per-wallet, per-network storage. `src/network.ts`,
   `src/network-config.ts`, `src/network-choice.ts`: the light client, the networks it serves and the per-tab choice.
 - `src/dotns.ts`, `src/address.ts`: name lookup and the address bar's grammar.
+- `src/shell.ts`: the dock's destinations and saved addresses, and what a product's `navigateTo` turns into.
 - `src/archive/`: CAR, UnixFS and CID verification and unpacking.
 - `src/sandbox/`, `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The plugin
   bundles them as static files, which the build emits and the dev server also answers.
@@ -415,8 +441,12 @@ and layout on narrow screens.
 - Gating of a product's own network, device or media requests. They follow the browser.
 - Byte-range requests and non-UTF-8 HTML from a name's archive.
 - Versioned hosted releases of this host, which would let a product be tested against a chosen TrUAPI version.
-- Navigation started by a product. A product that asks to go to a `polkadot://` name is logged and not followed.
-- Chat, contacts, Pocket and live OS permission status. The core answers those calls `Unsupported`.
+- Host-owned Chat, Contacts and Pocket. The dock opens Chat, Browse and Pocket as products. The host passes no `chat`,
+  `contacts`, `pocket` or payment callbacks, so the core answers those calls `Unsupported`, and a Pocket balance reads
+  "Unavailable". A contact picker needs `ContactsPlatform` (`contacts` and `pickContact`) and a list of contacts the
+  host owns. Live OS permission status is not provided either.
+- Several products in front at once. One product is in front, and the others run hidden behind it.
+- Keeping held products across a reload or a session change.
 - Worker products. Products run as `App`.
 - Preimage lookup. Every lookup is a miss. The core submits preimages to Bulletin itself.
 - Dialling an external wire debugger. `VITE_TRUAPI_DEBUGGER_URL` connects and receives no frames, because the signing

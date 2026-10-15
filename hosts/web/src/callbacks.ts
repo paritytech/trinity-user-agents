@@ -20,8 +20,11 @@ export interface HostCallbackOptions {
   storage: HostStorage;
   log: (text: string) => void;
   onAuthState: (state: AuthState) => void;
-  /** A `polkadot://` destination, which has no `https://` form to open. */
-  onProductNavigation: (url: string) => void;
+  /**
+   * Handle a product's request to open `url`: inside the host for a product
+   * name, in the browser for a web page. Rejects when the host will not open it.
+   */
+  navigate: (url: string) => Promise<void>;
   /**
    * Called when a network permission names domains, so the host can read the
    * core's saved answer for each. It only reports what was asked.
@@ -52,7 +55,7 @@ export function createHostCallbacks(
     storage,
     log,
     onAuthState,
-    onProductNavigation,
+    navigate,
     onNetworkAsked,
     onPermissionDecided,
   } = options;
@@ -79,9 +82,7 @@ export function createHostCallbacks(
     navigation: {
       navigateTo(url) {
         log(`navigate to ${url}`);
-        if (url.startsWith("polkadot://")) onProductNavigation(url);
-        else window.open(url, "_blank", "noopener,noreferrer");
-        return Promise.resolve();
+        return navigate(url);
       },
     },
 
