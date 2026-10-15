@@ -368,7 +368,27 @@
         tabindex="0"
       ></div>
       <div class="panel-head">
-        <p class="note">
+        <div class="inspector-views" role="tablist" aria-label="Inspector view">
+          <button
+            type="button"
+            role="tab"
+            data-inspector-view="wire"
+            aria-selected="true"
+            aria-controls="inspector-mount"
+          >
+            TrUAPI
+          </button>
+          <button
+            type="button"
+            role="tab"
+            data-inspector-view="chat"
+            aria-selected="false"
+            aria-controls="chat-diagnostics"
+          >
+            Chat
+          </button>
+        </div>
+        <p id="inspector-note" class="note">
           Frames stay in this tab and may carry sensitive payloads.
         </p>
         <button
@@ -383,6 +403,13 @@
         </button>
       </div>
       <div id="inspector-mount" class="inspector-mount"></div>
+      <div
+        id="chat-diagnostics"
+        class="chat-diagnostics"
+        role="tabpanel"
+        aria-label="Chat diagnostics"
+        hidden
+      ></div>
     </section>
 
     <div id="scrim" class="scrim" hidden></div>

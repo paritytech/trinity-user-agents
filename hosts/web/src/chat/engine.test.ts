@@ -10,6 +10,7 @@ import type {
 import { ChatEngine, WRITES_OFF, type StatementStoreLike } from "./engine.js";
 import { bytes, concat, equalBytes, text, u64 } from "./codec.js";
 import { cryptoRandom } from "./crypto.js";
+import { ChatDiagnostics } from "./diagnostics.js";
 import { ChatKeys } from "./keys.js";
 import { loadChatRecord } from "./store.js";
 import { requestChannel, sealSession, sessionTopic } from "./protocol.js";
@@ -773,5 +774,161 @@ describe("chat engine lifecycle", () => {
     expect(JSON.parse(storage.getItem("chat:bob")!).contacts).toEqual([]);
     alice.stop();
     bob.stop();
+  });
+});
+
+describe("chat engine diagnostics", () => {
+  test("reports an exchange as metadata, with no key, text or token", async () => {
+    const store = new MemoryStatementStore();
+    const alice = keys(ALICE);
+    const bob = keys(BOB);
+    const chain = directory([
+      { label: "alice.01", keys: alice, allowance: true, registry: "people" },
+      { label: "bob.02", keys: bob, allowance: true },
+    ]);
+    const diagnostics = new ChatDiagnostics();
+    const make = (chatKeys: ChatKeys, sink?: ChatDiagnostics) =>
+      new ChatEngine({
+        keys: chatKeys,
+        openStore: async () => store.connect(true),
+        directory: chain,
+        storage: new MemoryStorage(),
+        recordKey: "chat",
+        writes: () => true,
+        diagnostics: sink?.record,
+      });
+    const aliceEngine = make(alice);
+    const bobEngine = make(bob, diagnostics);
+    await Promise.all([aliceEngine.start(), bobEngine.start()]);
+    await aliceEngine.startChat("bob.02", "secret welcome words");
+    await settle();
+    await bobEngine.accept(bobEngine.snapshot().requests[0].id);
+    await settle();
+    await aliceEngine.send(
+      aliceEngine.snapshot().contacts[0].account,
+      "secret body text",
+    );
+    // A push token and a device change from Alice, as the app sends them.
+    const token = Uint8Array.of(0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef);
+    const head = (id: string, tag: number) =>
+      concat(text(id), u64(9n), Uint8Array.of(0, tag));
+    const topic = sessionTopic(
+      alice.agree(bob.chatPublic),
+      alice.identity,
+      bob.identity,
+    );
+    await store.connect(true).submit(
+      encodeSigned(
+        {
+          expiry: expiryAt(Date.UTC(2026, 9, 16)),
+          channel: requestChannel(topic),
+          topics: [topic],
+          data: sealSession(
+            alice.agree(bob.chatPublic),
+            {
+              kind: "request",
+              requestId: "control-request",
+              messages: [
+                concat(head("c1", 1), bytes(token), Uint8Array.of(1)),
+                concat(
+                  head("c2", 17),
+                  bytes(new Uint8Array(32).fill(3)),
+                  bytes(new Uint8Array(32).fill(4)),
+                ),
+              ],
+            },
+            cryptoRandom,
+          ),
+        },
+        alice.identity,
+        (payload) => alice.sign(payload),
+      ),
+    );
+    await settle();
+    bobEngine.stop();
+    aliceEngine.stop();
+
+    const events = diagnostics.list();
+    const types = events.map((event) => event.type);
+    expect(types).toContain("lifecycle");
+    expect(types).toContain("subscription");
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "request", outcome: "new", version: 1 }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "lookup",
+        outcome: "found",
+        from: ["people"],
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "submit",
+        purpose: "accept",
+        result: "stored",
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "session", data: "request", kinds: [0] }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session",
+        data: "request",
+        kinds: [1, 17],
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "submit",
+        purpose: "ack",
+        result: "stored",
+      }),
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: "lifecycle",
+      state: "stopped",
+    });
+
+    const dump = JSON.stringify(events).toLowerCase();
+    const hex = (bytes: Uint8Array) => bytesToHex(bytes).slice(2);
+    for (const secret of [
+      "secret welcome words",
+      "secret body text",
+      hex(token),
+      hex(alice.chatPublic),
+      hex(bob.chatPublic),
+      hex(alice.agree(bob.chatPublic)),
+      hex(alice.identity),
+      hex(bob.identity),
+      hex(new Uint8Array(32).fill(3)),
+    ])
+      expect(dump).not.toContain(secret.toLowerCase());
+  });
+
+  test("reports a failed user action with its reason", async () => {
+    const diagnostics = new ChatDiagnostics();
+    const engine = new ChatEngine({
+      keys: keys(BOB),
+      openStore: async () => new MemoryStatementStore().connect(true),
+      directory: directory([
+        { label: "bob.02", keys: keys(BOB), allowance: true },
+      ]),
+      storage: new MemoryStorage(),
+      recordKey: "chat",
+      writes: () => true,
+      diagnostics: diagnostics.record,
+    });
+    await engine.start();
+    await expect(engine.startChat("nobody.99", "hi")).rejects.toThrow();
+    expect(diagnostics.list().at(-1)).toEqual(
+      expect.objectContaining({
+        type: "action-failed",
+        action: "start chat",
+        reason: "No account holds the username nobody.99.",
+      }),
+    );
+    engine.stop();
   });
 });

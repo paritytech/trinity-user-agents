@@ -93,6 +93,7 @@ describe("People chain records", () => {
       name: "fixture.07",
       chatKey: key,
       conflict: false,
+      from: ["people"],
     });
     expect(resolveChatIdentity(names(key), null)?.chatKey).toEqual(key);
     expect(resolveChatIdentity(names(null), people(key))?.chatKey).toEqual(key);
@@ -104,6 +105,7 @@ describe("People chain records", () => {
       name: "fixture.07",
       chatKey: null,
       conflict: true,
+      from: ["asset hub", "people"],
     });
     expect(bytesToHex(key)).not.toBe(bytesToHex(other));
   });

@@ -3,6 +3,13 @@ import type { HexString } from "@parity/truapi/scale";
 import { equalBytes } from "./codec.js";
 import { cryptoRandom, type RandomBytes } from "./crypto.js";
 import {
+  sanitizeReason,
+  shortHex,
+  shortId,
+  type ChatEventBody,
+  type ChatEventSink,
+} from "./diagnostics.js";
+import {
   lookupChatIdentity,
   lookupOwner,
   type ChainDirectory,
@@ -13,6 +20,7 @@ import {
   checkIdentityProof,
   decodeMessage,
   encodeMessage,
+  messageKind,
   openRequest,
   openSession,
   requestChannel,
@@ -87,6 +95,16 @@ export interface ChatEngineDeps {
   writes?: () => boolean;
   /** How long to wait before reconnecting after a failed start or a dropped connection. */
   retryDelayMs?: number;
+  /** Where to report what the engine does, as metadata only. */
+  diagnostics?: ChatEventSink;
+}
+
+/** Why a submission was made, for diagnostics. */
+interface SubmitContext {
+  purpose: "chat request" | "accept" | "messages" | "ack";
+  peer: string;
+  requestId?: string;
+  messages?: number;
 }
 
 export type EngineStatus =
@@ -161,6 +179,22 @@ export class ChatEngine {
     return this.deps.keys.identity;
   }
 
+  private emit(event: ChatEventBody): void {
+    this.deps.diagnostics?.(event);
+  }
+
+  /** Run a user action in order, and report it when it fails. */
+  private userAction(action: string, work: () => Promise<void>): Promise<void> {
+    return this.serial(work).catch((error: unknown) => {
+      this.emit({
+        type: "action-failed",
+        action,
+        reason: sanitizeReason(errorText(error)),
+      });
+      throw error;
+    });
+  }
+
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -202,6 +236,7 @@ export class ChatEngine {
     this.clearRetry();
     const run = ++this.run;
     this.status = { state: "starting" };
+    this.emit({ type: "lifecycle", state: "starting" });
     this.changed();
     void this.readOwnStanding();
     let store: StatementStoreLike | null = null;
@@ -219,10 +254,17 @@ export class ChatEngine {
         (statements) =>
           void this.serial(() => this.receiveRequests(statements)),
       );
+      this.emit({
+        type: "subscription",
+        stream: "requests",
+        action: "subscribe",
+        topics: 1,
+      });
       await this.serial(() => this.listenToSessions());
       if (run !== this.run) return;
       this.failures = 0;
       this.status = { state: "listening" };
+      this.emit({ type: "lifecycle", state: "listening" });
       this.changed();
     } catch (error) {
       if (run !== this.run) return;
@@ -238,6 +280,7 @@ export class ChatEngine {
     this.dropConnection();
     this.failures = 0;
     this.status = { state: "stopped" };
+    this.emit({ type: "lifecycle", state: "stopped" });
     this.changed();
   }
 
@@ -264,6 +307,12 @@ export class ChatEngine {
     const retryInMs = Math.min(base * 2 ** this.failures, MAX_RETRY_DELAY_MS);
     this.failures += 1;
     this.status = { state: "failed", reason, retryInMs };
+    this.emit({
+      type: "lifecycle",
+      state: "failed",
+      reason: sanitizeReason(reason),
+      retryInMs,
+    });
     this.changed();
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
@@ -281,6 +330,25 @@ export class ChatEngine {
       lookupChatIdentity(this.deps.directory, this.me),
       this.deps.directory.hasAllowance(this.me),
     ]);
+    this.emit(
+      identity.status === "fulfilled"
+        ? {
+            type: "lookup",
+            account: shortHex(bytesToHex(this.me)),
+            outcome: identity.value?.conflict
+              ? "conflict"
+              : identity.value?.chatKey
+                ? "found"
+                : "missing",
+            from: identity.value?.from ?? [],
+          }
+        : {
+            type: "lookup",
+            account: shortHex(bytesToHex(this.me)),
+            outcome: "error",
+            reason: sanitizeReason(errorText(identity.reason)),
+          },
+    );
     if (identity.status === "fulfilled") {
       const onChain = identity.value?.chatKey ?? null;
       this.name = identity.value?.name ?? null;
@@ -314,33 +382,58 @@ export class ChatEngine {
           this.deps.keys.agree(ephemeral),
         );
         const peer = bytesToHex(request.peer);
+        const seen = (
+          outcome: Extract<ChatEventBody, { type: "request" }>["outcome"],
+          problem?: string | null,
+        ) =>
+          this.emit({
+            type: "request",
+            requestId: shortId(request.id),
+            peer: shortHex(peer),
+            version: request.content.version,
+            outcome,
+            ...(problem ? { problem: sanitizeReason(problem) } : {}),
+          });
         const known = this.record.requests.findIndex(
           (candidate) => candidate.id === request.id,
         );
         // A request whose sender's key could not be found is looked up again
         // each time the store delivers it, so a key read later is picked up.
         if (known !== -1) {
-          if (this.record.requests[known].peerChatKey === null)
+          if (this.record.requests[known].peerChatKey === null) {
             this.record.requests[known] = await this.describeRequest(
               request,
               peer,
             );
+            seen("looked up again", this.record.requests[known].problem);
+          } else seen("known");
           continue;
         }
-        if (
-          this.record.declined.includes(request.id) ||
-          this.contact(peer)?.state === "active"
-        )
+        if (this.record.declined.includes(request.id)) {
+          seen("declined earlier");
           continue;
+        }
+        if (this.contact(peer)?.state === "active") {
+          seen("contact active");
+          continue;
+        }
         const waiting = this.contact(peer);
         if (waiting !== undefined) {
           // Both sides asked at once; the peer's request answers this host's.
           waiting.state = "active";
+          seen("answers ours");
           continue;
         }
-        this.record.requests.push(await this.describeRequest(request, peer));
+        const described = await this.describeRequest(request, peer);
+        this.record.requests.push(described);
+        seen("new", described.problem);
       } catch (error) {
         this.skip(`A chat request could not be read: ${errorText(error)}`);
+        this.emit({
+          type: "set-aside",
+          stream: "requests",
+          reason: sanitizeReason(errorText(error)),
+        });
       }
     }
     this.changed();
@@ -366,6 +459,16 @@ export class ChatEngine {
         request.peer,
       );
       const chatKey = identity?.chatKey ?? null;
+      this.emit({
+        type: "lookup",
+        account: shortHex(peer),
+        outcome: identity?.conflict
+          ? "conflict"
+          : chatKey !== null
+            ? "found"
+            : "missing",
+        from: identity?.from ?? [],
+      });
       described.name = identity?.name ?? null;
       if (identity?.conflict) {
         described.problem =
@@ -383,6 +486,12 @@ export class ChatEngine {
           "The request's identity proof does not match the sender's chat key.";
     } catch (error) {
       described.problem = `The sender's chat key could not be read: ${errorText(error)}`;
+      this.emit({
+        type: "lookup",
+        account: shortHex(peer),
+        outcome: "error",
+        reason: sanitizeReason(errorText(error)),
+      });
     }
     return described;
   }
@@ -420,7 +529,15 @@ export class ChatEngine {
     );
     const fingerprint = topics.map(bytesToHex).join();
     if (fingerprint === this.sessionTopics) return;
-    this.stopSessions?.();
+    if (this.stopSessions !== null) {
+      this.stopSessions();
+      this.emit({
+        type: "subscription",
+        stream: "sessions",
+        action: "unsubscribe",
+        topics: this.sessionTopics.split(",").filter(Boolean).length,
+      });
+    }
     this.stopSessions = null;
     this.sessionTopics = fingerprint;
     if (topics.length === 0) return;
@@ -428,6 +545,12 @@ export class ChatEngine {
       { matchAny: topics },
       (statements) => void this.serial(() => this.receiveSessions(statements)),
     );
+    this.emit({
+      type: "subscription",
+      stream: "sessions",
+      action: "subscribe",
+      topics: topics.length,
+    });
   }
 
   private async receiveSessions(statements: Uint8Array[]): Promise<void> {
@@ -442,11 +565,23 @@ export class ChatEngine {
             topic !== undefined &&
             equalBytes(this.incomingTopic(candidate), topic),
         );
-        if (contact === undefined) continue;
+        if (contact === undefined) {
+          this.emit({
+            type: "set-aside",
+            stream: "sessions",
+            reason: "no contact's session topic matches",
+          });
+          continue;
+        }
         const data = openSession(this.secretWith(contact), statement.data);
         await this.receiveSessionData(contact, data);
       } catch (error) {
         this.skip(`A session statement could not be read: ${errorText(error)}`);
+        this.emit({
+          type: "set-aside",
+          stream: "sessions",
+          reason: sanitizeReason(errorText(error)),
+        });
       }
     }
     this.changed();
@@ -456,13 +591,24 @@ export class ChatEngine {
     contact: Contact,
     data: SessionData,
   ): Promise<void> {
+    const peer = shortHex(contact.account);
     switch (data.kind) {
       case "multi-device":
+        this.emit({ type: "session", peer, data: "multi-device" });
         this.skip(
           `${contact.name ?? contact.account} sent a multi-device envelope, which this host does not open.`,
         );
         return;
-      case "response":
+      case "response": {
+        const matched = contact.outbound?.requestId === data.requestId;
+        this.emit({
+          type: "session",
+          peer,
+          data: "response",
+          requestId: shortId(data.requestId),
+          code: data.code,
+          matched,
+        });
         if (
           data.code === ACKNOWLEDGED &&
           contact.outbound?.requestId === data.requestId
@@ -475,15 +621,31 @@ export class ChatEngine {
             await this.flush(contact);
         }
         return;
-      case "request":
+      }
+      case "request": {
         contact.state = "active";
+        let duplicates = 0;
         for (const encoded of data.messages)
-          this.receiveMessage(contact, encoded);
+          if (this.receiveMessage(contact, encoded) === "duplicate")
+            duplicates += 1;
+        this.emit({
+          type: "session",
+          peer,
+          data: "request",
+          requestId: shortId(data.requestId),
+          kinds: data.messages.map(messageKind),
+          duplicates,
+        });
         await this.acknowledge(contact, data.requestId);
+      }
     }
   }
 
-  private receiveMessage(contact: Contact, encoded: Uint8Array): void {
+  /** Add one received message to the conversation, and say what became of it. */
+  private receiveMessage(
+    contact: Contact,
+    encoded: Uint8Array,
+  ): "added" | "duplicate" | "control" | "unreadable" {
     let message: ChatMessage;
     try {
       message = decodeMessage(encoded);
@@ -491,9 +653,10 @@ export class ChatEngine {
       this.skip(
         `A message from ${contact.name ?? contact.account} could not be read: ${errorText(error)}`,
       );
-      return;
+      return "unreadable";
     }
-    if (contact.messages.some((known) => known.id === message.id)) return;
+    if (contact.messages.some((known) => known.id === message.id))
+      return "duplicate";
     const base = {
       id: message.id,
       direction: "in" as const,
@@ -507,24 +670,25 @@ export class ChatEngine {
           kind: "text",
           text: message.content.text,
         });
-        return;
+        return "added";
       case "accepted":
         contact.messages.push({
           ...base,
           kind: "accepted",
           text: "Accepted the chat request",
         });
-        return;
+        return "added";
       case "control":
         // A peer's push token and device list. This host sends no push
         // notifications and talks to the peer pairwise, so neither is kept.
-        return;
+        return "control";
       case "other":
         contact.messages.push({
           ...base,
           kind: "unsupported",
           text: `A message this host does not show yet (kind ${message.content.tag})`,
         });
+        return "added";
     }
   }
 
@@ -547,17 +711,48 @@ export class ChatEngine {
     if (!this.writesAllowed()) throw new Error(WRITES_OFF);
   }
 
-  private async submit(statement: Statement): Promise<void> {
-    if (!this.writesAllowed()) throw new Error(WRITES_OFF);
-    if (this.canSend === false) throw new Error(NO_ALLOWANCE);
-    const store = this.store;
-    if (store === null)
-      throw new Error("Chat is not connected to the People chain.");
-    const result = await store.submit(this.sign(statement));
-    if (!isStored(result))
-      throw new Error(
-        `The statement store did not keep the statement: ${result.status}${result.reason ? ` (${result.reason})` : ""}.`,
-      );
+  private async submit(
+    statement: Statement,
+    context: SubmitContext,
+  ): Promise<void> {
+    let reported = false;
+    const report = (
+      result: "stored" | "refused" | "error",
+      details: { status?: string; reason?: string },
+    ) => {
+      reported = true;
+      this.emit({
+        type: "submit",
+        ...context,
+        ...(context.requestId !== undefined
+          ? { requestId: shortId(context.requestId) }
+          : {}),
+        result,
+        ...details,
+      });
+    };
+    try {
+      if (!this.writesAllowed()) throw new Error(WRITES_OFF);
+      if (this.canSend === false) throw new Error(NO_ALLOWANCE);
+      const store = this.store;
+      if (store === null)
+        throw new Error("Chat is not connected to the People chain.");
+      const result = await store.submit(this.sign(statement));
+      if (!isStored(result)) {
+        report("refused", {
+          status: sanitizeReason(result.status),
+          ...(result.reason ? { reason: sanitizeReason(result.reason) } : {}),
+        });
+        throw new Error(
+          `The statement store did not keep the statement: ${result.status}${result.reason ? ` (${result.reason})` : ""}.`,
+        );
+      }
+      report("stored", { status: sanitizeReason(result.status) });
+    } catch (error) {
+      if (!reported)
+        report("error", { reason: sanitizeReason(errorText(error)) });
+      throw error;
+    }
   }
 
   private unacknowledged(contact: Contact): StoredMessage[] {
@@ -593,16 +788,26 @@ export class ChatEngine {
       this.now(),
     );
     try {
-      await this.submit({
-        expiry,
-        channel: requestChannel(topic),
-        topics: [topic],
-        data: sealSession(
-          this.secretWith(contact),
-          { kind: "request", requestId, messages: encoded },
-          this.random,
-        ),
-      });
+      await this.submit(
+        {
+          expiry,
+          channel: requestChannel(topic),
+          topics: [topic],
+          data: sealSession(
+            this.secretWith(contact),
+            { kind: "request", requestId, messages: encoded },
+            this.random,
+          ),
+        },
+        {
+          purpose: messages.some((message) => message.kind === "accepted")
+            ? "accept"
+            : "messages",
+          peer: shortHex(contact.account),
+          requestId,
+          messages: messages.length,
+        },
+      );
       contact.expiry.request = expiry.toString();
       contact.outbound = {
         requestId,
@@ -640,16 +845,19 @@ export class ChatEngine {
       this.now(),
     );
     try {
-      await this.submit({
-        expiry,
-        channel: responseChannel(topic),
-        topics: [topic],
-        data: sealSession(
-          this.secretWith(contact),
-          { kind: "response", requestId, code: ACKNOWLEDGED },
-          this.random,
-        ),
-      });
+      await this.submit(
+        {
+          expiry,
+          channel: responseChannel(topic),
+          topics: [topic],
+          data: sealSession(
+            this.secretWith(contact),
+            { kind: "response", requestId, code: ACKNOWLEDGED },
+            this.random,
+          ),
+        },
+        { purpose: "ack", peer: shortHex(contact.account), requestId },
+      );
       contact.expiry.response = expiry.toString();
       contact.acknowledged = requestId;
     } catch (error) {
@@ -661,7 +869,7 @@ export class ChatEngine {
 
   /** Accept a request: open the pairwise session and tell the requester. */
   accept(requestId: string): Promise<void> {
-    return this.serial(async () => {
+    return this.userAction("accept", async () => {
       this.requireWrites();
       const request = this.record.requests.find(
         (candidate) => candidate.id === requestId,
@@ -721,7 +929,7 @@ export class ChatEngine {
    * 0x-prefixed account id, with `welcome` as its first message.
    */
   startChat(target: string, welcome: string): Promise<void> {
-    return this.serial(async () => {
+    return this.userAction("start chat", async () => {
       this.requireWrites();
       const account = await this.resolve(target.trim());
       const peer = bytesToHex(account);
@@ -746,23 +954,30 @@ export class ChatEngine {
         },
       };
       const secret = this.deps.keys.agree(chatKey);
-      await this.submit({
-        expiry: expiryAt(this.now()),
-        channel: null,
-        topics: [
-          requestDayTopic(account, requestDay(this.now())),
-          requestTopic(account),
-          requestSessionTopic(secret, this.me, account),
-        ],
-        data: sealRequest(
-          request,
-          account,
-          chatKey,
-          this.me,
-          (payload) => this.deps.keys.sign(payload),
-          this.random,
-        ),
-      });
+      await this.submit(
+        {
+          expiry: expiryAt(this.now()),
+          channel: null,
+          topics: [
+            requestDayTopic(account, requestDay(this.now())),
+            requestTopic(account),
+            requestSessionTopic(secret, this.me, account),
+          ],
+          data: sealRequest(
+            request,
+            account,
+            chatKey,
+            this.me,
+            (payload) => this.deps.keys.sign(payload),
+            this.random,
+          ),
+        },
+        {
+          purpose: "chat request",
+          peer: shortHex(peer),
+          requestId: request.id,
+        },
+      );
       this.record.contacts.push({
         account: peer,
         chatKey: bytesToHex(chatKey),
@@ -798,7 +1013,7 @@ export class ChatEngine {
 
   /** Send text to an accepted contact. */
   send(account: HexString, text: string): Promise<void> {
-    return this.serial(async () => {
+    return this.userAction("send", async () => {
       this.requireWrites();
       const contact = this.contact(account);
       if (contact === undefined)
@@ -821,7 +1036,7 @@ export class ChatEngine {
 
   /** Send the unacknowledged messages of a contact again. */
   retry(account: HexString): Promise<void> {
-    return this.serial(async () => {
+    return this.userAction("retry", async () => {
       this.requireWrites();
       const contact = this.contact(account);
       if (contact === undefined) return;
