@@ -73,7 +73,7 @@ use zeroize::Zeroizing;
 use super::{
 	ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing},
 	signing_host::ring_vrf::{
-		ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
+		ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof,
 	},
 };
 
@@ -2155,7 +2155,7 @@ impl PairingHost {
 			self.ring_resolver.validate(&request.payload.ring_location).await?;
 			let vrf = vrf::load().await?;
 			self.current_private_session(session)?;
-			let context = development_context_bytes(&request.payload.context);
+			let context = context_bytes(&request.payload.context);
 			let alias = vrf.alias(&entropy, &context)?;
 			return Ok(latest::ContextualAlias { context, alias: alias.to_vec() });
 		}
@@ -2195,7 +2195,7 @@ impl PairingHost {
 				.resolve(&request.payload.ring_location, &[MemberCandidate { member }])
 				.await?;
 			self.current_private_session(session)?;
-			let context = development_context_bytes(&request.payload.context);
+			let context = context_bytes(&request.payload.context);
 			let (proof, alias) =
 				create_proof(&vrf, &entropy, &resolved, &context, &request.payload.message)?;
 			return Ok(latest::HostAccountCreateProofResponse {

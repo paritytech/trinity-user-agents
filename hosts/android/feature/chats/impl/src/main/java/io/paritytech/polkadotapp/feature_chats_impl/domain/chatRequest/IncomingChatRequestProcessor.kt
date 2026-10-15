@@ -294,7 +294,8 @@ class RealIncomingChatRequestProcessor @Inject constructor(
             welcomeMessageId = incomingData.chatRequestId,
             timestamp = incomingData.request.message.timestamp.toLong(),
             direction = ChatRequest.Direction.INCOMING,
-            status = ChatRequest.Status.PENDING
+            status = ChatRequest.Status.PENDING,
+            delivery = ChatRequest.Delivery.Delivered,
         )
     }
 
@@ -323,7 +324,8 @@ class RealIncomingChatRequestProcessor @Inject constructor(
             welcomeMessageId = data.request.message.messageId,
             timestamp = data.request.message.timestamp.toLong(),
             direction = ChatRequest.Direction.INCOMING,
-            status = ChatRequest.Status.PENDING
+            status = ChatRequest.Status.PENDING,
+            delivery = ChatRequest.Delivery.Delivered,
         )
         chatRequestRepository.save(request)
 

@@ -31,5 +31,6 @@ sealed interface PaymentSearchResults {
 
 data class SendPaymentUiState(
     val input: String,
+    val sendToYourselfVisible: Boolean,
     val results: PaymentSearchResults,
 )
