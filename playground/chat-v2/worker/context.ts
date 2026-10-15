@@ -7,7 +7,10 @@ import type { ProductState, RoomSettings } from "./state";
 import type { SourceStore } from "./store";
 
 /** The parts of the client the Worker uses. Tests give a fake of it. */
-export type SampleClient = Pick<TrUApiClient, "chat" | "renderer" | "localStorage" | "preimage" | "notifications">;
+export type SampleClient = Pick<
+  TrUApiClient,
+  "chat" | "renderer" | "localStorage" | "preimage" | "notifications" | "system"
+>;
 
 export type ChatSurface = SampleClient["chat"];
 

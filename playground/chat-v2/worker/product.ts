@@ -26,10 +26,11 @@ import { hexLength, hexToUtf8, utf8ToHex } from "./bytes";
 import { Clock, type RoomId } from "./clock";
 import { parseCommand, parseCommandEvent, type ParsedCommand } from "./commands";
 import type { ProductContext, SampleClient } from "./context";
-import { call, describeCallError } from "./errors";
-import { helpCommand, runCommand, setActivity, setPreview } from "./execute";
+import { call, describeCallError, reasonOf } from "./errors";
+import { createThread, helpCommand, runCommand, selectBranch, setActivity, setPreview } from "./execute";
 import { Feed } from "./feed";
 import {
+  ACTION_THREAD,
   CARD_MESSAGE_TYPE,
   MISSING_PREIMAGE_KEY,
   pickedBody,
@@ -39,7 +40,7 @@ import {
   sourcePreview,
   type Assets,
 } from "./fixtures";
-import { PRODUCT } from "./links";
+import { PRODUCT, roomLink } from "./links";
 import { EventLog, type LogSink, type QueryName } from "./log";
 import {
   answerMessageActions,
@@ -58,6 +59,7 @@ import {
   encodeState,
   initialState,
   memoryStorage,
+  roomSettings,
   type ProductState,
   type ProductStorage,
   type RoomSettings,
@@ -342,8 +344,9 @@ export class SampleProduct {
 
   // ------------------------------------------------------------- plumbing
 
+  /** The settings of a room; a thread room gets its own on first use. */
   #settings(room: RoomId): RoomSettings {
-    return this.#state.rooms[room];
+    return (this.#state.rooms[room] ??= roomSettings(room));
   }
 
   #context(): ProductContext {
@@ -673,7 +676,7 @@ export class SampleProduct {
   #received(item: HostChatActionSubscribeItem): void {
     void this.ready.then(() => {
       this.#record({ via: "action_subscribe", room: item.roomId, kind: item.event.tag, data: item.event.value ?? null });
-      const room = knownRoom(item.roomId);
+      const room = knownRoom(item.roomId, this.#state.rooms);
       if (room) void this.#enqueue(() => this.#handleEvent(room, item.event));
     });
   }
@@ -707,7 +710,9 @@ export class SampleProduct {
       case "RoomClosed":
         return this.#echo(room, event);
       case "MessageActionTriggered":
-        return this.#feed.reply(room, `MessageActionTriggered ${event.value.actionId} on ${event.value.messageId}`);
+        await this.#feed.reply(room, `MessageActionTriggered ${event.value.actionId} on ${event.value.messageId}`);
+        if (event.value.actionId === ACTION_THREAD.actionId) await this.#replyInThread(room, event.value.messageId);
+        return;
       case "ParticipantActionTriggered":
         return this.#feed.reply(room, `ParticipantActionTriggered ${event.value.actionId} on ${event.value.participantId}`);
       case "ToolbarActionTriggered":
@@ -730,7 +735,7 @@ export class SampleProduct {
   #roomEvent(item: HostChatRoomEventsSubscribeItem): void {
     void this.ready.then(() => {
       this.#record({ via: "room_events", room: item.roomId, kind: item.event.tag, data: item.event.value ?? null });
-      const room = knownRoom(item.roomId);
+      const room = knownRoom(item.roomId, this.#state.rooms);
       if (room) void this.#enqueue(() => this.#handleRoomEvent(room, item.event));
     });
   }
@@ -739,6 +744,26 @@ export class SampleProduct {
     switch (event.tag) {
       case "UserStateChanged":
         return this.#echoRoomEvent(room, event);
+      case "BranchSelected":
+        // `/slow` holds this answer too, so a host can show its time-out.
+        if (this.#state.slowMs > 0) await delay(this.#state.slowMs);
+        try {
+          await selectBranch(this.#context(), room, event.value.messageId, event.value.index);
+        } catch (error) {
+          await this.#feed.reply(room, `error BranchSelected: ${reasonOf(error)}`);
+        }
+        return;
+    }
+  }
+
+  /** "Reply in thread": create the thread of the message and open it. */
+  async #replyInThread(room: RoomId, messageId: string): Promise<void> {
+    try {
+      const thread = await createThread(this.#context(), room, messageId);
+      const opened = await this.#client.system.navigateTo({ url: roomLink(thread, this.#product) });
+      if (opened.isErr()) console.error(`chat-v2: opening ${thread} failed: ${describeCallError(opened.error)}`);
+    } catch (error) {
+      await this.#feed.reply(room, `error act-thread: ${reasonOf(error)}`);
     }
   }
 
@@ -780,7 +805,7 @@ export class SampleProduct {
       const { context } = item;
       const roomId = context.tag === "ChatMessage" || context.tag === "ChatFooter" ? context.value.roomId : null;
       this.#record({ via: "renderer_action", room: roomId, kind: context.tag, data: item });
-      const room = roomId === null ? undefined : knownRoom(roomId);
+      const room = roomId === null ? undefined : knownRoom(roomId, this.#state.rooms);
       if (!room) return;
       if (item.actionId === CARD_LIKE_ACTION) void this.#enqueue(() => this.#feed.reply(room, "card liked"));
       if (item.actionId === FOOTER_PING_ACTION) void this.#enqueue(() => this.#feed.reply(room, "footer ping"));

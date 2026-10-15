@@ -305,3 +305,43 @@ suite("search on the test host", () => {
     expect(running.log().filter((line) => line.via === "search_query")).toEqual([]);
   });
 });
+
+suite("threads and branches on the test host", () => {
+  test("S64: /thread opens a thread room of three replies with the root summary; deleting the parent deletes it", async () => {
+    const running = await start();
+    const { host, client } = running;
+    await host.chatUser.send("host", "/bot add helper Helper");
+    await waitForText(host, "host", /^bot helper (New|Exists)$/);
+    await host.chatUser.send("host", "/post text");
+    const root = await waitForText(host, "host", /^Plain text message/);
+    await host.chatUser.send("host", `/thread ${root.messageId}`);
+    await waitForText(host, "host", `ok /thread ${root.messageId}`);
+
+    const thread = `thread-host-${root.messageId}`;
+    expect(host.room(thread)?.features.threadOf).toEqual({ roomId: "host", messageId: root.messageId });
+    expect(host.feed(thread).map((message) => message.origin.participantId)).toEqual(["p1", "p2", "bot:helper"]);
+    expect(host.room("host")?.meta[root.messageId]?.thread).toEqual({
+      roomId: thread,
+      replyCount: 3,
+      lastReplyAt: expect.any(BigInt),
+      participantIds: ["p1", "p2", "bot:helper"],
+    });
+
+    expect((await client.chat.deleteRoom({ roomId: "host" })).isOk()).toBe(true);
+    expect(host.room(thread)).toBeUndefined();
+  });
+
+  test("S65: a branch arrow sends BranchSelected and the product answers the alternative", async () => {
+    const running = await start();
+    const { host } = running;
+    await host.chatUser.send("host", "/post text");
+    const message = await waitForText(host, "host", /^Plain text message/);
+    await host.chatUser.send("host", `/branches ${message.messageId} 3`);
+    await waitForText(host, "host", `ok /branches ${message.messageId} 3`);
+    expect(host.room("host")?.meta[message.messageId]?.branch).toEqual({ index: 1, count: 3 });
+
+    await host.chatUser.selectBranch("host", message.messageId, 2);
+    await waitForText(host, "host", "Branch 2 of 3");
+    await until(() => host.room("host")?.meta[message.messageId]?.branch?.index === 2, "the new position");
+  });
+});

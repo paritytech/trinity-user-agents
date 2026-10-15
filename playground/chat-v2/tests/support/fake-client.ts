@@ -120,6 +120,7 @@ export function createFakeClient(options: FakeClientOptions = {}) {
           },
       ),
       setRoomFeatures: unary("setRoomFeatures"),
+      setMessageMeta: unary("setMessageMeta"),
       registerBot: unary("registerBot", (request: { botId: string }) => {
         const status = bots.has(request.botId) ? "Exists" : "New";
         bots.add(request.botId);
@@ -155,6 +156,9 @@ export function createFakeClient(options: FakeClientOptions = {}) {
           return { unsubscribe: () => {}, subscriptionId: "fake" };
         },
       }),
+    },
+    system: {
+      navigateTo: unary("navigateTo"),
     },
     notifications: {
       sendPushNotification: unary("sendPushNotification", () => ({ id: 7 })),

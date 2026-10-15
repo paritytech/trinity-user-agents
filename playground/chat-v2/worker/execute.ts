@@ -4,6 +4,7 @@
  * `error <command>: <reason>` in the room it came from.
  */
 import type {
+  ChatMessageMeta,
   ChatMessageStatus,
   ChatRoomCalls,
   ChatRoomConfig,
@@ -11,7 +12,7 @@ import type {
   ChatRoomPreview,
   HostChatSetRoomFooterRequest,
 } from "@parity/truapi";
-import type { RoomId } from "./clock";
+import { isThreadRoom, threadRoomId, type RoomId, type ThreadRoomId } from "./clock";
 import { commandSpecs, findCommand, helpMarkdown, parseCommand, type ParsedCommand } from "./commands";
 import type { ProductContext } from "./context";
 import { call, CommandError, describeCallError, reasonOf } from "./errors";
@@ -26,6 +27,9 @@ import {
   LEGACY_TEXT,
   personaId,
   pngDataUrl,
+  REASONING_WORDS,
+  THREAD_REPLIERS,
+  threadMetadata,
   METADATA_DESCRIPTION,
   PAYMENT_DESTINATION,
   png,
@@ -40,10 +44,19 @@ import {
 } from "./fixtures";
 import { splitGraphemes } from "./graphemes";
 import { roomLink } from "./links";
-import type { MenuMode, ReactionsMode, SearchMode } from "./state";
+import { defaultFeatures, type MenuMode, type ReactionsMode, type SearchMode } from "./state";
 
 /** The interval between two `/stream` edits: 20 edits a second. */
 export const STREAM_INTERVAL_MS = 50;
+/**
+ * The interval between two `/reason` edits. The edits share the feed budget
+ * of the room with the meta, so they stay under 20 a second.
+ */
+export const REASON_INTERVAL_MS = 60;
+/** How long `/reason` says the product thought. */
+export const REASON_DURATION_MS = 4000;
+/** The most alternatives `/branches` declares, the bound of the RFC. */
+export const MAX_BRANCHES = 64;
 /** The upper bounds of numeric arguments. */
 export const MAX_HISTORY = 100_000;
 export const MAX_GUESTS = 100_000;
@@ -79,7 +92,7 @@ export async function runCommand(ctx: ProductContext, room: RoomId, command: Par
   }
 }
 
-/** `source` keeps its own messages; the other rooms are host-store rooms. */
+/** `source` keeps its own messages; the other rooms, threads too, are host-store rooms. */
 function modeOf(room: RoomId): "host" | "source" {
   return room === "source" ? "source" : "host";
 }
@@ -168,6 +181,12 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
   bot: runBot,
   notify: runNotify,
   search: runSearch,
+  thread: async (ctx, room, command) => {
+    const [id] = expectArgs(command, 1, "<id>");
+    await createThread(ctx, room, resolveId(ctx, room, id));
+  },
+  branches: runBranches,
+  reason: runReason,
 };
 
 /** The names of the commands this module runs, for the tests. */
@@ -287,7 +306,7 @@ async function runPreview(ctx: ProductContext, room: RoomId, command: ParsedComm
 }
 
 async function runMenu(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
-  const modes: readonly MenuMode[] = ["custom", "extend", "hide-edit", "none"];
+  const modes: readonly MenuMode[] = ["custom", "extend", "hide-edit", "thread", "none"];
   const mode = modes.find((candidate) => candidate === command.args[0]);
   if (!mode || command.args.length !== 1) throw usage(command, modes.join("|"));
   await setConfig(ctx, room, { messageActions: mode !== "none" });
@@ -435,6 +454,7 @@ async function runBot(ctx: ProductContext, room: RoomId, command: ParsedCommand)
         "register_bot",
         ctx.chat.registerBot({ botId, name, icon: pngDataUrl(ctx.assets.avatarAlt) }),
       );
+      if (!ctx.state.bots.includes(botId)) ctx.state.bots.push(botId);
       await ctx.feed.post(room, textBody(`bot ${botId} ${registered.status}`));
       return;
     }
@@ -493,6 +513,88 @@ async function runNotify(ctx: ProductContext, room: RoomId, command: ParsedComma
       ...(seconds > 0 ? { scheduledAt: BigInt(Date.now() + seconds * 1000) } : {}),
     }),
   );
+}
+
+// ----------------------------------------------------- threads and meta
+
+/**
+ * Replace the meta of one message with one change, the other fields as set
+ * last, and keep it.
+ */
+export async function setMeta(
+  ctx: ProductContext,
+  room: RoomId,
+  messageId: string,
+  change: Partial<ChatMessageMeta>,
+): Promise<void> {
+  const meta: ChatMessageMeta = { ...ctx.settings(room).meta[messageId], ...change };
+  for (const key of ["thread", "branch", "reasoning"] as const) if (meta[key] === undefined) delete meta[key];
+  await call("set_message_meta", ctx.chat.setMessageMeta({ roomId: room, messageId, meta }));
+  ctx.settings(room).meta[messageId] = meta;
+}
+
+/**
+ * The thread of message `messageId` of `room`: a host-store room
+ * `thread-<room>-<id>` whose features name the message, three replies from
+ * `p1`, `p2` and `bot:helper` (the product while no `helper` persona is
+ * registered), and the summary of the root.
+ */
+export async function createThread(ctx: ProductContext, room: RoomId, messageId: string): Promise<ThreadRoomId> {
+  if (isThreadRoom(room)) throw new CommandError("a thread has no thread of its own");
+  const thread = threadRoomId(room, messageId);
+  const created = await call(
+    "create_room",
+    ctx.chat.createRoom({ roomId: thread, metadata: threadMetadata(room, messageId, ctx.assets), config: hostStoreConfig() }),
+  );
+  if (created.status === "Exists") throw new CommandError(`${thread} exists`);
+  const features = { ...defaultFeatures(), threadOf: { roomId: room, messageId } };
+  await call("set_room_features", ctx.chat.setRoomFeatures({ roomId: thread, features }));
+  ctx.settings(thread).features = features;
+  const persona = ctx.state.bots.includes("helper") ? personaId("helper") : "product";
+  const repliers = [...THREAD_REPLIERS, persona];
+  for (const [index, origin] of repliers.entries()) {
+    await ctx.feed.post(thread, textBody(`Reply ${index + 1} from ${origin}`), { origin });
+  }
+  await setMeta(ctx, room, messageId, {
+    thread: {
+      roomId: thread,
+      replyCount: repliers.length,
+      lastReplyAt: ctx.clock.now(),
+      participantIds: repliers.filter((origin) => origin !== "product"),
+    },
+  });
+  return thread;
+}
+
+/** `/branches <id> <n>`: message `<id>` shows alternative 1 of `n`. */
+async function runBranches(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const [id, count] = expectArgs(command, 2, "<id> <n>");
+  if (!/^[1-9][0-9]*$/.test(count) || Number(count) > MAX_BRANCHES) throw usage(command, `<id> <n>, 1 to ${MAX_BRANCHES}`);
+  await setMeta(ctx, room, resolveId(ctx, room, id), { branch: { index: 1, count: Number(count) } });
+}
+
+/** The answer to `BranchSelected`: the alternative's text, then its position. */
+export async function selectBranch(ctx: ProductContext, room: RoomId, messageId: string, index: number): Promise<void> {
+  const branch = ctx.settings(room).meta[messageId]?.branch;
+  if (!branch) throw new CommandError(`${messageId} has no branches`);
+  if (index < 1 || index > branch.count) throw new CommandError(`${messageId} has no branch ${index}`);
+  await ctx.feed.edit(room, messageId, textBody(`Branch ${index} of ${branch.count}`));
+  await setMeta(ctx, room, messageId, { branch: { index, count: branch.count } });
+}
+
+/**
+ * `/reason`: a reasoning row that streams twenty edits while `Preparing`,
+ * then is `Sent` with the time the product thought.
+ */
+async function runReason(ctx: ProductContext, room: RoomId): Promise<void> {
+  const id = await ctx.feed.post(room, textBody(REASONING_WORDS[0]), { status: "Preparing" });
+  await setMeta(ctx, room, id, { reasoning: {} });
+  for (let words = 2; words <= REASONING_WORDS.length; words++) {
+    await delay(REASON_INTERVAL_MS);
+    await ctx.feed.edit(room, id, textBody(REASONING_WORDS.slice(0, words).join(" ")));
+  }
+  await ctx.feed.status(room, id, "Sent");
+  await setMeta(ctx, room, id, { reasoning: { durationMs: REASON_DURATION_MS } });
 }
 
 // ---------------------------------------------------------------- messages

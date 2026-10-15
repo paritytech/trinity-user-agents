@@ -349,3 +349,107 @@ describe("/search", () => {
     expect(posted(running.fake)).toEqual(["error /search on: only in source"]);
   });
 });
+
+describe("threads, branches and reasoning", () => {
+  test("/thread creates the thread room, three replies and the root summary (S64)", async () => {
+    const running = start();
+    await command(running, "/bot add helper Helper");
+    await command(running, "/post text");
+    const root = (running.fake.callsOf("updateFeed") as HostChatUpdateFeedRequest[]).flatMap(({ update }) =>
+      update.tag === "New" ? [update.value.messageId] : [],
+    )[1];
+    await command(running, `/thread ${root}`);
+
+    const thread = `thread-host-${root}`;
+    expect(running.fake.callsOf("createRoom").at(-1)).toEqual(expect.objectContaining({ roomId: thread }));
+    expect(running.fake.callsOf("setRoomFeatures").at(-1)).toEqual({
+      roomId: thread,
+      features: { preimageAttachments: false, search: false, readAloud: false, threadOf: { roomId: "host", messageId: root } },
+    });
+    const replies = (running.fake.callsOf("updateFeed") as HostChatUpdateFeedRequest[]).flatMap(({ roomId, update }) =>
+      roomId === thread && update.tag === "New" ? [update.value.origin.participantId] : [],
+    );
+    expect(replies).toEqual(["p1", "p2", "bot:helper"]);
+    expect(running.fake.callsOf("setMessageMeta")).toEqual([
+      {
+        roomId: "host",
+        messageId: root,
+        meta: {
+          thread: { roomId: thread, replyCount: 3, lastReplyAt: expect.any(BigInt), participantIds: ["p1", "p2", "bot:helper"] },
+        },
+      },
+    ]);
+    expect(posted(running.fake).at(-1)).toBe(`ok /thread ${root}`);
+  });
+
+  test("a thread room takes commands and has no thread of its own", async () => {
+    const running = start();
+    await command(running, "/post text");
+    await command(running, "/thread last");
+    const thread = (running.fake.callsOf("createRoom").at(-1) as { roomId: string }).roomId;
+    running.fake.emitEvent({
+      roomId: thread,
+      peer: "native",
+      event: { tag: "MessagePosted", value: { messageId: "t1", body: { tag: "Text", value: { text: "/thread last" } } } },
+    });
+    await running.product.idle();
+    const replies = (running.fake.callsOf("updateFeed") as HostChatUpdateFeedRequest[]).flatMap(({ roomId, update }) =>
+      roomId === thread && update.tag === "New" && update.value.body.tag === "Text" ? [update.value.body.value.text] : [],
+    );
+    expect(replies.at(-1)).toBe("error /thread last: a thread has no thread of its own");
+  });
+
+  test("/branches sets the position and BranchSelected answers with the alternative (S65)", async () => {
+    const running = start();
+    await command(running, "/post text");
+    await command(running, "/branches last 3");
+    const id = (running.fake.callsOf("setMessageMeta")[0] as { messageId: string }).messageId;
+    running.fake.emitRoomEvent({ roomId: "host", event: { tag: "BranchSelected", value: { messageId: id, index: 2 } } });
+    await running.product.idle();
+
+    expect(running.fake.callsOf("setMessageMeta")).toEqual([
+      { roomId: "host", messageId: id, meta: { branch: { index: 1, count: 3 } } },
+      { roomId: "host", messageId: id, meta: { branch: { index: 2, count: 3 } } },
+    ]);
+    const edits = (running.fake.callsOf("updateFeed") as HostChatUpdateFeedRequest[]).flatMap(({ update }) =>
+      update.tag === "Edited" && update.value.body.tag === "Text" ? [update.value.body.value.text] : [],
+    );
+    expect(edits).toEqual(["Branch 2 of 3"]);
+  });
+
+  test("/reason streams a reasoning row and ends it with its duration (S66)", async () => {
+    const running = start();
+    await command(running, "/reason");
+
+    const updates = (running.fake.callsOf("updateFeed") as HostChatUpdateFeedRequest[]).filter(({ update }) => update.tag !== "New" || update.value.status === "Preparing");
+    expect(updates.filter(({ update }) => update.tag === "Edited")).toHaveLength(20);
+    expect(updates.at(-1)?.update).toEqual({ tag: "StatusChanged", value: { messageId: expect.any(String), status: "Sent" } });
+    expect(running.fake.callsOf("setMessageMeta").map((call) => (call as { meta: unknown }).meta)).toEqual([
+      { reasoning: {} },
+      { reasoning: { durationMs: 4000 } },
+    ]);
+  });
+
+  test("/menu thread offers Reply in thread, which creates and opens the thread (S64)", async () => {
+    const running = start();
+    await command(running, "/post text");
+    await command(running, "/menu thread");
+    const root = (running.fake.callsOf("updateFeed") as HostChatUpdateFeedRequest[]).flatMap(({ update }) =>
+      update.tag === "New" ? [update.value.messageId] : [],
+    )[1];
+    const menu = await running.fake.ask("message_actions_query", {
+      roomId: "host",
+      message: { messageId: root, origin: { participantId: "product" }, timestamp: 1n, body: { tag: "Text", value: { text: "x" } }, status: "Sent", reactions: [] },
+    }).outcome;
+    expect(menu.item).toEqual({
+      menu: { tag: "ExtendBuiltIn", value: { actions: [expect.objectContaining({ actionId: "act-thread", label: "Reply in thread" })], hidden: [] } },
+    });
+    running.fake.emitEvent({
+      roomId: "host",
+      peer: "native",
+      event: { tag: "MessageActionTriggered", value: { messageId: root, actionId: "act-thread" } },
+    });
+    await running.product.idle();
+    expect(running.fake.callsOf("navigateTo")).toEqual([{ url: `polkadot://sample.dot/-/chat/thread-host-${root}` }]);
+  });
+});

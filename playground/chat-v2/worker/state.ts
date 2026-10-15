@@ -2,13 +2,19 @@
  * The state the product keeps in its local storage, so that a worker restart
  * continues where the last run stopped.
  */
-import type { ChatReactionDetail, ChatRoomConfig, ChatRoomFeatures, ChatRoomPreview } from "@parity/truapi";
+import type {
+  ChatMessageMeta,
+  ChatReactionDetail,
+  ChatRoomConfig,
+  ChatRoomFeatures,
+  ChatRoomPreview,
+} from "@parity/truapi";
 import type { HexString } from "@parity/truapi/scale";
 import { emptyClockState, type ClockState, type RoomId } from "./clock";
 import { defaultPreview, hostStoreConfig, productSourceConfig, sourcePreview } from "./fixtures";
 import { emptyStoreSnapshot, type StoreSnapshot } from "./store";
 
-export type MenuMode = "none" | "custom" | "extend" | "hide-edit";
+export type MenuMode = "none" | "custom" | "extend" | "hide-edit" | "thread";
 export type ReactionsMode = "on" | "na" | "off";
 export type SearchMode = "on" | "na" | "off";
 
@@ -34,6 +40,8 @@ export interface RoomSettings {
   features: ChatRoomFeatures;
   /** How the product answers `search_query`: `na` interrupts `NotAvailable`. */
   search: SearchMode;
+  /** The meta the product set last for each message, by message id. */
+  meta: Record<string, ChatMessageMeta>;
 }
 
 /** The one-shot failures of `/fail`. */
@@ -47,7 +55,8 @@ export interface FailFlags {
 export interface ProductState {
   version: 2;
   clock: ClockState;
-  rooms: Record<RoomId, RoomSettings>;
+  /** The fixed rooms, and each thread room the product created. */
+  rooms: Partial<Record<RoomId, RoomSettings>> & Record<"host" | "source" | "host-empty", RoomSettings>;
   source: StoreSnapshot;
   /** `true` once `host-empty` exists. */
   hostEmptyCreated: boolean;
@@ -55,6 +64,8 @@ export interface ProductState {
   preimageKey?: HexString;
   slowMs: number;
   fail: FailFlags;
+  /** The personas `/bot add` registered. */
+  bots: string[];
 }
 
 export function roomSettings(room: RoomId): RoomSettings {
@@ -73,6 +84,7 @@ export function roomSettings(room: RoomId): RoomSettings {
     reactionBook: {},
     features: defaultFeatures(),
     search: "off",
+    meta: {},
   };
 }
 
@@ -90,6 +102,7 @@ export function initialState(): ProductState {
     hostEmptyCreated: false,
     slowMs: 0,
     fail: { reject: false, timeout: false, crash: false, unavailable: false },
+    bots: [],
   };
 }
 
@@ -118,9 +131,12 @@ export function decodeState(text: string): ProductState {
   const state = value as ProductState;
   // A state saved before `/features` existed has no features: the default.
   for (const settings of Object.values(state.rooms)) {
+    if (!settings) continue;
     settings.features ??= defaultFeatures();
     settings.search ??= settings.features.search ? "on" : "off";
+    settings.meta ??= {};
   }
+  state.bots ??= [];
   return state;
 }
 

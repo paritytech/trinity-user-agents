@@ -64,20 +64,34 @@ export const BLURHASH_VIDEO = "L6Pj0^jE.AyE_3t7t7R**0o#DgR4";
 
 // ---------------------------------------------------------------- rooms
 
-export const ROOM_NAMES: Record<RoomId, string> = {
+export const ROOM_NAMES: Record<"host" | "source" | "host-empty", string> = {
   host: "Sample: host store",
   source: "Sample: product source",
   "host-empty": "Sample: empty",
 };
 
-export function roomMetadata(room: RoomId, assets: Assets): ChatRoomMetadata {
-  const descriptions: Record<RoomId, string> = {
+export function roomMetadata(room: "host" | "source" | "host-empty", assets: Assets): ChatRoomMetadata {
+  const descriptions: Record<"host" | "source" | "host-empty", string> = {
     host: "The host stores the messages of this room.",
     source: "The sample product keeps the messages of this room.",
     "host-empty": "A host-store room with no messages, for the placeholder.",
   };
   return { name: ROOM_NAMES[room], avatar: png(assets.avatar), description: descriptions[room] };
 }
+
+/** The metadata of the thread of message `messageId` of `room`. */
+export function threadMetadata(room: RoomId, messageId: string, assets: Assets): ChatRoomMetadata {
+  return { name: "Thread", avatar: png(assets.avatar), description: `Replies to ${messageId} in ${room}` };
+}
+
+/** The participants who answer in a thread `/thread` creates, in order. */
+export const THREAD_REPLIERS: readonly string[] = ["p1", "p2"];
+
+/** The twenty-one words a reasoning row `/reason` streams. */
+export const REASONING_WORDS: readonly string[] = (
+  "The user asked for a sample so I first check the room then pick a message " +
+  "and finally write an answer"
+).split(" ");
 
 /** The configuration of a host-store room: every field at its default. */
 export function hostStoreConfig(): ChatRoomConfig {
@@ -154,6 +168,7 @@ const CALLBACK: ChatActionHandler = { tag: "Callback" };
 export const ACTION_PIN: ChatProductAction = { actionId: "act-pin", label: "Pin", destructive: false, handler: CALLBACK };
 export const ACTION_REPORT: ChatProductAction = { actionId: "act-report", label: "Report", destructive: true, handler: CALLBACK };
 export const ACTION_MENTION: ChatProductAction = { actionId: "act-mention", label: "Mention", destructive: false, handler: CALLBACK };
+export const ACTION_THREAD: ChatProductAction = { actionId: "act-thread", label: "Reply in thread", destructive: false, handler: CALLBACK };
 
 export function actionOpenApp(product?: string): ChatProductAction {
   return {
