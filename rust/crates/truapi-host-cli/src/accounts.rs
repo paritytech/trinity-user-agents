@@ -766,6 +766,39 @@ fn imported_session_name(username: Option<&str>, public_key: &[u8; 32]) -> Strin
 	username.map_or_else(|| format!("imported-{}", hex::encode(&public_key[..8])), str::to_string)
 }
 
+/// The identity [`attest_mnemonic`] registered.
+pub struct AttestedIdentity {
+	pub address: String,
+	pub public_key: [u8; 32],
+	pub lite_username: String,
+}
+
+/// Attest `mnemonic`'s `uid.<tld>` identity for `username_base` and wait until
+/// it is a personhood ring member. Nothing is written to the account store.
+pub async fn attest_mnemonic(
+	network: NetworkConfig,
+	mnemonic: &str,
+	username_base: &str,
+) -> Result<AttestedIdentity> {
+	let username_base = lite_username_base(username_base)?;
+	let identity = identity_from_mnemonic(mnemonic, network.network_suffix)?;
+	let lite_username = attestation::attest(&attestation::AttestConfig {
+		backend_base: network.identity_backend_base.to_string(),
+		asset_hub_ws: network.asset_hub_ws.to_string(),
+		network_suffix: network.network_suffix.to_string(),
+		entropy: identity.entropy.clone(),
+		username_base,
+		reserved_username: None,
+	})
+	.await?;
+	wait_for_ring_membership(network, &identity.entropy).await?;
+	Ok(AttestedIdentity {
+		address: identity.address,
+		public_key: identity.public_key,
+		lite_username,
+	})
+}
+
 struct SignerIdentity {
 	entropy: Vec<u8>,
 	public_key: [u8; 32],

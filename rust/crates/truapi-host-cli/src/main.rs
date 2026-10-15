@@ -264,6 +264,21 @@ enum Command {
 		#[arg(long)]
 		chat_key: Option<String>,
 	},
+	/// Attest a mnemonic's `uid.<tld>` identity for a lite username, wait until
+	/// it is a personhood ring member, and print `{address, publicKey,
+	/// liteUsername}` as one JSON line. For e2e suites that hold their own
+	/// test mnemonics; the account store is not touched.
+	Attest {
+		/// BIP-39 mnemonic of the identity to attest.
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		mnemonic: String,
+		/// Network preset to attest on.
+		#[arg(long, value_enum, default_value = "paseo-next-v2")]
+		network: Network,
+		/// Lite username base (6+ lowercase ASCII letters).
+		#[arg(long)]
+		username: String,
+	},
 	/// Check (and optionally submit) a statement-store allowance registration
 	/// against the real People chain: ring membership, the chosen slot, and
 	/// (with `--submit`) the `set_statement_store_account` extrinsic.
@@ -627,6 +642,19 @@ async fn dispatch(
 		},
 		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
 			run_pgas_check(mnemonic, network.config(), target, lookback, submit).await
+		},
+		Command::Attest { mnemonic, network, username } => {
+			let attested =
+				accounts::attest_mnemonic(network.config(), &mnemonic, &username).await?;
+			println!(
+				"{}",
+				serde_json::json!({
+					"address": attested.address,
+					"publicKey": format!("0x{}", hex::encode(attested.public_key)),
+					"liteUsername": attested.lite_username,
+				})
+			);
+			Ok(())
 		},
 	}
 }
