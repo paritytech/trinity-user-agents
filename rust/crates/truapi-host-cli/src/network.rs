@@ -184,16 +184,14 @@ const POLKADOT_BULLETIN: ChainEndpoint = ChainEndpoint {
 /// The dotNS deployment on Polkadot Asset Hub, copied verbatim from
 /// `deployments/polkadot/420420419.json` in paritytech/dotns at
 /// `c3b291d287a28874f14f906ed61fb43162fc7caa` (paritytech/dotns#340). Replace
-/// the file rather than editing it; the tests read the controller out of it.
-#[cfg(test)]
+/// the file rather than editing it.
 const POLKADOT_DOTNS_DEPLOYMENT: &str = include_str!("../deployments/polkadot-420420419.json");
 
-/// `DotnsPopController` from [`POLKADOT_DOTNS_DEPLOYMENT`]. Discovery reads
-/// `DotnsGateway.DispatcherAddress`, which Polkadot Asset Hub leaves unset until
-/// referendum 1955 enacts, so the preset carries the controller until then.
-/// `polkadot_dotns_controller_matches_the_deployment_manifest` pins it.
+/// `DotnsPopController`, read out of [`POLKADOT_DOTNS_DEPLOYMENT`] at compile
+/// time. The preset carries it because Polkadot Asset Hub can leave
+/// `DotnsGateway.DispatcherAddress` unset, and discovery then finds nothing.
 const POLKADOT_DOTNS_POP_CONTROLLER: [u8; 20] =
-	hex_literal_address("A06d1CB1e3FedFF7b5dFa779b4Cc61703F8A46A1");
+	manifest_address(POLKADOT_DOTNS_DEPLOYMENT, "DotnsPopController");
 
 const PASEO_NEXT_V2_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 	&[PASEO_ASSET_HUB, PASEO_PEOPLE, PASEO_BULLETIN];
@@ -337,17 +335,41 @@ const fn hex_literal_genesis(hex: &str) -> [u8; 32] {
 	out
 }
 
-/// Decode a 40-char hex H160 at compile time. Accepts the EIP-55 mixed case
-/// the dotNS manifests use.
-const fn hex_literal_address(hex: &str) -> [u8; 20] {
-	let bytes = hex.as_bytes();
-	let mut out = [0u8; 20];
-	let mut i = 0;
-	while i < 20 {
-		out[i] = hex_nibble(bytes[i * 2]) << 4 | hex_nibble(bytes[i * 2 + 1]);
-		i += 1;
+/// The H160 a dotNS deployment manifest records under `name`, decoded at
+/// compile time from its `"<name>":"0x<40 hex>"` entry. Accepts the EIP-55
+/// mixed case the manifests use, and fails the build when the entry is missing.
+const fn manifest_address(manifest: &str, name: &str) -> [u8; 20] {
+	let json = manifest.as_bytes();
+	let name = name.as_bytes();
+	let mut start = 0;
+	while start + name.len() + 46 <= json.len() {
+		let mut matches = json[start] == b'"';
+		let mut i = 0;
+		while matches && i < name.len() {
+			matches = json[start + 1 + i] == name[i];
+			i += 1;
+		}
+		let value = start + 1 + name.len();
+		if matches &&
+			json[value] == b'"' &&
+			json[value + 1] == b':' &&
+			json[value + 2] == b'"' &&
+			json[value + 3] == b'0' &&
+			json[value + 4] == b'x'
+		{
+			let hex = value + 5;
+			let mut out = [0u8; 20];
+			let mut byte = 0;
+			while byte < 20 {
+				out[byte] =
+					hex_nibble(json[hex + byte * 2]) << 4 | hex_nibble(json[hex + byte * 2 + 1]);
+				byte += 1;
+			}
+			return out;
+		}
+		start += 1;
 	}
-	out
+	panic!("the deployment manifest has no entry with that name");
 }
 
 const fn hex_nibble(c: u8) -> u8 {
@@ -651,23 +673,23 @@ mod tests {
 		);
 	}
 
-	/// The preset's controller is a copy of the vendored manifest's entry, so
-	/// replacing the manifest with a new deployment fails here until the
-	/// constant follows it.
+	/// The compile-time reader must agree with a JSON parser on every entry,
+	/// so the preset's controller is exactly what the manifest records.
 	#[test]
-	fn polkadot_dotns_controller_matches_the_deployment_manifest() {
-		let manifest: serde_json::Value =
-			serde_json::from_str(POLKADOT_DOTNS_DEPLOYMENT).expect("manifest is JSON");
-		let controller = manifest["DotnsPopController"]
-			.as_str()
-			.expect("manifest names a DotnsPopController");
-		assert_eq!(
-			hex::decode(controller.trim_start_matches("0x")).expect("controller is hex"),
-			POLKADOT_DOTNS_POP_CONTROLLER,
-		);
+	fn manifest_addresses_decode_as_a_json_parser_reads_them() {
+		let manifest: serde_json::Map<String, serde_json::Value> =
+			serde_json::from_str(POLKADOT_DOTNS_DEPLOYMENT).expect("manifest is a JSON object");
+		for (name, address) in &manifest {
+			let address = address.as_str().expect("every entry is an address string");
+			assert_eq!(
+				hex::encode(manifest_address(POLKADOT_DOTNS_DEPLOYMENT, name)),
+				address.trim_start_matches("0x").to_lowercase(),
+				"{name}"
+			);
+		}
 		assert_eq!(
 			Network::Polkadot.preset().dotns_pop_controller,
-			Some(POLKADOT_DOTNS_POP_CONTROLLER)
+			Some(manifest_address(POLKADOT_DOTNS_DEPLOYMENT, "DotnsPopController"))
 		);
 	}
 
