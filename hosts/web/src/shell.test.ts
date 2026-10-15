@@ -22,30 +22,25 @@ function memory(): Pick<Storage, "getItem" | "setItem"> & {
 }
 
 describe("dock addresses", () => {
-  // Pocket has no published name, so the dock must not invent one for it.
-  test("start with the published products and leave Pocket empty", () => {
+  // Pocket is a screen the host draws, so it has no product address to keep.
+  test("start with the published products and keep none for Pocket", () => {
     expect(defaultAddresses("paseo")).toEqual({
       chat: "chat-spa-verbosity.paseo",
       browse: "browse.paseo",
-      pocket: "",
     });
   });
 
   test("start empty on a network with no known names", () => {
-    expect(defaultAddresses("previewnet")).toEqual({
-      chat: "",
-      browse: "",
-      pocket: "",
-    });
+    expect(defaultAddresses("previewnet")).toEqual({ chat: "", browse: "" });
   });
 
   test("keep what a destination was last pointed at, per network", () => {
     const storage = memory();
-    saveAddress(storage, "paseo", "pocket", "http://localhost:5192/");
-    expect(loadAddresses(storage, "paseo").pocket).toBe(
+    saveAddress(storage, "paseo", "browse", "http://localhost:5192/");
+    expect(loadAddresses(storage, "paseo").browse).toBe(
       "http://localhost:5192/",
     );
-    expect(loadAddresses(storage, "previewnet").pocket).toBe("");
+    expect(loadAddresses(storage, "previewnet").browse).toBe("");
   });
 
   // The default network keeps the original key, so a tab from before the dock
@@ -62,9 +57,22 @@ describe("dock addresses", () => {
 
   test("do not keep an address that carries a secret", () => {
     const storage = memory();
-    saveAddress(storage, "paseo", "pocket", "http://localhost:1/?token=abc");
+    saveAddress(storage, "paseo", "browse", "http://localhost:1/?token=abc");
     expect(storage.values.size).toBe(0);
-    expect(loadAddresses(storage, "paseo").pocket).toBe("");
+    expect(loadAddresses(storage, "paseo").browse).toBe("browse.paseo");
+  });
+
+  // A dock saved before Pocket became a host screen still carries a pocket entry.
+  test("ignore a saved address for a destination the host draws itself", () => {
+    const storage = memory();
+    storage.setItem(
+      "truapi-web-signing-host:dock:v1",
+      '{"chat":"a.paseo","pocket":"http://localhost:5192/"}',
+    );
+    expect(loadAddresses(storage, "paseo")).toEqual({
+      chat: "a.paseo",
+      browse: "browse.paseo",
+    });
   });
 
   test("fall back to the defaults when the saved value is unreadable", () => {
@@ -151,7 +159,6 @@ describe("destinationOf", () => {
   const addresses = {
     chat: "chat-spa-verbosity.paseo",
     browse: "browse.paseo",
-    pocket: "http://localhost:5192/",
   };
 
   test("finds the destination that already holds a product", () => {

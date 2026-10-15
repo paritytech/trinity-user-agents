@@ -453,7 +453,7 @@ describe("the dock", () => {
                 JSON.stringify(addresses),
               );
           },
-          { chat: urlProduct.url, browse: second.url, pocket: "" },
+          { chat: urlProduct.url, browse: second.url },
         );
         const page = await openHost(context);
         await signIn(page);
@@ -495,17 +495,22 @@ describe("the dock", () => {
         expect(await page.inputValue("#address")).toBe(urlProduct.url);
         expect(browse.isDetached()).toBe(false);
 
-        // A destination with no product says so and takes one from the address bar.
+        // Pocket is drawn by the host. The products behind it keep running.
         await page.click('#dock [data-destination="pocket"]');
-        await page
-          .locator(".stage-empty")
-          .filter({ hasText: "Pocket has no product yet" })
-          .waitFor({ state: "visible" });
+        await page.locator("#pocket-screen").waitFor({ state: "visible" });
         expect(await destinations(page)).toEqual({
           chat: "behind/running",
           browse: "behind/running",
           pocket: "front/idle",
         });
+        // The Pocket screen covers the stage; the product frames are hidden.
+        expect(
+          await page
+            .locator("#product-slot iframe")
+            .evaluateAll((frames) =>
+              frames.map((frame) => (frame as HTMLElement).style.display),
+            ),
+        ).toEqual(["none", "none"]);
       } finally {
         await context.close();
         second.close();
@@ -528,7 +533,7 @@ describe("the dock", () => {
                 JSON.stringify(addresses),
               );
           },
-          { chat: urlProduct.url, browse: second.url, pocket: "" },
+          { chat: urlProduct.url, browse: second.url },
         );
         const page = await openHost(context);
         await signIn(page);
@@ -552,6 +557,58 @@ describe("the dock", () => {
       } finally {
         await context.close();
         second.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "draws Pocket itself, as two cards, and gives the digital dollar no amount",
+    async () => {
+      const context = await newContext();
+      try {
+        const page = await openHost(context);
+        await page.click('#dock [data-destination="pocket"]');
+        await page.locator("#pocket-screen").waitFor({ state: "visible" });
+        expect(await page.locator("#product-slot iframe").count()).toBe(0);
+
+        // The native list: the digital dollar, then Humanity, stacked.
+        expect(
+          await page
+            .locator(".pocket-card")
+            .evaluateAll((cards) =>
+              cards.map((card) => (card as HTMLElement).dataset.card),
+            ),
+        ).toEqual(["digital_dollar_card", "humanity"]);
+        expect(await page.locator(".pocket-title").innerText()).toBe("Pocket");
+        expect(await page.locator(".pocket-face").innerText()).toBe(
+          "Humanity\nProof of personhood",
+        );
+
+        // No Coinage engine here, so the amount slot carries no figure.
+        const amount = page.locator(".pocket-amount");
+        expect(await amount.innerText()).toBe("Unavailable");
+        expect(await amount.getAttribute("data-state")).toBe("unavailable");
+        expect(await page.locator(".pocket-dollar").innerText()).not.toMatch(
+          /[$\d]/,
+        );
+
+        // Signing in changes nothing: neither card reads the wallet.
+        await signIn(page);
+        expect(await page.locator(".pocket-card").count()).toBe(2);
+        expect(await amount.innerText()).toBe("Unavailable");
+
+        // An address typed over Pocket opens a product and hides the screen.
+        await openAddress(page, urlProduct.url);
+        await productFrame(page, new URL(urlProduct.url).origin);
+        expect(await page.locator("#pocket-screen").isHidden()).toBe(true);
+        expect(await destinations(page)).toEqual({
+          chat: "behind/idle",
+          browse: "behind/idle",
+          pocket: "behind/idle",
+        });
+      } finally {
+        await context.close();
       }
     },
     TEST_MS,

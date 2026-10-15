@@ -7,20 +7,29 @@ import { isRecordable } from "./recents.js";
 export const DESTINATIONS = ["chat", "browse", "pocket"] as const;
 export type Destination = (typeof DESTINATIONS)[number];
 
+/** Destinations that open a product. The others are screens the host draws itself. */
+export const PRODUCT_DESTINATIONS = ["chat", "browse"] as const;
+export type ProductDestination = (typeof PRODUCT_DESTINATIONS)[number];
+
+export function isProductDestination(
+  destination: Destination | null,
+): destination is ProductDestination {
+  return (
+    destination !== null &&
+    (PRODUCT_DESTINATIONS as readonly string[]).includes(destination)
+  );
+}
+
 export const DESTINATION_LABELS: Record<Destination, string> = {
   chat: "Chat",
   browse: "Browse",
   pocket: "Pocket",
 };
 
-/** The product each destination opens: a name or URL, or empty for none yet. */
-export type DockAddresses = Record<Destination, string>;
+/** The product each product destination opens: a name or URL, or empty for none yet. */
+export type DockAddresses = Record<ProductDestination, string>;
 
-/**
- * What a destination opens before the user chooses. Only names known to be
- * published are listed. Pocket has no published name, so it starts empty and
- * takes a URL or a name from the address bar.
- */
+/** What a destination opens before the user chooses. Only names known to be published are listed. */
 const DEFAULTS: Record<string, Partial<DockAddresses>> = {
   paseo: { chat: "chat-spa-verbosity.paseo", browse: "browse.paseo" },
 };
@@ -29,7 +38,6 @@ export function defaultAddresses(network: string): DockAddresses {
   return {
     chat: "",
     browse: "",
-    pocket: "",
     ...DEFAULTS[normalizeNetwork(network)],
   };
 }
@@ -55,7 +63,7 @@ export function loadAddresses(
       storage.getItem(keyFor(network)) ?? "null",
     );
     if (typeof saved !== "object" || saved === null) return addresses;
-    for (const destination of DESTINATIONS) {
+    for (const destination of PRODUCT_DESTINATIONS) {
       const value = (saved as Record<string, unknown>)[destination];
       if (typeof value === "string") addresses[destination] = value;
     }
@@ -72,7 +80,7 @@ export function loadAddresses(
 export function saveAddress(
   storage: Pick<Storage, "getItem" | "setItem">,
   network: string,
-  destination: Destination,
+  destination: ProductDestination,
   address: string,
 ): DockAddresses {
   const addresses = loadAddresses(storage, network);
@@ -139,7 +147,7 @@ export function destinationOf(
   address: string,
   addresses: DockAddresses,
   network: NetworkConfig,
-): Destination | null {
+): ProductDestination | null {
   let wanted: string | null;
   try {
     const parsed = parseTypedAddress(address, network);
@@ -149,7 +157,7 @@ export function destinationOf(
     return null;
   }
   if (wanted === null) return null;
-  for (const destination of DESTINATIONS) {
+  for (const destination of PRODUCT_DESTINATIONS) {
     try {
       const saved = parseTypedAddress(addresses[destination], network);
       if (saved.kind === "name" && saved.name === wanted) return destination;

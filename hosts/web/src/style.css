@@ -836,6 +836,219 @@ textarea {
 }
 
 /*
+ * The host's own Pocket screen, laid out as the native Pocket is: a large
+ * title over two cards that overlap. The values come from the Android
+ * implementation (CardSizes: 234dp high, 170dp overlap; shapes.large: 24dp;
+ * PocketCardColors) and from the Berlin Night tokens, which the cards use in
+ * every theme. The fonts are bundled, so nothing is fetched.
+ */
+@font-face {
+  font-family: "Manrope";
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("./assets/fonts/manrope-variable-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./assets/fonts/inter-variable-latin.woff2") format("woff2");
+}
+
+body[data-surface="pocket"] .stage-empty {
+  display: none;
+}
+
+.pocket-screen {
+  --pocket-bg: #0b0c0f;
+  --pocket-primary: #f4f4f5;
+  --pocket-secondary: #8c8f98;
+  --pocket-title-font: "Manrope", system-ui, -apple-system, sans-serif;
+  --pocket-body-font: "Inter", system-ui, -apple-system, sans-serif;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow-y: auto;
+  background: var(--pocket-bg);
+  color: var(--pocket-primary);
+  font-family: var(--pocket-body-font);
+}
+
+.pocket-screen[hidden] {
+  display: none;
+}
+
+/* PolkadotTopBar, large: 64dp high, the title at 32/40 bold. */
+.pocket-bar {
+  display: flex;
+  align-items: center;
+  min-height: 64px;
+  padding: 0 4px 0 16px;
+}
+
+.pocket-title {
+  margin: 0;
+  font: 700 32px/40px var(--pocket-title-font);
+  letter-spacing: -0.5px;
+  text-transform: none;
+  color: var(--pocket-primary);
+}
+
+/* contentPadding = 16dp, spacedBy(-170dp): 234 - 170 leaves 64 of each card showing. */
+.pocket-list {
+  padding: 16px;
+}
+
+.pocket-slot {
+  position: relative;
+}
+
+.pocket-slot + .pocket-slot {
+  margin-top: -170px;
+}
+
+.pocket-card {
+  position: relative;
+  isolation: isolate;
+  height: 234px;
+  overflow: hidden;
+  border-radius: 24px;
+  background-color: #000;
+}
+
+/* PocketCardColors.DigitalDollarCardBackground is black; the grain is the dark texture over the whole card. */
+.pocket-grain {
+  position: absolute;
+  inset: 0;
+  background: url("./assets/pocket/img_texture_grain_dark.png") center / cover;
+}
+
+/*
+ * The digital dollar: a hairline radial border (primary fading out from the
+ * top-left corner), the artwork, a radial highlight, then the grain at 30%.
+ */
+.pocket-dollar {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(#000, #000) padding-box,
+    radial-gradient(900px 900px at 0 0, #f4f4f5 0%, rgba(244, 244, 245, 0) 100%)
+      border-box;
+}
+
+/*
+ * The artwork masks the shine: the native card draws it at 20% and lays a dim
+ * and a shine gradient over it along a 151.367 degree axis. Tilt moves them
+ * on a phone; here they rest where a flat phone leaves them.
+ */
+.pocket-dollar-art {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(
+      151.367deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.18) 18%,
+      rgba(255, 255, 255, 0.5) 30%,
+      rgba(255, 255, 255, 0.18) 42%,
+      rgba(255, 255, 255, 0) 60%
+    ),
+    linear-gradient(
+      151.367deg,
+      rgba(0, 0, 0, 0.7) 0%,
+      rgba(0, 0, 0, 0.35) 18%,
+      rgba(0, 0, 0, 0) 30%,
+      rgba(0, 0, 0, 0.35) 55%,
+      rgba(0, 0, 0, 0.7) 100%
+    );
+  -webkit-mask: url("./assets/pocket/img_digital_dollar_card.webp") right
+    center / auto 100% no-repeat;
+  mask: url("./assets/pocket/img_digital_dollar_card.webp") right center / auto
+    100% no-repeat;
+}
+
+/* The artwork itself, drawn at the native 20%. */
+.pocket-dollar-art::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url("./assets/pocket/img_digital_dollar_card.webp") right center /
+    auto 100% no-repeat;
+  opacity: 0.2;
+}
+
+.pocket-dollar-highlight {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    700px 700px at 0 0,
+    rgba(244, 244, 245, 0.35) 0%,
+    rgba(244, 244, 245, 0.1) 50%,
+    rgba(244, 244, 245, 0) 100%
+  );
+}
+
+.pocket-dollar-grain {
+  opacity: 0.3;
+}
+
+/* horizontal = 24dp, vertical = 16dp: the logo at the start, the amount at the end. */
+.pocket-dollar-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 24px;
+}
+
+.pocket-logo {
+  flex: none;
+  height: 36px;
+  width: auto;
+  aspect-ratio: 100 / 110;
+}
+
+/* headline.medium: 28/36 bold. Unavailable is quieter than a figure and says so on hover. */
+.pocket-amount {
+  font: 700 28px/36px var(--pocket-title-font);
+  color: #fff;
+  white-space: nowrap;
+}
+
+.pocket-amount[data-state="unavailable"] {
+  font: 600 16px/24px var(--pocket-title-font);
+  color: var(--pocket-secondary);
+  padding-top: 6px;
+  cursor: help;
+}
+
+/* A product card: black, a hairline border in the secondary colour, the product's face inside. */
+.pocket-product {
+  border: 1px solid var(--pocket-secondary);
+}
+
+/* Humanity's bundled face: a column with 16dp all round, the title on top, the subtitle at the bottom. */
+.pocket-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px;
+}
+
+.pocket-face-title {
+  font: 600 16px/24px var(--pocket-title-font);
+  color: var(--pocket-primary);
+}
+
+.pocket-face-subtitle {
+  font: 400 14px/20px var(--pocket-body-font);
+  color: var(--pocket-secondary);
+}
+
+/*
  * The host's own navigation, drawn inside the product rectangle as a phone
  * host draws its tab bar, so a size chosen in the menu includes it.
  */
