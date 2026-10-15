@@ -9,8 +9,9 @@ import { createClient, createTransport } from "@parity/truapi";
 
 import {
   createNodePairingHostRuntime,
-  headlessHostCallbacks,
+  createHeadlessHostCallbacks,
 } from "../../dist/node/index.js";
+import { wasmIsBuilt } from "../../dist/testing/require-wasm.js";
 
 const PEOPLE =
   "0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48";
@@ -82,46 +83,53 @@ const productStorage = {
   },
 };
 
-test("a product's requestLogin shows a pairing deeplink and persists the device identity", async () => {
-  const storage = memoryStorage();
-  let showDeeplink;
-  const deeplink = new Promise((resolve) => (showDeeplink = resolve));
-  const runtime = await createNodePairingHostRuntime(
-    headlessHostCallbacks({
-      coreStorage: storage.coreStorage,
-      chain: silentChain,
-      auth: {
-        authStateChanged(state) {
-          if (state.tag === "Pairing") showDeeplink(state.value.deeplink);
+test(
+  "a product's requestLogin shows a pairing deeplink and persists the device identity",
+  { skip: !wasmIsBuilt("web/truapi_server_bg.wasm") && "WASM not built" },
+  async () => {
+    const storage = memoryStorage();
+    let showDeeplink;
+    const deeplink = new Promise((resolve) => (showDeeplink = resolve));
+    const runtime = await createNodePairingHostRuntime(
+      createHeadlessHostCallbacks({
+        coreStorage: storage.coreStorage,
+        chain: silentChain,
+        auth: {
+          authStateChanged(state) {
+            if (state.tag === "Pairing") showDeeplink(state.value.deeplink);
+          },
         },
-      },
-      productStorage,
-      supportedChains,
-      userConfirmation: {
-        confirmUserAction: async () => false,
-        confirmPermission: async () => "Deny",
-      },
-      permissions: {
-        devicePermission: async () => "Deny",
-        remotePermission: async () => "Deny",
-      },
-    }),
-    { hostConfig },
-  );
-  try {
-    await assert.rejects(runtime.activateStoredSession(), /absent/);
-    const provider = await runtime.createProvider({
-      productId: "node-entry-test.dot",
-    });
-    const client = createClient(createTransport(provider));
+        productStorage,
+        supportedChains,
+        userConfirmation: {
+          confirmUserAction: async () => false,
+          confirmPermission: async () => "Deny",
+        },
+        permissions: {
+          devicePermission: async () => "Deny",
+          remotePermission: async () => "Deny",
+        },
+      }),
+      { hostConfig },
+    );
+    try {
+      await assert.rejects(runtime.activateStoredSession(), /absent/);
+      const provider = await runtime.createProvider({
+        productId: "node-entry-test.dot",
+      });
+      const client = createClient(createTransport(provider));
 
-    const login = client.account.requestLogin({ reason: "node entry test" });
-    assert.match(await deeplink, /^polkadotapp:\/\/pair\?handshake=[0-9a-f]+$/);
-    assert.deepEqual(storage.tagsWritten(), ["PairingDeviceIdentity"]);
-    // Cancelling must end the product's login, not leave it waiting forever.
-    runtime.cancelPairing();
-    assert.equal((await login)._unsafeUnwrap(), "Rejected");
-  } finally {
-    runtime.dispose();
-  }
-});
+      const login = client.account.requestLogin({ reason: "node entry test" });
+      assert.match(
+        await deeplink,
+        /^polkadotapp:\/\/pair\?handshake=[0-9a-f]+$/,
+      );
+      assert.deepEqual(storage.tagsWritten(), ["PairingDeviceIdentity"]);
+      // Cancelling must end the product's login, not leave it waiting forever.
+      runtime.cancelPairing();
+      assert.equal((await login)._unsafeUnwrap(), "Rejected");
+    } finally {
+      runtime.dispose();
+    }
+  },
+);
