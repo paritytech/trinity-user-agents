@@ -32,52 +32,21 @@ that world as it is today; the design's own terms are introduced in the [Overvie
 
 ### Who reads stack facts today
 
-Every repository below keeps its own copy of some stack's facts. The last column says whether the repository, as already
-built and released, can use a stack that did not exist when that version shipped, such as a two-hour PPN fork:
+About a dozen repositories keep their own copy of some stack's facts, and almost none of them, as already released, can
+use a stack that did not exist when that version shipped, such as a two-hour PPN fork. For example:
 
-| Repository                                     | Facts it reads                                                                                  | Where they come from                                                             | Can use a new stack without a new version?                       |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| iOS and Android (`hosts/ios`, `hosts/android`) | chains with genesis and RPCs, DUB, IPFS gateway, dotNS addresses, TURN credentials from the DUB | Firebase Remote Config, chosen by build flavour                                  | no                                                               |
-| polkadot-desktop                               | the same Firebase keys, plus a channel list and a TURN host and secret                          | Firebase, `VITE_ENVIRONMENTS`, `VITE_WEBRTC_TURN_*`, the truapi-provider catalog | no; dev builds can add single RPC chains for dapps               |
-| dotli-community                                | genesis, RPCs, IPFS gateway, dotNS registry contract and TLD                                    | `packages/config/src/network.ts`, the truapi-provider catalog                    | no; Docker builds can change endpoints of its bundled networks   |
-| host-rust-core                                 | genesis and chain specs, CLI endpoints, dotNS TLDs                                              | the truapi-provider catalog, `truapi-host-cli` presets, `DOTNS_TLDS`             | no                                                               |
-| product-sdk                                    | genesis per environment, dotNS addresses, Bulletin RPCs                                         | bundled PAPI descriptors and constants                                           | no                                                               |
-| dotns-sdk                                      | RPCs, genesis, contract addresses, IPFS gateway                                                 | `constants.ts`                                                                   | partly: RPC endpoints by flag, contract addresses need a release |
-| bulletin-deploy                                | chains, IPFS gateway, TLD, contract addresses                                                   | a snapshot of `triangle-status/environments.json`                                | yes, with `--environment-file`                                   |
-| triangle-status                                | chains by environment, DUB, IPFS gateway, dotNS addresses                                       | its own `environments.json`                                                      | no                                                               |
-| polkadot-pop-e2e                               | Asset Hub, People and Bulletin RPCs, DUB, IPFS gateway                                          | `networks.ts` and `FORK_*` variables                                             | partly, with `FORK_*` variables                                  |
-| device-uniqueness-backend                      | People and Asset Hub RPCs, a People genesis hash                                                | environment variables                                                            | yes, by editing its environment and restarting                   |
-| web3-citizenship-web                           | RPCs, IPFS gateway, dotNS protocol registry contract                                            | environment variables and a closed environment list                              | only in place of one of its two environments                     |
-
-How the copies reach their readers:
-
-```mermaid
-flowchart LR
-  subgraph producers["Producers"]
-    ENG["previewnet-engine<br/>/api/network, /api/addresses"]
-    SPW["preview-net-v1 spawner<br/>generated domains"]
-  end
-  subgraph copies["Copies kept by hand"]
-    FB["Firebase Remote Config"]
-    CAT["truapi-provider catalog<br/>and CLI presets"]
-    NET["dotli network.ts"]
-    PSD["product-sdk PAPI descriptors"]
-    DNC["dotns-sdk constants.ts"]
-    TSE["triangle-status<br/>environments.json"]
-    POP["pop-e2e networks.ts"]
-    ENV["environment variables"]
-  end
-  FB --> MOB["iOS and Android"] & DSK["polkadot-desktop"]
-  CAT --> DSK & DOT["dotli"] & CLI["truapi-host CLI"]
-  NET --> DOT
-  PSD --> DAP["dapps"]
-  DNC --> DNS["dotns CLI and actions"]
-  TSE --> TSP["triangle-status page"] & BDP["bulletin-deploy"]
-  POP --> E2E["pop-e2e and triangle-e2e"]
-  ENV --> DUB["DUB"] & W3C["web3-citizenship-web"]
-  ENG --> DASH["PPN dashboard"]
-  SPW -. "no host can reach it" .-> MOB
-```
+- **iOS and Android** (`hosts/ios`, `hosts/android`) read chains, the DUB, the IPFS gateway and dotNS addresses from
+  Firebase Remote Config, chosen by build flavour.
+- **[polkadot-desktop](https://github.com/paritytech/polkadot-desktop)** reads the same Firebase keys, plus a TURN host
+  and secret from `VITE_WEBRTC_TURN_*`.
+- **[dotli-community](https://github.com/paritytech/dotli-community)** and the host core read genesis hashes and RPCs
+  from `packages/config/src/network.ts` and the truapi-provider catalog.
+- **[dotns-sdk](https://github.com/paritytech/dotns-sdk)** keeps RPCs and contract addresses in `constants.ts`, so new
+  addresses need a release.
+- **[triangle-status](https://github.com/paritytech/triangle-status)** keeps its own `environments.json`, and
+  [bulletin-deploy](https://github.com/paritytech/bulletin-deploy) reads a snapshot of it.
+- **[polkadot-pop-e2e](https://github.com/paritytech/polkadot-pop-e2e)** reaches a fork only through `FORK_*` variables
+  filled in by hand.
 
 ### What goes wrong
 
@@ -173,9 +142,9 @@ type Descriptor = {
   id: string; // The stack's name, e.g. "previewnet". Tools and logs use it; it never decides trust and is not unique.
   name: string; // Display name. Shown to people; never used to identify the stack.
   network: string; // The ecosystem get_chain_info (RFC 0026) reports to dapps, e.g. "paseo" for previewnet and paseo-next-v2.
-  tld: string; // dotNS TLD without the leading dot, e.g. "testnet".
-  expiresAt?: string; // Time after which the stack no longer exists. Short-lived stacks only.
-  validUntil?: string; // Time after which the descriptor is stale.
+  tld: string; // dotNS TLD without the leading dot, e.g. "testnet". Hosts check it against the chain's NetworkSuffix before deriving keys.
+  expiresAt?: string; // When the stack itself is shut down, e.g. a two-hour fork. Reaches readers that already imported it.
+  validUntil?: string; // When this copy goes stale and must be fetched again. The stack keeps running.
   chains: Chain[];
   services: Service[];
   assets?: Asset[]; // Assets readers treat specially, such as the one a wallet pays in.
@@ -374,6 +343,7 @@ polkadotapp://stack?key=0x3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048
   own scheme or an https link to its own domain.
 - A signed pointer is about 200 characters, small enough for a QR code. A tool takes the same link as its stack
   argument.
+- What a host does when it opens a link, such as asking the person to switch to the stack, is left to a follow-up RFC.
 
 A signed descriptor travels inside an envelope, so readers verify the exact bytes the operator signed and never
 re-encode JSON to check a signature:
@@ -386,11 +356,12 @@ type Envelope = {
 };
 ```
 
-- The signature is pure Ed25519 (RFC 8032) over the ASCII bytes of `trinity-stack/descriptor/v1`, with no separator,
-  followed by the decoded payload bytes. Readers MUST verify strictly: they reject `S` not below the group order `L`, a
-  non-canonical encoding of the public key `A` or of `R`, and a small-order `A` or `R`, and they use the cofactorless
-  equation, as ed25519-dalek's `verify_strict` does. `signature` is 64 bytes in lowercase 0x-prefixed hex. The prefix
-  keeps a descriptor signature from being valid as any other signed message.
+- The signature is pure Ed25519 (RFC 8032) over the ASCII bytes of `trinity-stack/descriptor/v<$v>`, which is
+  `trinity-stack/descriptor/v1` for this format, with no separator, followed by the decoded payload bytes. Readers MUST
+  verify strictly: they reject `S` not below the group order `L`, a non-canonical encoding of the public key `A` or of
+  `R`, and a small-order `A` or `R`, and they use the cofactorless equation, as ed25519-dalek's `verify_strict` does.
+  `signature` is 64 bytes in lowercase 0x-prefixed hex. The prefix keeps a descriptor signature from being valid as any
+  other signed message.
 - A document with a `payload` member is an envelope, and any other document is a plain descriptor. A reader MUST refuse
   an envelope whose payload `$v` differs from the envelope's `$v`.
 - A pointer with a `key` MUST accept only an envelope that verifies against it. A reader MUST NOT fall back to a plain
@@ -433,7 +404,8 @@ same descriptors. [Appendix B](#appendix-b-changes-per-tool) lists what changes 
 
 A reference implementation, which is informative, will come with the conformance vectors: a TypeScript library and CLI
 that build a descriptor from one model, render each format from it, validate, sign, and print a pointer's link and QR
-code, and a Rust parser in the host core. Operators and tools may use it or their own.
+code, and a Rust parser in the host core. Its CLI defaults `sequence` to the publish time in seconds. Operators and
+tools may use it or their own.
 
 ## Drawbacks
 
@@ -445,7 +417,8 @@ code, and a Rust parser in the host core. Operators and tools may use it or thei
 ## Security
 
 - **Replay and rollback.** The sequence rule refuses an older signed descriptor for the same stack, and the signing
-  prefix keeps a descriptor signature from standing in for any other signed message.
+  prefix keeps a descriptor signature from standing in for any other signed message. A reader that stores no `sequence`,
+  such as a one-off tool run, can be served an older signed copy. `validUntil` with regular republishing limits that.
 - **Downgrade.** A keyed pointer never accepts a plain descriptor.
 - **Key reuse.** A key that signs two stacks lets one be swapped for the other, which is why one key signs one stack.
 - **Stolen keys.** A stolen key can point its stack at other chains and services, or publish the highest possible
