@@ -46,14 +46,17 @@ class ExpandedProductPageTest {
         FakeSession().also { opened += Triple(url, scope, it) }
     }
 
+    // The product is named by the card it was opened for, since a screen drawn for any other card
+    // must leave its one WebView alone.
     @Test
-    fun `opening a card hosts its product and hands the session to the screen`() = runTest {
+    fun `opening a card hosts its product and hands it to that card's screen`() = runTest {
         val page = page(screenScope())
 
         page.open("https://game.dot?card=loyalty")
 
         assertEquals(listOf("https://game.dot?card=loyalty"), opened.map { it.first })
-        assertTrue(page.session.value is FakeSession)
+        assertEquals("https://game.dot?card=loyalty", page.shown.value?.url)
+        assertTrue(page.shown.value?.session is FakeSession)
     }
 
     // The product costs a WebView and a page load to build, and a user who looks at a card usually
@@ -65,7 +68,7 @@ class ExpandedProductPageTest {
 
         page.close()
 
-        assertNull(page.session.value)
+        assertNull(page.shown.value)
         assertTrue(opened.single().second.isActive)
         assertEquals(1, sessions.single().paused)
     }
@@ -79,7 +82,7 @@ class ExpandedProductPageTest {
         page.open("https://game.dot?card=loyalty")
 
         assertEquals(1, opened.size)
-        assertEquals(sessions.single(), page.session.value)
+        assertEquals(sessions.single(), page.shown.value?.session)
         assertEquals(1, sessions.single().resumed)
     }
 
@@ -94,7 +97,7 @@ class ExpandedProductPageTest {
         page.showIfHeld("https://game.dot?card=loyalty")
 
         assertEquals(1, opened.size)
-        assertEquals(sessions.single(), page.session.value)
+        assertEquals(sessions.single(), page.shown.value?.session)
         assertEquals(1, sessions.single().resumed)
     }
 
@@ -110,7 +113,7 @@ class ExpandedProductPageTest {
 
         assertEquals(1, opened.size)
         assertTrue(opened.single().second.isActive)
-        assertNull(page.session.value)
+        assertNull(page.shown.value)
     }
 
     // Only one product is ever held, so a second card cannot leave the first one's WebView behind.
@@ -160,7 +163,7 @@ class ExpandedProductPageTest {
         page.close()
 
         assertTrue(opened.isEmpty())
-        assertNull(page.session.value)
+        assertNull(page.shown.value)
     }
 
     @Test
@@ -198,7 +201,7 @@ class ExpandedProductPageTest {
         page.release()
 
         assertFalse(opened.single().second.isActive)
-        assertNull(page.session.value)
+        assertNull(page.shown.value)
     }
 
     @Test

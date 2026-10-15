@@ -44,6 +44,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.Produ
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ShownProduct
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalNavAnimatedVisibilityScope
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -64,7 +65,7 @@ fun ProductPocketCardDetails(
     modifier: Modifier = Modifier,
     card: PocketCardUiModel.ProductCard,
     bindings: ProductFaceBindings,
-    session: SpaHostSession?,
+    shownProduct: ShownProduct?,
     openingFaceShown: Boolean?,
     cardIndex: Int,
     onSettled: () -> Unit,
@@ -74,6 +75,9 @@ fun ProductPocketCardDetails(
 
     val fold = rememberExpandedCardFoldState()
 
+    // One WebView per product: a screen still drawn for another card must not take it.
+    val session = shownProduct?.takeIf { it.url == card.key.launchUrl() }?.session
+
     // A product not held yet is asked for only once the card has arrived, so its WebView is not built
     // while the card is still travelling. The fold starts after the arrival, so the shared-element
     // transition lands on the card's real bounds; showFace returns as the fold starts, so the page is
@@ -81,10 +85,11 @@ fun ProductPocketCardDetails(
     // has pulled back.
     val arrival = LocalNavAnimatedVisibilityScope.current?.transition
     val arrived = arrival == null || arrival.currentState == EnterExitState.Visible
+    val leaving = arrival?.targetState == EnterExitState.PostExit
     var openingFaceApplied by rememberSaveable { mutableStateOf(false) }
-    var settled by remember { mutableStateOf(false) }
-    LaunchedEffect(arrived, openingFaceShown) {
-        if (!arrived || openingFaceShown == null) return@LaunchedEffect
+    var settled by remember(leaving) { mutableStateOf(false) }
+    LaunchedEffect(arrived, openingFaceShown, leaving) {
+        if (leaving || !arrived || openingFaceShown == null) return@LaunchedEffect
 
         if (!openingFaceApplied) {
             if (!openingFaceShown) fold.showFace(false)
@@ -97,7 +102,6 @@ fun ProductPocketCardDetails(
     // A card being left stays composed while it fades out, and the next card's requests are for that
     // card's fold alone. A held product's requests wait for its card to settle, so the fold never
     // starts mid-flight.
-    val leaving = arrival?.targetState == EnterExitState.PostExit
     LaunchedEffect(session, fold, leaving) {
         if (leaving) return@LaunchedEffect
         session?.faceShownRequests?.collect { request ->
@@ -140,10 +144,9 @@ fun ProductPocketCardDetails(
             VerticalSpacer { mediumIncreased }
         }
 
-        // One WebView per product: a card being left must not take it from the card arriving.
         ExpandedProductContent(
             modifier = Modifier.fillMaxSize(),
-            session = session.takeUnless { leaving },
+            session = session,
             showLoading = slowToOpen,
         )
     }
@@ -198,10 +201,9 @@ private fun ExpandedProductContent(
     val loadProgress by (session?.loadProgress ?: noProgressYet).collectAsStateWithLifecycle()
     val webView by (session?.webView ?: noWebViewYet).collectAsStateWithLifecycle()
 
-    // Once the product has painted once it owns the space; its own navigations must not blank it.
-    var productShowing by remember(session) {
-        mutableStateOf(session?.loadProgress?.value == DotNsLoadProgress.Completed)
-    }
+    // Once the product has painted once it owns the space; its own navigations must not blank it, and
+    // the screen closing over it must not bring a spinner.
+    var productShowing by remember { mutableStateOf(session?.loadProgress?.value == DotNsLoadProgress.Completed) }
     LaunchedEffect(loadProgress) {
         if (loadProgress == DotNsLoadProgress.Completed) productShowing = true
     }

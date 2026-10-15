@@ -23,11 +23,13 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHo
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ShownProduct
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalNavAnimatedVisibilityScope
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -52,21 +54,23 @@ class ProductPocketCardDetailsLoadingTest {
         override fun resumeConnections() = Unit
     }
 
+    private val card = PocketCardUiModel.ProductCard(
+        key = PocketCardKey(ProductId.fromStoredValue("pocketdemo.dot"), PocketCardId("loyalty")),
+        title = "Loyalty",
+        pinned = false,
+    )
+
     @Composable
-    private fun Details(session: SpaHostSession?) {
+    private fun Details(session: SpaHostSession?, openedFor: String = card.key.launchUrl()) {
         PolkadotTheme(theme = PolkadotAppTheme.BerlinNight) {
             ProductPocketCardDetails(
-                card = PocketCardUiModel.ProductCard(
-                    key = PocketCardKey(ProductId.fromStoredValue("pocketdemo.dot"), PocketCardId("loyalty")),
-                    title = "Loyalty",
-                    pinned = false,
-                ),
+                card = card,
                 bindings = ProductFaceBindings(
                     face = MutableStateFlow(null),
                     onFaceAction = { _, _ -> },
                     imageResolver = JsImageResolver { null },
                 ),
-                session = session,
+                shownProduct = session?.let { ShownProduct(openedFor, it) },
                 openingFaceShown = true,
                 cardIndex = 0,
                 onSettled = {},
@@ -90,28 +94,57 @@ class ProductPocketCardDetailsLoadingTest {
         compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertExists()
     }
 
-    // There is one WebView per product, and showing it takes it from wherever it was. A screen fading
-    // out while the next card arrives over the same product would take that card's page away.
+    // A card being closed has nothing more to load, so a spinner on its way out is only noise.
     @Test
-    fun aScreenBeingClosedShowsNeitherThePageNorTheSpinner() {
-        val session = FakeSession(DotNsLoadProgress.Completed)
+    fun aScreenBeingClosedShowsNoSpinner() {
         var shown by mutableStateOf(true)
         compose.mainClock.autoAdvance = false
         compose.setContent {
             AnimatedVisibility(visible = shown) {
-                CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) { Details(session) }
+                CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) { Details(session = null) }
             }
         }
         compose.mainClock.advanceTimeBy(2_000)
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_PAGE).assertExists()
+        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertExists()
 
         shown = false
         compose.mainClock.advanceTimeByFrame()
         compose.mainClock.advanceTimeByFrame()
 
         compose.onNodeWithTag(PocketTestTags.PRODUCT_CARD).assertExists()
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_PAGE).assertDoesNotExist()
         compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertDoesNotExist()
+    }
+
+    // Closing a card takes its product away a frame before the screen learns it is closing. A screen
+    // that has shown its product has nothing left to load, so that frame must not bring a spinner.
+    @Test
+    fun aScreenWhoseProductGoesAwayShowsNoSpinner() {
+        var session by mutableStateOf<SpaHostSession?>(FakeSession(DotNsLoadProgress.Completed))
+        compose.mainClock.autoAdvance = false
+        compose.setContent { Details(session) }
+        compose.mainClock.advanceTimeBy(2_000)
+        compose.onNodeWithTag(PocketTestTags.PRODUCT_PAGE).assertExists()
+
+        session = null
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeByFrame()
+
+        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertDoesNotExist()
+    }
+
+    // There is one WebView per product, and showing it takes it from wherever it was. A screen still
+    // drawn for another card, on its way out or not yet told it is, would take that card's page and
+    // answer its requests with its own fold.
+    @Test
+    fun aScreenNeverTakesAPageOpenedForAnotherCard() {
+        val session = FakeSession(DotNsLoadProgress.Completed)
+        compose.mainClock.autoAdvance = false
+        compose.setContent { Details(session, openedFor = "https://shop.dot?card=points") }
+
+        compose.mainClock.advanceTimeBy(2_000)
+
+        compose.onNodeWithTag(PocketTestTags.PRODUCT_PAGE).assertDoesNotExist()
+        assertEquals(0, session.faceRequests.subscriptionCount.value)
     }
 
     // A card tapped again while it fades out gets its fading screen back rather than a new one. The
@@ -134,8 +167,10 @@ class ProductPocketCardDetailsLoadingTest {
         shown = true
         compose.mainClock.advanceTimeByFrame()
         compose.mainClock.advanceTimeByFrame()
-
         compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertDoesNotExist()
+
+        compose.mainClock.advanceTimeBy(1_600)
+        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertExists()
     }
 
     // A product opened again is on screen while its card is still moving. Its requests to fold the
@@ -163,6 +198,6 @@ class ProductPocketCardDetailsLoadingTest {
 
         compose.mainClock.advanceTimeBy(2_000)
         compose.waitForIdle()
-        assertEquals(FaceShownAnswer.APPLIED, reply.getCompleted())
+        assertEquals(FaceShownAnswer.APPLIED, runBlocking { reply.await() })
     }
 }

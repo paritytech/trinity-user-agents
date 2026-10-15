@@ -187,7 +187,7 @@ class PocketViewModelTest {
         advanceUntilIdle()
 
         assertTrue("the card came back selected", viewModel.state.value is PocketScreenState.List)
-        assertNull(viewModel.expandedProductSession.value)
+        assertNull(viewModel.shownProduct.value)
     }
 
     /**
@@ -317,14 +317,14 @@ class PocketViewModelTest {
         viewModel.selectCard(openCard)
         viewModel.hostExpandedProduct(openCard)
         advanceUntilIdle()
-        assertNotNull(viewModel.expandedProductSession.value)
+        assertNotNull(viewModel.shownProduct.value)
 
         cardOpenRequests.request(linked.key)
         advanceUntilIdle()
 
         val shown = viewModel.state.value as PocketScreenState.CardDetails
         assertEquals("product_card:game.dot:stamps", shown.selectedCard.id)
-        assertNull("the open card's page stayed under the linked one", viewModel.expandedProductSession.value)
+        assertNull("the open card's page stayed under the linked one", viewModel.shownProduct.value)
     }
 
     // Closing a card a link opened goes back to the list, not to whatever was up when the link came.
@@ -410,7 +410,7 @@ class PocketViewModelTest {
 
         viewModel.hostExpandedProduct(leftCard)
 
-        assertNull(viewModel.expandedProductSession.value)
+        assertNull(viewModel.shownProduct.value)
     }
 
     // A card opened again rides up with the product it left, so the space under the moving card is
@@ -426,32 +426,8 @@ class PocketViewModelTest {
 
         viewModel.selectCard(card)
 
-        assertNotNull(viewModel.expandedProductSession.value)
+        assertNotNull(viewModel.shownProduct.value)
     }
-
-    // A link can switch cards while one is open, and that card's screen is still drawn, not yet
-    // leaving, until the screen state catches up. A page handed over at once could land under it.
-    @Test
-    fun `a link to a card with a held product switches to it before handing the product over`() =
-        runTest(testDispatcher) {
-            val held = productCard("loyalty")
-            val open = productCard("stamps")
-            whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(held, open)))
-            val viewModel = createViewModel()
-            val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
-            val heldCard = cards.single { it.title == held.title }
-            viewModel.selectCard(heldCard)
-            viewModel.hostExpandedProduct(heldCard)
-            viewModel.dismissCard()
-            viewModel.selectCard(cards.single { it.title == open.title })
-
-            cardOpenRequests.request(held.key)
-            advanceUntilIdle()
-
-            assertNull(viewModel.expandedProductSession.value)
-            viewModel.hostExpandedProduct(heldCard)
-            assertNotNull(viewModel.expandedProductSession.value)
-        }
 
     // Building a WebView while the card is still moving starves the animation.
     @Test
@@ -462,9 +438,9 @@ class PocketViewModelTest {
 
         viewModel.selectCard(card)
         advanceUntilIdle()
-        assertNull(viewModel.expandedProductSession.value)
+        assertNull(viewModel.shownProduct.value)
 
         viewModel.hostExpandedProduct(card)
-        assertNotNull(viewModel.expandedProductSession.value)
+        assertNotNull(viewModel.shownProduct.value)
     }
 }
