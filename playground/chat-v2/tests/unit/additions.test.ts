@@ -306,3 +306,46 @@ describe("media from the user", () => {
     ]);
   });
 });
+
+describe("/search", () => {
+  /** Send a command in `source` as the host does: a user action. */
+  async function sourceCommand(running: ReturnType<typeof start>, text: string) {
+    await running.product.ready;
+    const { outcome } = running.fake.ask("user_action", {
+      roomId: "source",
+      action: { tag: "NewMessage", value: { body: { tag: "Text", value: { text } } } },
+    });
+    await outcome;
+    await running.product.idle();
+  }
+
+  test("declares search and pages the stored messages, or answers NotAvailable (S62)", async () => {
+    const running = start();
+    await sourceCommand(running, "/history 30");
+    await sourceCommand(running, "/search on");
+    expect((running.fake.callsOf("setRoomFeatures") as HostChatSetRoomFeaturesRequest[]).at(-1)).toEqual({
+      roomId: "source",
+      features: { preimageAttachments: false, search: true, readAloud: false },
+    });
+
+    const found = await running.fake.ask("search_query", { roomId: "source", text: "message 0001", pageSize: 3 }).outcome;
+    expect((found.item as { hits: { messageId: string }[] }).hits.map((hit) => hit.messageId)).toEqual([
+      "source-h-00019",
+      "source-h-00018",
+      "source-h-00017",
+    ]);
+    expect((found.item as { next?: string }).next).toBe("16");
+
+    await sourceCommand(running, "/search na");
+    const na = await running.fake.ask("search_query", { roomId: "source", text: "message", pageSize: 3 }).outcome;
+    expect(na.interrupt).toEqual({ tag: "Domain", value: { tag: "V1", value: { tag: "NotAvailable" } } });
+    // `na` keeps search declared.
+    expect((running.fake.callsOf("setRoomFeatures") as HostChatSetRoomFeaturesRequest[]).at(-1)?.features.search).toBe(true);
+  });
+
+  test("runs only in the room the product keeps", async () => {
+    const running = start();
+    await command(running, "/search on");
+    expect(posted(running.fake)).toEqual(["error /search on: only in source"]);
+  });
+});

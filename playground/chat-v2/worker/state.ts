@@ -10,6 +10,7 @@ import { emptyStoreSnapshot, type StoreSnapshot } from "./store";
 
 export type MenuMode = "none" | "custom" | "extend" | "hide-edit";
 export type ReactionsMode = "on" | "na" | "off";
+export type SearchMode = "on" | "na" | "off";
 
 /** The current setting of each command, for one room. */
 export interface RoomSettings {
@@ -31,6 +32,8 @@ export interface RoomSettings {
   reactionBook: Record<string, ChatReactionDetail[]>;
   /** The optional features `/features` declared last. */
   features: ChatRoomFeatures;
+  /** How the product answers `search_query`: `na` interrupts `NotAvailable`. */
+  search: SearchMode;
 }
 
 /** The one-shot failures of `/fail`. */
@@ -69,6 +72,7 @@ export function roomSettings(room: RoomId): RoomSettings {
     echoMessages: [],
     reactionBook: {},
     features: defaultFeatures(),
+    search: "off",
   };
 }
 
@@ -113,7 +117,10 @@ export function decodeState(text: string): ProductState {
   }
   const state = value as ProductState;
   // A state saved before `/features` existed has no features: the default.
-  for (const settings of Object.values(state.rooms)) settings.features ??= defaultFeatures();
+  for (const settings of Object.values(state.rooms)) {
+    settings.features ??= defaultFeatures();
+    settings.search ??= settings.features.search ? "on" : "off";
+  }
   return state;
 }
 

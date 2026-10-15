@@ -180,6 +180,28 @@ export class SourceStore {
     return { messages: this.#range(start, end), ...(end < total ? { next: String(end) } : {}) };
   }
 
+  /**
+   * The messages whose text holds `text`, case ignored, newest first. A
+   * cursor is the slot where the next page starts, going older.
+   */
+  search(text: string, cursor: string | undefined, pageSize: number): Page {
+    const needle = text.toLowerCase();
+    const size = Math.max(1, Math.min(pageSize, MAX_PAGE_SIZE));
+    const total = this.slotCount;
+    let slot = (cursor === undefined ? total : parseCursor(cursor, total)) - 1;
+    const messages: ChatMessage[] = [];
+    for (; slot >= 0 && messages.length < size; slot--) {
+      const stored = this.#at(slot);
+      if (stored && searchableText(stored.message.body).toLowerCase().includes(needle)) messages.push(present(stored));
+    }
+    let more = false;
+    for (let rest = slot; rest >= 0 && !more; rest--) {
+      const stored = this.#at(rest);
+      more = !!stored && searchableText(stored.message.body).toLowerCase().includes(needle);
+    }
+    return { messages, ...(more ? { next: String(slot + 1) } : {}) };
+  }
+
   #range(start: number, end: number): ChatMessage[] {
     const out: ChatMessage[] = [];
     for (let slot = start; slot < end; slot++) {
@@ -229,6 +251,19 @@ export class SourceStore {
     } else {
       change(current);
     }
+  }
+}
+
+/** The text a search looks in: the text of a body, or the preview of a custom one. */
+function searchableText(body: ChatMessageBody): string {
+  switch (body.tag) {
+    case "Text":
+      return body.value.text;
+    case "RichText":
+    case "Actions":
+      return body.value.text ?? "";
+    case "Custom":
+      return body.value.previewText ?? "";
   }
 }
 

@@ -12,7 +12,8 @@ export type QueryName =
   | "reactions_query"
   | "participants_query"
   | "message_actions_query"
-  | "participant_actions_query";
+  | "participant_actions_query"
+  | "search_query";
 
 export type LogVia =
   | "action_subscribe"

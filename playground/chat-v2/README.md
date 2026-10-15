@@ -89,7 +89,8 @@ At start the Worker does, in order, before its first `await` (the state load sta
 kept for a handler, which the client gives during the registration, waits for the state):
 
 1. Registers a handler for each of the six queries (`messages_query`, `user_action`, `reactions_query`,
-   `participants_query`, `message_actions_query`, `participant_actions_query`) and `Renderer::render`.
+   `participants_query`, `message_actions_query`, `participant_actions_query`), for `search_query` of the
+   additions, and for `Renderer::render`.
 2. Opens `Chat::action_subscribe`, `Renderer::action_subscribe` and `Chat::room_events_subscribe`. The last one logs
    each item with `via: "room_events"`; a host before the [additions](../../docs/rfcs/chat-extension-v2-additions.md)
    refuses it, and the product works on without it.
@@ -232,7 +233,7 @@ on (S52).
 | `/bot typing <id>`                         | P10.6 | `set_room_activity` with `{ text: "Sample is typing", participant_id: "bot:<id>" }`; `/activity off` clears it                                                       | S53              | Implemented |
 | `/notify [<seconds>]`                      | P10.10 | `send_push_notification` with `text: "Sample notification from <room>"` and the room link `polkadot://<product>/-/chat/<room>` as deeplink, now or with `scheduled_at` `<seconds>` (up to 86400) from now; the host shows nothing for an immediate one into a muted room. `UserStateChanged` is logged, and with `/echo` answered `echo UserStateChanged muted=<none\|forever\|ms> archived=<bool>` | S54 to S56       | Implemented |
 | `/features preimage on`                    | P10.3 | As above. The Worker logs each media item of a user message with `via: "media"`, `kind` the item kind and `data.line` `<kind> <size> <Inline\|Preimage>` (the size from `ChatMediaMeta.size_bytes`), and with `/echo` answers `echo media <kind> <size> <resource kind>`. It reads a `Preimage` item back with `Preimage::lookup_subscribe` and logs `via: "preimage"`, `kind: "Fetched"` with the size it got, or `NotFetched` after 10 s | S57 to S60, B7   | Implemented |
-| `/search on\|na\|off`                    | P10.5 | `set_room_features { search }`; `na` keeps it declared and interrupts `NotAvailable`; `search_query` pages the stored messages newest first with the cursor `<index>` | S61 to S63, B8   | Planned     |
+| `/search on\|na\|off` (`source` only)      | P10.5 | `set_room_features` with `search` set (`on`, `na`) or cleared (`off`), the other features as last declared; `search_query` answers the stored messages whose text holds the typed text, case ignored, newest first, at most `page_size`, with the cursor `<slot>` where the next page starts; `na` keeps `search` declared and interrupts `NotAvailable` | S61 to S63, B8   | Implemented |
 | `/thread <id>`                             | P10.9 | Creates `thread-<room>-<id>` with `thread_of`, posts three replies from `p1`, `p2` and `bot:helper` when present, and sets the summary of the root                    | S64              | Planned     |
 | `/menu thread`                             | P10.9 | Adds `act-thread` "Reply in thread" to the message menu                                                                                                               | S64              | Planned     |
 | `/branches <id> <n>`                       | P10.9 | `set_message_meta` with `branch: { 1, n }`; answers `BranchSelected` with `Edited` "Branch i of n" and the new position                                              | S65              | Planned     |

@@ -257,3 +257,51 @@ suite("preimage attachments on the test host", () => {
     expect(running.log().filter((line) => line.via === "media")).toEqual([]);
   });
 });
+
+suite("search on the test host", () => {
+  test("S62: a room the product keeps pages search_query hits; na shows not available; off shows no search", async () => {
+    const running = await start();
+    const { host } = running;
+    await host.chatUser.open("source");
+    await host.chatUser.send("source", "/history 30");
+    await until(() => running.product.store.messages().length === 30, "the history");
+    await host.chatUser.send("source", "/search on");
+    await waitForText(host, "source", "ok /search on");
+
+    const first = await host.chatUser.search("source", "Message 0001");
+    expect(first?.hits.map((hit) => hit.messageId)).toEqual([
+      "source-h-00019",
+      "source-h-00018",
+      "source-h-00017",
+      "source-h-00016",
+      "source-h-00015",
+      "source-h-00014",
+      "source-h-00013",
+      "source-h-00012",
+      "source-h-00011",
+      "source-h-00010",
+    ]);
+    expect(first?.next).toBeUndefined();
+    expect(running.log().filter((line) => line.via === "search_query")).toHaveLength(1);
+
+    await host.chatUser.send("source", "/search na");
+    await waitForText(host, "source", "ok /search na");
+    expect(await host.chatUser.search("source", "message")).toBeUndefined();
+    await host.chatUser.send("source", "/search off");
+    await waitForText(host, "source", "ok /search off");
+    const asked = running.log().filter((line) => line.via === "search_query").length;
+    expect(await host.chatUser.search("source", "message")).toBeUndefined();
+    // Without `search` the host shows no search and asks nothing.
+    expect(running.log().filter((line) => line.via === "search_query")).toHaveLength(asked);
+  });
+
+  test("S61: the host searches a room it stores itself, case ignored, and asks the product nothing", async () => {
+    const running = await start();
+    const { host } = running;
+    await host.chatUser.send("host", "/post text");
+    await waitForText(host, "host", /^Plain text message/);
+    const found = await host.chatUser.search("host", "PLAIN TEXT");
+    expect(found?.hits.map((hit) => hit.body.tag === "Text" && hit.body.value.text.startsWith("Plain text"))).toEqual([true]);
+    expect(running.log().filter((line) => line.via === "search_query")).toEqual([]);
+  });
+});

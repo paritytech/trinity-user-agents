@@ -40,7 +40,7 @@ import {
 } from "./fixtures";
 import { splitGraphemes } from "./graphemes";
 import { roomLink } from "./links";
-import type { MenuMode, ReactionsMode } from "./state";
+import type { MenuMode, ReactionsMode, SearchMode } from "./state";
 
 /** The interval between two `/stream` edits: 20 edits a second. */
 export const STREAM_INTERVAL_MS = 50;
@@ -167,6 +167,7 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
   features: runFeatures,
   bot: runBot,
   notify: runNotify,
+  search: runSearch,
 };
 
 /** The names of the commands this module runs, for the tests. */
@@ -454,6 +455,21 @@ async function runBot(ctx: ProductContext, room: RoomId, command: ParsedCommand)
     default:
       throw usage(command, hint);
   }
+}
+
+/**
+ * `/search on|na|off`: declare `search` in the features of the room, and
+ * answer `search_query` from the stored messages (`on`) or with
+ * `NotAvailable` (`na`, which keeps `search` declared).
+ */
+async function runSearch(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const modes: readonly SearchMode[] = ["on", "na", "off"];
+  const mode = modes.find((candidate) => candidate === command.args[0]);
+  if (!mode || command.args.length !== 1) throw usage(command, modes.join("|"));
+  const features: ChatRoomFeatures = { ...ctx.settings(room).features, search: mode !== "off" };
+  await call("set_room_features", ctx.chat.setRoomFeatures({ roomId: room, features }));
+  ctx.settings(room).features = features;
+  ctx.settings(room).search = mode;
 }
 
 /** The text of the notification `/notify` sends from `room`. */

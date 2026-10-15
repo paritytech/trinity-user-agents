@@ -13,6 +13,8 @@ import type {
   ProductChatQueryError,
   ProductChatReactionsQueryItem,
   ProductChatReactionsQueryRequest,
+  ProductChatSearchQueryItem,
+  ProductChatSearchQueryRequest,
 } from "@parity/truapi";
 import type { RoomId } from "./clock";
 import {
@@ -139,6 +141,23 @@ export function answerMessageActions(
       // The host asks only after `/deeplink` turned the menu on: answer the
       // host's own menu.
       return { ok: { menu: { tag: "ExtendBuiltIn", value: { actions: [], hidden: [] } } } };
+  }
+}
+
+/** The page of `search_query`: newest first, with the cursor `<index>`. */
+export function answerSearch(
+  context: QueryContext,
+  request: ProductChatSearchQueryRequest,
+): Answer<ProductChatSearchQueryItem> {
+  if (request.roomId !== "source") return UNKNOWN_ROOM;
+  const settings = context.rooms.source;
+  if (!settings.features.search || settings.search === "na") return NOT_AVAILABLE;
+  try {
+    const page = context.store.search(request.text, request.cursor, request.pageSize);
+    return { ok: { hits: page.messages, ...(page.next === undefined ? {} : { next: page.next }) } };
+  } catch (error) {
+    if (error instanceof StoreError) return unknown(error.message);
+    throw error;
   }
 }
 

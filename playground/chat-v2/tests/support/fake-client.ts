@@ -129,6 +129,7 @@ export function createFakeClient(options: FakeClientOptions = {}) {
       roomEventsSubscribe: () => roomEvents.observable,
       onMessagesQuery: register("messages_query"),
       onUserAction: register("user_action"),
+      onSearchQuery: register("search_query"),
       onReactionsQuery: register("reactions_query"),
       onParticipantsQuery: register("participants_query"),
       onMessageActionsQuery: register("message_actions_query"),

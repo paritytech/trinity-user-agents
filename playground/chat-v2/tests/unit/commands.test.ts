@@ -71,8 +71,8 @@ describe("the command table", () => {
     expect(help).toContain("`<id> <text>`");
   });
 
-  test("history is the only source-only command", () => {
-    expect(COMMANDS.filter((c) => c.rooms !== "both").map((c) => c.name)).toEqual(["history"]);
+  test("search and history are the only source-only commands", () => {
+    expect(COMMANDS.filter((c) => c.rooms !== "both").map((c) => c.name)).toEqual(["search", "history"]);
     expect(findCommand("history")?.posts).toBe(true);
     expect(findCommand("meta")?.posts).toBe(false);
   });

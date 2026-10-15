@@ -47,6 +47,7 @@ import {
   answerParticipantActions,
   answerParticipants,
   answerReactions,
+  answerSearch,
   knownRoom,
   type Answer,
   type QueryContext,
@@ -236,7 +237,8 @@ export class SampleProduct {
     //    during the registration, and that handler waits for `ready`, so
     //    `ready` exists before the first handler does.
     this.ready = this.#load();
-    // 1. The handlers, before the first `await`, so no query is lost.
+    // 1. The handlers, before the first `await`, so no query is lost. A host
+    //    before the Chat additions never asks `search_query`.
     this.#registerQueries();
     this.#client.renderer.onRender((request, send, interrupt) => this.#render(request, send, interrupt));
     // 2. The subscriptions.
@@ -470,6 +472,11 @@ export class SampleProduct {
       this.#query("participant_actions_query", request.roomId, "ParticipantActions", request, send, interrupt, () =>
         answerParticipantActions(this.#queryContext(), request),
       (item) => item.menu.tag),
+    );
+    chat.onSearchQuery((request, send, interrupt) =>
+      this.#query("search_query", request.roomId, "Search", request, send, interrupt, () =>
+        answerSearch(this.#queryContext(), request),
+      () => "Hits"),
     );
     chat.onUserAction((request, send, interrupt) => this.#userAction(request, send, interrupt));
   }
