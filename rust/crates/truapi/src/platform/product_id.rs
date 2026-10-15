@@ -3,6 +3,7 @@
 use parity_scale_codec::{Decode, Encode};
 
 use super::{CoreStorageKey, RuntimeConfigValidationError, has_dotns_tld, require_non_empty};
+use crate::host_logic::dotns_gateway::is_dns_label;
 
 /// Largest accepted product identifier, in bytes.
 ///
@@ -26,9 +27,6 @@ const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
 
 /// The start of a development product identifier that names a port.
 const LOCALHOST_PORT_PREFIX: &str = "localhost:";
-
-/// Longest label dotNS registers, the DNS limit.
-const DOTNS_LABEL_MAX_BYTES: usize = 63;
 
 /// A product identifier in normalized form: trimmed, lowercased, and either a
 /// name dotNS can register or a localhost development identifier.
@@ -235,17 +233,7 @@ fn has_well_formed_labels(normalized: &str) -> bool {
 	if normalized == LOCALHOST_PRODUCT_LABEL || normalized.starts_with(LOCALHOST_PORT_PREFIX) {
 		return is_localhost_form(normalized);
 	}
-	normalized.split('.').all(is_dotns_label)
-}
-
-/// A label dotNS can register, as [`has_well_formed_labels`] describes.
-fn is_dotns_label(label: &str) -> bool {
-	(1..=DOTNS_LABEL_MAX_BYTES).contains(&label.len()) &&
-		!label.starts_with('-') &&
-		!label.ends_with('-') &&
-		label
-			.bytes()
-			.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+	normalized.split('.').all(is_dns_label)
 }
 
 #[cfg(test)]
@@ -395,7 +383,7 @@ mod tests {
 
 	#[test]
 	fn only_a_name_dotns_can_register_is_an_identifier() {
-		let longest_label = "a".repeat(DOTNS_LABEL_MAX_BYTES);
+		let longest_label = "a".repeat(63);
 		for id in ["Dim2.DOT", "dim2-two.dot", "0x.dot", &format!("{longest_label}.dot")] {
 			assert!(ProductId::parse(id).is_ok(), "{id:?} is a name dotNS can register");
 		}
@@ -418,7 +406,7 @@ mod tests {
 	fn an_overlong_product_id_is_not_an_identifier() {
 		// Every label is well formed, so without the cap any length would be
 		// a valid, distinct cache key taken from the wire.
-		let full_label = "a".repeat(DOTNS_LABEL_MAX_BYTES);
+		let full_label = "a".repeat(63);
 		let at_cap = format!("{full_label}.{full_label}.{full_label}.{}.dot", "a".repeat(60));
 		assert_eq!(at_cap.len(), PRODUCT_ID_MAX_BYTES);
 		assert!(ProductId::parse(&at_cap).is_ok(), "an id exactly at the cap is still valid");
