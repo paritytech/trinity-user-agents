@@ -33,7 +33,10 @@ struct ChatExtensionV2RoomScenarioTests {
         let chat = try #require(try await fixture.storedChat("lobby"))
         #expect(chat.roomMetadata == Chat.RoomMetadata(chatRelativeId: "lobby", name: "Lobby", icon: icon))
         #expect(chat.roomDeclarations?.avatar == .inline(png))
-        #expect(chat.roomPolicy == .defaults)
+        // The core sets the configuration of a new room, and each `set_room_config` starts a generation (O9).
+        var defaults = ChatRoomPolicy.defaults
+        defaults.configGeneration = 1
+        #expect(chat.roomPolicy == defaults)
         #expect(try await bridge.roomConfig(roomId: "lobby") == .hostDefault)
         #expect(try await bridge.listRooms() == [ChatRoom(roomId: "lobby", participatingAs: .roomHost)])
     }
@@ -97,7 +100,9 @@ struct ChatExtensionV2RoomScenarioTests {
 
         let chat = try #require(try await fixture.storedChat("lobby"))
         #expect(chat.roomDeclarations?.preview == previewCase.stored)
-        #expect(chat.roomPolicy == ChatRoomPolicy(footer: nil, preview: previewCase.stored))
+        var expected = ChatRoomPolicy(footer: nil, preview: previewCase.stored)
+        expected.configGeneration = 1
+        #expect(chat.roomPolicy == expected)
     }
 
     @Test func s4ThePolicyShowsEachPreviewValue() async throws {

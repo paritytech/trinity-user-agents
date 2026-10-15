@@ -1043,15 +1043,10 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
       phases: [
         {
           // The room asks the count when it opens and when its
-          // configuration changes. `/participants` keeps the configuration
-          // when the room declares participants already, so the room opens
-          // again.
-          steps: [
-            "/participants 6",
-            { host: "list" },
-            { host: "open" },
-            { wait: 1_000 },
-          ],
+          // configuration generation changes. Each `set_room_config` starts a
+          // new generation (02-DESIGN §8.2, O9), also when `/participants`
+          // keeps the configuration, so the open room asks again.
+          steps: ["/participants 6", { wait: 1_000 }],
           expect: [
             { ui: "header", match: "^10 participants$" },
             { ui: "author-p1", match: "Person #1" },
@@ -1239,13 +1234,22 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     drive: {
       // The first phase opens the room screen, and then no step opens it
       // again. Each `set_room_config` writes a new generation, and the open
-      // screen draws the new policy.
+      // screen draws the new policy. The last phase sends the same
+      // configuration again: the policy marker repeats only when its value
+      // changes, so a new marker is a new generation (O9).
       phases: [
         {
           steps: [{ host: "list" }, { host: "open" }, "/allowed 👍"],
           expect: [
             { console: "[e2e:ui] policy host generation=" },
             { ui: "allowed", match: "^👍$" },
+          ],
+        },
+        {
+          steps: ["/allowed"],
+          expect: [
+            { console: "[e2e:ui] policy host generation=" },
+            { ui: "allowed", match: "^all$" },
           ],
         },
         {

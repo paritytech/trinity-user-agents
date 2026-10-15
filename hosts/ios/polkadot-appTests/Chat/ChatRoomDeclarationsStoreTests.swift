@@ -7,7 +7,9 @@ import Testing
 struct ChatRoomDeclarationsStoreTests {
     private let fixture = ProductRoomFixture()
 
-    @Test func aConfigurationPersistsAndAChangeBumpsTheGeneration() async throws {
+    /// 02-DESIGN §8.2 (O9, PARITY row 1): each `set_room_config` starts a new generation, also with an unchanged
+    /// configuration, as on Android.
+    @Test func eachConfigurationPersistsAndStartsANewGeneration() async throws {
         try await createRoom()
 
         try await fixture.context.setRoomConfig(for: fixture.bot, roomId: "lobby", config: reportingSeen)
@@ -15,19 +17,22 @@ struct ChatRoomDeclarationsStoreTests {
 
         let declarations = try await fixture.context.roomDeclarations(for: fixture.bot, roomId: "lobby")
         #expect(declarations.config == reportingSeen)
-        #expect(declarations.configGeneration == 1)
+        #expect(declarations.configGeneration == 2)
     }
 
-    /// The core sets the default configuration on each new room, and that writes nothing.
-    @Test func theDefaultConfigurationOfANewRoomWritesNothing() async throws {
+    /// The core sets the configuration of each new room. The default configuration also starts a generation and
+    /// keeps the messages.
+    @Test func theDefaultConfigurationOfANewRoomStartsAGeneration() async throws {
         try await createRoom()
+        try await fixture.save(fixture.userMessage(.text("hello"), roomId: "lobby"))
 
         try await fixture.context.setRoomConfig(for: fixture.bot, roomId: "lobby", config: .hostDefault)
 
         let declarations = try await fixture.context.roomDeclarations(for: fixture.bot, roomId: "lobby")
-        #expect(declarations.config == nil)
-        #expect(declarations.configGeneration == 0)
+        #expect(declarations.config == .hostDefault)
+        #expect(declarations.configGeneration == 1)
         #expect(declarations.effectiveConfig == .hostDefault)
+        #expect(try await fixture.messages("lobby").count == 1)
     }
 
     /// 02-DESIGN §13 item 8: a change of the message store discards the messages that the host kept.
