@@ -37,6 +37,13 @@ class PermissionPromptViewModel @Inject constructor(
     private fun deliver(decision: PermissionDecision) {
         permissionContext?.deliver(decision)
     }
+
+    // The prompt left the screen for good: a navigation removed it, or the activity closed. With no answer, the
+    // request must not wait for a prompt that no longer shows.
+    override fun onCleared() {
+        permissionContext?.abandon()
+        super.onCleared()
+    }
 }
 
 private fun ProductPermissionContext.toUiState(): PermissionPromptUiState {

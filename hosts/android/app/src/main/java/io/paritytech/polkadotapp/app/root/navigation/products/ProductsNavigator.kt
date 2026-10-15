@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPay
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.PermissionPromptBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import javax.inject.Inject
 
 class ProductsNavigator @Inject constructor(
@@ -63,11 +64,21 @@ class ProductsNavigator @Inject constructor(
         )
     }
 
+    // A navigation does nothing with no activity, and it throws after the activity saved its state. The result tells
+    // the requester, which then does not wait for a prompt that never shows.
     override suspend fun openPermissionPrompt(requestId: String) = withContext(dispatchers.main) {
-        performNavigation(
-            R.id.action_global_to_permissionPromptBottomSheet,
-            bundleOf(PermissionPromptBottomSheet.REQUEST_ID to requestId),
-        )
+        try {
+            performNavigation(
+                R.id.action_global_to_permissionPromptBottomSheet,
+                bundleOf(PermissionPromptBottomSheet.REQUEST_ID to requestId),
+            )
+        } catch (error: IllegalStateException) {
+            Timber.w(error, "The permission prompt %s cannot show", requestId)
+            return@withContext false
+        }
+        val entry = navigationHolder.navController?.currentBackStackEntry
+        entry?.destination?.id == R.id.permissionPromptBottomSheet &&
+            entry.arguments?.getString(PermissionPromptBottomSheet.REQUEST_ID) == requestId
     }
 
     override suspend fun closePermissionPrompt(requestId: String?) = withContext(dispatchers.main) {
