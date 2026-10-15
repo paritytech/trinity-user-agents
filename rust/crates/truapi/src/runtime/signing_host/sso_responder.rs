@@ -953,14 +953,19 @@ pub async fn allocate_statement_store_allowance(
 	let _registration = signing_host.renewal.registration_lock().lock().await;
 
 	// Existing allocations need no proof or costly ring snapshot.
+	let signer = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
+	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
 	let scans = scan_collections(
 		rpc,
 		&chain.metadata,
-		&candidates,
-		&network_suffix,
-		period,
-		&target,
-		reuse_existing,
+		&signer,
+		&collections,
+		statement_allowance::CollectionScanParams {
+			network_suffix: &network_suffix,
+			period,
+			target: &target,
+			reuse_existing,
+		},
 	)
 	.await?;
 	if let Some((collection, seq)) = allocated_in(&scans) {
@@ -980,7 +985,8 @@ pub async fn allocate_statement_store_allowance(
 
 	// Every ring back to index 0, because a membership that stopped being
 	// re-included still proves against the ring that holds it.
-	let memberships = find_including_rings(rpc, &chain.metadata, &candidates, u32::MAX).await?;
+	let memberships =
+		find_including_rings(rpc, &chain.metadata, &signer, &collections, u32::MAX).await?;
 	if memberships.is_empty() {
 		return Err(AllowanceAllocationError::MissingPersonhoodMembership {
 			resource: "statement-store",
@@ -991,6 +997,7 @@ pub async fn allocate_statement_store_allowance(
 		rpc,
 		&chain.metadata,
 		&chain.state,
+		&signer,
 		&scans,
 		&memberships,
 		PooledRegistrationParams {
@@ -1088,11 +1095,13 @@ pub async fn allocate_bulletin_allowance(
 	let network_suffix = statement_allowance::slot::read_network_suffix(people_rpc).await?;
 	let candidates = signing_host.reserved_person_collection_candidates(session)?;
 	// Prefer light membership so switching collections cannot reset the person's budget.
+	let signer = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
+	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
 	let memberships =
-		find_including_rings(people_rpc, &chain.metadata, &candidates, u32::MAX).await?;
+		find_including_rings(people_rpc, &chain.metadata, &signer, &collections, u32::MAX).await?;
 	let membership = memberships
 		.iter()
-		.find(|membership| membership.collection() == PersonhoodCollection::LitePeople)
+		.find(|membership| membership.collection == PersonhoodCollection::LitePeople)
 		.or_else(|| memberships.first())
 		.ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "Bulletin" })?;
 	let period_duration =
@@ -1106,11 +1115,11 @@ pub async fn allocate_bulletin_allowance(
 		rpc: people_rpc,
 		metadata: &chain.metadata,
 		chain_state: &chain.state,
-		entropy: membership.entropy,
+		signer: &signer,
 		network_suffix: &network_suffix,
 		target: &target,
 		period,
-		ring: &membership.ring,
+		ring: membership,
 	})
 	.await?;
 	let statement_allowance::LongTermStorageOutcome::Claimed { block_hash, counter, ring_index } =
@@ -1212,11 +1221,14 @@ pub async fn allocate_smart_contract_allowance(
 
 	let candidates = signing_host.reserved_person_collection_candidates(session)?;
 	// A PGAS claim uses the strongest available membership.
-	let membership = find_including_rings(people_rpc, &people.metadata, &candidates, u32::MAX)
-		.await?
-		.into_iter()
-		.next()
-		.ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "PGAS" })?;
+	let signer = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
+	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
+	let membership =
+		find_including_rings(people_rpc, &people.metadata, &signer, &collections, u32::MAX)
+			.await?
+			.into_iter()
+			.next()
+			.ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "PGAS" })?;
 
 	signing_host.require_current_session(session)?;
 	let outcome = pgas::claim_pgas(pgas::PgasClaim {
@@ -1224,10 +1236,10 @@ pub async fn allocate_smart_contract_allowance(
 		asset_hub: &asset_hub,
 		people_rpc,
 		people_metadata: &people.metadata,
-		entropy: membership.entropy,
+		signer: &signer,
 		network_suffix: &network_suffix,
 		target: &target,
-		ring: &membership.ring,
+		ring: &membership,
 	})
 	.await?;
 	debug!(
