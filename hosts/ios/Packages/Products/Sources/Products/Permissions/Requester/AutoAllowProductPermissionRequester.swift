@@ -17,19 +17,19 @@ public struct AutoAllowProductPermissionRequester: ProductPermissionRequesting {
     public func prompt(
         productId: String,
         permission: ProductPermission
-    ) async -> PermissionDecision {
+    ) async throws -> PermissionDecision {
         guard !isAutoAllowed(productId: productId) else { return .allowAlways }
 
-        return await wrapped.prompt(productId: productId, permission: permission)
+        return try await wrapped.prompt(productId: productId, permission: permission)
     }
 
     public func promptBatched(
         productId: String,
         permissions: [ProductPermission]
-    ) async -> PermissionDecision {
+    ) async throws -> PermissionDecision {
         guard !isAutoAllowed(productId: productId) else { return .allowAlways }
 
-        return await wrapped.promptBatched(productId: productId, permissions: permissions)
+        return try await wrapped.promptBatched(productId: productId, permissions: permissions)
     }
 }
 

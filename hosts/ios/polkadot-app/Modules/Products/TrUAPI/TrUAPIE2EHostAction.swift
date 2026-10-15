@@ -6,7 +6,8 @@ import UIKit
     /// command feed (P6.10). Each action runs the code path of the gesture that it stands for, from the point after
     /// the gesture: the harness cannot tap the simulator.
     ///
-    /// `open` and `list` act on the navigation. Every other action goes to the room screen that shows the room.
+    /// `open`, `list` and `permission` act on the app. Every other action goes to the room screen that shows the
+    /// room.
     struct TrUAPIE2EHostAction {
         static let notification = Notification.Name("TrUAPIE2EHostAction")
         static let inputTextNotification = Notification.Name("TrUAPIE2ESetInputText")
@@ -34,6 +35,9 @@ import UIKit
                 TrUAPIE2EWorkerHolds.release(productId: productId)
             case "hold-worker":
                 TrUAPIE2EWorkerHolds.hold(productId: productId)
+            case "permission":
+                // The answer of the user to the permission prompt on the screen: `always`, `once` or `deny`.
+                TrUAPIE2EPendingPermission.answer(argument)
             default:
                 NotificationCenter.default.post(name: Self.notification, object: self)
             }

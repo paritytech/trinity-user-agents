@@ -38,6 +38,24 @@ struct ProductsRouterTests {
         #expect(router.present(view: StubView()))
     }
 
+    /// O33: a prompt that no screen shows ends the request with an error, not with a refusal that the core keeps.
+    @Test(arguments: [false, true])
+    func promptThatCannotShowEndsWithoutARefusal(anchored: Bool) async {
+        let router = ProductsRouter()
+        if anchored {
+            // The anchor is in no window, so UIKit does not present from it.
+            router.setPresentationView(StubView())
+        }
+        let context = ProductPermissionContext(productId: "test.product", permission: .preimageSubmitAccess)
+
+        await #expect(throws: ProductPermissionPromptError.cannotShow) {
+            try await withCheckedThrowingContinuation { continuation in
+                context.setContinuation(continuation)
+                router.showPrompt(context: context)
+            }
+        }
+    }
+
     @Test
     func actionReviewsOfferOnlyConfirmationAndRejection() async throws {
         let request = TrUAPIActionConfirmationRequest.productSubtree(productId: "test.product")

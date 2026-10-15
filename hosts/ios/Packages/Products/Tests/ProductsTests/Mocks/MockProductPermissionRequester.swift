@@ -3,6 +3,8 @@ import Foundation
 
 final class MockProductPermissionRequester: ProductPermissionRequesting, @unchecked Sendable {
     var decision: PermissionDecision = .allowAlways
+    /// When set, every prompt ends with this error, as a prompt that no screen answers.
+    var failure: ProductPermissionPromptError?
 
     private(set) var promptCalls: [(productId: String, permission: ProductPermission)] = []
     private(set) var promptBatchedCalls: [(productId: String, permissions: [ProductPermission])] = []
@@ -10,16 +12,18 @@ final class MockProductPermissionRequester: ProductPermissionRequesting, @unchec
     func prompt(
         productId: String,
         permission: ProductPermission
-    ) async -> PermissionDecision {
+    ) async throws -> PermissionDecision {
         promptCalls.append((productId, permission))
+        if let failure { throw failure }
         return decision
     }
 
     func promptBatched(
         productId: String,
         permissions: [ProductPermission]
-    ) async -> PermissionDecision {
+    ) async throws -> PermissionDecision {
         promptBatchedCalls.append((productId, permissions))
+        if let failure { throw failure }
         return decision
     }
 }

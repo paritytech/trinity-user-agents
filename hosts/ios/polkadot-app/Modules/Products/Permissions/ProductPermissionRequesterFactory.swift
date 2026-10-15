@@ -5,9 +5,10 @@ import TrUAPIHost
 enum ProductPermissionRequesterFactory {
     static func create(
         router: ProductPermissionRouting,
-        fundingProvider: FundingDomainProviding
+        fundingProvider: FundingDomainProviding,
+        foreground: ProductPromptForegroundWaiting = ApplicationForegroundWaiter()
     ) -> ProductPermissionRequesting {
-        let requester = ProductPermissionRequester(router: router)
+        let requester = ProductPermissionRequester(router: router, foreground: foreground)
         // Ordered narrowest first. The trusted wrapper grants remote access only
         // and is not tied to the settings-screen build flag, so it still applies
         // in builds where `ProductAutoAllowList` is empty.

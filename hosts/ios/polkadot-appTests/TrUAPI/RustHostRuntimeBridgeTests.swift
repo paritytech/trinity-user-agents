@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import ChainRegistry
+import Products
 import SubstrateSdk
 import TrUAPIHost
 @testable import polkadot_app
@@ -85,14 +86,30 @@ struct RustHostRuntimeBridgeTests {
         #expect(presenter.receivedRequesterName == "host")
     }
 
-    @Test func permissionsDenyAtHostLevel() async throws {
+    /// O33: the runtime has no product screen. A denial here would be kept by the core for good, so the bridge
+    /// throws an error that the core does not keep.
+    @Test func permissionsFailWithoutARefusalAtHostLevel() async throws {
         let bridge = makeHostBridge()
 
-        let device = try await bridge.devicePermission(product: testProduct, request: .camera)
-        let remote = try await bridge.remotePermission(product: testProduct, request: .webRtc)
+        await #expect(throws: ProductPermissionPromptError.cannotShow) {
+            try await bridge.devicePermission(product: testProduct, request: .camera)
+        }
+        await #expect(throws: ProductPermissionPromptError.cannotShow) {
+            try await bridge.remotePermission(product: testProduct, request: .preimageSubmit)
+        }
+    }
 
-        #expect(device == .deny)
-        #expect(remote == .deny)
+    @Test func confirmPermissionWithNoAnswerThrows() async throws {
+        let presenter = MockConfirmationPresenter()
+        presenter.permissionError = ProductPermissionPromptError.closedWithoutAnswer
+        let bridge = makeHostBridge(confirmationPresenter: presenter)
+        let review = UserConfirmationReview.identityDisclosure(
+            IdentityDisclosureReview(productId: "caller.dot")
+        )
+
+        await #expect(throws: ProductPermissionPromptError.closedWithoutAnswer) {
+            try await bridge.confirmPermission(review: review)
+        }
     }
 
     @Test(arguments: [TrUAPIPermissionDecision.allowOnce, .allowAlways, .deny])

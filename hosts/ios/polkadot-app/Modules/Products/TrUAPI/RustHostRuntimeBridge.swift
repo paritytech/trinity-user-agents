@@ -1,4 +1,5 @@
 import Foundation
+import Products
 import TrUAPIHost
 import ChainRegistry
 import SubstrateSdk
@@ -7,8 +8,8 @@ import SubstrateSdk
 /// identity: it owns the host-global core storage, host-level chain access, and
 /// the answers the runtime needs before any product opens. Product-scoped
 /// capabilities (navigation, permissions, notifications, product KV) live in
-/// the per-execution ``RustProductExecutionBridge``; here they deny or fall to
-/// the `HostBridge` protocol defaults.
+/// the per-execution ``RustProductExecutionBridge``; here they deny, fail
+/// without a stored decision, or fall to the `HostBridge` protocol defaults.
 ///
 /// Threading contract matches `HostBridge`: sync members run inline on the
 /// dispatcher thread and return promptly.
@@ -62,18 +63,22 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         throw HostNavigateToError.Unknown(reason: "navigation unavailable at host level: \(url)")
     }
 
+    /// The runtime has no product screen that can show the prompt. The error is not a refusal, so the core keeps
+    /// no decision and asks again through an open product execution.
     func devicePermission(
         product _: ProductExecutionConfig,
         request _: HostDevicePermissionRequest
     ) async throws -> TrUAPIPermissionDecision {
-        .deny
+        throw ProductPermissionPromptError.cannotShow
     }
 
+    /// The core asks here when the product has no open execution, for example when it stages a chat attachment
+    /// after the worker stopped. As ``devicePermission(product:request:)``, the error is not a refusal.
     func remotePermission(
         product _: ProductExecutionConfig,
         request _: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
-        .deny
+        throw ProductPermissionPromptError.cannotShow
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
@@ -94,7 +99,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await confirmationPresenter.confirmPermission(review: review, from: "host")
+        try await confirmationPresenter.confirmPermission(review: review, from: "host")
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
