@@ -356,10 +356,11 @@ impl ChainRuntime {
 		Self { scope, ..self.clone() }
 	}
 
-	/// Map key for this scope's connection to `genesis_hash`. Two scopes on the
-	/// same chain are two connections.
+	/// Key for this scope's connection to `genesis_hash`, within this scope's
+	/// own map. The scope is the outer key, so the chain alone identifies the
+	/// connection here and two scopes on one chain are still two connections.
 	fn connection_key(&self, genesis_hash: &[u8]) -> String {
-		format!("{}:{}", self.scope.key_prefix(), encode_hex(genesis_hash))
+		encode_hex(genesis_hash)
 	}
 
 	/// Drop everything this scope holds, on every chain, and tear it down.
@@ -2785,17 +2786,18 @@ mod tests {
 
 		product.release_scope();
 
-		let remaining: Vec<String> = core
+		let remaining: Vec<(ConnectionScope, String)> = core
 			.connections
 			.lock()
 			.unwrap()
-			.values()
-			.flat_map(|connections| connections.keys())
-			.cloned()
+			.iter()
+			.flat_map(|(scope, connections)| {
+				connections.keys().map(|key| (*scope, key.clone())).collect::<Vec<_>>()
+			})
 			.collect();
-		assert_eq!(remaining.len(), 1, "the product's connections outlived it");
-		assert!(
-			remaining[0].starts_with("core:"),
+		assert_eq!(
+			remaining,
+			vec![(ConnectionScope::Core, encode_hex(&genesis))],
 			"releasing a product took the core's connection with it: {remaining:?}",
 		);
 	}
@@ -2954,15 +2956,16 @@ mod tests {
 
 		first.release_scope();
 
-		let remaining: Vec<String> = core
+		let remaining: Vec<(ConnectionScope, String)> = core
 			.connections
 			.lock()
 			.unwrap()
-			.values()
-			.flat_map(|connections| connections.keys())
-			.cloned()
+			.iter()
+			.flat_map(|(scope, connections)| {
+				connections.keys().map(|key| (*scope, key.clone())).collect::<Vec<_>>()
+			})
 			.collect();
-		assert_eq!(remaining, vec!["p2:".to_owned() + &encode_hex(&genesis)]);
+		assert_eq!(remaining, vec![(ConnectionScope::Product(2), encode_hex(&genesis))]);
 	}
 
 	#[test]
