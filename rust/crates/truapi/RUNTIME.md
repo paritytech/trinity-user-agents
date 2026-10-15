@@ -207,7 +207,7 @@ awaiting `run_durable_recovery()`, which returns once nothing is live.
 ### The two roles
 
 - **`PairingHost`** (seedless): runs `HostAccounts<RemoteAccountHolder>` and owns logout and the paired session's grants. `SsoRequestService` owns pairing and login state, persisted session reload and remote signing-host liveness, and carries account operations to the phone over the encrypted SSO channel (People-chain statement store; v2 wire protocol with raw X25519 keys, HKDF-SHA256 and ChaCha20-Poly1305). The paired host confirms a signing, transaction, VRF or allocation request before forwarding it, and the phone confirms it again.
-- **`SigningHost`** (wallet-local): runs `HostAccounts<WalletAccountHolder>`. `WalletAccountHolder` owns local entropy, derivation, grant issuance and renewal, and asks for account access before a product uses another product's ring-VRF keys; `SigningHost` routes activation, lock and product reset through `HostAccounts`. It signs on device from local BIP-39 entropy,
+- **`SigningHost`** (wallet-local): runs `HostAccounts<WalletAccountHolder>`. `WalletAccountHolder` owns local entropy, derivation, grant issuance and renewal, and asks for account access before a product uses another product's ring-VRF keys; `SigningHost` routes activation, lock, product reset and wallet removal through `HostAccounts`. It signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0022
   `uid.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
@@ -223,7 +223,7 @@ awaiting `run_durable_recovery()`, which returns once nothing is live.
   the `RuntimeServices`-owned per-chain cache rather than re-reading it per
   call.
 - `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
-- `HostGrantStore`: holds the keys and public subtrees issued to `HostAccounts`, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation.
+- `HostGrantStore`: holds the keys and public subtrees issued to `HostAccounts`, per wallet on a signing host and per pairing on a paired host. Native hosts keep allowance keys in protected platform storage across restarts, check them on chain before use, and renew them through the account holder.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O

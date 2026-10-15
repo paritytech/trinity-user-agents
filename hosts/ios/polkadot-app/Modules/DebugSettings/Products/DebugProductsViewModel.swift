@@ -1,3 +1,4 @@
+import Keystore_iOS
 import Foundation
 import Operation_iOS
 import Products
@@ -62,6 +63,18 @@ final class DebugProductsViewModel {
         )
 
         Task { @MainActor [notificationScheduler] in
+            if SettingsManager.shared.isTrUAPIRuntimeEnabled {
+                do {
+                    guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
+                        downloadError = "Product runtime is unavailable"
+                        return
+                    }
+                    try await provider.sharedRuntime().clearProductState(productId: product.identifier)
+                } catch {
+                    downloadError = "Product removal failed: \(error.localizedDescription)"
+                    return
+                }
+            }
             try? await notificationScheduler.cancelAll(forProductId: product.identifier)
             try? await productRepository.saveOperation({ [] }, { [product.identifier] }).asyncExecute()
             try? await productChatRepository.deleteAllOperation().asyncExecute()

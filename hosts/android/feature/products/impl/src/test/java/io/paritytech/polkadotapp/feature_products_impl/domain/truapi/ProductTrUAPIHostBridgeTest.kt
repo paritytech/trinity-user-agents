@@ -46,6 +46,7 @@ class ProductTrUAPIHostBridgeTest {
         hostApiInteractor = hostApiInteractor,
         chainHttpClient = OkHttpClient(),
         encryptedPreferences = mock(EncryptedPreferences::class.java),
+        coreStorage = mockk(),
         confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         dotNsTldProvider = mock(DotNsTldProvider::class.java),

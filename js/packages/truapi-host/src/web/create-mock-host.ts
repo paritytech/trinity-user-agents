@@ -48,7 +48,8 @@ import type {
   RequiredHostCallbacks,
   UserConfirmationReview,
 } from "../generated/host-callbacks.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
+import { encodeCoreStorageKey, type ProductRuntimeConfig } from "../runtime.js";
+import { CoreStorageKey as CoreStorageKeyCodec } from "../generated/host-callbacks.js";
 
 /** How the mock answers a permission prompt for one capability. */
 export type PermissionPolicy = "allow-all" | "deny-all";
@@ -977,25 +978,27 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
 
   const productKey = (key: string): string => `product:${key}`;
   const coreKey = (key: CoreStorageKey): string =>
-    key.value === undefined
-      ? `core:${key.tag}`
-      : // Entries sorted, so a payload built field-by-field in a different
-        // order still addresses the slot it addressed before.
-        `core:${key.tag}:${JSON.stringify(key.value, (_, inner: unknown) =>
-          inner !== null && typeof inner === "object" && !Array.isArray(inner)
-            ? Object.fromEntries(
-                Object.entries(inner as Record<string, unknown>).sort(
-                  ([left], [right]) => left.localeCompare(right),
-                ),
-              )
-            : inner,
-        )}`;
+    `core:${Array.from(encodeCoreStorageKey(key), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
   /** Replacing a mock decision must invalidate the core's settled answer. */
   const forgetStoredAuthorization = (permission: string): void => {
-    const prefix = "core:PermissionAuthorization:";
-    const needle = JSON.stringify(permission);
     for (const key of storage.keys()) {
-      if (key.startsWith(prefix) && key.includes(needle)) storage.delete(key);
+      if (!key.startsWith("core:")) continue;
+      let decoded: CoreStorageKey;
+      try {
+        decoded = CoreStorageKeyCodec.dec(
+          scale.hexToBytes(`0x${key.slice(5)}`),
+        );
+      } catch {
+        continue;
+      }
+      if (decoded.tag !== "PermissionAuthorization") continue;
+      const request = decoded.value.request;
+      if (
+        (request.tag === "Device" && request.value === permission) ||
+        (request.tag === "Remote" &&
+          request.value.permission.tag === permission)
+      )
+        storage.delete(key);
     }
   };
 
@@ -1118,6 +1121,18 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     coreStorage: {
+      async coreStorageKeys() {
+        if (faults.storageError) throw new Error(faults.storageError);
+        return {
+          encodedKeys: Array.from(storage.keys())
+            .filter((key) => key.startsWith("core:"))
+            .map((key) =>
+              Uint8Array.from(key.slice(5).match(/.{2}/g) ?? [], (byte) =>
+                Number.parseInt(byte, 16),
+              ),
+            ),
+        };
+      },
       async readCoreStorage(key) {
         if (faults.storageError) throw new Error(faults.storageError);
         return storage.get(coreKey(key));

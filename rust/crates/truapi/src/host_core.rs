@@ -1013,6 +1013,14 @@ impl SigningHostRuntime {
 			.map_err(|reason| v01::GenericError { reason })
 	}
 
+	/// Remove grants owned by a deleted wallet, preserving other wallets' records.
+	pub async fn clear_wallet_state(&self, owner: [u8; 32]) -> Result<(), v01::GenericError> {
+		self.signing_host
+			.clear_wallet_state(owner)
+			.await
+			.map_err(|reason| v01::GenericError { reason })
+	}
+
 	/// Read a stored permission authorization status for a product without prompting.
 	///
 	/// A device capability also resolves the host application's OS gate, so an

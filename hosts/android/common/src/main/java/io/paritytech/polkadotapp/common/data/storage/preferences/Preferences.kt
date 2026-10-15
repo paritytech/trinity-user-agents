@@ -5,6 +5,8 @@ import kotlinx.coroutines.flow.Flow
 typealias InitialValueProducer<T> = suspend () -> T
 
 interface Preferences {
+    fun keys(): Set<String> = error("Preference enumeration is unavailable")
+
     fun contains(field: String): Boolean
 
     fun putString(
@@ -119,4 +121,6 @@ interface Editor {
     fun remove(field: String)
 
     fun apply()
+
+    fun commit(): Boolean
 }

@@ -149,6 +149,14 @@ impl SigningHost {
 		self.accounts.clear_product_state(product_id).await
 	}
 
+	/// Delete persisted grants when their wallet is removed, including while locked.
+	pub async fn clear_wallet_state(&self, owner: [u8; 32]) -> Result<(), String> {
+		if self.accounts.revoke_wallet(owner, || self.wallet.clear()) {
+			self.auth_state.store_disconnected();
+		}
+		self.accounts.finish_grant_cleanup().await
+	}
+
 	/// The product's hard-subtree public key under the active wallet, or
 	/// `None` while the wallet is locked.
 	pub fn product_subtree_public_key(
