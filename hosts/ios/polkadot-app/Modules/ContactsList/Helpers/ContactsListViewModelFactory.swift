@@ -47,7 +47,8 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
             IdentifiableContentConfiguration<String, DSChatListItemConfiguration>
         ] = []
 
-        let chats = model.establishedChats
+        // A thread room opens from the message that it answers, not from the list (07-LATER §9.2).
+        let chats = model.establishedChats.filter { $0.chat.roomDeclarations?.features.threadOf == nil }
 
         chats.forEach { chatWithPeerMetadata in
             let chat = chatWithPeerMetadata.chat
