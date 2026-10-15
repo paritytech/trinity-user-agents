@@ -63,7 +63,6 @@ pub enum AllowanceAllocationError {
 
 impl AllowanceAllocationError {
 	/// Preserve authority failures while reporting unavailable allowance work.
-	#[cfg(test)]
 	pub fn into_authority_error(self) -> AuthorityError {
 		match self {
 			Self::Authority(err) |

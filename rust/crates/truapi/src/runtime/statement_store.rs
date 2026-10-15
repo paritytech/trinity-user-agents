@@ -134,15 +134,23 @@ impl StatementStore for ProductRuntimeHost {
 		let encoded = signed_statement_to_scale(statement.clone()).map_err(|reason| {
 			CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError { reason }))
 		})?;
+		if let latest::StatementProof::Sr25519 { signer, .. } = &statement.proof {
+			let renewal = remote_authority_context(cx);
+			remote_authority_call(
+				&renewal,
+				self.accounts.renew_statement_sponsorship(&renewal, *signer),
+			)
+			.await
+			.map_err(|error| {
+				CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
+					reason: error.to_string(),
+				}))
+			})?;
+		}
 		self.statement_store_rpc()
 			.submit_sso(encoded, "statement-store")
 			.await
 			.map_err(|reason| {
-				if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
-					statement_store_rpc::is_no_allowance_rejection(&reason)
-				{
-					self.accounts.forget_statement_store_allowance_key(signer);
-				}
 				CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
 					reason: format!("statement-store submit failed: {reason}"),
 				}))
@@ -469,7 +477,7 @@ mod tests {
 			submitted_remote_message, subscribe_ack_frame, test_spawner,
 		},
 	};
-	use futures::StreamExt;
+	use futures::{FutureExt, StreamExt};
 	use parity_scale_codec::Encode;
 	use schnorrkel::{ExpansionMode, MiniSecretKey, PublicKey, Signature};
 	use std::sync::Arc;
@@ -821,6 +829,93 @@ mod tests {
 			request.resources,
 			vec![truapi::latest::AllocatableResource::StatementStoreAllowance]
 		);
+	}
+
+	/// The phone renews the sponsorships it issued, so submitting a sponsored statement
+	/// sends the phone nothing and needs no answer from it.
+	#[test]
+	fn a_sponsored_statement_is_submitted_without_asking_the_phone() {
+		let session = sso_session_info();
+		let (allowance_secret, signer) = allowance_key(11);
+		let platform = Arc::new(StubPlatform {
+            sso_response_script: Some(sso_success_response_script(
+                &session,
+                crate::host_internal::sso_messages::RemoteMessage {
+                    message_id: "wallet-proof-auth-1".to_string(),
+                    data: crate::host_internal::sso_messages::RemoteMessageData::V1(
+                        crate::host_internal::sso_messages::v1::RemoteMessage::ResourceAllocationResponse(
+                            crate::host_internal::sso_messages::Response {
+                                responding_to: "proof-auth-1".to_string(),
+                                payload: Ok(vec![
+                                    crate::host_internal::sso_messages::SsoAllocationOutcome::Allocated(
+                                        crate::host_internal::sso_messages::SsoAllocatedResource::StatementStoreAllowance {
+                                            slot_account_key: allowance_secret.to_vec(),
+                                        },
+                                    ),
+                                ]),
+                            },
+                        ),
+                    ),
+                },
+            )),
+            ..Default::default()
+        });
+		let host =
+			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		host.test_session_state().set_session(session);
+		futures::executor::block_on(StatementStore::create_proof_authorized(
+			&host,
+			&CallContext::with_request_id("proof-auth-1".to_string()),
+			RemoteStatementStoreCreateProofAuthorizedRequest::V1(statement()),
+		))
+		.unwrap();
+		let published_before = published_statements(&platform).len();
+		let sponsored = latest::SignedStatement {
+			proof: latest::StatementProof::Sr25519 { signature: [9; 64], signer },
+			..signed_statement([7; 32])
+		};
+		let cx = CallContext::with_request_id("submit-sponsored".to_string());
+
+		// The stub never acknowledges this submit, so stop at the first statement
+		// published after the proof: a request to the phone would come first.
+		futures::executor::block_on(async {
+			let published = async {
+				while published_statements(&platform).len() == published_before {
+					futures_timer::Delay::new(core::time::Duration::from_millis(1)).await;
+				}
+			};
+			futures::select! {
+				_ = StatementStore::submit(
+					&host,
+					&cx,
+					RemoteStatementStoreSubmitRequest::V1(sponsored.clone()),
+				).fuse() => {},
+				() = published.fuse() => {},
+				() = futures_timer::Delay::new(core::time::Duration::from_secs(5)).fuse() => {
+					panic!("the sponsored statement was never published")
+				},
+			}
+		});
+
+		assert_eq!(published_statements(&platform)[published_before..], [sponsored]);
+	}
+
+	/// Every statement this host published, SSO requests included, oldest first.
+	fn published_statements(platform: &StubPlatform) -> Vec<latest::SignedStatement> {
+		platform
+			.sent_rpc
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|request| request.contains("\"statement_submit\""))
+			.map(|request| {
+				let request: serde_json::Value = serde_json::from_str(request).unwrap();
+				let statement_hex = request["params"][0].as_str().unwrap();
+				let statement =
+					hex::decode(statement_hex.strip_prefix("0x").unwrap_or(statement_hex)).unwrap();
+				crate::host_logic::statement_store::decode_signed_statement(&statement).unwrap()
+			})
+			.collect()
 	}
 
 	#[test]
