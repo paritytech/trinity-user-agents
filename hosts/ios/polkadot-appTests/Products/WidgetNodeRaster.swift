@@ -7,15 +7,17 @@ import UIKit
 /// that paints from one that only maps.
 @MainActor
 enum WidgetNodeRaster {
-    /// The bucket of the black every node is drawn over.
-    static let backdrop = "0-0-0"
+    /// The bucket of the magenta every node is drawn over, a colour no design
+    /// token comes near, so what a node leaves unpainted is told apart from a
+    /// dark surface it paints.
+    static let backdrop = "3-0-3"
 
-    /// Colours the node paints over black, each as a coarse `r-g-b` bucket,
-    /// counted. Bucketed because anti-aliasing puts an edge across dozens of
-    /// neighbouring values that say nothing on their own.
+    /// Colours the node paints over the backdrop, each as a coarse `r-g-b`
+    /// bucket, counted. Bucketed because anti-aliasing puts an edge across
+    /// dozens of neighbouring values that say nothing on their own.
     static func colours(of node: CustomMessageWidgetNode, in size: CGSize) throws -> [String: Int] {
         let view = ZStack {
-            Color.black
+            backdropColour
             CustomMessageWidgetView(node: node, resolveImage: nil)
         }
         .frame(width: size.width, height: size.height)
@@ -40,7 +42,7 @@ enum WidgetNodeRaster {
     ) async throws -> [String: CGRect] {
         let view = CustomMessageWidgetView(node: node, resolveImage: resolveImage)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
-            .background(Color.black)
+            .background(backdropColour)
         let host = UIHostingController(rootView: view)
         host.safeAreaRegions = []
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
@@ -66,12 +68,12 @@ enum WidgetNodeRaster {
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }.cgImage)
 
-        return buckets(of: image).mapValues { points in
-            points.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: CGSize(width: 1, height: 1))) }
-        }
+        return buckets(of: image).mapValues(\.bounds)
     }
 
-    private static func buckets(of image: CGImage) -> [String: [CGPoint]] {
+    private static let backdropColour = Color(.sRGB, red: 1, green: 0, blue: 1)
+
+    private static func buckets(of image: CGImage) -> [String: (count: Int, bounds: CGRect)] {
         let width = image.width
         let height = image.height
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
@@ -86,13 +88,15 @@ enum WidgetNodeRaster {
         )
         context?.draw(image, in: CGRect(origin: .zero, size: CGSize(width: width, height: height)))
 
-        var points: [String: [CGPoint]] = [:]
+        var found: [String: (count: Int, bounds: CGRect)] = [:]
         for index in 0 ..< width * height {
             let pixel = index * 4
             let bucket = "\(pixels[pixel] / 64)-\(pixels[pixel + 1] / 64)-\(pixels[pixel + 2] / 64)"
-            points[bucket, default: []].append(CGPoint(x: index % width, y: index / width))
+            let point = CGRect(x: index % width, y: index / width, width: 1, height: 1)
+            let seen = found[bucket] ?? (0, .null)
+            found[bucket] = (seen.count + 1, seen.bounds.union(point))
         }
 
-        return points
+        return found
     }
 }

@@ -123,7 +123,7 @@ struct WidgetNodeLayoutTests {
         )
 
         let drawn = try await WidgetNodeRaster.bounds(of: button, in: CGSize(width: 300, height: 60))
-        let painted = drawn.filter { $0.key != black }.values.reduce(CGRect.null) { $0.union($1) }
+        let painted = drawn.filter { $0.key != WidgetNodeRaster.backdrop }.values.reduce(CGRect.null) { $0.union($1) }
 
         #expect(filled ? painted.width == 300 : painted.width < 150)
     }
@@ -139,7 +139,7 @@ struct WidgetNodeLayoutTests {
             resolveImage: WidgetImageResolver { _ in nil }
         )
 
-        #expect(Array(drawn.keys) == [black])
+        #expect(Array(drawn.keys) == [WidgetNodeRaster.backdrop])
     }
 
     @Test
@@ -193,12 +193,13 @@ struct WidgetNodeLayoutTests {
         #expect(drawn[red]?.size == drawnSize)
     }
 
-    /// An image sized on one side takes the other from its proportions, so it
-    /// never stretches to the space around it.
-    @Test
-    func anImageSizedOnOneSideTakesTheOtherFromItsProportions() async throws {
+    /// An image sized on one side never stretches to the space around it: it
+    /// takes the other side from its proportions, or its natural size when it
+    /// is not to be resized.
+    @Test(arguments: [(CustomMessageWidgetNode.ImageFit.cover, 20.0), (.none, 40.0)])
+    func anImageSizedOnOneSideKeepsItsOwnHeight(fit: CustomMessageWidgetNode.ImageFit, height: CGFloat) async throws {
         let column = node(.column(.init(), children: [
-            node(.image(.init(source: .archive(path: "wide.png"), fit: .none)), width: 40),
+            node(.image(.init(source: .archive(path: "wide.png"), fit: fit)), width: 40),
             block(.green, width: 20, height: 20),
         ]))
 
@@ -209,13 +210,12 @@ struct WidgetNodeLayoutTests {
             until: { $0[red] != nil }
         )
 
-        #expect(drawn[green]?.minY == 20)
+        #expect(drawn[green]?.minY == height)
     }
 }
 
 // MARK: - Fixtures
 
-private let black = "0-0-0"
 private let red = "3-0-0"
 private let green = "0-3-0"
 private let white = "3-3-3"

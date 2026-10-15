@@ -129,18 +129,27 @@ private struct NodeImageView: View {
     /// nothing in the size its modifiers give it. A picture with no size of
     /// its own takes its natural one, one pixel to a point, shrunk to fit the
     /// space it is given; one sized on a single side takes the other from its
-    /// proportions.
+    /// proportions, or its natural size when it is not to be resized.
     @ViewBuilder
     private var content: some View {
         switch picture {
         case .loading:
             nothing
         case let .loaded(image):
-            switch (modifiers.hasWidthConstraint, modifiers.hasHeightConstraint) {
+            switch (modifiers.hasOwnWidth, modifiers.hasOwnHeight) {
             case (true, true):
                 props.fit.apply(to: Image(uiImage: image))
             case (false, false):
                 CustomMessageWidgetNode.ImageFit.scaleDown.apply(to: Image(uiImage: image))
+            case let (width, height) where props.fit == .none:
+                Image(uiImage: image)
+                    .frame(
+                        minWidth: 0,
+                        maxWidth: width ? .infinity : nil,
+                        minHeight: 0,
+                        maxHeight: height ? .infinity : nil
+                    )
+                    .clipped()
             default:
                 Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
             }
@@ -151,11 +160,10 @@ private struct NodeImageView: View {
         }
     }
 
-    /// Takes the sides the node's modifiers size and nothing on the others.
     private var nothing: some View {
         Color.clear.frame(
-            maxWidth: modifiers.hasWidthConstraint ? .infinity : 0,
-            maxHeight: modifiers.hasHeightConstraint ? .infinity : 0
+            maxWidth: modifiers.hasOwnWidth ? .infinity : 0,
+            maxHeight: modifiers.hasOwnHeight ? .infinity : 0
         )
     }
 }
@@ -265,7 +273,7 @@ private struct NodeColumnView: View {
         VStack(alignment: props.alignment, spacing: 0) {
             ArrangedChildren(
                 children: children,
-                arrangement: modifiers.hasHeightConstraint ? props.arrangement : .start
+                arrangement: modifiers.hasOwnHeight ? props.arrangement : .start
             )
         }
     }
@@ -282,7 +290,7 @@ private struct NodeRowView: View {
         HStack(alignment: props.alignment, spacing: 0) {
             ArrangedChildren(
                 children: children,
-                arrangement: modifiers.hasWidthConstraint ? props.arrangement : .start
+                arrangement: modifiers.hasOwnWidth ? props.arrangement : .start
             )
         }
         .fixedSize(
@@ -376,7 +384,7 @@ private struct NodeButtonView: View {
             // padding, as on Android.
             Text(props.text)
                 .padding(.horizontal, 24)
-                .frame(maxWidth: modifiers.hasWidthConstraint ? .infinity : nil)
+                .frame(maxWidth: modifiers.hasOwnWidth ? .infinity : nil)
         }
         .buttonStyle(buttonStyle(for: props.variant))
         .applyWidgetNodeModifiers(modifiers)

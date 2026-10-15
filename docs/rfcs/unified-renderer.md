@@ -306,7 +306,7 @@ pub enum ImageSource {
 }
 
 pub enum ImageFit {
-    /// The image is not resized.
+    /// The image is not resized: one image pixel to a point.
     None,
     /// Resized to fill the container without preserving the aspect ratio.
     Fill,
@@ -370,7 +370,8 @@ pub enum RendererNode {
         props: RowProps,
         children: Vec<RendererNode>,
     },
-    /// Flexible space.
+    /// Flexible space: shares out what its stack has left, unless sized along
+    /// the stack's axis.
     Spacer {
         modifiers: Vec<Modifier>,
     },
@@ -390,12 +391,14 @@ pub enum RendererNode {
         modifiers: Vec<Modifier>,
         props: TextFieldProps,
     },
-    /// Image, sized by modifiers.
+    /// Image, sized by modifiers. Without any it takes its natural size, one
+    /// image pixel to a point.
     Image {
         modifiers: Vec<Modifier>,
         props: ImageProps,
     },
-    /// Applies its effect to its children.
+    /// Applies its effect to its children. As large as its children, which it
+    /// places at the top start like a `Box`.
     Effect {
         props: EffectProps,
         children: Vec<RendererNode>,

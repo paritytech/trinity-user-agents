@@ -78,6 +78,42 @@ class JsWidgetLayoutTest {
         assertEquals(listOf(30, 20), listOf(drawn?.width()?.inDp(), drawn?.height()?.inDp()))
     }
 
+    @Test
+    fun aLargePictureWithNoSizeOfItsOwnIsShrunkToFit() {
+        val picture = Bitmap.createBitmap(600, 300, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
+
+        draw(
+            JsWidget.Image(source = JsImageSource.Archive("large.png"), fit = JsImageFit.FILL),
+            images = JsImageResolver { picture },
+        )
+        compose.waitUntil(timeoutMillis = 5_000) { boundsOf(pureRed) != null }
+
+        val drawn = boundsOf(pureRed)
+        assertEquals(listOf(100, 50), listOf(drawn?.width()?.inDp(), drawn?.height()?.inDp()))
+    }
+
+    @Test
+    fun aPictureSizedOnOneSideTakesTheOtherFromItsProportions() {
+        val picture = Bitmap.createBitmap(80, 40, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
+
+        draw(
+            JsWidget.Column(
+                children = listOf(
+                    JsWidget.Image(
+                        source = JsImageSource.Archive("wide.png"),
+                        fit = JsImageFit.COVER,
+                        modifiers = listOf(JsModifier.Size(width = 40)),
+                    ),
+                    block(JsColor.FG_SUCCESS),
+                ),
+            ),
+            images = JsImageResolver { picture },
+        )
+        compose.waitUntil(timeoutMillis = 5_000) { boundsOf(pureRed) != null }
+
+        assertEquals(20, boundsOf(success)?.top?.inDp())
+    }
+
     private fun draw(widget: JsWidget, images: JsImageResolver = JsImageResolver { null }) {
         compose.setContent {
             PolkadotTheme(theme = PolkadotAppTheme.BerlinNight) {

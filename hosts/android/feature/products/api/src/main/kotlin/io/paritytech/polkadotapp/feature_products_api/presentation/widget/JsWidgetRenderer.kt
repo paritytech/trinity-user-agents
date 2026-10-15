@@ -30,13 +30,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -117,9 +119,9 @@ private fun JsImageRenderer(
         Spacer(modifier = imageModifier)
     } else {
         val density = LocalDensity.current.density
+        val sizedSides = listOf(widget.modifiers.hasWidth(), widget.modifiers.hasHeight()).count { it }
         // A picture drawn at its natural size is loaded whole, not at the size of the space around it.
-        val drawsNaturalSize = widget.fit == JsImageFit.NONE ||
-            !widget.modifiers.hasWidth() && !widget.modifiers.hasHeight()
+        val drawsNaturalSize = widget.fit == JsImageFit.NONE || sizedSides == 0
         AsyncImage(
             modifier = imageModifier,
             model = if (drawsNaturalSize) {
@@ -128,7 +130,13 @@ private fun JsImageRenderer(
                 model
             },
             contentDescription = null,
-            contentScale = widget.fit.toContentScale(),
+            contentScale = when {
+                // Natural size, shrunk to fit the space given, as on iOS.
+                sizedSides == 0 -> ContentScale.Inside
+                // Sized on one side, the picture's proportions set the other rather than the space around it.
+                sizedSides == 1 && widget.fit != JsImageFit.NONE -> ContentScale.Fit
+                else -> widget.fit.toContentScale()
+            },
             transform = { state ->
                 if (state is AsyncImagePainter.State.Success) {
                     state.copy(painter = DpPainter(state.painter, density))
@@ -153,7 +161,7 @@ private fun JsEffectRenderer(
     widget: JsWidget.Effect,
     modifier: Modifier = Modifier,
 ) {
-    // The protocol's tint is animated: the gradient sweeps across the children and back.
+    // The protocol's tint is animated.
     val sweep by rememberInfiniteTransition(label = "effect").animateFloat(
         initialValue = 0f,
         targetValue = 1f,
@@ -167,10 +175,16 @@ private fun JsEffectRenderer(
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .drawBehind {
-                    val start = Offset(size.width * (sweep - 1), 0f)
-                    val end = start + Offset(size.width * 2, size.height)
-                    drawRect(widget.effect.toBrush(start, end), alpha = EFFECT_ALPHA)
+                .drawWithCache {
+                    val sweepWidth = Size(size.width * 2, size.height)
+                    val brush = widget.effect.toBrush(Offset.Zero, Offset(sweepWidth.width, sweepWidth.height))
+                    onDrawBehind {
+                        clipRect {
+                            translate(left = size.width * (sweep - 1)) {
+                                drawRect(brush, size = sweepWidth, alpha = EFFECT_ALPHA)
+                            }
+                        }
+                    }
                 },
         )
     }
@@ -228,7 +242,7 @@ private fun JsColumnRenderer(
         verticalArrangement = widget.verticalArrangement?.toComposeVerticalArrangement() ?: Arrangement.Top,
     ) {
         widget.children.forEach { child ->
-            val flexible = child is JsWidget.Spacer && !child.modifiers.hasHeight()
+            val flexible = child is JsWidget.Spacer && !child.modifiers.fixedHeight()
             JsWidgetContent(widget = child, modifier = if (flexible) Modifier.weight(1f) else Modifier)
         }
     }
@@ -256,17 +270,20 @@ private fun JsRowRenderer(
         horizontalArrangement = widget.horizontalArrangement?.toComposeHorizontalArrangement() ?: Arrangement.Start,
     ) {
         widget.children.forEach { child ->
-            val flexible = child is JsWidget.Spacer && !child.modifiers.hasWidth()
+            val flexible = child is JsWidget.Spacer && !child.modifiers.fixedWidth()
             JsWidgetContent(widget = child, modifier = if (flexible) Modifier.weight(1f) else Modifier)
         }
     }
 }
 
-private fun List<JsModifier>.hasWidth() =
-    any { it is JsModifier.FillMaxWidth || it is JsModifier.Size && (it.width ?: it.minWidth) != null }
+private fun List<JsModifier>.fixedWidth() = any { it is JsModifier.Size && it.width != null }
 
-private fun List<JsModifier>.hasHeight() =
-    any { it is JsModifier.FillMaxHeight || it is JsModifier.Size && (it.height ?: it.minHeight) != null }
+private fun List<JsModifier>.fixedHeight() = any { it is JsModifier.Size && it.height != null }
+
+/** A fixed or filled width, which a minimum alone is not. */
+private fun List<JsModifier>.hasWidth() = fixedWidth() || any { it is JsModifier.FillMaxWidth }
+
+private fun List<JsModifier>.hasHeight() = fixedHeight() || any { it is JsModifier.FillMaxHeight }
 
 private fun JsWidget.fillsHeight(): Boolean = when (this) {
     is JsWidget.Box -> modifiers
