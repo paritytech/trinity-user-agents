@@ -25,7 +25,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -68,14 +70,32 @@ function freePort() {
   });
 }
 
+/** The latest change time of the files under `dir`, in milliseconds. */
+function newestChange(dir) {
+  let newest = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    const time = entry.isDirectory()
+      ? newestChange(path)
+      : statSync(path).mtimeMs;
+    newest = Math.max(newest, time);
+  }
+  return newest;
+}
+
 /**
  * Build the product for `PRODUCT_ID`, so the room links it sends name the
- * product the host runs. A bundle built for another name is built again.
+ * product the host runs. A bundle built for another name, or older than a
+ * source file of the product, is built again.
  */
 function buildProduct() {
   const built =
     existsSync(WORKER_BUNDLE) &&
-    readFileSync(WORKER_BUNDLE, "utf8").includes(JSON.stringify(PRODUCT_ID));
+    readFileSync(WORKER_BUNDLE, "utf8").includes(JSON.stringify(PRODUCT_ID)) &&
+    ["app", "worker", "assets"].every(
+      (dir) =>
+        newestChange(join(PRODUCT_DIR, dir)) <= statSync(WORKER_BUNDLE).mtimeMs,
+    );
   if (built && !process.argv.includes("--build")) return;
   for (const args of [["install", "--frozen-lockfile"], ["build"]]) {
     const result = spawnSync("yarn", args, {
