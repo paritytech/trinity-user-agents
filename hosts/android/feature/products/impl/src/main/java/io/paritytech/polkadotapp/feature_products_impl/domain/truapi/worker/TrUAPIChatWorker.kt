@@ -65,6 +65,8 @@ import uniffi.truapi.ChatCommand
 import uniffi.truapi.ChatEvent
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatParticipantsQuery
+import uniffi.truapi.ChatWakeOutcome
+import uniffi.truapi.ChatWakeReason
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductChatMessageActionsQueryRequest
@@ -89,8 +91,8 @@ class TrUAPIChatWorker(
 ) : ProductWorker {
     private val rendererId = productId.toChatExtensionId()
 
-    // The worker runs while a room screen is open, or briefly for a message in flight; never for the life of
-    // the installed integration (D10).
+    // The worker runs while a room screen is open, or for a wake of the core (07-LATER §10.2); never for the life
+    // of the installed integration (D10).
     private val holds = WorkerHolds(
         acquire = { runtime.acquireWorker(productId.value) },
         release = {
@@ -132,17 +134,11 @@ class TrUAPIChatWorker(
         holds.closeRoom(roomId.value)
     }
 
+    // W2: a product without a room has no screen to start it. The wake lasts until the worker runs, and 30 s more.
     override fun holdBriefly() {
-        runCatching { holds.hold() }.onFailure {
-            Timber.w(it, "TrUAPI worker hold failed for %s", productId.value)
-            return
-        }
         scope.launch {
-            try {
+            withWake(ChatWakeReason.ProductStart) {
                 withTimeoutOrNull(TrUAPIWorkerSupervisor.EXECUTION_WAIT_TIMEOUT) { runningExecution() }
-                delay(BRIEF_HOLD)
-            } finally {
-                holds.drop()
             }
         }
     }
@@ -221,27 +217,50 @@ class TrUAPIChatWorker(
 
     private fun Throwable.isUnavailable() = this is ChatQueryException.Failed || this is ProductRuntimeException
 
-    // A message in flight holds the worker for a short while, so the product can answer without an open room.
-    private suspend fun <T> withBriefHold(block: suspend () -> Result<T>): Result<T> {
-        val held = runCatching { holds.hold() }.isSuccess
+    // W1: a message in flight wakes the worker, so the product can answer when the user closes the room at once.
+    // Every message wakes, also with an open room: the room can close before the product answers.
+    private suspend fun <T> withBriefHold(roomId: ProductChatIdParameter, block: suspend () -> Result<T>): Result<T> =
+        withWake(ChatWakeReason.MessageInFlight(roomId.value), block)
+
+    /**
+     * Wakes the worker for [reason] while [block] runs, and for 30 s after it (07-LATER §10.2). The core holds a wake
+     * for 30 s and a new wake moves its end, so the wake starts again while a slow worker start continues.
+     */
+    private suspend fun <T> withWake(reason: ChatWakeReason, block: suspend () -> T): T {
+        wake(reason)
+        val renewal = scope.launch {
+            while (true) {
+                delay(WAKE_RENEWAL)
+                wake(reason)
+            }
+        }
         try {
             return block()
         } finally {
-            if (held) {
-                scope.launch {
-                    try {
-                        delay(BRIEF_HOLD)
-                    } finally {
-                        holds.drop()
-                    }
-                }
-            }
+            renewal.cancel()
+            wake(reason)
         }
+    }
+
+    // A wake that the core refuses holds nothing, and the message goes on as before.
+    private fun wake(reason: ChatWakeReason) {
+        runCatching {
+            when (val outcome = runtime.wakeProduct(productId.value, reason)) {
+                is ChatWakeOutcome.Held -> Timber.d("TrUAPI %s woken for %s until %d", productId.value, reason.label(), outcome.untilMs.toLong())
+                ChatWakeOutcome.BudgetSpent -> Timber.w("TrUAPI %s has no wake left for %s", productId.value, reason.label())
+            }
+        }.onFailure { Timber.w(it, "TrUAPI %s was not woken for %s", productId.value, reason.label()) }
+    }
+
+    private fun ChatWakeReason.label(): String = when (this) {
+        ChatWakeReason.ProductStart -> "product-start"
+        is ChatWakeReason.MessageInFlight -> "message-in-flight $roomId"
+        is ChatWakeReason.Notification -> "notification $roomId $watchId"
     }
 
     override suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit> {
         if (roomId == null) return roomlessFailure("message")
-        val outcome = withBriefHold { runCatching {
+        val outcome = withBriefHold(roomId) { runCatching {
             val execution = awaitRunningExecution()
             execution.publishChatAction(
                 HostChatActionSubscribeItem(
@@ -257,7 +276,7 @@ class TrUAPIChatWorker(
 
     override suspend fun publishRoomEvent(roomId: ProductChatIdParameter, event: ProductRoomEvent): Result<Unit> {
         val chatEvent = event.toChatEvent() ?: return Result.success(Unit)
-        return withBriefHold { publishNow(roomId, chatEvent) }
+        return withBriefHold(roomId) { publishNow(roomId, chatEvent) }
     }
 
     private suspend fun publishNow(roomId: ProductChatIdParameter, event: ChatEvent): Result<Unit> {
@@ -414,6 +433,8 @@ class TrUAPIChatWorker(
         const val NATIVE_PEER = "native"
         const val QUERY_ATTEMPTS = 2
         val QUERY_RETRY_DELAY = 1.seconds
-        val BRIEF_HOLD = 30.seconds
+
+        /** Below the 30 s of a wake of the core, so that a renewal comes before the end. */
+        val WAKE_RENEWAL = 20.seconds
     }
 }
