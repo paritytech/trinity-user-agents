@@ -327,6 +327,11 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   offers **Read aloud** on text, Markdown read as plain text and a custom
   body's preview, spoken by the browser, with a **Stop** line in the footer
   until it ends or you leave the room.
+- **Wake.** **Wake** in the room header stands in for an authenticated
+  notification on watch `dev` for the room: the core holds the product's
+  worker for 30 s and sends `Woken`, at most 12 times for each product in one
+  hour (then the page says the budget is spent). The host does not list
+  `wake`, which needs a push route to the device.
 - **Bot personas.** A message or an activity line from `bot:<id>` draws with
   the name and icon of the persona `<id>` the product registered, with no
   `participants_query`; the **Bots** list of the rooms pane shows each persona.
@@ -369,7 +374,7 @@ then a `room`, `roomDeleted`, `bot`, `message` or `notification` event as each l
 operation per thing a person does: `post`, `edit`, `delete`, `react`, `seen`,
 `retry`, `trigger`, `command`, `messageAction`, `participantAction`, `toolbar`,
 `suggestion`, `open`, `close`, `attach` (a photo, video or file in base64,
-inline or staged), `search`, `branch` (sends `BranchSelected`) and
+inline or staged), `search`, `branch` (sends `BranchSelected`), `wake` and
 `userState` (which mutes or archives a room
 and sends `UserStateChanged` to `chat.roomEventsSubscribe()`; `mutedForever`
 mutes with no end), and the queries

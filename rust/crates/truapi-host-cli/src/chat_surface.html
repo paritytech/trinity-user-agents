@@ -1217,6 +1217,18 @@ function renderHeader2() {
     toggle.onclick = () => toggleSearch(room);
     head.appendChild(toggle);
   }
+  const wake = el("button", null, "Wake");
+  wake.type = "button";
+  wake.id = "wake";
+  wake.title = "Wake the product as a notification on watch dev for this room does";
+  wake.onclick = () => ask("wake", { roomId: room.roomId }, (frame) => {
+    const outcome = frame.ok ? frame.ok.type : describeError(frame.error);
+    document.body.dataset.wakeOutcome = outcome;
+    if (frame.ok && frame.ok.type === "Held") setStatus(`woken: the worker is held until ${clock(frame.ok.untilMs)}`, "ok");
+    else if (frame.ok) setStatus("not woken: the product used its 12 notification wakes of this hour", "warn");
+    else setStatus(`wake: ${outcome}`, "err");
+  });
+  head.appendChild(wake);
   head.appendChild(userStateNode(room));
   head.appendChild(toolbarNode(room));
 }

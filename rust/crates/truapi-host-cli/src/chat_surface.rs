@@ -34,7 +34,8 @@ use tokio::{
 };
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use truapi::{
-	CallError, ChatStageRejection, ProductRuntime, ProductRuntimeError, Subscription,
+	CallError, ChatStageRejection, ChatWakeOutcome, ChatWakeReason, ProductRuntime,
+	ProductRuntimeError, Subscription,
 	latest::{
 		ActionTrigger, ChatBuiltInMessageAction, ChatCommand, ChatEvent, ChatMediaItem,
 		ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageMenu, ChatPageAnchor,
@@ -54,6 +55,9 @@ use truapi::{
 use crate::chat::{
 	ChatSnapshot, CliChatHost, PRODUCT, USER, UserChange, handler_json, message_json, resource_json,
 };
+
+/// The watch a wake from the page names.
+const DEV_WATCH: &str = "dev";
 
 /// Matches of a room the host keeps on one search page.
 const HOST_SEARCH_PAGE: usize = 50;
@@ -151,6 +155,10 @@ pub trait ChatWorker: Send + Sync {
 		item: HostChatRoomEventsSubscribeItem,
 	) -> Result<(), ProductRuntimeError>;
 
+	/// Hold the product's worker for a wake; see
+	/// `ProductRuntimeControl::wake_product`.
+	fn wake_product(&self, reason: ChatWakeReason) -> Result<ChatWakeOutcome, ProductRuntimeError>;
+
 	/// Ask the product for the messages of a room it keeps that match what
 	/// the user typed.
 	fn search_query(
@@ -224,6 +232,10 @@ impl ChatWorker for ProductRuntime {
 		item: HostChatRoomEventsSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
 		self.control().publish_chat_room_event(item)
+	}
+
+	fn wake_product(&self, reason: ChatWakeReason) -> Result<ChatWakeOutcome, ProductRuntimeError> {
+		self.control().wake_product(reason)
 	}
 
 	fn search_query(
@@ -431,6 +443,12 @@ enum PageOp {
 		req_id: u64,
 		room_id: String,
 		participant_id: String,
+	},
+	/// The development stand-in for a notification that arrived on watch
+	/// `dev` for the room: a notification wake of the product.
+	Wake {
+		req_id: u64,
+		room_id: String,
 	},
 	/// The user picked alternative `index` of a message with a branch
 	/// position.
@@ -716,6 +734,24 @@ impl ChatSurface {
 				reply_to.clone(),
 				source,
 			),
+			PageOp::Wake { req_id, .. } => {
+				let Some(worker) = self.newest_worker() else {
+					return Applied::Now(error_reply("no worker is connected to wake".to_string()));
+				};
+				let reason = ChatWakeReason::Notification {
+					room_id: room_id.clone(),
+					watch_id: DEV_WATCH.to_string(),
+				};
+				Applied::Now(match worker.wake_product(reason) {
+					Ok(ChatWakeOutcome::Held { until_ms }) => {
+						answer_ok("wake", *req_id, json!({ "type": "Held", "untilMs": until_ms }))
+					},
+					Ok(ChatWakeOutcome::BudgetSpent) => {
+						answer_ok("wake", *req_id, json!({ "type": "BudgetSpent" }))
+					},
+					Err(error) => error_reply(error.to_string()),
+				})
+			},
 			PageOp::Branch { message_id, index, .. } => {
 				let event =
 					ChatRoomEvent::BranchSelected { message_id: message_id.clone(), index: *index };
@@ -1296,6 +1332,7 @@ fn op_room(op: &PageOp) -> &str {
 		PageOp::Attach { room_id, .. } |
 		PageOp::Search { room_id, .. } |
 		PageOp::Branch { room_id, .. } |
+		PageOp::Wake { room_id, .. } |
 		PageOp::UserState { room_id, .. } => room_id,
 	}
 }
@@ -1314,7 +1351,8 @@ fn op_req_id(op: &PageOp) -> Option<u64> {
 		PageOp::MessageActions { req_id, .. } |
 		PageOp::ParticipantActions { req_id, .. } |
 		PageOp::Attach { req_id, .. } |
-		PageOp::Search { req_id, .. } => Some(*req_id),
+		PageOp::Search { req_id, .. } |
+		PageOp::Wake { req_id, .. } => Some(*req_id),
 		_ => None,
 	}
 }
@@ -1343,6 +1381,7 @@ fn op_name(op: &PageOp) -> &'static str {
 		PageOp::Attach { .. } => "attach",
 		PageOp::Search { .. } => "search",
 		PageOp::Branch { .. } => "branch",
+		PageOp::Wake { .. } => "wake",
 		PageOp::UserState { .. } => "userState",
 	}
 }
@@ -1669,6 +1708,14 @@ mod tests {
 			Ok(())
 		}
 
+		fn wake_product(
+			&self,
+			reason: ChatWakeReason,
+		) -> Result<ChatWakeOutcome, ProductRuntimeError> {
+			self.ask(reason);
+			Ok(ChatWakeOutcome::Held { until_ms: 30_000 })
+		}
+
 		fn search_query(
 			&self,
 			request: ProductChatSearchQueryRequest,
@@ -1749,6 +1796,13 @@ mod tests {
 			&self,
 			_item: HostChatRoomEventsSubscribeItem,
 		) -> Result<(), ProductRuntimeError> {
+			Err(ProductRuntimeError::Denied)
+		}
+
+		fn wake_product(
+			&self,
+			_reason: ChatWakeReason,
+		) -> Result<ChatWakeOutcome, ProductRuntimeError> {
 			Err(ProductRuntimeError::Denied)
 		}
 
@@ -2667,6 +2721,28 @@ mod tests {
 		);
 		assert!(worker.events().is_empty());
 		assert!(surface.chat().observe().0.messages.is_empty());
+	}
+
+	// S70: the page's Wake is a notification wake of watch `dev`.
+	#[test]
+	fn the_wake_button_wakes_the_product_for_the_room() {
+		let surface = surface(None);
+		assert_eq!(now(&surface, json!({"op":"wake","reqId":3,"roomId":"daily"}))["kind"], "error");
+		let (worker, _attachment) = attach(&surface);
+
+		let reply = now(&surface, json!({"op":"wake","reqId":3,"roomId":"daily"}));
+
+		assert_eq!(reply["ok"], json!({ "type": "Held", "untilMs": 30_000 }));
+		assert_eq!(
+			worker.asked(),
+			[format!(
+				"{:?}",
+				ChatWakeReason::Notification {
+					room_id: "daily".to_string(),
+					watch_id: "dev".to_string()
+				}
+			)]
+		);
 	}
 
 	// S65: a branch arrow is a room event for the product.
