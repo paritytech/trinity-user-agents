@@ -52,8 +52,7 @@ pub fn preimage_cid(key: &[u8; 32]) -> String {
 	cid
 }
 
-/// Sign at `client`'s block, with its account nonce and a mortality anchor from
-/// [`mortality_anchor`].
+/// Sign with a finalized mortality anchor and the client's current account nonce.
 pub async fn build_signed_store_transaction<C: OnlineClientAtBlockT<SubstrateConfig>>(
 	client: &ClientAtBlock<SubstrateConfig, C>,
 	finalized: &ClientAtBlock<SubstrateConfig, C>,
@@ -61,25 +60,15 @@ pub async fn build_signed_store_transaction<C: OnlineClientAtBlockT<SubstrateCon
 	data: &[u8],
 ) -> Result<SubmittableTransaction<SubstrateConfig, C>, ExtrinsicError> {
 	let payload = StaticPayload::new(STORE_PALLET_NAME, STORE_CALL_NAME, StoreCallData(data));
-	let (anchor_number, anchor_hash) = mortality_anchor(
-		(client.block_number(), client.block_hash()),
-		(finalized.block_number(), finalized.block_hash()),
-	);
 	let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
-		.mortal_from_unchecked(MORTAL_PERIOD_BLOCKS, anchor_number, anchor_hash)
+		.mortal_from_unchecked(
+			MORTAL_PERIOD_BLOCKS,
+			finalized.block_number(),
+			finalized.block_hash(),
+		)
 		.build();
 	let mut tx = client.tx();
 	tx.create_signed(&payload, signer, params).await
-}
-
-/// The block a store transaction's mortality is anchored to, as `(number, hash)`.
-///
-/// The finalized block, so a fork cannot discard the anchor, unless the
-/// transaction is built and dry-run at an older block. The runtime resolves the
-/// birth block from the block it validates at, so an anchor ahead of that block
-/// fails with `BadProof`, or `AncientBirthBlock` when it is one block ahead.
-fn mortality_anchor<Hash>(build: (u64, Hash), finalized: (u64, Hash)) -> (u64, Hash) {
-	if finalized.0 <= build.0 { finalized } else { build }
 }
 
 /// The only [`BulletinAllowanceKey`] -> signer conversion in the crate. The
@@ -140,18 +129,6 @@ fn require_u8_sequence<R: TypeResolver>(
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	#[test]
-	fn mortality_is_anchored_at_the_finalized_block_when_the_build_block_is_ahead() {
-		assert_eq!(mortality_anchor((105, "build"), (100, "finalized")), (100, "finalized"));
-		assert_eq!(mortality_anchor((100, "build"), (100, "finalized")), (100, "finalized"));
-	}
-
-	#[test]
-	fn mortality_is_anchored_at_the_build_block_when_finality_is_ahead_of_it() {
-		assert_eq!(mortality_anchor((99, "build"), (100, "finalized")), (99, "build"));
-		assert_eq!(mortality_anchor((94, "build"), (100, "finalized")), (94, "build"));
-	}
 	use crate::{
 		host_internal::extrinsic::tests::{OfflineChainState, bulletin_chain_state, split_v4},
 		host_logic::product_account::SR25519_SIGNING_CONTEXT,
