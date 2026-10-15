@@ -43,23 +43,32 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
         let resolved = try? await products.resolve(productId)
         let source = try await workerSource(for: resolved, productId: productId)
 
-        let engine = try ChatProductEngineFactory.makeContext(
-            source: source,
-            productFileProvider: productFileProvider,
-            logger: logger
-        )
-
         return try TrUAPIWorkerRuntime(
-            productUrl: engine.productUrl,
+            code: workerCode(source: source),
             executionModel: environment().makeWorkerExecution(
                 productId: productId,
                 routers: context.routers,
                 chatMessaging: context.chat,
                 pocket: pocket
             ),
-            engineFactory: engine.engineFactory,
             logger: logger
         )
+    }
+
+    /// A worker is a wasm module when its entry file starts with the wasm magic bytes, and a script otherwise.
+    private func workerCode(source: ProductWorkerSource) throws -> TrUAPIWorkerCode {
+        let entry = productFileProvider.load(for: source.contentId, relativePath: source.entryRelativePath)
+        let name = "\(source.contentId)/\(source.entryRelativePath)"
+        if let wasm = TrUAPIWorkerCode.wasmModule(entry: entry, name: name) {
+            return wasm
+        }
+
+        let engine = try ChatProductEngineFactory.makeContext(
+            source: source,
+            productFileProvider: productFileProvider,
+            logger: logger
+        )
+        return .script(productUrl: engine.productUrl, engineFactory: engine.engineFactory)
     }
 
     /// The product's published worker, or the script installed by hand through

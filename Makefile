@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-v2-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run android-chat-v2-run
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-v2-run ios-verbosity-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run android-chat-v2-run
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -243,6 +243,11 @@ ios-chat-v2-run: ios-build ## Run the Chat Extension v2 sample product (playgrou
 	TRUAPI_IOS_E2E_APP="$(IOS_APP)" \
 	TRUAPI_IOS_E2E_BUNDLE="$(IOS_BUNDLE)" \
 	node scripts/launch-ios-chat-v2.mjs
+
+ios-verbosity-run: ## Run the wasm chat product in TRUAPI_IOS_E2E_VERBOSITY_WASM on two iPhone simulators with live accounts (build the app first).
+	TRUAPI_IOS_E2E_APP="$(IOS_APP)" \
+	TRUAPI_IOS_E2E_BUNDLE="$(IOS_BUNDLE)" \
+	node scripts/launch-ios-verbosity.mjs
 
 ios-chat-host-playground-run: ios-build ## Verify Host Playground Chat through the workspace-linked TrUAPI client.
 	TRUAPI_IOS_E2E_DEVICE="$(IOS_SIMULATOR_DEVICE)" \

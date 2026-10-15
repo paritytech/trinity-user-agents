@@ -198,6 +198,8 @@ impl NativeTrUApiHostRuntime {
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
 			product_control: Arc::new(Mutex::new(None)),
+			#[cfg(feature = "wasm-worker")]
+			wasm_worker: Mutex::new(None),
 		});
 
 		if product.execution_kind == ProductExecutionKind::Worker {
@@ -793,6 +795,9 @@ pub struct NativeProductExecution {
 	ws_bridge: Arc<SharedWsBridge>,
 	bridge_token: Mutex<Option<String>>,
 	product_control: Arc<Mutex<Option<crate::ProductRuntimeControl>>>,
+	/// The wasm worker of this execution, while one runs in place of a bridge.
+	#[cfg(feature = "wasm-worker")]
+	wasm_worker: Mutex<Option<super::wasm_worker::RunningWasmWorker>>,
 }
 
 impl NativeProductExecution {
@@ -848,6 +853,12 @@ impl NativeProductExecution {
 		let token = self.bridge_token.lock().expect("native product bridge mutex poisoned").take();
 		if let Some(token) = token {
 			self.ws_bridge.revoke(&token);
+		}
+		#[cfg(feature = "wasm-worker")]
+		if let Some(worker) =
+			self.wasm_worker.lock().expect("native wasm worker mutex poisoned").take()
+		{
+			worker.stop();
 		}
 		*self.product_control.lock().expect("native product control mutex poisoned") = None;
 	}
@@ -1224,6 +1235,16 @@ impl NativeProductExecution {
 		if guard.is_some() {
 			return Err(WsBridgeStartError::AlreadyRunning);
 		}
+		#[cfg(feature = "wasm-worker")]
+		if self
+			.wasm_worker
+			.lock()
+			.expect("native wasm worker mutex poisoned")
+			.as_ref()
+			.is_some_and(super::wasm_worker::RunningWasmWorker::is_running)
+		{
+			return Err(WsBridgeStartError::AlreadyRunning);
+		}
 		let logger: BridgeLogger = {
 			let callbacks = self.callbacks.clone();
 			Arc::new(move |marker: &str, detail: &str| {
@@ -1247,8 +1268,54 @@ impl NativeProductExecution {
 	}
 
 	/// Revoke this execution's bridge registration while leaving it reusable.
+	/// This also stops the wasm worker of the execution.
 	pub fn stop_ws_bridge(&self) {
 		self.stop_bridge();
+	}
+}
+
+#[cfg(feature = "wasm-worker")]
+#[uniffi::export]
+impl NativeProductExecution {
+	/// Run `wasm`, a product worker compiled to wasm, in the core in place of
+	/// a bridge. The worker gets the chat connection, the renderer connection
+	/// and the permissions of this execution. Its log lines go to
+	/// `on_core_log` with the marker `wasm-worker`. `observer` receives the end
+	/// of the worker one time. `stop_ws_bridge` and `shutdown` stop the worker.
+	pub fn start_wasm_worker(
+		&self,
+		wasm: Vec<u8>,
+		observer: Box<dyn super::wasm_worker::NativeWasmWorkerObserver>,
+	) -> Result<(), crate::ProductRuntimeError> {
+		use super::wasm_worker::{DiscardedFrames, RunningWasmWorker, WASM_WORKER_LOG_MARKER};
+
+		if self.closed.load(Ordering::Acquire) {
+			return Err(crate::ProductRuntimeError::Closed);
+		}
+		let bridge = self.bridge_token.lock().expect("native product bridge mutex poisoned");
+		let mut slot = self.wasm_worker.lock().expect("native wasm worker mutex poisoned");
+		if bridge.is_some() || slot.as_ref().is_some_and(RunningWasmWorker::is_running) {
+			return Err(crate::ProductRuntimeError::Rejected {
+				reason: "a worker already runs for this execution".to_string(),
+			});
+		}
+		let product_runtime = self.runtime.product_runtime_with(
+			self.product.clone(),
+			self.adapters(),
+			Arc::new(DiscardedFrames),
+		);
+		let env = super::wasm_worker::product_env(&product_runtime);
+		let callbacks = self.callbacks.clone();
+		let worker = crate::WasmWorker::new(env, &wasm)
+			.map_err(|error| crate::ProductRuntimeError::Rejected { reason: error.to_string() })?
+			.with_log(move |line| {
+				callbacks.on_core_log(WASM_WORKER_LOG_MARKER.to_string(), line.to_string());
+			});
+		*self.product_control.lock().expect("native product control mutex poisoned") =
+			Some(product_runtime.control());
+		*slot =
+			Some(RunningWasmWorker::spawn(worker, product_runtime, observer.into(), &self.spawner));
+		Ok(())
 	}
 }
 

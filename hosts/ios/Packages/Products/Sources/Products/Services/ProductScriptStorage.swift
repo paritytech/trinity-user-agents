@@ -7,11 +7,22 @@ public protocol ChatScriptStorageProtocol: ProductFileProviding {
     func scriptExists(productId: ProductId) -> Bool
     func loadData(productId: ProductId, relativePath: String) -> Data?
     func chatEntrypointRelativePath() -> String
+    /// Whether the product has a file at `relativePath`, without a read of the file.
+    func fileExists(productId: ProductId, relativePath: String) -> Bool
 }
 
 public extension ChatScriptStorageProtocol {
     func load(for productId: ProductId, relativePath: String) -> Data? {
         loadData(productId: productId, relativePath: relativePath)
+    }
+
+    func fileExists(productId: ProductId, relativePath: String) -> Bool {
+        loadData(productId: productId, relativePath: relativePath) != nil
+    }
+
+    /// The entry of a worker compiled to wasm and installed by hand. It wins over the script entry.
+    func wasmEntrypointRelativePath() -> String {
+        "ChatExtension/index.wasm"
     }
 }
 
@@ -57,6 +68,13 @@ public final class FileChatScriptStorage: ChatScriptStorageProtocol {
 
     public func chatEntrypointRelativePath() -> String {
         "ChatExtension/index.js"
+    }
+
+    public func fileExists(productId: ProductId, relativePath: String) -> Bool {
+        let fileURL = baseDirectory
+            .appendingPathComponent(productId)
+            .appendingPathComponent(relativePath)
+        return fileManager.fileExists(atPath: fileURL.path)
     }
 
     // MARK: - Private

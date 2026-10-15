@@ -29,6 +29,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
 
         #if targetEnvironment(simulator)
+            TrUAPIE2EWalletRestore.restoreIfRequested()
             TrUAPIE2EIdentitySeed.seedIfRequested()
         #endif
 

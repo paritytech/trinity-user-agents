@@ -178,7 +178,7 @@ fn expand_host(
 		}
 	});
 	quote! {
-		#[cfg(feature = "wasm-worker")]
+		#[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
 		#[allow(deprecated)]
 		impl<H: #trait_ident + 'static> crate::wasm_worker::WasmEnv<H> {
 			#[doc = #doc]

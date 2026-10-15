@@ -2210,6 +2210,13 @@ impl ProductRuntime {
 		}
 	}
 
+	/// The host object of this connection, which implements every service
+	/// trait for its product. A wasm worker calls it with no frames.
+	#[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
+	pub fn host(&self) -> &Arc<ProductRuntimeHost> {
+		&self.admin.product_runtime
+	}
+
 	/// Core-owned logout/disconnect. Best-effort notifies the SSO peer when
 	/// the session has channel material, then clears in-memory and persisted
 	/// session state.

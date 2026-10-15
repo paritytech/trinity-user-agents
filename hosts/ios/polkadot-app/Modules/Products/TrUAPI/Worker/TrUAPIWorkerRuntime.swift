@@ -4,6 +4,9 @@ import TrUAPIHost
 
 /// One product's worker, running headless behind a Worker execution.
 ///
+/// A worker is a script or a wasm module. The core runs a wasm module itself, with no web view (see
+/// ``TrUAPIWorkerCode``).
+///
 /// The script runs in a web view with no screen of its own: the bootstrap
 /// publishes the execution's loopback bridge before the page exists, the entry
 /// module connects to it, and everything the worker draws comes back over the
@@ -44,15 +47,26 @@ actor TrUAPIWorkerRuntime {
     nonisolated let faults: AsyncStream<String>
     private let faultContinuation: AsyncStream<String>.Continuation
 
-    private let productUrl: URL
+    private let code: TrUAPIWorkerCode
     private let executionModel: RustRuntimeEnvironment.ExecutionModel
-    private let engineFactory: @Sendable () -> JSEngineProtocol
     private let logger: LoggerProtocol
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
     private var moduleBridge: JSESModuleBridge?
+    private var wasmEnds: Task<Void, Never>?
     private var disposed = false
+
+    init(
+        code: TrUAPIWorkerCode,
+        executionModel: RustRuntimeEnvironment.ExecutionModel,
+        logger: LoggerProtocol = Logger.shared
+    ) {
+        self.code = code
+        self.executionModel = executionModel
+        self.logger = logger
+        (faults, faultContinuation) = AsyncStream.makeStream(of: String.self)
+    }
 
     init(
         productUrl: URL,
@@ -60,11 +74,11 @@ actor TrUAPIWorkerRuntime {
         engineFactory: @escaping @Sendable () -> JSEngineProtocol,
         logger: LoggerProtocol = Logger.shared
     ) {
-        self.productUrl = productUrl
-        self.executionModel = executionModel
-        self.engineFactory = engineFactory
-        self.logger = logger
-        (faults, faultContinuation) = AsyncStream.makeStream(of: String.self)
+        self.init(
+            code: .script(productUrl: productUrl, engineFactory: engineFactory),
+            executionModel: executionModel,
+            logger: logger
+        )
     }
 
     nonisolated var execution: TrUAPIProductExecutionProtocol { executionModel.execution }
@@ -72,10 +86,22 @@ actor TrUAPIWorkerRuntime {
     func start() async throws {
         try checkNotDisposed()
 
+        switch code {
+        case let .script(productUrl, engineFactory):
+            try await startScript(productUrl: productUrl, engineFactory: engineFactory)
+        case let .wasm(module, name):
+            try startWasm(module, name: name)
+        }
+    }
+
+    private func startScript(
+        productUrl: URL,
+        engineFactory: @escaping @Sendable () -> JSEngineProtocol
+    ) async throws {
         let bootstrap = try executionModel.startBridge()
         let scripts = try RustRuntimeScriptsFactory(bootstrapScript: bootstrap).makeScripts()
             + [JSEngineScript(content: Self.faultScript, insertionPoint: .atDocStart)]
-        let jsEngine = try await bootEngine(scripts: scripts)
+        let jsEngine = try await bootEngine(scripts: scripts, engineFactory: engineFactory)
         try checkNotDisposed()
 
         // Before the product's module runs, so an error of its first line ends the worker too.
@@ -96,6 +122,25 @@ actor TrUAPIWorkerRuntime {
         logger.debug("[truapi] worker running: \(productUrl)")
     }
 
+    /// The core runs the module and reports its end. Every end of a worker that still runs is a fault: also a
+    /// clean return of its entry point leaves nothing that serves the product.
+    private func startWasm(_ module: Data, name: String) throws {
+        let ends = try executionModel.execution.startWasmWorker(module)
+        wasmEnds = Task { [faultContinuation, logger] in
+            for await end in ends {
+                let message: String
+                switch end {
+                case .stopped: return
+                case .finished: message = "the entry point of the wasm worker returned"
+                case let .failed(reason): message = reason
+                }
+                logger.error("[truapi] worker fault, the worker ends: \(message) (\(name))")
+                faultContinuation.yield(message)
+            }
+        }
+        logger.debug("[truapi] wasm worker running: \(name) (\(module.count) bytes)")
+    }
+
     func dispose() async {
         guard !disposed else { return }
         disposed = true
@@ -114,14 +159,19 @@ actor TrUAPIWorkerRuntime {
         executionModel.execution.stopWsBridge()
         executionModel.execution.close()
         executionModel.chainConnections.closeAll()
+        wasmEnds?.cancel()
+        wasmEnds = nil
         faultContinuation.finish()
 
-        logger.debug("[truapi] worker stopped: \(productUrl)")
+        logger.debug("[truapi] worker stopped: \(code.name)")
     }
 
     /// The capability handler is installed before the page exists, so a script
     /// that asks for a camera on its first line is prompted rather than denied.
-    private func bootEngine(scripts: [JSEngineScript]) async throws -> JSEngineProtocol {
+    private func bootEngine(
+        scripts: [JSEngineScript],
+        engineFactory: @Sendable () -> JSEngineProtocol
+    ) async throws -> JSEngineProtocol {
         let jsEngine = engineFactory()
         do {
             await jsEngine.registerJSDeviceCapabilityHandler(
@@ -152,5 +202,30 @@ actor TrUAPIWorkerRuntime {
 
     private func checkNotDisposed() throws {
         guard !disposed else { throw CancellationError() }
+    }
+}
+
+/// The code of one worker.
+enum TrUAPIWorkerCode: Sendable {
+    /// An entry module that runs in a headless web view.
+    case script(productUrl: URL, engineFactory: @Sendable () -> JSEngineProtocol)
+    /// A module compiled to wasm that the core runs. `name` identifies it in the log.
+    case wasm(Data, name: String)
+
+    /// The first bytes of every wasm module: `\0asm`.
+    static let wasmMagic = Data([0x00, 0x61, 0x73, 0x6D])
+
+    /// The wasm code for `entry` when it is a wasm module, and nil when it is a script.
+    static func wasmModule(entry: Data?, name: String) -> TrUAPIWorkerCode? {
+        guard let entry, entry.starts(with: wasmMagic) else { return nil }
+
+        return .wasm(entry, name: name)
+    }
+
+    var name: String {
+        switch self {
+        case let .script(productUrl, _): productUrl.absoluteString
+        case let .wasm(_, name): name
+        }
     }
 }
