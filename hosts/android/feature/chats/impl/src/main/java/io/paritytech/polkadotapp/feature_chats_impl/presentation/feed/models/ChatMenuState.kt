@@ -19,6 +19,9 @@ sealed interface ChatMenuType {
 
     /** The participants of a product room. The product room state holds the list. */
     data object Participants : ChatMenuType
+
+    /** The sheet of one participant of a product room. The product room state holds it. */
+    data object ParticipantSheet : ChatMenuType
 }
 
 enum class ChatMenuAction {

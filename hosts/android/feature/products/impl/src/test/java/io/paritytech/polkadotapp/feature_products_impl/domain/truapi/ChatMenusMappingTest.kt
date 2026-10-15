@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatBuiltInMessageActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReactionSummaryModel
@@ -22,6 +23,7 @@ import uniffi.truapi.ChatBuiltInMessageAction
 import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageMenu
 import uniffi.truapi.ChatMessageStatus
+import uniffi.truapi.ChatParticipantMenu
 import uniffi.truapi.ChatProductAction
 import uniffi.truapi.ChatReactionSummary
 import uniffi.truapi.ChatResource
@@ -53,6 +55,15 @@ class ChatMenusMappingTest {
             ),
             menu.toModel(),
         )
+    }
+
+    @Test
+    fun `a participant menu of the product keeps its entries`() {
+        val action = ChatProductAction("mute", "Mute", icon = null, destructive = false, ChatActionHandler.Callback)
+        val model = ChatProductActionModel("mute", "Mute", icon = null, destructive = false, ChatActionHandlerModel.Callback)
+
+        assertEquals(ChatParticipantMenuModel.Custom(listOf(model)), ChatParticipantMenu.Custom(listOf(action)).toModel())
+        assertEquals(ChatParticipantMenuModel.ExtendBuiltIn(listOf(model)), ChatParticipantMenu.ExtendBuiltIn(listOf(action)).toModel())
     }
 
     @Test

@@ -16,4 +16,7 @@ sealed interface ProductRoomAction {
 
     /** The user picked a participant in the list, or tapped the author of a message. */
     data class SelectParticipant(val participantId: String) : ProductRoomAction
+
+    /** An entry of the sheet of the participant that the room shows. */
+    data class ParticipantSheet(val entry: ParticipantSheetEntry) : ProductRoomAction
 }

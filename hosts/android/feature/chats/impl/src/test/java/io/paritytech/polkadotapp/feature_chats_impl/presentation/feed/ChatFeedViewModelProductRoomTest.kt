@@ -5,7 +5,9 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionHandlerModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -15,6 +17,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
@@ -36,6 +39,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatParticipantAppearanceFactory
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductLinkOpener
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ParticipantSheetEntry
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductToolbarItemUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
@@ -105,6 +109,7 @@ class ChatFeedViewModelProductRoomTest {
         coEvery { sendUserEvent(any(), any()) } returns Result.success(Unit)
     }
     private val productLinkOpener = mockk<ChatProductLinkOpener>(relaxed = true)
+    private val clipboardService = mockk<ClipboardService>(relaxed = true)
     private val resourceResolver = mockk<ChatResourceResolver> {
         coEvery { resolve(any()) } returns Result.failure(IllegalStateException("no image in a unit test"))
     }
@@ -220,6 +225,47 @@ class ChatFeedViewModelProductRoomTest {
         coVerify(exactly = 0) { querying.participantsCount(any()) }
     }
 
+    @Test
+    fun `the sheet of a participant shows the entries of the product, and a callback entry sends ParticipantActionTriggered`() = runBlocking<Unit> {
+        policy.value = ChatRoomPolicy.Defaults.copy(
+            productQueries = setOf(ChatRoomPolicy.ProductQuery.PARTICIPANTS, ChatRoomPolicy.ProductQuery.PARTICIPANT_ACTIONS),
+        )
+        coEvery { querying.participantMenu(any(), any()) } returns Result.success(
+            ChatParticipantMenuModel.Custom(listOf(productAction("mute", ChatActionHandlerModel.Callback))),
+        )
+        val model = viewModel()
+
+        model.onProductRoomAction(ProductRoomAction.SelectParticipant("alice"))
+
+        val sheet = withTimeout(5_000) { model.productRoomState.first { it.participantSheet?.loading == false }.participantSheet!! }
+        assertEquals("Alice", sheet.participant.name)
+        assertEquals(listOf(ParticipantSheetEntry.Product("mute", "mute", icon = null, isDestructive = false)), sheet.entries)
+        assertEquals(ChatMenuType.ParticipantSheet, model.menuState.value.type)
+        coVerify { querying.participantMenu(any(), participant("alice")) }
+
+        model.onProductRoomAction(ProductRoomAction.ParticipantSheet(sheet.entries.single()))
+
+        coVerify(timeout = 5_000) { interactor.sendUserEvent(roomId, ChatRoomUserEvent.ParticipantActionTriggered("alice", "mute")) }
+    }
+
+    @Test
+    fun `the sheet of a lite person copies its address`() = runBlocking<Unit> {
+        policy.value = ChatRoomPolicy.Defaults.copy(productQueries = setOf(ChatRoomPolicy.ProductQuery.PARTICIPANTS))
+        val account = ByteArray(32) { 1 }.toDataByteArray()
+        coEvery { querying.participantsByIds(any(), listOf("lite")) } returns
+            Result.success(listOf(ChatParticipantEntryModel("lite", ChatParticipantModel.LitePerson(account))))
+        val model = viewModel()
+
+        model.onProductRoomAction(ProductRoomAction.SelectParticipant("lite"))
+
+        val sheet = withTimeout(5_000) { model.productRoomState.first { it.participantSheet != null }.participantSheet!! }
+        val copy = sheet.entries.single() as ParticipantSheetEntry.CopyAddress
+        model.onProductRoomAction(ProductRoomAction.ParticipantSheet(copy))
+
+        verify { clipboardService.setPrimaryClip(copy.address) }
+        coVerify(exactly = 0) { querying.participantMenu(any(), any()) }
+    }
+
     private fun participant(id: String) =
         ChatParticipantEntryModel(id, ChatParticipantModel.Custom(nickname = id.replaceFirstChar { it.uppercase() }, avatar = null))
 
@@ -258,6 +304,7 @@ class ChatFeedViewModelProductRoomTest {
             resourceResolver = resourceResolver,
             productLinkOpener = productLinkOpener,
             appearances = ChatParticipantAppearanceFactory(mockk(relaxed = true), resourceResolver),
+            clipboardService = clipboardService,
         ),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk<CallStateTracker> { every { observeActiveCall() } returns flowOf(null) },

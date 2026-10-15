@@ -155,6 +155,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onDeleteMessageConfirm = contract::onDeleteMessageConfirm,
         onProductLinkConfirm = { contract.onProductRoomAction(ProductRoomAction.OpenLink(it)) },
         participants = productRoomState.participants.list,
+        participantSheet = productRoomState.participantSheet,
         onProductRoomAction = contract::onProductRoomAction,
     )
 

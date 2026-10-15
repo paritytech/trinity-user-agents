@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatBuiltInMessageActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
@@ -15,6 +16,7 @@ import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageMenu
 import uniffi.truapi.ChatMessageOrigin
 import uniffi.truapi.ChatMessageStatus
+import uniffi.truapi.ChatParticipantMenu
 import uniffi.truapi.ChatProductAction
 import uniffi.truapi.ChatReactionSummary
 import uniffi.truapi.ChatMessage as CoreChatMessage
@@ -27,6 +29,11 @@ fun ChatMessageMenu.toModel(): ChatMessageMenuModel = when (this) {
         actions = actions.map { it.toModel() },
         hidden = hidden.mapTo(mutableSetOf()) { it.toModel() },
     )
+}
+
+fun ChatParticipantMenu.toModel(): ChatParticipantMenuModel = when (this) {
+    is ChatParticipantMenu.Custom -> ChatParticipantMenuModel.Custom(actions.map { it.toModel() })
+    is ChatParticipantMenu.ExtendBuiltIn -> ChatParticipantMenuModel.ExtendBuiltIn(actions.map { it.toModel() })
 }
 
 fun ChatProductAction.toModel() = ChatProductActionModel(

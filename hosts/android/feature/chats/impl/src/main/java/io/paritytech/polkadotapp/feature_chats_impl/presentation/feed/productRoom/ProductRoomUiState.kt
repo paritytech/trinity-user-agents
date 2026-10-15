@@ -9,11 +9,13 @@ import kotlinx.collections.immutable.persistentListOf
 data class ProductRoomUiState(
     val toolbar: ProductToolbarUiModel,
     val participants: ProductParticipantsUiState,
+    val participantSheet: ParticipantSheetUiState?,
 ) {
     companion object {
         val None = ProductRoomUiState(
             toolbar = ProductToolbarUiModel(inline = persistentListOf(), overflow = persistentListOf()),
             participants = ProductParticipantsUiState.None,
+            participantSheet = null,
         )
     }
 }

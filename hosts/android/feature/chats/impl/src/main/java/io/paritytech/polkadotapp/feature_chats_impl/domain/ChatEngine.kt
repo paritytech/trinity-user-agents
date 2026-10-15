@@ -660,6 +660,9 @@ class ChatEngine @Inject constructor(
     suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? =
         chatExtensionRegistry.getExtensionForChat(chatId)?.roomQuerying(chatId)
 
+    suspend fun productAppAddress(chatId: ChatId): String? =
+        chatExtensionRegistry.getExtensionForChat(chatId)?.productAppAddress(chatId)
+
     fun subscribeRevisions(chatId: ChatId): Flow<Map<ChatMessageId, MessageRevision>> {
         return flowOfAll {
             val decoder = getCustomContentDecoder(chatId)

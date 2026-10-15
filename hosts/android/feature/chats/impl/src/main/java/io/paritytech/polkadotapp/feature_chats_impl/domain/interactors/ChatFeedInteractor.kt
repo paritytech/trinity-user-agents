@@ -343,6 +343,9 @@ class ChatFeedInteractor @Inject internal constructor(
         return querying.messageMenu(chatId, snapshot.productQueryMessage(message))
     }
 
+    /** The address of the App of the product of the room, or null when no product serves the room. */
+    suspend fun productAppAddress(chatId: ChatId): String? = chatEngine.productAppAddress(chatId)
+
     /** A product action of a menu, the toolbar or a suggestion that the user selected. */
     suspend fun sendUserEvent(chatId: ChatId, event: ChatRoomUserEvent): Result<Unit> =
         productRoomUserActions.sendEvent(chatId, event)

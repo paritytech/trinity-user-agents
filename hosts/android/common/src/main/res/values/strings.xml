@@ -895,6 +895,8 @@
     <string name="chat_participant_kind_lite_person">Account</string>
     <string name="chat_participant_kind_contact">Contact</string>
     <string name="chat_participant_kind_guest">Guest</string>
+    <string name="chat_participant_copy_address">Copy address</string>
+    <string name="chat_participant_open_product">Open app</string>
 
     <string name="notification_channel_name_video_game">Weekly game</string>
     <string name="notification_channel_description_video_game">Notifications about upcoming weekly games</string>

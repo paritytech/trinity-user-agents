@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
@@ -66,6 +67,7 @@ import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductChatMessageActionsQueryRequest
 import uniffi.truapi.ProductChatMessagesQueryRequest
+import uniffi.truapi.ProductChatParticipantActionsQueryRequest
 import uniffi.truapi.ProductChatParticipantsQueryRequest
 import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.ProductRendererRenderRequest
@@ -176,6 +178,11 @@ class TrUAPIChatWorker(
         query { execution ->
             val byIds = ChatParticipantsQuery.ByIds(participantIds)
             execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, byIds)).toResolved()
+        }
+
+    override suspend fun participantMenu(roomId: ProductChatIdParameter, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =
+        query { execution ->
+            execution.chatParticipantActionsQuery(ProductChatParticipantActionsQueryRequest(roomId.value, entry.toCore())).menu.toModel()
         }
 
     // The core holds the worker for each open query. A worker that is not running yet starts first, and an

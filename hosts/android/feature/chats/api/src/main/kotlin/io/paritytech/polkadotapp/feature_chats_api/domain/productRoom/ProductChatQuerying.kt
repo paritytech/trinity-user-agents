@@ -25,4 +25,8 @@ interface ProductChatQuerying {
     /** The participants with these ids that the product knows. An unknown id is not in the answer. */
     suspend fun participantsByIds(chatId: ChatId, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> =
         Result.failure(ProductChatQueryException.NotAvailable())
+
+    /** The menu of one participant of the room. */
+    suspend fun participantMenu(chatId: ChatId, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =
+        Result.failure(ProductChatQueryException.NotAvailable())
 }

@@ -67,6 +67,9 @@ interface ChatExtension {
     /** The queries of a room whose messages the product keeps. Null when the extension cannot answer them. */
     fun roomQuerying(chatId: ChatId): ProductChatQuerying? = null
 
+    /** The address of the App of the product that serves [chatId], or null when no product serves it. */
+    fun productAppAddress(chatId: ChatId): String? = null
+
     /** Gives an action of the user in [chatId] that is not a saved message to the extension. */
     suspend fun onUserEvent(chatId: ChatId, event: ChatRoomUserEvent) = Unit
 

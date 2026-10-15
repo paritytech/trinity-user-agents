@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom
 
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionHandlerModel
@@ -9,6 +10,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
@@ -54,6 +56,7 @@ class ChatProductRoomController(
     private val resourceResolver: ChatResourceResolver,
     private val productLinkOpener: ChatProductLinkOpener,
     appearances: ChatParticipantAppearanceFactory,
+    private val clipboardService: ClipboardService,
 ) {
     /** What the controller asks of the room screen. */
     interface Screen {
@@ -86,8 +89,12 @@ class ChatProductRoomController(
         querying = { interactor.roomQuerying(chatId) },
     )
 
-    val uiState: StateFlow<ProductRoomUiState> = combine(toolbar, participants.uiState) { toolbar, participants ->
-        ProductRoomUiState(toolbar = toolbar, participants = participants)
+    private val participantSheet = MutableStateFlow<ParticipantSheetUiState?>(null)
+    private var participantSheetMenu: ChatParticipantMenuModel? = null
+    private var participantSheetJob: Job? = null
+
+    val uiState: StateFlow<ProductRoomUiState> = combine(toolbar, participants.uiState, participantSheet) { toolbar, participants, sheet ->
+        ProductRoomUiState(toolbar = toolbar, participants = participants, participantSheet = sheet)
     }.stateIn(scope, SharingStarted.Eagerly, ProductRoomUiState.None)
 
     private val _messageMenu = MutableStateFlow<ProductMessageMenuState?>(null)
@@ -128,8 +135,49 @@ class ChatProductRoomController(
             is ProductRoomAction.Toolbar -> pressToolbar(action.actionId)
             ProductRoomAction.ShowParticipants -> showParticipants()
             ProductRoomAction.LoadMoreParticipants -> participants.loadMore()
-            // The sheet of one participant comes with the participant menus.
-            is ProductRoomAction.SelectParticipant -> Unit
+            is ProductRoomAction.SelectParticipant -> showParticipant(action.participantId)
+            is ProductRoomAction.ParticipantSheet -> selectSheetEntry(action.entry)
+        }
+    }
+
+    /** The sheet of a participant: the host entry for its kind, and the entries of `participant_actions_query` (P6.4). */
+    private fun showParticipant(participantId: String) {
+        participantSheetJob?.cancel()
+        participantSheetJob = scope.launch {
+            val participant = participants.appearanceOf(participantId)
+            val entry = participants.entryOf(participantId)
+            val builtIns = ParticipantSheet.builtIns(participantId, entry, interactor.productAppAddress(chatId))
+            val asks = entry != null && roomPolicy.first()?.productQueries?.contains(ChatRoomPolicy.ProductQuery.PARTICIPANT_ACTIONS) == true
+
+            participantSheetMenu = null
+            participantSheet.value = ParticipantSheetUiState(participant, builtIns.toImmutableList(), loading = asks)
+            screen.showMenu(ChatMenuType.ParticipantSheet)
+            if (!asks || entry == null) return@launch
+
+            val menu = interactor.roomQuerying(chatId)?.participantMenu(chatId, entry)
+                ?.logFailure("The participant sheet keeps the host entry")
+                ?.getOrNull()
+            participantSheetMenu = menu
+            val entries = ParticipantSheet.entries(builtIns, menu, menu?.actions().orEmpty().resolveIcons())
+            participantSheet.value = ParticipantSheetUiState(participant, entries.toImmutableList(), loading = false)
+        }
+    }
+
+    private fun selectSheetEntry(entry: ParticipantSheetEntry) {
+        val participantId = participantSheet.value?.participant?.participantId ?: return
+        when (entry) {
+            is ParticipantSheetEntry.CopyAddress -> {
+                clipboardService.setPrimaryClip(entry.address)
+                screen.closeMenu()
+            }
+
+            is ParticipantSheetEntry.OpenProduct -> openLink(entry.address)
+
+            is ParticipantSheetEntry.Product -> {
+                val action = participantSheetMenu?.actions()?.find { it.actionId == entry.actionId } ?: return
+                if (action.handler == ChatActionHandlerModel.Callback) screen.closeMenu()
+                perform(action.handler, ChatRoomUserEvent.ParticipantActionTriggered(participantId, entry.actionId))
+            }
         }
     }
 
@@ -180,6 +228,7 @@ class ChatProductRoomController(
         private val resourceResolver: ChatResourceResolver,
         private val productLinkOpener: ChatProductLinkOpener,
         private val appearances: ChatParticipantAppearanceFactory,
+        private val clipboardService: ClipboardService,
     ) {
         @Suppress("LongParameterList")
         fun <S> create(
@@ -201,6 +250,7 @@ class ChatProductRoomController(
             resourceResolver = resourceResolver,
             productLinkOpener = productLinkOpener,
             appearances = appearances,
+            clipboardService = clipboardService,
         )
     }
 }
