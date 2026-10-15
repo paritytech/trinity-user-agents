@@ -2182,6 +2182,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_BATTERY_REPORT_PATH` | Override battery report destination. |
 | `TRUAPI_APPROVALS_LOG` | Append one line per decided confirmation to this file. |
 | `TRUAPI_NAVIGATIONS_LOG` | Append one JSON line `{"url","at"}` (`at` in Unix milliseconds) per `navigate_to` destination the host accepted. Unset, nothing is written; set, a transcript that cannot be written fails that `navigate_to` call. The terminal UI shows each accepted destination either way. |
+| `TRUAPI_ACCOUNT_REQUESTS_DIR` | In `signing-host --serve`, answer each `<name>.request.json` (`{"productId","index"}`) in this directory with `<name>.response.json` (`{"productId","derivationIndex","publicKey","address"}` or `{"error"}`) from the running session, for the served product only, and remove the request. Read-only. |
 
 ## 22. Current v0.1 operational constraints
 
