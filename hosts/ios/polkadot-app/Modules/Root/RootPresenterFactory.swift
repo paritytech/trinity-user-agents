@@ -17,11 +17,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
             visibilityReporter: foregroundPresentationController
         )
 
-        #if FEATURE_DIMS
-            let chatExtensionRouters: [ChatExtensionPushRouting] = [DIM2ExtensionPushRouter()]
-        #else
-            let chatExtensionRouters: [ChatExtensionPushRouting] = []
-        #endif
+        let chatExtensionRouters: [ChatExtensionPushRouting] = []
 
         let chatExtensionRouteHandler = ChatExtensionPushRouteHandler(
             routers: chatExtensionRouters,
@@ -94,7 +90,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         #if TESTNET_FEATURE
             interactor.appFactoryResetCheckerFactory = AppFactoryResetCheckerFactory(
                 operationQueue: OperationManagerFacade.sharedDefaultQueue,
-                usernameChain: AppConfig.Chains.usernameChain
+                identityChain: AppConfig.Chains.assethubChain
             )
         #endif
 

@@ -1,6 +1,5 @@
 @testable import polkadot_app
 import Foundation
-import Operation_iOS
 import SubstrateSdk
 
 final class MockRemoteContactOperationFactory: RemoteContactOperationMaking {
@@ -17,17 +16,13 @@ final class MockRemoteContactOperationFactory: RemoteContactOperationMaking {
     var receivedSearchQuery: String?
     var receivedFetchAccountId: AccountId?
 
-    func search(by query: String) -> CompoundOperationWrapper<[Chat.RemoteContact]> {
+    func search(by query: String) async throws -> [Chat.RemoteContact] {
         receivedSearchQuery = query
 
-        let operation = ClosureOperation<[Chat.RemoteContact]> {
-            if let error = self.searchError {
-                throw error
-            }
-            return self.searchResult
+        if let error = searchError {
+            throw error
         }
-
-        return CompoundOperationWrapper(targetOperation: operation)
+        return searchResult
     }
 
     func fetch(by accountId: AccountId) async throws -> Chat.RemoteContact? {

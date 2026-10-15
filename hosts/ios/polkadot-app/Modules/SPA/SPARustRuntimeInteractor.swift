@@ -102,7 +102,8 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
 private extension SPARustRuntimeInteractor {
     /// A dotNS page is its manifest, so a resolution failure is the page failing. A direct URL is
     /// its own content and the manifest only names it, so a label that holds no records — a local
-    /// server opened from debug settings — still opens, unnamed.
+    /// server opened from debug settings — still opens, unnamed. A development server page is not
+    /// published content, so nothing is resolved for it.
     static func resolveProduct(
         with productResolver: ProductResolving,
         for configuration: SPAConfiguration
@@ -114,6 +115,10 @@ private extension SPARustRuntimeInteractor {
             return try await productResolver.resolve(domain)
         case .directURL:
             return try? await productResolver.resolve(domain)
+        #if DEBUG
+            case .devServer:
+                return nil
+        #endif
         }
     }
 
@@ -121,9 +126,7 @@ private extension SPARustRuntimeInteractor {
         setupTask?.cancel()
 
         do {
-            let newRuntime = try runtimeFactory.createRuntime(
-                for: configuration.page.host.toDotDomain()
-            )
+            let newRuntime = try runtimeFactory.createRuntime(for: configuration.productId)
             runtime = newRuntime
 
             setupTask = Task { [weak self, productResolver, configuration] in

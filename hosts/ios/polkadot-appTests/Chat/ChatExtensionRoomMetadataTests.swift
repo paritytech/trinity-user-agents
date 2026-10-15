@@ -117,7 +117,6 @@ private final class StubRoomBot: ChatExtensionBotProtocol {
     var peerMetadata: Chat.PeerMetadata {
         Chat.PeerMetadata(
             name: "Jollity",
-            contactSource: .chat,
             icon: .product(domain: identifier),
             input: .empty,
             moreActions: []

@@ -4,6 +4,7 @@ import WebKit
 public enum JSDeviceCapability: Sendable {
     case camera
     case microphone
+    case motion
 
     public var deviceCapabilityType: DeviceCapabilityType {
         switch self {
@@ -11,6 +12,8 @@ public enum JSDeviceCapability: Sendable {
             .camera
         case .microphone:
             .microphone
+        case .motion:
+            .motion
         }
     }
 }

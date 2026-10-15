@@ -272,7 +272,8 @@ class ChatMessageUiMapper @Inject constructor(
                         status = status,
                         renderer = renderer,
                         origin = origin,
-                        content = latestContent.content
+                        content = latestContent.content,
+                        chatId = chatId,
                     )
                 } else {
                     // Fallback to Unsupported if renderer not found

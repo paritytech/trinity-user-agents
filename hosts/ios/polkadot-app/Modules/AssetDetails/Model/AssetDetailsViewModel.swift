@@ -34,8 +34,6 @@ protocol AssetDetailsViewModelProtocol: Observation.Observable {
 
     var isTopUpInProgress: Bool { get set }
     var onTopUp: (() -> Void)? { get set }
-    var isWithdrawInProgress: Bool { get set }
-    var onWithdraw: (() -> Void)? { get set }
 
     var coinageBreakdown: CoinageBalanceBreakdownViewModel? { get set }
     #if TESTNET_FEATURE
@@ -63,8 +61,6 @@ class AssetDetailsViewModel: AssetDetailsViewModelProtocol {
 
     var isTopUpInProgress: Bool = false
     var onTopUp: (() -> Void)?
-    var isWithdrawInProgress: Bool = false
-    var onWithdraw: (() -> Void)?
 
     var coinageBreakdown: CoinageBalanceBreakdownViewModel?
     #if TESTNET_FEATURE

@@ -1,10 +1,12 @@
 //! Unified [`Contacts`] trait.
 
-use crate::versioned::contacts::{
-    HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
+use crate::{
+	CallContext, CallError,
+	versioned::contacts::{
+		HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
+	},
+	wire, wire_trait,
 };
-use crate::{CallContext, CallError};
-use crate::{wire, wire_trait};
 
 /// User-mediated access to the user's contacts.
 ///
@@ -19,39 +21,39 @@ use crate::{wire, wire_trait};
 #[wire_trait(id = 20)]
 #[crate::async_trait]
 pub trait Contacts: Send + Sync {
-    /// Ask the host to let the user pick one contact.
-    ///
-    /// Resolves with the chosen contact's handle, or with why nothing was
-    /// chosen. A host that serves no picker answers `Unsupported`.
-    ///
-    /// The handle is not an address and cannot be turned into one. To pay the
-    /// person it names, put the handle where the recipient goes in the call and
-    /// list it in `contacts` on the transaction payload: the host replaces it
-    /// with their account before anything is signed or shown. A handle sent
-    /// anywhere else is 32 bytes that resolve to nobody.
-    ///
-    /// ```ts
-    /// const result = await truapi.contacts.pick({});
-    /// assert(result.isOk(), "contacts.pick failed:", result);
-    /// const outcome = result.value.outcome;
-    /// switch (outcome.tag) {
-    ///   case "Picked":
-    ///     console.log("picked:", outcome.value.handle);
-    ///     break;
-    ///   case "Dismissed":
-    ///     console.log("the user closed the picker; worth offering again");
-    ///     break;
-    ///   case "NoContacts":
-    ///     console.log("nothing to pick from");
-    ///     break;
-    /// }
-    /// ```
-    #[wire(id = 0)]
-    async fn pick(
-        &self,
-        _cx: &CallContext,
-        _request: HostContactsPickRequest,
-    ) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
-        Err(CallError::unavailable())
-    }
+	/// Ask the host to let the user pick one contact.
+	///
+	/// Resolves with the chosen contact's handle, or with why nothing was
+	/// chosen. A host that serves no picker answers `Unsupported`.
+	///
+	/// The handle is not an address and cannot be turned into one. To pay the
+	/// person it names, put the handle where the recipient goes in the call and
+	/// list it in `contacts` on the transaction payload: the host replaces it
+	/// with their account before anything is signed or shown. A handle sent
+	/// anywhere else is 32 bytes that resolve to nobody.
+	///
+	/// ```ts
+	/// const result = await truapi.contacts.pick({});
+	/// assert(result.isOk(), "contacts.pick failed:", result);
+	/// const outcome = result.value.outcome;
+	/// switch (outcome.tag) {
+	///   case "Picked":
+	///     console.log("picked:", outcome.value.handle);
+	///     break;
+	///   case "Dismissed":
+	///     console.log("the user closed the picker; worth offering again");
+	///     break;
+	///   case "NoContacts":
+	///     console.log("nothing to pick from");
+	///     break;
+	/// }
+	/// ```
+	#[wire(id = 0)]
+	async fn pick(
+		&self,
+		_cx: &CallContext,
+		_request: HostContactsPickRequest,
+	) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
+		Err(CallError::unavailable())
+	}
 }
