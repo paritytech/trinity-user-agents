@@ -6,6 +6,7 @@ import { Worker as Thread } from "node:worker_threads";
  */
 export class ThreadWorker extends EventTarget {
   readonly #thread: Thread;
+  #terminated = false;
 
   constructor(entry: URL) {
     super();
@@ -16,11 +17,17 @@ export class ThreadWorker extends EventTarget {
     this.#thread.on("messageerror", () =>
       this.dispatchEvent(new MessageEvent("messageerror")),
     );
-    this.#thread.on("error", (error: Error) =>
-      this.dispatchEvent(
-        Object.assign(new Event("error"), { message: error.message, error }),
-      ),
-    );
+    this.#thread.on("error", (error: Error) => this.#fail(error.message));
+    // A browser worker cannot exit on its own, so the host driver only listens
+    // for errors. Report an exit nobody asked for as one, or calls wait forever.
+    this.#thread.on("exit", (code) => {
+      if (!this.#terminated)
+        this.#fail(`worker thread exited with code ${code}`);
+    });
+  }
+
+  #fail(message: string): void {
+    this.dispatchEvent(Object.assign(new Event("error"), { message }));
   }
 
   postMessage(message: unknown, transfer?: Transferable[]): void {
@@ -28,6 +35,7 @@ export class ThreadWorker extends EventTarget {
   }
 
   terminate(): void {
+    this.#terminated = true;
     void this.#thread.terminate();
   }
 }
