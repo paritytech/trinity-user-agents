@@ -40,6 +40,10 @@ pub enum FundingFailure {
 	/// The user abandoned the flow, or declined to authorize an outbound
 	/// release.
 	Cancelled,
+	/// The provider returned the user's payment instead of crediting it.
+	Refunded,
+	/// The user's bank or card issuer refused the payment.
+	Declined,
 	/// Outcome not covered by the other variants. Clients render the message
 	/// and treat the code as opaque.
 	Other {
@@ -51,10 +55,6 @@ pub enum FundingFailure {
 		/// `payment_failed` when the user's payment did not go through.
 		message: String,
 	},
-	/// The provider returned the user's payment instead of crediting it.
-	Refunded,
-	/// The user's bank or card issuer refused the payment.
-	Declined,
 }
 
 /// Request to open the funding modality.
