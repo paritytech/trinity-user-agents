@@ -10,12 +10,13 @@ extension View {
         alignment: Alignment = .center
     ) -> some View {
         self
-            // 1. Inner padding
-            .padding(modifiers.padding)
-            // 2. Frame constraints (size / fill), before anything that paints:
-            // a background sizes to what it is given, so painting first leaves
-            // a node that takes its size from here with nothing behind it.
+            // 1. Frame constraints (size / fill), which size the content, before
+            // anything that paints: a background sizes to what it is given, so
+            // painting first leaves a node that takes its size from here with
+            // nothing behind it.
             .modifier(NodeFrameModifier(modifiers: modifiers, alignment: alignment))
+            // 2. Inner padding, around the content's size
+            .padding(modifiers.padding)
             // 3. Background color + clip
             .modifier(NodeBackgroundModifier(background: modifiers.background))
             // 4. Border overlay
@@ -81,18 +82,17 @@ private struct NodeBackgroundModifier: ViewModifier {
 
 // MARK: - Border
 
+/// Drawn inside the node, so a border never reaches over its neighbours. A
+/// stroke twice as wide clipped to the shape keeps the outer edge on the shape
+/// for any shape, which an inset stroke cannot do for rounded corners.
 private struct NodeBorderModifier: ViewModifier {
     let border: CustomMessageWidgetNode.Border?
 
     func body(content: Content) -> some View {
         if let border {
-            if let shape = border.shape {
-                content
-                    .overlay(shape.stroke(border.color, lineWidth: border.width))
-            } else {
-                content
-                    .overlay(Rectangle().stroke(border.color, lineWidth: border.width))
-            }
+            let shape = border.shape ?? AnyShape(Rectangle())
+            content
+                .overlay(shape.stroke(border.color, lineWidth: border.width * 2).clipShape(shape))
         } else {
             content
         }

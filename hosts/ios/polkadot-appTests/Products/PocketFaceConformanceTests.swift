@@ -23,10 +23,11 @@ struct PocketFaceConformanceTests {
 
         // Drawn to pixels, not just mapped: these faces build their surface out
         // of nodes sized only by their own modifiers, which map to a full tree
-        // and can still reach the screen as one flat fill.
+        // and can still reach the screen as one flat fill. The surface is bars
+        // that touch, so it is most of the card; a flat fill is all of it.
         let share = try WidgetNodeRaster.largestShare(of: drawn, in: cardSize)
 
-        #expect(share < 0.9)
+        #expect(share < 0.97)
     }
 
     /// The bound the approval sheet applies, checked against the largest face a

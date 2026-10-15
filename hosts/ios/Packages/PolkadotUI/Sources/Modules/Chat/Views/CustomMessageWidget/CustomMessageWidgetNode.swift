@@ -34,7 +34,7 @@ public extension CustomMessageWidgetNode {
     struct BoxProps {
         public let alignment: Alignment
 
-        public init(alignment: Alignment = .center) {
+        public init(alignment: Alignment = .topLeading) {
             self.alignment = alignment
         }
     }
@@ -188,15 +188,6 @@ public extension CustomMessageWidgetNode {
         case spaceBetween
         case spaceAround
         case spaceEvenly
-
-        var isSpaced: Bool {
-            switch self {
-            case .spaceBetween,
-                 .spaceAround,
-                 .spaceEvenly: true
-            default: false
-            }
-        }
     }
 
     enum ButtonVariant {
