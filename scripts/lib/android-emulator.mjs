@@ -653,6 +653,8 @@ export function streamLogcat(serial, destination) {
       stdio: ["ignore", "pipe", "ignore"],
     });
     child.stdout.on("data", (chunk) => {
+      // The adb process can still send data after stop(), which ends the file.
+      if (stopped) return;
       const text = partial + chunk.toString("utf8");
       const parts = text.split(/\r?\n/);
       partial = parts.pop() ?? "";
