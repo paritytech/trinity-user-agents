@@ -1,6 +1,7 @@
 import Foundation
 import Operation_iOS
 import os
+import StructuredConcurrency
 import TrUAPIHost
 
 extension ProductAttachmentStager {
@@ -19,9 +20,24 @@ extension ProductAttachmentStager {
 /// reaches the Bulletin chain. The app gives it only the product, the room and the bytes.
 struct TrUAPIProductAttachmentStaging: ProductAttachmentStaging {
     private let runtime: @Sendable () throws -> TrUAPIHostRuntime
+    private let references: @Sendable () throws -> any TrUAPIWorkerReferencing
+    private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
+    /// The longest wait for the worker before a stage. Android waits for the same execution (PARITY row 49).
+    private let executionWait: Duration
+    private let logger: LoggerProtocol
 
-    init(runtime: @escaping @Sendable () throws -> TrUAPIHostRuntime = Self.sharedRuntime) {
+    init(
+        runtime: @escaping @Sendable () throws -> TrUAPIHostRuntime = Self.sharedRuntime,
+        references: (@Sendable () throws -> any TrUAPIWorkerReferencing)? = nil,
+        workers: @escaping @Sendable () -> (any TrUAPIWorkerManaging)? = Self.sharedWorkers,
+        executionWait: Duration = .seconds(30),
+        logger: LoggerProtocol = Logger.shared
+    ) {
         self.runtime = runtime
+        self.references = references ?? { try runtime() }
+        self.workers = workers
+        self.executionWait = executionWait
+        self.logger = logger
     }
 
     func stage(productId: String, roomId: String, mimeType: String, bytes: Data) async throws -> Data {
@@ -50,12 +66,44 @@ struct TrUAPIProductAttachmentStaging: ProductAttachmentStaging {
         }
     }
 
-    func holdWorker(productId: String) {
-        try? runtime().acquireWorker(productId: productId)
+    /// Takes a worker reference, and then waits until the execution of the worker runs. On a cold start, the core
+    /// can read the declaration of the room only through the open execution (D36).
+    func holdWorker(productId: String) async {
+        do {
+            try references().acquireWorker(productId: productId)
+        } catch {
+            logger.warning("[staging] cannot hold the worker of \(productId): \(error)")
+            return
+        }
+
+        await waitForExecution(of: productId)
     }
 
     func releaseWorker(productId: String) {
-        try? runtime().releaseWorker(productId: productId)
+        try? references().releaseWorker(productId: productId)
+    }
+
+    /// Returns when the worker of the product runs, or after ``executionWait``. A stage after the bound still runs,
+    /// and the core answers it.
+    func waitForExecution(of productId: String) async {
+        guard let workers = workers() else {
+            logger.warning("[staging] no worker manager: the worker of \(productId) is not awaited")
+            return
+        }
+
+        guard workers.currentExecution(of: productId) == nil else {
+            return
+        }
+
+        do {
+            try await withTimeout(executionWait) {
+                for try await execution in workers.executions(of: productId) where execution != nil {
+                    return
+                }
+            }
+        } catch {
+            logger.warning("[staging] the worker of \(productId) does not run: \(error)")
+        }
     }
 
     @Sendable
@@ -64,6 +112,13 @@ struct TrUAPIProductAttachmentStaging: ProductAttachmentStaging {
             throw ProductStageFailure.submitFailed(reason: "no runtime provider")
         }
         return try provider.sharedRuntime()
+    }
+
+    /// The worker manager that the runtime provider of the app has.
+    @Sendable
+    static func sharedWorkers() -> (any TrUAPIWorkerManaging)? {
+        let provider: TrUAPIHostRuntimeProviding? = RootDependencyLocator.getDependency()
+        return provider?.attachedWorkerManager
     }
 }
 

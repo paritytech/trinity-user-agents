@@ -31,10 +31,19 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// for them. Called once at startup, before the runtime is first built.
     func attach(workerManager: any TrUAPIWorkerManaging)
 
+    /// The manager that ``attach(workerManager:)`` gave. Nil before the attach.
+    var attachedWorkerManager: (any TrUAPIWorkerManaging)? { get }
+
     /// Builds the runtime on a background task, so that no caller on the main
     /// thread builds it (06-OPEN-ITEMS O24). Called once at startup, after
     /// ``attach(workerManager:)``.
     func prepareInBackground()
+}
+
+extension TrUAPIHostRuntimeProviding {
+    var attachedWorkerManager: (any TrUAPIWorkerManaging)? {
+        nil
+    }
 }
 
 /// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
@@ -86,6 +95,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         defer { lock.unlock() }
 
         self.workerManager = workerManager
+    }
+
+    var attachedWorkerManager: (any TrUAPIWorkerManaging)? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        return workerManager
     }
 
     func prepareInBackground() {
