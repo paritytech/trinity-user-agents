@@ -140,6 +140,12 @@ leave the room screen and S6 stops the product server. Each P8.6 scenario puts t
 - A screen dump of a busy emulator can take more than 20 s. The launcher waits up to 90 s for one, and stops a dump that
   does not end. When an adb command times out, the helpers restart the adb server; the logcat stream then connects again
   from its last line, and the launcher maps the product port again.
+- An emulator under load can show "isn't responding" for the app; the launcher taps Wait. A sheet can drop a tap while
+  it slides in; the launcher taps the buttons of the public-storage notice again, at most three times. A tap on the
+  share sheet that lands while its rows move can open the Quick Share setup of the system; the launcher presses Back.
+  It notes each of these under "Observed while driving the app".
+- The files of the P10.3 rows stay in the Download folder of the AVD after a run, and push the files of S36 out of the
+  document picker. The launcher removes them before it pushes the files of the run.
 - An emulator under load can drop a swipe gesture. When a mute or archive swipe on a list row changes nothing in 6 s,
   the launcher swipes again, at most three times, and notes each repeat under "Observed while driving the app".
 - The app shows "The environment has been reset" after `pm clear`, and the product asks to submit a preimage at its

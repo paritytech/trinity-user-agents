@@ -4011,11 +4011,14 @@ async function main() {
       // The Attach button asks for the camera first; S36 picks files from the Download folder.
       grantPermission(serial, packageName, "android.permission.CAMERA");
       // The files of an earlier run stay in the Download folder and push the files of S36 out of the picker list.
-      shell(serial, ["rm", "-f", "/sdcard/Download/s5[789]-*", "/sdcard/Download/s60-*"]);
+      // The helper quotes each word, so a shell on the device expands the patterns.
+      shell(serial, ["sh", "-c", "rm -f /sdcard/Download/s5[789]-* /sdcard/Download/s60-*"]);
       pushFile(serial, resolve(productRoot, "assets", SMALL_ATTACHMENT), `/sdcard/Download/${SMALL_ATTACHMENT}`);
       const large = largeAttachment();
       pushFile(serial, large, `/sdcard/Download/${LARGE_ATTACHMENT}`);
       rmSync(large);
+      // `adb push` keeps the time of the source file, and the picker lists the newest files first.
+      for (const name of [SMALL_ATTACHMENT, LARGE_ATTACHMENT]) shell(serial, ["touch", `/sdcard/Download/${name}`]);
 
       step("start the app, seed the identity and install the product");
       amStart(serial, ["-n", launcherActivity]);
