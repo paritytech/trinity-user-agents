@@ -37,6 +37,19 @@ protocol ProductChatMessaging: Sendable {
     /// Chat Extension v2 `update_feed` for a room that the host stores. Throws `Chat.ProductFeedError` for a
     /// refused update.
     func applyFeedUpdate(roomId: String, update: Chat.ProductFeedUpdate) async throws
+    /// The features that the product declared for a room (Chat Extension v2 additions).
+    func roomFeatures(roomId: String) async throws -> Chat.RoomFeatures
+    /// Chat Extension v2 additions `set_room_features`.
+    func setRoomFeatures(roomId: String, features: Chat.RoomFeatures) async throws
+    /// Chat Extension v2 additions `set_message_meta`. Throws `Chat.ProductFeedError.unknownMessage` for a
+    /// message that a room of the host store does not hold.
+    func setMessageMeta(roomId: String, messageId: String, meta: Chat.MessageMeta) async throws
+    /// Chat Extension v2 additions `set_room_call`.
+    func setRoomCall(roomId: String, call: Chat.RoomCall?) async throws
+    /// The rooms of the product that the user muted or archived.
+    func roomUserStates() async throws -> [Chat.RoomUserStateEntry]
+    /// The bot ids of the personas that the product registered.
+    func personaIds() async throws -> [String]
 }
 
 /// Serves those calls from a chat binding. Conformers differ only in where the
@@ -159,6 +172,36 @@ extension BoundProductChatMessaging {
     func applyFeedUpdate(roomId: String, update: Chat.ProductFeedUpdate) async throws {
         let (context, bot) = try requireMessaging()
         try await context.applyFeedUpdate(for: bot, roomId: roomId, update: update)
+    }
+
+    func roomFeatures(roomId: String) async throws -> Chat.RoomFeatures {
+        let (context, bot) = try requireMessaging()
+        return try await context.roomFeatures(for: bot, roomId: roomId)
+    }
+
+    func setRoomFeatures(roomId: String, features: Chat.RoomFeatures) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomFeatures(for: bot, roomId: roomId, features: features)
+    }
+
+    func setMessageMeta(roomId: String, messageId: String, meta: Chat.MessageMeta) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setMessageMeta(for: bot, roomId: roomId, messageId: messageId, meta: meta)
+    }
+
+    func setRoomCall(roomId: String, call: Chat.RoomCall?) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomCall(for: bot, roomId: roomId, call: call)
+    }
+
+    func roomUserStates() async throws -> [Chat.RoomUserStateEntry] {
+        let (context, bot) = try requireMessaging()
+        return try await context.roomUserStates(for: bot)
+    }
+
+    func personaIds() async throws -> [String] {
+        let (context, bot) = try requireMessaging()
+        return try await context.personaIds(for: bot)
     }
 }
 

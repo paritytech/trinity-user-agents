@@ -149,8 +149,8 @@ extension ChatExtensionDiscoverContext {
 }
 
 private extension ChatExtensionDiscoverContext {
-    /// Removes the messages of a room with their reactions, unread marks and extension history. The room and
-    /// its declarations stay.
+    /// Removes the messages of a room with their reactions, unread marks, meta and extension history. The room
+    /// and its declarations stay.
     static func discardMessages(of chat: CDChat, chatId: Chat.Id, in context: NSManagedObjectContext) throws {
         for message in (chat.messages as? Set<CDChatMessage>) ?? [] {
             context.delete(message)
@@ -158,6 +158,11 @@ private extension ChatExtensionDiscoverContext {
 
         for unread in (chat.unreadMessages as? Set<CDChatUnreadMessage>) ?? [] {
             context.delete(unread)
+        }
+
+        // The meta names messages of the store that the room leaves.
+        for meta in (chat.messageMeta as? Set<CDChatMessageMeta>) ?? [] {
+            context.delete(meta)
         }
 
         chat.lastDisplayMessage = nil

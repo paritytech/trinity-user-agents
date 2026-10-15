@@ -111,6 +111,42 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
         feedUpdates.append((roomId, update))
     }
 
+    var features: [String: Chat.RoomFeatures] = [:]
+    var metaError: Error?
+    private(set) var metaCalls: [(roomId: String, messageId: String, meta: Chat.MessageMeta)] = []
+    private(set) var calls: [(roomId: String, call: Chat.RoomCall?)] = []
+    var userStates: [Chat.RoomUserStateEntry] = []
+    var personas: [String] = []
+
+    func roomFeatures(roomId: String) async throws -> Chat.RoomFeatures {
+        try requireRoom(roomId)
+        return features[roomId] ?? .hostDefault
+    }
+
+    func setRoomFeatures(roomId: String, features: Chat.RoomFeatures) async throws {
+        try requireRoom(roomId)
+        self.features[roomId] = features
+    }
+
+    func setMessageMeta(roomId: String, messageId: String, meta: Chat.MessageMeta) async throws {
+        try requireRoom(roomId)
+        if let metaError { throw metaError }
+        metaCalls.append((roomId, messageId, meta))
+    }
+
+    func setRoomCall(roomId: String, call: Chat.RoomCall?) async throws {
+        try requireRoom(roomId)
+        calls.append((roomId, call))
+    }
+
+    func roomUserStates() async throws -> [Chat.RoomUserStateEntry] {
+        userStates
+    }
+
+    func personaIds() async throws -> [String] {
+        personas
+    }
+
     private func requireRoom(_ roomId: String) throws {
         if unknownRooms.contains(roomId) { throw ChatRoomError.unknownRoom(roomId) }
     }
