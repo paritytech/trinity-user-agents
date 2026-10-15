@@ -871,7 +871,7 @@ pub use host_logic::session::{
 	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
 };
 #[cfg(feature = "runtime")]
-pub use host_logic::worker::{WorkerLedger, WorkerTransition};
+pub use host_logic::worker::{WorkerKeepAlive, WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
