@@ -73,7 +73,9 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toU
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentExecutor
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentKind
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentResult
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.attachmentKinds
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.roomAvatar
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
@@ -653,8 +655,11 @@ class ChatFeedViewModel @Inject constructor(
     }
 
     override fun onAttachClick() = launchUnit {
-        val cameraPermissionGranted = permissionAsker.askPermission(Manifest.permission.CAMERA) == PermissionResult.GRANTED
+        val kinds = roomPolicy.first().attachmentKinds()
+        val cameraPermissionGranted = AttachmentKind.PHOTO in kinds &&
+            permissionAsker.askPermission(Manifest.permission.CAMERA) == PermissionResult.GRANTED
         attachmentExecutor.setCameraAllowed(cameraPermissionGranted)
+        attachmentExecutor.setAllowedKinds(kinds)
 
         attachmentExecutor.execute()
             .onSuccess { attachmentResult ->
@@ -685,7 +690,7 @@ class ChatFeedViewModel @Inject constructor(
             fileSize = attachmentResult.size,
             text = text,
             replyToMessageId = replyToMessageId
-        ).onFailure {
+        ).onSuccess(::showActionOutcome).onFailure {
             showPresentationError(it.asAttachmentError().toPresentationError())
         }
     }

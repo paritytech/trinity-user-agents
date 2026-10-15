@@ -44,7 +44,8 @@ fun ChatMessageBody.toContent(rendererId: String): ChatMessage.Content = when (t
  */
 fun ChatMessage.Content.toCoreBody(): ChatMessageBody? = when (this) {
     is ChatMessage.Content.Text -> ChatMessageBody.Text(text)
-    // A user attachment is not sent to a product yet (P8.6): the text of the message goes alone.
+    // The attachments of a v1 rich text are network uploads that no product fetches. An attachment that the user sends
+    // in a product room is a product body with inline media, so only the text of a rich text goes.
     is ChatMessage.Content.RichText -> text?.let { ChatMessageBody.Text(it) }
     is ChatMessage.Content.ProductBody -> when (val body = body) {
         is ProductMessageBody.RichText -> ChatMessageBody.RichText(body.text, body.media.mapNotNull { it.toCore() })

@@ -309,6 +309,7 @@ class ProductChatExtension(
         return when (val content = content) {
             is ChatMessage.Content.Text,
             is ChatMessage.Content.RichText,
+            is ChatMessage.Content.ProductBody,
             -> ProductRoomEvent.MessagePosted(id, content, replyToMessageId?.let(::productId))
             is ChatMessage.Content.Edited -> ProductRoomEvent.UserEdited(productId(content.messageId), content.content)
             is ChatMessage.Content.Reacted -> ProductRoomEvent.UserReacted(productId(content.messageId), content.content.emoji, placed = true)

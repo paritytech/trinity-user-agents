@@ -35,6 +35,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatVariant
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
@@ -49,6 +50,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload.FileUploadStarter
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatNotificationPublisher
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.ProductAttachmentEncoder
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
@@ -117,6 +119,7 @@ class ChatFeedInteractor @Inject internal constructor(
     private val roomPolicyProvider: ChatRoomPolicyProvider,
     private val productRoomUserActions: ProductRoomUserActions,
     private val roomSourceContextFactory: ChatRoomSourceContextFactory,
+    private val productAttachmentEncoder: ProductAttachmentEncoder,
 ) {
     private val roomSources = ConcurrentHashMap<ChatId, ChatRoomSourceContext>()
 
@@ -260,10 +263,42 @@ class ChatFeedInteractor @Inject internal constructor(
         fileSize: InformationSize,
         text: String?,
         replyToMessageId: ChatMessageId?
-    ) = runCatching {
-        // Attachments of a product-source room go to the product as inline media, which P8.6 adds.
-        check(roomSource(chatId).productSource() == null) { "A product-source room takes no attachments yet" }
+    ): Result<ChatSourceActionOutcome> {
+        if (roomPolicyProvider.observePolicy(chatId).first() != null) {
+            return sendProductAttachment(chatId, contentUri, mimeType, fileSize, text, replyToMessageId)
+        }
 
+        return sendHostedAttachment(chatId, contentUri, mimeType, fileSize, text, replyToMessageId).map { ChatSourceActionOutcome.Done }
+    }
+
+    /**
+     * An attachment in a product room goes inline, up to 1 MiB, as rich text with one media item (02-DESIGN §3.5). The
+     * product of a product-source room gets it as `NewMessage`; the product of a host-store room gets `MessagePosted`.
+     */
+    private suspend fun sendProductAttachment(
+        chatId: ChatId,
+        contentUri: Uri,
+        mimeType: String,
+        fileSize: InformationSize,
+        text: String?,
+        replyToMessageId: ChatMessageId?
+    ): Result<ChatSourceActionOutcome> = productAttachmentEncoder.encode(contentUri, mimeType, fileSize).map { media ->
+        val content = ChatMessage.Content.ProductBody(ProductMessageBody.RichText(text = text, media = listOf(media)))
+
+        performInProductRoom(chatId, ChatSourceAction.Send(content, replyToMessageId)) ?: run {
+            chatEngine.sendUserMessage(chatId = chatId, content = content, replyToMessageId = replyToMessageId)
+            ChatSourceActionOutcome.Done
+        }
+    }
+
+    private suspend fun sendHostedAttachment(
+        chatId: ChatId,
+        contentUri: Uri,
+        mimeType: String,
+        fileSize: InformationSize,
+        text: String?,
+        replyToMessageId: ChatMessageId?
+    ) = runCatching {
         if (fileSize > MAX_ATTACHMENT_SIZE) {
             throw FileTooLargeException(fileSize, MAX_ATTACHMENT_SIZE)
         }
