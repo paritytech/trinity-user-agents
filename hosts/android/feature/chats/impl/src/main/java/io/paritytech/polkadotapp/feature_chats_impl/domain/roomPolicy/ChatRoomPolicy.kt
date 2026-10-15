@@ -72,7 +72,10 @@ data class ChatRoomPolicy(
         val allowsFile: Boolean,
         val allowsPayment: Boolean,
         val placeholder: String?,
-    )
+    ) {
+        val allowsAttachments: Boolean
+            get() = allowsPhoto || allowsVideo || allowsFile
+    }
 
     sealed interface Footer {
         data class TextInput(val input: Input) : Footer

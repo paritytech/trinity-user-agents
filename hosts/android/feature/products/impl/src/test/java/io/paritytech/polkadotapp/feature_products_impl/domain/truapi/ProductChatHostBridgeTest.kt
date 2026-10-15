@@ -177,13 +177,12 @@ class ProductChatHostBridgeTest {
     }
 
     @Test
-    fun `a footer that the product draws is rejected`() = runTest {
+    fun `a footer that the product draws is kept for the room`() = runTest {
         val api = FakeChatMessaging()
 
-        val thrown = runCatching { bridge(api).setRoomFooter(ROOM, ChatRoomFooter.Custom) }.exceptionOrNull()
+        bridge(api).setRoomFooter(ROOM, ChatRoomFooter.Custom)
 
-        assertTrue(thrown is HostRejection)
-        assertTrue(api.footers.isEmpty())
+        assertEquals(listOf(ProductChatIdParameter(ROOM) to ChatRoomFooterModel.Custom), api.footers)
     }
 
     @Test

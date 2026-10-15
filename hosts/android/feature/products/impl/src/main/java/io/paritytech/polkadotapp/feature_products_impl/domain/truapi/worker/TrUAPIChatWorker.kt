@@ -258,7 +258,6 @@ class TrUAPIChatWorker(
         return outcome.logFailure("truapi.chat.event for ${productId.value}")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     override fun renderMessage(
         roomId: ProductChatIdParameter?,
         messageId: ChatMessageId,
@@ -271,6 +270,28 @@ class TrUAPIChatWorker(
             messageId = productMessageId(roomId, messageId),
             messageType = messageType,
         )
+        return render(context, messageData.value)
+    }
+
+    // The footer render request has an empty payload (02-DESIGN §13 item 14).
+    override fun renderFooter(roomId: ProductChatIdParameter): Flow<Result<JsWidget>> =
+        render(RenderContext.ChatFooter(roomId.value), ByteArray(0))
+
+    override fun dispatchFooterEvent(roomId: ProductChatIdParameter, actionId: String, eventType: JsUiEvent.Type) {
+        val execution = workers.currentExecution(productId)
+        if (execution == null) {
+            Timber.w("TrUAPI chat footer event for %s/%s dropped: no running execution", productId.value, roomId.value)
+            return
+        }
+        runCatching {
+            execution.publishRendererAction(
+                HostRendererActionSubscribeItem(RenderContext.ChatFooter(roomId.value), actionId, eventType.toActionPayload()),
+            )
+        }.logFailure("truapi.renderer.footer action '$actionId' for ${productId.value}")
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun render(context: RenderContext, payload: ByteArray): Flow<Result<JsWidget>> {
         return workers.executionState(productId)
             .distinctUntilChanged()
             .flatMapLatest { state ->
@@ -279,7 +300,7 @@ class TrUAPIChatWorker(
                     is WorkerExecutionState.Failed ->
                         flowOf(Result.failure(ExecutionUnavailableException(state.reason)))
                     null -> emptyFlow()
-                    is WorkerExecutionState.Running -> state.execution.chatRender(context, messageData.value)
+                    is WorkerExecutionState.Running -> state.execution.chatRender(context, payload)
                 }
             }
             .conflate()
@@ -349,7 +370,7 @@ class TrUAPIChatWorker(
     // Reopened under flatMapLatest, not above it: a stop or a replacement execution then cancels
     // the backoff wait, and a failure cannot overtake the node drawn just before it by cancelling
     // the scope that drains flatMapLatest's channel.
-    private fun TrUAPIProductExecution.chatRender(context: RenderContext.ChatMessage, payload: ByteArray): Flow<Result<JsWidget>> =
+    private fun TrUAPIProductExecution.chatRender(context: RenderContext, payload: ByteArray): Flow<Result<JsWidget>> =
         flow {
             var drew = false
             render(ProductRendererRenderRequest(context, payload))
@@ -364,7 +385,13 @@ class TrUAPIChatWorker(
         }
             // The execution went away, not the render: end quietly and let the replacement draw.
             .catch { cause -> if (cause !is CancellationException) throw cause }
-            .reopenAfterFailure("TrUAPI chat render for ${productId.value}/${context.messageId}")
+            .reopenAfterFailure("TrUAPI chat render for ${productId.value}/${context.label()}")
+
+    private fun RenderContext.label(): String = when (this) {
+        is RenderContext.ChatMessage -> messageId
+        is RenderContext.ChatFooter -> "footer:$roomId"
+        else -> toString()
+    }
 
     private class StreamDrewNothing : Exception("the render stream ended without drawing")
 

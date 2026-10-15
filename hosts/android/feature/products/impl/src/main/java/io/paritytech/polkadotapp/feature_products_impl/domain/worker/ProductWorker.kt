@@ -14,10 +14,12 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductCha
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.JsEventDispatcher
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 /**
  * A booted product worker that the chat surface drives: it delivers user messages, renders custom
@@ -73,6 +75,13 @@ interface ProductWorker : JsEventDispatcher {
 
     suspend fun participantMenu(roomId: ProductChatIdParameter, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =
         Result.failure(ProductChatQueryException.Unavailable(cause = null))
+
+    /** The tree of the footer that the product draws for [roomId] (`RenderContext::ChatFooter`). */
+    fun renderFooter(roomId: ProductChatIdParameter): Flow<Result<JsWidget>> =
+        flowOf(Result.failure(UnsupportedOperationException("this runtime draws no chat footer")))
+
+    /** A press or an input in the footer that the product draws. */
+    fun dispatchFooterEvent(roomId: ProductChatIdParameter, actionId: String, eventType: JsUiEvent.Type) = Unit
 
     fun renderMessage(
         roomId: ProductChatIdParameter?,

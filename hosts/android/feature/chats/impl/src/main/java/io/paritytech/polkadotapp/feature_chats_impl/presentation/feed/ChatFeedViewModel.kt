@@ -286,9 +286,10 @@ class ChatFeedViewModel @Inject constructor(
     override val chatInputUiState = combine(
         messageInputState,
         chatInputStateType,
-        chatRequestAnswerProgress
-    ) { messageInput, chatInputStateType, answerProgress ->
-        chatInputStateType.toChatInputUiState(messageInput, answerProgress)
+        chatRequestAnswerProgress,
+        roomPolicy,
+    ) { messageInput, chatInputStateType, answerProgress, policy ->
+        chatInputStateType.toChatInputUiState(messageInput, answerProgress, policy?.footer)
     }.stateIn(this, SharingStarted.Eagerly, ChatInputUiState.Hidden)
 
     // The "New messages" marker waits for the first page of a product-source room, so a cached page does not set it.
@@ -331,11 +332,13 @@ class ChatFeedViewModel @Inject constructor(
 
     override val menuState = MutableStateFlow(ChatMenuState())
 
+    // A product room draws its footer in the footer slot, not in the list.
     override val footerRenderer = combine(
         flowOf { interactor.getFooterRendererForChat(chatId) },
         revealComplete,
-    ) { renderer, revealed ->
-        renderer.takeIf { revealed }
+        roomPolicy,
+    ) { renderer, revealed, policy ->
+        renderer.takeIf { revealed && policy == null }
     }.stateInBackground(initialValue = null)
 
     override val customAppearance = flowOf {
@@ -867,9 +870,11 @@ private fun gateMessageReveal(
     return GatedMessages(visibleMessages = visible, revealingMessageId = revealing?.id, revealComplete = revealing == null)
 }
 
+/** [footer] is the footer that a product room declares, or null in a person chat. */
 private fun ChatUserInputState.toChatInputUiState(
     messageInputState: ChatSendMessageInputState,
-    answerProgress: ChatRequestAnswerProgress
+    answerProgress: ChatRequestAnswerProgress,
+    footer: ChatRoomPolicy.Footer?,
 ): ChatInputUiState {
     return when (this) {
         is ChatUserInputState.AcceptChatRequest -> ChatInputUiState.AcceptChatRequest(answerProgress)
@@ -881,12 +886,15 @@ private fun ChatUserInputState.toChatInputUiState(
             ChatInputUiState.SendMessage(messageInputState.clearRelation(), isChatRequest = true)
         }
 
+        // A product room has no payment path yet, so its input has no payment button (P10).
         is ChatUserInputState.SendMessage -> {
+            val productInput = (footer as? ChatRoomPolicy.Footer.TextInput)?.input
             ChatInputUiState.SendMessage(
                 messageState = messageInputState,
                 isChatRequest = false,
                 showPayButton = paymentState is ChatUserInputState.SendMessage.Payment.Available,
-                showAttachButton = attachmentsSupported
+                showAttachButton = attachmentsSupported || productInput?.allowsAttachments == true,
+                placeholder = productInput?.placeholder,
             )
         }
     }

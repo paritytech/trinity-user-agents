@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRe
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
@@ -116,7 +117,7 @@ class ProductChatExtension(
     // Strong ref to the messaging target bound weakly onto the shared worker; held for our lifetime.
     private var chatMessaging: ProductChatMessaging? = null
 
-    // A footer that the product draws hides the input until the host can draw it (P8.6).
+    // Only an Input footer shows the input: an Empty footer shows nothing, a Custom one shows the tree of the product.
     override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> {
         if (chatId.productRoomId(id) == null) return flowOf(true)
         return declarationsRepository.observe(chatId)
@@ -134,6 +135,9 @@ class ProductChatExtension(
         ProductChatMenuRenderer(product, chatId, removable = origin == ProductChatExtensionOrigin.InstalledByUser)
 
     override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*> = chatPreviewDelegate
+
+    override fun customFooterRenderer(chatId: ChatId): CustomChatFooterRenderer? =
+        chatId.productRoomId(id)?.let { ProductFooterRenderer(it, runningWorker) }
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {

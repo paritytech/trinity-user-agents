@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom
 
 import androidx.compose.runtime.Immutable
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 
@@ -10,12 +11,15 @@ data class ProductRoomUiState(
     val toolbar: ProductToolbarUiModel,
     val participants: ProductParticipantsUiState,
     val participantSheet: ParticipantSheetUiState?,
+    /** The footer that the product draws in place of the input (`ChatRoomFooter::Custom`), or null. */
+    val customFooter: CustomChatFooterRenderer?,
 ) {
     companion object {
         val None = ProductRoomUiState(
             toolbar = ProductToolbarUiModel(inline = persistentListOf(), overflow = persistentListOf()),
             participants = ProductParticipantsUiState.None,
             participantSheet = null,
+            customFooter = null,
         )
     }
 }

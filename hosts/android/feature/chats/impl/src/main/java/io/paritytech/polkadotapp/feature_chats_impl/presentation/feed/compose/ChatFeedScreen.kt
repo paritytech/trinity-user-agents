@@ -43,6 +43,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.MessageActionMenuDropdown
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.ReactionDetailsDialog
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatInputRow
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ProductCustomFooter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.menu.ChatFeedMenu
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.LocalChatFeedTimestampAnchor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.*
@@ -298,20 +299,25 @@ private fun ChatFeedScreenInternal(
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                 ) {
-                    ChatInputRow(
-                        inputState = chatInputUiState,
-                        username = username,
-                        onClearReply = onClearReply,
-                        onClearEdit = onClearEdit,
-                        onMessageChange = onMessageChange,
-                        onSendMessageClick = onSendMessageClick,
-                        onPayClick = onPayClick,
-                        onAttachClick = onAttachClick,
-                        onAcceptChatRequest = onAcceptChatRequest,
-                        onDeclineChatRequest = onDeclineChatRequest,
-                        onUnblockUserClick = onUnblockUserClick,
-                        onHeightChanged = { footerHeight = it },
-                    )
+                    val customFooter = productRoomState.customFooter
+                    if (customFooter != null) {
+                        ProductCustomFooter(renderer = customFooter, onHeightChanged = { footerHeight = it })
+                    } else {
+                        ChatInputRow(
+                            inputState = chatInputUiState,
+                            username = username,
+                            onClearReply = onClearReply,
+                            onClearEdit = onClearEdit,
+                            onMessageChange = onMessageChange,
+                            onSendMessageClick = onSendMessageClick,
+                            onPayClick = onPayClick,
+                            onAttachClick = onAttachClick,
+                            onAcceptChatRequest = onAcceptChatRequest,
+                            onDeclineChatRequest = onDeclineChatRequest,
+                            onUnblockUserClick = onUnblockUserClick,
+                            onHeightChanged = { footerHeight = it },
+                        )
+                    }
                 }
             }
         }

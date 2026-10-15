@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
@@ -99,8 +100,18 @@ class ChatProductRoomController(
     private var participantSheetMenu: ChatParticipantMenuModel? = null
     private var participantSheetJob: Job? = null
 
-    val uiState: StateFlow<ProductRoomUiState> = combine(toolbar, participants.uiState, participantSheet) { toolbar, participants, sheet ->
-        ProductRoomUiState(toolbar = toolbar, participants = participants, participantSheet = sheet)
+    /** A `Custom` footer draws the tree of the product in the footer slot, bounded in height (P6.6). */
+    private val customFooter = combine(roomPolicy, flow { emit(interactor.getFooterRendererForChat(chatId)) }) { policy, renderer ->
+        renderer.takeIf { policy?.footer == ChatRoomPolicy.Footer.Custom }
+    }
+
+    val uiState: StateFlow<ProductRoomUiState> = combine(
+        toolbar,
+        participants.uiState,
+        participantSheet,
+        customFooter,
+    ) { toolbar, participants, sheet, customFooter ->
+        ProductRoomUiState(toolbar = toolbar, participants = participants, participantSheet = sheet, customFooter = customFooter)
     }.stateIn(scope, SharingStarted.Eagerly, ProductRoomUiState.None)
 
     private val _reactionDetails = MutableStateFlow<MessagePopUpUiState.ReactionsDetails?>(null)

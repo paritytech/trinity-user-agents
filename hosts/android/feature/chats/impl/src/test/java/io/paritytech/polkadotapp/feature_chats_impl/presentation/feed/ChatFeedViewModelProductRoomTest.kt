@@ -9,6 +9,7 @@ import io.mockk.verify
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionHandlerModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
@@ -39,6 +40,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageOriginD
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatInputUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatParticipantAppearanceFactory
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductLinkOpener
@@ -295,6 +297,34 @@ class ChatFeedViewModelProductRoomTest {
 
         coVerify(timeout = 5_000, exactly = 2) { querying.reactions(any(), "message-1") }
         assertEquals(null, model.popupState.value)
+    }
+
+    @Test
+    fun `the input of a product room shows the placeholder and the attach button of its footer`() = runBlocking<Unit> {
+        val input = ChatRoomPolicy.DefaultInput.copy(placeholder = "Ask the weather", allowsPhoto = false, allowsVideo = false, allowsFile = true)
+        policy.value = ChatRoomPolicy.Defaults.copy(footer = ChatRoomPolicy.Footer.TextInput(input))
+        every { interactor.subscribeUserInputState(any()) } returns flowOf(
+            ChatUserInputState.SendMessage(ChatUserInputState.SendMessage.Payment.NotAvailable, attachmentsSupported = false),
+        )
+
+        val state = withTimeout(5_000) { viewModel().chatInputUiState.first { it is ChatInputUiState.SendMessage } } as ChatInputUiState.SendMessage
+
+        assertEquals("Ask the weather", state.placeholder)
+        assertEquals(true, state.showAttachButton)
+        assertEquals(false, state.showPayButton)
+    }
+
+    @Test
+    fun `a custom footer draws in the footer slot and not in the list`() = runBlocking<Unit> {
+        val renderer = mockk<CustomChatFooterRenderer>()
+        coEvery { interactor.getFooterRendererForChat(roomId) } returns renderer
+        policy.value = ChatRoomPolicy.Defaults.copy(footer = ChatRoomPolicy.Footer.Custom)
+        val model = viewModel()
+
+        val footer = withTimeout(5_000) { model.productRoomState.first { it.customFooter != null }.customFooter }
+
+        assertEquals(renderer, footer)
+        assertEquals(null, model.footerRenderer.value)
     }
 
     private fun participant(id: String) =
