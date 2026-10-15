@@ -744,6 +744,17 @@ The `TRUAPI_ANDROID_E2E_*` environment variables override every default
 (device, APK, product, room, message, username, URL, report path); they
 mirror the iOS `TRUAPI_IOS_E2E_*` ones.
 
+The Chat Extension v2 sample product has its own Android launcher too. It
+builds the debug APK, seeds the app through the debug E2E hooks, types the
+sample's commands into the `host` and `source` rooms as a user, and writes one
+diagnosis row per Android scenario of the test plan to
+`playground/test-results/android-chat-v2/diagnosis-report.md`. See
+[docs/chat-android-emulator.md](docs/chat-android-emulator.md):
+
+```bash
+make android-chat-v2-run ANDROID_GOOGLE_SERVICES_JSON=<path>/google-services.json
+```
+
 The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md).
 
 ## Regenerate the TypeScript client
