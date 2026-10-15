@@ -47,7 +47,6 @@ import uniffi.truapi.HostPaymentStatusSubscribeItem
 import uniffi.truapi.HostPaymentTopUpException
 import uniffi.truapi.HostPaymentTopUpRequest
 import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
-import java.math.BigInteger
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -139,11 +138,12 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         if (request.into != null) return Result.failure(HostPaymentTopUpException.Unknown(NO_PURSES))
 
         val id = PaymentTopUpId.fromBytes(request.id.toDataByteArray())
-            .getOrElse { return Result.failure(HostPaymentTopUpException.Unknown(it.message ?: "invalid top-up id")) }
+            .getOrElse { return Result.failure(HostPaymentTopUpException.Unknown(INVALID_ID)) }
+        val amount = request.amount.toPlanksOrNull() ?: return Result.failure(HostPaymentTopUpException.InvalidAmount())
         val source = request.source.toDomain()
             .getOrElse { return Result.failure(HostPaymentTopUpException.InvalidSource()) }
 
-        return topUpService.start(product, id, request.amount.toPlanks(), source)
+        return topUpService.start(product, id, amount, source)
             .fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asTopUpException()) })
     }
 
@@ -166,12 +166,13 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         if (request.from != null) return Result.failure(HostPaymentException.Unknown(NO_PURSES))
 
         val id = ProductPaymentRequestId.fromBytes(request.id.toDataByteArray())
-            .getOrElse { return Result.failure(HostPaymentException.Unknown(it.message ?: "invalid payment id")) }
+            .getOrElse { return Result.failure(HostPaymentException.Unknown(INVALID_ID)) }
+        val amount = request.amount.toPlanksOrNull() ?: return Result.failure(HostPaymentException.InvalidAmount())
 
         return requestPaymentUseCase.requestPayment(
             productId = product,
             id = id,
-            amount = request.amount.toPlanks(),
+            amount = amount,
             destination = request.destination.intoAccountId(),
             shortfallDisclosure = ShortfallDisclosure.CALLER,
         ).fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asPaymentException()) })
@@ -193,7 +194,10 @@ class TrUAPIPaymentPlatforms @Inject constructor(
 
         return totalBalanceUseCase.getBalance()
             .map { it.spendableByProducts().value.toString() }
-            .getOrElse { throw HostPaymentBalanceSubscribeException.Unknown(it.message ?: "balance unavailable") }
+            .getOrElse {
+                Timber.tag(PAYMENTS_LOG_TAG).w(it, "Balance unavailable")
+                throw HostPaymentBalanceSubscribeException.Unknown(BALANCE_UNAVAILABLE)
+            }
     }
 
     private fun forwardBalance() {
@@ -211,6 +215,10 @@ class TrUAPIPaymentPlatforms @Inject constructor(
 
     private companion object {
         const val NO_PURSES = "the host has only the main purse"
+
+        const val INVALID_ID = "the id is not 32 bytes"
+
+        const val BALANCE_UNAVAILABLE = "balance is unavailable"
     }
 }
 
@@ -294,7 +302,7 @@ internal class StatusForwarder<S : Any>(
                 throw cancellation
             } catch (error: Throwable) {
                 val notFound = isNotFound(error)
-                if (!notFound) Timber.tag(LOG_TAG).w(error, "Status forwarding failed for $productId")
+                if (!notFound) Timber.tag(PAYMENTS_LOG_TAG).w(error, "Status forwarding failed for $productId")
                 fresh.value = if (notFound) Latest.NotFound else Latest.Failed(error)
             } finally {
                 runs.remove(key, fresh)
@@ -305,15 +313,21 @@ internal class StatusForwarder<S : Any>(
     }
 
     private companion object {
-        const val LOG_TAG = "truapi.payments"
-
         const val FIRST_STATUS_WAIT_MS = 1_000L
 
         const val SETTLED_KEPT = 256
     }
 }
 
-private fun String.toPlanks(): Balance = BigInteger(this).intoBalance()
+/** The amount as planks, or `null` when it is not a positive whole number. */
+private fun String.toPlanksOrNull(): Balance? = toBigIntegerOrNull()?.takeIf { it.signum() > 0 }?.intoBalance()
+
+// Products see these fixed reasons. The engine's own text, which can name internals or a short balance the
+// core would otherwise mask, only reaches the log.
+private const val PAYMENTS_LOG_TAG = "truapi.payments"
+private const val TOP_UP_FAILED = "top-up could not be registered"
+private const val PAYMENT_FAILED = "payment could not be started"
+private const val PAYMENT_DID_NOT_COMPLETE = "payment did not complete"
 
 private fun NativeTopUpSource.toDomain(): Result<PaymentTopUpSource> = when (this) {
     is NativeTopUpSource.ProductAccount -> derivationIndex.toDomain().map { PaymentTopUpSource.ProductAccount(it) }
@@ -334,19 +348,28 @@ private fun PaymentStatus.toNative(): HostPaymentStatusSubscribeItem = when (thi
     PaymentStatus.Processing -> HostPaymentStatusSubscribeItem.Processing
     PaymentStatus.Completed -> HostPaymentStatusSubscribeItem.Completed
     is PaymentStatus.PartiallyClaimed -> HostPaymentStatusSubscribeItem.ClaimedPartially(actualClaimed = claimed.value.toString())
-    is PaymentStatus.Failed -> HostPaymentStatusSubscribeItem.Failed(reason = reason)
+    is PaymentStatus.Failed -> {
+        Timber.tag(PAYMENTS_LOG_TAG).w("Payment failed: %s", reason)
+        HostPaymentStatusSubscribeItem.Failed(reason = PAYMENT_DID_NOT_COMPLETE)
+    }
 }
 
 private fun Throwable.asTopUpException(): HostPaymentTopUpException = when (this) {
     is TopUpError.InvalidSource -> HostPaymentTopUpException.InvalidSource()
     is TopUpError.AlreadyExists -> HostPaymentTopUpException.AlreadyExists()
     is TopUpError.SourceBusy -> HostPaymentTopUpException.SourceBusy()
-    else -> HostPaymentTopUpException.Unknown(message ?: toString())
+    else -> {
+        Timber.tag(PAYMENTS_LOG_TAG).w(this, "Top-up could not be registered")
+        HostPaymentTopUpException.Unknown(TOP_UP_FAILED)
+    }
 }
 
 private fun Throwable.asPaymentException(): HostPaymentException = when (this) {
     is PaymentRequestError.AlreadyExists -> HostPaymentException.AlreadyExists()
     is PaymentRequestError.Rejected -> HostPaymentException.Rejected()
     is PaymentRequestError.InsufficientBalance -> HostPaymentException.InsufficientBalance()
-    else -> HostPaymentException.Unknown(message ?: toString())
+    else -> {
+        Timber.tag(PAYMENTS_LOG_TAG).w(this, "Payment could not be started")
+        HostPaymentException.Unknown(PAYMENT_FAILED)
+    }
 }

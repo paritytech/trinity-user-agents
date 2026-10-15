@@ -218,6 +218,31 @@ class TrUAPIPaymentPlatformsTest {
         assertTrue(error is HostPaymentTopUpException.SourceBusy)
     }
 
+    @Test
+    fun `a top-up of nothing, or of no number, is an invalid amount`() = runBlocking<Unit> {
+        val key = ByteArray(64) { 1 }
+
+        for (amount in listOf("0", "-5", "ten")) {
+            val request = topUpRequest(NativeTopUpSource.PrivateKey(key)).copy(amount = amount)
+            val error = runCatching { platforms.topUp(product.value, request) }.exceptionOrNull()
+
+            assertTrue("$amount: $error", error is HostPaymentTopUpException.InvalidAmount)
+        }
+    }
+
+    @Test
+    fun `an unexpected top-up failure reaches the product without the engine's words`() = runBlocking<Unit> {
+        val key = ByteArray(64) { 1 }
+        coEvery { topUpService.start(product, topUpId, planks(25), any()) } returns
+            Result.failure(IllegalStateException("coin 0x12 locked by claim 7"))
+
+        val error = runCatching { platforms.topUp(product.value, topUpRequest(NativeTopUpSource.PrivateKey(key))) }
+            .exceptionOrNull()
+
+        assertTrue(error is HostPaymentTopUpException.Unknown)
+        assertEquals("top-up could not be registered", (error as HostPaymentTopUpException.Unknown).reason)
+    }
+
     // ---- payments ----
 
     /** The core hides a shortfall from products without BalanceAccess; the host must always report it. */
@@ -253,6 +278,46 @@ class TrUAPIPaymentPlatformsTest {
             listOf(
                 HostPaymentStatusSubscribeItem.Processing,
                 HostPaymentStatusSubscribeItem.ClaimedPartially(actualClaimed = "9"),
+            ),
+            pushedPayments.awaitSize(2),
+        )
+    }
+
+    @Test
+    fun `a payment of nothing, or of no number, is an invalid amount`() = runBlocking<Unit> {
+        for (amount in listOf("0", "-5", "ten")) {
+            val error = runCatching { platforms.requestPayment(product.value, paymentRequest().copy(amount = amount)) }
+                .exceptionOrNull()
+
+            assertTrue("$amount: $error", error is HostPaymentException.InvalidAmount)
+        }
+    }
+
+    @Test
+    fun `an unexpected payment failure reaches the product without the engine's words`() = runBlocking<Unit> {
+        coEvery { requestPaymentUseCase.requestPayment(product, paymentId, planks(25), any(), any()) } returns
+            Result.failure(IllegalStateException("cheque store at /data/coinage is corrupt"))
+
+        val error = runCatching { platforms.requestPayment(product.value, paymentRequest()) }.exceptionOrNull()
+
+        assertTrue(error is HostPaymentException.Unknown)
+        assertEquals("payment could not be started", (error as HostPaymentException.Unknown).reason)
+    }
+
+    /** The engine's reason can name a shortfall the core masks, so a failed payment reaches the product generic. */
+    @Test
+    fun `a failed payment reaches the product with a fixed reason`() = runBlocking<Unit> {
+        coEvery { requestPaymentUseCase.requestPayment(product, paymentId, planks(25), any(), any()) } returns
+            Result.success(Unit)
+        every { requestPaymentUseCase.subscribeStatus(product, paymentId) } returns
+            flowOf(PaymentStatus.Processing, PaymentStatus.Failed("only 12 planks spendable"))
+
+        platforms.requestPayment(product.value, paymentRequest())
+
+        assertEquals(
+            listOf(
+                HostPaymentStatusSubscribeItem.Processing,
+                HostPaymentStatusSubscribeItem.Failed(reason = "payment did not complete"),
             ),
             pushedPayments.awaitSize(2),
         )
