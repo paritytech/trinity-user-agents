@@ -70,6 +70,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.sen
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.sendableMessageText
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentExecutor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentResult
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
@@ -115,6 +117,7 @@ class ChatFeedViewModel @Inject constructor(
     private val attachmentExecutor: AttachmentExecutor,
     private val dispatchers: CoroutineDispatchers,
     private val resourceResolver: ChatResourceResolver,
+    productRoomFactory: ChatProductRoomController.Factory,
     draftControllerFactory: ChatDraftController.Factory,
     callStateTracker: CallStateTracker
 ) : BaseViewModel(), ChatFeedContract {
@@ -139,6 +142,20 @@ class ChatFeedViewModel @Inject constructor(
         .shareInBackground()
 
     private val feedSnapshot = interactor.subscribeMessages(chatId).shareInBackground()
+
+    private val productRoom = productRoomFactory.create(
+        scope = this,
+        chatId = chatId,
+        roomPolicy = roomPolicy,
+        feedSnapshot = feedSnapshot,
+        screen = object : ChatProductRoomController.Screen {
+            override fun showMenu(type: ChatMenuType) = menuState.update { it.copy(isVisible = true, type = type) }
+
+            override fun closeMenu() = onCloseMenu()
+
+            override fun showFailure(error: Throwable) = showPresentationError(UnexpectedPresentationError(error))
+        },
+    )
 
     private val reactions = feedSnapshot.map { it.reactions }.distinctUntilChanged().shareInBackground()
 
@@ -235,15 +252,23 @@ class ChatFeedViewModel @Inject constructor(
     }.stateInBackground(initialValue = persistentListOf())
 
     override val popupState = combine(
-        messagePopupSection,
+        combineToPair(messagePopupSection, productRoom.messageMenu),
         reactions,
         originDisplayResolver,
         messages,
         combineToPair(chatInputStateType, roomPolicy),
-    ) { popupSelection, reactions, originDisplayResolver, messagesList, (chatInputStateType, policy) ->
+    ) { (popupSelection, productMenu), reactions, originDisplayResolver, messagesList, (chatInputStateType, policy) ->
         if (popupSelection == null) return@combine null
 
-        messageUiMapper.constructPopUpState(popupSelection, reactions, originDisplayResolver, messagesList, chatInputStateType, policy)
+        messageUiMapper.constructPopUpState(
+            selection = popupSelection,
+            reactions = reactions,
+            originDisplayResolver = originDisplayResolver,
+            messages = messagesList,
+            userInputState = chatInputStateType,
+            roomPolicy = policy,
+            productMenu = productMenu,
+        )
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     private val messageInputState = MutableStateFlow(ChatSendMessageInputState())
@@ -344,25 +369,6 @@ class ChatFeedViewModel @Inject constructor(
 
     private fun seedMessageRevealProgress() = launchUnit {
         revealedUpTo.value = interactor.getLastRevealedTimestamp(chatId) ?: 0L
-    }
-
-    private fun gateMessageReveal(
-        domainMessages: List<ChatMessage>,
-        animates: Boolean,
-        revealedUpTo: Timestamp?,
-    ): GatedMessages {
-        if (!animates) return GatedMessages(visibleMessages = domainMessages, revealingMessageId = null, revealComplete = true)
-        if (revealedUpTo == null) return GatedMessages(visibleMessages = emptyList(), revealingMessageId = null, revealComplete = false)
-
-        val revealing = domainMessages
-            .filter { it.timestamp > revealedUpTo && it.animatesReveal }
-            .minByOrNull { it.timestamp }
-        val visible = if (revealing == null) {
-            domainMessages
-        } else {
-            domainMessages.filter { it.timestamp <= revealing.timestamp }
-        }
-        return GatedMessages(visibleMessages = visible, revealingMessageId = revealing?.id, revealComplete = revealing == null)
     }
 
     override fun onPayClick() = launchUnit {
@@ -537,6 +543,7 @@ class ChatFeedViewModel @Inject constructor(
                 messagePopupSection.update {
                     MessagePopUpSelection.actions(action.message.id)
                 }
+                productRoom.askMessageMenu(action.message)
             }
 
             is MessageAction.Press -> handleMessagePress(action.message)
@@ -590,11 +597,18 @@ class ChatFeedViewModel @Inject constructor(
                 }
             }
 
+            is MessageAction.ProductMenuAction -> {
+                messagePopupSection.update { null }
+                productRoom.selectMessageMenuAction(action.message.id, action.actionId)
+            }
+
             is MessageAction.DismissActionMenu -> {
                 messagePopupSection.update { null }
             }
         }
     }
+
+    override fun onProductRoomAction(action: ProductRoomAction) = productRoom.handle(action)
 
     override fun onDeleteMessageConfirm(messageId: ChatMessageId) = launchUnit {
         onCloseMenu()
@@ -791,31 +805,6 @@ class ChatFeedViewModel @Inject constructor(
         }
     }
 
-    private fun ChatUserInputState.toChatInputUiState(
-        messageInputState: ChatSendMessageInputState,
-        answerProgress: ChatRequestAnswerProgress
-    ): ChatInputUiState {
-        return when (this) {
-            is ChatUserInputState.AcceptChatRequest -> ChatInputUiState.AcceptChatRequest(answerProgress)
-            is ChatUserInputState.Nothing, ChatUserInputState.UserDeclinedChatRequest -> ChatInputUiState.Hidden
-            is ChatUserInputState.PeerLeft -> ChatInputUiState.PeerLeft
-            is ChatUserInputState.UnblockUser -> ChatInputUiState.UnblockUser
-            is ChatUserInputState.WaitChatRequestApproval -> ChatInputUiState.WaitChatRequestApproval
-            is ChatUserInputState.SendChatRequest -> {
-                ChatInputUiState.SendMessage(messageInputState.clearRelation(), isChatRequest = true)
-            }
-
-            is ChatUserInputState.SendMessage -> {
-                ChatInputUiState.SendMessage(
-                    messageState = messageInputState,
-                    isChatRequest = false,
-                    showPayButton = paymentState is ChatUserInputState.SendMessage.Payment.Available,
-                    showAttachButton = attachmentsSupported
-                )
-            }
-        }
-    }
-
     private fun markNonDisplayableMessagesAsRead() = launchUnit {
         interactor.markNonDisplayableMessagesAsRead(chatId)
     }
@@ -853,3 +842,47 @@ private data class GatedMessages(
 // (custom renderers, payments, system events) appears instantly and must not gate the reveal.
 private val ChatMessage.animatesReveal: Boolean
     get() = content is ChatMessage.Content.Text || content is ChatMessage.Content.RichText
+
+private fun gateMessageReveal(
+    domainMessages: List<ChatMessage>,
+    animates: Boolean,
+    revealedUpTo: Timestamp?,
+): GatedMessages {
+    if (!animates) return GatedMessages(visibleMessages = domainMessages, revealingMessageId = null, revealComplete = true)
+    if (revealedUpTo == null) return GatedMessages(visibleMessages = emptyList(), revealingMessageId = null, revealComplete = false)
+
+    val revealing = domainMessages
+        .filter { it.timestamp > revealedUpTo && it.animatesReveal }
+        .minByOrNull { it.timestamp }
+    val visible = if (revealing == null) {
+        domainMessages
+    } else {
+        domainMessages.filter { it.timestamp <= revealing.timestamp }
+    }
+    return GatedMessages(visibleMessages = visible, revealingMessageId = revealing?.id, revealComplete = revealing == null)
+}
+
+private fun ChatUserInputState.toChatInputUiState(
+    messageInputState: ChatSendMessageInputState,
+    answerProgress: ChatRequestAnswerProgress
+): ChatInputUiState {
+    return when (this) {
+        is ChatUserInputState.AcceptChatRequest -> ChatInputUiState.AcceptChatRequest(answerProgress)
+        is ChatUserInputState.Nothing, ChatUserInputState.UserDeclinedChatRequest -> ChatInputUiState.Hidden
+        is ChatUserInputState.PeerLeft -> ChatInputUiState.PeerLeft
+        is ChatUserInputState.UnblockUser -> ChatInputUiState.UnblockUser
+        is ChatUserInputState.WaitChatRequestApproval -> ChatInputUiState.WaitChatRequestApproval
+        is ChatUserInputState.SendChatRequest -> {
+            ChatInputUiState.SendMessage(messageInputState.clearRelation(), isChatRequest = true)
+        }
+
+        is ChatUserInputState.SendMessage -> {
+            ChatInputUiState.SendMessage(
+                messageState = messageInputState,
+                isChatRequest = false,
+                showPayButton = paymentState is ChatUserInputState.SendMessage.Payment.Available,
+                showAttachButton = attachmentsSupported
+            )
+        }
+    }
+}

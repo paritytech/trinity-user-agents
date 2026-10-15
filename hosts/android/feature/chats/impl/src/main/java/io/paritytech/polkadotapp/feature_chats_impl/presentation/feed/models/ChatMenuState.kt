@@ -13,6 +13,9 @@ sealed interface ChatMenuType {
     data class MessageHistory(val current: MessageRevisionUiModel, val history: ImmutableList<MessageRevisionUiModel>) : ChatMenuType
     data class Custom(val renderer: CustomChatMenuRenderer) : ChatMenuType
     data class DeleteMessageConfirmation(val messageId: ChatMessageId) : ChatMenuType
+
+    /** A product action opens [url] after the user confirms it. */
+    data class ProductLinkConfirmation(val url: String) : ChatMenuType
 }
 
 enum class ChatMenuAction {

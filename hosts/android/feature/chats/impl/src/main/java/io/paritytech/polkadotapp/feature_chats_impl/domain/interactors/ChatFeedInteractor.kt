@@ -40,7 +40,9 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.onContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.userDeclinedIncomingRequest
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
@@ -72,6 +74,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallRe
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageEditHistoryItem
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.productQueryMessage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ProductRoomUserActions
@@ -330,6 +333,15 @@ class ChatFeedInteractor @Inject internal constructor(
 
     /** The page and user-action queries of a room whose messages the product keeps, or null without a product. */
     suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? = chatEngine.roomQuerying(chatId)
+
+    /**
+     * The menu that the product gives for [message] of the window [snapshot] (`message_actions_query`). A failure is
+     * a refusal, no answer in time, or a room without a product: the room screen then shows the host menu.
+     */
+    suspend fun productMessageMenu(chatId: ChatId, message: ChatMessage, snapshot: ChatFeedSnapshot): Result<ChatMessageMenuModel> {
+        val querying = roomQuerying(chatId) ?: return Result.failure(ProductChatQueryException.NotAvailable())
+        return querying.messageMenu(chatId, snapshot.productQueryMessage(message))
+    }
 
     /** A product action of a menu, the toolbar or a suggestion that the user selected. */
     suspend fun sendUserEvent(chatId: ChatId, event: ChatRoomUserEvent): Result<Unit> =

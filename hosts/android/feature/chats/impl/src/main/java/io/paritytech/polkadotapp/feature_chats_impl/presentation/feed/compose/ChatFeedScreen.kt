@@ -45,6 +45,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.menu.ChatFeedMenu
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.LocalChatFeedTimestampAnchor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.*
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.LocalChatMessageTimeFormatter
@@ -146,6 +147,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onBlockUserRequest = contract::onBlockUserRequest,
         onBlockUserConfirm = contract::onBlockUserConfirm,
         onDeleteMessageConfirm = contract::onDeleteMessageConfirm,
+        onProductLinkConfirm = { contract.onProductRoomAction(ProductRoomAction.OpenLink(it)) },
     )
 
     when (popupState) {

@@ -1,6 +1,10 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed
 
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionHandlerModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatBuiltInMessageActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.AllowedMessageMenuAction
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
@@ -78,6 +82,65 @@ class ChatMenuActionsProviderTest {
         assertTrue(provider.canLeaveMenuReactions(canSend, roomPolicy = null))
         assertFalse(provider.canLeaveMenuReactions(ChatUserInputState.Nothing, hostStoreRoom))
     }
+
+    @Test
+    fun `extend built-in hides the hidden entries and adds the product entries in a section after them`() {
+        val host = provider.getMessageActions(text(), canSend, hostStoreRoom)
+        val menu = ChatMessageMenuModel.ExtendBuiltIn(
+            actions = listOf(productAction("pin"), productAction("report", destructive = true), productAction("share")),
+            hidden = setOf(ChatBuiltInMessageActionModel.EDIT),
+        )
+
+        val actions = provider.applyProductMenu(host, menu, icons = mapOf("share" to "icon"))
+
+        assertEquals(host.filterNot { it is AllowedMessageMenuAction.Edit }, actions.take(host.size - 1))
+        assertEquals(
+            listOf(
+                AllowedMessageMenuAction.Custom("pin", "pin", icon = null, isDestructive = false),
+                AllowedMessageMenuAction.Custom("share", "share", icon = "icon", isDestructive = false),
+                AllowedMessageMenuAction.Custom("report", "report", icon = null, isDestructive = true),
+            ),
+            actions.takeLast(3),
+        )
+    }
+
+    @Test
+    fun `custom shows only the product entries and no reactions`() {
+        val host = provider.getMessageActions(text(), canSend, hostStoreRoom)
+        val menu = ChatMessageMenuModel.Custom(listOf(productAction("pin")))
+
+        assertEquals(
+            listOf(AllowedMessageMenuAction.Custom("pin", "pin", icon = null, isDestructive = false)),
+            provider.applyProductMenu(host, menu, icons = emptyMap()),
+        )
+        assertFalse(provider.canLeaveReactions(hostAllows = true, menu = menu))
+    }
+
+    @Test
+    fun `no answer from the product shows the host menu`() {
+        val host = provider.getMessageActions(text(), canSend, hostStoreRoom)
+
+        assertEquals(host, provider.applyProductMenu(host, menu = null, icons = emptyMap()))
+        assertTrue(provider.canLeaveReactions(hostAllows = true, menu = null))
+    }
+
+    @Test
+    fun `hiding react removes the reactions`() {
+        val hideReact = ChatMessageMenuModel.ExtendBuiltIn(emptyList(), hidden = setOf(ChatBuiltInMessageActionModel.REACT))
+        val hideEdit = ChatMessageMenuModel.ExtendBuiltIn(emptyList(), hidden = setOf(ChatBuiltInMessageActionModel.EDIT))
+
+        assertFalse(provider.canLeaveReactions(hostAllows = true, menu = hideReact))
+        assertTrue(provider.canLeaveReactions(hostAllows = true, menu = hideEdit))
+        assertFalse(provider.canLeaveReactions(hostAllows = false, menu = hideEdit))
+    }
+
+    private fun productAction(id: String, destructive: Boolean = false) = ChatProductActionModel(
+        actionId = id,
+        label = id,
+        icon = null,
+        destructive = destructive,
+        handler = ChatActionHandlerModel.Callback,
+    )
 
     private fun text(
         direction: ChatMessageUiModel.Direction = ChatMessageUiModel.Direction.OUTGOING,

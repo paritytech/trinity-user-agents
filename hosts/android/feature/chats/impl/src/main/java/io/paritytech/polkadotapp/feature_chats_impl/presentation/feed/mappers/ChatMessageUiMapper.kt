@@ -25,6 +25,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.ChatMenuAc
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.InputMessageRelation
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.MessagePopUpSelection
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductMessageMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.CallResolutionContext
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.buildCallResolutionContext
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.resolveCallState
@@ -93,9 +94,17 @@ class ChatMessageUiMapper @Inject constructor(
         messages: List<ChatMessageUiModel>,
         userInputState: ChatUserInputState,
         roomPolicy: ChatRoomPolicy?,
+        productMenu: ProductMessageMenuState?,
     ): MessagePopUpUiState? {
         return when (selection.type) {
-            MessagePopUpSelection.Type.ACTIONS -> constructActionMenuPopUpState(selection.messageId, reactions, messages, userInputState, roomPolicy)
+            MessagePopUpSelection.Type.ACTIONS -> constructActionMenuPopUpState(
+                messageId = selection.messageId,
+                reactions = reactions,
+                messages = messages,
+                userInputState = userInputState,
+                roomPolicy = roomPolicy,
+                productMenu = productMenu?.takeIf { it.messageId == selection.messageId },
+            )
             MessagePopUpSelection.Type.REACTION_DETAILS -> constructReactionDetailsPopUpState(selection.messageId, reactions, originDisplayResolver)
         }
     }
@@ -334,6 +343,7 @@ class ChatMessageUiMapper @Inject constructor(
         messages: List<ChatMessageUiModel>,
         userInputState: ChatUserInputState,
         roomPolicy: ChatRoomPolicy?,
+        productMenu: ProductMessageMenuState?,
     ): MessagePopUpUiState.ActionMenu? {
         val messageReactions = reactions[messageId].orEmpty()
         val userReactedEmojis = messageReactions
@@ -343,12 +353,19 @@ class ChatMessageUiMapper @Inject constructor(
 
         val message = messages.find { it.id == messageId } ?: return null
 
+        val hostActions = chatMenuActionsProvider.getMessageActions(message, userInputState, roomPolicy)
+        val hostAllowsReactions = chatMenuActionsProvider.canLeaveMenuReactions(userInputState, roomPolicy)
+        val answer = productMenu as? ProductMessageMenuState.Answered
+
         return MessagePopUpUiState.ActionMenu(
             message = message,
             userReactedEmojis = userReactedEmojis,
-            canLeaveReactions = chatMenuActionsProvider.canLeaveMenuReactions(userInputState, roomPolicy),
-            allowedMenuActions = chatMenuActionsProvider.getMessageActions(message, userInputState, roomPolicy).toImmutableList(),
+            canLeaveReactions = chatMenuActionsProvider.canLeaveReactions(hostAllowsReactions, answer?.menu),
+            allowedMenuActions = chatMenuActionsProvider
+                .applyProductMenu(hostActions, answer?.menu, answer?.icons.orEmpty())
+                .toImmutableList(),
             allowedReactions = roomPolicy?.messageMenu?.allowedReactions?.toImmutableList(),
+            productActionsLoading = productMenu is ProductMessageMenuState.Loading,
         )
     }
 }

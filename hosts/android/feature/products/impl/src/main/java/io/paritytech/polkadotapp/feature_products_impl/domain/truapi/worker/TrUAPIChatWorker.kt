@@ -6,12 +6,14 @@ import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -24,6 +26,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCoreBody
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toModel
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toQueryException
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toQueryMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.CancellationException
@@ -55,6 +58,7 @@ import uniffi.truapi.ChatEvent
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
+import uniffi.truapi.ProductChatMessageActionsQueryRequest
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.ProductRendererRenderRequest
@@ -145,6 +149,11 @@ class TrUAPIChatWorker(
             execution.chatUserAction(ProductChatUserActionRequest(roomId.value, coreAction)).toModel(rendererId)
         }
     }
+
+    override suspend fun messageMenu(roomId: ProductChatIdParameter, message: ProductRoomMessage): Result<ChatMessageMenuModel> =
+        query { execution ->
+            execution.chatMessageActionsQuery(ProductChatMessageActionsQueryRequest(roomId.value, message.toQueryMessage())).menu.toModel()
+        }
 
     // The core holds the worker for each open query. A worker that is not running yet starts first, and an
     // unavailable worker is asked once more after a second (02-DESIGN §3.6, §5.1).

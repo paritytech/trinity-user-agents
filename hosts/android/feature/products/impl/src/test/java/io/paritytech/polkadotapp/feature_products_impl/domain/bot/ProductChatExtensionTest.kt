@@ -23,6 +23,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserAc
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -383,5 +385,27 @@ class ProductChatExtensionTest {
         requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.DeleteMessage("m2"))
 
         assertEquals(listOf<ChatUserActionModel>(ChatUserActionModel.Retry("m1"), ChatUserActionModel.DeleteMessage("m2")), worker.userActions)
+    }
+
+    @Test
+    fun `a message menu question names the message and its reply by the product ids`() = runTest {
+        val worker = RecordingWorker()
+        val extension = extension(FakeRefCounter(worker))
+        withChatHost(ownRooms = flowOf(listOf(room))) { extension.startGlobalWork() }
+        val message = ProductRoomMessage(
+            messageId = ProductMessageIds.stored("m1", room),
+            participantId = "product",
+            timestamp = 1L,
+            content = ChatMessage.Content.Text("hi"),
+            status = ProductMessageStatusModel.SENT,
+            replyTo = ProductMessageIds.stored("m0", room),
+            editedAt = null,
+            reactions = emptyList(),
+        )
+
+        val menu = requireNotNull(extension.roomQuerying(room)).messageMenu(room, message)
+
+        assertEquals(RecordingWorker.MENU, menu.getOrNull())
+        assertEquals(listOf(message.copy(messageId = "m1", replyTo = "m0")), worker.menuQuestions)
     }
 }

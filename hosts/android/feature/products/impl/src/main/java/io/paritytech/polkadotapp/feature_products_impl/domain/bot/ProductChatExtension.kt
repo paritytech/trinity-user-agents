@@ -25,6 +25,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
@@ -36,6 +37,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFee
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -214,6 +216,15 @@ class ProductChatExtension(
             override suspend fun userAction(chatId: ChatId, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
                 val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
                 return runningWorker.userAction(room, action.withProductIds(chatId))
+            }
+
+            override suspend fun messageMenu(chatId: ChatId, message: ProductRoomMessage): Result<ChatMessageMenuModel> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                val productMessage = message.copy(
+                    messageId = ProductMessageIds.product(message.messageId, chatId),
+                    replyTo = message.replyTo?.let { ProductMessageIds.product(it, chatId) },
+                )
+                return runningWorker.messageMenu(room, productMessage)
             }
         }
     }

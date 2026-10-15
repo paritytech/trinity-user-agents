@@ -2,11 +2,13 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -75,6 +77,12 @@ class DeferredProductWorker : ProductWorker {
     override suspend fun userAction(roomId: ProductChatIdParameter, action: ChatUserActionModel): Result<ChatUserActionOutcome> =
         awaitWorker().fold(
             onSuccess = { it.userAction(roomId, action) },
+            onFailure = { Result.failure(ProductChatQueryException.Unavailable(it)) },
+        )
+
+    override suspend fun messageMenu(roomId: ProductChatIdParameter, message: ProductRoomMessage): Result<ChatMessageMenuModel> =
+        awaitWorker().fold(
+            onSuccess = { it.messageMenu(roomId, message) },
             onFailure = { Result.failure(ProductChatQueryException.Unavailable(it)) },
         )
 
