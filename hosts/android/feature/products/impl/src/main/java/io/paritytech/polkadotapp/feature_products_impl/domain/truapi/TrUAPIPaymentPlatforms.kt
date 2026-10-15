@@ -143,7 +143,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         val source = request.source.toDomain()
             .getOrElse { return Result.failure(HostPaymentTopUpException.InvalidSource()) }
 
-        return topUpService.start(product, id, request.amount.toBalance(), source)
+        return topUpService.start(product, id, request.amount.toPlanks(), source)
             .fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asTopUpException()) })
     }
 
@@ -171,7 +171,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         return requestPaymentUseCase.requestPayment(
             productId = product,
             id = id,
-            amount = request.amount.toBalance(),
+            amount = request.amount.toPlanks(),
             destination = request.destination.intoAccountId(),
             shortfallDisclosure = ShortfallDisclosure.CALLER,
         ).fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asPaymentException()) })
@@ -313,7 +313,7 @@ internal class StatusForwarder<S : Any>(
     }
 }
 
-private fun String.toBalance(): Balance = BigInteger(this).intoBalance()
+private fun String.toPlanks(): Balance = BigInteger(this).intoBalance()
 
 private fun NativeTopUpSource.toDomain(): Result<PaymentTopUpSource> = when (this) {
     is NativeTopUpSource.ProductAccount -> derivationIndex.toDomain().map { PaymentTopUpSource.ProductAccount(it) }
