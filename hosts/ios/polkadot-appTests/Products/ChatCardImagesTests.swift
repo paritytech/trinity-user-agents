@@ -68,6 +68,7 @@ private final class NoRuntime: TrUAPIHostRuntimeProviding {
     func sharedRuntime() throws -> TrUAPIHostRuntime { throw Unavailable() }
     @MainActor func setPresentationView(_: ControllerBackedProtocol) {}
     func attach(workerManager _: any TrUAPIWorkerManaging) {}
+    func prepareInBackground() {}
 }
 
 private struct NoWorkers: ProductWorkerManaging {
