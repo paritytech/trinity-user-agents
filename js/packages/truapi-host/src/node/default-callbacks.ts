@@ -50,10 +50,11 @@ function unchangingStream<T>(value: T): AsyncIterable<Result<T, GenericError>> {
     [Symbol.asyncIterator]() {
       let emitted = false;
       let closed = false;
-      let close: (() => void) | undefined;
+      const waiting: (() => void)[] = [];
       const done = { value: undefined, done: true } as const;
       return {
         next() {
+          if (closed) return Promise.resolve(done);
           if (!emitted) {
             emitted = true;
             return Promise.resolve({
@@ -61,14 +62,11 @@ function unchangingStream<T>(value: T): AsyncIterable<Result<T, GenericError>> {
               done: false,
             });
           }
-          if (closed) return Promise.resolve(done);
-          return new Promise((resolve) => {
-            close = () => resolve(done);
-          });
+          return new Promise((resolve) => waiting.push(() => resolve(done)));
         },
         return() {
           closed = true;
-          close?.();
+          for (const wake of waiting.splice(0)) wake();
           return Promise.resolve(done);
         },
       };

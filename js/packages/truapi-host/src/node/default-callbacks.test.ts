@@ -106,12 +106,39 @@ describe("createHeadlessHostCallbacks", () => {
     const stream = createHeadlessHostCallbacks(hostCallbacks)
       .theme.subscribeTheme()
       [Symbol.asyncIterator]();
-    expect(await stream.next()).toEqual({
-      value: ok({ name: { tag: "Default" }, variant: "Dark" }),
-      done: false,
-    });
-    const pending = stream.next();
+    const first = await stream.next();
+    const second = stream.next();
+    const stillOpen = await Promise.race([
+      second.then(() => false),
+      Bun.sleep(20).then(() => true),
+    ]);
     await stream.return?.();
-    expect(await pending).toEqual({ value: undefined, done: true });
+    expect({ first, stillOpen, second: await second }).toEqual({
+      first: {
+        value: ok({ name: { tag: "Default" }, variant: "Dark" }),
+        done: false,
+      },
+      stillOpen: true,
+      second: { value: undefined, done: true },
+    });
+  });
+
+  it("ends every pending read on close, and emits nothing once closed", async () => {
+    const callbacks = createHeadlessHostCallbacks(hostCallbacks);
+    const opened = callbacks.locale.subscribeLocale()[Symbol.asyncIterator]();
+    await opened.next();
+    const pending = [opened.next(), opened.next()];
+    await opened.return?.();
+    const closedEarly = callbacks.preimage
+      .lookupPreimage(new Uint8Array())
+      [Symbol.asyncIterator]();
+    await closedEarly.return?.();
+    expect([...(await Promise.all(pending)), await closedEarly.next()]).toEqual(
+      [
+        { value: undefined, done: true },
+        { value: undefined, done: true },
+        { value: undefined, done: true },
+      ],
+    );
   });
 });

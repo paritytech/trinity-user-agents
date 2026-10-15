@@ -21,6 +21,11 @@ port.on("messageerror", () =>
   events.dispatchEvent(new MessageEvent("messageerror")),
 );
 
+// A browser worker only logs an unhandled rejection; a Node thread would die.
+process.on("unhandledRejection", (reason) => {
+  console.error("[truapi worker] unhandled rejection:", reason);
+});
+
 // `self` is the thread's own global, so the core still finds `crypto` and the
 // rest of what it reads there.
 Object.assign(globalThis, {
