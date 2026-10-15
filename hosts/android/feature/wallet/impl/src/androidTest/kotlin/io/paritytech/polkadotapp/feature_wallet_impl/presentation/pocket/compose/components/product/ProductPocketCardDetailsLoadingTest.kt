@@ -114,6 +114,30 @@ class ProductPocketCardDetailsLoadingTest {
         compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertDoesNotExist()
     }
 
+    // A card tapped again while it fades out gets its fading screen back rather than a new one. The
+    // wait before the spinner is counted from that tap too, or the spinner would be there at once.
+    @Test
+    fun aCardReopenedWhileItClosesWaitsAgainBeforeTheSpinner() {
+        var shown by mutableStateOf(true)
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            AnimatedVisibility(visible = shown) {
+                CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) { Details(session = null) }
+            }
+        }
+        compose.mainClock.advanceTimeBy(2_000)
+        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertExists()
+
+        shown = false
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeByFrame()
+        shown = true
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeByFrame()
+
+        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertDoesNotExist()
+    }
+
     // A product opened again is on screen while its card is still moving. Its requests to fold the
     // face wait for the card to settle: applied at once they would move the card mid-flight, and
     // turned away they would be lost, since the product does not ask again.

@@ -429,6 +429,30 @@ class PocketViewModelTest {
         assertNotNull(viewModel.expandedProductSession.value)
     }
 
+    // A link can switch cards while one is open, and that card's screen is still drawn, not yet
+    // leaving, until the screen state catches up. A page handed over at once could land under it.
+    @Test
+    fun `a link to a card with a held product switches to it before handing the product over`() =
+        runTest(testDispatcher) {
+            val held = productCard("loyalty")
+            val open = productCard("stamps")
+            whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(held, open)))
+            val viewModel = createViewModel()
+            val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
+            val heldCard = cards.single { it.title == held.title }
+            viewModel.selectCard(heldCard)
+            viewModel.hostExpandedProduct(heldCard)
+            viewModel.dismissCard()
+            viewModel.selectCard(cards.single { it.title == open.title })
+
+            cardOpenRequests.request(held.key)
+            advanceUntilIdle()
+
+            assertNull(viewModel.expandedProductSession.value)
+            viewModel.hostExpandedProduct(heldCard)
+            assertNotNull(viewModel.expandedProductSession.value)
+        }
+
     // Building a WebView while the card is still moving starves the animation.
     @Test
     fun `a card opened for the first time gets its product only once it settles`() = runTest(testDispatcher) {

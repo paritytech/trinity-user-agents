@@ -77,8 +77,8 @@ fun ProductPocketCardDetails(
     // A product not held yet is asked for only once the card has arrived, so its WebView is not built
     // while the card is still travelling. The fold starts after the arrival, so the shared-element
     // transition lands on the card's real bounds; showFace returns as the fold starts, so the page is
-    // requested while it animates. Applied once: a recreated screen must not fold away a face the user has
-    // pulled back.
+    // requested while it animates. Applied once: a recreated screen must not fold away a face the user
+    // has pulled back.
     val arrival = LocalNavAnimatedVisibilityScope.current?.transition
     val arrived = arrival == null || arrival.currentState == EnterExitState.Visible
     var openingFaceApplied by rememberSaveable { mutableStateOf(false) }
@@ -95,8 +95,8 @@ fun ProductPocketCardDetails(
     }
 
     // A card being left stays composed while it fades out, and the next card's requests are for that
-    // card's fold alone. A held product is on screen while its card still travels, and its requests
-    // wait for the card to settle so the fold never starts mid-flight.
+    // card's fold alone. A held product's requests wait for its card to settle, so the fold never
+    // starts mid-flight.
     val leaving = arrival?.targetState == EnterExitState.PostExit
     LaunchedEffect(session, fold, leaving) {
         if (leaving) return@LaunchedEffect
@@ -110,10 +110,11 @@ fun ProductPocketCardDetails(
         }
     }
 
-    // Products draw their own loading state, so the host's spinner is kept for one that is clearly
-    // late. Counted from the card opening, since the product is asked for only once the card has
-    // settled, which waits on a chain read.
-    val slowToOpen by produceState(initialValue = false) {
+    // Products draw their own loading state, so the host's spinner is for one that is clearly late.
+    // Counted from the card opening, as the product is asked for only once the card settles.
+    val slowToOpen by produceState(initialValue = false, leaving) {
+        value = false
+        if (leaving) return@produceState
         delay(PRODUCT_PROGRESS_DELAY)
         value = true
     }
@@ -139,12 +140,11 @@ fun ProductPocketCardDetails(
             VerticalSpacer { mediumIncreased }
         }
 
-        // There is one WebView per product, and showing it takes it from wherever it was, so a card
-        // being left must not take the page from the card arriving over the same product.
+        // One WebView per product: a card being left must not take it from the card arriving.
         ExpandedProductContent(
             modifier = Modifier.fillMaxSize(),
             session = session.takeUnless { leaving },
-            showLoading = slowToOpen && !leaving,
+            showLoading = slowToOpen,
         )
     }
 }

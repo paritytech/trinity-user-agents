@@ -210,21 +210,23 @@ class PocketViewModel @Inject constructor(
     /**
      * A tap always starts from the list, but a link can arrive with another card open. Switched to
      * straight away, the new card would be drawn over the open one's page until it settled, so the
-     * open card is closed first, as [dismissCard] does, and the list behind it is put back.
+     * open card is closed first, as [dismissCard] does, and the list behind it is put back. Its
+     * screen is drawn until the state catches up, so a held product waits for the new card to settle.
      */
     private fun openRequestedCard(card: PocketCardUiModel.ProductCard) {
         cardOpenRequests.consume(card.key)
         if (selectedCardId.value == card.id) return
 
-        if (selectedCardId.value != null) dismissCard()
+        val switching = selectedCardId.value != null
+        if (switching) dismissCard()
         removalCandidate.value = null
-        selectCard(card)
+        selectCard(card, showHeldProduct = !switching)
     }
 
-    fun selectCard(card: PocketCardUiModel) {
+    fun selectCard(card: PocketCardUiModel, showHeldProduct: Boolean = true) {
         selectedCardId.value = card.id
         if (card is PocketCardUiModel.ProductCard) {
-            expandedProduct.showIfHeld(card.key.launchUrl())
+            if (showHeldProduct) expandedProduct.showIfHeld(card.key.launchUrl())
             warmUpProduct(card)
             lookUpOpeningFace(card)
         }
