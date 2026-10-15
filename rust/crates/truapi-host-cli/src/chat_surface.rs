@@ -37,14 +37,14 @@ use truapi::{
 	latest::{
 		ActionTrigger, ChatBuiltInMessageAction, ChatCommand, ChatEvent, ChatMessageBody,
 		ChatMessageMenu, ChatPageAnchor, ChatParticipant, ChatParticipantEntry,
-		ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction, ChatUserAction,
-		HostChatActionSubscribeItem, ProductChatMessageActionsQueryItem,
-		ProductChatMessageActionsQueryRequest, ProductChatMessagesQueryItem,
-		ProductChatMessagesQueryRequest, ProductChatParticipantActionsQueryItem,
-		ProductChatParticipantActionsQueryRequest, ProductChatParticipantsQueryItem,
-		ProductChatParticipantsQueryRequest, ProductChatQueryError, ProductChatReactionsQueryItem,
-		ProductChatReactionsQueryRequest, ProductChatUserActionError, ProductChatUserActionItem,
-		ProductChatUserActionRequest,
+		ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction, ChatRoomEvent,
+		ChatUserAction, HostChatActionSubscribeItem, HostChatRoomEventsSubscribeItem,
+		ProductChatMessageActionsQueryItem, ProductChatMessageActionsQueryRequest,
+		ProductChatMessagesQueryItem, ProductChatMessagesQueryRequest,
+		ProductChatParticipantActionsQueryItem, ProductChatParticipantActionsQueryRequest,
+		ProductChatParticipantsQueryItem, ProductChatParticipantsQueryRequest,
+		ProductChatQueryError, ProductChatReactionsQueryItem, ProductChatReactionsQueryRequest,
+		ProductChatUserActionError, ProductChatUserActionItem, ProductChatUserActionRequest,
 	},
 };
 
@@ -134,6 +134,13 @@ pub trait ChatWorker: Send + Sync {
 		&self,
 		request: ProductChatParticipantActionsQueryRequest,
 	) -> Result<Query<ProductChatParticipantActionsQueryItem>, ProductRuntimeError>;
+
+	/// Send one room event to the product's `chat.roomEventsSubscribe()`. The
+	/// core keeps it for the product until a connection subscribes.
+	fn publish_chat_room_event(
+		&self,
+		item: HostChatRoomEventsSubscribeItem,
+	) -> Result<(), ProductRuntimeError>;
 }
 
 impl ChatWorker for ProductRuntime {
@@ -185,6 +192,13 @@ impl ChatWorker for ProductRuntime {
 		request: ProductChatParticipantActionsQueryRequest,
 	) -> Result<Query<ProductChatParticipantActionsQueryItem>, ProductRuntimeError> {
 		self.control().chat_participant_actions_query(request)
+	}
+
+	fn publish_chat_room_event(
+		&self,
+		item: HostChatRoomEventsSubscribeItem,
+	) -> Result<(), ProductRuntimeError> {
+		self.control().publish_chat_room_event(item)
 	}
 }
 
@@ -372,6 +386,14 @@ enum PageOp {
 		req_id: u64,
 		room_id: String,
 		participant_id: String,
+	},
+	/// The user muted, unmuted, archived or unarchived the room.
+	UserState {
+		room_id: String,
+		#[serde(default)]
+		muted_until: Option<u64>,
+		#[serde(default)]
+		archived: bool,
 	},
 }
 
@@ -561,6 +583,11 @@ impl ChatSurface {
 				"send": self.timeouts.send.as_millis() as u64,
 				"action": self.timeouts.action.as_millis() as u64,
 				"query": self.timeouts.query.as_millis() as u64,
+			},
+			"capabilities": {
+				"features": crate::chat::CLI_CHAT_FEATURES,
+				"inlineAttachmentMaxBytes": truapi::platform::CHAT_INLINE_MEDIA_MAX_BYTES,
+				"preimageAttachmentMaxBytes": 0,
 			},
 			"rooms": snapshot.rooms,
 			"bots": snapshot.bots,
@@ -877,6 +904,31 @@ impl ChatSurface {
 					)
 				}))
 			},
+			PageOp::UserState { muted_until, archived, .. } => {
+				if let Err(reason) = self.chat.set_user_state(&room_id, *muted_until, *archived) {
+					return Applied::Now(error_reply(reason));
+				}
+				let event = ChatRoomEvent::UserStateChanged {
+					muted_until: *muted_until,
+					archived: *archived,
+				};
+				Applied::Now(self.deliver_room_event("userState", &room_id, event))
+			},
+		}
+	}
+
+	/// Send one room event to the product through a live worker. Every
+	/// worker connection of this host shares one queue for the product, so
+	/// one connection is enough.
+	fn deliver_room_event(&self, name: &str, room_id: &str, event: ChatRoomEvent) -> Value {
+		let item = HostChatRoomEventsSubscribeItem { room_id: room_id.to_string(), event };
+		let worker = self.lock_workers().live.values().rev().filter_map(Weak::upgrade).next();
+		let Some(worker) = worker else {
+			return error_reply("no worker is connected to receive the room event".to_string());
+		};
+		match worker.publish_chat_room_event(item) {
+			Ok(()) => json!({ "kind": "delivered", "op": name, "workers": 1 }),
+			Err(error) => error_reply(error.to_string()),
 		}
 	}
 
@@ -1024,7 +1076,8 @@ fn op_room(op: &PageOp) -> &str {
 		PageOp::Reactions { room_id, .. } |
 		PageOp::Participants { room_id, .. } |
 		PageOp::MessageActions { room_id, .. } |
-		PageOp::ParticipantActions { room_id, .. } => room_id,
+		PageOp::ParticipantActions { room_id, .. } |
+		PageOp::UserState { room_id, .. } => room_id,
 	}
 }
 
@@ -1066,6 +1119,7 @@ fn op_name(op: &PageOp) -> &'static str {
 		PageOp::Participants { .. } => "participants",
 		PageOp::MessageActions { .. } => "messageActions",
 		PageOp::ParticipantActions { .. } => "participantActions",
+		PageOp::UserState { .. } => "userState",
 	}
 }
 
@@ -1273,6 +1327,7 @@ mod tests {
 		participants: Scripted<ProductChatParticipantsQueryItem>,
 		message_menus: Scripted<ProductChatMessageActionsQueryItem>,
 		participant_menus: Scripted<ProductChatParticipantActionsQueryItem>,
+		room_events: Mutex<Vec<HostChatRoomEventsSubscribeItem>>,
 	}
 
 	fn scripted<Item: Send + 'static, Error: Send + 'static>(
@@ -1366,6 +1421,14 @@ mod tests {
 			self.ask(request);
 			Ok(scripted(&self.participant_menus))
 		}
+
+		fn publish_chat_room_event(
+			&self,
+			item: HostChatRoomEventsSubscribeItem,
+		) -> Result<(), ProductRuntimeError> {
+			self.room_events.lock().expect("not poisoned").push(item);
+			Ok(())
+		}
 	}
 
 	/// A worker connection the core refuses Chat to.
@@ -1419,6 +1482,13 @@ mod tests {
 			&self,
 			_request: ProductChatParticipantActionsQueryRequest,
 		) -> Result<Query<ProductChatParticipantActionsQueryItem>, ProductRuntimeError> {
+			Err(ProductRuntimeError::Denied)
+		}
+
+		fn publish_chat_room_event(
+			&self,
+			_item: HostChatRoomEventsSubscribeItem,
+		) -> Result<(), ProductRuntimeError> {
 			Err(ProductRuntimeError::Denied)
 		}
 	}
@@ -2196,5 +2266,43 @@ mod tests {
 		std::fs::write(bundle.path(), "second")?;
 		assert_eq!(surface.worker_bundle().as_deref(), Ok("second"));
 		Ok(())
+	}
+
+	// S49: the page shows the features the host lists, as a product reads
+	// them from `capabilities`.
+	#[test]
+	fn the_snapshot_lists_the_capabilities_of_the_page() {
+		let surface = surface(None);
+		let (snapshot, _) = surface.chat().observe();
+
+		assert_eq!(
+			surface.snapshot(snapshot, 0)["capabilities"],
+			json!({
+				"features": crate::chat::CLI_CHAT_FEATURES,
+				"inlineAttachmentMaxBytes": 1024 * 1024,
+				"preimageAttachmentMaxBytes": 0,
+			})
+		);
+	}
+
+	#[test]
+	fn the_user_state_of_a_room_reaches_the_product() {
+		let surface = surface(None);
+		let op = json!({"op":"userState","roomId":"daily","mutedUntil":5,"archived":true});
+
+		// Without a worker the state is kept and the page hears why the
+		// product did not.
+		assert_eq!(now(&surface, op.clone())["kind"], "error");
+		assert_eq!(surface.chat().user_states().len(), 1);
+
+		let (worker, _attachment) = attach(&surface);
+		assert_eq!(now(&surface, op)["kind"], "delivered");
+		assert_eq!(
+			*worker.room_events.lock().expect("not poisoned"),
+			[HostChatRoomEventsSubscribeItem {
+				room_id: "daily".to_string(),
+				event: ChatRoomEvent::UserStateChanged { muted_until: Some(5), archived: true },
+			}]
+		);
 	}
 }

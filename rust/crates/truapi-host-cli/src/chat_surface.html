@@ -220,6 +220,9 @@ aside[hidden], section[hidden] { display: none; }
 .roomhead { flex-wrap: wrap; }
 .roomhead .titles { flex: 1; min-width: 0; }
 .roomhead .titles p { margin: 2px 0 0; font: 12px var(--ui); color: var(--muted); white-space: pre-wrap; }
+.caps { padding: 10px 14px; border-top: 1px solid var(--line); }
+.caps p { margin: 0; font: 11px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.roomhead .features { display: block; font: 11px var(--mono); color: var(--muted); }
 .roomhead .people { font: 11px var(--mono); color: var(--muted); background: none; border: 0; padding: 0; text-decoration: underline dotted; }
 .toolbar { display: flex; gap: 6px; align-items: center; position: relative; }
 .toolbar button { display: inline-flex; gap: 6px; align-items: center; }
@@ -299,6 +302,7 @@ aside[hidden], section[hidden] { display: none; }
     <h2>Rooms</h2>
     <div id="rooms"></div>
     <div class="bots" id="botsBox" hidden><h2>Bots</h2><div id="bots"></div></div>
+    <div class="caps"><h2>Capabilities</h2><p id="capabilities">unknown</p></div>
   </nav>
   <div class="gutter" id="gutter-rooms" title="Drag to resize"></div>
   <section id="chat-pane">
@@ -352,6 +356,8 @@ const state = {
   productId: "",
   worker: { configured: true, connected: 0 },
   timeouts: { page: 10000, send: 30000, action: 10000, query: 5000 },
+  // What the host lists in `capabilities`: feature names and attachment bounds.
+  capabilities: { features: [], inlineAttachmentMaxBytes: 0, preimageAttachmentMaxBytes: 0 },
   rooms: new Map(),
   bots: [],
   // roomId -> messages in screen order (host store, or the product's pages plus updates).
@@ -991,8 +997,39 @@ function renderHeader2() {
   const sub = el("code", null, `${room.roomId} · ${isSource(room) ? "product source" : "host store"} · `);
   sub.appendChild(peopleButton);
   titles.appendChild(sub);
+  const features = declaredFeatures(room);
+  if (features.length) {
+    const line = el("code", "features", `features: ${features.join(", ")}`);
+    line.id = "roomfeatures";
+    titles.appendChild(line);
+  }
   head.appendChild(titles);
   head.appendChild(toolbarNode(room));
+}
+
+// The optional features a room declares, each marked when this host does not
+// serve it: the host keeps such a feature and ignores it.
+function declaredFeatures(room) {
+  const f = room.features || {};
+  const served = new Set(state.capabilities.features);
+  const declared = [];
+  const add = (label, name) => declared.push(served.has(name) ? label : `${label} (not served)`);
+  if (f.preimageAttachments) add("preimage attachments", "preimage_attachments");
+  if (f.search) add("search", "search");
+  if (f.calls && (f.calls.audio || f.calls.video)) {
+    const kinds = [f.calls.audio && "audio", f.calls.video && "video"].filter(Boolean).join("+");
+    add(`calls ${kinds}`, "call_buttons");
+  }
+  if (f.threadOf) add(`thread of ${f.threadOf.roomId}/${f.threadOf.messageId}`, "threads");
+  if (f.readAloud) add("read aloud", "read_aloud");
+  return declared;
+}
+
+function renderCapabilities() {
+  const caps = state.capabilities;
+  const bytes = (n) => n >= 1024 * 1024 ? `${n / (1024 * 1024)} MiB` : `${n} B`;
+  $("capabilities").textContent =
+    `${caps.features.join(", ") || "none"} · inline ${bytes(caps.inlineAttachmentMaxBytes)} · preimage ${caps.preimageAttachmentMaxBytes ? bytes(caps.preimageAttachmentMaxBytes) : "none"}`;
 }
 
 function runHandler(handler, onCallback) {
@@ -1526,6 +1563,8 @@ function handle(frame) {
       state.productId = frame.productId || "";
       state.worker = frame.worker || { configured: false, connected: 0 };
       if (frame.timeouts) state.timeouts = frame.timeouts;
+      if (frame.capabilities) state.capabilities = frame.capabilities;
+      renderCapabilities();
       state.rooms = new Map((frame.rooms || []).map((room) => [room.roomId, room]));
       state.bots = frame.bots || [];
       state.messages = new Map();

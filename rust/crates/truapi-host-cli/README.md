@@ -287,6 +287,16 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   you type), and the `/` catalogue of the room's commands. Only a declared
   command name becomes a `Command`; any other text is a message. An empty room
   shows its `placeholder`.
+- **Chat Extension v2 additions.** The rooms pane ends with a **Capabilities**
+  line: the feature names this host lists in `capabilities`
+  (`product_source_rooms`, `reaction_details`, `participants`, `message_menus`,
+  `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`) and
+  both attachment bounds. The host keeps what a product declares with
+  `set_room_features` whole, and the room header lists each declared feature,
+  marked "not served" where the host does not serve it. The host also keeps the
+  meta of each message (`set_message_meta`), the call of each room
+  (`set_room_call`), the personas of the product (`register_bot`, where a repeat
+  replaces the name and icon) and the mute and archive state of each room.
 
 A room the host keeps stores what you send and tells the product with the
 events of `chat.actionSubscribe()` (`MessagePosted` with the host's id,
@@ -309,14 +319,17 @@ remembered across reloads.
 
 ![Toggling the rooms and log panes and dragging the log wider](docs/chat-panes.gif)
 
-On `/chat/ws` the host sends a `snapshot` (rooms with their declarations and
-list row, bots, the messages of rooms the host keeps, and the time-outs) first,
+On `/chat/ws` the host sends a `snapshot` (rooms with their declarations,
+features, meta, call, user state and list row, bots, the messages of rooms the
+host keeps, the time-outs and the capabilities) first,
 then a `room`, `roomDeleted`, `bot` or `message` event as each lands, and
 `workers` whenever a worker connects or disconnects. The page sends one
 operation per thing a person does: `post`, `edit`, `delete`, `react`, `seen`,
 `retry`, `trigger`, `command`, `messageAction`, `participantAction`, `toolbar`,
-`suggestion`, `open` and `close`, and the queries `messages`, `reactions`,
-`participants`, `messageActions` and `participantActions`. An event is answered
+`suggestion`, `open`, `close` and `userState` (which mutes or archives a room
+and sends `UserStateChanged` to `chat.roomEventsSubscribe()`), and the queries
+`messages`, `reactions`, `participants`, `messageActions` and
+`participantActions`. An event is answered
 with `delivered` and the number of workers that took it, where 0 means none is
 connected; a query or a user action with `answer`, which carries the page's
 `reqId` and the product's answer or the reason there is none (`Timeout`,
