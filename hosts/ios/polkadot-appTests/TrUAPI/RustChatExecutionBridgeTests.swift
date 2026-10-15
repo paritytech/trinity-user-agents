@@ -205,13 +205,27 @@ struct RustChatExecutionBridgeTests {
         #expect(api.createdRooms.isEmpty)
     }
 
-    @Test func registerBotIsRejected() async throws {
+    /// P10.6: `register_bot` keeps a persona. An empty icon means no icon.
+    @Test func registerBotKeepsAPersona() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+
+        #expect(try await bridge.registerBot(botId: "b", name: "n", icon: "") == .new)
+        #expect(try await bridge.registerBot(botId: "b", name: "m", icon: "https://e.com/i.png") == .exists)
+        #expect(api.registeredPersonas == [
+            .init(botId: "b", name: "n", icon: nil),
+            .init(botId: "b", name: "m", icon: "https://e.com/i.png")
+        ])
+    }
+
+    @Test func registerBotRejectsAnEmptyId() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
 
         await #expect(throws: HostRejection.self) {
-            try await bridge.registerBot(botId: "b", name: "n", icon: "i")
+            try await bridge.registerBot(botId: "", name: "n", icon: "")
         }
+        #expect(api.registeredPersonas.isEmpty)
     }
 
     @Test func listRoomsReadsTheCurrentRooms() async throws {

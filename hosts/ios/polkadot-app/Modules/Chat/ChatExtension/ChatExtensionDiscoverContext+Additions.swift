@@ -34,6 +34,15 @@ protocol ChatProductRoomAdditions {
 
     /// The bot ids of the personas that the product registered, in alphabetical order.
     func personaIds(for chatBot: ChatExtensionBotProtocol) async throws -> [String]
+
+    /// Keeps a persona of the product (`register_bot`). A repeat replaces the name and the icon. Throws
+    /// ``ChatProductPersonaError/tooMany(max:)`` for a ninth persona.
+    func registerPersona(
+        for chatBot: ChatExtensionBotProtocol,
+        botId: String,
+        name: String,
+        icon: String?
+    ) async throws -> Chat.PersonaRegistration
 }
 
 extension ChatExtensionDiscoverContext: ChatProductRoomAdditions {
@@ -86,14 +95,23 @@ extension ChatExtensionDiscoverContext: ChatProductRoomAdditions {
     }
 
     func personaIds(for chatBot: ChatExtensionBotProtocol) async throws -> [String] {
-        let productId = chatBot.identifier
+        try await ChatProductPersonaStore(storageFacade: storageFacade)
+            .personas(of: chatBot.identifier)
+            .map(\.botId)
+    }
 
-        return try await storageFacade.databaseService.performRead { context in
-            let request: NSFetchRequest<CDProductChatPersona> = CDProductChatPersona.fetchRequest()
-            request.predicate = .personas(of: productId)
-
-            return try context.fetch(request).compactMap(\.botId).sorted()
-        }
+    func registerPersona(
+        for chatBot: ChatExtensionBotProtocol,
+        botId: String,
+        name: String,
+        icon: String?
+    ) async throws -> Chat.PersonaRegistration {
+        try await ChatProductPersonaStore(storageFacade: storageFacade).register(Chat.ProductPersona(
+            productId: chatBot.identifier,
+            botId: botId,
+            name: name,
+            icon: icon
+        ))
     }
 }
 

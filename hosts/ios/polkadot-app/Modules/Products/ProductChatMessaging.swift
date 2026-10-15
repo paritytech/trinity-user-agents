@@ -4,8 +4,7 @@ import Products
 import AsyncExtensions
 
 /// The chat calls a product's bot can make. All the rust chat bridge needs from
-/// the native surface: `ChatHostBridge`'s fourth callback, `registerBot`, is
-/// rejected outright.
+/// the native surface.
 ///
 /// A call about a room that the product did not create throws `ChatRoomError.unknownRoom`.
 protocol ProductChatMessaging: Sendable {
@@ -50,6 +49,8 @@ protocol ProductChatMessaging: Sendable {
     func roomUserStates() async throws -> [Chat.RoomUserStateEntry]
     /// The bot ids of the personas that the product registered.
     func personaIds() async throws -> [String]
+    /// Chat Extension v2 additions `register_bot`: keeps a persona that the product speaks as (07-LATER §5).
+    func registerPersona(botId: String, name: String, icon: String?) async throws -> Chat.PersonaRegistration
 }
 
 /// Serves those calls from a chat binding. Conformers differ only in where the
@@ -202,6 +203,11 @@ extension BoundProductChatMessaging {
     func personaIds() async throws -> [String] {
         let (context, bot) = try requireMessaging()
         return try await context.personaIds(for: bot)
+    }
+
+    func registerPersona(botId: String, name: String, icon: String?) async throws -> Chat.PersonaRegistration {
+        let (context, bot) = try requireMessaging()
+        return try await context.registerPersona(for: bot, botId: botId, name: name, icon: icon)
     }
 }
 

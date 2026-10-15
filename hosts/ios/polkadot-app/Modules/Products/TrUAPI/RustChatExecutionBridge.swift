@@ -9,6 +9,7 @@ import TrUAPIHost
 final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge, @unchecked Sendable {
     private let chatMessaging: any ProductChatMessaging
     private let feedListeners: ProductFeedListeners
+    private let preparingMessages: ChatPreparingMessageTracking
     // The base class keeps `dependencies` private; hold on to what this bridge reads here.
     private let productId: ProductId
     private let logger: LoggerProtocol
@@ -16,10 +17,12 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     init(
         dependencies: Dependencies,
         chatMessaging: any ProductChatMessaging,
-        feedListeners: ProductFeedListeners = .shared
+        feedListeners: ProductFeedListeners = .shared,
+        preparingMessages: ChatPreparingMessageTracking = ChatPreparingMessageStore.shared
     ) {
         self.chatMessaging = chatMessaging
         self.feedListeners = feedListeners
+        self.preparingMessages = preparingMessages
         productId = dependencies.productId
         logger = dependencies.logger
         super.init(dependencies: dependencies)
@@ -44,10 +47,22 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         }
     }
 
-    func registerBot(botId: String, name _: String, icon _: String) async throws -> ChatBotRegistrationStatus {
-        logger.debug("[truapi:chat-bridge] registerBot \(botId) -> rejecting")
-        // No native bot registry; the container leaves it unimplemented too.
-        throw HostRejection.Rejected(reason: "bot registration is not supported by this host")
+    /// Keeps a persona that the product speaks as in its own rooms (07-LATER §5, D30). The core screened the
+    /// values and checked the bound of personas. The store checks the bound again.
+    func registerBot(botId: String, name: String, icon: String) async throws -> ChatBotRegistrationStatus {
+        logger.debug("[truapi:chat-bridge] registerBot \(botId)")
+        guard let botId = botId.nilIfEmpty else {
+            throw HostRejection.Rejected(reason: "a bot needs an id")
+        }
+
+        do {
+            return switch try await chatMessaging.registerPersona(botId: botId, name: name, icon: icon.nilIfEmpty) {
+            case .new: .new
+            case .exists: .exists
+            }
+        } catch let ChatProductPersonaError.tooMany(max) {
+            throw HostRejection.Rejected(reason: "a product registers at most \(max) bots")
+        }
     }
 
     func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String {
@@ -122,14 +137,18 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     }
 
     /// The core reads the configuration of the room and sets `persist` for a room that the host stores. For a
-    /// room that the product keeps, only an open room screen takes the update.
+    /// room that the product keeps, only an open room screen takes the update. The bridge also records which
+    /// messages are `Preparing`, for the reasoning rows.
     func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
         guard let roomId = roomId.nilIfEmpty else {
             throw NativeChatFeedRejection.Rejected(reason: "a chat room needs an id")
         }
 
+        let chatId = Chat.Id.chatExtension(productId, roomId: roomId)
+        let localUpdate = Chat.ProductFeedUpdate(update)
+
         guard persist else {
-            let chatId = Chat.Id.chatExtension(productId, roomId: roomId)
+            preparingMessages.record(localUpdate, isPreparing: update.isNewAndPreparing, chatId: chatId)
             if await !feedListeners.deliver(update, roomId: roomId, to: chatId) {
                 logger.debug("[truapi:chat-bridge] updateFeed \(roomId): no open room takes it")
             }
@@ -137,7 +156,8 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         }
 
         do {
-            try await chatMessaging.applyFeedUpdate(roomId: roomId, update: Chat.ProductFeedUpdate(update))
+            try await chatMessaging.applyFeedUpdate(roomId: roomId, update: localUpdate)
+            preparingMessages.record(localUpdate, isPreparing: update.isNewAndPreparing, chatId: chatId)
         } catch let error as Chat.ProductFeedError {
             throw error.rejection
         } catch let ChatRoomError.unknownRoom(roomId) {
@@ -225,6 +245,13 @@ private extension RustChatExecutionBridge {
             throw HostRejection.Rejected(reason: "a chat room needs an id")
         }
         return roomId
+    }
+}
+
+private extension ChatFeedUpdate {
+    /// True for a new message with the status `Preparing`.
+    var isNewAndPreparing: Bool {
+        if case let .new(message) = self { message.status == .preparing } else { false }
     }
 }
 

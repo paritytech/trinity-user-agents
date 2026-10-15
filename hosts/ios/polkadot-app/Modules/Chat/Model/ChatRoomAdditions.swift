@@ -97,6 +97,11 @@ extension Chat {
         func meta(for productMessageId: String) -> MessageMeta? {
             metaByMessageId[productMessageId]
         }
+
+        /// The ids of the messages that have meta, in alphabetical order.
+        var productMessageIds: [String] {
+            metaByMessageId.keys.sorted()
+        }
     }
 
     /// What the user did with a product room: mute and archive (`ChatRoomUserState`). The user sets it, not
@@ -136,7 +141,9 @@ extension Chat {
         let productId: String
         let botId: String
         let name: String
-        let iconData: Data?
+        /// The source of the icon: an `https` address or an inline `data:` address. Nil draws the initial of the
+        /// name.
+        let icon: String?
     }
 
     /// The call of a room (`ChatRoomCall`). The host keeps it in memory: a call does not survive a restart.

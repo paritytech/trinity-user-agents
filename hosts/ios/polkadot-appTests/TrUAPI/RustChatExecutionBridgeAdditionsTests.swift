@@ -48,7 +48,7 @@ struct RustChatExecutionBridgeAdditionsTests {
     /// S51: the host keeps a feature that it does not serve, so a later build applies it.
     @Test func aFeatureThatThisBuildDoesNotServeIsKept() async throws {
         let bridge = try await openRoom()
-        #expect(!ChatHostCapabilities.served.contains("read_aloud"))
+        #expect(!ChatHostCapabilities.served.contains("preimage_attachments"))
 
         try await bridge.setRoomFeatures(roomId: "lobby", features: everyFeature)
 
@@ -192,6 +192,55 @@ struct RustChatExecutionBridgeAdditionsTests {
         let bridge = await fixture.bridge()
 
         #expect(try await bridge.bots().isEmpty)
+    }
+
+    // MARK: - registerBot
+
+    /// S53: `New` the first time, then `Exists`, and a repeat replaces the name and the icon.
+    @Test func aRepeatedRegistrationReplacesThePersona() async throws {
+        let bridge = await fixture.bridge()
+        let store = ChatProductPersonaStore(storageFacade: fixture.storageFacade)
+
+        #expect(try await bridge.registerBot(botId: "helper", name: "Helper", icon: "") == .new)
+        #expect(try await bridge.registerBot(botId: "helper", name: "Helper Two", icon: "data:image/png;base64,AA==")
+            == .exists)
+
+        let replaced = Chat.ProductPersona(
+            productId: fixture.productId,
+            botId: "helper",
+            name: "Helper Two",
+            icon: "data:image/png;base64,AA=="
+        )
+        #expect(try await store.personas(of: fixture.productId) == [replaced])
+        #expect(try await bridge.bots() == ["helper"])
+    }
+
+    @Test func aNinthPersonaIsRefusedAndARepeatOfAKnownOneIsNot() async throws {
+        let bridge = await fixture.bridge()
+        for index in 0 ..< ChatProductPersonaStore.maxPerProduct {
+            _ = try await bridge.registerBot(botId: "b\(index)", name: "Bot \(index)", icon: "")
+        }
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.registerBot(botId: "b8", name: "Bot 8", icon: "")
+        }
+        #expect(try await bridge.registerBot(botId: "b0", name: "Bot zero", icon: "") == .exists)
+        #expect(try await bridge.bots().count == ChatProductPersonaStore.maxPerProduct)
+    }
+
+    @Test func thePersonasOfOneProductDoNotCountForAnother() async throws {
+        let bridge = await fixture.bridge()
+        let store = ChatProductPersonaStore(storageFacade: fixture.storageFacade)
+        for index in 0 ..< ChatProductPersonaStore.maxPerProduct {
+            _ = try await store.register(Chat.ProductPersona(
+                productId: "other.dot",
+                botId: "b\(index)",
+                name: "Other",
+                icon: nil
+            ))
+        }
+
+        #expect(try await bridge.registerBot(botId: "helper", name: "Helper", icon: "") == .new)
     }
 }
 
