@@ -1124,6 +1124,62 @@ fn game_callbacks_receive_the_start_time_and_the_cancel() {
 	assert_eq!(*callbacks.calls.lock().expect("game calls mutex poisoned"), vec![Some(42), None]);
 }
 
+// D36: the native runtime stages for a product through its open Worker
+// execution: the execution's chat adapter reads the room's features, and its
+// callbacks show the `PreimageSubmit` prompt. Without an execution and a
+// declaration the core saw, the room declares nothing and no prompt shows.
+#[test]
+fn native_staging_reads_the_room_through_the_open_worker() {
+	let mut config = native_host_runtime_config();
+	config.local_session_secret = Some(vec![7; 32]);
+	let runtime_callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(runtime_callbacks.clone(), config)
+		.expect("host runtime config should be valid");
+	let stage = || {
+		futures::executor::block_on(host.chat_stage_attachment(
+			"chat-product.dot".to_string(),
+			"main".to_string(),
+			"image/png".to_string(),
+			vec![1; 16],
+		))
+	};
+
+	assert_eq!(stage(), Err(super::errors::NativeChatStageRejection::NotDeclared));
+
+	let chat = Arc::new(EventCallbacks::new());
+	chat.chat_room_features.lock().expect("room features mutex poisoned").insert(
+		"main".to_string(),
+		truapi::latest::ChatRoomFeatures { preimage_attachments: true, ..Default::default() },
+	);
+	let execution_callbacks = Arc::new(EventCallbacks::new());
+	let _execution = host
+		.open_product_execution(
+			execution_callbacks.clone(),
+			Some(chat),
+			None,
+			None,
+			native_execution_config("chat-product.dot", ProductExecutionKind::Worker),
+		)
+		.expect("Chat execution should open");
+
+	// The execution's callbacks deny `PreimageSubmit`, so nothing is uploaded.
+	assert_eq!(stage(), Err(super::errors::NativeChatStageRejection::PermissionDenied));
+	assert_eq!(
+		*execution_callbacks
+			.remote_permission_products
+			.lock()
+			.expect("permission products mutex poisoned"),
+		[("chat-product.dot".to_string(), ProductExecutionKind::Worker)]
+	);
+	assert!(
+		runtime_callbacks
+			.remote_permission_products
+			.lock()
+			.expect("permission products mutex poisoned")
+			.is_empty()
+	);
+}
+
 #[test]
 fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
 	let mut config = native_host_runtime_config();

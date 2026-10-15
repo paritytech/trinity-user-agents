@@ -247,6 +247,7 @@ impl Chat for ProductRuntimeHost {
 					limits.feed.forget(&self.product.product_id, &room_id);
 					limits.preview.forget(&self.product.product_id, &room_id);
 					limits.call.forget(&self.product.product_id, &room_id);
+					self.forget_chat_staging(&room_id);
 					request.room_id = room_id;
 					platform.delete_chat_room(&self.product, request).await.map_err(room_host_error)
 				},
@@ -394,10 +395,14 @@ impl Chat for ProductRuntimeHost {
 				self.check_thread_parent(&platform, &room_id, parent).await?;
 			}
 			request.room_id = room_id;
+			let features = request.features.clone();
+			let room_id = request.room_id.clone();
 			platform
 				.set_chat_room_features(&self.product, request)
 				.await
-				.map_err(room_host_error)
+				.map_err(room_host_error)?;
+			self.record_chat_staging(&room_id, &features);
+			Ok(())
 		};
 		answer_room_change(result.await, version, HostChatSetRoomFeaturesResponse::from_latest)
 	}
@@ -635,15 +640,15 @@ fn post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMess
 }
 
 /// Whether the core can back a feature a host lists. The core cannot back a
-/// product-drawn body without a renderer. It does not stage attachments or
-/// serve the Media service yet, and no host draws the payment button yet.
+/// product-drawn body without a renderer. It does not serve the Media
+/// service yet, and no host draws the payment button yet.
 fn core_backs_chat_feature(
 	name: &str,
 	execution_kind: crate::platform::ProductExecutionKind,
 ) -> bool {
 	match name {
 		"custom_bodies" | "custom_footer" => renderer_access_for(execution_kind).is_ok(),
-		"preimage_attachments" | "room_calls" | "payment_button" => false,
+		"room_calls" | "payment_button" => false,
 		_ => true,
 	}
 }
@@ -1709,9 +1714,11 @@ mod tests {
 		assert_eq!(
 			capabilities(&runtime),
 			latest::HostChatCapabilitiesResponse {
-				features: ["custom_footer", "search", "call_buttons"].map(str::to_string).to_vec(),
+				features: ["custom_footer", "preimage_attachments", "search", "call_buttons"]
+					.map(str::to_string)
+					.to_vec(),
 				inline_attachment_max_bytes: 1024 * 1024,
-				preimage_attachment_max_bytes: 0,
+				preimage_attachment_max_bytes: 8 * 1024 * 1024,
 			}
 		);
 	}

@@ -288,8 +288,10 @@ export interface ChatHostRuntime extends ChatHostQueries {
   wakeProduct(reason: ChatWakeReason): Promise<ChatWakeOutcome>;
   /**
    * Store a user attachment of a room as a preimage that the Bulletin
-   * allowance of the product pays for, and give its key. The core does not
-   * stage attachments yet, so this always rejects.
+   * allowance of the product pays for, and give its key. The core rejects a
+   * room whose features do not declare `preimageAttachments`, an attachment
+   * above 8 MiB or above the Bulletin chain's per-transaction bound, and a
+   * product the user refused `PreimageSubmit`.
    */
   stageChatAttachment(
     roomId: string,

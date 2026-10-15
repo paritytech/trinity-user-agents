@@ -1893,6 +1893,21 @@ impl ProductRuntimeControl {
 		self.runtime()?.wake(reason)
 	}
 
+	/// Stage a user attachment of `room_id` as a preimage that the Bulletin
+	/// allowance of the product pays for, and answer its key; see
+	/// [`ProductRuntimeHost::stage_chat_attachment`].
+	pub async fn stage_chat_attachment(
+		&self,
+		room_id: &str,
+		mime_type: &str,
+		bytes: Vec<u8>,
+	) -> Result<Vec<u8>, crate::ChatStageRejection> {
+		let runtime = self.runtime().map_err(|error| crate::ChatStageRejection::SubmitFailed {
+			reason: error.to_string(),
+		})?;
+		runtime.stage_chat_attachment(room_id, mime_type, bytes).await
+	}
+
 	/// Run one chat query: check the room declares the handler, hold a worker
 	/// reference while the product answers, take the first item, screen it,
 	/// and stop the product's stream.

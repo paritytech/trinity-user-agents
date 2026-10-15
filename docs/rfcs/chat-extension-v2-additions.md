@@ -272,9 +272,10 @@ end to end on that build.
 | `room_calls`                                                  | `Active { media_session: Some(_) }` presented by the host ([Calls](#calls))                               |
 
 The core answers the host's list minus what it cannot back: `custom_bodies` and `custom_footer` without a `Renderer`
-host, `preimage_attachments` without a Bulletin service in the runtime, `room_calls` while the runtime serves no Media
-service, and `payment_button` until the footer payment path exists. It drops names it does not know. The two bounds are
-core constants: 1 MiB inline, and 8 MiB for a preimage, or 0 when `preimage_attachments` is not listed.
+host, `room_calls` while the runtime serves no Media service, and `payment_button` until the footer payment path
+exists. It drops names it does not know. The two bounds are core constants: 1 MiB inline, and 8 MiB for a preimage, or
+0 when `preimage_attachments` is not listed. The Bulletin chain's own per-transaction bound can be lower; staging
+reports it.
 
 A product that wants a feature reads `capabilities` first and falls back when the name is missing. On a host that
 serves only the base, `capabilities` answers `unavailable`, and the product treats every added feature as missing.
@@ -363,7 +364,14 @@ worker need not run.
   stored on the public Bulletin chain. Declining keeps that attachment unsent. The attachment is not encrypted: a key
   field would version every body type, against rule 1. A product that needs private files keeps the flag off.
 - **Bounds.** One preimage per attachment, at most 8 MiB and never above the Bulletin chain's per-transaction bound,
-  which the core reads at runtime. There is no chunking.
+  which the core reads at runtime from the `MaxTransactionSize` constant of the chain's `TransactionStorage` pallet.
+  There is no chunking. A refusal names the bound that held.
+- **The declaration the core reads.** The staging call carries the product and the room, not the room's features: a
+  host does not vouch for its own opt-in. The core reads the `preimage_attachments` flag from the last
+  `set_room_features` it accepted for the room in this runtime, which a `delete_room` forgets. When it has none, as after
+  a restart, it reads the features the host keeps through the chat adapter of the product's connection: the runtime's
+  own on a web host, the open Worker execution's on a native host, which also shows the `PreimageSubmit` prompt. With
+  neither, the room declares nothing and nothing is uploaded. The allowance key never leaves the core.
 - **Send flow.** In a product-source room the host draws the message `Preparing`, stages the attachment, then sends
   `user_action { NewMessage }` with the preimage media item and its `ChatMediaMeta`. In a host-store room the host
   stores the message `Preparing`, stages, then marks it `Sent` and publishes `MessagePosted`. A rejection or a time-out

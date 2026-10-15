@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 /** The names the core cannot back, so it removes them from any list. */
-const CORE_REMOVES = new Set(["preimage_attachments", "room_calls", "payment_button"]);
+const CORE_REMOVES = new Set(["room_calls", "payment_button"]);
 
 suite("chat additions on the test host", () => {
   test("S49: /caps lists what the host serves less what the core cannot back, and both bounds", async () => {
@@ -29,7 +29,7 @@ suite("chat additions on the test host", () => {
     await host.chatUser.send("host", "/caps");
 
     const served = MOCK_CHAT_FEATURE_NAMES.filter((name) => !CORE_REMOVES.has(name));
-    await waitForText(host, "host", capsText(served, 1_048_576, 0));
+    await waitForText(host, "host", capsText(served, 1_048_576, 8_388_608));
   });
 
   test("S49: a host that lists no feature gets caps: none", async () => {
@@ -45,7 +45,6 @@ suite("chat additions on the test host", () => {
     await waitForText(host, "host", "ok /features preimage on");
     await host.chatUser.send("host", "/features readaloud on");
     await waitForText(host, "host", "ok /features readaloud on");
-    // The core backs no staging, yet the host keeps `preimage_attachments`.
     expect(host.room("host")?.features).toEqual({ preimageAttachments: true, search: false, readAloud: true });
     await first.product.idle();
     first.dispose();

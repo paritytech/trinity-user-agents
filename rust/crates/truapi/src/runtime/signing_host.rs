@@ -1476,6 +1476,8 @@ fn product_authority_error(err: ProductAccountError) -> AuthorityError {
 mod tests {
 	mod allowance_keys;
 	mod auto_signing;
+	#[cfg(feature = "test-host")]
+	mod chat_staging;
 	mod cross_product_account;
 	#[cfg(feature = "test-host")]
 	mod local_preimages;

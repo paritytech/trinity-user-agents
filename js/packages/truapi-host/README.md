@@ -218,8 +218,13 @@ subscriber, and starts each subscription with the rooms the host reports as
 muted or archived (`readChatRoomUserStates`). `wakeProduct` holds the
 product's worker for 30 s for a reason (`ProductStart`, `MessageInFlight`,
 `Notification`) and resolves with `Held { untilMs }`, or `BudgetSpent` after
-12 notification wakes in one hour. `stageChatAttachment` is the seam for
-attachments stored as preimages; the core does not stage yet, so it rejects.
+12 notification wakes in one hour. `stageChatAttachment(roomId, mimeType,
+bytes)` stores a user attachment above the inline bound as one Bulletin
+preimage that the product's own allowance pays for and resolves with its key;
+it rejects for a room whose features do not declare `preimageAttachments`, an
+attachment above 8 MiB or above the chain's per-transaction bound, and a
+product the user refused `PreimageSubmit`. The test host keeps the preimage
+in the core.
 
 ### Chat queries
 

@@ -438,9 +438,17 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Stage a user attachment of a room as a preimage that the Bulletin
-	/// allowance of the product pays for, and return its key. The core does
-	/// not stage attachments yet, so that `capabilities` never lists
-	/// `preimage_attachments`, and each call is refused.
+	/// allowance of the product pays for, and return its key.
+	///
+	/// The core refuses a room whose features do not declare
+	/// `preimage_attachments`, an attachment above 8 MiB or above the
+	/// per-transaction bound of the Bulletin runtime, and a product the user
+	/// refused `PreimageSubmit`; it prompts when the user did not decide yet.
+	/// The core reads the room's features from the last `set_room_features`
+	/// it accepted, else through the chat adapter of the product's open
+	/// Worker execution; with neither the room declares nothing. The prompt
+	/// goes through that execution's callbacks, else through the runtime's.
+	/// Staging needs no worker reference and goes on after the room closes.
 	pub async fn chat_stage_attachment(
 		&self,
 		product_id: String,
@@ -448,21 +456,25 @@ impl NativeTrUApiHostRuntime {
 		mime_type: String,
 		bytes: Vec<u8>,
 	) -> Result<Vec<u8>, NativeChatStageRejection> {
-		tracing::debug!(
-			%product_id,
-			%room_id,
-			%mime_type,
-			size = bytes.len(),
-			"chat attachment staging is not served"
-		);
-		if bytes.len() > crate::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES {
-			return Err(NativeChatStageRejection::TooLarge {
-				max_bytes: crate::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES as u32,
-			});
-		}
-		Err(NativeChatStageRejection::SubmitFailed {
-			reason: "this core does not stage chat attachments yet".to_string(),
-		})
+		let product = ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
+			.map_err(|error| NativeChatStageRejection::SubmitFailed {
+				reason: error.to_string(),
+			})?;
+		let execution = self
+			.worker_executions
+			.lock()
+			.expect("native worker execution registry mutex poisoned")
+			.get(&product.product_id)
+			.and_then(Weak::upgrade);
+		let admin = match execution {
+			Some(execution) => execution.admin(),
+			None => self.runtime.product_admin(product),
+		};
+		admin
+			.product_runtime()
+			.stage_chat_attachment(&room_id, &mime_type, bytes)
+			.await
+			.map_err(Into::into)
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
