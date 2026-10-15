@@ -983,7 +983,7 @@ truapi-host alloc-check --mnemonic "spin battle …" --lookback 100
 Both hosts take `--network`: `paseo-next-v2` (default), `previewnet`, or
 `polkadot` (mainnet). Mainnet identities are real, so `polkadot` signs only with
 `--mnemonic` / `HOST_CLI_SIGNER_MNEMONIC`, never stores an account, never
-auto-approves, and has no identity backend unless
+auto-approves, refuses `--product-config`, and has no identity backend unless
 `HOST_CLI_IDENTITY_BACKEND_BASE` names one (SPEC.md §14.1).
 The network preset owns the identity backend URL, the People, Bulletin and Asset
 Hub RPCs, and their genesis hashes; there is

@@ -1630,7 +1630,7 @@ async fn start_signing_host(
 		chat.clone(),
 		pocket.clone(),
 	)?;
-	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
+	apply_local_product_grants(platform.as_ref(), network, &args.product_config).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()
@@ -1986,10 +1986,21 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// cannot tell them is that the manifest is not published yet, so the host says
 /// it every run: a grant that works locally and was never deployed is the
 /// failure this feature would otherwise cause.
-async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -> Result<()> {
+async fn apply_local_product_grants(
+	platform: &CliPlatform,
+	network: NetworkConfig,
+	paths: &[PathBuf],
+) -> Result<()> {
 	if paths.is_empty() {
 		return Ok(());
 	}
+	// Seeded grants persist in the core database and are never prompted for.
+	anyhow::ensure!(
+		network.disposable_identities,
+		"{} holds real identities, so --product-config grants are only available on test \
+		 network presets",
+		network.id
+	);
 	let configs = product_config::read_all(paths)?;
 	let now = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
@@ -4636,6 +4647,25 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 
 	/// `dev` always auto-accepts, so this is what stops it signing for a real
 	/// identity without a prompt.
+	/// A seeded grant is never prompted for and outlives the run, so a preset
+	/// whose identities are real refuses it before reading any config.
+	#[tokio::test]
+	async fn a_real_identity_network_refuses_local_product_grants() {
+		let production = NetworkConfig {
+			disposable_identities: false,
+			..crate::network::Network::Polkadot.config()
+		};
+		let platform = CliPlatform::new(production, None, ApprovalPolicy::Prompt, None);
+		let error = apply_local_product_grants(
+			&platform,
+			production,
+			&[PathBuf::from("/nonexistent/product.json")],
+		)
+		.await
+		.expect_err("grants are refused on a real-identity preset");
+		assert!(error.to_string().contains("--product-config"), "{error}");
+	}
+
 	#[test]
 	fn a_real_identity_network_never_approves_without_a_prompt() {
 		let testnet = crate::network::Network::PaseoNextV2.config();

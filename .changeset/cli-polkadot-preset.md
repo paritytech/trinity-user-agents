@@ -11,4 +11,5 @@ The plaintext account store now holds mnemonics only for presets whose identitie
 disposable. On `polkadot` the CLI signs only with `--mnemonic` or `HOST_CLI_SIGNER_MNEMONIC`,
 and refuses auto accounts, stored accounts and mnemonic imports. It also refuses automatic
 approval there, so `dev`, `--auto-accept` and `/approval automatic` cannot sign for a real
-identity without a prompt. The two test presets behave as before.
+identity without a prompt, and refuses `--product-config`, whose seeded grants are never
+prompted for. The two test presets behave as before.

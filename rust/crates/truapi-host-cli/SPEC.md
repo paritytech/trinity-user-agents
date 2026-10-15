@@ -1617,7 +1617,8 @@ the account store: it signs only with `--mnemonic` or
 `HOST_CLI_SIGNER_MNEMONIC`, and refuses auto accounts, stored accounts and
 mnemonic imports. It also refuses automatic approval (`--auto-accept`,
 `/approval automatic` and `dev`), so a local page cannot get a real identity's
-signature without a prompt.
+signature without a prompt, and refuses `--product-config`, whose seeded grants
+are never prompted for and persist in the core database.
 
 Auto-account onboarding (§12.3) needs an identity backend that records the
 lite username on the dotNS gateway. Each test preset points at its matching
