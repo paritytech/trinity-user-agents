@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.app.debug.e2e
 
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.EntryPoint
@@ -24,11 +26,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 /**
- * Debug-only entry point the chat e2e drives: seeds an identity, registers a product, and posts a
- * user message through the real chat path.
+ * Debug-only entry point the chat e2e drives: seeds an identity, registers a product, posts a
+ * user message through the real chat path, and puts a text on the clipboard.
+ *
+ * With the clipboard hook, the launcher can type a text that `adb shell input text` cannot type,
+ * for example an emoji. The launcher sets the text here, and then pastes it into the input.
  *
  * TODO: seeding state through a broadcast is implicit. The explicit alternative is swapping parts
  * of the DI graph for test implementations, such as an account repository that answers fixtures.
@@ -54,14 +60,16 @@ class E2EHookReceiver : BroadcastReceiver() {
 
         scope.launch {
             try {
-                handle(hooks, intent)
+                handle(context, hooks, intent)
             } finally {
                 pendingResult.finish()
             }
         }
     }
 
-    private suspend fun handle(hooks: Hooks, intent: Intent) {
+    private suspend fun handle(context: Context, hooks: Hooks, intent: Intent) {
+        intent.getStringExtra(EXTRA_CLIPBOARD)?.let { setClipboard(context, it) }
+
         if (intent.getBooleanExtra(EXTRA_SEED_IDENTITY, false)) {
             seedIdentity(hooks, username = intent.stringExtra(EXTRA_USERNAME) ?: DEFAULT_USERNAME)
         }
@@ -91,6 +99,18 @@ class E2EHookReceiver : BroadcastReceiver() {
                 onSuccess = { log(E2EAcks.messageSent(productId.value, roomId)) },
                 onFailure = { logError("message", it) },
             )
+    }
+
+    private suspend fun setClipboard(context: Context, text: String) {
+        runCatching {
+            withContext(Dispatchers.Main) {
+                val clipboard = context.getSystemService(ClipboardManager::class.java)
+                clipboard.setPrimaryClip(ClipData.newPlainText(CLIP_LABEL, text))
+            }
+        }.fold(
+            onSuccess = { log(CLIPBOARD_SET_ACK) },
+            onFailure = { logError("clipboard", it) },
+        )
     }
 
     private suspend fun seedIdentity(hooks: Hooks, username: String) {
@@ -129,6 +149,10 @@ class E2EHookReceiver : BroadcastReceiver() {
         const val EXTRA_WORKER_URL = "worker_url"
         const val EXTRA_MESSAGE = "message"
         const val EXTRA_ROOM_ID = "room_id"
+        const val EXTRA_CLIPBOARD = "clipboard"
+
+        const val CLIP_LABEL = "truapi-e2e"
+        const val CLIPBOARD_SET_ACK = "clipboard set"
 
         const val DEFAULT_USERNAME = "truapi-e2e"
 
