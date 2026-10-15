@@ -33,14 +33,6 @@ class RealChatRoomRepository @Inject constructor(
     override suspend fun createRoom(request: CreateRoomRequest): CreateRoomResult {
         val existing = chatRoomDao.getRoom(request.chatId.toLocal())
         if (existing != null) {
-            // A product registers its room on every start and its API has no call that updates one,
-            // so a registration that carries metadata wins over what is stored: that is how a room
-            // placed by the host before the product ran gets the product's own name and icon. One
-            // without metadata, the host's own placement included, leaves the room as it is.
-            val carriesMetadata = request.name != null || request.icon != null
-            if (carriesMetadata && (existing.name != request.name || existing.icon != request.icon)) {
-                chatRoomDao.updateMetadata(existing.id, request.name, request.icon)
-            }
             return CreateRoomResult(request.chatId, CreateRoomStatus.Exists)
         }
 

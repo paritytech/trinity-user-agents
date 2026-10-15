@@ -1,15 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
-import io.mockk.coEvery
-import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
-import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
-import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomResult
-import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomPreviewData
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -50,20 +45,16 @@ class ProductChatExtensionTest {
     private val product = Product(ProductId.fromStoredValue("truapi-playground.dot"), "TrUAPI Playground", icon = null)
     private val extensionId = product.id.toChatExtensionId()
 
-    private val placedRoom = ProductChatIdParameter("jollity")
-
     private fun hostPlaced(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, placedRoom = placedRoom)
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, hostPlaced = true)
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
         private val bootFailure: Throwable? = null,
-        private val onAcquire: () -> Unit = {},
     ) : ProductWorkerRefCounter {
         var chatSurface: ProductChatMessaging? = null
 
         override suspend fun acquire(productId: ProductId, label: String): ProductWorkerReference {
-            onAcquire()
             return object : ProductWorkerReference {
                 override suspend fun worker(): ProductWorker = booted ?: throw requireNotNull(bootFailure)
                 override suspend fun enableModalityApi(api: WorkerModalityApi) {
@@ -194,74 +185,6 @@ class ProductChatExtensionTest {
 
         val rooms = requireNotNull(refCounter.chatSurface).subscribeChatRooms().first()
         assertEquals(listOf(ROOM to RoomParticipation.ROOM_HOST), rooms.map { it.roomId to it.participatingAs })
-    }
-
-    // The row is the host's own: it has to be on the list before the worker has downloaded and
-    // booted, which is the whole point of placing it. No metadata, so the list shows the product's
-    // name until the product's own createRoom finds the row and supplies its own.
-    @Test
-    fun `a host-placed room is on the list before its worker is acquired`() = runTest {
-        val events = mutableListOf<String>()
-        val refCounter = FakeRefCounter(RecordingWorker(), onAcquire = { events += "worker" })
-        val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
-        val context = chatExtensionContext(hostScope, emptyFlow())
-        var placed: CreateRoomRequest? = null
-        coEvery { context.createRoom(any()) } answers {
-            placed = firstArg()
-            events += "room"
-            CreateRoomResult(firstArg<CreateRoomRequest>().chatId, CreateRoomStatus.New)
-        }
-
-        try {
-            with(context) { hostPlaced(refCounter).startGlobalWork() }
-            advanceUntilIdle()
-        } finally {
-            hostScope.cancel()
-        }
-
-        assertEquals(listOf("room", "worker"), events)
-        val request = requireNotNull(placed)
-        assertEquals(
-            listOf(ChatId.forExtensionRoom(extensionId, "jollity"), null, null),
-            listOf(request.chatId, request.name, request.icon),
-        )
-    }
-
-    // A failure costs the placeholder, not the room: the product's own createRoom still runs, so
-    // the worker has to come up regardless.
-    @Test
-    fun `a room that cannot be placed does not cost the worker`() = runTest {
-        var acquired = false
-        val refCounter = FakeRefCounter(RecordingWorker(), onAcquire = { acquired = true })
-        val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
-        val context = chatExtensionContext(hostScope, emptyFlow())
-        coEvery { context.createRoom(any()) } throws IllegalStateException("database locked")
-
-        try {
-            with(context) { hostPlaced(refCounter).startGlobalWork() }
-            advanceUntilIdle()
-        } finally {
-            hostScope.cancel()
-        }
-
-        assertTrue(acquired)
-    }
-
-    @Test
-    fun `an ordinary product places no room of its own`() = runTest {
-        val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
-        val context = chatExtensionContext(hostScope, emptyFlow())
-
-        try {
-            with(context) {
-                ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker())).startGlobalWork()
-            }
-            advanceUntilIdle()
-        } finally {
-            hostScope.cancel()
-        }
-
-        coVerify(exactly = 0) { context.createRoom(any()) }
     }
 
     private suspend fun ProductChatExtension.pinnedAndRemovable(chatId: ChatId): Pair<ChatPreview?, Boolean> = coroutineScope {

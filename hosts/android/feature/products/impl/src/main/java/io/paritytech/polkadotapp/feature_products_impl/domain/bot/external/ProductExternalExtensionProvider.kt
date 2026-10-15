@@ -28,9 +28,13 @@ class ProductExternalExtensionProvider @Inject constructor(
             hostPlacedProducts.observe(),
             integrationRepository.observeProductsByType(IntegrationType.Chat),
         ) { placed, installed ->
-            val placedIds = placed.map { it.product.id }.toSet()
-            placed.map { productBotFactory.create(it.product, placedRoom = it.roomId) } +
-                installed.filterNot { it.id in placedIds }.map { productBotFactory.create(it) }
+            val placedIds = placed.map { it.id }.toSet()
+            val placedExtensions = placed.map { productBotFactory.create(it, hostPlaced = true) }
+            val installedExtensions = installed
+                .filterNot { it.id in placedIds }
+                .map { productBotFactory.create(it) }
+
+            placedExtensions + installedExtensions
         }.distinctUntilChanged()
     }
 }

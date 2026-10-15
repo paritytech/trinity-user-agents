@@ -56,15 +56,13 @@ import timber.log.Timber
  *
  * Each instance is created by [ProductBotFactory] for a specific [Product].
  *
- * A host-placed product's [placedRoom] is drawn by the host before the worker has downloaded and
- * booted. Placement is per product: every room it registers is pinned above the rest and offers
- * no removal.
+ * A [hostPlaced] product's rooms are pinned above the rest and offer no removal.
  */
 class ProductChatExtension(
     appContext: Context,
     val product: Product,
     private val workerRefCounter: ProductWorkerRefCounter,
-    val placedRoom: ProductChatIdParameter? = null,
+    val hostPlaced: Boolean = false,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
 
@@ -95,10 +93,10 @@ class ProductChatExtension(
     }
 
     override fun customMenuRenderer(chatId: ChatId): CustomChatMenuRenderer =
-        ProductChatMenuRenderer(product, chatId, removable = placedRoom == null)
+        ProductChatMenuRenderer(product, chatId, removable = !hostPlaced)
 
     override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*>? =
-        placedRoom?.let { PinnedChatPreviewDelegate }
+        PinnedChatPreviewDelegate.takeIf { hostPlaced }
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {
@@ -110,8 +108,6 @@ class ProductChatExtension(
 
         scope.launch {
             Timber.d("Starting a bot ${product.name}...")
-
-            placeRoom()
 
             chatExtensionContext.subscribeNewMessages(NewMessagesRoomFilter.AnyFromExtension(id))
                 .filter { it.origin !is ChatMessageOrigin.Extension }
@@ -145,23 +141,10 @@ class ProductChatExtension(
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is ProductChatExtension) return false
-        return product == other.product && placedRoom == other.placedRoom
+        return product == other.product && hostPlaced == other.hostPlaced
     }
 
-    override fun hashCode(): Int = 31 * product.hashCode() + placedRoom.hashCode()
-
-    // No metadata: the list falls back to the product's name until the product's own createRoom
-    // finds the row, answers exists and supplies name and icon. A failure costs the placeholder,
-    // not the room, so it must not cost the worker.
-    context(chatExtensionContext: ChatExtensionContext)
-    private suspend fun placeRoom() {
-        val room = placedRoom ?: return
-        runCatching { chatExtensionContext.createRoom(CreateRoomRequest(room.toChatId(id), name = null, icon = null)) }
-            .onFailure { error ->
-                if (error is CancellationException) throw error
-                Timber.e(error, "Failed to place the room ${room.value} of ${product.id.value}")
-            }
-    }
+    override fun hashCode(): Int = product.hashCode()
 
     override suspend fun dispose() {
         // Cancelling the scope runs the finally in startGlobalWork, which releases the worker lease.
