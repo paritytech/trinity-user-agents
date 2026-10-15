@@ -63,8 +63,8 @@ class RealAddContactInteractor @Inject constructor(
             .map { onChainUsers ->
                 foundUsers
                     .filter {
-                        val displayUsername = it.username.getDisplayUsername()
                         val onChainUser = onChainUsers[it.accountId] ?: return@filter false
+                        val displayUsername = it.username.getDisplayUsername()
                         onChainUser.liteUsername == displayUsername || onChainUser.fullUsername == displayUsername
                     }
                     .map {
