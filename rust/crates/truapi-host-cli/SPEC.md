@@ -287,6 +287,7 @@ Commands:
 | `register-name` | Register a full-person username via `DotnsGateway.register_name`. |
 | `alloc-check` | Inspect or submit Statement Store allowance registration. |
 | `pgas-check` | Inspect or submit an Asset Hub PGAS allowance claim. |
+| `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. |
 
 ### 4.1 Global logging option
 
@@ -1656,7 +1657,9 @@ itself through the backend's `auth/challenges` → `auth/token` handshake
 account creation works here.
 
 There are no public endpoint override flags. `HOST_CLI_IDENTITY_BACKEND_BASE`
-replaces only the identity backend base URL (§21).
+replaces the identity backend base URL, and `HOST_CLI_PEOPLE_WS`,
+`HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` replace a chain's URL for a fork
+of the preset's network, keeping its genesis hashes (§21).
 
 Every role the preset serves — People, Bulletin and Asset Hub — is always routed,
 because host internals require all three: statement-store traffic addressed to the
@@ -2165,8 +2168,9 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_HOST_BIN_DIR` | Directory the installer puts the `PATH` symlink in. |
 | `TRUAPI_HOST_VERSION` | Version the installer installs, instead of the current stable one. |
 | `TRUAPI_HOST_RELEASE_BASE_URL` | Release host for the installer and the updater, for mirrors and tests. |
-| `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check` and `pgas-check` when `--mnemonic` is omitted. |
-| `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Chain endpoints stay on the preset. |
+| `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
+| `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. |
+| `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's WebSocket URL override, for a fork of the preset's network. Genesis hashes stay the preset's, which a fork keeps. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet; `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
