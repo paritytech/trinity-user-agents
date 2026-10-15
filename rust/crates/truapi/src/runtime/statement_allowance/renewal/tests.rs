@@ -186,6 +186,143 @@ fn a_pass_rescans_before_claiming_fresh_slots() {
 	);
 }
 
+/// A wallet that stops signing mid-pass must end the pass without losing what
+/// it already renewed. The host records the first target's registration, and
+/// every target the pass did not reach is reported as failed rather than left
+/// for another proof against a wallet that is gone.
+#[test]
+fn a_wallet_change_keeps_finished_targets_and_fails_the_rest() {
+	use std::sync::atomic::{AtomicUsize, Ordering};
+
+	use parity_scale_codec::Encode;
+	use subxt_rpcs::RpcClient as HostRpcClient;
+
+	use crate::runtime::{
+		authority::AuthorityError,
+		statement_allowance::{
+			FixedPersonhoodSigner, proof,
+			ring::RingParams,
+			rpc::{RpcClient, testing::ScriptedRpc},
+			slot::{StatementStoreAllowanceEntry, testing::lite_people},
+			test_fixtures,
+		},
+	};
+
+	const NOW: u64 = 10_000_000;
+
+	/// Signs with fixed keys until the wallet changes before its second proof.
+	struct WalletChangesBeforeSecondProof<'a> {
+		keys: FixedPersonhoodSigner<'a>,
+		proofs: AtomicUsize,
+	}
+
+	impl PersonhoodSigner for WalletChangesBeforeSecondProof<'_> {
+		fn member(
+			&self,
+			collection: PersonhoodCollection,
+		) -> Result<[u8; 32], StatementAllowanceError> {
+			self.keys.member(collection)
+		}
+
+		fn alias(
+			&self,
+			collection: PersonhoodCollection,
+			context: &[u8],
+		) -> Result<[u8; 32], StatementAllowanceError> {
+			self.keys.alias(collection, context)
+		}
+
+		fn prove(
+			&self,
+			ring: &RingParams,
+			context: &[u8],
+			message: &[u8],
+		) -> Result<Vec<u8>, StatementAllowanceError> {
+			if self.proofs.fetch_add(1, Ordering::SeqCst) == 1 {
+				return Err(AuthorityError::Disconnected.into());
+			}
+			self.keys.prove(ring, context, message)
+		}
+	}
+
+	fn entry(account: [u8; 32]) -> String {
+		let entry =
+			StatementStoreAllowanceEntry { account_id: account, seq: 0, since: NOW }.encode();
+		format!(r#""0x{}""#, hex::encode(entry))
+	}
+
+	let metadata = test_fixtures::people();
+	let extrinsics = super::super::test_fixtures::people_extrinsics();
+	let target_chain = super::super::test_fixtures::people_target(&extrinsics);
+	let entropy = [0x11; 32];
+	let memberships = [RingParams {
+		collection: PersonhoodCollection::LitePeople,
+		members: vec![proof::member_key_now(entropy)],
+		exponent: 9,
+		ring_index: 0,
+		block_hash: "0xfinal".to_string(),
+	}];
+	let targets = [
+		target_with("first", [0xa1; 32]),
+		target_with("second", [0xa2; 32]),
+		target_with("third", [0xa3; 32]),
+	];
+
+	// Every target's table is scanned first, then the first target is rescanned,
+	// registered and verified, and the second is rescanned before its proof.
+	// Nothing is scripted after that, so the pass cannot reach the third target.
+	let mut responses = vec!["null".to_string(); 30];
+	responses.extend(vec!["null".to_string(); 10]);
+	responses.push("null".to_string());
+	responses.push(entry(targets[0].account_id));
+	responses.push(entry(targets[0].account_id));
+	responses.extend(vec!["null".to_string(); 9]);
+	responses.push("null".to_string());
+	let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
+	scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
+	let rpc = RpcClient::new(HostRpcClient::new(scripted));
+
+	let candidates = lite_people(entropy);
+	let signer = WalletChangesBeforeSecondProof {
+		keys: futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap(),
+		proofs: AtomicUsize::new(0),
+	};
+	let context = RenewalChainContext {
+		rpc: &rpc,
+		metadata,
+		target_chain,
+		network_suffix: b"paseo",
+		signer: &signer,
+		collections: &[PersonhoodCollection::LitePeople],
+		memberships: &memberships,
+	};
+	let report = futures::executor::block_on(renew_targets(&context, 7, &targets, &Mutex::new(())));
+
+	let wallet_changed = TargetRenewalStatus::Failed { reason: "Disconnected".to_string() };
+	assert_eq!(
+		report,
+		StatementRenewalReport {
+			period: 7,
+			outcomes: vec![
+				StatementRenewalOutcome {
+					label: "first".to_string(),
+					status: TargetRenewalStatus::Registered {
+						seq: 0,
+						block_hash: "0xb10c".to_string(),
+					},
+				},
+				StatementRenewalOutcome {
+					label: "second".to_string(),
+					status: wallet_changed.clone(),
+				},
+				StatementRenewalOutcome { label: "third".to_string(), status: wallet_changed },
+			],
+			pruned: Vec::new(),
+			slots_exhausted: false,
+		}
+	);
+}
+
 #[test]
 fn a_new_target_cannot_replace_an_existing_later_target() {
 	use parity_scale_codec::Encode;
@@ -339,7 +476,11 @@ fn mid_list_failure_does_not_stop_the_pass() {
 				seq: 1,
 				collection: PersonhoodCollection::LitePeople,
 			}),
-			Err(RenewalFailure { reason: "rpc timeout".to_string(), slots_exhausted: false }),
+			Err(RenewalFailure {
+				reason: "rpc timeout".to_string(),
+				slots_exhausted: false,
+				wallet_changed: false,
+			}),
 			Ok(RegistrationOutcome::Registered {
 				block_hash: "0xabc".to_string(),
 				seq: 2,

@@ -1,66 +1,140 @@
 //! Wallet account execution and access to other products' keys.
 
-use super::allowance;
-use truapi::latest::{
-	ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-	HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-	HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
-};
-
+use super::{WalletAccountHolder, WalletKeys, allowance::AllowanceAllocationError};
 use crate::{
 	host_internal::{
-		extrinsic::build_local_transaction,
-		sso_messages::{OnExistingAllowancePolicy, ProductRequest, RingVrfError},
+		extrinsic::{Sr25519Signer, build_signed_transaction, local_transaction_metadata},
+		sso_messages::{OnExistingAllowancePolicy, RingVrfError},
 		transaction::sign_extrinsic_payload,
 	},
 	host_logic::{
-		entropy::derive_product_entropy,
 		features::genesis_for,
-		product_account::{
-			SR25519_SIGNING_CONTEXT, derive_product_subtree_keypair,
-			derive_root_keypair_from_entropy, personhood_product_id,
-		},
+		product_account::{SR25519_SIGNING_CONTEXT, personhood_product_id},
 		raw_signing::raw_payload_bytes,
 	},
-	platform::{PermissionAuthorizationStatus, ProductContext, ProductId},
+	platform::{PermissionAuthorizationStatus, ProductId},
 	runtime::{
 		allowances::AllowanceResource,
 		authority::{
-			AccountCaller, Allowance, AuthorityError, AuthoritySession, AutoSigningGrant,
-			BulletinAllowanceKey, CreateTransactionAuthorityRequest, ProductAuthority,
-			SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, Allowance,
+			AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
+			CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
+			SignRawAuthorityRequest, StatementStoreAllowanceKey,
 		},
-		product_consent::ProductConsent,
+		authority_cancellation_error,
+		contacts::ContactHandles,
+		product_manifest::{
+			AuthorizedAccess, require_context_access, ring_vrf_key_access_granted,
+			ring_vrf_key_access_granted_or_consent,
+		},
+		remote_authority_call, remote_authority_context,
 		ring_vrf_registry::apply_ring_vrf_disclosure,
-		signing_host::{
-			SigningHost,
-			ring_vrf::{MemberCandidate, context_bytes, create_proof},
-		},
-		statement_allowance::{self, collection::PersonhoodCollection},
+		signing_host::ring_vrf::{MemberCandidate, context_bytes, create_proof},
+		statement_allowance::collection::PersonhoodCollection,
 		until_cancelled,
 		vrf::{self, Vrf},
 	},
 };
-use truapi::{CallContext, v01};
-use zeroize::Zeroizing;
+use futures::{
+	StreamExt,
+	stream::{self, BoxStream},
+};
+use truapi::{
+	latest as api,
+	latest::{
+		ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest,
+		HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
+		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest, ProductAccountId,
+		RingLocation, RingLocationJunction,
+	},
+};
 
-impl SigningHost {
+impl WalletAccountHolder {
+	fn caller_key_handle(
+		invocation: &AccountInvocation<'_>,
+		index: DerivationIndex,
+	) -> Result<ProductAccountId, RingVrfError> {
+		let owner = invocation.caller.product_id().ok_or(RingVrfError::NotAllowlisted)?;
+		Ok(ProductAccountId { dot_ns_identifier: owner.clone(), derivation_index: index })
+	}
+
+	async fn derive_ring_vrf_member(
+		&self,
+		session: &AuthoritySession,
+		handle: &ProductAccountId,
+	) -> Result<[u8; 32], RingVrfError> {
+		let vrf = vrf::load().await?;
+		self.with_keys(session, |keys| vrf.member(&*keys.ring_vrf_entropy(handle)?))
+	}
+
+	async fn record_registration(
+		&self,
+		session: &AuthoritySession,
+		handle: ProductAccountId,
+		ring: RingLocation,
+		public_key: [u8; 32],
+	) -> Result<(), RingVrfError> {
+		let mut update = self.ring_vrf_registry.prepare_update(session.public_key).await?;
+		self.require_current_session(session)?;
+		update.register(handle, ring, public_key)?;
+		update.persist().await?;
+		self.require_current_session(session)?;
+		Ok(())
+	}
+
 	/// Derive the product's hard-subtree public key from the active session root.
 	/// Returns `None` when no session is active.
 	pub fn derive_subtree_public_key(
 		&self,
 		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, AuthorityError> {
-		let Ok(entropy) = self.root_entropy() else {
+		let Some(session) = self.current_session() else {
 			return Ok(None);
 		};
-		let root = derive_root_keypair_from_entropy(&entropy)?;
-		let subtree = derive_product_subtree_keypair(&root, product_id)?;
-		Ok(Some(subtree.public.to_bytes()))
+		self.with_keys(&session, |keys| {
+			Ok(keys.product_subtree_keypair(product_id)?.public.to_bytes())
+		})
+		.map(Some)
 	}
-}
 
-impl SigningHost {
+	fn transaction_keypair(
+		keys: &WalletKeys,
+		request: &CreateTransactionAuthorityRequest,
+	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		match request {
+			// The product account is authoritative and caller-scoping is
+			// enforced upstream, so the derived key defines the signer.
+			CreateTransactionAuthorityRequest::Product(payload) => {
+				keys.product_keypair(&payload.signer)
+			},
+			CreateTransactionAuthorityRequest::LegacyAccount { product_account, request } => {
+				let keypair = keys.product_keypair(product_account)?;
+				// Defense-in-depth: the slot-zero key must match the legacy
+				// signer the caller asked for (also validated upstream). Never
+				// sign with a diverging key.
+				if keypair.public.to_bytes() != request.signer {
+					return Err(AuthorityError::Unknown {
+						reason: "signing host: legacy signer does not match the product \
+                                 slot-zero account"
+							.to_string(),
+					});
+				}
+				Ok(keypair)
+			},
+			CreateTransactionAuthorityRequest::IdentityAccount(request) => {
+				let keypair = keys.identity_keypair()?;
+				if keypair.public.to_bytes() != request.signer {
+					return Err(AuthorityError::Unavailable {
+						reason: "signing host: the requested identity account is not available in \
+                                 this CLI wallet"
+							.to_string(),
+					});
+				}
+				Ok(keypair)
+			},
+		}
+	}
+
 	async fn register_builtin_personhood_keys_if_needed(
 		&self,
 		session: &AuthoritySession,
@@ -70,6 +144,7 @@ impl SigningHost {
 			return Ok(());
 		}
 		let chains = self
+			.services
 			.platform
 			.supported_chains()
 			.await
@@ -94,6 +169,7 @@ impl SigningHost {
 			})
 			.collect::<Vec<_>>();
 		if missing.is_empty() {
+			self.require_current_session(session)?;
 			return Ok(());
 		}
 		let pallet_index = self.ring_resolver.members_pallet_index(&chain_id).await?;
@@ -103,8 +179,8 @@ impl SigningHost {
 				dot_ns_identifier: owner.clone(),
 				derivation_index: DerivationIndex::Index(index),
 			};
-			let entropy = self.ring_vrf_entropy(session, &handle)?;
-			let public_key = vrf.member(&entropy)?;
+			let public_key =
+				self.with_keys(session, |keys| vrf.member(&*keys.ring_vrf_entropy(&handle)?))?;
 			let ring = RingLocation {
 				chain_id,
 				junctions: vec![
@@ -112,9 +188,7 @@ impl SigningHost {
 					RingLocationJunction::CollectionId(collection.identifier().to_vec()),
 				],
 			};
-			self.ring_vrf_registry
-				.register(session.public_key, handle, ring, public_key)
-				.await?;
+			self.record_registration(session, handle, ring, public_key).await?;
 		}
 		Ok(())
 	}
@@ -122,19 +196,20 @@ impl SigningHost {
 	async fn registered_ring_vrf_entry(
 		&self,
 		session: &AuthoritySession,
-		handle: &v01::ProductAccountId,
-	) -> Result<Option<v01::RegisteredRingVrfKey>, RingVrfError> {
+		handle: &ProductAccountId,
+	) -> Result<Option<api::RegisteredRingVrfKey>, RingVrfError> {
 		self.require_current_session(session)?;
-		self.ring_vrf_registry.entry(session.public_key, handle).await
+		let entry = self.ring_vrf_registry.entry(session.public_key, handle).await?;
+		self.require_current_session(session)?;
+		Ok(entry)
 	}
 
-	async fn resolve_ring_vrf_key_for_ring(
+	async fn registered_ring_vrf_entry_for_ring(
 		&self,
-		vrf: &Vrf,
 		session: &AuthoritySession,
-		handle: &v01::ProductAccountId,
-		ring: &v01::RingLocation,
-	) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
+		handle: &ProductAccountId,
+		ring: &RingLocation,
+	) -> Result<api::RegisteredRingVrfKey, RingVrfError> {
 		let entry = self
 			.registered_ring_vrf_entry(session, handle)
 			.await?
@@ -142,29 +217,12 @@ impl SigningHost {
 		if !entry.rings.contains(ring) {
 			return Err(RingVrfError::KeyNotInRing);
 		}
-		let entropy = self.ring_vrf_entropy(session, handle)?;
-		Self::require_matching_registered_public_key(vrf, &entry, &entropy)?;
-		Ok(entropy)
-	}
-
-	async fn resolve_registered_ring_vrf_key(
-		&self,
-		vrf: &Vrf,
-		session: &AuthoritySession,
-		handle: &v01::ProductAccountId,
-	) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
-		let entry = self
-			.registered_ring_vrf_entry(session, handle)
-			.await?
-			.ok_or(RingVrfError::KeyNotRegistered)?;
-		let entropy = self.ring_vrf_entropy(session, handle)?;
-		Self::require_matching_registered_public_key(vrf, &entry, &entropy)?;
-		Ok(entropy)
+		Ok(entry)
 	}
 
 	fn require_matching_registered_public_key(
 		vrf: &Vrf,
-		entry: &v01::RegisteredRingVrfKey,
+		entry: &api::RegisteredRingVrfKey,
 		entropy: &[u8; 32],
 	) -> Result<(), RingVrfError> {
 		if entry.public_key != Some(vrf.member(entropy)?) {
@@ -176,36 +234,25 @@ impl SigningHost {
 		Ok(())
 	}
 
-	fn ring_vrf_member_candidate(
-		&self,
-		vrf: &Vrf,
-		entropy: &[u8; 32],
-	) -> Result<MemberCandidate, RingVrfError> {
-		Ok(MemberCandidate { member: vrf.member(entropy)? })
-	}
-
-	/// Whether `calling_product_id` may act on `handle`'s ring-VRF key.
+	/// Whether the invocation's caller may act on `handle`'s ring-VRF key.
 	///
-	/// Delegates to [`crate::runtime::ring_vrf_key_access_granted`], which
-	/// resolves the owner's manifest here rather than trusting the request: on
-	/// this role the request can have arrived over the pairing wire.
+	/// Delegates to [`ring_vrf_key_access_granted`], which resolves the owner's
+	/// manifest here rather than trusting the request: on this role the
+	/// request can have arrived over the pairing wire.
 	async fn require_ring_vrf_key_access(
 		&self,
-		calling_product_id: ProductId,
-		handle: &v01::ProductAccountId,
-	) -> Result<
-		(v01::ProductAccountId, crate::runtime::product_manifest::AuthorizedAccess),
-		RingVrfError,
-	> {
-		let access = crate::runtime::product_manifest::ring_vrf_key_access_granted(
+		invocation: &AccountInvocation<'_>,
+		handle: &ProductAccountId,
+	) -> Result<(ProductAccountId, AuthorizedAccess), RingVrfError> {
+		let access = ring_vrf_key_access_granted(
 			&self.services,
-			self.platform.as_ref(),
-			calling_product_id,
+			self.services.platform.as_ref(),
+			invocation.caller.product_id().ok_or(RingVrfError::Rejected)?.clone(),
 			handle,
 		)
 		.await?;
 		Ok((
-			v01::ProductAccountId {
+			ProductAccountId {
 				dot_ns_identifier: access.owner.clone(),
 				derivation_index: handle.derivation_index.clone(),
 			},
@@ -215,12 +262,12 @@ impl SigningHost {
 
 	async fn require_account_access(
 		&self,
-		cx: &CallContext,
+		invocation: &AccountInvocation<'_>,
 		requester: &ProductId,
 		owner: &ProductId,
 	) -> Result<(), RingVrfError> {
-		let access = self.consent.account_access(requester, owner, self.platform.as_ref());
-		let status = until_cancelled(cx, access)
+		let access = self.consent.account_access(requester, owner, self.services.platform.as_ref());
+		let status = until_cancelled(invocation.call, access)
 			.await?
 			.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?;
 		if status == PermissionAuthorizationStatus::Authorized {
@@ -232,216 +279,291 @@ impl SigningHost {
 }
 
 #[async_trait::async_trait]
-impl ProductAuthority for SigningHost {
+impl AccountHolder for WalletAccountHolder {
+	const GRANT_KEEPING: GrantKeeping = GrantKeeping::Wallet;
+
 	fn current_session(&self) -> Option<AuthoritySession> {
-		self.current_local_session()
+		let state = self.lifecycle.lock().expect("wallet lifecycle mutex poisoned");
+		let session = self.session_state.current()?;
+		state.keys.as_ref()?;
+		Some(state.session(&session))
 	}
 
-	fn consent(&self) -> &ProductConsent {
-		&self.consent
+	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError> {
+		self.lifecycle
+			.lock()
+			.expect("wallet lifecycle mutex poisoned")
+			.require_session(self.session_state.current(), session)
+			.map(|_| ())
 	}
 
-	fn grant_revision(&self) -> u64 {
-		self.grants.lifecycle().revision()
+	async fn allocate_grants<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
+		request: api::HostRequestResourceAllocationRequest,
+		policy: OnExistingAllowancePolicy,
+	) -> Result<BoxStream<'a, Result<AccountGrantOutcome, AuthorityError>>, AuthorityError> {
+		let product_id = invocation.caller.product_id().ok_or(AuthorityError::Rejected)?.clone();
+		self.require_current_session(invocation.session)?;
+		Ok(stream::unfold(
+			(request.resources.into_iter(), product_id, invocation),
+			move |(mut resources, product_id, invocation)| async move {
+				let resource = resources.next()?;
+				let outcome = async {
+					self.require_current_session(invocation.session)?;
+					if let Some(reason) = invocation.call.cancel().reason() {
+						return Err(authority_cancellation_error(invocation.call, reason).into());
+					}
+					// Checked before the work, not after: withholding is the suite
+					// saying this resource is refused, so performing the allocation
+					// and then reporting a refusal would leave the two disagreeing.
+					#[cfg(feature = "test-host")]
+					self.resource_controls.refuse_withheld(&resource)?;
+					let grant = match resource {
+						api::AllocatableResource::StatementStoreAllowance => {
+							let allocation = self
+								.allocate_statement_store_allowance(
+									invocation.session,
+									&product_id,
+									policy,
+								)
+								.await?;
+							AccountGrant::Allowance(Allowance::StatementStore {
+								key: StatementStoreAllowanceKey::from_secret_bytes(
+									allocation.secret,
+								)?,
+								period: Some(allocation.period),
+							})
+						},
+						api::AllocatableResource::BulletinAllowance => AccountGrant::Allowance(
+							Allowance::Bulletin(BulletinAllowanceKey::from_secret_bytes(
+								self.allocate_bulletin_allowance(
+									invocation.session,
+									&product_id,
+									policy,
+								)
+								.await?,
+							)?),
+						),
+						api::AllocatableResource::SmartContractAllowance(index) => {
+							self.allocate_smart_contract_allowance(
+								invocation.session,
+								&product_id,
+								index,
+								policy,
+							)
+							.await?;
+							AccountGrant::SmartContract
+						},
+						api::AllocatableResource::AutoSigning => self
+							.with_keys::<_, AuthorityError>(invocation.session, |keys| {
+								Ok(AccountGrant::AutoSigning(AutoSigningKey::from_parts(
+									keys.product_subtree_keypair(&product_id)?.secret.to_bytes(),
+									keys.ring_vrf_domain_entropy(&product_id)?,
+								)))
+							})?,
+					};
+					Ok(grant)
+				}
+				.await;
+				let outcome = self
+					.require_current_session(invocation.session)
+					.map_err(AllowanceAllocationError::from)
+					.and(outcome);
+				let outcome = match outcome {
+					Ok(grant) => Ok(AccountGrantOutcome::Allocated(grant)),
+					Err(AllowanceAllocationError::Authority(
+						error @ (AuthorityError::Disconnected | AuthorityError::Cancelled(_)),
+					)) => Err(error),
+					Err(AllowanceAllocationError::Authority(AuthorityError::Rejected)) => {
+						Ok(AccountGrantOutcome::Rejected)
+					},
+					Err(error) => {
+						Ok(AccountGrantOutcome::NotAvailable { reason: Some(error.to_string()) })
+					},
+				};
+				Some((outcome, (resources, product_id, invocation)))
+			},
+		)
+		.boxed())
+	}
+
+	async fn ensure_allowance(
+		&self,
+		invocation: AccountInvocation<'_>,
+		resource: AllowanceResource,
+		policy: OnExistingAllowancePolicy,
+	) -> Result<AccountGrant, AuthorityError> {
+		let resource = match resource {
+			AllowanceResource::StatementStore => api::AllocatableResource::StatementStoreAllowance,
+			AllowanceResource::Bulletin => api::AllocatableResource::BulletinAllowance,
+		};
+		let mut grants = self
+			.allocate_grants(
+				invocation,
+				api::HostRequestResourceAllocationRequest { resources: vec![resource] },
+				policy,
+			)
+			.await?;
+		match grants.next().await.transpose()? {
+			Some(AccountGrantOutcome::Allocated(grant)) => Ok(grant),
+			Some(AccountGrantOutcome::NotAvailable { reason }) => {
+				Err(AuthorityError::Unavailable {
+					reason: reason.unwrap_or_else(|| "Allowance unavailable".to_string()),
+				})
+			},
+			Some(AccountGrantOutcome::Rejected) | None => Err(AuthorityError::Rejected),
+		}
 	}
 
 	async fn product_subtree_public_key(
 		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
+		invocation: AccountInvocation<'_>,
 		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError> {
-		self.require_current_session(session)?;
-		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy)?;
-		derive_product_subtree_keypair(&root, product_id)
-			.map(|keypair| keypair.public.to_bytes())
-			.map_err(Into::into)
-	}
-
-	async fn subtree_resolution_reaches_account_holder(
-		&self,
-		_session: &AuthoritySession,
-		_product_id: &ProductId,
-	) -> bool {
-		// A signing host derives the subtree locally from root entropy, so
-		// resolution never reaches a remote Account Holder and never prompts.
-		false
-	}
-
-	async fn auto_signing_status(
-		&self,
-		session: &AuthoritySession,
-		calling_product_id: &ProductId,
-		account: &v01::ProductAccountId,
-	) -> Result<AutoSigningGrant, AuthorityError> {
-		// A stale session is not a grant, and is answered here rather than
-		// raising a prompt against a session that no longer exists.
-		// `grant_auto_signing` refuses to keep a key whose owner is not the
-		// session's own key, so the session carries the owner a key is kept
-		// under and no root derivation is needed to answer this.
-		let current = self.require_current_session(session)?;
-		if crate::runtime::authority::is_blessed_owner(
-			calling_product_id,
-			&account.dot_ns_identifier,
-		) || self
-			.keeps_auto_signing_key(&current, calling_product_id, &account.dot_ns_identifier)
-			.await
-		{
-			Ok(AutoSigningGrant::Active)
-		} else {
-			Ok(AutoSigningGrant::Absent)
-		}
+		self.with_keys(invocation.session, |keys| {
+			Ok(keys.product_subtree_keypair(product_id)?.public.to_bytes())
+		})
 	}
 
 	async fn sign_vrf(
 		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		calling_product_id: &ProductId,
-		request: v01::HostAccountSignVrfRequest,
-	) -> Result<v01::VrfSignature, AuthorityError> {
-		let product = ProductContext::new(calling_product_id.clone());
-		self.sign_vrf_request(cx, session, AccountCaller::Local { product: &product }, request)
-			.await
+		invocation: AccountInvocation<'_>,
+		request: api::HostAccountSignVrfRequest,
+	) -> Result<api::VrfSignature, AuthorityError> {
+		self.with_keys(invocation.session, |keys| {
+			let keypair = keys.product_keypair(&request.account)?;
+			let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
+				&keypair,
+				&request.transcript_label,
+				request.items.iter().map(|item| (item.label.as_slice(), item.value.as_slice())),
+			);
+			Ok(api::VrfSignature { pre_output, proof })
+		})
 	}
 
 	async fn sign_payload(
 		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		_calling_product_id: Option<&ProductId>,
+		invocation: AccountInvocation<'_>,
 		request: SignPayloadAuthorityRequest,
-	) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-		self.require_current_session(session)?;
-		let (keypair, payload) = match request {
-			SignPayloadAuthorityRequest::Product(request) => {
-				(self.product_keypair(&request.account)?, request.payload)
-			},
-			SignPayloadAuthorityRequest::LegacyAccount { product_account, request } => {
-				(self.product_keypair(&product_account)?, request.payload)
-			},
-		};
-		Ok(sign_extrinsic_payload(&keypair, payload)?)
+	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
+		self.require_current_session(invocation.session)?;
+		let cx = remote_authority_context(invocation.call);
+		remote_authority_call(&cx, async {
+			self.with_keys(invocation.session, |keys| {
+				let (account, payload) = match request {
+					SignPayloadAuthorityRequest::Product(request) => {
+						(request.account, request.payload)
+					},
+					SignPayloadAuthorityRequest::LegacyAccount { product_account, request } => {
+						(product_account, request.payload)
+					},
+				};
+				Ok(sign_extrinsic_payload(&keys.product_keypair(&account)?, payload)?)
+			})
+		})
+		.await
 	}
 
 	async fn sign_raw(
 		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		_calling_product_id: Option<&ProductId>,
+		invocation: AccountInvocation<'_>,
 		request: SignRawAuthorityRequest,
 		watermarked: bool,
-	) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-		let (keypair, payload) = match request {
-			SignRawAuthorityRequest::Product(request) => {
-				(self.product_keypair(&request.account)?, request.payload)
-			},
-			SignRawAuthorityRequest::LegacyAccount { account, request } => {
-				let keypair = self.identity_keypair()?;
-				if keypair.public.to_bytes() != account {
-					return Err(AuthorityError::Unavailable {
-						reason: "signing host: the requested legacy account is not available in \
-                                 this CLI wallet"
-							.to_string(),
-					});
-				}
-				(keypair, request.payload)
-			},
-		};
-		self.require_current_session(session)?;
-		let message = raw_payload_bytes(payload, watermarked)?;
-		let signature = keypair
-			.secret
-			.sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
-			.to_bytes();
-		Ok(v01::HostSignPayloadResponse { signature: signature.to_vec(), signed_transaction: None })
+	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
+		self.require_current_session(invocation.session)?;
+		let cx = remote_authority_context(invocation.call);
+		remote_authority_call(&cx, async {
+			self.with_keys(invocation.session, |keys| {
+				let (keypair, payload) = match request {
+					SignRawAuthorityRequest::Product(request) => {
+						(keys.product_keypair(&request.account)?, request.payload)
+					},
+					SignRawAuthorityRequest::LegacyAccount { account, request } => {
+						let keypair = keys.identity_keypair()?;
+						if keypair.public.to_bytes() != account {
+							return Err(AuthorityError::Unavailable {
+								reason: "signing host: the requested legacy account is not \
+                                         available in this CLI wallet"
+									.to_string(),
+							});
+						}
+						(keypair, request.payload)
+					},
+				};
+				let message = raw_payload_bytes(payload, watermarked)?;
+				let signature = keypair
+					.secret
+					.sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
+					.to_bytes();
+				Ok(api::HostSignPayloadResponse {
+					signature: signature.to_vec(),
+					signed_transaction: None,
+				})
+			})
+		})
+		.await
 	}
 
 	async fn create_transaction(
 		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		_calling_product_id: Option<&ProductId>,
+		invocation: AccountInvocation<'_>,
 		request: CreateTransactionAuthorityRequest,
-	) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
-		self.require_current_session(session)?;
-		match request {
-			CreateTransactionAuthorityRequest::Product(payload) => {
-				// The product account is authoritative and caller-scoping is
-				// enforced upstream, so the derived key defines the signer.
-				let keypair = self.product_keypair(&payload.signer)?;
-				build_local_transaction(
-					&self.services.chain,
-					&keypair,
+	) -> Result<api::HostCreateTransactionResponse, AuthorityError> {
+		self.require_current_session(invocation.session)?;
+		let cx = remote_authority_context(invocation.call);
+		remote_authority_call(&cx, async {
+			self.with_keys(invocation.session, |keys| {
+				Self::transaction_keypair(keys, &request).map(|_| ())
+			})?;
+			let (genesis_hash, call_data, extensions, tx_ext_version) = match &request {
+				CreateTransactionAuthorityRequest::Product(payload) => (
 					payload.genesis_hash,
 					&payload.call_data,
 					&payload.extensions,
 					payload.tx_ext_version,
-				)
-				.await
-				.map_err(AuthorityError::from)
-			},
-			CreateTransactionAuthorityRequest::LegacyAccount { product_account, request } => {
-				let keypair = self.product_keypair(&product_account)?;
-				// Defense-in-depth: the slot-zero key must match the legacy
-				// signer the caller asked for (also validated upstream). Never
-				// sign with a diverging key.
-				if keypair.public.to_bytes() != request.signer {
-					return Err(AuthorityError::Unknown {
-						reason: "signing host: legacy signer does not match the product \
-                                 slot-zero account"
-							.to_string(),
-					});
-				}
-				build_local_transaction(
-					&self.services.chain,
-					&keypair,
+				),
+				CreateTransactionAuthorityRequest::LegacyAccount { request, .. } |
+				CreateTransactionAuthorityRequest::IdentityAccount(request) => (
 					request.genesis_hash,
 					&request.call_data,
 					&request.extensions,
 					request.tx_ext_version,
-				)
-				.await
-				.map_err(AuthorityError::from)
-			},
-			CreateTransactionAuthorityRequest::IdentityAccount(request) => {
-				let keypair = self.identity_keypair()?;
-				if keypair.public.to_bytes() != request.signer {
-					return Err(AuthorityError::Unavailable {
-						reason: "signing host: the requested identity account is not available in \
-                                 this CLI wallet"
-							.to_string(),
-					});
-				}
-				build_local_transaction(
-					&self.services.chain,
-					&keypair,
-					request.genesis_hash,
-					&request.call_data,
-					&request.extensions,
-					request.tx_ext_version,
-				)
-				.await
-				.map_err(AuthorityError::from)
-			},
-		}
+				),
+			};
+			let metadata = local_transaction_metadata(&self.services.chain, genesis_hash).await?;
+			self.with_keys(invocation.session, |keys| {
+				let keypair = Self::transaction_keypair(keys, &request)?;
+				Ok(api::HostCreateTransactionResponse {
+					transaction: build_signed_transaction(
+						&Sr25519Signer::from_keypair(&keypair),
+						genesis_hash,
+						call_data,
+						extensions,
+						tx_ext_version,
+						metadata,
+					)?,
+				})
+			})
+		})
+		.await
 	}
 
 	async fn account_alias(
 		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		request: ProductRequest<HostAccountGetAliasRequest>,
-	) -> Result<v01::ContextualAlias, RingVrfError> {
+		invocation: AccountInvocation<'_>,
+		request: HostAccountGetAliasRequest,
+	) -> Result<api::ContextualAlias, RingVrfError> {
+		let session = invocation.session;
 		self.require_current_session(session)?;
+		let requester = invocation.caller.product_id().ok_or(RingVrfError::NotAllowlisted)?;
 		// Aliases expose the same identity as `create_proof`, so both must enforce
 		// the same RFC-0024 grant and context restrictions.
-		let key_access = crate::runtime::product_manifest::ring_vrf_key_access_granted_or_consent(
+		let key_access = ring_vrf_key_access_granted_or_consent(
 			&self.services,
-			self.platform.as_ref(),
-			request.calling_product_id.clone(),
-			&request.payload.key_handle,
+			self.services.platform.as_ref(),
+			requester.clone(),
+			&request.key_handle,
 		)
 		.await;
 		let granted = match key_access {
@@ -453,336 +575,144 @@ impl ProductAuthority for SigningHost {
 		// the proof come from one VRF evaluation.
 		let key_handle = match granted {
 			Some(access) => {
-				crate::runtime::product_manifest::require_context_access(
-					&self.services,
-					&access,
-					&request.payload.context,
-				)
-				.await?;
-				v01::ProductAccountId {
+				require_context_access(&self.services, &access, &request.context).await?;
+				ProductAccountId {
 					dot_ns_identifier: access.owner,
-					derivation_index: request.payload.key_handle.derivation_index.clone(),
+					derivation_index: request.key_handle.derivation_index.clone(),
 				}
 			},
 			None => {
 				// Permission lookups and prompts must use the same canonical identifiers.
-				let requester = &request.calling_product_id;
-				let owner = request.payload.key_handle.dot_ns_identifier.clone();
-				self.require_account_access(cx, requester, &owner).await?;
-				v01::ProductAccountId {
+				let owner = request.key_handle.dot_ns_identifier.clone();
+				self.require_account_access(&invocation, requester, &owner).await?;
+				ProductAccountId {
 					dot_ns_identifier: owner,
-					derivation_index: request.payload.key_handle.derivation_index.clone(),
+					derivation_index: request.key_handle.derivation_index.clone(),
 				}
 			},
 		};
 		let vrf = vrf::load().await?;
-		let entropy = self
-			.resolve_ring_vrf_key_for_ring(
-				&vrf,
-				session,
-				&key_handle,
-				&request.payload.ring_location,
-			)
+		let entry = self
+			.registered_ring_vrf_entry_for_ring(session, &key_handle, &request.ring_location)
 			.await?;
-		self.ring_resolver.validate(&request.payload.ring_location).await?;
-		let context = context_bytes(&request.payload.context);
-		let alias = vrf.alias(&entropy, &context)?;
-		Ok(v01::ContextualAlias { context, alias: alias.to_vec() })
+		self.ring_resolver.validate(&request.ring_location).await?;
+		let context = context_bytes(&request.context);
+		self.with_keys(session, |keys| {
+			let entropy = keys.ring_vrf_entropy(&key_handle)?;
+			Self::require_matching_registered_public_key(&vrf, &entry, &entropy)?;
+			let alias = vrf.alias(&entropy, &context)?;
+			Ok(api::ContextualAlias { context, alias: alias.to_vec() })
+		})
 	}
 
 	async fn create_proof(
 		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		request: ProductRequest<HostAccountCreateProofRequest>,
-	) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
+		invocation: AccountInvocation<'_>,
+		request: HostAccountCreateProofRequest,
+	) -> Result<api::HostAccountCreateProofResponse, RingVrfError> {
+		let session = invocation.session;
 		self.require_current_session(session)?;
-		let (key_handle, access) = self
-			.require_ring_vrf_key_access(request.calling_product_id, &request.payload.key_handle)
-			.await?;
+		let (key_handle, access) =
+			self.require_ring_vrf_key_access(&invocation, &request.key_handle).await?;
 		// A grant cannot expose the owner's alias in a third product's context unless
 		// that product's manifest grants the caller `context`.
-		crate::runtime::product_manifest::require_context_access(
-			&self.services,
-			&access,
-			&request.payload.context,
-		)
-		.await?;
+		require_context_access(&self.services, &access, &request.context).await?;
 		let vrf = vrf::load().await?;
-		let entropy = self
-			.resolve_ring_vrf_key_for_ring(
-				&vrf,
-				session,
-				&key_handle,
-				&request.payload.ring_location,
-			)
+		let entry = self
+			.registered_ring_vrf_entry_for_ring(session, &key_handle, &request.ring_location)
 			.await?;
-		let candidate = self.ring_vrf_member_candidate(&vrf, &entropy)?;
-		let resolved =
-			self.ring_resolver.resolve(&request.payload.ring_location, &[candidate]).await?;
-		// Reject a stale request if the local session disconnected or changed
-		// while its chain snapshot was being resolved.
-		self.require_current_session(session)?;
-		let context = context_bytes(&request.payload.context);
-		let (proof, alias) =
-			create_proof(&vrf, &entropy, &resolved, &context, &request.payload.message)?;
-		Ok(v01::HostAccountCreateProofResponse {
-			proof,
-			contextual_alias: v01::ContextualAlias { context, alias: alias.to_vec() },
-			ring_index: resolved.ring_index,
-			ring_revision: resolved.ring_revision,
+		let candidate = self.with_keys(session, |keys| {
+			let entropy = keys.ring_vrf_entropy(&key_handle)?;
+			Self::require_matching_registered_public_key(&vrf, &entry, &entropy)?;
+			Ok::<_, RingVrfError>(MemberCandidate { member: vrf.member(&entropy)? })
+		})?;
+		let resolved = self.ring_resolver.resolve(&request.ring_location, &[candidate]).await?;
+		self.with_keys(session, |keys| {
+			let entropy = keys.ring_vrf_entropy(&key_handle)?;
+			let context = context_bytes(&request.context);
+			let (proof, alias) =
+				create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
+			Ok(api::HostAccountCreateProofResponse {
+				proof,
+				contextual_alias: api::ContextualAlias { context, alias: alias.to_vec() },
+				ring_index: resolved.ring_index,
+				ring_revision: resolved.ring_revision,
+			})
 		})
 	}
 
 	async fn register_ring_vrf_key(
 		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRegisterRingVrfKeyRequest,
 	) -> Result<[u8; 32], RingVrfError> {
-		self.require_current_session(session)?;
-		self.ring_resolver.validate(&request.payload.ring).await?;
-
-		let handle = v01::ProductAccountId {
-			dot_ns_identifier: request.calling_product_id,
-			derivation_index: request.payload.index,
-		};
-		let entropy = self.ring_vrf_entropy(session, &handle)?;
-		let public_key = vrf::load().await?.member(&entropy)?;
-		self.ring_vrf_registry
-			.register(session.public_key, handle, request.payload.ring, public_key)
+		self.require_current_session(invocation.session)?;
+		self.ring_resolver.validate(&request.ring).await?;
+		let handle = Self::caller_key_handle(&invocation, request.index)?;
+		let public_key = self.derive_ring_vrf_member(invocation.session, &handle).await?;
+		self.record_registration(invocation.session, handle, request.ring, public_key)
 			.await?;
 		Ok(public_key)
 	}
 
 	async fn list_ring_vrf_keys(
 		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		request: ProductRequest<HostAccountListRingVrfKeysRequest>,
-	) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
+		invocation: AccountInvocation<'_>,
+		request: HostAccountListRingVrfKeysRequest,
+	) -> Result<Vec<api::RegisteredRingVrfKey>, RingVrfError> {
+		let session = invocation.session;
 		self.require_current_session(session)?;
-		let owner = &request.payload.owner;
-		let caller = &request.calling_product_id;
+		let owner = &request.owner;
+		let caller = invocation.caller.product_id().ok_or(RingVrfError::NotAllowlisted)?;
 		if caller != owner {
-			self.require_account_access(cx, caller, owner).await?;
+			self.require_account_access(&invocation, caller, owner).await?;
 		}
 
 		self.register_builtin_personhood_keys_if_needed(session, owner).await?;
 		let mut entries = self.ring_vrf_registry.owner_entries(session.public_key, owner).await?;
 		self.require_current_session(session)?;
-		apply_ring_vrf_disclosure(&mut entries, request.payload.disclosure);
+		apply_ring_vrf_disclosure(&mut entries, request.disclosure);
 		Ok(entries)
 	}
 
 	async fn ring_vrf_sign(
 		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		request: ProductRequest<HostAccountRingVrfSignRequest>,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRingVrfSignRequest,
 	) -> Result<Vec<u8>, RingVrfError> {
+		let session = invocation.session;
 		self.require_current_session(session)?;
-		let (key_handle, _access) = self
-			.require_ring_vrf_key_access(request.calling_product_id, &request.payload.key_handle)
-			.await?;
+		let (key_handle, _access) =
+			self.require_ring_vrf_key_access(&invocation, &request.key_handle).await?;
 		let vrf = vrf::load().await?;
-		let entropy = self.resolve_registered_ring_vrf_key(&vrf, session, &key_handle).await?;
-		vrf.sign(&entropy, &request.payload.message)
-	}
-
-	async fn allocate_resources(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		grant_revision: u64,
-		product_id: &ProductId,
-		request: v01::HostRequestResourceAllocationRequest,
-	) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
-		self.require_current_session(session)?;
-		self.grants.lifecycle().require_revision(grant_revision)?;
-		#[cfg(feature = "test-host")]
-		if self.resource_controls.grants_allowances_unchecked() {
-			// Nothing is allocated and no proof is built: a suite in this mode
-			// learns that its product handles a grant, not that a host would
-			// have given one. A withheld tag is still refused here, so the one
-			// resource a suite wants to prove its product lives without stays
-			// refused while the rest are granted.
-			return Ok(v01::HostRequestResourceAllocationResponse {
-				outcomes: request
-					.resources
-					.iter()
-					.map(|resource| {
-						if self.resource_controls.withholds(resource) {
-							v01::AllocationOutcome::Rejected
-						} else {
-							v01::AllocationOutcome::Allocated
-						}
-					})
-					.collect(),
-			});
-		}
-		let mut outcomes = Vec::with_capacity(request.resources.len());
-		for resource in request.resources {
-			if let Some(reason) = cx.cancel().reason() {
-				return Err(crate::runtime::authority_cancellation_error(cx, reason));
-			}
-			// Checked before the work, not after: withholding is the suite
-			// saying this resource is refused, so performing the allocation and
-			// then reporting a refusal would leave the two disagreeing.
-			#[cfg(feature = "test-host")]
-			if self.resource_controls.withholds(&resource) {
-				outcomes.push(v01::AllocationOutcome::Rejected);
-				continue;
-			}
-			let outcome = match resource {
-				v01::AllocatableResource::StatementStoreAllowance => self
-					.allocate_statement_store_allowance_key(
-						session,
-						grant_revision,
-						product_id,
-						OnExistingAllowancePolicy::Increase,
-					)
-					.await
-					.map(|_| v01::AllocationOutcome::Allocated),
-				v01::AllocatableResource::BulletinAllowance => {
-					allowance::allocate_bulletin_allowance(
-						&self.services,
-						self,
-						session,
-						product_id,
-						OnExistingAllowancePolicy::Increase,
-					)
-					.await
-					.map(|_| v01::AllocationOutcome::Allocated)
-				},
-				v01::AllocatableResource::SmartContractAllowance(index) => {
-					allowance::allocate_smart_contract_allowance(
-						&self.services,
-						self,
-						session,
-						product_id,
-						index,
-						OnExistingAllowancePolicy::Increase,
-					)
-					.await
-					.map(|()| v01::AllocationOutcome::Allocated)
-				},
-				v01::AllocatableResource::AutoSigning => self
-					.grant_auto_signing(session, grant_revision, product_id)
-					.await
-					.map(|_| v01::AllocationOutcome::Allocated)
-					.map_err(allowance::AllowanceAllocationError::Authority),
-			};
-			match outcome {
-				Ok(outcome) => outcomes.push(outcome),
-				Err(reason) => {
-					tracing::warn!(%product_id, %reason, "direct resource allocation item failed");
-					outcomes.push(v01::AllocationOutcome::NotAvailable);
-				},
-			}
-		}
-		Ok(v01::HostRequestResourceAllocationResponse { outcomes })
-	}
-
-	async fn statement_store_allowance_key(
-		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		product_id: &ProductId,
-	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-		let (current, grant_revision) = self.grant_session(session)?;
-		#[cfg(feature = "test-host")]
-		self.resource_controls
-			.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
-		let period = statement_allowance::slot::current_period(allowance::current_unix_secs()?);
-		if let Some(Allowance::StatementStore { key, period: Some(kept_period) }) = self
-			.grants
-			.cached_allowance(
-				&current,
-				grant_revision,
-				product_id,
-				AllowanceResource::StatementStore,
-			)
-			.await? && kept_period == period
-		{
-			return Ok(key);
-		}
-		self.allocate_statement_store_allowance_key(
-			session,
-			grant_revision,
-			product_id,
-			OnExistingAllowancePolicy::Ignore,
-		)
-		.await
-		.map_err(Into::into)
-	}
-
-	#[cfg(feature = "test-host")]
-	fn submits_preimages_locally(&self) -> bool {
-		self.resource_controls.grants_allowances_unchecked() ||
-			self.submit_preimages_locally.load(core::sync::atomic::Ordering::Relaxed)
-	}
-
-	fn forget_statement_store_allowance_key(&self, product_id: &ProductId, public_key: [u8; 32]) {
-		self.grants.forget_statement_store_allowance_key(product_id, public_key);
-	}
-
-	async fn bulletin_allowance_key(
-		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		product_id: &ProductId,
-	) -> Result<BulletinAllowanceKey, AuthorityError> {
-		self.require_current_session(session)?;
-		#[cfg(feature = "test-host")]
-		self.resource_controls
-			.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
-		let secret = allowance::allocate_bulletin_allowance(
-			&self.services,
-			self,
-			session,
-			product_id,
-			OnExistingAllowancePolicy::Ignore,
-		)
-		.await?;
-		BulletinAllowanceKey::from_secret_bytes(secret)
-	}
-
-	async fn refresh_bulletin_allowance_key(
-		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		product_id: &ProductId,
-	) -> Result<BulletinAllowanceKey, AuthorityError> {
-		self.require_current_session(session)?;
-		#[cfg(feature = "test-host")]
-		self.resource_controls
-			.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
-		let secret = allowance::allocate_bulletin_allowance(
-			&self.services,
-			self,
-			session,
-			product_id,
-			OnExistingAllowancePolicy::Increase,
-		)
-		.await?;
-		BulletinAllowanceKey::from_secret_bytes(secret)
+		let entry = self
+			.registered_ring_vrf_entry(session, &key_handle)
+			.await?
+			.ok_or(RingVrfError::KeyNotRegistered)?;
+		self.with_keys(session, |keys| {
+			let entropy = keys.ring_vrf_entropy(&key_handle)?;
+			Self::require_matching_registered_public_key(&vrf, &entry, &entropy)?;
+			vrf.sign(&entropy, &request.message)
+		})
 	}
 
 	async fn sign_statement_store_product_payload(
 		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		_calling_product_id: Option<&ProductId>,
-		account: v01::ProductAccountId,
+		invocation: AccountInvocation<'_>,
+		account: ProductAccountId,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError> {
-		self.require_current_session(session)?;
-		let keypair = self.product_keypair(&account)?;
-		Ok(keypair
-			.secret
-			.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
-			.to_bytes())
+		let cx = remote_authority_context(invocation.call);
+		remote_authority_call(&cx, async {
+			self.with_keys(invocation.session, |keys| {
+				let keypair = keys.product_keypair(&account)?;
+				Ok(keypair
+					.secret
+					.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
+					.to_bytes())
+			})
+		})
+		.await
 	}
 
 	fn derive_entropy(
@@ -791,18 +721,13 @@ impl ProductAuthority for SigningHost {
 		product_id: &ProductId,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError> {
-		self.require_current_session(session)?;
-		let entropy = self.root_entropy()?;
-		derive_product_entropy(&entropy, product_id, context)
-			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
+		self.with_keys(session, |keys| keys.derive_entropy(product_id, context))
 	}
 
-	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
-		self.require_current_session(session)?;
-		// The same 32 bytes a pairing host receives from the wallet, so one
-		// contact hashes alike whichever role the user is running.
-		let root_entropy_source =
-			crate::host_logic::entropy::root_entropy_source(&self.root_entropy()?);
-		Ok(crate::runtime::contacts::handle_key_from_root_source(&root_entropy_source))
+	fn contact_handles(
+		&self,
+		session: &AuthoritySession,
+	) -> Result<ContactHandles, AuthorityError> {
+		self.with_keys(session, |keys| Ok(keys.contact_handles()))
 	}
 }

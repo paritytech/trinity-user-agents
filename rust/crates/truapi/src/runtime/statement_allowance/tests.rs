@@ -825,6 +825,78 @@ fn a_broken_people_collection_does_not_discard_a_lite_people_membership() {
 	assert_eq!(memberships[0].members, vec![proof::member_key_now(lite_entropy)]);
 }
 
+/// A wallet that stops signing is not one broken collection. Skipping it and
+/// carrying on with the next collection would build an allocation for a wallet
+/// that is gone, so the whole resolution stops with the wallet's error.
+#[test]
+fn a_wallet_change_stops_ring_resolution_instead_of_skipping_a_collection() {
+	use crate::runtime::authority::AuthorityError;
+
+	/// Signs with fixed keys, except that the wallet is gone for People.
+	struct WalletGoneForPeople<'a>(FixedPersonhoodSigner<'a>);
+
+	impl PersonhoodSigner for WalletGoneForPeople<'_> {
+		fn member(
+			&self,
+			collection: PersonhoodCollection,
+		) -> Result<[u8; 32], StatementAllowanceError> {
+			if collection == PersonhoodCollection::People {
+				return Err(AuthorityError::Disconnected.into());
+			}
+			self.0.member(collection)
+		}
+
+		fn alias(
+			&self,
+			collection: PersonhoodCollection,
+			context: &[u8],
+		) -> Result<[u8; 32], StatementAllowanceError> {
+			self.0.alias(collection, context)
+		}
+
+		fn prove(
+			&self,
+			ring: &RingParams,
+			context: &[u8],
+			message: &[u8],
+		) -> Result<Vec<u8>, StatementAllowanceError> {
+			self.0.prove(ring, context, message)
+		}
+	}
+
+	let metadata = test_fixtures::people();
+	let candidates = pooled_candidates();
+	let signer = WalletGoneForPeople(
+		futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap(),
+	);
+	let lite_entropy = candidates[1].entropy;
+	let page = format!(r#""0x04{}""#, hex::encode(proof::member_key_now(lite_entropy)));
+	// LitePeople would resolve if the resolution kept going after People.
+	let responses = [
+		r#""0xfinal""#.to_string(),
+		LIVE_LITE_COLLECTION.to_string(),
+		r#""0x00000000""#.to_string(),
+		page,
+		"null".to_string(),
+		"null".to_string(),
+	];
+	let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
+	let rpc = RpcClient::new(HostRpcClient::new(scripted));
+
+	let err = futures::executor::block_on(find_including_rings(
+		&rpc,
+		metadata,
+		&signer,
+		&PersonhoodCollection::ALL,
+		u32::MAX,
+	))
+	.expect_err("a wallet change must stop the resolution");
+	assert!(
+		matches!(err, StatementAllowanceError::Authority(AuthorityError::Disconnected)),
+		"unexpected error: {err:?}"
+	);
+}
+
 /// Every candidate failing is an outage, not an answer. Reporting it as "no
 /// membership" would let a caller conclude the person has no personhood.
 #[test]

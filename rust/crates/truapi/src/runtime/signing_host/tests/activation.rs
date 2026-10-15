@@ -1,5 +1,153 @@
 use super::*;
 
+#[test]
+fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
+	let platform = Arc::new(StubPlatform {
+		sign_raw_confirmed: false,
+		resource_allocation_confirmed: true,
+		..StubPlatform::default()
+	});
+	let (services, authority) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(
+		authority.activate_local_session_with_identity(ENTROPY.to_vec(), Some("alice".to_string())),
+	)
+	.expect("initial activation succeeds");
+	let session = active_session(&authority);
+	let runtime = product_runtime(services, authority.clone());
+	auto_signing::grant_auto_signing(&runtime);
+
+	let error = futures::executor::block_on(
+		authority.activate_local_session_with_identity(vec![0xCD; 17], Some("bob".to_string())),
+	)
+	.expect_err("invalid BIP-39 entropy cannot replace the wallet");
+	assert!(matches!(error, AuthorityError::Unavailable { .. }));
+
+	let HostSignRawResponse::V1(response) = futures::executor::block_on(runtime.sign_raw(
+		&CallContext::default(),
+		HostSignRawRequest::V1(v01::HostSignRawRequest {
+			account: v01::ProductAccountId {
+				dot_ns_identifier: ProductId::for_test("myapp.dot"),
+				derivation_index: v01::DerivationIndex::Index(0),
+			},
+			payload: v01::RawPayload::Bytes { bytes: b"still active".to_vec() },
+		}),
+	))
+	.expect("the active wallet still signs under its existing grant");
+	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("original root derives");
+	let keypair = derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
+		.expect("product key derives");
+	let signature =
+		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
+
+	assert_eq!(
+		(
+			authority.wallet.current_session().map(|current| current.validation_id),
+			keypair
+				.public
+				.verify_simple(b"substrate", b"<Bytes>still active</Bytes>", &signature)
+				.is_ok(),
+			platform
+				.sign_raw_reviews
+				.lock()
+				.expect("raw signing review list mutex poisoned")
+				.is_empty(),
+		),
+		(Some(session.validation_id), true, true),
+		"a failed activation must preserve the session token, signing key and grant",
+	);
+}
+
+/// A VRF signature confirmed under one wallet is not made with the keys of the
+/// next: a lock or a wallet change during the review fails it, while a reset of
+/// the calling product leaves the wallet and the signature alone.
+#[test]
+fn pending_vrf_approval_tracks_wallet_activation() {
+	use crate::{
+		host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
+		runtime::{signing_host::SigningHostSsoService, sso_service::Dispatch},
+	};
+	use futures::FutureExt;
+	use truapi::versioned::account::{HostAccountSignVrfError, HostAccountSignVrfRequest};
+
+	for remote in [false, true] {
+		for change in ["lock", "reactivate", "reset"] {
+			let (release, gate) = futures::channel::oneshot::channel();
+			let platform = Arc::new(StubPlatform {
+				sign_vrf_confirmed: true,
+				sign_vrf_confirmation_gate: std::sync::Mutex::new(Some(gate)),
+				..StubPlatform::default()
+			});
+			let (services, authority) = signing_runtime_with_platform(platform.clone());
+			futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+				.unwrap();
+			let session = active_session(&authority);
+			let runtime = product_runtime(services, authority.clone());
+			let service = SigningHostSsoService::new(authority.clone());
+			let answer = async {
+				if remote {
+					let Dispatch::Response(answer) = service
+						.answer(RemoteMessage::request(
+							"pending-vrf".to_string(),
+							ProductRequest {
+								calling_product_id: ProductId::for_test("myapp.dot"),
+								payload: vrf_request("myapp.dot"),
+							},
+						))
+						.await
+					else {
+						panic!("expected a VRF response")
+					};
+					let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) =
+						answer.message.data
+					else {
+						panic!("expected a VRF signing response")
+					};
+					response.payload.map(|_| ())
+				} else {
+					runtime
+						.sign_vrf(
+							&CallContext::default(),
+							HostAccountSignVrfRequest::V1(vrf_request("myapp.dot")),
+						)
+						.await
+						.map(|_| ())
+						.map_err(|error| match error {
+							CallError::Domain(HostAccountSignVrfError::V1(error)) => error,
+							other => panic!("unexpected signing failure: {other:?}"),
+						})
+				}
+			};
+			futures::pin_mut!(answer);
+			assert!(answer.as_mut().now_or_never().is_none());
+			match change {
+				"lock" => futures::executor::block_on(authority.disconnect()),
+				"reactivate" => {
+					futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+						.unwrap();
+				},
+				"reset" => authority.clear_product_state(&ProductId::for_test("myapp.dot")),
+				_ => unreachable!(),
+			}
+			release.send(()).unwrap();
+			let expected = if change == "reset" {
+				Ok(())
+			} else {
+				Err(v01::HostAccountSignVrfError::NotConnected)
+			};
+			assert_eq!(
+				(
+					futures::executor::block_on(answer),
+					authority.wallet.current_session().map(|current| current.validation_id) ==
+						Some(session.validation_id),
+					platform.sign_vrf_reviews.lock().unwrap().len()
+				),
+				(expected, change == "reset", 1),
+				"{change}, remote: {remote}",
+			);
+		}
+	}
+}
+
 /// A product reset concerns that product's grants, not the wallet: account
 /// work already under way survives it, while a lock or a wallet change ends it.
 #[test]
@@ -101,6 +249,48 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
 			1
 		),
 	);
+}
+
+/// An alias whose ring is still being prepared when the wallet locks or
+/// changes is refused rather than derived from the keys installed afterwards.
+#[test]
+fn wallet_change_during_ring_preparation_rejects_the_alias() {
+	use futures::FutureExt;
+
+	for lock in [false, true] {
+		let resolver = full_person_ring_resolver();
+		let (_, authority) =
+			signing_runtime_with_ring_resolver(Arc::new(StubPlatform::default()), resolver.clone());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		let session = active_session(&authority);
+		let ring = full_person_ring_location();
+		register_full_person_key(&authority, &session, &ring);
+		let (release, gate) = futures::channel::oneshot::channel();
+		*resolver.validation_gate.lock().unwrap() = Some(gate);
+		let product = ProductContext::new(ProductId::for_test("peopl.dot"));
+		let cx = CallContext::default();
+		let alias = authority.wallet.account_alias(
+			local(&cx, &session, &product),
+			HostAccountGetAliasRequest {
+				key_handle: full_person_key_handle(),
+				context: context_of("peopl.dot"),
+				ring_location: ring,
+			},
+		);
+		futures::pin_mut!(alias);
+		assert!(alias.as_mut().now_or_never().is_none());
+		if lock {
+			futures::executor::block_on(authority.disconnect());
+		} else {
+			futures::executor::block_on(authority.activate_local_session([0xCD; 16].to_vec()))
+				.unwrap();
+		}
+		release.send(()).unwrap();
+		assert_eq!(
+			futures::executor::block_on(alias),
+			Err(RingVrfError::from(AuthorityError::Disconnected))
+		);
+	}
 }
 
 /// Allow once lasts for one unlocked wallet and one installed product: lock,
