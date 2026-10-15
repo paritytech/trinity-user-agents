@@ -56,9 +56,11 @@ import {
   waitForProcess,
 } from "./lib/android-emulator.mjs";
 import {
+  ANDROID_CHAT_FEATURE_ROWS,
   ANDROID_CHAT_V2_SCENARIOS,
   blockedRows,
   byScenarioNumber,
+  capabilityVerdict,
   consoleMessages,
   parseEventLog,
   parseLogcatLine,
@@ -189,16 +191,8 @@ async function runScenario(scenario) {
   }
 }
 
-/**
- * The rows that show each Chat feature that the app can list (S49). The app
- * lists a feature only when these rows pass on the emulator.
- */
-const FEATURE_ROWS = {
-  product_source_rooms: "S15 to S24 and S46",
-  custom_bodies: "S7",
-  mute_archive: "S54 to S56",
-  search: "S61 to S63",
-};
+/** The Chat features that the app lists to the product, as S49 reads them from logcat. */
+let listedFeatures = [];
 
 const DRIVERS = {
   async S2({ note }) {
@@ -649,12 +643,11 @@ const DRIVERS = {
       `the product read ${read.join(",") || "none"}, the app lists ${listed.join(",") || "none"}`,
     );
     expect(match[2] === String(1024 * 1024) && match[3] === "0", `bounds inline ${match[2]} B, preimage ${match[3]} B`);
-    const unbacked = listed.filter((name) => !FEATURE_ROWS[name]);
-    expect(unbacked.length === 0, `the app lists ${unbacked.join(", ")} without a row of the launcher that passes for it`);
+    listedFeatures = listed;
     await waitScreen((screen) => findText(screen, /^caps: /), "the capabilities message");
     note(`\`${await screenshot(scenarioById("S49"), "host")}\``);
     note(
-      `the app lists ${listed.join(", ") || "none"}; the product read ${read.join(", ") || "none"}; inline ${match[2]} B, preimage ${match[3]} B; the rows of the listed names: ${listed.map((name) => `${name} ${FEATURE_ROWS[name]}`).join(", ") || "none"}`,
+      `the app lists ${listed.join(", ") || "none"}; the product read ${read.join(", ") || "none"}; inline ${match[2]} B, preimage ${match[3]} B; the rows of the listed names: ${listed.map((name) => `${name} ${ANDROID_CHAT_FEATURE_ROWS[name]?.join(", ") ?? "none"}`).join("; ") || "none"}`,
     );
   },
 
@@ -2657,7 +2650,9 @@ async function main() {
     for (const scenario of ANDROID_CHAT_V2_SCENARIOS) {
       if (onlyScenarios.length > 0 && !onlyScenarios.includes(scenario.id)) continue;
       step(`${scenario.id} ${scenario.title}`);
-      rows.push(await runScenario(scenario));
+      const result = await runScenario(scenario);
+      // S49 runs after the rows that prove the features, so it can check them.
+      rows.push(scenario.id === "S49" ? capabilityVerdict(result, rows, listedFeatures) : result);
       console.log(`    ${rows.at(-1).result}: ${rows.at(-1).evidence}`);
     }
   } catch (error) {

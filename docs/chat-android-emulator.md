@@ -111,7 +111,7 @@ leave the room screen and S6 stops the product server. Each P8.6 scenario puts t
 | S55      | a swipe to the start: the "Archived" row and no room row; the room stays archived after `/post text`; the archived section shows it, and a swipe there brings it back |
 | S56      | the host room muted always and the source room archived, the app restarted: the first room events of the new worker are both `UserStateChanged` |
 | S63      | with no worker page, the list search shows both rooms for "Sample", the host message for "crème", nothing for a text that only the source product keeps, and no worker starts |
-| S49      | `/caps`: the stored answer has the names that the app logs (`truapi.chat.capabilities`), each with a row above, and the bounds 1 MiB and 0 |
+| S49      | `/caps`: the stored answer has the names that the app logs (`truapi.chat.capabilities`) and the bounds 1 MiB and 0; each row that proves a listed name (`ANDROID_CHAT_FEATURE_ROWS`) passed earlier in the run |
 | S4, S6   | `/preview` variants in the chat list rows; the list with the product server stopped                                                                                                                 |
 
 ## Troubleshooting

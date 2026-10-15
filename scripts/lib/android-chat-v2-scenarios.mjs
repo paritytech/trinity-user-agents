@@ -378,6 +378,51 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
   },
 ]);
 
+/**
+ * The rows that prove each Chat feature that the app can list (S49). The app
+ * lists a feature only when each of these rows passes on the emulator.
+ */
+export const ANDROID_CHAT_FEATURE_ROWS = Object.freeze({
+  product_source_rooms: ["S15", "S16", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24", "S46"],
+  custom_bodies: ["S7"],
+  mute_archive: ["S54", "S55", "S56"],
+  search: ["S61", "S62", "S63"],
+});
+
+/**
+ * S49 checks the features that the app lists against the rows of the same
+ * run: each row that proves a listed feature must pass. A listed feature
+ * with a failed row, or with no rows in `featureRows`, fails S49. A row that
+ * the run did not drive (a skip, or `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY`) is
+ * named as not checked.
+ */
+export function capabilityVerdict(capsRow, rows, listed, featureRows = ANDROID_CHAT_FEATURE_ROWS) {
+  if (capsRow.result !== "pass") return capsRow;
+  const results = new Map(rows.map((entry) => [entry.id, entry.result]));
+  const failed = [];
+  const unchecked = [];
+  for (const name of listed) {
+    const ids = featureRows[name];
+    if (!ids) {
+      failed.push(`${name} (no row proves it)`);
+      continue;
+    }
+    for (const id of ids) {
+      const result = results.get(id);
+      if (result === "pass") continue;
+      (result === "fail" ? failed : unchecked).push(`${name} (${id} ${result ?? "has no row"})`);
+    }
+  }
+  if (failed.length > 0) {
+    return { ...capsRow, result: "fail", evidence: `${capsRow.evidence}; FAILED: the app lists ${failed.join(", ")}` };
+  }
+  const note =
+    unchecked.length > 0
+      ? `not checked in this run: ${unchecked.join(", ")}`
+      : "the rows of each listed feature passed";
+  return { ...capsRow, evidence: `${capsRow.evidence}; ${note}` };
+}
+
 /** The logcat tag of the console lines of a product WebView. */
 export const CONSOLE_TAG = "ProductWebChromeClientKt";
 

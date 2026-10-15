@@ -4,9 +4,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  ANDROID_CHAT_FEATURE_ROWS,
   ANDROID_CHAT_V2_SCENARIOS,
   blockedRows,
   byScenarioNumber,
+  capabilityVerdict,
   consoleMessages,
   parseEventLog,
   parseLogcatLine,
@@ -57,6 +59,56 @@ test("the P10.10 and P10.5 rows are driven, and S62 waits for the sample", () =>
 test("S4 and S6 run after every other driven scenario, because they leave the room screen", () => {
   const driven = ANDROID_CHAT_V2_SCENARIOS.filter((scenario) => scenario.drive).map((scenario) => scenario.id);
   assert.deepEqual(driven.slice(-2), ["S4", "S6"]);
+});
+
+test("each feature that the app can list names rows that run before S49", () => {
+  const ids = ANDROID_CHAT_V2_SCENARIOS.map((scenario) => scenario.id);
+  const s49 = ids.indexOf("S49");
+  assert.ok(ANDROID_CHAT_V2_SCENARIOS[s49].drive);
+  for (const [name, rows] of Object.entries(ANDROID_CHAT_FEATURE_ROWS)) {
+    for (const id of rows) {
+      const index = ids.indexOf(id);
+      assert.ok(index >= 0 && index < s49, `${name}: ${id} runs before S49`);
+    }
+  }
+});
+
+test("S49 fails when a listed feature has a failed row or no rows", () => {
+  const caps = { id: "S49", result: "pass", evidence: "stored" };
+  const rows = [
+    { id: "S7", result: "pass" },
+    { id: "S54", result: "fail" },
+  ];
+  const features = { custom_bodies: ["S7"], mute_archive: ["S54"] };
+
+  const failedRow = capabilityVerdict(caps, rows, ["custom_bodies", "mute_archive"], features);
+  const unknown = capabilityVerdict(caps, rows, ["custom_bodies", "calls"], features);
+
+  assert.equal(failedRow.result, "fail");
+  assert.match(failedRow.evidence, /mute_archive \(S54 fail\)/);
+  assert.equal(unknown.result, "fail");
+  assert.match(unknown.evidence, /calls \(no row proves it\)/);
+});
+
+test("S49 passes, checks only the listed features, and names the rows that the run did not drive", () => {
+  const caps = { id: "S49", result: "pass", evidence: "stored" };
+  const features = { custom_bodies: ["S7"], search: ["S61", "S62"], mute_archive: ["S54"] };
+  const rows = [
+    { id: "S7", result: "pass" },
+    { id: "S61", result: "pass" },
+    { id: "S62", result: "skip" },
+    { id: "S54", result: "fail" },
+  ];
+
+  const all = capabilityVerdict(caps, rows, ["custom_bodies"], features);
+  const partial = capabilityVerdict(caps, rows, ["custom_bodies", "search"], features);
+  const failedCaps = capabilityVerdict({ ...caps, result: "fail" }, rows, ["mute_archive"], features);
+
+  assert.equal(all.result, "pass");
+  assert.match(all.evidence, /the rows of each listed feature passed$/);
+  assert.equal(partial.result, "pass");
+  assert.match(partial.evidence, /not checked in this run: search \(S62 skip\)$/);
+  assert.equal(failedCaps.evidence, "stored");
 });
 
 test("a scenario with its own skip reason keeps it", () => {
