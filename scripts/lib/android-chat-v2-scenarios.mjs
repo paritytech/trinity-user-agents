@@ -132,6 +132,13 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S68",
+    title: "the meta of a product-source message survives a reload of its pages",
+    mode: "source",
+    phase: "P10.9",
+    drive: true,
+  },
+  {
     id: "S1",
     title: "post_message V2 posts a product message in a host-store room",
     mode: "host",
@@ -300,6 +307,41 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S53",
+    title: "register_bot answers New, then Exists and renames the persona; a bot message and the activity line draw its name and icon without a query; an unknown persona is refused",
+    mode: "host",
+    phase: "P10.6",
+    drive: true,
+  },
+  {
+    id: "S64",
+    title: "a root shows 3 replies and opens the thread room, which is not in the list; deleting the parent deletes the thread",
+    mode: "host",
+    phase: "P10.9",
+    drive: true,
+  },
+  {
+    id: "S65",
+    title: "branch arrows send BranchSelected; the product's answer moves the position; without an answer the control reverts after 5 s",
+    mode: "host",
+    phase: "P10.9",
+    drive: true,
+  },
+  {
+    id: "S66",
+    title: "a reasoning row streams with Thinking, collapses to Thought for 4 s, expands on a tap, reads its state, and is never the list preview",
+    mode: "host",
+    phase: "P10.9",
+    drive: true,
+  },
+  {
+    id: "S67",
+    title: "Read aloud appears only with read_aloud, speaks RichText as plain text, and stops on leaving the room",
+    mode: "host",
+    phase: "P10.9",
+    drive: true,
+  },
+  {
     id: "S61",
     title: "in-room search in a host-store room finds by text, case and diacritics ignored, and jumps",
     mode: "host",
@@ -387,6 +429,11 @@ export const ANDROID_CHAT_FEATURE_ROWS = Object.freeze({
   custom_bodies: ["S7"],
   mute_archive: ["S54", "S55", "S56"],
   search: ["S61", "S62", "S63"],
+  bot_personas: ["S53"],
+  threads: ["S64"],
+  branches: ["S65"],
+  reasoning_rows: ["S66", "S68"],
+  read_aloud: ["S67"],
 });
 
 /**

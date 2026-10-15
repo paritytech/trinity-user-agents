@@ -48,6 +48,8 @@ data class ChatFeedSnapshot(
     val productStatuses: Map<ChatMessageId, ProductMessageStatusModel>,
     val paging: ChatPagingState,
     val readiness: ChatRoomReadiness,
+    /** The messages of the product whose status is `Preparing`, for the reasoning rows (07-LATER §9.4). */
+    val preparingProductMessages: Set<ChatMessageId> = emptySet(),
 )
 
 /** What the room screen can ask at each end of the window. */

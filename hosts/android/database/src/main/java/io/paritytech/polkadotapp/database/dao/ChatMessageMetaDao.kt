@@ -13,6 +13,9 @@ abstract class ChatMessageMetaDao {
     @Query("SELECT * FROM chat_message_meta WHERE chatId = :chatId")
     abstract fun observe(chatId: ByteArray): Flow<List<ChatMessageMetaLocal>>
 
+    @Query("SELECT * FROM chat_message_meta")
+    abstract fun observeAll(): Flow<List<ChatMessageMetaLocal>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun put(meta: ChatMessageMetaLocal)
 

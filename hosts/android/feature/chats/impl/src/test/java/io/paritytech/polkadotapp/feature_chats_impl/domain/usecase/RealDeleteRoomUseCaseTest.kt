@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.usecase
 
+import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
@@ -10,6 +11,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatMessag
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomActivityWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomCallWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomDeclarationsWriter
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatThreadRoomCascade
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
@@ -28,6 +30,10 @@ class RealDeleteRoomUseCaseTest {
     private val metaWriter: ChatMessageMetaWriter = mockk(relaxed = true)
     private val callWriter: ChatRoomCallWriter = mockk(relaxed = true)
     private val personaWriter: ChatBotPersonaWriter = mockk(relaxed = true)
+    private val threadRooms: ChatThreadRoomCascade = mockk {
+        coEvery { threadRoomsOf(any()) } returns emptyList()
+        coEvery { inTransaction(any()) } coAnswers { firstArg<suspend () -> Unit>().invoke() }
+    }
 
     private val useCase = RealDeleteRoomUseCase(
         chatRoomRepository = chatRoomRepository,
@@ -38,7 +44,22 @@ class RealDeleteRoomUseCaseTest {
         metaWriter = metaWriter,
         callWriter = callWriter,
         personaWriter = personaWriter,
+        threadRooms = threadRooms,
     )
+
+    @Test
+    fun `deleting a parent room deletes its thread rooms in the same transaction`() = runBlocking<Unit> {
+        val thread = ChatId.forExtensionRoom("ProductBot_game.dot", "thread-lobby-m1")
+        coEvery { threadRooms.threadRoomsOf(room) } returns listOf(thread)
+
+        useCase.invoke(room)
+
+        coVerify(exactly = 1) { threadRooms.inTransaction(any()) }
+        coVerify { chatRoomRepository.deleteRoom(thread) }
+        coVerify { chatMessageRepository.deleteAllChatMessages(thread) }
+        coVerify { declarationsWriter.delete(thread) }
+        coVerify { chatRoomRepository.deleteRoom(room) }
+    }
 
     @Test
     fun `deleting a room removes its messages, meta, draft, declarations, activity line and call`() = runBlocking<Unit> {

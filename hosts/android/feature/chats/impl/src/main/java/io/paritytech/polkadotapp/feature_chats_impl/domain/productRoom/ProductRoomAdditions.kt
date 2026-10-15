@@ -44,6 +44,8 @@ class ProductRoomAdditions @Inject constructor(
     /**
      * The product keeps the messages of a product-source room, so the host cannot check the message id there. It
      * orders the meta of such a room by the time of the call, and keeps the newest [PRODUCT_SOURCE_META_KEPT].
+     *
+     * A reasoning row is not counted as unread (07-LATER §9.4), so the host marks a stored reasoning message as read.
      */
     suspend fun setMessageMeta(
         extensionId: ChatExtensionId,
@@ -57,7 +59,9 @@ class ProductRoomAdditions @Inject constructor(
         val timestamp = if (productSource) {
             System.currentTimeMillis()
         } else {
-            storedMessage(chatId, messageId, decoder)?.timestamp ?: throw ProductFeedRejection.UnknownMessage()
+            val stored = storedMessage(chatId, messageId, decoder) ?: throw ProductFeedRejection.UnknownMessage()
+            if (meta.reasoning != null && stored.status == ChatMessage.Status.NEW) chatMessageRepository.markMessageAsRead(stored.id)
+            stored.timestamp
         }
 
         when {

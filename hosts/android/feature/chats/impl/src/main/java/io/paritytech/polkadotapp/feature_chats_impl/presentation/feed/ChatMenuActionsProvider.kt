@@ -109,6 +109,7 @@ class ChatMenuActionsProvider @Inject constructor() {
         AllowedMessageMenuAction.Delete -> ChatBuiltInMessageActionModel.DELETE
         AllowedMessageMenuAction.Retry -> ChatBuiltInMessageActionModel.RETRY
         AllowedMessageMenuAction.ViewEditHistory,
+        is AllowedMessageMenuAction.ReadAloud,
         is AllowedMessageMenuAction.Custom -> null
     }
 

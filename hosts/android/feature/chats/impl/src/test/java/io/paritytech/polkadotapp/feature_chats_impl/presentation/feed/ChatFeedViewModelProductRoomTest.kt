@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed
 
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -50,6 +51,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatParticipantAppearanceFactory
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductLinkOpener
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.FakeProductRoomAdditionsFeed
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.FakeReadAloudController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ParticipantSheetEntry
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductToolbarItemUiModel
@@ -58,6 +61,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatR
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -96,6 +100,8 @@ class ChatFeedViewModelProductRoomTest {
     )
     private val feed = MutableStateFlow(snapshot)
     private val activity = MutableStateFlow<ChatRoomActivityModel?>(null)
+    private val additions = FakeProductRoomAdditionsFeed()
+    private val readAloud = FakeReadAloudController()
     private val roomExists = MutableStateFlow(true)
     private val router = mockk<ChatsRouter>(relaxed = true)
     private val origins = object : MessageOriginDisplayResolver {
@@ -141,7 +147,13 @@ class ChatFeedViewModelProductRoomTest {
     fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
 
     @After
-    fun tearDown() = Dispatchers.resetMain()
+    fun tearDown() {
+        // A view model that a test leaves open would run on the main dispatcher of the next test.
+        models.forEach { it.viewModelScope.cancel() }
+        Dispatchers.resetMain()
+    }
+
+    private val models = mutableListOf<ChatFeedViewModel>()
 
     @Test
     fun `a long press asks the product for the menu of the message`() = runBlocking<Unit> {
@@ -479,7 +491,9 @@ class ChatFeedViewModelProductRoomTest {
         isMarkdown = false,
     )
 
-    private fun viewModel() = ChatFeedViewModel(
+    private fun viewModel() = createViewModel().also { models += it }
+
+    private fun createViewModel() = ChatFeedViewModel(
         savedStateHandle = SavedStateHandle(mapOf(ChatFeedPayload::class.java.name to ChatFeedPayload.existingChat(roomId))),
         router = router,
         interactor = interactor,
@@ -496,6 +510,9 @@ class ChatFeedViewModelProductRoomTest {
             productLinkOpener = productLinkOpener,
             appearances = ChatParticipantAppearanceFactory(mockk(relaxed = true), resourceResolver),
             clipboardService = clipboardService,
+            additions = additions,
+            readAloud = readAloud,
+            router = router,
         ),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk<CallStateTracker> { every { observeActiveCall() } returns flowOf(null) },

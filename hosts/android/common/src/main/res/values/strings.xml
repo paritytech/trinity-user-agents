@@ -917,6 +917,28 @@
     <string name="chat_participant_kind_lite_person">Account</string>
     <string name="chat_participant_kind_contact">Contact</string>
     <string name="chat_participant_kind_guest">Guest</string>
+    <string name="chat_participant_kind_bot">Bot</string>
+    <plurals name="chat_thread_replies">
+        <item quantity="one">%d reply</item>
+        <item quantity="other">%d replies</item>
+    </plurals>
+    <string name="chat_thread_title">Thread</string>
+    <string name="chat_thread_new_replies">New replies</string>
+    <string name="chat_thread_open">Open the thread</string>
+    <string name="chat_branch_previous">Previous alternative</string>
+    <string name="chat_branch_next">Next alternative</string>
+    <string name="chat_branch_position">Alternative %1$d of %2$d</string>
+    <string name="chat_branch_waiting">Waiting for the app</string>
+    <string name="chat_reasoning_thinking">Thinking…</string>
+    <string name="chat_reasoning_thought_for">Thought for %d s</string>
+    <string name="chat_reasoning_thought">Thought</string>
+    <string name="chat_reasoning">Reasoning</string>
+    <string name="chat_reasoning_collapsed">collapsed</string>
+    <string name="chat_reasoning_expanded">expanded</string>
+    <string name="chat_read_aloud">Read aloud</string>
+    <string name="chat_read_aloud_speaking">Reading aloud</string>
+    <string name="chat_read_aloud_stop">Stop</string>
+    <string name="chat_read_aloud_unavailable">Read aloud is not available</string>
     <string name="chat_participant_copy_address">Copy address</string>
     <string name="chat_participant_open_product">Open app</string>
 

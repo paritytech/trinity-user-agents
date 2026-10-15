@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatSummary
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.chatListOrder
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.withRoomPolicy
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ReasoningListPreviews
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import kotlinx.coroutines.flow.Flow
@@ -38,6 +39,7 @@ class SubscribeActiveChatsUseCase @Inject constructor(
     private val chatExtensionRegistry: ChatExtensionRegistry,
     private val chatDisplayGenerator: ChatDisplayGenerator,
     private val roomPolicyProvider: ChatRoomPolicyProvider,
+    private val reasoningListPreviews: ReasoningListPreviews,
 ) {
     context(scope: ComputationalScope)
     operator fun invoke(): Flow<List<Chat>> = combineToPair(
@@ -46,7 +48,7 @@ class SubscribeActiveChatsUseCase @Inject constructor(
     ).flatMapLatest { (activeExtensions, contacts) ->
         val context = buildActiveChatsContext(activeExtensions, contacts)
 
-        withRoomPolicies(chatEngine.subscribeChatSummaries())
+        withRoomPolicies(reasoningListPreviews.apply(chatEngine.subscribeChatSummaries()))
             .map { (summaries, policies) ->
                 chatListOrder(summaries, policies.mapValues { it.value.listOrder }).mapNotNull { messageSummary ->
                     val chatId = messageSummary.chatId

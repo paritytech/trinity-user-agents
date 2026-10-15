@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -23,6 +24,8 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
+import io.paritytech.polkadotapp.design.components.avatar.PolkadotAvatar
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -35,11 +38,17 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 private val CommandCatalogueMaxHeight = 240.dp
 
-/** The activity line of a product room, for example "Bot is typing" (02-DESIGN §6.6). */
+private val ActivityAvatarSize = 16.dp
+
+/**
+ * The activity line of a product room, for example "Bot is typing" (02-DESIGN §6.6). A line about a persona shows the
+ * icon of the persona (07-LATER §5.2).
+ */
 @Composable
 internal fun ChatActivityLine(
     modifier: Modifier = Modifier,
     text: String,
+    avatar: AvatarUiModel? = null,
 ) {
     Row(
         modifier = modifier
@@ -51,6 +60,11 @@ internal fun ChatActivityLine(
         OngoingActivityIndicator()
 
         HorizontalSpacer { small }
+
+        if (avatar != null) {
+            PolkadotAvatar(model = avatar, modifier = Modifier.size(ActivityAvatarSize))
+            HorizontalSpacer { tiny }
+        }
 
         NovaText(
             text = text,

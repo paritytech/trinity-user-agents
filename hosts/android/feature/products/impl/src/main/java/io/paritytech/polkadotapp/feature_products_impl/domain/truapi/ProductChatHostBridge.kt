@@ -57,7 +57,7 @@ class ProductChatHostBridge(
     }
 
     override suspend fun registerBot(botId: String, name: String, icon: String): ChatBotRegistrationStatus =
-        throw HostRejection.Rejected("this host has no bot registry")
+        storedState.registerBot(productId, botId, name, icon)
 
     override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat message needs a room")

@@ -111,6 +111,16 @@ test("S49 passes, checks only the listed features, and names the rows that the r
   assert.equal(failedCaps.evidence, "stored");
 });
 
+test("the P10.6 and P10.9 rows are driven, S68 with the product-source rooms", () => {
+  const byId = (id) => ANDROID_CHAT_V2_SCENARIOS.find((scenario) => scenario.id === id);
+  for (const id of ["S53", "S64", "S65", "S66", "S67", "S68"]) {
+    assert.equal(byId(id).drive, true, id);
+  }
+  assert.equal(byId("S68").mode, "source");
+  const order = ANDROID_CHAT_V2_SCENARIOS.map((scenario) => scenario.id);
+  assert.ok(order.indexOf("S68") < order.indexOf("S1"), "S68 runs with the product-source rows");
+});
+
 test("a scenario with its own skip reason keeps it", () => {
   const scenario = ANDROID_CHAT_V2_SCENARIOS.find((entry) => entry.id === "S5");
   assert.match(skipRow(scenario).evidence, /^skip: the sample product has no command that calls delete_room/);

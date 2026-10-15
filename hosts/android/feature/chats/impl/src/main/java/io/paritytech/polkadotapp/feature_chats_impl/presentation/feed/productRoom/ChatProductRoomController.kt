@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatHostCapabilities
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionHandlerModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
@@ -14,15 +15,20 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPartic
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
+import io.paritytech.polkadotapp.feature_chats_api.presentation.model.AllowedMessageMenuAction
+import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessagePopUpUiState
+import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductRoomAdditionsFeed
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.MessagePopUpSelection
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.readAloud.ChatReadAloudController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -63,8 +69,11 @@ class ChatProductRoomController(
     private val interactor: ChatFeedInteractor,
     private val resourceResolver: ChatResourceResolver,
     private val productLinkOpener: ChatProductLinkOpener,
-    appearances: ChatParticipantAppearanceFactory,
+    private val appearances: ChatParticipantAppearanceFactory,
     private val clipboardService: ClipboardService,
+    additions: ProductRoomAdditionsFeed,
+    private val readAloud: ChatReadAloudController,
+    private val router: ChatsRouter,
 ) {
     /** What the controller asks of the room screen. */
     interface Screen {
@@ -101,8 +110,11 @@ class ChatProductRoomController(
         feedSnapshot = feedSnapshot,
         origins = origins,
         appearances = appearances,
+        personas = additions.personas(chatId),
         querying = { interactor.roomQuerying(chatId) },
     )
+
+    private val decorations = ProductRoomDecorations(scope, chatId, roomPolicy, feedSnapshot, additions, participants)
 
     private val participantSheet = MutableStateFlow<ParticipantSheetUiState?>(null)
     private var participantSheetMenu: ChatParticipantMenuModel? = null
@@ -113,28 +125,46 @@ class ChatProductRoomController(
         renderer.takeIf { policy?.footer == ChatRoomPolicy.Footer.Custom }
     }
 
-    /** The quick replies, the slash commands and the activity line (P6.8). */
-    private val extras = combine(roomPolicy, interactor.observeRoomActivity(chatId)) { policy, activity ->
+    /** The quick replies, the slash commands and the activity line (P6.8). A persona names its activity line. */
+    private val extras = combine(roomPolicy, interactor.observeRoomActivity(chatId), participants.personas) { policy, activity, personas ->
+        val speakerId = activity?.participantId
+        val speaker = speakerId?.let { id -> personas[id]?.let { appearances.persona(id, it) } }
         ProductRoomExtrasUiState(
             suggestions = policy?.suggestions.orEmpty().toImmutableList(),
             commands = policy?.commands.orEmpty().toImmutableList(),
-            activity = activity?.text.takeIf { policy != null },
+            activity = activity?.text?.let { text -> speaker?.let { "${it.name}: $text" } ?: text }.takeIf { policy != null },
+            activitySpeaker = speaker.takeIf { policy != null },
         )
     }
 
+    /** "Read aloud" applies only when the room declares it and the host lists it (07-LATER §9.5). */
+    private val readsAloud = roomPolicy
+        .map { it?.features?.readAloud == true && ChatHostCapabilities.READ_ALOUD in ChatHostCapabilities.features }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.Eagerly, false)
+
+    private val additionsState = combine(
+        decorations.decorations,
+        decorations.threadRoom,
+        readAloud.speaking.map { it == chatId },
+        ::Triple,
+    )
+
     val uiState: StateFlow<ProductRoomUiState> = combine(
-        toolbar,
-        participants.uiState,
-        participantSheet,
+        combine(toolbar, participants.uiState, participantSheet, ::Triple),
         customFooter,
         extras,
-    ) { toolbar, participants, sheet, customFooter, extras ->
+        additionsState,
+    ) { (toolbar, participants, sheet), customFooter, extras, (decorations, thread, readingAloud) ->
         ProductRoomUiState(
             toolbar = toolbar,
             participants = participants,
             participantSheet = sheet,
             customFooter = customFooter,
             extras = extras,
+            decorations = decorations,
+            thread = thread,
+            readingAloud = readingAloud,
         )
     }.stateIn(scope, SharingStarted.Eagerly, ProductRoomUiState.None)
 
@@ -170,7 +200,8 @@ class ChatProductRoomController(
         messageMenuJob = scope.launch {
             val policy = roomPolicy.first()
             val asks = policy != null && ChatRoomPolicy.ProductQuery.MESSAGE_ACTIONS in policy.productQueries
-            if (!asks || message is ChatMessageUiModel.Custom<*>) return@launch
+            // The menu of a reasoning row has Copy only, so the product gets no question (07-LATER §9.4).
+            if (!asks || message is ChatMessageUiModel.Custom<*> || decorations.isReasoning(message.id)) return@launch
 
             _messageMenu.value = ProductMessageMenuState.Loading(message.id)
 
@@ -227,7 +258,42 @@ class ChatProductRoomController(
             is ProductRoomAction.SelectParticipant -> showParticipant(action.participantId)
             is ProductRoomAction.ParticipantSheet -> selectSheetEntry(action.entry)
             is ProductRoomAction.Suggestion -> selectSuggestion(action.suggestionId)
+            // The thread room opens on top of this room, so Back returns to the root (07-LATER §9.2).
+            is ProductRoomAction.OpenThread -> {
+                readAloud.stop(chatId)
+                router.openThreadFeed(ChatFeedPayload.existingChat(action.threadChatId))
+            }
+            is ProductRoomAction.SelectBranch -> decorations.selectBranch(action.messageId, action.index)
+            ProductRoomAction.StopReadAloud -> readAloud.stop(chatId)
         }
+    }
+
+    /** Speaks the plain text of a message of this room. */
+    fun readAloud(text: String) {
+        if (readsAloud.value) readAloud.speak(chatId, text)
+    }
+
+    /**
+     * The message menu with the additions of 07-LATER §9: a reasoning row offers Copy only, and a room that declares
+     * `read_aloud` adds "Read aloud" for text, also in an `ExtendBuiltIn` menu. A `Custom` menu keeps the entries of
+     * the product only.
+     */
+    fun adjustPopup(state: MessagePopUpUiState?): MessagePopUpUiState? {
+        if (state !is MessagePopUpUiState.ActionMenu) return state
+        if (decorations.isReasoning(state.message.id)) {
+            return state.copy(
+                allowedMenuActions = state.allowedMenuActions.filterIsInstance<AllowedMessageMenuAction.Copy>().toImmutableList(),
+                canLeaveReactions = false,
+                productActionsLoading = false,
+            )
+        }
+        val answer = _messageMenu.value as? ProductMessageMenuState.Answered
+        val customMenu = answer != null && answer.messageId == state.message.id && answer.menu is ChatMessageMenuModel.Custom
+        val text = decorations.speakableText(state.message.id)?.takeIf { readsAloud.value && !customMenu } ?: return state
+        val actions = state.allowedMenuActions
+        val position = actions.indexOfFirst { it is AllowedMessageMenuAction.Custom }.takeIf { it >= 0 } ?: actions.size
+        val withReadAloud = actions.take(position) + AllowedMessageMenuAction.ReadAloud(text) + actions.drop(position)
+        return state.copy(allowedMenuActions = withReadAloud.toImmutableList())
     }
 
     /** The sheet of a participant: the host entry for its kind, and the entries of `participant_actions_query` (P6.4). */
@@ -345,6 +411,9 @@ class ChatProductRoomController(
         private val productLinkOpener: ChatProductLinkOpener,
         private val appearances: ChatParticipantAppearanceFactory,
         private val clipboardService: ClipboardService,
+        private val additions: ProductRoomAdditionsFeed,
+        private val readAloud: ChatReadAloudController,
+        private val router: ChatsRouter,
     ) {
         @Suppress("LongParameterList")
         fun <S> create(
@@ -367,6 +436,9 @@ class ChatProductRoomController(
             productLinkOpener = productLinkOpener,
             appearances = appearances,
             clipboardService = clipboardService,
+            additions = additions,
+            readAloud = readAloud,
+            router = router,
         )
     }
 }

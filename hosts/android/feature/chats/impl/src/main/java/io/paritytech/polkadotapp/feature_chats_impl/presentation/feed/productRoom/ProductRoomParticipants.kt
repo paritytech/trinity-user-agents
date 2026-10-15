@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom
 
 import androidx.compose.runtime.Immutable
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatBotPersonaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
@@ -68,6 +69,9 @@ data class ParticipantListUiState(
  * The participants of a product room (02-DESIGN §3.3.7, scenario S30): the count in the header, the author of each
  * message, and the list, paged through `participants_query`. A room that does not declare its participants has two,
  * the user and the product, and offers no list.
+ *
+ * A `bot:<id>` author is a persona of the product (07-LATER §5.2): the host draws it from [personas] in each room,
+ * with no `participants_query`.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProductRoomParticipants(
@@ -77,6 +81,7 @@ class ProductRoomParticipants(
     feedSnapshot: Flow<ChatFeedSnapshot>,
     private val origins: Flow<MessageOriginDisplayResolver>,
     private val appearances: ChatParticipantAppearanceFactory,
+    personas: Flow<List<ChatBotPersonaModel>>,
     querying: suspend () -> ProductChatQuerying?,
 ) {
     private data class Declaration(val declared: Boolean, val generation: Long)
@@ -99,8 +104,15 @@ class ProductRoomParticipants(
     private class CachedAppearance(
         val entry: ChatParticipantEntryModel?,
         val origins: MessageOriginDisplayResolver,
+        val persona: ChatBotPersonaModel?,
         val appearance: ChatParticipantUiModel,
     )
+
+    /** The personas of the product, by their participant id `bot:<id>`. */
+    val personas: StateFlow<Map<String, ChatBotPersonaModel>> = personas
+        .map { list -> list.associateBy { ProductParticipant.PERSONA_PREFIX + it.botId } }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
     private val paging = MutableStateFlow(InitialPaging)
     private var pageJob: Job? = null
@@ -111,14 +123,19 @@ class ProductRoomParticipants(
         .onEach(::restart)
         .stateIn(scope, SharingStarted.Eagerly, Declaration(declared = false, generation = 0))
 
-    private val authors = combine(declaration, feedSnapshot, directory.resolved, origins) { declaration, snapshot, resolved, origins ->
-        if (!declaration.declared) return@combine emptyMap()
-
+    private val authors = combine(declaration, feedSnapshot, directory.resolved, origins, this.personas) { declaration, snapshot, resolved, origins, personas ->
+        // A persona draws without a declaration. Another author draws only in a room that declares its participants.
         val authorIds = snapshot.messages
             .filterNot { it.origin.isUser() }
-            .mapNotNull { message -> message.originParticipantId?.takeUnless { it in RESERVED }?.let { message.id to it } }
+            .mapNotNull { message ->
+                message.originParticipantId
+                    ?.takeUnless { it in RESERVED }
+                    ?.takeIf { declaration.declared || it in personas }
+                    ?.let { message.id to it }
+            }
             .toMap()
-        directory.resolve(authorIds.values)
+        if (authorIds.isEmpty()) return@combine emptyMap()
+        if (declaration.declared) directory.resolve(authorIds.values.filterNot { it in personas })
 
         val byParticipant = authorIds.values.toSet().associateWith { appearance(it, resolved[it], origins) }
         authorIds.mapValues { (_, participantId) -> byParticipant.getValue(participantId) }
@@ -157,9 +174,9 @@ class ProductRoomParticipants(
         }
     }
 
-    /** The appearance of one participant, after the product resolved it when it can. */
+    /** The appearance of one participant, after the product resolved it when it can. A persona needs no question. */
     suspend fun appearanceOf(participantId: String): ChatParticipantUiModel {
-        directory.resolveNow(listOf(participantId))
+        if (participantId !in personas.value) directory.resolveNow(listOf(participantId))
         return appearance(participantId, directory.resolved.value[participantId], origins.first())
     }
 
@@ -167,17 +184,18 @@ class ProductRoomParticipants(
 
     /** The appearances of these participants, after the product resolved them when the room declares its participants. */
     suspend fun appearancesOf(participantIds: Collection<String>): Map<String, ChatParticipantUiModel> {
-        if (declaration.value.declared) directory.resolveNow(participantIds)
+        if (declaration.value.declared) directory.resolveNow(participantIds.filterNot { it in personas.value })
         val origins = origins.first()
         return participantIds.toSet().associateWith { appearance(it, directory.resolved.value[it], origins) }
     }
 
     private suspend fun appearance(participantId: String, entry: ChatParticipantEntryModel?, origins: MessageOriginDisplayResolver): ChatParticipantUiModel {
+        val persona = personas.value[participantId]
         val cached = appearanceCache[participantId]
-        if (cached != null && cached.entry === entry && cached.origins === origins) return cached.appearance
+        if (cached != null && cached.entry === entry && cached.origins === origins && cached.persona == persona) return cached.appearance
 
-        return appearances.appearance(participantId, entry, origins, productOrigin)
-            .also { appearanceCache[participantId] = CachedAppearance(entry, origins, it) }
+        return appearances.appearance(participantId, entry, origins, productOrigin, persona)
+            .also { appearanceCache[participantId] = CachedAppearance(entry, origins, persona, it) }
     }
 
     private fun restart(declaration: Declaration) {

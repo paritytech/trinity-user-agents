@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatReasoningModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
@@ -80,6 +81,18 @@ class ProductRoomAdditionsTest {
         additions.setMessageMeta(extensionId, room, "m1", meta, decoder)
 
         coVerify { metaWriter.put(room, "m1", 42, meta, keepNewest = null) }
+    }
+
+    @Test
+    fun `a stored reasoning message is marked as read, so it is not counted as unread`() = runBlocking<Unit> {
+        withRoomExisting(true)
+        withProductSource(false)
+        withStoredMessage("m1", timestamp = 42)
+        coEvery { chatMessageRepository.markMessageAsRead(any()) } returns Unit
+
+        additions.setMessageMeta(extensionId, room, "m1", ChatMessageMetaModel(null, null, ChatReasoningModel(durationMs = null)), decoder)
+
+        coVerify { chatMessageRepository.markMessageAsRead(ProductMessageIds.stored("m1", room)) }
     }
 
     @Test

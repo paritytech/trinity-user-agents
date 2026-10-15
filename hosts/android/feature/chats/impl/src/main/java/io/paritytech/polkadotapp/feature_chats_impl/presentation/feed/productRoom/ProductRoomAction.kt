@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom
 
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+
 /** What the user does to the parts of a product room that its product declares. */
 sealed interface ProductRoomAction {
     /** The user confirmed the link of a product action or of a message. */
@@ -25,4 +28,13 @@ sealed interface ProductRoomAction {
 
     /** A press on a quick reply above the input. */
     data class Suggestion(val suggestionId: String) : ProductRoomAction
+
+    /** A tap on the thread chip under a message opens the thread room (07-LATER §9.2). */
+    data class OpenThread(val threadChatId: ChatId) : ProductRoomAction
+
+    /** An arrow of the branch control of a message (07-LATER §9.3). */
+    data class SelectBranch(val messageId: ChatMessageId, val index: Int) : ProductRoomAction
+
+    /** "Stop" in the footer while a message speaks (07-LATER §9.5). */
+    data object StopReadAloud : ProductRoomAction
 }

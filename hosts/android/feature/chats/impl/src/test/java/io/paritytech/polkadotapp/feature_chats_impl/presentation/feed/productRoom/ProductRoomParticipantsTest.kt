@@ -44,7 +44,7 @@ class ProductRoomParticipantsTest {
         override fun displayOf(messageOrigin: ChatMessageOrigin) = MessageOriginDisplay("Bench", ChatAvatar.Url("https://bench"))
     }
     private val appearances = mockk<ChatParticipantAppearanceFactory> {
-        coEvery { appearance(any(), any(), any(), any()) } answers {
+        coEvery { appearance(any(), any(), any(), any(), any()) } answers {
             val id = firstArg<String>()
             ChatParticipantUiModel(id, id, "", AvatarUiModel.Name(id, AvatarColorScheme.from(id.encodeToByteArray())))
         }
@@ -62,6 +62,7 @@ class ProductRoomParticipantsTest {
             ),
             origins = flowOf(origins),
             appearances = appearances,
+            personas = flowOf(emptyList()),
             querying = { querying },
         )
         withTimeout(5_000) { participants.uiState.first { it.declared } }
@@ -73,6 +74,6 @@ class ProductRoomParticipantsTest {
         scope.cancel()
 
         assertEquals(entries.map { it.participantId }, participants.uiState.value.list.participants.map { it.participantId })
-        entries.forEach { entry -> coVerify(exactly = 1) { appearances.appearance(entry.participantId, any(), any(), any()) } }
+        entries.forEach { entry -> coVerify(exactly = 1) { appearances.appearance(entry.participantId, any(), any(), any(), any()) } }
     }
 }

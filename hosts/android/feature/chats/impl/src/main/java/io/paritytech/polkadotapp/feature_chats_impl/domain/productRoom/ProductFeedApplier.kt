@@ -10,8 +10,10 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReact
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedRejection
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipant
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatMessageMetaWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.CustomContentDecoder
@@ -21,11 +23,16 @@ import javax.inject.Inject
 /**
  * Stores the feed updates that an extension pushes to a room whose messages the host keeps (Chat Extension
  * v2, `update_feed` with `persist`). The extension writes as its participants, never as the user.
+ *
+ * The status of a message of the product goes to [preparing] only, for the reasoning rows. A deleted message loses
+ * its meta (07-LATER §9.6).
  */
 class ProductFeedApplier @Inject constructor(
     private val chatMessageRepository: ChatMessageRepository,
     private val messageRevisionRepository: MessageRevisionRepository,
     private val chatRoomRepository: ChatRoomRepository,
+    private val metaWriter: ChatMessageMetaWriter,
+    private val preparing: PreparingProductMessages,
 ) {
     /** [save] stores a new message the way the chat engine stores every message. */
     suspend fun apply(
@@ -44,8 +51,12 @@ class ProductFeedApplier @Inject constructor(
             is ProductFeedUpdateModel.ReactionPlaced -> react(extensionId, chatId, update.messageId, update.participantId, update.emoji, decoder, placed = true)
             is ProductFeedUpdateModel.ReactionRemoved ->
                 react(extensionId, chatId, update.messageId, update.participantId, update.emoji, decoder, placed = false)
-            // The status of a message of the product means nothing to the user of a room that the host keeps.
-            is ProductFeedUpdateModel.StatusChanged -> requireLive(chatId, update.messageId, decoder)
+            // The status of a message of the product means nothing to the user of a room that the host keeps,
+            // except that a reasoning row shows "Thinking" while its message is `Preparing`.
+            is ProductFeedUpdateModel.StatusChanged -> {
+                requireLive(chatId, update.messageId, decoder)
+                preparing.set(chatId, update.messageId, update.status == ProductMessageStatusModel.PREPARING)
+            }
         }
     }
 
@@ -71,6 +82,7 @@ class ProductFeedApplier @Inject constructor(
                 originParticipantId = message.participantId,
             ),
         )
+        if (message.status == ProductMessageStatusModel.PREPARING) preparing.set(chatId, message.messageId, isPreparing = true)
     }
 
     // The new body replaces the old one in place. One revision row carries the "edited" mark, so a product that
@@ -88,6 +100,8 @@ class ProductFeedApplier @Inject constructor(
         val message = find(chatId, messageId, decoder) ?: throw ProductFeedRejection.UnknownMessage()
         if (message.content is ChatMessage.Content.Deleted) return
         chatMessageRepository.markMessageDeleted(message.id)
+        metaWriter.delete(chatId, messageId)
+        preparing.set(chatId, messageId, isPreparing = false)
     }
 
     // The reaction table keeps one row for each origin kind, so the participants of the product share one row an emoji.

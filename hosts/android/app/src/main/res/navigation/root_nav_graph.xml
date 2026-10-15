@@ -166,6 +166,11 @@
         app:destination="@id/chatFeedFragment"
         app:popUpTo="@id/mainFragment" />
 
+    <!-- A thread room opens on top of the room of its root, so Back returns to the root (07-LATER §9.2). -->
+    <action
+        android:id="@+id/action_global_to_threadChatFeedFragment"
+        app:destination="@id/chatFeedFragment" />
+
     <action
         android:id="@+id/action_global_to_chatSearchFragment"
         app:destination="@id/chatSearchFragment" />

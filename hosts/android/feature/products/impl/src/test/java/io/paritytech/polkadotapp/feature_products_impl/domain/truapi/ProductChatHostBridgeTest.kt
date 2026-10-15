@@ -57,6 +57,7 @@ import uniffi.truapi.ChatActionHandler
 import uniffi.truapi.ChatActionLayout
 import uniffi.truapi.ChatActions
 import uniffi.truapi.ChatActivity
+import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.ChatBranchPosition
 import uniffi.truapi.ChatCommandSpec
 import uniffi.truapi.ChatCustomMessage
@@ -134,11 +135,10 @@ class ProductChatHostBridgeTest {
     }
 
     @Test
-    fun `registerBot is rejected — this host has no bot registry`() = runTest {
-        val thrown = runCatching { bridge(FakeChatMessaging()).registerBot("b", "B", "") }.exceptionOrNull()
+    fun `registerBot keeps the persona in the stored state of the product`() = runTest {
+        coEvery { storedState.registerBot(productId, "helper", "Helper", "") } returns ChatBotRegistrationStatus.NEW
 
-        assertTrue(thrown is HostRejection)
-        assertTrue(thrown!!.message!!.contains("bot registry"))
+        assertEquals(ChatBotRegistrationStatus.NEW, ProductChatHostBridge(productId, FakeChatMessaging(), storedState).registerBot("helper", "Helper", ""))
     }
 
     @Test
@@ -348,7 +348,10 @@ class ProductChatHostBridgeTest {
 
     @Test
     fun `capabilities lists only the features that this build serves from end to end`() = runTest {
-        assertEquals(listOf("product_source_rooms", "custom_bodies"), bridge(FakeChatMessaging()).capabilities())
+        assertEquals(
+            listOf("product_source_rooms", "custom_bodies", "bot_personas", "threads", "branches", "reasoning_rows", "read_aloud"),
+            bridge(FakeChatMessaging()).capabilities(),
+        )
     }
 
     @Test

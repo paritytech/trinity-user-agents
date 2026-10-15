@@ -99,6 +99,7 @@ class ChatExtensionV2BenchmarkTest {
             feedSnapshot = flowOf(emptySnapshot()),
             origins = flowOf(origins),
             appearances = ChatParticipantAppearanceFactory(quietContext(), mockk<ChatResourceResolver>()),
+            personas = flowOf(emptyList()),
             querying = { querying },
         )
         withTimeout(10_000) { list.uiState.first { it.declared } }

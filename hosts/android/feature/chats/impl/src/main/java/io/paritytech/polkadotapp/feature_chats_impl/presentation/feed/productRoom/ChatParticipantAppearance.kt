@@ -6,6 +6,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.configs.colors.AvatarColorScheme
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatBotPersonaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantModel
@@ -36,20 +37,30 @@ class ChatParticipantAppearanceFactory @Inject constructor(
 ) {
     /**
      * [entry] is null for a reserved id or an id that the product did not resolve. [productOrigin] is the origin of the
-     * messages of the product of the room.
+     * messages of the product of the room. A [persona] is the registered persona of a `bot:<id>` participant: the host
+     * draws its name and icon also when the product lists the participant too (07-LATER §5.2).
      */
     suspend fun appearance(
         participantId: String,
         entry: ChatParticipantEntryModel?,
         origins: MessageOriginDisplayResolver,
         productOrigin: ChatMessageOrigin,
+        persona: ChatBotPersonaModel? = null,
     ): ChatParticipantUiModel = when {
         // The host names the user "You", which needs no kind under it.
         participantId == ProductParticipant.USER -> origin(participantId, origins, ChatMessageOrigin.User, detail = "")
         participantId == ProductParticipant.PRODUCT ->
             origin(participantId, origins, productOrigin, context.getString(RCommon.string.chat_participant_kind_product))
+        persona != null -> persona(participantId, persona)
         entry == null -> named(participantId, participantId, detail = "")
         else -> declared(entry)
+    }
+
+    /** A persona with an icon that does not load shows the first letter of its name. */
+    fun persona(participantId: String, persona: ChatBotPersonaModel): ChatParticipantUiModel {
+        val fallback = named(participantId, persona.name, context.getString(RCommon.string.chat_participant_kind_bot))
+        val image = persona.icon.takeIf { it.isNotEmpty() }?.let { resourceResolver.resolveIcon(it).getOrNull() }
+        return if (image == null) fallback else fallback.copy(avatar = image.toAvatar())
     }
 
     private fun origin(participantId: String, origins: MessageOriginDisplayResolver, origin: ChatMessageOrigin, detail: String): ChatParticipantUiModel {
