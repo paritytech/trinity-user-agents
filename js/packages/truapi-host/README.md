@@ -12,6 +12,7 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `@parity/truapi-host`                | Shared runtime types plus generated typed host callback contracts.                                                  |
 | `@parity/truapi-host/web`            | Browser pairing host: `createIframeHost` (iframe MessageChannel handshake) and `createWebWorkerPairingHostRuntime`. |
+| `@parity/truapi-host/node`           | Node pairing host: `createNodePairingHostRuntime`, the `./web` runtime with the core in a worker thread, and `headlessHostCallbacks`. |
 | `@parity/truapi-host/worker-runtime` | Web Worker entrypoint (import with your bundler's `?worker` suffix) so the WASM core runs off the page main thread. |
 | `@parity/truapi-host/wasm/web`       | The raw browser `wasm-bindgen` glue, if you need to instantiate the core yourself.                                  |
 | `@parity/truapi-host/testing`        | `createMockHost`: the in-memory host seam a product is tested against.                                              |
@@ -324,6 +325,41 @@ const secondProvider = await runtime.createProvider({
 `@parity/truapi-host/web` also exports `createIframeHost` for the
 protocol-iframe MessageChannel handshake. Host code creates one worker runtime
 and then opens one provider per product id.
+
+## Example — Node (worker thread)
+
+For a host with no browser, such as a CLI that pairs with the user's wallet.
+`createNodePairingHostRuntime` takes the same callbacks and options as
+`createWebWorkerPairingHostRuntime` and returns the same runtime; the core runs
+in a `node:worker_threads` thread and its WASM is read from disk.
+
+```ts
+import { createClient, createTransport } from "@parity/truapi";
+import { createNodePairingHostRuntime, headlessHostCallbacks } from "@parity/truapi-host/node";
+
+const runtime = await createNodePairingHostRuntime(
+  headlessHostCallbacks({
+    coreStorage, // persists the paired session; files on disk for a CLI
+    chain, // opens a JSON-RPC WebSocket per genesis hash
+    auth: { authStateChanged: (state) => state.tag === "Pairing" && showQr(state.value.deeplink) },
+    productStorage,
+    supportedChains,
+    userConfirmation, // the user's answer to reviews, e.g. a CLI prompt
+    permissions,
+  }),
+  { hostConfig },
+);
+const client = createClient(createTransport(await runtime.createProvider({ productId: "my-cli.dot" })));
+await client.account.requestLogin({});
+```
+
+`headlessHostCallbacks` fills in what a host without a screen cannot do:
+navigation and push notifications reject, and theme, locale and preimage lookup
+answer with fixed values. The host still passes `userConfirmation` and
+`permissions`, because they are the user's answers: `getAccount` asks to
+disclose the product subtree, and `signRaw` asks for the `ChainSubmit`
+permission and a signing review. A CLI asks at its prompt. A host with a UI
+passes the full callback set instead, exactly as on the web.
 
 ## Session lifecycle
 
