@@ -415,7 +415,7 @@ impl NativeTrUApiHostRuntime {
 
 	/// The amounts funding session `intent` can take on `rail`, `asset`,
 	/// `network` and `country` across every provider, as their refusals
-	/// showed. The host's own product floor applies on top.
+	/// showed. The minimum is never below the $10 product floor.
 	pub fn funding_amount_limits(
 		&self,
 		intent: String,
