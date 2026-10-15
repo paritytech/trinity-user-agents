@@ -8452,6 +8452,39 @@ fn wait_for_stage(
 	None
 }
 
+// A host asks whether funding is in progress at launch, before funding
+// resumes; the answer comes from storage, not from the empty registry.
+#[test]
+fn funding_in_progress_reads_storage_before_funding_resumes() {
+	let storage = stub_platform();
+	let before = funding_services_over(storage.clone());
+	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(before.open_funding(
+		None,
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot", None))
+			.expect("selected")
+	);
+
+	let relaunched = funding_services_over(storage.clone());
+
+	assert_eq!(
+		(
+			relaunched.funding().in_progress(),
+			futures::executor::block_on(relaunched.funding_in_progress()),
+		),
+		(false, Ok(true))
+	);
+}
+
 // The provider's worker takes a session from assignment to delivered, and a
 // restart in between loses nothing: the restarted worker is handed the
 // session again with its last step and the state it saved, and the host
@@ -8682,10 +8715,12 @@ fn only_the_assigned_provider_worker_reports() {
 	));
 }
 
-// A session goes only to a provider the host offers, and only one serving
-// the session's direction; anything else the user could not have picked.
+// A session goes only to a funding provider the core knows of. Its routes
+// do not narrow the choice: every provider is asked for quotes, so one whose
+// manifest declares only inbound card can still be picked for a withdrawal
+// it quoted.
 #[test]
-fn a_session_is_handed_only_to_an_offered_provider_serving_its_direction() {
+fn a_session_is_handed_only_to_a_known_funding_provider() {
 	let services = funding_services();
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
@@ -8710,7 +8745,7 @@ fn a_session_is_handed_only_to_an_offered_provider_serving_its_direction() {
 			select(&outbound, "ramp.dot"),
 			select(&inbound, "ramp.dot"),
 		),
-		(false, false, true)
+		(false, true, true)
 	);
 }
 
@@ -8757,6 +8792,7 @@ fn card_quote(quote_id: &str) -> v01::FundingQuote {
 		network_fee: 5,
 		eta_secs: Some(60),
 		expires_at: None,
+		asset_decimals: 2,
 	}
 }
 
@@ -8946,7 +8982,7 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 		v01::FundingQuote { send_amount: 1_010, ..card_quote("q2") },
 	);
 	use crate::platform::FundingQuoteState;
-	let mut lists = services.watch_funding_quotes_within(
+	let (_, mut lists) = services.watch_funding_quotes_within(
 		&intent,
 		card_ask(None),
 		Duration::from_secs(5),
@@ -8981,6 +9017,47 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 			after_choice,
 		),
 		(vec!["ramp.dot", "cheap.dot"], Some("cheap.dot"), Some("cheap.dot"), true, 0)
+	);
+}
+
+// Each request's lists carry its id, and a request the host replaced stops
+// at once, mid round too: a late answer for an amount the user already
+// changed never reaches the host.
+#[test]
+fn a_replaced_quote_request_stops_mid_round() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent =
+		futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, None))
+			.expect("opened")
+			.intent;
+	let (first_id, mut first) = services.watch_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_secs(60),
+	);
+	let shown = futures::executor::block_on(first.next()).expect("first list");
+
+	let (second_id, mut second) = services.watch_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_secs(60),
+	);
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+
+	assert_eq!(
+		(
+			shown.request_id == first_id,
+			second_id > first_id,
+			futures::executor::block_on(first.next()),
+			futures::executor::block_on(second.next()).map(|list| list.request_id),
+		),
+		(true, true, None, Some(second_id))
 	);
 }
 
@@ -9189,6 +9266,59 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 		),
 		(1, 1, (true, true), (true, true))
 	);
+}
+
+// What a provider's answer shows is written alongside what earlier runs
+// stored, never over records the core has not read yet.
+#[test]
+fn learning_before_the_stored_records_load_keeps_them() {
+	use crate::host_logic::funding_providers::LearnedSupport;
+	let storage = stub_platform();
+	let support = |provider_id: &str| LearnedSupport {
+		provider_id: provider_id.to_string(),
+		direction: v01::FundingDirection::In,
+		rail: v01::FundingRail::Card,
+		asset: "EUR".to_string(),
+		network: None,
+		country: None,
+		asked: 1_000,
+		supported: true,
+		min: None,
+		max: None,
+		learned_at_ms: crate::unix_time::current_unix_millis(),
+	};
+	futures::executor::block_on(storage.write_core_storage(
+		CoreStorageKey::FundingSupport,
+		parity_scale_codec::Encode::encode(&vec![support("earlier.dot")]),
+	))
+	.expect("stored");
+	let services = funding_services_over(storage.clone());
+
+	services.learn_funding_support(support("now.dot"));
+
+	let mut stored = Vec::new();
+	for _ in 0..200 {
+		stored =
+			futures::executor::block_on(storage.read_core_storage(CoreStorageKey::FundingSupport))
+				.ok()
+				.flatten()
+				.and_then(|bytes| {
+					<Vec<LearnedSupport> as parity_scale_codec::Decode>::decode(
+						&mut bytes.as_slice(),
+					)
+					.ok()
+				})
+				.unwrap_or_default()
+				.into_iter()
+				.map(|record| record.provider_id)
+				.collect::<Vec<_>>();
+		if stored.len() == 2 {
+			break;
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	stored.sort();
+	assert_eq!(stored, ["earlier.dot".to_string(), "now.dot".to_string()]);
 }
 
 /// Open an inbound session for `amount` and hand it to `ramp.dot`.
