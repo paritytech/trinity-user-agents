@@ -32,13 +32,12 @@ final class DebugPocketCardsViewModel {
     /// id the core refuses reads as no card at all, which looks like the
     /// card simply never arriving.
     func save() {
-        let typedWidgetUrl = widgetUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         let card = DebugPocketCard(
             productId: productId,
             cardId: cardId,
             title: title,
             faceUrl: faceUrl,
-            widgetUrl: typedWidgetUrl.isEmpty ? nil : typedWidgetUrl,
+            widgetUrl: URL(string: widgetUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
             faceShown: !opensWithFaceAway
         )
 
