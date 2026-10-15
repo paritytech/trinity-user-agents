@@ -180,7 +180,7 @@ class RealRequestPaymentUseCaseTest {
     /** The core owns BalanceAccess and hides the shortfall itself, so it must always hear about one. */
     @Test
     fun `a caller that owns balance access always learns the balance is insufficient`() = runBlocking<Unit> {
-        givenProduct(whitelisted = false, strategy = RecyclingStrategyType.BALANCED)
+        givenProduct(strategy = RecyclingStrategyType.BALANCED)
 
         val result = useCase.requestPayment(product, id, planks(31), destination, ShortfallDisclosure.CALLER)
 
@@ -222,7 +222,7 @@ class RealRequestPaymentUseCaseTest {
         assertTrue(error is PaymentRequestError.NotFound)
     }
 
-    private fun givenProduct(whitelisted: Boolean, strategy: RecyclingStrategyType, privateVouchersCover: Boolean = true) {
+    private fun givenProduct(strategy: RecyclingStrategyType, whitelisted: Boolean = false, privateVouchersCover: Boolean = true) {
         coEvery { planner.canPayPrivately(any()) } returns Result.success(privateVouchersCover)
         coEvery { externalPaymentService.exists(key) } returns Result.success(false)
         coEvery { whitelistedProductsProvider.whitelistedProducts() } returns if (whitelisted) setOf(product) else emptySet()
