@@ -1152,6 +1152,21 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.releaseWorker(productId: productId)
     }
 
+    /// Tell the core whether the app is in the foreground. While it is, the
+    /// core holds the worker of each product that declares
+    /// `WorkerKeepAlive.foreground`. The core starts in the background, so
+    /// report the state once the runtime exists and at each change.
+    public func setAppForeground(foreground: Bool) {
+        inner.setAppForeground(foreground: foreground)
+    }
+
+    /// Tell the core when the worker of a product runs, from the `keepAlive`
+    /// field of its Worker executable manifest. Set `.onDemand` again when
+    /// the product goes.
+    public func setWorkerKeepAlive(productId: String, keepAlive: WorkerKeepAlive) {
+        inner.setWorkerKeepAlive(productId: productId, keepAlive: keepAlive)
+    }
+
     /// Send one event about a room to the product: the user muted or
     /// archived the room, pressed a call button, answered a call, or selected
     /// another alternative of a message. The core keeps the newest events of

@@ -34,6 +34,7 @@ struct ExecutableManifestDTO: Decodable {
     let pocket: PocketDTO?
     let description: String?
     let dimensions: DimensionsDTO?
+    let keepAlive: KeepAliveDTO?
 
     enum CodingKeys: String, CodingKey {
         case version = "$v"
@@ -44,6 +45,23 @@ struct ExecutableManifestDTO: Decodable {
         case pocket
         case description
         case dimensions
+        case keepAlive
+    }
+}
+
+/// The part of a Worker executable manifest that a worker installed by hand can declare in
+/// `ChatExtension/manifest.json`. The entry of such a worker stays the conventional file.
+struct ManualWorkerManifestDTO: Decodable {
+    let keepAlive: KeepAliveDTO?
+}
+
+/// The `keepAlive` field. A value of the wrong JSON type is kept as an unknown value, so it costs the product its
+/// foreground worker and not the worker record.
+struct KeepAliveDTO: Decodable {
+    let value: String?
+
+    init(from decoder: Decoder) throws {
+        value = try? decoder.singleValueContainer().decode(String.self)
     }
 }
 

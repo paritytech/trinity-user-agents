@@ -78,6 +78,25 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
         return wakeOutcome
     }
 
+    /// The foreground declarations and withdrawals of the handlers, in order (I5).
+    var foregroundDeclarations: [String] { foregroundRecords.withLock { $0 } }
+    /// The reports of the app state, in order.
+    var foregroundReports: [Bool] { reportRecords.withLock { $0 } }
+    private let foregroundRecords = OSAllocatedUnfairLock(initialState: [String]())
+    private let reportRecords = OSAllocatedUnfairLock(initialState: [Bool]())
+
+    func declareForegroundWorker(for productId: ProductId) {
+        foregroundRecords.withLock { $0.append("declare \(productId)") }
+    }
+
+    func withdrawForegroundWorker(for productId: ProductId) {
+        foregroundRecords.withLock { $0.append("withdraw \(productId)") }
+    }
+
+    func appForegroundChanged(_ foreground: Bool) {
+        reportRecords.withLock { $0.append(foreground) }
+    }
+
     func publish(_ executions: [ProductId: TrUAPIProductExecutionProtocol]) {
         subject.send(executions)
     }
@@ -149,6 +168,11 @@ final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
             $0.released.append(productId)
             $0.log.append("release \(productId)")
         }
+    }
+
+    /// Records the keep alive in the log beside the requests (I5).
+    func setWorkerKeepAlive(productId: ProductId, keepAlive: WorkerKeepAlive) {
+        records.withLock { $0.log.append("keep alive \(productId) \(keepAlive)") }
     }
 
     /// Records the wake in the log beside the requests, and holds until 30 seconds after `now`.

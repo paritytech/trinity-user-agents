@@ -201,6 +201,19 @@ a test can act in its rooms; `chat-actions` is the example for that.
 - A module that imports anything the host does not link is rejected before it runs.
 - The worker runs as the `Worker` execution kind, so Worker-only services such as `Chat` and `Pocket` are available to it.
 
+## Lifetime
+
+A wasm worker runs under the same [Worker Lifecycle](../rfcs/worker-lifecycle.md) as a script: the core's reference ledger (`WorkerLedger`) starts it when the first holder takes a reference and lets the host stop it when the last one goes. A worker that must follow its statement-store topics, such as a chat that receives contact requests, declares `"keepAlive": "foreground"` in its Worker executable manifest. The ledger then holds it while the host reports the app in the foreground:
+
+```rust
+// The host reads the manifest and reports the declaration and the state of the app.
+host.set_worker_keep_alive("chat.dot".into(), WorkerKeepAlive::Foreground);
+host.set_app_foreground(true); // `Start` for chat.dot reaches `worker_demand_changed`
+host.set_app_foreground(false); // `Stop`, unless a room screen or a wake still holds it
+```
+
+On iOS a worker installed by hand declares it in `Products/<host>/ChatExtension/manifest.json` beside `index.wasm`. In the background nothing keeps the worker; a start on a statement for the product needs the notification wake and a push relay (Worker Lifecycle, "Foreground").
+
 ## Open questions
 
 - Host-initiated methods (such as `renderer.render`) need a guest export that accepts a call the host starts.

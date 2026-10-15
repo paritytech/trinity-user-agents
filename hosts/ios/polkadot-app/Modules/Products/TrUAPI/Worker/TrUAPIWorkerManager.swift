@@ -33,6 +33,18 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
     @discardableResult
     func wake(_ productId: ProductId, reason: ChatWakeReason) async -> ChatWakeOutcome?
 
+    /// Declares that the worker of the product runs while the app is in the foreground (VERBOSITY-WASM-PRODUCT I5).
+    /// The core holds the worker while the host reports the app in the foreground. Pair each call with one
+    /// ``withdrawForegroundWorker(for:)``.
+    func declareForegroundWorker(for productId: ProductId)
+
+    /// Gives back one ``declareForegroundWorker(for:)``. The last one ends the foreground hold of the product.
+    func withdrawForegroundWorker(for productId: ProductId)
+
+    /// The host reported the app in the foreground or in the background to the core. In the foreground, a worker
+    /// that ended on a fault starts again, because the core still counts it and sends no start.
+    func appForegroundChanged(_ foreground: Bool)
+
     /// What `productId`'s worker is built against, for the life of the session
     /// rather than of any one worker.
     func context(of productId: ProductId) -> ProductWorkerContext
@@ -107,6 +119,11 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private var draining: Task<Void, Never>?
     private var isShutDown = false
 
+    /// The declarations of a foreground worker, by product. The core holds one flag for each product, so the
+    /// manager counts the declarations and tells the core only when the count goes from zero or to zero. The
+    /// count and the call to the core change under one lock, so two holders cannot reorder them.
+    private let foregroundDeclarations = OSAllocatedUnfairLock<[ProductId: Int]>(initialState: [:])
+
     /// Read from `context(of:)`, which a chat session calls before any worker
     /// exists, so it is held beside the actor's own state rather than in it.
     private let openContexts = OSAllocatedUnfairLock<[ProductId: ProductWorkerContext]>(initialState: [:])
@@ -175,6 +192,43 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         await backgroundTasks.hold(productId: productId, until: deadline)
         logger.debug("[truapi] \(productId) woken for \(reason.logName) until \(untilMs)")
         return outcome
+    }
+
+    nonisolated func declareForegroundWorker(for productId: ProductId) {
+        foregroundDeclarations.withLock { counts in
+            counts[productId, default: 0] += 1
+            guard counts[productId] == 1 else { return }
+
+            setKeepAlive(.foreground, of: productId)
+        }
+    }
+
+    nonisolated func withdrawForegroundWorker(for productId: ProductId) {
+        foregroundDeclarations.withLock { counts in
+            guard let count = counts[productId] else { return }
+
+            guard count == 1 else {
+                counts[productId] = count - 1
+                return
+            }
+            counts[productId] = nil
+            setKeepAlive(.onDemand, of: productId)
+        }
+    }
+
+    nonisolated func appForegroundChanged(_ foreground: Bool) {
+        guard foreground else { return }
+
+        Task { await self.restartFaultedWorkers() }
+    }
+
+    private nonisolated func setKeepAlive(_ keepAlive: WorkerKeepAlive, of productId: ProductId) {
+        do {
+            try references().setWorkerKeepAlive(productId: productId, keepAlive: keepAlive)
+            logger.debug("[truapi] \(productId)'s worker keep alive: \(keepAlive)")
+        } catch {
+            logger.error("[truapi] \(productId)'s worker keep alive \(keepAlive) did not reach the core: \(error)")
+        }
     }
 
     /// Started from a task rather than in `init`, because the drain task
@@ -337,6 +391,13 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         faulted.remove(productId)
         logger.debug("[truapi] \(productId)'s worker starts again after its fault")
         start(productId)
+    }
+
+    /// The app came back to the foreground: each worker that ended on a fault starts again (I5).
+    private func restartFaultedWorkers() {
+        for productId in faulted.sorted() {
+            restartIfFaulted(productId)
+        }
     }
 
     private nonisolated func publishCards(_ cards: [PocketCard], of productId: ProductId) {

@@ -49,19 +49,40 @@ struct ManualWorkerEntryTests {
         #expect(provider.manualScriptEntryPath(productId: productId) == nil)
     }
 
+    /// The harness declares a foreground worker in `ChatExtension/manifest.json`, as a published worker does in
+    /// its manifest (I5).
+    @Test
+    func aManifestBesideTheEntryDeclaresAForegroundWorker() throws {
+        try write("ChatExtension/index.wasm")
+        try write("ChatExtension/manifest.json", #"{"keepAlive":"foreground"}"#)
+        defer { removeProduct() }
+
+        #expect(provider.manualWorkerKeepAlive(productId: productId) == .foreground)
+    }
+
+    /// No file, a file that is not JSON, and a value that this host does not know all keep the worker on demand.
+    @Test(arguments: [nil, "not json", #"{"keepAlive":"always"}"#, #"{"keepAlive":"onDemand"}"#, "{}"])
+    func anyOtherManifestKeepsTheWorkerOnDemand(_ manifest: String?) throws {
+        try write("ChatExtension/index.wasm")
+        if let manifest { try write("ChatExtension/manifest.json", manifest) }
+        defer { removeProduct() }
+
+        #expect(provider.manualWorkerKeepAlive(productId: productId) == .onDemand)
+    }
+
     private var productDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Products")
             .appendingPathComponent(productId)
     }
 
-    private func write(_ relativePath: String) throws {
+    private func write(_ relativePath: String, _ text: String? = nil) throws {
         let file = productDirectory.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(
             at: file.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data([0x00]).write(to: file)
+        try (text.map { Data($0.utf8) } ?? Data([0x00])).write(to: file)
     }
 
     private func removeProduct() {

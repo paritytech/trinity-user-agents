@@ -407,6 +407,22 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.worker_ledger().release(&product_id);
 	}
 
+	/// Tell the core whether the app is in the foreground. While it is, the
+	/// core holds the worker of each product that declares
+	/// [`crate::WorkerKeepAlive::Foreground`]. The core starts in the
+	/// background, so the host reports the state when it builds the runtime
+	/// and at each change.
+	pub fn set_app_foreground(&self, foreground: bool) {
+		self.runtime.worker_ledger().set_app_foreground(foreground);
+	}
+
+	/// Tell the core when the worker of a product runs, from the `keepAlive`
+	/// field of its Worker executable manifest. The host sets
+	/// [`crate::WorkerKeepAlive::OnDemand`] again when the product goes.
+	pub fn set_worker_keep_alive(&self, product_id: String, keep_alive: crate::WorkerKeepAlive) {
+		self.runtime.worker_ledger().set_keep_alive(&product_id, keep_alive);
+	}
+
 	/// Send one event about a room to the product: the user muted or
 	/// archived the room, pressed a call button, answered a call, or picked
 	/// another alternative of a message. The core keeps the newest events of

@@ -2,7 +2,10 @@
 //! message the user posts there with the same text. A message that starts
 //! with `/statement` is also submitted to the statement store with the
 //! product's allowance, and the answer says whether the network took it. It
-//! runs until the host stops it.
+//! runs until the host stops it, and writes a heartbeat line to the host log
+//! every [`HEARTBEAT`], so a log shows when the worker runs.
+
+use core::time::Duration;
 
 use futures::StreamExt;
 use truapi::latest::{
@@ -11,6 +14,9 @@ use truapi::latest::{
 };
 
 const ROOM: &str = "echo";
+
+/// The time between two heartbeat lines.
+const HEARTBEAT: Duration = Duration::from_secs(5);
 
 /// 2027-12-28 in Unix seconds, in the high 32 bits as the statement store reads
 /// an expiry. The worker has no clock, so the expiry is fixed.
@@ -30,6 +36,7 @@ async fn main() -> Result<(), truapi::Error> {
 	})
 	.await?;
 	truapi::log!("room {ROOM} ready");
+	truapi::spawn(heartbeat());
 
 	let mut actions = truapi::chat::action_subscribe(());
 	while let Some(action) = actions.next().await {
@@ -52,6 +59,18 @@ async fn main() -> Result<(), truapi::Error> {
 		truapi::log!("echoed {} bytes", text.len());
 	}
 	Err("the chat action subscription ended".into())
+}
+
+/// Write one line to the host log every [`HEARTBEAT`], with the count of lines
+/// and the time since the worker loaded, until the host stops the worker.
+async fn heartbeat() {
+	let mut beat = 0u64;
+	loop {
+		truapi::time::sleep(HEARTBEAT).await;
+		beat += 1;
+		let seconds = truapi::time::monotonic_millis() / 1_000;
+		truapi::log!("heartbeat {beat} after {seconds} s");
+	}
 }
 
 /// Prove `text` with the allowance of the product and submit it. The topic is

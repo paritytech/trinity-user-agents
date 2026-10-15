@@ -14,16 +14,24 @@
 //   node scripts/ios-verbosity.mjs <user> wait-message <room> <text> [timeout-ms]
 //   node scripts/ios-verbosity.mjs <user> markers [key]
 //   node scripts/ios-verbosity.mjs <user> worker-log
+//   node scripts/ios-verbosity.mjs <user> background
+//   node scripts/ios-verbosity.mjs <user> foreground
 //   node scripts/ios-verbosity.mjs <user> screenshot <file>
 //   node scripts/ios-verbosity.mjs <user> whoami
 //
 // `<user>` is `a` or `b`. The state file is
 // `playground/test-results/ios-verbosity/state.json`, or
 // `TRUAPI_IOS_E2E_VERBOSITY_OUT/state.json`.
+//
+// `background` opens the Settings app over the app, which sends the app to
+// the background, and `foreground` brings it back. The core holds a
+// foreground worker only while the app is in the foreground.
 
 import { resolve } from "node:path";
 
+import { DEFAULT_BUNDLE } from "./lib/ios-simulator.mjs";
 import { SimulatorUser, readState } from "./lib/ios-verbosity.mjs";
+import { run } from "./lib/process.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const outDir = resolve(
@@ -38,6 +46,7 @@ if (!entry) {
   throw new Error(`no user ${name}; the run has ${Object.keys(state.users)}`);
 }
 const user = new SimulatorUser(entry);
+const bundle = process.env.TRUAPI_IOS_E2E_BUNDLE ?? DEFAULT_BUNDLE;
 
 const commands = {
   rooms: () => user.rooms(),
@@ -53,6 +62,9 @@ const commands = {
     user.waitForMessage(room, text, Number(timeout ?? 120_000)),
   markers: (key) => user.markers(key),
   "worker-log": () => user.workerLog(),
+  background: () =>
+    run("xcrun", ["simctl", "launch", entry.udid, "com.apple.Preferences"]),
+  foreground: () => run("xcrun", ["simctl", "launch", entry.udid, bundle]),
   screenshot: (file) => user.screenshot(resolve(file)),
   whoami: () => ({ user: name, username: entry.username, device: entry.udid }),
 };

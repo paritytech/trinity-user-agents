@@ -50,6 +50,9 @@ final class ProductBotFactory {
             let runtime = TrUAPIChatHandler(
                 productId: product.identifier,
                 workers: workers,
+                keepAlive: ProductWorkerKeepAlive.of(resolved) {
+                    productFileProvider.manualWorkerKeepAlive(productId: $0)
+                },
                 logger: logger
             )
             return ProductBot(

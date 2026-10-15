@@ -178,6 +178,7 @@ final class RecordingWakeTasks: ProductWakeBackgroundTasking {
 private final class SpentReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
     func acquireWorker(productId _: ProductId) {}
     func releaseWorker(productId _: ProductId) {}
+    func setWorkerKeepAlive(productId _: ProductId, keepAlive _: WorkerKeepAlive) {}
     func wakeProduct(productId _: ProductId, reason _: ChatWakeReason) throws -> ChatWakeOutcome {
         .budgetSpent
     }

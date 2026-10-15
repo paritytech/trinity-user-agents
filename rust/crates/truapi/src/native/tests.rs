@@ -1002,6 +1002,43 @@ fn process_runtime_counts_worker_references_per_product() {
 	);
 }
 
+/// A product that declares a foreground worker is held while the host reports
+/// the app in the foreground, through the same demand callback as every other
+/// holder.
+#[test]
+fn process_runtime_holds_a_foreground_worker_while_the_app_is_in_the_foreground() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+	let product = || "chat.dot".to_string();
+	let demand = || callbacks.worker_demand.lock().expect("worker demand mutex poisoned").clone();
+
+	host.set_worker_keep_alive(product(), crate::WorkerKeepAlive::Foreground);
+	assert_eq!(demand(), vec![], "the core starts in the background");
+
+	host.set_app_foreground(true);
+	host.acquire_worker(product());
+	host.set_app_foreground(false);
+	assert_eq!(demand(), vec![(product(), WorkerTransition::Start)], "a room still holds it");
+
+	host.release_worker(product());
+	host.set_app_foreground(true);
+	host.set_worker_keep_alive(product(), crate::WorkerKeepAlive::OnDemand);
+
+	assert_eq!(
+		demand(),
+		vec![
+			(product(), WorkerTransition::Start),
+			(product(), WorkerTransition::Stop),
+			(product(), WorkerTransition::Start),
+			(product(), WorkerTransition::Stop),
+		]
+	);
+}
+
 /// A host removes a card through its own storage, which can take a while,
 /// so the core waits for the answer without holding the thread that asked.
 #[test]
