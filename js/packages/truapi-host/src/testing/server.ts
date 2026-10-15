@@ -171,15 +171,15 @@ export async function createTestHostServer(
   // in-page statement store or seeded storage asked for here would reach no
   // page. Refused rather than dropped.
   if (!options.productUrl) {
-    const dropped = [
+    const refused = [
       options.networks?.length && "networks",
       options.chain && "chain",
       options.loopbackStatements && "loopbackStatements",
       Object.keys(options.productStorage ?? {}).length && "productStorage",
     ].filter((name): name is string => typeof name === "string");
-    if (dropped.length) {
+    if (refused.length) {
       throw new Error(
-        `createTestHostServer: ${dropped.map((name) => `\`${name}\``).join(", ")} ` +
+        `createTestHostServer: ${refused.map((name) => `\`${name}\``).join(", ")} ` +
           "needs `productUrl`. Without one the server returns a bare base " +
           "that the Playwright fixture configures per test, so pass these to " +
           "the fixture instead.",
