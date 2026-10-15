@@ -20,6 +20,15 @@ abstract class ChatRoomDeclarationsDao {
     @Query("SELECT chatId, features FROM chat_room_declarations WHERE features IS NOT NULL")
     abstract fun observeDeclaredFeatures(): Flow<List<DeclaredFeatures>>
 
+    @Query("SELECT chatId, features FROM chat_room_declarations WHERE features IS NOT NULL")
+    abstract suspend fun getDeclaredFeatures(): List<DeclaredFeatures>
+
+    /** Runs [action] in one transaction. The calls of other daos in [action] are part of it. */
+    @Transaction
+    open suspend fun withTransaction(action: suspend () -> Unit) {
+        action()
+    }
+
     @Query("SELECT chatId, mutedUntil, archived FROM chat_room_declarations WHERE mutedUntil IS NOT NULL OR archived = 1")
     abstract fun observeUserStates(): Flow<List<UserState>>
 

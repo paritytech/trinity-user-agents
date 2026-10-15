@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatMessag
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomActivityWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomCallWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomDeclarationsWriter
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatThreadRoomCascade
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
@@ -16,7 +17,8 @@ import javax.inject.Inject
 
 /**
  * Removes a room with its messages, their reactions, revisions and meta, its draft, its declarations (with the
- * features and the user state), its activity line and its call.
+ * features and the user state), its activity line and its call. The thread rooms of the room go with it in the same
+ * transaction, so no thread stays hidden for ever (07-LATER §9.2).
  */
 class RealDeleteRoomUseCase @Inject constructor(
     private val chatRoomRepository: ChatRoomRepository,
@@ -27,8 +29,16 @@ class RealDeleteRoomUseCase @Inject constructor(
     private val metaWriter: ChatMessageMetaWriter,
     private val callWriter: ChatRoomCallWriter,
     private val personaWriter: ChatBotPersonaWriter,
+    private val threadRooms: ChatThreadRoomCascade,
 ) : DeleteRoomUseCase {
     override suspend fun invoke(chatId: ChatId) {
+        val threads = threadRooms.threadRoomsOf(chatId)
+        threadRooms.inTransaction {
+            (threads + chatId).forEach { deleteOne(it) }
+        }
+    }
+
+    private suspend fun deleteOne(chatId: ChatId) {
         chatRoomRepository.deleteRoom(chatId)
         // The reactions and the revisions of a message go with it (foreign keys with cascade).
         chatMessageRepository.deleteAllChatMessages(chatId)

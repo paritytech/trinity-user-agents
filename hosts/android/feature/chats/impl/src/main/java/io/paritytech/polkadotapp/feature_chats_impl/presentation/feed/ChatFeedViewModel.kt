@@ -278,7 +278,7 @@ class ChatFeedViewModel @Inject constructor(
         val answered = productReactions?.takeIf { popupSelection.type == MessagePopUpSelection.Type.REACTION_DETAILS }
         if (answered?.messageId == popupSelection.messageId) return@combine answered
 
-        messageUiMapper.constructPopUpState(
+        productRoom.adjustPopup(messageUiMapper.constructPopUpState(
             selection = popupSelection,
             reactions = reactions,
             originDisplayResolver = originDisplayResolver,
@@ -286,7 +286,7 @@ class ChatFeedViewModel @Inject constructor(
             userInputState = chatInputStateType,
             roomPolicy = policy,
             productMenu = productMenu,
-        )
+        ))
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     private val messageInputState = MutableStateFlow(ChatSendMessageInputState())
@@ -631,6 +631,8 @@ class ChatFeedViewModel @Inject constructor(
                 messagePopupSection.update { null }
                 productRoom.selectMessageMenuAction(action.message.id, action.actionId)
             }
+
+            is MessageAction.ReadAloud -> productRoom.readAloud(action.text).also { messagePopupSection.update { null } }
 
             is MessageAction.DismissActionMenu -> {
                 messagePopupSection.update { null }

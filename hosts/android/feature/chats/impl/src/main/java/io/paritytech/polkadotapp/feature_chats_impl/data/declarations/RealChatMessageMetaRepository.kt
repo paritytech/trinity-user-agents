@@ -21,12 +21,27 @@ interface ChatMessageMetaWriter {
     suspend fun deleteRoom(chatId: ChatId)
 }
 
+/** Reads which messages are reasoning rows, in all rooms, for the chat list (07-LATER §9.4). */
+fun interface ChatReasoningMessages {
+    /** The product ids of the reasoning messages of each room that has one. */
+    fun observe(): Flow<Map<ChatId, Set<String>>>
+}
+
 class RealChatMessageMetaRepository @Inject constructor(
     private val dao: ChatMessageMetaDao,
-) : ChatMessageMetaRepository, ChatMessageMetaWriter {
+) : ChatMessageMetaRepository, ChatMessageMetaWriter, ChatReasoningMessages {
     override fun observe(chatId: ChatId): Flow<Map<String, ChatMessageMetaModel>> =
         dao.observe(chatId.toLocal())
             .map { rows -> rows.mapNotNull { row -> row.meta.decodeMessageMeta()?.let { row.messageId to it } }.toMap() }
+            .distinctUntilChanged()
+
+    override fun observe(): Flow<Map<ChatId, Set<String>>> =
+        dao.observeAll()
+            .map { rows ->
+                rows.filter { it.meta.decodeMessageMeta()?.reasoning != null }
+                    .groupBy({ ChatId.fromRawValue(it.chatId) }, { it.messageId })
+                    .mapValues { (_, ids) -> ids.toSet() }
+            }
             .distinctUntilChanged()
 
     override suspend fun put(chatId: ChatId, messageId: String, timestamp: Long, meta: ChatMessageMetaModel, keepNewest: Int?) {

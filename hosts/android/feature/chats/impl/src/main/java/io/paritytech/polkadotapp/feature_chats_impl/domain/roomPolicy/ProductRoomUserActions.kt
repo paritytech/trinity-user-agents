@@ -6,6 +6,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatMessageMetaWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.ChatExtensionRegistry
 import javax.inject.Inject
@@ -14,6 +16,7 @@ import javax.inject.Inject
 class ProductRoomUserActions @Inject constructor(
     private val chatExtensionRegistry: ChatExtensionRegistry,
     private val chatMessageRepository: ChatMessageRepository,
+    private val metaWriter: ChatMessageMetaWriter,
 ) {
     suspend fun sendEvent(chatId: ChatId, event: ChatRoomUserEvent): Result<Unit> = runCatching {
         val extension = checkNotNull(chatExtensionRegistry.getExtensionForChat(chatId)) { "No extension serves the room" }
@@ -21,16 +24,19 @@ class ProductRoomUserActions @Inject constructor(
     }
 
     /**
-     * In a host-store room the host keeps a hidden tombstone of the message, so its id stays taken, and sends
-     * `UserDeleted` (02-DESIGN §19 item 4). In a product-source room the product deletes it through `user_action`.
+     * In a host-store room the host keeps a hidden tombstone of the message, so its id stays taken, removes its meta
+     * (07-LATER §9.6) and sends `UserDeleted` (02-DESIGN §19 item 4). In a product-source room the product deletes it
+     * through `user_action`.
      */
     suspend fun deleteMessage(chatId: ChatId, messageId: ChatMessageId, policy: ChatRoomPolicy): Result<Unit> {
         if (!policy.hostAppliesUserActions) {
             return productQuerying(chatId).flatMap { it.userAction(chatId, ChatUserActionModel.DeleteMessage(messageId)) }.map { }
         }
 
-        return runCatching { chatMessageRepository.markMessageDeleted(messageId) }
-            .flatMap { sendEvent(chatId, ChatRoomUserEvent.MessageDeleted(messageId)) }
+        return runCatching {
+            chatMessageRepository.markMessageDeleted(messageId)
+            metaWriter.delete(chatId, ProductMessageIds.product(messageId, chatId))
+        }.flatMap { sendEvent(chatId, ChatRoomUserEvent.MessageDeleted(messageId)) }
     }
 
     /** Only a product-source room offers Retry (02-DESIGN §13 item 9). */

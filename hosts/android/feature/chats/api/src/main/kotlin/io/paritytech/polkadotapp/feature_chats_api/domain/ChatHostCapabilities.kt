@@ -20,5 +20,20 @@ object ChatHostCapabilities {
     /** The mute and the archive of the user, which the product reads through `UserStateChanged`: S54 to S56. */
     const val MUTE_ARCHIVE = "mute_archive"
 
-    val features: List<String> = listOf(PRODUCT_SOURCE_ROOMS, CUSTOM_BODIES)
+    /** `register_bot` keeps a persona, and the host draws `bot:<id>` with its name and icon: S53. */
+    const val BOT_PERSONAS = "bot_personas"
+
+    /** Thread rooms, the chip under the root and the pinned root in the thread: S64. */
+    const val THREADS = "threads"
+
+    /** The branch control under a message and `BranchSelected`: S65. */
+    const val BRANCHES = "branches"
+
+    /** Reasoning rows in place of bubbles: S66 and S68. */
+    const val REASONING_ROWS = "reasoning_rows"
+
+    /** "Read aloud" in the message menu of a room that declares it: S67. */
+    const val READ_ALOUD = "read_aloud"
+
+    val features: List<String> = listOf(PRODUCT_SOURCE_ROOMS, CUSTOM_BODIES, BOT_PERSONAS, THREADS, BRANCHES, REASONING_ROWS, READ_ALOUD)
 }

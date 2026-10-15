@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 
@@ -254,6 +255,9 @@ internal class ProductMessageWindow(private val windowLimit: Int) {
                 .associate { (_, message) -> message.messageId to message.status },
             paging = paging,
             readiness = readiness,
+            preparingProductMessages = windowMessages
+                .filter { (_, message) -> !message.isFromUser && message.status == ProductMessageStatusModel.PREPARING }
+                .mapTo(mutableSetOf()) { (_, message) -> message.messageId },
         )
     }
 
