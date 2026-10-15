@@ -136,6 +136,8 @@ export interface ChatIdentity {
   chatKey: Uint8Array | null;
   /** Both chains name an X25519 key, and they differ. */
   conflict: boolean;
+  /** The chains that name an X25519 chat key for the account. */
+  from: ("asset hub" | "people")[];
 }
 
 /**
@@ -161,6 +163,10 @@ export function resolveChatIdentity(
       null,
     chatKey: conflict ? null : (assetHubKey ?? peopleKey),
     conflict,
+    from: [
+      ...(assetHubKey !== null ? (["asset hub"] as const) : []),
+      ...(peopleKey !== null ? (["people"] as const) : []),
+    ],
   };
 }
 

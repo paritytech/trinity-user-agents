@@ -73,6 +73,8 @@ import {
 } from "./shell.js";
 import { drawPocket } from "./pocket-screen.js";
 import { ChatScreen } from "./chat-screen.js";
+import { mountChatDiagnostics } from "./chat-diagnostics-view.js";
+import { ChatDiagnostics } from "./chat/diagnostics.js";
 import { openProduct, type OpenProduct } from "./product.js";
 import {
   notOpenableText,
@@ -161,9 +163,11 @@ const pocketScreen = element("pocket-screen");
 const chatBadge = document.querySelector<HTMLElement>(
   '#dock [data-destination="chat"] [data-badge]',
 );
+const chatDiagnostics = new ChatDiagnostics();
 const chatScreen = new ChatScreen(
   element("chat-screen"),
   localStorage,
+  chatDiagnostics,
   (pendingRequests) => {
     if (chatBadge === null) return;
     chatBadge.hidden = pendingRequests === 0;
@@ -193,7 +197,37 @@ const chrome = bindChrome({
 });
 
 const inspector = createInAppDebugger();
-inspector.mount(element("inspector-mount"));
+const inspectorMount = element("inspector-mount");
+inspector.mount(inspectorMount);
+const chatDiagnosticsView = mountChatDiagnostics(
+  element("chat-diagnostics"),
+  chatDiagnostics,
+);
+const inspectorNote = element("inspector-note");
+const INSPECTOR_NOTES = {
+  wire: "Frames stay in this tab and may carry sensitive payloads.",
+  chat: "Chat events are not TrUAPI frames. Metadata only, kept in memory and cleared when the session changes.",
+} as const;
+const inspectorViewButtons = [
+  ...document.querySelectorAll<HTMLButtonElement>("[data-inspector-view]"),
+];
+/** Show the TrUAPI traces or the chat events in the inspector. */
+function showInspectorView(view: keyof typeof INSPECTOR_NOTES): void {
+  for (const button of inspectorViewButtons)
+    button.setAttribute(
+      "aria-selected",
+      String(button.dataset.inspectorView === view),
+    );
+  inspectorMount.hidden = view !== "wire";
+  chatDiagnosticsView.show(view === "chat");
+  inspectorNote.textContent = INSPECTOR_NOTES[view];
+}
+for (const button of inspectorViewButtons)
+  button.addEventListener("click", () =>
+    showInspectorView(
+      button.dataset.inspectorView === "chat" ? "chat" : "wire",
+    ),
+  );
 bindDockResize(
   element("inspector-resize"),
   element("inspector"),

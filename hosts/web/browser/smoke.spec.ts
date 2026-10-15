@@ -633,6 +633,23 @@ describe("the dock", () => {
           await page.locator('[data-action^="chat-"], .chat-toggle').count(),
         ).toBe(0);
 
+        // The inspector's Chat view lists the engine's events with no product
+        // open, apart from the TrUAPI traces.
+        await page.click("#inspector-toggle");
+        await page.click('[data-inspector-view="chat"]');
+        await page.locator("#chat-diagnostics").waitFor({ state: "visible" });
+        expect(await page.locator("#inspector-mount").isHidden()).toBe(true);
+        await page
+          .locator(".chat-diag-row", { hasText: "starting" })
+          .first()
+          .waitFor();
+        expect(await page.locator("#product-slot iframe").count()).toBe(0);
+        const diagnostics = await page.locator("#chat-diagnostics").innerText();
+        expect(diagnostics).not.toContain(identity!);
+        await page.click('[data-inspector-view="wire"]');
+        expect(await page.locator("#inspector-mount").isVisible()).toBe(true);
+        await page.click('[data-inspector-view="chat"]');
+
         await openMenu(page);
         await page.click("#sign-out");
         await page
@@ -642,6 +659,8 @@ describe("the dock", () => {
         expect(
           await page.getAttribute("#chat-screen", "data-chat-engine"),
         ).toBe("off");
+        // The signed-out session's events are gone.
+        expect(await page.locator(".chat-diag-row").count()).toBe(0);
       } finally {
         await context.close();
       }

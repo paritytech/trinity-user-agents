@@ -1,6 +1,7 @@
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type { HexString } from "@parity/truapi/scale";
 import type { ChainProvider } from "@parity/truapi-host";
+import type { ChatDiagnostics } from "./chat/diagnostics.js";
 import { chainDirectory } from "./chat/directory.js";
 import { ChatEngine, type ChatSnapshot } from "./chat/engine.js";
 import { chatRefusal } from "./chat/gate.js";
@@ -143,6 +144,7 @@ export class ChatScreen {
   constructor(
     private readonly root: HTMLElement,
     private readonly storage: Storage,
+    private readonly diagnostics: ChatDiagnostics,
     private readonly onActivity: (pendingRequests: number) => void,
   ) {
     root.dataset.chatEngine = "off";
@@ -161,6 +163,8 @@ export class ChatScreen {
     }
     this.sessionKey = key;
     this.stopEngine();
+    // Events of one session are not shown in the next.
+    this.diagnostics.clear();
     this.view = { kind: "list" };
     this.draft = this.newTarget = this.newWelcome = "";
     if (session !== null) this.startEngine(session);
@@ -226,6 +230,7 @@ export class ChatScreen {
       storage: this.storage,
       recordKey: chatRecordKey(session.network, session.walletId),
       writes: () => true,
+      diagnostics: this.diagnostics.record,
     });
     this.engine = engine;
     this.stopListening = engine.onChange(() => {

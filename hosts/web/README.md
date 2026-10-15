@@ -330,6 +330,13 @@ the product and the core, in both directions, and the debugger groups and decode
 own wire schema: if it differs from the page bundle's, the inspector lists operations without decoding them and the log
 says so. Frames stay in the tab, may carry sensitive payloads, and are held in memory only.
 
+**Chat diagnostics.** The inspector's **Chat** tab lists what the host's chat engine does: start, stop, reconnects,
+subscriptions, requests received and why one was set aside, key lookups and which chain named the key, session requests
+with the kind number of each message, responses, and every submission with its purpose and the store's answer. Chat is
+not a product, so none of this is a TrUAPI frame, and it is listed apart from the traces. The events are metadata only:
+shortened accounts and ids, kinds, counts and error text with hex shortened. They never hold keys, shared secrets,
+message text, push tokens or decrypted payloads. The last 300 are kept in memory and cleared when the session changes.
+
 **Versions.** The menu shows client, host and core, provider and debugger versions, read from the linked packages and
 the loaded `testing` bundle. A warning appears only when the core's wire schema differs from the client's. **Technical
 details** holds the SHA-256 of the served `.wasm` files, the wire schema, and the source commit with whether the tree
@@ -487,7 +494,8 @@ and layout on narrow screens.
   `src/pocket.ts`, `src/pocket-screen.ts`: the Pocket cards and how the screen draws them.
 - `src/chat/`: the chat engine. `gate.ts` refuses the public development phrase, `keys.ts` derives the keys,
   `protocol.ts` and `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC, `directory.ts` the chain
-  reads, `store.ts` the saved conversations and `engine.ts` ties them together. `src/chat-screen.ts` draws the Chat screen.
+  reads, `store.ts` the saved conversations and `engine.ts` ties them together, and `diagnostics.ts` holds its events.
+  `src/chat-screen.ts` draws the Chat screen and `src/chat-diagnostics-view.ts` the inspector's Chat tab.
 - `src/archive/`: CAR, UnixFS and CID verification and unpacking.
 - `src/sandbox/`, `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The plugin
   bundles them as static files, which the build emits and the dev server also answers.

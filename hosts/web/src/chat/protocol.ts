@@ -342,6 +342,19 @@ export function encodeMessage(message: ChatMessage): Uint8Array {
   }
 }
 
+/** The content kind of an encoded message, or null when its head cannot be read. */
+export function messageKind(encoded: Uint8Array): number | null {
+  try {
+    const reader = new Reader(encoded);
+    reader.text();
+    reader.u64();
+    if (reader.u8() !== 0) return null;
+    return reader.u8();
+  } catch {
+    return null;
+  }
+}
+
 /** Decode one message. A kind this host does not read decodes as `other` with its tag. */
 export function decodeMessage(encoded: Uint8Array): ChatMessage {
   const reader = new Reader(encoded);
