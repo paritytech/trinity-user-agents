@@ -135,7 +135,12 @@ nav h2 { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: upp
 .avatar.sm { width: 28px; height: 28px; border-radius: 8px; font-size: 12px; }
 .bots { margin-top: 18px; }
 .bot { display: flex; align-items: center; gap: 10px; padding: 6px 18px; color: var(--muted); font-size: 13px; }
-section { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
+section { display: grid; grid-template-rows: auto auto 1fr auto; min-height: 0; }
+#searchbar { padding: 8px 22px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
+#searchbar input { font: 13px var(--ui); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+#searchresults .hit { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; padding: 5px 2px; font: 12px var(--ui); }
+#searchresults .hit small { display: block; font: 10px var(--mono); color: var(--faint); }
+#searchresults mark { background: var(--accent); color: var(--accent-ink); }
 .roomhead { padding: 12px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
 .roomhead h1 { font: 500 19px var(--sans); margin: 0; }
 .roomhead code { font: 11px var(--mono); color: var(--faint); }
@@ -316,6 +321,10 @@ aside[hidden], section[hidden] { display: none; }
   <div class="gutter" id="gutter-rooms" title="Drag to resize"></div>
   <section id="chat-pane">
     <div class="roomhead" id="roomhead"></div>
+    <div id="searchbar" hidden>
+      <input id="searchtext" type="search" placeholder="Search this room" spellcheck="false">
+      <div id="searchresults"></div>
+    </div>
     <div id="thread"></div>
     <footer id="footer">
       <div class="composer">
@@ -395,6 +404,8 @@ const state = {
   showArchived: false,
   // The notifications the host delivered, newest first.
   notifications: [],
+  // The search of the open room: { roomId, text, hits, next, loading, unavailable }.
+  search: null,
 };
 const $ = (id) => document.getElementById(id);
 let statusTimer = null;
@@ -1098,8 +1109,102 @@ function renderHeader2() {
     titles.appendChild(line);
   }
   head.appendChild(titles);
+  if (searchable(room)) {
+    const toggle = el("button", state.search && state.search.roomId === room.roomId ? "on" : null, "Search");
+    toggle.type = "button";
+    toggle.id = "search-toggle";
+    toggle.onclick = () => toggleSearch(room);
+    head.appendChild(toggle);
+  }
   head.appendChild(userStateNode(room));
   head.appendChild(toolbarNode(room));
+}
+
+// A room the host keeps is searched by the host. A room the product keeps
+// shows search only when it declares `search` and the host serves it.
+function searchable(room) {
+  if (!isSource(room)) return true;
+  return !!(room.features && room.features.search) && state.capabilities.features.includes("search");
+}
+
+function toggleSearch(room) {
+  state.search = state.search && state.search.roomId === room.roomId ? null : { roomId: room.roomId, text: "", hits: [], next: null, loading: false, unavailable: false };
+  $("searchtext").value = "";
+  renderSearch();
+  renderHeader2();
+  if (state.search) $("searchtext").focus();
+}
+
+let searchTimer = null;
+// The matches of the open room, asked 300 ms after the user stops typing.
+function runSearch(cursor) {
+  const search = state.search;
+  if (!search) return;
+  const text = $("searchtext").value.trim();
+  search.text = text;
+  if (!text) { search.hits = []; search.next = null; search.unavailable = false; renderSearch(); return; }
+  search.loading = true;
+  renderSearch();
+  ask("search", { roomId: search.roomId, text, cursor }, (frame) => {
+    if (state.search !== search || search.text !== text) return;
+    search.loading = false;
+    if (frame.error) {
+      search.unavailable = true;
+      search.hits = [];
+      search.next = null;
+    } else {
+      search.unavailable = false;
+      search.hits = cursor ? search.hits.concat(frame.ok.hits) : frame.ok.hits;
+      search.next = frame.ok.next;
+    }
+    renderSearch();
+  });
+}
+
+// The match highlighted in the line it is in.
+function highlighted(line, text) {
+  const box = el("span");
+  const fold = (value) => value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  const at = fold(line).indexOf(fold(text));
+  if (at < 0 || line.normalize("NFD").length !== line.length) { box.textContent = line; return box; }
+  box.append(document.createTextNode(line.slice(0, at)), el("mark", null, line.slice(at, at + text.length)), document.createTextNode(line.slice(at + text.length)));
+  return box;
+}
+
+function renderSearch() {
+  const bar = $("searchbar");
+  const search = state.search && state.search.roomId === state.selected ? state.search : null;
+  bar.hidden = !search;
+  const results = $("searchresults");
+  results.textContent = "";
+  delete results.dataset.unavailable;
+  delete results.dataset.answered;
+  if (!search) return;
+  if (search.loading) results.appendChild(el("span", "note", "searching…"));
+  // The text whose answer is on screen.
+  else results.dataset.answered = search.text;
+  if (search.unavailable) {
+    results.dataset.unavailable = "true";
+    results.appendChild(el("span", "note", "Search is not available"));
+    return;
+  }
+  for (const hit of search.hits) {
+    const row = el("button", "hit");
+    row.type = "button";
+    row.dataset.hit = hit.messageId;
+    row.appendChild(el("small", null, `${participantName(search.roomId, hit.origin)} · ${clock(hit.timestamp)}`));
+    row.appendChild(highlighted(String(hit.preview || "").split("\n")[0], search.text));
+    row.onclick = () => jumpTo(search.roomId, hit.messageId);
+    results.appendChild(row);
+  }
+  if (search.text && !search.loading && !search.hits.length) results.appendChild(el("span", "note", "no matches"));
+  if (search.next) {
+    const more = el("button", null, "Older matches");
+    more.type = "button";
+    more.id = "search-more";
+    more.onclick = () => runSearch(search.next);
+    results.appendChild(more);
+  }
 }
 
 // Mute and archive, kept by the host and told to the product with
@@ -1188,6 +1293,7 @@ function toolbarNode(room) {
 
 function renderRoom(forceBottom) {
   renderHeader2();
+  renderSearch();
   const thread = $("thread");
   const pinned = forceBottom || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60;
   thread.textContent = "";
@@ -1790,6 +1896,7 @@ function handle(frame) {
 }
 
 $("compose").onsubmit = (event) => { event.preventDefault(); submit(); };
+$("searchtext").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => runSearch(null), 300); };
 for (const key of ["photo", "video", "file"]) {
   const input = $(`attach-${key}`);
   input.onchange = () => { const room = roomOf(state.selected); if (room && input.files.length) sendAttachment(room, input.dataset.kind, input.files[0]); };

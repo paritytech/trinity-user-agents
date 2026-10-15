@@ -291,7 +291,7 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   line: the feature names this host lists in `capabilities`
   (`product_source_rooms`, `reaction_details`, `participants`, `message_menus`,
   `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`,
-  `inline_attachments`, `preimage_attachments`, `bot_personas`,
+  `inline_attachments`, `preimage_attachments`, `search`, `bot_personas`,
   `mute_archive`) and both attachment bounds. The host keeps what a product declares with
   `set_room_features` whole, and the room header lists each declared feature,
   marked "not served" where the host does not serve it. The host also keeps the
@@ -305,6 +305,14 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   refuses an undeclared room, and the page refuses a file above 8 MiB before
   it reads it. The live Bulletin chain stores at most 2 MiB in one
   transaction, which the core reads and enforces.
+- **Search.** **Search** in the room header opens a field above the messages.
+  300 ms after you stop typing, a room the host keeps is searched in the host's
+  store (case and diacritics ignored, 50 matches a page); a room the product
+  keeps that declares `search` asks the product with `search_query` (30 a page,
+  10 s), and shows "Search is not available" when it does not answer. Each
+  match shows its author, time and line with the match marked, and a click
+  jumps to the message. A room the product keeps without `search` shows no
+  search.
 - **Bot personas.** A message or an activity line from `bot:<id>` draws with
   the name and icon of the persona `<id>` the product registered, with no
   `participants_query`; the **Bots** list of the rooms pane shows each persona.
@@ -347,7 +355,7 @@ then a `room`, `roomDeleted`, `bot`, `message` or `notification` event as each l
 operation per thing a person does: `post`, `edit`, `delete`, `react`, `seen`,
 `retry`, `trigger`, `command`, `messageAction`, `participantAction`, `toolbar`,
 `suggestion`, `open`, `close`, `attach` (a photo, video or file in base64,
-inline or staged) and `userState` (which mutes or archives a room
+inline or staged), `search` and `userState` (which mutes or archives a room
 and sends `UserStateChanged` to `chat.roomEventsSubscribe()`; `mutedForever`
 mutes with no end), and the queries
 `messages`, `reactions`, `participants`, `messageActions` and

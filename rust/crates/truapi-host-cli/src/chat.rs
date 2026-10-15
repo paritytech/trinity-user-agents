@@ -74,7 +74,7 @@ const SENT_A_MESSAGE: &str = "Sent a message";
 /// `CHAT_FEATURE_NAMES`. The page has no renderer and no room links, so
 /// `custom_bodies`, `custom_footer` and `room_links` are not here. A P10 item
 /// adds its name when the page serves it.
-pub const CLI_CHAT_FEATURES: [&str; 13] = [
+pub const CLI_CHAT_FEATURES: [&str; 14] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -86,6 +86,7 @@ pub const CLI_CHAT_FEATURES: [&str; 13] = [
 	"activity",
 	"inline_attachments",
 	"preimage_attachments",
+	"search",
 	"bot_personas",
 	"mute_archive",
 ];
@@ -469,6 +470,35 @@ impl CliChatHost {
 		let state = self.lock();
 		let room = state.rooms.get(room_id)?;
 		room.position(message_id).map(|index| room.messages[index].message.clone())
+	}
+
+	/// The messages of a room the host keeps whose list text holds `text`,
+	/// case and diacritics ignored, newest first: `page_size` of them after
+	/// the first `skip`, and whether more follow.
+	pub fn search_messages(
+		&self,
+		room_id: &str,
+		text: &str,
+		skip: usize,
+		page_size: usize,
+	) -> Result<(Vec<ChatMessage>, bool), String> {
+		let state = self.lock();
+		let room = state.rooms.get(room_id).ok_or_else(|| unknown_room(room_id))?;
+		if !room.host_store() {
+			return Err("the room keeps its messages in the product".to_string());
+		}
+		let needle = search_form(text);
+		let mut matches = room
+			.messages
+			.iter()
+			.rev()
+			.filter(|stored| {
+				!stored.deleted && search_form(&preview_text(&stored.message)).contains(&needle)
+			})
+			.skip(skip);
+		let page: Vec<ChatMessage> =
+			matches.by_ref().take(page_size).map(|stored| stored.message.clone()).collect();
+		Ok((page, matches.next().is_some()))
 	}
 
 	/// A participant the product resolved for `room_id`.
@@ -947,6 +977,15 @@ fn legacy_body(content: &ChatMessageContent, alt: Option<&str>) -> ChatMessageBo
 fn with_kind(kind: &str, mut body: Value) -> Value {
 	body["kind"] = Value::from(kind);
 	body
+}
+
+/// The form search compares: lower case, without diacritics.
+fn search_form(text: &str) -> String {
+	use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
+	text.nfd()
+		.filter(|character| !is_combining_mark(*character))
+		.collect::<String>()
+		.to_lowercase()
 }
 
 /// The chat-list text of one message: its text, its `preview_text`, the

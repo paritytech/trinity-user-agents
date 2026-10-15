@@ -37,22 +37,29 @@ use truapi::{
 	CallError, ChatStageRejection, ProductRuntime, ProductRuntimeError, Subscription,
 	latest::{
 		ActionTrigger, ChatBuiltInMessageAction, ChatCommand, ChatEvent, ChatMediaItem,
-		ChatMediaMeta, ChatMessageBody, ChatMessageMenu, ChatPageAnchor, ChatParticipant,
-		ChatParticipantEntry, ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction,
-		ChatResource, ChatRoomEvent, ChatUserAction, HostChatActionSubscribeItem,
-		HostChatRoomEventsSubscribeItem, ProductChatMessageActionsQueryItem,
-		ProductChatMessageActionsQueryRequest, ProductChatMessagesQueryItem,
-		ProductChatMessagesQueryRequest, ProductChatParticipantActionsQueryItem,
-		ProductChatParticipantActionsQueryRequest, ProductChatParticipantsQueryItem,
-		ProductChatParticipantsQueryRequest, ProductChatQueryError, ProductChatReactionsQueryItem,
-		ProductChatReactionsQueryRequest, ProductChatUserActionError, ProductChatUserActionItem,
-		ProductChatUserActionRequest,
+		ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageMenu, ChatPageAnchor,
+		ChatParticipant, ChatParticipantEntry, ChatParticipantMenu, ChatParticipantsQuery,
+		ChatProductAction, ChatResource, ChatRoomEvent, ChatUserAction,
+		HostChatActionSubscribeItem, HostChatRoomEventsSubscribeItem,
+		ProductChatMessageActionsQueryItem, ProductChatMessageActionsQueryRequest,
+		ProductChatMessagesQueryItem, ProductChatMessagesQueryRequest,
+		ProductChatParticipantActionsQueryItem, ProductChatParticipantActionsQueryRequest,
+		ProductChatParticipantsQueryItem, ProductChatParticipantsQueryRequest,
+		ProductChatQueryError, ProductChatReactionsQueryItem, ProductChatReactionsQueryRequest,
+		ProductChatSearchQueryItem, ProductChatSearchQueryRequest, ProductChatUserActionError,
+		ProductChatUserActionItem, ProductChatUserActionRequest,
 	},
 };
 
 use crate::chat::{
 	ChatSnapshot, CliChatHost, PRODUCT, USER, UserChange, handler_json, message_json, resource_json,
 };
+
+/// Matches of a room the host keeps on one search page.
+const HOST_SEARCH_PAGE: usize = 50;
+
+/// Matches the host asks a product for on one search page.
+const PRODUCT_SEARCH_PAGE: u32 = 30;
 
 /// Path of the chat surface page.
 pub const PAGE_PATH: &str = "/chat";
@@ -144,6 +151,13 @@ pub trait ChatWorker: Send + Sync {
 		item: HostChatRoomEventsSubscribeItem,
 	) -> Result<(), ProductRuntimeError>;
 
+	/// Ask the product for the messages of a room it keeps that match what
+	/// the user typed.
+	fn search_query(
+		&self,
+		request: ProductChatSearchQueryRequest,
+	) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError>;
+
 	/// Stage a user attachment of `room_id` as a preimage that the product's
 	/// Bulletin allowance pays for, through the core, and give its key.
 	fn stage_chat_attachment(
@@ -212,6 +226,13 @@ impl ChatWorker for ProductRuntime {
 		self.control().publish_chat_room_event(item)
 	}
 
+	fn search_query(
+		&self,
+		request: ProductChatSearchQueryRequest,
+	) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError> {
+		self.control().chat_search_query(request)
+	}
+
 	fn stage_chat_attachment(
 		&self,
 		room_id: String,
@@ -237,6 +258,8 @@ pub struct Timeouts {
 	pub query: Duration,
 	/// The wait before the one retry of an `unavailable` interrupt.
 	pub retry: Duration,
+	/// `search_query`.
+	pub search: Duration,
 }
 
 impl Default for Timeouts {
@@ -247,6 +270,7 @@ impl Default for Timeouts {
 			action: Duration::from_secs(10),
 			query: Duration::from_secs(5),
 			retry: Duration::from_secs(1),
+			search: Duration::from_secs(10),
 		}
 	}
 }
@@ -407,6 +431,15 @@ enum PageOp {
 		req_id: u64,
 		room_id: String,
 		participant_id: String,
+	},
+	/// The user searches a room: the host's own store, or `search_query` to
+	/// a room the product keeps that declares `search`.
+	Search {
+		req_id: u64,
+		room_id: String,
+		text: String,
+		#[serde(default)]
+		cursor: Option<String>,
 	},
 	/// The user sends a photo, a video or a file. One above the inline bound
 	/// is staged as a preimage through the core first.
@@ -676,6 +709,49 @@ impl ChatSurface {
 				reply_to.clone(),
 				source,
 			),
+			PageOp::Search { req_id, text, cursor, .. } => {
+				if !source {
+					let skip =
+						cursor.as_deref().and_then(|cursor| cursor.parse().ok()).unwrap_or(0);
+					return Applied::Now(
+						match self.chat.search_messages(&room_id, text, skip, HOST_SEARCH_PAGE) {
+							Ok((hits, more)) => answer_ok(
+								"search",
+								*req_id,
+								search_json(
+									&hits,
+									more.then(|| (skip + HOST_SEARCH_PAGE).to_string()),
+								),
+							),
+							Err(reason) => error_reply(reason),
+						},
+					);
+				}
+				let request = ProductChatSearchQueryRequest {
+					room_id,
+					text: text.clone(),
+					cursor: cursor.clone(),
+					page_size: PRODUCT_SEARCH_PAGE,
+				};
+				let surface = Arc::clone(self);
+				let req_id = *req_id;
+				Applied::Later(Box::pin(async move {
+					let answer = surface
+						.ask(surface.timeouts.search, move |worker| {
+							worker.search_query(request.clone())
+						})
+						.await;
+					answer_json(
+						"search",
+						req_id,
+						answer,
+						|item: &ProductChatSearchQueryItem| {
+							search_json(&item.hits, item.next.clone())
+						},
+						query_error_json,
+					)
+				}))
+			},
 			PageOp::Attach { req_id, kind, mime_type, file_name, data, width, height, .. } => {
 				let bytes = match BASE64.decode(data) {
 					Ok(bytes) => bytes,
@@ -1206,6 +1282,7 @@ fn op_room(op: &PageOp) -> &str {
 		PageOp::MessageActions { room_id, .. } |
 		PageOp::ParticipantActions { room_id, .. } |
 		PageOp::Attach { room_id, .. } |
+		PageOp::Search { room_id, .. } |
 		PageOp::UserState { room_id, .. } => room_id,
 	}
 }
@@ -1223,7 +1300,8 @@ fn op_req_id(op: &PageOp) -> Option<u64> {
 		PageOp::Participants { req_id, .. } |
 		PageOp::MessageActions { req_id, .. } |
 		PageOp::ParticipantActions { req_id, .. } |
-		PageOp::Attach { req_id, .. } => Some(*req_id),
+		PageOp::Attach { req_id, .. } |
+		PageOp::Search { req_id, .. } => Some(*req_id),
 		_ => None,
 	}
 }
@@ -1250,6 +1328,7 @@ fn op_name(op: &PageOp) -> &'static str {
 		PageOp::MessageActions { .. } => "messageActions",
 		PageOp::ParticipantActions { .. } => "participantActions",
 		PageOp::Attach { .. } => "attach",
+		PageOp::Search { .. } => "search",
 		PageOp::UserState { .. } => "userState",
 	}
 }
@@ -1322,6 +1401,11 @@ fn user_action_error_json(error: &ProductChatUserActionError) -> Value {
 			json!({ "tag": "Unknown", "reason": reason })
 		},
 	}
+}
+
+/// One page of search matches, newest first, and the cursor of the next.
+fn search_json(hits: &[ChatMessage], next: Option<String>) -> Value {
+	json!({ "hits": hits.iter().map(message_json).collect::<Vec<_>>(), "next": next })
 }
 
 fn page_json(page: &ProductChatMessagesQueryItem) -> Value {
@@ -1463,6 +1547,7 @@ mod tests {
 		participants: Scripted<ProductChatParticipantsQueryItem>,
 		message_menus: Scripted<ProductChatMessageActionsQueryItem>,
 		participant_menus: Scripted<ProductChatParticipantActionsQueryItem>,
+		searches: Scripted<ProductChatSearchQueryItem>,
 		room_events: Mutex<Vec<HostChatRoomEventsSubscribeItem>>,
 		/// What the worker staged, as `(room, size)`, and the refusal it
 		/// answers instead of a key.
@@ -1570,6 +1655,14 @@ mod tests {
 			Ok(())
 		}
 
+		fn search_query(
+			&self,
+			request: ProductChatSearchQueryRequest,
+		) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError> {
+			self.ask(request);
+			Ok(scripted(&self.searches))
+		}
+
 		fn stage_chat_attachment(
 			&self,
 			room_id: String,
@@ -1645,6 +1738,13 @@ mod tests {
 			Err(ProductRuntimeError::Denied)
 		}
 
+		fn search_query(
+			&self,
+			_request: ProductChatSearchQueryRequest,
+		) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError> {
+			Err(ProductRuntimeError::Denied)
+		}
+
 		fn stage_chat_attachment(
 			&self,
 			_room_id: String,
@@ -1661,6 +1761,7 @@ mod tests {
 		action: Duration::from_millis(300),
 		query: Duration::from_millis(300),
 		retry: Duration::from_millis(20),
+		search: Duration::from_millis(300),
 	};
 
 	fn product() -> ProductContext {
@@ -2483,6 +2584,54 @@ mod tests {
 			.filter(|event| matches!(event, ChatEvent::MessagePosted { .. }))
 			.collect();
 		assert_eq!(posted.len(), 2, "both attachments reach the product");
+	}
+
+	// S61: the host searches a room it keeps itself, case and diacritics
+	// ignored, newest first; S62: a room the product keeps asks the product.
+	#[tokio::test]
+	async fn a_search_reads_the_store_or_asks_the_product() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+		for text in ["Café au lait", "plain", "CAFE noir"] {
+			surface
+				.chat()
+				.post_user_message("daily", ChatMessageBody::Text { text: text.to_string() }, None)
+				.expect("stored");
+		}
+
+		let stored = now(&surface, json!({"op":"search","reqId":1,"roomId":"daily","text":"cafe"}));
+		let texts: Vec<_> = stored["ok"]["hits"]
+			.as_array()
+			.expect("hits")
+			.iter()
+			.map(|hit| hit["body"]["text"].clone())
+			.collect();
+		assert_eq!(texts, [json!("CAFE noir"), json!("Café au lait")]);
+		assert_eq!(stored["ok"]["next"], Value::Null);
+		assert!(worker.asked().is_empty(), "the host asks no product for its own store");
+
+		FakeWorker::script(
+			&worker.searches,
+			Ok(ProductChatSearchQueryItem {
+				hits: vec![product_message("kept-9", "product")],
+				next: Some("8".to_string()),
+			}),
+		);
+		let kept = run(&surface, json!({"op":"search","reqId":2,"roomId":"kept","text":"x"})).await;
+		assert_eq!(kept["ok"]["hits"][0]["messageId"], "kept-9");
+		assert_eq!(kept["ok"]["next"], "8");
+		assert_eq!(
+			worker.asked(),
+			vec![format!(
+				"{:?}",
+				ProductChatSearchQueryRequest {
+					room_id: "kept".to_string(),
+					text: "x".to_string(),
+					cursor: None,
+					page_size: 30,
+				}
+			)]
+		);
 	}
 
 	// S58: a staging refusal posts nothing and tells the page why.
