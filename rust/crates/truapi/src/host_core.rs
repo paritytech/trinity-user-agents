@@ -37,13 +37,12 @@ use truapi::{CallContext, CancellationReason, v01};
 
 use crate::{
 	frame::ProtocolMessage,
-	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
 	host_logic::worker::WorkerLedger,
 	runtime::{
-		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-		HostSession, LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority,
-		ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
-		SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
+		ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+		DevicePairingObserver, HostSession, LocalActivation, PairedSsoPeer, PairingHostRole,
+		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
+		SigningHostRole, SsoAccountHolderService, SsoResponderService,
 	},
 	subscription::{HostInitiatedSubscriptionManager, Spawner},
 	transport::Transport,
@@ -748,8 +747,7 @@ impl SigningHostRuntime {
 			);
 		}
 		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
-		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
-		Self { services, signing_host, sso_responder }
+		Self { services, sso_responder: signing_host.sso_responder(), signing_host }
 	}
 
 	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
@@ -1232,19 +1230,14 @@ impl SigningHostRuntime {
 			.map_err(|reason| v01::GenericError { reason })
 	}
 
-	/// Answer one SSO request using this signing host.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-	pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
-		let service = SigningHostSsoService::new(self.signing_host.clone());
-		match service.answer(message).await {
-			Dispatch::Response(answer) => {
-				SsoRequestOutcome::Response { message: answer.message.encode() }
-			},
-			Dispatch::Disconnected => SsoRequestOutcome::Disconnected,
-			Dispatch::NotARequest(_) | Dispatch::Withdraw(_) | Dispatch::Withdrawn => {
-				SsoRequestOutcome::Ignored
-			},
-		}
+	/// Bind an external SSO transport to the wallet matching both of its keys.
+	pub fn open_sso_service(
+		&self,
+		own_statement_account_id: [u8; 32],
+		own_encryption_public_key: [u8; 32],
+	) -> Result<SsoAccountHolderService, AuthorityError> {
+		self.sso_responder
+			.open_service(own_statement_account_id, own_encryption_public_key)
 	}
 }
 
@@ -3676,103 +3669,6 @@ mod tests {
 			block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
 				.expect("installed database serves writes");
 		assert_eq!(answer, 42);
-	}
-
-	#[test]
-	fn answer_sso_request_distinguishes_disconnect_from_ignorable_messages() {
-		use crate::{
-			host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
-			platform::{HostInfo, PlatformInfo, SigningHostConfig},
-		};
-
-		const ENTROPY: [u8; 32] = [0xab; 32];
-
-		let config = SigningHostConfig::new(
-			HostInfo {
-				name: "Polkadot Mobile".to_string(),
-				icon: None,
-				version: None,
-				platform: truapi::latest::HostPlatform::Unknown,
-			},
-			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
-			"paseo".to_string(),
-		)
-		.expect("signing host config is valid");
-		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-		futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-
-		let disconnected = RemoteMessage {
-			message_id: "m1".to_string(),
-			data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-		};
-		let outcome = futures::executor::block_on(runtime.answer_sso_request(disconnected));
-		assert!(matches!(outcome, SsoRequestOutcome::Disconnected));
-
-		let response_variant = RemoteMessage {
-			message_id: "m2".to_string(),
-			data: RemoteMessageData::V1(v1::RemoteMessage::SignRawWithLegacyAccountResponse(
-				Response { responding_to: "m2".to_string(), payload: Ok(vec![]) },
-			)),
-		};
-		let outcome = futures::executor::block_on(runtime.answer_sso_request(response_variant));
-		assert!(matches!(outcome, SsoRequestOutcome::Ignored));
-	}
-
-	#[test]
-	fn answer_sso_request_returns_a_correlated_response() {
-		use crate::{
-			host_internal::sso_messages::{
-				ProductSubtreeRequest, RemoteMessage, RemoteMessageData, v1,
-			},
-			platform::{HostInfo, PlatformInfo, SigningHostConfig},
-		};
-
-		const ENTROPY: [u8; 32] = [0xab; 32];
-
-		let config = SigningHostConfig::new(
-			HostInfo {
-				name: "Polkadot Mobile".to_string(),
-				icon: None,
-				version: None,
-				platform: truapi::latest::HostPlatform::Unknown,
-			},
-			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
-			"paseo".to_string(),
-		)
-		.expect("signing host config is valid");
-		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-		futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-
-		let request = RemoteMessage {
-			message_id: "m3".to_string(),
-			data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(
-				ProductSubtreeRequest { product_id: "browse.dot".to_string() },
-			)),
-		};
-		let outcome = futures::executor::block_on(runtime.answer_sso_request(request));
-		let SsoRequestOutcome::Response { message } = outcome else {
-			panic!("expected a response outcome");
-		};
-		let response =
-			RemoteMessage::decode(&mut message.as_slice()).expect("valid response encoding");
-		assert_eq!(response.message_id, "m3:response");
-		let RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(payload)) =
-			response.data
-		else {
-			panic!("expected a product subtree response payload");
-		};
-		assert_eq!(payload.responding_to, "m3");
-		assert!(payload.payload.is_ok());
 	}
 
 	#[test]

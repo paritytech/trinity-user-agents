@@ -4,13 +4,11 @@
 
 mod local_activation;
 pub mod ring_vrf;
-mod sso_service;
 mod wallet_account_holder;
 
 use std::sync::Arc;
 
 pub use local_activation::LocalActivation;
-pub use sso_service::SigningHostSsoService;
 #[cfg(not(target_arch = "wasm32"))]
 pub use wallet_account_holder::TrackedStatementRenewalTarget;
 pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
@@ -28,12 +26,13 @@ use super::{
 	host_grants::{HostGrantGuard, HostGrantStore},
 	product_consent::ProductConsent,
 	ring_vrf_registry::RingVrfRegistryStore,
+	sso_responder_service::SsoResponderService,
 	validate_vrf_transcript,
 };
 use crate::{
 	host_internal::sso_messages::{OnExistingAllowancePolicy, ProductRequest, RingVrfError},
 	host_logic::session::{SessionInfo, SessionState},
-	runtime::{auth_state::AuthStateMachine, sso_service::SsoWithdrawals, statement_allowance},
+	runtime::{auth_state::AuthStateMachine, statement_allowance},
 };
 use futures::StreamExt;
 #[cfg(test)]
@@ -67,8 +66,7 @@ pub struct SigningHost {
 	grants: HostGrantStore,
 	/// Durable RFC-0024 registry, scoped by the active wallet root.
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
-	/// Paired-host requests the pairing host can still withdraw.
-	sso_withdrawals: SsoWithdrawals,
+	sso_responder: Arc<SsoResponderService>,
 	/// Keep preimage submissions in the core instead of the Bulletin chain,
 	/// also implied by unchecked allowance grants.
 	#[cfg(feature = "test-host")]
@@ -100,13 +98,13 @@ impl SigningHost {
 	) -> Arc<Self> {
 		let platform = services.platform.clone();
 		Arc::new(Self {
-			services,
+			services: services.clone(),
+			sso_responder: SsoResponderService::new(services, wallet.clone(), consent.clone()),
 			wallet,
 			auth_state: AuthStateMachine::new(platform.clone()),
 			consent,
 			grants: HostGrantStore::new(platform, WalletAccountHolder::GRANT_KEEPING),
 			ring_vrf_registry: registry,
-			sso_withdrawals: Default::default(),
 			#[cfg(feature = "test-host")]
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
 			#[cfg(not(target_arch = "wasm32"))]
@@ -165,14 +163,9 @@ impl SigningHost {
 		Self::with_wallet(services, wallet, registry, consent)
 	}
 
-	/// The wallet that answers this host's paired peers.
-	pub fn wallet(&self) -> &Arc<WalletAccountHolder> {
-		&self.wallet
-	}
-
-	/// Paired-host requests the pairing host can still withdraw.
-	pub fn sso_withdrawals(&self) -> &SsoWithdrawals {
-		&self.sso_withdrawals
+	/// Incoming SSO for this host's wallet, answered by its runtime.
+	pub fn sso_responder(&self) -> Arc<SsoResponderService> {
+		self.sso_responder.clone()
 	}
 
 	/// Retained grants, exposed so tests can seed and inspect them.

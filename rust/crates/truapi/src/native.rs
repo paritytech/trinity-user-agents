@@ -24,16 +24,14 @@ mod executor;
 mod platform;
 mod renderer;
 mod runtime;
+mod sso;
 mod subscribers;
 mod ws_bridge;
 
-pub use crate::{
-	host_internal::sso_messages::SsoRequestOutcome,
-	host_logic::{
-		dev_server::{DevServerError, DevServerProduct},
-		dotns::{NavigateDecision, PocketDeeplinkAction},
-		scanner::{ScanFilter, ScanVerdict},
-	},
+pub use crate::host_logic::{
+	dev_server::{DevServerError, DevServerProduct},
+	dotns::{NavigateDecision, PocketDeeplinkAction},
+	scanner::{ScanFilter, ScanVerdict},
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
@@ -48,6 +46,7 @@ pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
+pub use sso::SsoRequestOutcome;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use parity_scale_codec::{DecodeLimit, Encode};

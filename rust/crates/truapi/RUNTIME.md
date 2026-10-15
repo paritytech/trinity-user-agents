@@ -293,13 +293,9 @@ the page.
 
 ### Inter-host SSO
 
-`SsoRequestService::call(request)` sends typed requests to
-[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
-consent and business logic; [`SsoResponderService`](src/runtime/sso_responder_service.rs)
-owns the transport loop: it answers pairing, serves the session and drops
-duplicate requests. Resource consent is bound to the request's signing session:
-account changes, disconnects, and reactivation invalidate pending approval before
-allocation or key return. Allocation failure details stay in local transcripts.
+On the signing host, [`SsoResponderService`](src/runtime/sso_responder_service.rs) owns the transport: it answers pairing, runs the serve loop, drops duplicate requests, and gives each peer its own [`SsoAccountHolderService`](src/runtime/sso_account_holder_service.rs). That service is bound to the wallet activation that authenticated the peer's channel and calls `WalletAccountHolder` directly; once that activation ends it answers only not-connected. A native wallet with its own transport opens the same per-peer service from the native runtime.
+
+On the paired host, `SsoRequestService::call(request)` sends typed requests to the peer's `SsoAccountHolderService`. That service confirms each signing, transaction, VRF and allocation request with the user before `WalletAccountHolder` acts on it, and approval is bound to the request's signing session, so account changes, disconnects and reactivation invalidate a pending one. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
 Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and
