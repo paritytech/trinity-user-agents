@@ -142,8 +142,11 @@ extension WalletMainViewController: WalletMainViewProtocol {
             navigationItem.title = title
             return
         }
-        titleLabel.text = title
         titleLabel.typography = .titleLarge
+        titleLabel.attributedText = title.map {
+            CashLogo.styled($0, symbol: PaymentAssetBranding.shared.current.symbol, font: UIFont.app(.titleLarge))
+        }
+        titleLabel.accessibilityLabel = title
         titleLabel.sizeToFit()
         navigationItem.titleView = titleLabel
     }
