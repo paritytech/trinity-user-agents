@@ -33,9 +33,12 @@ import io.paritytech.polkadotapp.common.R as RCommon
 internal fun ChatListContent(
     state: ChatListUiState,
     onChatClick: (ChatListUiState.ChatItem) -> Unit,
-    onNewRequestsClick: () -> Unit
+    onNewRequestsClick: () -> Unit,
+    onArchivedRowClick: () -> Unit = {},
+    onMuteToggle: (ChatListUiState.ChatItem) -> Unit = {},
+    onArchiveToggle: (ChatListUiState.ChatItem) -> Unit = {},
 ) {
-    val hasContent = state.chats.isNotEmpty() || state.hasNewRequests
+    val hasContent = state.chats.isNotEmpty() || state.hasNewRequests || state.hasArchivedRow
 
     if (!hasContent) {
         // The empty state never scrolls, but SearchRevealContainer drives the reveal from nested
@@ -69,6 +72,20 @@ internal fun ChatListContent(
                 bottom = PolkadotTheme.spacings.medium
             ).add(LocalAppNavigationBarInsets.current).asPaddingValues()
         ) {
+            if (state.hasArchivedRow) {
+                item(key = "archived") {
+                    ArchivedChatsRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = PolkadotTheme.spacings.mediumIncreased)
+                            .padding(bottom = PolkadotTheme.spacings.mediumIncreased)
+                            .animateItem(),
+                        count = state.archivedCount,
+                        onClick = onArchivedRowClick,
+                    )
+                }
+            }
+
             if (state.hasNewRequests) {
                 item(key = "new_requests") {
                     NewRequestsItem(
@@ -90,11 +107,13 @@ internal fun ChatListContent(
                 val chat = state.chats[i]
 
                 Column(modifier = Modifier.animateItem()) {
-                    PolkadotChatListItem(
+                    ChatListRow(
                         modifier = Modifier.fillMaxWidth(),
                         chat = chat,
                         currentTimestamp = currentTimestamp,
                         onClick = { onChatClick(chat) },
+                        onMuteToggle = { onMuteToggle(chat) },
+                        onArchiveToggle = { onArchiveToggle(chat) },
                     )
 
                     if (i < state.chats.lastIndex) {

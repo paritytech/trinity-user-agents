@@ -14,5 +14,8 @@ object ChatHostCapabilities {
     /** `Custom` bodies that the product draws through its renderer: S7. */
     const val CUSTOM_BODIES = "custom_bodies"
 
+    /** The mute and the archive of the user, which the product reads through `UserStateChanged`: S54 to S56. */
+    const val MUTE_ARCHIVE = "mute_archive"
+
     val features: List<String> = listOf(PRODUCT_SOURCE_ROOMS, CUSTOM_BODIES)
 }

@@ -1,13 +1,17 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.list
 
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMuteDuration
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomUserStateService
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomUserStateModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.DraftPreviewUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.LastMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
@@ -33,6 +37,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -52,6 +57,7 @@ class ChatListViewModelTest {
         every { subscribeActiveCall() } returns flowOf(null)
     }
     private val resolver = mockk<ChatResourceResolver>()
+    private val userStateService = mockk<ChatRoomUserStateService>(relaxed = true)
 
     @Before
     fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
@@ -94,11 +100,65 @@ class ChatListViewModelTest {
         assertEquals("Sunny", (viewModel().firstRow().preview as LastMessageUiModel.Text).message)
     }
 
+    @Test
+    fun `a muted product room shows the mute`() = runBlocking<Unit> {
+        val muted = ChatRoomUserStateModel(mutedUntil = ChatRoomUserStateModel.MUTED_WITHOUT_END, archived = false)
+        chats.value = listOf(productRoom(productText = null, ongoing = false, userState = muted))
+
+        val row = viewModel().firstRow()
+
+        assertTrue(row.isMuted)
+        assertEquals(ChatListUiState.UserState(isMuted = true, isArchived = false), row.userState)
+    }
+
+    @Test
+    fun `an archived room leaves the main list for the archived section`() = runBlocking<Unit> {
+        val archived = ChatRoomUserStateModel(mutedUntil = null, archived = true)
+        chats.value = listOf(productRoom(productText = null, ongoing = false, userState = archived))
+        val viewModel = viewModel()
+
+        val main = viewModel.loaded { it.archivedCount == 1 }
+        assertTrue(main.chats.isEmpty())
+        assertTrue(main.hasArchivedRow)
+
+        viewModel.onArchivedRowClick()
+        val section = viewModel.loaded { it.showsArchived }
+        assertEquals(listOf(roomId), section.chats.map { it.chatId })
+        assertFalse(section.hasArchivedRow)
+
+        viewModel.onArchivedBack()
+        assertTrue(viewModel.loaded { !it.showsArchived }.chats.isEmpty())
+    }
+
+    @Test
+    fun `the swipe actions unmute at once, ask the mute duration, and toggle the archive`() = runBlocking<Unit> {
+        chats.value = listOf(productRoom(productText = null, ongoing = false))
+        val viewModel = viewModel()
+        val row = viewModel.firstRow()
+
+        viewModel.onMuteToggle(row)
+        assertEquals(roomId, viewModel.mutePicker.value)
+        viewModel.onMuteDurationSelected(ChatMuteDuration.EIGHT_HOURS)
+        assertNull(viewModel.mutePicker.value)
+        coVerify { userStateService.mute(roomId, ChatMuteDuration.EIGHT_HOURS) }
+
+        viewModel.onMuteToggle(row.copy(userState = ChatListUiState.UserState(isMuted = true, isArchived = false)))
+        coVerify { userStateService.unmute(roomId) }
+
+        viewModel.onArchiveToggle(row)
+        coVerify { userStateService.setArchived(roomId, archived = true) }
+    }
+
+    private suspend fun ChatListViewModel.loaded(predicate: (ChatListUiState) -> Boolean): ChatListUiState = withTimeout(5_000) {
+        (state.first { it is LoadingState.Loaded && predicate(it.data) } as LoadingState.Loaded).data
+    }
+
     private fun viewModel() = ChatListViewModel(
         interactor = interactor,
         router = mockk<ChatsRouter>(),
         messageMappingHelper = mockk(),
         roomPolicyMapper = ChatListRoomPolicyMapper(resolver),
+        userStateService = userStateService,
     )
 
     private suspend fun ChatListViewModel.firstRow(): ChatListUiState.ChatItem = withTimeout(5_000) {
@@ -106,7 +166,7 @@ class ChatListViewModelTest {
         (loaded as LoadingState.Loaded).data.chats.first()
     }
 
-    private fun productRoom(productText: String?, ongoing: Boolean): Chat {
+    private fun productRoom(productText: String?, ongoing: Boolean, userState: ChatRoomUserStateModel = ChatRoomUserStateModel.NONE): Chat {
         val lastMessage = ChatMessage(
             id = "message-1",
             chatId = roomId,
@@ -125,7 +185,7 @@ class ChatListViewModelTest {
             unreadBadge = ChatSummaryBadge.None,
             hasUnseenReaction = false,
             customPreviewRenderer = null,
-            roomPolicy = ChatRoomPolicy.Defaults.copy(listPreview = listPreview),
+            roomPolicy = ChatRoomPolicy.Defaults.copy(listPreview = listPreview, userState = userState),
         )
     }
 }

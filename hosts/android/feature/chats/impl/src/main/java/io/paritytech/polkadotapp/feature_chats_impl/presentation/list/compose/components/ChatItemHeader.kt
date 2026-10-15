@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
@@ -15,6 +16,9 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 
 private val MuteIconSize = 20.dp
+
+/** The tag of the speaker icon of a muted room. */
+internal const val MUTE_ICON_TAG = "chat_list_mute_icon"
 
 @Composable
 internal fun ChatItemHeader(
@@ -42,7 +46,9 @@ internal fun ChatItemHeader(
 
             if (isMuted) {
                 NovaIcon(
-                    modifier = Modifier.size(MuteIconSize),
+                    modifier = Modifier
+                        .size(MuteIconSize)
+                        .testTag(MUTE_ICON_TAG),
                     imageVector = NovaIcons.SpeakerXMark,
                     tint = PolkadotTheme.colors.fg.tertiary,
                 )

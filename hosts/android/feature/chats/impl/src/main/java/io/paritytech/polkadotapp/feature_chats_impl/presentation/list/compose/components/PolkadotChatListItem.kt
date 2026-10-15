@@ -86,6 +86,7 @@ internal fun PolkadotChatListItem(
                     badge = chat.badge,
                     hasReaction = chat.hasReaction,
                     isOngoing = chat.isOngoing,
+                    isMuted = chat.isMuted,
                 )
             }
         }

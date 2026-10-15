@@ -929,6 +929,16 @@
     <string name="product_chat_menu_remove_chat">Remove chat</string>
     <string name="product_chat_menu_remove_confirmation_text">Remove chat?</string>
     <string name="product_chat_menu_remove_confirmation_positive">Remove</string>
+    <string name="chat_room_mute">Mute</string>
+    <string name="chat_room_unmute">Unmute</string>
+    <string name="chat_room_archive">Archive</string>
+    <string name="chat_room_unarchive">Unarchive</string>
+    <string name="chat_room_mute_title">Mute notifications</string>
+    <string name="chat_room_mute_one_hour">For 1 hour</string>
+    <string name="chat_room_mute_eight_hours">For 8 hours</string>
+    <string name="chat_room_mute_one_week">For 1 week</string>
+    <string name="chat_room_mute_always">Always</string>
+    <string name="chat_list_archived">Archived</string>
 
     <string name="chain_health_state_connected">Connected</string>
     <string name="chain_health_state_not_producing">Not producing blocks</string>

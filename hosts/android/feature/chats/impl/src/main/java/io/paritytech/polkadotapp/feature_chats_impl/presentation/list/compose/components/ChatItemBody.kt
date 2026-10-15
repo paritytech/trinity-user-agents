@@ -33,6 +33,7 @@ internal fun ChatItemBody(
     badge: ChatListUiState.Badge,
     hasReaction: Boolean,
     isOngoing: Boolean,
+    isMuted: Boolean = false,
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
@@ -106,6 +107,7 @@ internal fun ChatItemBody(
             modifier = Modifier.padding(top = PolkadotTheme.spacings.tiny),
             badge = badge,
             hasReaction = hasReaction,
+            isMuted = isMuted,
         )
     }
 }
