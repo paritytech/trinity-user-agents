@@ -753,7 +753,11 @@ describe("product worker chat", () => {
   test(
     "runs a worker, shows its room and card, and carries actions and messages both ways",
     async () => {
-      const worker = publishApp({ "index.js": await buildChatWorker() });
+      const worker = publishApp({
+        "index.js": await buildChatWorker(),
+        "images/dot.svg":
+          '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="8"/></svg>',
+      });
       const context = await browser.newContext();
       context.setDefaultTimeout(STEP_MS);
       await serveNames(context, [
@@ -804,6 +808,14 @@ describe("product worker chat", () => {
         // Text in the tree stays text.
         expect(await card.locator("b").count()).toBe(0);
         expect(await card.innerText()).toContain("<b>not markup</b>");
+        // An image from the worker's archive is read from the storage of the
+        // worker's frame, which a credentialless frame keeps apart from this page's.
+        await page.waitForFunction(() => {
+          const image = document.querySelector<HTMLImageElement>(
+            '.product-card[data-message-type="fixture.counter"] img.pr-image',
+          );
+          return image?.complete === true && image.naturalWidth === 16;
+        });
 
         // A press reaches the worker, and its new tree replaces the card.
         await card.locator("button", { hasText: "bump" }).click();

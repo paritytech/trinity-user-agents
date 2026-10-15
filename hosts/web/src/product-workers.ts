@@ -255,20 +255,24 @@ export class ProductWorkers {
   }
 
   /**
-   * A URL for a file of `productId`'s worker archive, read from the verified
-   * copy the loader stored, or null when there is no such file.
+   * A URL for a file of `productId`'s worker archive, or null when there is
+   * no such file. It is read from the copy the loader checked and stored in
+   * the worker frame's own storage, which the worker itself can also write.
    */
   async archiveImage(productId: string, path: string): Promise<string | null> {
     const running = this.workers.get(productId);
     if (running?.cid == null || archivePath(`/${path}`) !== path) return null;
     const known = running.images.get(path);
     if (known !== undefined) return known;
-    const cache = await caches.open(archiveCacheName(running.cid));
-    const stored = await cache.match(fileKey(window.location.origin, path));
-    if (stored === undefined || this.workers.get(productId) !== running)
-      return null;
     const type = contentTypeOf(path);
     if (!type.startsWith("image/")) return null;
+    const stored = await running.handle
+      ?.frameCaches()
+      ?.match(fileKey(window.location.origin, path), {
+        cacheName: archiveCacheName(running.cid),
+      });
+    if (stored === undefined || this.workers.get(productId) !== running)
+      return null;
     const url = URL.createObjectURL(
       new Blob([await stored.arrayBuffer()], { type }),
     );
