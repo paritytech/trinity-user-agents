@@ -5,11 +5,14 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionHandlerModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
@@ -26,15 +29,19 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductLinkOpener
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductToolbarItemUiModel
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -77,6 +84,9 @@ class ChatFeedViewModelProductRoomTest {
         coEvery { sendUserEvent(any(), any()) } returns Result.success(Unit)
     }
     private val productLinkOpener = mockk<ChatProductLinkOpener>(relaxed = true)
+    private val resourceResolver = mockk<ChatResourceResolver> {
+        coEvery { resolve(any()) } returns Result.failure(IllegalStateException("no image in a unit test"))
+    }
     private val draftControllerFactory = mockk<ChatDraftController.Factory> {
         every { create(any(), any(), any()) } returns mockk(relaxed = true)
     }
@@ -128,6 +138,37 @@ class ChatFeedViewModelProductRoomTest {
         with(model) { coVerify(timeout = 5_000) { productLinkOpener.open("polkadot://weather.dot/docs") } }
     }
 
+    @Test
+    fun `the toolbar shows the buttons of the product`() = runBlocking<Unit> {
+        policy.value = ChatRoomPolicy.Defaults.copy(toolbar = listOf(toolbarAction("refresh", ChatActionHandlerModel.Callback)))
+
+        val toolbar = withTimeout(5_000) { viewModel().productRoomState.first { it.toolbar.inline.isNotEmpty() }.toolbar }
+
+        assertEquals(listOf(ProductToolbarItemUiModel("refresh", "refresh", icon = null)), toolbar.inline)
+    }
+
+    @Test
+    fun `a toolbar button sends ToolbarActionTriggered, or asks to open its link`() = runBlocking<Unit> {
+        policy.value = ChatRoomPolicy.Defaults.copy(
+            toolbar = listOf(
+                toolbarAction("refresh", ChatActionHandlerModel.Callback),
+                toolbarAction("help", ChatActionHandlerModel.Deeplink("polkadot://weather.dot/help")),
+            ),
+        )
+        val model = viewModel()
+        withTimeout(5_000) { model.productRoomState.first { it.toolbar.inline.size == 2 } }
+
+        model.onProductRoomAction(ProductRoomAction.Toolbar("refresh"))
+        model.onProductRoomAction(ProductRoomAction.Toolbar("help"))
+
+        coVerify(timeout = 5_000) { interactor.sendUserEvent(roomId, ChatRoomUserEvent.ToolbarActionTriggered("refresh")) }
+        coVerify(exactly = 1) { interactor.sendUserEvent(any(), any()) }
+        assertEquals(ChatMenuType.ProductLinkConfirmation("polkadot://weather.dot/help"), model.menuState.value.type)
+    }
+
+    private fun toolbarAction(id: String, handler: ChatActionHandlerModel) =
+        ChatToolbarActionModel(actionId = id, label = id, icon = ChatResourceModel.Inline("image/png", byteArrayOf(1).toDataByteArray()), handler = handler)
+
     private fun productAction(id: String, handler: ChatActionHandlerModel) =
         ChatProductActionModel(actionId = id, label = id, icon = null, destructive = false, handler = handler)
 
@@ -155,7 +196,7 @@ class ChatFeedViewModelProductRoomTest {
         attachmentExecutor = mockk(relaxed = true),
         dispatchers = TestCoroutineDispatchers(UnconfinedTestDispatcher()),
         resourceResolver = mockk(relaxed = true),
-        productRoomFactory = ChatProductRoomController.Factory(interactor, mockk(relaxed = true), productLinkOpener),
+        productRoomFactory = ChatProductRoomController.Factory(interactor, resourceResolver, productLinkOpener),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk<CallStateTracker> { every { observeActiveCall() } returns flowOf(null) },
     )

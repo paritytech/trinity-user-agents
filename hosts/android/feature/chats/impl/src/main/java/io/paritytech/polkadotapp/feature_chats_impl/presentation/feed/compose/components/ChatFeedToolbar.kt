@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.design.components.topbar.TopBarAction
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatToolbarAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductToolbarUiModel
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
@@ -27,9 +28,11 @@ internal fun ChatFeedToolbar(
     toolbarActions: ImmutableList<ChatToolbarAction>,
     subtitle: String?,
     showAvatar: Boolean,
+    productToolbar: ProductToolbarUiModel,
     onBack: () -> Unit,
     onStartCallClick: (withVideo: Boolean) -> Unit,
-    onMenuClick: () -> Unit
+    onMenuClick: () -> Unit,
+    onProductToolbarClick: (actionId: String) -> Unit,
 ) {
     val isLoaded = displayState is LoadingState.Loaded
     val displayData = displayState.dataOrNull
@@ -64,11 +67,18 @@ internal fun ChatFeedToolbar(
         }.toPersistentList()
     }
 
+    val hasProductButtons = isLoaded && (productToolbar.inline.isNotEmpty() || productToolbar.overflow.isNotEmpty())
+
     PolkadotTopBar(
         navigationAction = rememberTopBarAction(action = onBack, icon = NovaIcons.ArrowLeft),
         title = displayData?.username,
         subtitle = subtitle,
         actions = resolvedActions,
         leadingContent = leadingAvatar,
+        extraActions = if (hasProductButtons) {
+            { ProductToolbarButtons(toolbar = productToolbar, onClick = onProductToolbarClick) }
+        } else {
+            null
+        },
     )
 }

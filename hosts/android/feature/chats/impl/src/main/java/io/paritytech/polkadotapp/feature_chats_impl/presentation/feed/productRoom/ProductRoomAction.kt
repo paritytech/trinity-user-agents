@@ -4,4 +4,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRo
 sealed interface ProductRoomAction {
     /** The user confirmed the link of a product action. */
     data class OpenLink(val url: String) : ProductRoomAction
+
+    /** A press on a button of the toolbar. */
+    data class Toolbar(val actionId: String) : ProductRoomAction
 }

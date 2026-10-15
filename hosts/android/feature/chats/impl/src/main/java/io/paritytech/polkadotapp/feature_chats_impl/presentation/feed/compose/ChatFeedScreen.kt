@@ -46,6 +46,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.LocalChatFeedTimestampAnchor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.*
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.LocalChatMessageTimeFormatter
@@ -69,6 +70,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
     val customAppearance by contract.customAppearance.collectAsStateWithLifecycle()
     val revealingMessageId by contract.revealingMessageId.collectAsStateWithLifecycle()
     val roomState by contract.roomState.collectAsStateWithLifecycle()
+    val productRoomState by contract.productRoomState.collectAsStateWithLifecycle()
     val popupState = contract.popupState.collectAsStateWithLifecycle().value
     var menuLayoutInfo by remember { mutableStateOf<MessageLayoutInfo?>(null) }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -111,6 +113,8 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onMessageRevealComplete = contract::onMessageRevealComplete,
         toolbarActions = toolbarActions,
         roomState = roomState,
+        productRoomState = productRoomState,
+        onProductRoomAction = contract::onProductRoomAction,
         highlightEvents = contract.highlightEvents,
         scrollToPosition = contract.scrollToPosition,
         onBackClick = contract::onBackClick,
@@ -184,6 +188,8 @@ private fun ChatFeedScreenInternal(
     onMessageRevealComplete: (ChatMessageId) -> Unit,
     toolbarActions: ImmutableList<ChatToolbarAction>,
     roomState: ChatRoomUiState,
+    productRoomState: ProductRoomUiState,
+    onProductRoomAction: (ProductRoomAction) -> Unit,
     highlightEvents: Flow<HighlightedMessage>,
     scrollToPosition: Flow<Int>,
     onBackClick: () -> Unit,
@@ -231,9 +237,11 @@ private fun ChatFeedScreenInternal(
                     toolbarActions = toolbarActions,
                     subtitle = roomState.subtitle,
                     showAvatar = config.showAvatar,
+                    productToolbar = productRoomState.toolbar,
                     onBack = onBackClick,
                     onStartCallClick = onStartCallClick,
                     onMenuClick = onMenuClick,
+                    onProductToolbarClick = { onProductRoomAction(ProductRoomAction.Toolbar(it)) },
                 )
             }
 
@@ -367,6 +375,8 @@ private fun ChatFeedPreview() {
                     onMessageRevealComplete = {},
                     toolbarActions = persistentListOf(ChatToolbarAction.VIDEO_CALL),
                     roomState = ChatRoomUiState.PersonChat,
+                    productRoomState = ProductRoomUiState.None,
+                    onProductRoomAction = {},
                     highlightEvents = emptyFlow(),
                     scrollToPosition = emptyFlow(),
                     onBackClick = {},

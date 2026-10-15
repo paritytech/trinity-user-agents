@@ -157,6 +157,8 @@ class ChatFeedViewModel @Inject constructor(
         },
     )
 
+    override val productRoomState = productRoom.uiState
+
     private val reactions = feedSnapshot.map { it.reactions }.distinctUntilChanged().shareInBackground()
 
     private val revisions = feedSnapshot.map { it.revisions }.distinctUntilChanged().shareInBackground()

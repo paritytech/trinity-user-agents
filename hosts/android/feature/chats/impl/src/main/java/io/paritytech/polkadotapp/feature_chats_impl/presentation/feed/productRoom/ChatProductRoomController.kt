@@ -6,6 +6,8 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionHandlerModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
@@ -15,12 +17,19 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFee
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
+import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -30,6 +39,7 @@ import javax.inject.Inject
  * `ChatProductRoomPresenter`. Each question to the product has the lookup time of 02-DESIGN §3.6. When the product
  * refuses a question or does not answer it in time, the room uses the host default.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class ChatProductRoomController(
     private val scope: ComputationalScope,
     private val messageDisplay: MessageDisplay,
@@ -49,6 +59,22 @@ class ChatProductRoomController(
 
         fun showFailure(error: Throwable)
     }
+
+    private val toolbarActions = roomPolicy
+        .map { it?.toolbar.orEmpty() }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /** The toolbar draws at once with the labels, then again with the icons when they load (P6.2). */
+    private val toolbar = toolbarActions
+        .transformLatest { actions ->
+            emit(actions.toToolbar(icons = emptyMap()))
+            if (actions.any { it.icon != null }) emit(actions.toToolbar(actions.resolveIcons()))
+        }
+
+    val uiState: StateFlow<ProductRoomUiState> = toolbar
+        .map { ProductRoomUiState(toolbar = it) }
+        .stateIn(scope, SharingStarted.Eagerly, ProductRoomUiState.None)
 
     private val _messageMenu = MutableStateFlow<ProductMessageMenuState?>(null)
     val messageMenu: StateFlow<ProductMessageMenuState?> = _messageMenu.asStateFlow()
@@ -85,7 +111,13 @@ class ChatProductRoomController(
     fun handle(action: ProductRoomAction) {
         when (action) {
             is ProductRoomAction.OpenLink -> openLink(action.url)
+            is ProductRoomAction.Toolbar -> pressToolbar(action.actionId)
         }
+    }
+
+    private fun pressToolbar(actionId: String) {
+        val action = toolbarActions.value.find { it.actionId == actionId } ?: return
+        perform(action.handler, ChatRoomUserEvent.ToolbarActionTriggered(actionId))
     }
 
     private fun openLink(url: String) {
@@ -106,10 +138,19 @@ class ChatProductRoomController(
     }
 
     /** The image models of the icons of product entries, by action id. An icon that does not load has none. */
-    private suspend fun List<ChatProductActionModel>.resolveIcons(): Map<String, Any> = mapNotNull { action ->
-        val icon = action.icon ?: return@mapNotNull null
-        resourceResolver.resolve(icon).getOrNull()?.let { action.actionId to it.model }
-    }.toMap()
+    @JvmName("resolveMenuIcons")
+    private suspend fun List<ChatProductActionModel>.resolveIcons(): Map<String, Any> =
+        resolveIcons(map { it.actionId to it.icon })
+
+    @JvmName("resolveToolbarIcons")
+    private suspend fun List<ChatToolbarActionModel>.resolveIcons(): Map<String, Any> =
+        resolveIcons(map { it.actionId to it.icon })
+
+    private suspend fun resolveIcons(icons: List<Pair<String, ChatResourceModel?>>): Map<String, Any> =
+        icons.mapNotNull { (actionId, icon) ->
+            icon ?: return@mapNotNull null
+            resourceResolver.resolve(icon).getOrNull()?.let { actionId to it.model }
+        }.toMap()
 
     class Factory @Inject constructor(
         private val interactor: ChatFeedInteractor,
@@ -134,6 +175,14 @@ class ChatProductRoomController(
             productLinkOpener = productLinkOpener,
         )
     }
+}
+
+internal fun List<ChatToolbarActionModel>.toToolbar(icons: Map<String, Any>): ProductToolbarUiModel {
+    val items = map { ProductToolbarItemUiModel(it.actionId, it.label, icons[it.actionId]) }
+    return ProductToolbarUiModel(
+        inline = items.take(ProductToolbarUiModel.INLINE_COUNT).toImmutableList(),
+        overflow = items.drop(ProductToolbarUiModel.INLINE_COUNT).toImmutableList(),
+    )
 }
 
 private fun ChatMessageMenuModel.actions(): List<ChatProductActionModel> = when (this) {

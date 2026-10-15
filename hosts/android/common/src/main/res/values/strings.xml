@@ -881,6 +881,7 @@
     <string name="chat_product_menu_loading">Loading…</string>
     <string name="chat_product_link_question">Open this link?</string>
     <string name="chat_product_link_open">Open</string>
+    <string name="chat_product_toolbar_more">More actions</string>
 
     <string name="notification_channel_name_video_game">Weekly game</string>
     <string name="notification_channel_description_video_game">Notifications about upcoming weekly games</string>
