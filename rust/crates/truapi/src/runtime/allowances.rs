@@ -47,7 +47,7 @@ impl AllowanceCacheKey {
 
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
 struct StoredAllowanceEntry {
-	product_id: String,
+	product_id: ProductId,
 	resource: AllowanceResource,
 	slot_account_key: Vec<u8>,
 }
@@ -62,7 +62,7 @@ pub async fn read_allowance_key(
 	let entries = read_entries(storage, session).await?;
 	Ok(entries
 		.into_iter()
-		.find(|entry| entry.product_id == product_id.as_str() && entry.resource == resource)
+		.find(|entry| &entry.product_id == product_id && entry.resource == resource)
 		.map(|entry| entry.slot_account_key))
 }
 
@@ -76,10 +76,9 @@ pub async fn write_allowance_key(
 	slot_account_key: Vec<u8>,
 ) -> Result<(), AuthorityError> {
 	let mut entries = read_entries(storage, session).await?;
-	entries
-		.retain(|entry| !(entry.product_id == product_id.as_str() && entry.resource == resource));
+	entries.retain(|entry| !(&entry.product_id == product_id && entry.resource == resource));
 	entries.push(StoredAllowanceEntry {
-		product_id: product_id.to_string(),
+		product_id: product_id.clone(),
 		resource,
 		slot_account_key,
 	});
@@ -99,8 +98,7 @@ pub async fn remove_allowance_key(
 ) -> Result<(), AuthorityError> {
 	let mut entries = read_entries(storage, session).await?;
 	let before = entries.len();
-	entries
-		.retain(|entry| !(entry.product_id == product_id.as_str() && entry.resource == resource));
+	entries.retain(|entry| !(&entry.product_id == product_id && entry.resource == resource));
 	if entries.len() == before {
 		return Ok(());
 	}
@@ -128,7 +126,7 @@ pub async fn clear_product_allowance_keys(
 		},
 	};
 	let before = entries.len();
-	entries.retain(|entry| entry.product_id != product_id.as_str());
+	entries.retain(|entry| &entry.product_id != product_id);
 	if entries.len() == before {
 		return Ok(());
 	}
@@ -235,6 +233,17 @@ mod tests {
 			self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
 			Ok(())
 		}
+	}
+
+	#[test]
+	fn entries_stored_with_string_ids_read_and_write_unchanged() {
+		// Installs already hold entries keyed by the id string, so the stored
+		// format must stay that string.
+		let stored =
+			vec![("dotli.dot".to_string(), AllowanceResource::StatementStore, vec![2u8; 64])]
+				.encode();
+		let entries = decode_entries(&stored).expect("string-keyed entries decode");
+		assert_eq!(encode_entries(entries), stored);
 	}
 
 	#[test]

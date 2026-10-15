@@ -127,7 +127,7 @@ struct PersistedAutoSigningKey {
 	#[zeroize(skip)]
 	owner: AutoSigningOwner,
 	#[zeroize(skip)]
-	product_id: String,
+	product_id: ProductId,
 	#[zeroize(skip)]
 	expected_product_subtree_public_key: [u8; 32],
 	secret: [u8; 64],
@@ -1533,7 +1533,7 @@ impl PairingHost {
 						.map_err(|error| error.reason),
 					Ok(mut keys) => {
 						let before = keys.len();
-						keys.retain(|key| key.product_id != product_id.as_str());
+						keys.retain(|key| &key.product_id != product_id);
 						if keys.len() == before {
 							Ok(())
 						} else if keys.is_empty() {
@@ -1651,12 +1651,10 @@ impl PairingHost {
 				},
 				None => Vec::new(),
 			};
-		keys.retain(|persisted| {
-			persisted.owner == owner && persisted.product_id != product_id.as_str()
-		});
+		keys.retain(|persisted| persisted.owner == owner && &persisted.product_id != product_id);
 		keys.push(PersistedAutoSigningKey {
 			owner,
-			product_id: product_id.to_string(),
+			product_id: product_id.clone(),
 			expected_product_subtree_public_key,
 			secret,
 			ring_vrf_domain_entropy,
@@ -1741,8 +1739,7 @@ impl PairingHost {
 			let _ = self.platform.clear_core_storage(CoreStorageKey::AutoSigningKeys).await;
 			return Ok(None);
 		}
-		let Some(persisted) =
-			keys.iter().find(|persisted| persisted.product_id == product_id.as_str())
+		let Some(persisted) = keys.iter().find(|persisted| &persisted.product_id == product_id)
 		else {
 			return if legacy_present {
 				Err(AuthorityError::Unavailable {
