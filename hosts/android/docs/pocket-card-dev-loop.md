@@ -86,7 +86,8 @@ Images draw as they will on a published card:
 - An `Archive` path loads from the server the face came from, at that path. Serve the folder that
   becomes your worker archive, so `images/stamp.png` is at `http://127.0.0.1:5173/images/stamp.png`
   here and at the same path inside the archive once published.
-- An archive path that leaves that server, or contains a `..` segment, draws as empty space.
+- An archive path is always read as a file on that server, as the archive reads it. A path that climbs
+  above the root with `..` draws as empty space.
 
 Pressing **Draw** again also fetches the images again, so an edited image shows without restarting
 the app.

@@ -24,17 +24,24 @@ class PocketFacePreviewInteractor @Inject constructor(
         is JsImageSource.Bulletin -> ipfsContentLookup.getIpfsLinkFor(source.cid)
     }
 
+    // Each segment is a literal file name, as the archive reads it, so the address cannot leave the face's server.
     private fun archiveImageUrl(faceUrl: String, path: String): String {
-        // Checked before resolving, which quietly drops a `..` above the root.
-        require(".." !in path.split("/")) { "'$path' escapes the archive" }
+        val segments = path.split("/")
+        require(!segments.climbsAboveRoot()) { "'$path' escapes the archive" }
 
-        val face = faceUrl.toHttpUrl()
-        val image = requireNotNull(face.resolve("/")?.resolve(path)) { "'$path' is not an archive path" }
-
-        require(image.scheme == face.scheme && image.host == face.host && image.port == face.port) {
-            "'$path' leaves the face's server"
-        }
-
-        return image.toString()
+        return segments
+            .fold(faceUrl.toHttpUrl().newBuilder().encodedPath("/").query(null).fragment(null)) { url, segment ->
+                url.addPathSegment(segment)
+            }
+            .build()
+            .toString()
     }
+
+    private fun List<String>.climbsAboveRoot(): Boolean = runningFold(0) { depth, segment ->
+        when (segment) {
+            ".." -> depth - 1
+            "", "." -> depth
+            else -> depth + 1
+        }
+    }.any { it < 0 }
 }

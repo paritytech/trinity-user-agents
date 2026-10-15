@@ -33,6 +33,7 @@ import io.paritytech.polkadotapp.design.components.text.NovaTextField
 import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
@@ -111,7 +112,7 @@ private fun PocketFacePreviewScreenInternal(
                         shape = PolkadotTheme.shapes.large,
                         color = PolkadotTheme.colors.bg.surface.container,
                     ) {
-                        CompositionLocalProvider(LocalJsImageResolver provides rememberUncached(imageResolver)) {
+                        CompositionLocalProvider(LocalJsImageResolver provides rememberUncachedArchive(imageResolver)) {
                             key(state.draws) {
                                 FaceOrExplanation(face = state.face)
                             }
@@ -149,14 +150,19 @@ private fun FaceOrExplanation(face: LoadingState<JsWidget>?) {
     }
 }
 
-// Drawing again is how an edited image is picked up, so no cache may answer in place of the server.
+// Drawing again is how an edited archive image is picked up, so no cache may answer for the dev server.
+// A Bulletin CID names content that never changes, so it keeps the cache.
 @Composable
-private fun rememberUncached(resolver: JsImageResolver): JsImageResolver {
+private fun rememberUncachedArchive(resolver: JsImageResolver): JsImageResolver {
     val context = LocalContext.current
 
     return remember(resolver, context) {
         JsImageResolver { source ->
-            resolver.resolve(source)?.let { address ->
+            val address = resolver.resolve(source)
+
+            if (address == null || source is JsImageSource.Bulletin) {
+                address
+            } else {
                 ImageRequest.Builder(context)
                     .data(address)
                     .memoryCachePolicy(CachePolicy.DISABLED)

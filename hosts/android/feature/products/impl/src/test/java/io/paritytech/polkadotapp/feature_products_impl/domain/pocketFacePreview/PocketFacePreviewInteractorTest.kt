@@ -32,6 +32,21 @@ class PocketFacePreviewInteractorTest {
             "http://127.0.0.1:5173/images/stamp.png",
             archiveImage("images/stamp.png").getOrThrow(),
         )
+        assertEquals(
+            "http://127.0.0.1:5173/images/stamp.png",
+            archiveImage("images/stamp.png", "$FACE_URL?cachebust=1#top").getOrThrow(),
+        )
+    }
+
+    /**
+     * A card reads an archive path as a file inside the archive, not as a URL. The preview must find the same
+     * file, or it draws an image where the card has none.
+     */
+    @Test
+    fun `an archive path is read as a file in the archive, as a card reads it`() = runTest {
+        assertEquals("http://127.0.0.1:5173/images/stamp.png", archiveImage("images/badges/../stamp.png").getOrThrow())
+        assertEquals("http://127.0.0.1:5173/stamp.png%3Fv=2", archiveImage("stamp.png?v=2").getOrThrow())
+        assertEquals("http://127.0.0.1:5173/x/%252e%252e/stamp.png", archiveImage("x/%2e%2e/stamp.png").getOrThrow())
     }
 
     /** A phone with no cable reaches the developer's machine through an HTTPS tunnel. */
