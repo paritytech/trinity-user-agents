@@ -86,8 +86,8 @@ defines the runtime protocols (+ the SPA factory protocol); `Chat/Native/`, `Cha
 `SPA/Native/`, `SPA/Rust/` hold the per-surface, per-mode runtimes and scripts factories.
 Shared rust infrastructure lives in `TrUAPI/`: `RustRuntimeEnvironment` +
 `RustRuntimeSessionParams` (per-runtime core assembly), `RustRuntimeBridge`
-(HostCallbacks), `TrUAPIConfirmationPresenter`, `Connection/` (chain connection pool, rpc
-adapter, frames), `Storage/` (`TrUAPILocalStorage`), and `Preimage/`
+(HostCallbacks), `TrUAPIConfirmationPresenter`, `Connection/` (per-lease raw socket pool
+`TrUAPIV2SpecConnectionPool` + the `TrUAPIChainConnecting` seam), `Storage/` (`TrUAPILocalStorage`), and `Preimage/`
 (`TrUAPIPreimageCache`). The rust core itself is the remote `TrUAPIHost` SPM package. The
 debug playground lives in `Modules/DebugSettings/` (`TrUAPIPlaygroundViewFactory`,
 presented by `DebugSettingsWireframe.showTrUAPIPlayground(from:)`), and assembles its SPA
@@ -173,6 +173,18 @@ Rules:
    carries (see `StatementProofDto`, `CreateStatementProofAuthorizedDto`,
    `PaymentTopUpRequestDto`/`HostPaymentTopUpStatusDto`). Keeps the wire contract in one typed place,
    off the handler bodies.
+9. **One `chain_connect` = one node socket.** `TrUAPIV2SpecConnectionPool` backs every core
+   lease with its own `ChainSocket` (from `ChainRegistryProtocol.makeChainSocket`). The host
+   never multiplexes leases onto a shared engine, never rewrites request or subscription ids,
+   never resends after a reconnect and never hides one: every transport death (connect failure or
+   timeout, peer close, error, missed ping, foreground expiry) is reported once via `chainDidClose`,
+   whenever it happens, and the core rebuilds on a fresh `chain_connect`. A lease the core releases
+   (`chain_close`) ends silently. Backgrounding by itself closes and probes nothing, so the pool
+   gives products no reason to retry against an app about to be suspended; a socket that really
+   dies while the app keeps running in the background (calls, background tasks) is still reported.
+   On `willEnterForeground` the pool revalidates every socket that lived through the background:
+   past `ResumePolicy.expiryThreshold` it `expire()`s all of them, otherwise it
+   `probe(timeout:)`s each and only silent ones close (`.livenessTimeout`).
 
 ## Seams
 
