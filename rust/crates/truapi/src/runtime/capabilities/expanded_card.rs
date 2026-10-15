@@ -17,11 +17,11 @@ use truapi::{
 use super::from_latest_error;
 use crate::{
 	platform::{ExpandedCardFaceOutcome, ProductExecutionKind},
-	runtime::ProductRuntimeHost,
+	runtime::{AccountHolder, ProductRuntimeHost},
 };
 
 #[truapi::async_trait]
-impl ExpandedCard for ProductRuntimeHost {
+impl<H: AccountHolder> ExpandedCard for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_face_shown"))]
 	async fn set_face_shown(
 		&self,

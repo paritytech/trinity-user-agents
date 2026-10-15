@@ -38,9 +38,9 @@ use crate::{
 	frame::ProtocolMessage,
 	host_logic::worker::WorkerLedger,
 	runtime::{
-		ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-		DevicePairingObserver, HostSession, LocalActivation, PairedSsoPeer, PairingHostRole,
-		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
+		AccountHolder, ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+		DevicePairingObserver, HostAccounts, HostSession, LocalActivation, PairedSsoPeer,
+		PairingHost, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
 		SigningHostRole, SsoAccountHolderService, SsoResponderService,
 	},
 	subscription::{HostInitiatedSubscriptionManager, Spawner},
@@ -184,7 +184,7 @@ fn product_context(product_id: &str) -> Result<ProductContext, v01::GenericError
 /// is a signing-host operation and is not present here.
 pub struct PairingHostRuntime {
 	services: Arc<RuntimeServices>,
-	pairing_host: Arc<PairingHostRole>,
+	pairing: PairingHost,
 }
 
 impl PairingHostRuntime {
@@ -193,7 +193,7 @@ impl PairingHostRuntime {
 	/// For test hosts only, with the `test-host` feature enabled.
 	#[cfg(feature = "test-host")]
 	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.pairing_host.set_submit_preimages_locally(local);
+		self.pairing.accounts().set_submit_preimages_locally(local);
 	}
 
 	/// Build a long-lived pairing-host runtime around a platform implementation.
@@ -248,9 +248,9 @@ impl PairingHostRuntime {
 		if let Some(contacts_platform) = contacts_platform {
 			services.install_contacts_platform(contacts_platform);
 		}
-		let pairing_host = PairingHostRole::new(services.clone(), config);
-		pairing_host.session().clone().start_session_store_sync(spawner);
-		Self { services, pairing_host }
+		let pairing = PairingHost::new(services.clone(), config);
+		pairing.session().clone().start_session_store_sync(spawner);
+		Self { services, pairing }
 	}
 
 	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
@@ -343,8 +343,8 @@ impl PairingHostRuntime {
 	) -> ProductRuntime {
 		ProductRuntime::new(
 			self.services.clone(),
-			self.pairing_host.clone(),
-			self.pairing_host.session().clone(),
+			self.pairing.accounts().clone(),
+			self.pairing.session().clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
 			sink,
@@ -356,8 +356,8 @@ impl PairingHostRuntime {
 	pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
 		HostAdmin::new(
 			self.services.clone(),
-			self.pairing_host.clone(),
-			self.pairing_host.session().clone(),
+			self.pairing.accounts().clone(),
+			self.pairing.session().clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
 		)
@@ -366,7 +366,7 @@ impl PairingHostRuntime {
 	/// Disconnect the active account-authority session.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
-		self.pairing_host.session().disconnect().await;
+		self.pairing.session().disconnect().await;
 	}
 
 	/// Log out and discard the old pairing keypair.
@@ -375,17 +375,15 @@ impl PairingHostRuntime {
 	/// presents a new deeplink suitable for another signing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
 	pub async fn logout(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.logout_and_reset_pairing()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.pairing.logout().await.map_err(|reason| v01::GenericError { reason })
 	}
 
 	/// Clear one product's capability state while preserving the active
 	/// session and unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-		self.pairing_host
+		self.pairing
+			.accounts()
 			.clear_product_state(product_id)
 			.await
 			.map_err(|reason| v01::GenericError { reason })
@@ -396,7 +394,11 @@ impl PairingHostRuntime {
 		&self,
 		ring: &v01::RingLocation,
 	) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-		self.pairing_host.ring_vrf_providers(ring).await.map_err(ring_vrf_admin_error)
+		self.pairing
+			.accounts()
+			.ring_vrf_providers(ring)
+			.await
+			.map_err(ring_vrf_admin_error)
 	}
 
 	/// Current provider selected for an internal well-known-ring feature.
@@ -404,7 +406,8 @@ impl PairingHostRuntime {
 		&self,
 		ring: &v01::RingLocation,
 	) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
-		self.pairing_host
+		self.pairing
+			.accounts()
 			.selected_ring_vrf_provider(ring)
 			.await
 			.map_err(ring_vrf_admin_error)
@@ -416,7 +419,8 @@ impl PairingHostRuntime {
 		ring: v01::RingLocation,
 		handle: v01::ProductAccountId,
 	) -> Result<(), v01::GenericError> {
-		self.pairing_host
+		self.pairing
+			.accounts()
 			.select_ring_vrf_provider(ring, handle)
 			.await
 			.map_err(ring_vrf_admin_error)
@@ -432,14 +436,14 @@ impl PairingHostRuntime {
 	/// running their own P2P chat channel for the paired identity.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.session_chat_identity_key"))]
 	pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
-		self.pairing_host.session().session_state().current()?.identity_chat_private_key
+		self.pairing.session().session_state().current()?.identity_chat_private_key
 	}
 
 	/// Read the active session's sr25519 statement-store secret, for hosts
 	/// running their own statement-store traffic against the advertised account.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_statement_key"))]
 	pub fn device_statement_key(&self) -> Option<[u8; 64]> {
-		Some(self.pairing_host.session().session_state().current()?.sso?.ss_secret)
+		Some(self.pairing.session().session_state().current()?.sso?.ss_secret)
 	}
 
 	/// Read this device's X25519 encryption secret, for hosts running device
@@ -460,14 +464,14 @@ impl PairingHostRuntime {
 		product_id: &str,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		product_subtree_public_key(self.pairing_host.as_ref(), product_id, timeout_ms).await
+		product_subtree_public_key(self.pairing.accounts().as_ref(), product_id, timeout_ms).await
 	}
 
 	/// Clear the canonical paired session and all capability caches/storage
 	/// without sending a peer-disconnect notice.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
 	pub async fn reset_session_state(&self) {
-		self.pairing_host.session().reset_session_state().await;
+		self.pairing.session().reset_session_state().await;
 	}
 
 	/// Start or join the pairing-host login flow for one product.
@@ -477,7 +481,7 @@ impl PairingHostRuntime {
 		product_id: &str,
 	) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
 		let product = product_context(product_id)?;
-		match self.pairing_host.session().request_login(&product).await {
+		match self.pairing.session().request_login(&product).await {
 			Ok(response) => Ok(response),
 			Err(error) => Err(v01::GenericError { reason: pairing_login_error_reason(error) }),
 		}
@@ -487,7 +491,7 @@ impl PairingHostRuntime {
 	/// active.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.cancel_pairing"))]
 	pub fn cancel_pairing(&self) {
-		self.pairing_host.session().cancel_login();
+		self.pairing.session().cancel_login();
 	}
 
 	/// Activate a canonical session blob supplied by an external encrypted
@@ -497,7 +501,7 @@ impl PairingHostRuntime {
 	/// connected-session installation have completed.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_external_session"))]
 	pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), v01::GenericError> {
-		self.pairing_host
+		self.pairing
 			.session()
 			.activate_external_session(blob)
 			.await
@@ -511,7 +515,7 @@ impl PairingHostRuntime {
 	/// immediately use the restored authority session.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
 	pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
+		self.pairing
 			.session()
 			.activate_stored_session()
 			.await
@@ -522,7 +526,7 @@ impl PairingHostRuntime {
 	/// have changed and should be re-read.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_session_store_changed"))]
 	pub fn notify_session_store_changed(&self) {
-		self.pairing_host.session().notify_session_store_changed();
+		self.pairing.session().notify_session_store_changed();
 	}
 
 	/// Read a stored permission authorization status for a product without prompting.
@@ -622,7 +626,7 @@ impl SigningHostRuntime {
 	/// For test hosts only, with the `test-host` feature enabled.
 	#[cfg(feature = "test-host")]
 	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.signing_host.set_submit_preimages_locally(local);
+		self.signing_host.accounts().set_submit_preimages_locally(local);
 	}
 
 	/// The product's hard-subtree public key, derived from the active session
@@ -863,29 +867,10 @@ impl SigningHostRuntime {
 	) -> ProductRuntime {
 		ProductRuntime::new(
 			self.services.clone(),
-			self.signing_host.clone(),
+			self.signing_host.accounts().clone(),
 			self.signing_host.clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
-			sink,
-		)
-	}
-
-	/// Build one product connection with adapters scoped to one native
-	/// executable while sharing this runtime's authentication and services.
-	#[cfg(not(target_arch = "wasm32"))]
-	pub fn product_runtime_with(
-		&self,
-		product: ProductContext,
-		adapters: ConnectionAdapters,
-		sink: Arc<dyn FrameSink>,
-	) -> ProductRuntime {
-		ProductRuntime::new(
-			self.services.clone(),
-			self.signing_host.clone(),
-			self.signing_host.clone(),
-			product,
-			adapters,
 			sink,
 		)
 	}
@@ -895,27 +880,10 @@ impl SigningHostRuntime {
 	pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
 		HostAdmin::new(
 			self.services.clone(),
-			self.signing_host.clone(),
+			self.signing_host.accounts().clone(),
 			self.signing_host.clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
-		)
-	}
-
-	/// Build a product administration handle with adapters scoped to one
-	/// native executable connection.
-	#[cfg(not(target_arch = "wasm32"))]
-	pub fn product_admin_with(
-		&self,
-		product: ProductContext,
-		adapters: ConnectionAdapters,
-	) -> HostAdmin {
-		HostAdmin::new(
-			self.services.clone(),
-			self.signing_host.clone(),
-			self.signing_host.clone(),
-			product,
-			adapters,
 		)
 	}
 
@@ -996,7 +964,11 @@ impl SigningHostRuntime {
 		&self,
 		ring: &v01::RingLocation,
 	) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-		self.signing_host.ring_vrf_providers(ring).await.map_err(ring_vrf_admin_error)
+		self.signing_host
+			.accounts()
+			.ring_vrf_providers(ring)
+			.await
+			.map_err(ring_vrf_admin_error)
 	}
 
 	/// Current provider selected for an internal well-known-ring feature.
@@ -1005,6 +977,7 @@ impl SigningHostRuntime {
 		ring: &v01::RingLocation,
 	) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
 		self.signing_host
+			.accounts()
 			.selected_ring_vrf_provider(ring)
 			.await
 			.map_err(ring_vrf_admin_error)
@@ -1017,6 +990,7 @@ impl SigningHostRuntime {
 		handle: v01::ProductAccountId,
 	) -> Result<(), v01::GenericError> {
 		self.signing_host
+			.accounts()
 			.select_ring_vrf_provider(ring, handle)
 			.await
 			.map_err(ring_vrf_admin_error)
@@ -1140,6 +1114,42 @@ impl SigningHostRuntime {
 		self.sso_responder
 			.open_service(own_statement_account_id, own_encryption_public_key)
 	}
+}
+
+/// Build one product connection with adapters scoped to one native
+/// executable while sharing this runtime's authentication and services.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn product_runtime_with_adapters(
+	host: &SigningHostRuntime,
+	product: ProductContext,
+	adapters: ConnectionAdapters,
+	sink: Arc<dyn FrameSink>,
+) -> ProductRuntime {
+	ProductRuntime::new(
+		host.services.clone(),
+		host.signing_host.accounts().clone(),
+		host.signing_host.clone(),
+		product,
+		adapters,
+		sink,
+	)
+}
+
+/// Build a product administration handle with adapters scoped to one
+/// native executable connection.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn product_admin_with_adapters(
+	host: &SigningHostRuntime,
+	product: ProductContext,
+	adapters: ConnectionAdapters,
+) -> HostAdmin {
+	HostAdmin::new(
+		host.services.clone(),
+		host.signing_host.accounts().clone(),
+		host.signing_host.clone(),
+		product,
+		adapters,
+	)
 }
 
 /// The durable transaction engine over `db`, reading and submitting through
@@ -1326,28 +1336,66 @@ fn ring_vrf_admin_error(
 	}
 }
 
+type ProductSubtreeRequest = Arc<
+	dyn Fn(
+			String,
+			Option<u32>,
+		) -> futures::future::BoxFuture<'static, Result<Option<[u8; 32]>, v01::GenericError>>
+		+ Send
+		+ Sync,
+>;
+
 /// Product-scoped administration handle for host UI.
 ///
 /// Host UI should use this when it needs to inspect or update core-owned state
 /// without owning a product frame endpoint.
 pub struct HostAdmin {
-	authority: Arc<dyn ProductAuthority>,
+	#[cfg(not(target_arch = "wasm32"))]
+	product_runtime: Arc<dyn truapi::api::Permissions>,
+	connection: Arc<ProductConnection>,
 	host_session: Arc<dyn HostSession>,
-	product_runtime: Arc<ProductRuntimeHost>,
+	product_subtree: ProductSubtreeRequest,
 }
 
 impl HostAdmin {
-	/// Product runtime managed by this admin handle.
-	#[cfg(any(test, not(target_arch = "wasm32")))]
-	pub fn product_runtime(&self) -> &Arc<ProductRuntimeHost> {
-		&self.product_runtime
+	/// Authorize one operation using this execution's saved and one-use permissions.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn authorize_remote_permission(
+		&self,
+		request: truapi::latest::RemotePermissionRequest,
+	) -> Result<bool, truapi::latest::GenericError> {
+		use truapi::versioned::IntoLatest;
+
+		self.product_runtime
+			.authorize_remote_permission(
+				&CallContext::default(),
+				truapi::versioned::permissions::RemotePermissionRequest::V1(request),
+			)
+			.await
+			.map(|response| response.into_latest().granted)
+			.map_err(|error| truapi::latest::GenericError { reason: format!("{error:?}") })
 	}
 
-	/// Build an admin handle for one product connection.
+	/// Authorize one device capability the host's web view gates itself, using
+	/// this execution's saved and one-use permissions.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn authorize_device_permission(
+		&self,
+		request: truapi::latest::HostDevicePermissionRequest,
+	) -> Result<bool, truapi::latest::GenericError> {
+		use truapi::versioned::IntoLatest;
+
+		self.product_runtime
+			.authorize_device_permission(&CallContext::default(), request.into())
+			.await
+			.map(|response| response.into_latest().granted)
+			.map_err(|error| truapi::latest::GenericError { reason: format!("{error:?}") })
+	}
+
 	#[instrument(skip_all, fields(runtime.method = "host_admin.new"))]
-	pub fn new(
+	fn new<H: AccountHolder>(
 		services: Arc<RuntimeServices>,
-		authority: Arc<dyn ProductAuthority>,
+		accounts: Arc<HostAccounts<H>>,
 		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 		adapters: ConnectionAdapters,
@@ -1355,11 +1403,22 @@ impl HostAdmin {
 		let product_runtime = Arc::new(ProductRuntimeHost::from_services(
 			services,
 			adapters,
-			authority.clone(),
+			accounts.clone(),
 			host_session.clone(),
 			product,
 		));
-		Self { authority, host_session, product_runtime }
+		Self {
+			connection: product_runtime.connection().clone(),
+			#[cfg(not(target_arch = "wasm32"))]
+			product_runtime,
+			host_session,
+			product_subtree: Arc::new(move |product_id, timeout_ms| {
+				let accounts = accounts.clone();
+				Box::pin(async move {
+					product_subtree_public_key(&accounts, &product_id, timeout_ms).await
+				})
+			}),
+		}
 	}
 
 	/// Core-owned logout/disconnect.
@@ -1378,7 +1437,7 @@ impl HostAdmin {
 		&self,
 		request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_runtime.connection().permission_authorization_status(request).await
+		self.connection.permission_authorization_status(request).await
 	}
 
 	/// Read stored permission authorization statuses without prompting.
@@ -1391,10 +1450,7 @@ impl HostAdmin {
 		&self,
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_runtime
-			.connection()
-			.permission_authorization_statuses(requests)
-			.await
+		self.connection.permission_authorization_statuses(requests).await
 	}
 
 	/// Update a stored permission authorization status.
@@ -1404,10 +1460,7 @@ impl HostAdmin {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.product_runtime
-			.connection()
-			.set_permission_authorization_status(request, status)
-			.await
+		self.connection.set_permission_authorization_status(request, status).await
 	}
 }
 
@@ -1458,8 +1511,7 @@ impl CoreAdmin for HostAdmin {
 	}
 
 	async fn get_device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-		self.product_runtime
-			.connection()
+		self.connection
 			.services()
 			.device_encryption_secret()
 			.await
@@ -1471,7 +1523,7 @@ impl CoreAdmin for HostAdmin {
 		product_id: String,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		product_subtree_public_key(self.authority.as_ref(), &product_id, timeout_ms).await
+		(self.product_subtree)(product_id, timeout_ms).await
 	}
 }
 
@@ -1487,14 +1539,14 @@ impl CoreAdmin for HostAdmin {
 /// cancelling. Only the SSO response wait observes the cancellation token; the
 /// statement-store setup before it does not, so a call parked there ignores a
 /// cancel and would outlive any deadline that waited for it to finish.
-async fn product_subtree_public_key(
-	authority: &(impl ProductAuthority + ?Sized),
+async fn product_subtree_public_key<H: AccountHolder>(
+	accounts: &HostAccounts<H>,
 	product_id: &str,
 	timeout_ms: Option<u32>,
 ) -> Result<Option<[u8; 32]>, v01::GenericError> {
 	let product_id = normalize_product_identifier(product_id)
 		.map_err(|reason| v01::GenericError { reason: reason.to_string() })?;
-	let Some(session) = authority.current_session() else {
+	let Some(authority_session) = accounts.current_session() else {
 		return Ok(None);
 	};
 	let timeout = timeout_ms
@@ -1503,7 +1555,10 @@ async fn product_subtree_public_key(
 	let mut cx = CallContext::default();
 	cx.set_timeout(timeout);
 
-	let call = authority.product_subtree_public_key(&cx, &session, product_id).fuse();
+	let product = product_context(&product_id)?;
+	let call = accounts
+		.product_subtree_public_key(&authority_session, &cx, &product, product_id)
+		.fuse();
 	let deadline = futures_timer::Delay::new(timeout).fuse();
 	pin_mut!(call, deadline);
 	futures::select! {
@@ -1529,7 +1584,8 @@ async fn product_subtree_public_key(
 /// in-flight dispatch cancellation on dispose.
 pub struct ProductRuntime {
 	core: TrUApiCore,
-	admin: HostAdmin,
+	host_session: Arc<dyn HostSession>,
+	connection: Arc<ProductConnection>,
 	transport: Arc<SinkTransport>,
 	host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
 	disposed: Arc<AtomicBool>,
@@ -1646,7 +1702,7 @@ impl ProductRuntime {
 	/// what it cached before. For an embedder that holds only this runtime;
 	/// one holding the host runtime calls it there.
 	pub fn notify_contacts_changed(&self) {
-		self.admin.product_runtime.connection().services().contact_handles.clear();
+		self.connection.services().contact_handles.clear();
 	}
 
 	/// Build a product-facing host core around a platform implementation and
@@ -1721,18 +1777,23 @@ impl ProductRuntime {
 		pairing.product_runtime(product, sink)
 	}
 
-	/// Build a product runtime with connection-scoped adapters.
 	#[instrument(skip_all, fields(runtime.method = "product_runtime.new"))]
-	pub fn new(
+	fn new<H: AccountHolder + 'static>(
 		services: Arc<RuntimeServices>,
-		authority: Arc<dyn ProductAuthority>,
+		accounts: Arc<HostAccounts<H>>,
 		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 		adapters: ConnectionAdapters,
 		sink: Arc<dyn FrameSink>,
 	) -> Self {
-		let session_state = host_session.session_state();
-		let admin = HostAdmin::new(services.clone(), authority, host_session, product, adapters);
+		let runtime = Arc::new(ProductRuntimeHost::from_services(
+			services.clone(),
+			adapters,
+			accounts,
+			host_session.clone(),
+			product,
+		));
+		let connection = runtime.connection().clone();
 		let disposed = Arc::new(AtomicBool::new(false));
 		let transport = Arc::new(SinkTransport {
 			sink,
@@ -1742,12 +1803,9 @@ impl ProductRuntime {
 		});
 		let host_subscriptions = Arc::new(HostInitiatedSubscriptionManager::new());
 		Self {
-			core: TrUApiCore::from_product_runtime(
-				admin.product_runtime.clone(),
-				services.spawner.clone(),
-				session_state,
-			),
-			admin,
+			core: crate::truapi_core::from_product_runtime(runtime, services.spawner.clone()),
+			connection,
+			host_session,
 			transport,
 			host_subscriptions,
 			disposed,
@@ -1817,7 +1875,7 @@ impl ProductRuntime {
 	/// Return a cloneable native control handle bound to this connection.
 	pub fn control(&self) -> ProductRuntimeControl {
 		ProductRuntimeControl {
-			connection: self.admin.product_runtime.connection().clone(),
+			connection: self.connection.clone(),
 			transport: self.transport.clone(),
 			host_subscriptions: self.host_subscriptions.clone(),
 			disposed: self.disposed.clone(),
@@ -1829,7 +1887,7 @@ impl ProductRuntime {
 	/// session state.
 	#[instrument(skip_all, fields(runtime.method = "product_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
-		self.admin.disconnect_session().await;
+		self.host_session.disconnect().await;
 	}
 
 	/// Read a stored permission authorization status without prompting.
@@ -1842,7 +1900,7 @@ impl ProductRuntime {
 		&self,
 		request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.admin.permission_authorization_status(request).await
+		self.connection.permission_authorization_status(request).await
 	}
 
 	/// Read stored permission authorization statuses without prompting.
@@ -1855,7 +1913,7 @@ impl ProductRuntime {
 		&self,
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.admin.permission_authorization_statuses(requests).await
+		self.connection.permission_authorization_statuses(requests).await
 	}
 
 	/// Update a stored permission authorization status. `NotDetermined`
@@ -1866,7 +1924,7 @@ impl ProductRuntime {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.admin.set_permission_authorization_status(request, status).await
+		self.connection.set_permission_authorization_status(request, status).await
 	}
 
 	/// Install a dev-only [`DebugSink`] that observes every product frame in
@@ -1902,10 +1960,9 @@ impl ProductRuntime {
 				handle.abort();
 			}
 		}
-		let connection = self.admin.product_runtime.connection();
-		connection.detach_chat();
-		connection.detach_renderer();
-		connection.release_open_operations();
+		self.connection.detach_chat();
+		self.connection.detach_renderer();
+		self.connection.release_open_operations();
 		self.host_subscriptions.close();
 		self.core.cancel_subscriptions();
 	}
@@ -2031,7 +2088,6 @@ mod tests {
 	use parity_scale_codec::Encode;
 	use std::sync::atomic::Ordering;
 	use truapi::{
-		api::Permissions,
 		latest::{RemotePermission, RemotePermissionRequest, RemotePermissionResponse},
 		versioned::permissions,
 	};
@@ -2082,7 +2138,7 @@ mod tests {
 			|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 			"the boot reconcile did not report the empty session store",
 		);
-		runtime.pairing_host.session().session_state().set_session(session);
+		runtime.pairing.session().session_state().set_session(session);
 	}
 
 	fn assert_send<T: Send>(_: T) {}
@@ -2357,7 +2413,8 @@ mod tests {
 		let session = crate::test_support::sso_session_info();
 		install_session_after_boot(&runtime, &platform, session.clone());
 		runtime
-			.pairing_host
+			.pairing
+			.accounts()
 			.cache_product_subtree_for_test(&session, "myapp.dot", [9; 32]);
 
 		let key =
@@ -2831,24 +2888,31 @@ mod tests {
 			crate::platform::ProductExecutionKind::Worker,
 		)
 		.expect("worker product context is valid");
+		let sink = Arc::new(RecordingSink::default());
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
 			test_spawner(),
-			Arc::new(RecordingSink::default()),
+			sink.clone(),
 		);
-		let host = runtime.admin.product_runtime().clone();
 		assert!(
-			host.test_session_state().current().is_none(),
+			runtime.core.session_state().current().is_none(),
 			"the fixture must be signed out for this test to mean anything"
 		);
 
-		let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
-			host.as_ref(),
-			&CallContext::with_request_id("renderer:1".to_string()),
-			truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
-		));
+		let ids = subscription_ids("renderer_action_subscribe").expect("known subscription");
+		let mut frame = ProtocolMessage {
+			request_id: "renderer:1".to_string(),
+			payload: Payload {
+				trait_id: ids.trait_id,
+				method_id: ids.method_id,
+				message_type: crate::frame::MESSAGE_TYPE_START,
+				value: truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1.encode(),
+			},
+		};
+		futures::executor::block_on(runtime.receive_frame(frame.encode()))
+			.expect("subscribe actions");
 
 		let _render = runtime
 			.control()
@@ -2857,6 +2921,7 @@ mod tests {
 				payload: vec![],
 			})
 			.expect("a signed-out Worker connection may render");
+		sink.frames.lock().unwrap().clear();
 
 		let published = v01::HostRendererActionSubscribeItem {
 			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
@@ -2868,17 +2933,12 @@ mod tests {
 			.publish_renderer_action(published.clone())
 			.expect("a signed-out Worker connection may receive actions");
 
-		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
-		let delivered = match actions.poll_next_unpin(&mut cx) {
-			core::task::Poll::Ready(Some(item)) => item,
-			other => panic!("a published renderer action must be ready, got {other:?}"),
-		};
-		let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) =
-			delivered
-		else {
-			panic!("expected a renderer action item")
-		};
-		assert_eq!(delivered, published);
+		frame.payload.message_type = crate::frame::MESSAGE_TYPE_RECEIVE;
+		frame.payload.value =
+			truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(published).encode();
+		wait_until(|| !sink.frames.lock().unwrap().is_empty(), "renderer action must arrive");
+		let frames = sink.frames.lock().unwrap().clone();
+		assert_eq!(frames, vec![frame.encode()]);
 	}
 
 	#[test]
@@ -2910,7 +2970,7 @@ mod tests {
 			test_spawner(),
 			Arc::new(RecordingSink::default()),
 		);
-		let services = runtime.admin.product_runtime().connection().services().clone();
+		let services = runtime.connection.services().clone();
 		let demand = Arc::new(RecordingDemand::default());
 		assert!(
 			services.worker_ledger.install_demand_observer(demand.clone()),
@@ -3015,7 +3075,7 @@ mod tests {
 	#[test]
 	fn a_render_the_product_ends_releases_its_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().connection().services().clone();
+		let services = runtime.connection.services().clone();
 		let mut render = start_render(&runtime, "loyalty");
 		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
@@ -3040,7 +3100,7 @@ mod tests {
 	#[test]
 	fn a_render_the_product_interrupts_releases_its_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().connection().services().clone();
+		let services = runtime.connection.services().clone();
 		let mut render = start_render(&runtime, "loyalty");
 
 		let request_id = render_request_id(&sink, 0);
@@ -3072,7 +3132,7 @@ mod tests {
 	#[test]
 	fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().connection().services().clone();
+		let services = runtime.connection.services().clone();
 		let mut render = start_render(&runtime, "loyalty");
 
 		let request_id = render_request_id(&sink, 0);
@@ -3090,7 +3150,7 @@ mod tests {
 	#[test]
 	fn disposing_the_core_releases_an_open_renders_worker_reference() {
 		let (runtime, _sink) = render_runtime();
-		let services = runtime.admin.product_runtime().connection().services().clone();
+		let services = runtime.connection.services().clone();
 		let mut render = start_render(&runtime, "loyalty");
 		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
@@ -3105,7 +3165,7 @@ mod tests {
 	#[test]
 	fn one_render_ending_leaves_the_other_renders_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().connection().services().clone();
+		let services = runtime.connection.services().clone();
 		let mut first = start_render(&runtime, "loyalty");
 		let second = start_render(&runtime, "rewards");
 		assert_eq!(services.worker_ledger.count("worker.dot"), 2);
@@ -3374,11 +3434,68 @@ mod tests {
 		);
 	}
 
+	fn begin_worker_operation(runtime: &ProductRuntime) {
+		let ids = request_ids("worker_begin_operation").expect("known Worker request");
+		let frame = ProtocolMessage {
+			request_id: "worker:begin".to_string(),
+			payload: Payload {
+				trait_id: ids.trait_id,
+				method_id: ids.method_id,
+				message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+				value: truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
+					truapi::latest::HostWorkerBeginOperationRequest { label: None },
+				)
+				.encode(),
+			},
+		};
+		futures::executor::block_on(runtime.receive_frame(frame.encode()))
+			.expect("begin operation frame");
+	}
+
+	#[test]
+	fn open_operation_demand_lasts_until_dispose_or_the_last_control() {
+		for dispose in [false, true] {
+			let platform = Arc::new(StubPlatform::default());
+			let sink = Arc::new(RecordingSink::default());
+			let (host_config, mut product) = runtime_config("myapp.dot");
+			product.execution_kind = crate::platform::ProductExecutionKind::Worker;
+			let runtime = ProductRuntime::from_platform_with_config(
+				platform.clone(),
+				host_config,
+				product,
+				test_spawner(),
+				sink,
+			);
+			let services = runtime.connection.services().clone();
+			let control = runtime.control();
+
+			begin_worker_operation(&runtime);
+			assert_eq!(services.worker_ledger.count("myapp.dot"), 1);
+
+			if dispose {
+				runtime.dispose();
+				wait_until(
+					|| {
+						*platform.ended_operations.lock().unwrap() ==
+							vec![("myapp.dot".to_string(), 1)]
+					},
+					"disposing the runtime must end its host operations while controls still exist",
+				);
+			}
+			drop(runtime);
+			assert_eq!(services.worker_ledger.count("myapp.dot"), usize::from(!dispose));
+
+			drop(control);
+			assert_eq!(services.worker_ledger.count("myapp.dot"), 0);
+		}
+	}
+
 	#[test]
 	fn dispose_releases_the_demand_open_operations_hold() {
 		let platform = Arc::new(StubPlatform::default());
 		let sink = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
+		let (host_config, mut product) = runtime_config("myapp.dot");
+		product.execution_kind = crate::platform::ProductExecutionKind::Worker;
 		let runtime = ProductRuntime::from_platform_with_config(
 			platform,
 			host_config,
@@ -3386,69 +3503,18 @@ mod tests {
 			test_spawner(),
 			sink,
 		);
-		let host = runtime.admin.product_runtime().clone();
+		let services = runtime.connection.services().clone();
 
-		futures::executor::block_on(truapi::api::Worker::begin_operation(
-			host.as_ref(),
-			&truapi::CallContext::default(),
-			truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-				truapi::latest::HostWorkerBeginOperationRequest { label: None },
-			),
-		))
-		.expect("begin operation");
-		assert_eq!(host.connection().services().worker_ledger.count("myapp.dot"), 1);
+		begin_worker_operation(&runtime);
+		assert_eq!(services.worker_ledger.count("myapp.dot"), 1);
 
 		runtime.dispose();
 
 		assert_eq!(
-			host.connection().services().worker_ledger.count("myapp.dot"),
+			services.worker_ledger.count("myapp.dot"),
 			0,
 			"disposing a connection drops the demand its open operations held"
 		);
-	}
-
-	#[test]
-	fn dispose_ends_the_operations_the_host_is_still_holding() {
-		let platform = Arc::new(StubPlatform::default());
-		let sink = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			platform.clone(),
-			host_config,
-			product,
-			test_spawner(),
-			sink,
-		);
-		let host = runtime.admin.product_runtime().clone();
-
-		futures::executor::block_on(truapi::api::Worker::begin_operation(
-			host.as_ref(),
-			&truapi::CallContext::default(),
-			truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-				truapi::latest::HostWorkerBeginOperationRequest { label: None },
-			),
-		))
-		.expect("begin operation");
-
-		runtime.dispose();
-
-		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-		loop {
-			let ended = platform
-				.ended_operations
-				.lock()
-				.expect("ended operations mutex poisoned")
-				.clone();
-			if ended == vec![("myapp.dot".to_string(), 1)] {
-				break;
-			}
-			assert!(
-				std::time::Instant::now() < deadline,
-				"the host's own record of the operation is closed, not left to \
-                 accumulate; saw {ended:?}"
-			);
-			std::thread::yield_now();
-		}
 	}
 
 	#[test]
@@ -3792,7 +3858,7 @@ mod tests {
 		let host = ProductRuntimeHost::from_services(
 			runtime.services.clone(),
 			ConnectionAdapters::from_services(&runtime.services),
-			runtime.signing_host.clone(),
+			runtime.signing_host.accounts().clone(),
 			runtime.signing_host.clone(),
 			ProductContext::new("unknown.dot".to_string()).expect("valid product id"),
 		);

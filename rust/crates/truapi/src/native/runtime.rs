@@ -11,7 +11,7 @@ use crate::platform::{
 	ProductExecutionKind,
 };
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
+use truapi::{Bytes32, v01};
 
 use super::{
 	reject_undecodable_deeplink,
@@ -723,7 +723,11 @@ impl NativeProductExecution {
 	}
 
 	fn admin(&self) -> crate::HostAdmin {
-		self.runtime.product_admin_with(self.product.clone(), self.adapters())
+		crate::host_core::product_admin_with_adapters(
+			&self.runtime,
+			self.product.clone(),
+			self.adapters(),
+		)
 	}
 
 	fn require_chat(&self) -> Result<(), crate::ProductRuntimeError> {
@@ -767,18 +771,17 @@ impl NativeProductExecution {
 				reason: "product execution is closed".to_string(),
 			});
 		}
-		let response = self
+		let granted = self
 			.admin()
-			.product_runtime()
-			.authorize_remote_permission(&truapi::CallContext::default(), request.into())
+			.authorize_remote_permission(request)
 			.await
-			.map_err(|error| HostRejection::Rejected { reason: format!("{error:?}") })?;
+			.map_err(|error| HostRejection::Rejected { reason: error.reason })?;
 		if self.closed.load(Ordering::Acquire) {
 			return Err(HostRejection::Rejected {
 				reason: "product execution is closed".to_string(),
 			});
 		}
-		Ok(response.into_latest().granted)
+		Ok(granted)
 	}
 
 	/// Authorize one device capability that the host's web view gates itself,
@@ -793,18 +796,17 @@ impl NativeProductExecution {
 				reason: "product execution is closed".to_string(),
 			});
 		}
-		let response = self
+		let granted = self
 			.admin()
-			.product_runtime()
-			.authorize_device_permission(&truapi::CallContext::default(), request.into())
+			.authorize_device_permission(request)
 			.await
-			.map_err(|error| HostRejection::Rejected { reason: format!("{error:?}") })?;
+			.map_err(|error| HostRejection::Rejected { reason: error.reason })?;
 		if self.closed.load(Ordering::Acquire) {
 			return Err(HostRejection::Rejected {
 				reason: "product execution is closed".to_string(),
 			});
 		}
-		Ok(response.into_latest().granted)
+		Ok(granted)
 	}
 
 	/// Read a product-scoped permission authorization without prompting.
@@ -990,8 +992,12 @@ impl NativeProductExecution {
 		let adapters = self.adapters();
 		let product_control = self.product_control.clone();
 		let runtime_factory = Arc::new(move |sink| {
-			let product_runtime =
-				runtime.product_runtime_with(product.clone(), adapters.clone(), sink);
+			let product_runtime = crate::host_core::product_runtime_with_adapters(
+				&runtime,
+				product.clone(),
+				adapters.clone(),
+				sink,
+			);
 			*product_control.lock().expect("native product control mutex poisoned") =
 				Some(product_runtime.control());
 			product_runtime
@@ -1028,6 +1034,7 @@ mod tests {
 	use super::*;
 	use crate::{
 		PairedSsoPeer,
+		frame::{Payload, ProtocolMessage, request_ids, subscription_ids},
 		native::tests::*,
 		platform::{
 			PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
@@ -1035,8 +1042,48 @@ mod tests {
 		},
 	};
 	use futures::stream::StreamExt;
-	use std::sync::{Arc, atomic::Ordering};
-	use truapi::v01;
+	use parity_scale_codec::{Decode, Encode};
+	use std::sync::{
+		Arc,
+		atomic::Ordering,
+		mpsc::{Receiver, Sender},
+	};
+	use truapi::{v01, versioned::IntoLatest};
+
+	struct ProductFrames(Sender<ProtocolMessage>);
+
+	impl crate::FrameSink for ProductFrames {
+		fn emit_frame(&self, frame: Vec<u8>) {
+			let _ = self.0.send(ProtocolMessage::decode(&mut frame.as_slice()).unwrap());
+		}
+	}
+
+	fn product_connection(
+		execution: &NativeProductExecution,
+	) -> (crate::ProductRuntime, Receiver<ProtocolMessage>) {
+		let (sender, receiver) = std::sync::mpsc::channel();
+		let runtime = crate::host_core::product_runtime_with_adapters(
+			&execution.runtime,
+			execution.product.clone(),
+			execution.adapters(),
+			Arc::new(ProductFrames(sender)),
+		);
+		(runtime, receiver)
+	}
+
+	fn product_request(method: &str, value: Vec<u8>) -> Vec<u8> {
+		let ids = request_ids(method).or_else(|| subscription_ids(method)).unwrap();
+		ProtocolMessage {
+			request_id: method.to_string(),
+			payload: Payload {
+				trait_id: ids.trait_id,
+				method_id: ids.method_id,
+				message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+				value,
+			},
+		}
+		.encode()
+	}
 
 	#[test]
 	fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution() {
@@ -1207,12 +1254,12 @@ mod tests {
 			)
 			.expect("Worker execution should open");
 
-		let admin = execution.admin();
-		let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
-			admin.product_runtime().as_ref(),
-			&truapi::CallContext::with_request_id("renderer-1".to_string()),
-			truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
-		));
+		let (connection, frames) = product_connection(&execution);
+		futures::executor::block_on(connection.receive_frame(product_request(
+			"renderer_action_subscribe",
+			truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1.encode(),
+		)))
+		.unwrap();
 
 		let published = v01::HostRendererActionSubscribeItem {
 			context: v01::RenderContext::ChatMessage {
@@ -1227,15 +1274,19 @@ mod tests {
 			.publish_renderer_action(published.clone())
 			.expect("a Worker execution may publish renderer actions");
 
-		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
-		let delivered = match actions.poll_next_unpin(&mut cx) {
-			core::task::Poll::Ready(Some(item)) => item,
-			other => panic!("a published renderer action must be ready, got {other:?}"),
-		};
-		let delivered = delivered.expect("expected a renderer action item").into_latest();
-		assert_eq!(delivered, published);
+		let delivered = frames.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+		connection.dispose();
+		assert_eq!(
+			delivered.payload.value,
+			truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(published).encode(),
+		);
 		// The scanner checks taps on a connection, while hosts publish them here.
-		assert!(admin.product_runtime().connection().recently_tapped());
+		assert!(
+			execution
+				.adapters()
+				.renderer
+				.published_within(crate::runtime::USER_TAP_WINDOW_SECS)
+		);
 	}
 
 	#[test]
@@ -1261,12 +1312,25 @@ mod tests {
 		let (card, card_callbacks) = open_widget("card.dot");
 		let (_other, other_callbacks) = open_widget("other.dot");
 
-		let admin = card.admin();
-		let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_face_shown(
-			admin.product_runtime().as_ref(),
-			&truapi::CallContext::default(),
-			v01::HostExpandedCardSetFaceShownRequest { shown: false }.into(),
-		));
+		let (connection, frames) = product_connection(&card);
+		futures::executor::block_on(
+			connection.receive_frame(product_request(
+				"expanded_card_set_face_shown",
+				truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest::V1(
+					v01::HostExpandedCardSetFaceShownRequest { shown: false },
+				)
+				.encode(),
+			)),
+		)
+		.unwrap();
+		let reply = frames.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+		connection.dispose();
+
+		let reply = Result::<
+			truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse,
+			truapi::CallError<truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError>,
+		>::decode(&mut reply.payload.value.as_slice())
+		.unwrap();
 
 		assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
 		assert_eq!(*card_callbacks.face_requests.lock().expect("face requests"), [false]);
@@ -1434,6 +1498,7 @@ mod tests {
 		};
 		let execution = open();
 		let other = open();
+		let (connection, frames) = product_connection(&execution);
 		futures::executor::block_on(async {
 			let admin = execution.admin();
 			let request = truapi::latest::RemotePermissionRequest {
@@ -1441,13 +1506,27 @@ mod tests {
 					domains: vec!["api.example.com".to_string()],
 				},
 			};
-			let context = truapi::CallContext::default();
-			let sdk_request = || {
-				admin
-					.product_runtime()
-					.request_remote_permission(&context, request.clone().into())
+			let sdk_request = || async {
+				connection
+					.receive_frame(product_request(
+						"permissions_request_remote_permission",
+						truapi::versioned::permissions::RemotePermissionRequest::V1(
+							request.clone(),
+						)
+						.encode(),
+					))
+					.await
+					.unwrap();
+				let response = frames.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+				Result::<
+					truapi::versioned::permissions::RemotePermissionResponse,
+					truapi::CallError<truapi::versioned::permissions::RemotePermissionError>,
+				>::decode(&mut response.payload.value.as_slice())
+				.unwrap()
+				.unwrap()
+				.into_latest()
 			};
-			let granted = sdk_request().await.unwrap().into_latest();
+			let granted = sdk_request().await;
 			let permission = PermissionAuthorizationRequest::Remote(request.clone());
 			let other_status =
 				other.permission_authorization_status(permission.clone()).await.unwrap();
@@ -1459,7 +1538,7 @@ mod tests {
 				execution.authorize_remote_permission(request.clone()).await.unwrap();
 			let other_operation = other.authorize_remote_permission(request.clone()).await.unwrap();
 			let prompts_after_operations = callbacks.remote_permission_calls.load(Ordering::SeqCst);
-			sdk_request().await.unwrap();
+			sdk_request().await;
 			execution.shutdown();
 			let after_shutdown = admin.permission_authorization_status(permission).await.unwrap();
 			assert_eq!(

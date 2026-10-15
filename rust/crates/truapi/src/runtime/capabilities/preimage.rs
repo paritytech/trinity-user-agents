@@ -23,69 +23,16 @@ use web_time::Instant;
 
 use super::from_latest_error;
 use crate::{
-	host_internal::bulletin::{allowance_signer, preimage_key},
+	host_internal::bulletin::preimage_key,
 	runtime::{
-		AuthoritySession, BulletinAllowanceKey, PERMISSION_DENIED_REASON,
-		PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, PREIMAGE_SUBMIT_TIMEOUT, ProductRuntimeHost,
-		bulletin_allowance_error_reason,
-		bulletin_rpc::BulletinSubmitError,
-		preimage_submit_error, remote_authority_call, remote_authority_context_until,
-		statement_allowance::{
-			fetch_bulletin_allowance, rpc::RpcClient, wait_bulletin_authorization,
-		},
+		PERMISSION_DENIED_REASON, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+		PREIMAGE_SUBMIT_TIMEOUT, ProductRuntimeHost, preimage_submit_error, remote_authority_call,
+		remote_authority_context_until,
 	},
 };
-use subxt::tx::Signer;
-
-impl ProductRuntimeHost {
-	/// Extend the product's Bulletin authorization before signing a payload it
-	/// cannot hold, so the chain never rejects a submission the host could see coming.
-	async fn bulletin_allowance_for(
-		&self,
-		cx: &CallContext,
-		deadline: Instant,
-		session: &AuthoritySession,
-		allowance: BulletinAllowanceKey,
-		size: u64,
-	) -> Result<BulletinAllowanceKey, String> {
-		let rpc = RpcClient::new(
-			self.connection
-				.services
-				.bulletin
-				.client("Bulletin authorization")
-				.await
-				.map_err(|error| error.to_string())?,
-		);
-		let target = allowance_signer(&allowance)?.account_id().0;
-		let current = fetch_bulletin_allowance(&rpc, &target)
-			.await
-			.map_err(|error| error.to_string())?;
-		if current.is_some_and(|info| info.can_store(size)) {
-			return Ok(allowance);
-		}
-		let authority_cx = remote_authority_context_until(
-			cx,
-			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-			deadline,
-		);
-		let allowance = remote_authority_call(
-			&authority_cx,
-			self.accounts.refresh_bulletin_allowance_key(&authority_cx, session),
-		)
-		.await
-		.map_err(bulletin_allowance_error_reason)?;
-		let replacement = allowance_signer(&allowance)?.account_id().0;
-		let baseline = (replacement == target).then_some(current).flatten();
-		let timeout = deadline.saturating_duration_since(Instant::now());
-		wait_bulletin_authorization(&rpc, &replacement, baseline, size, timeout)
-			.await
-			.map_err(|error| error.to_string())?;
-		Ok(allowance)
-	}
-}
 
 #[truapi::async_trait]
-impl Preimage for ProductRuntimeHost {
+impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "preimage.lookup_subscribe"))]
 	async fn lookup_subscribe(
 		&self,
@@ -162,10 +109,9 @@ impl Preimage for ProductRuntimeHost {
 		let version = request.version();
 		let value = request.into_latest();
 		let result = async {
-			let Some(session) = self.accounts.current_session() else {
+			let Some(authority_session) = self.accounts.current_session() else {
 				return Err(preimage_submit_error("No active session".to_string()));
 			};
-			let bulletin = &self.connection.services.bulletin;
 			self.connection
 				.require_remote_permission(
 					latest::RemotePermission::PreimageSubmit,
@@ -180,54 +126,23 @@ impl Preimage for ProductRuntimeHost {
 				PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 				submission_deadline,
 			);
-			let allowance = remote_authority_call(
+			let key = remote_authority_call(
 				&authority_cx,
-				self.accounts.bulletin_allowance_key(&authority_cx, &session),
+				self.accounts.submit_preimage(
+					&authority_cx,
+					submission_deadline,
+					&authority_session,
+					&value,
+				),
 			)
 			.await
-			.map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
-
+			.map_err(|err| preimage_submit_error(err.to_string()))?;
 			#[cfg(feature = "test-host")]
 			if self.accounts.submits_preimages_locally() {
-				let key = preimage_key(&value);
-				self.connection.services.keep_local_preimage(key, value);
-				return Ok(key.to_vec());
+				self.connection.services.keep_local_preimage(preimage_key(&value), value);
+				return Ok(key);
 			}
 
-			let allowance = self
-				.bulletin_allowance_for(
-					cx,
-					submission_deadline,
-					&session,
-					allowance,
-					value.len() as u64,
-				)
-				.await
-				.map_err(preimage_submit_error)?;
-			let key = match bulletin
-				.submit_preimage(cx, submission_deadline, &allowance, &value)
-				.await
-			{
-				Ok(key) => key,
-				Err(BulletinSubmitError::AllowanceRejected { .. }) => {
-					let authority_cx = remote_authority_context_until(
-						cx,
-						PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-						submission_deadline,
-					);
-					let allowance = remote_authority_call(
-						&authority_cx,
-						self.accounts.refresh_bulletin_allowance_key(&authority_cx, &session),
-					)
-					.await
-					.map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
-					bulletin
-						.submit_preimage(cx, submission_deadline, &allowance, &value)
-						.await
-						.map_err(|err| preimage_submit_error(err.to_string()))?
-				},
-				Err(err) => return Err(preimage_submit_error(err.to_string())),
-			};
 			// Move the owned body into the lookup cache (no extra copy) so an
 			// immediate product lookup hits before the content backend has it.
 			self.prime_preimage_cache(&key, value);

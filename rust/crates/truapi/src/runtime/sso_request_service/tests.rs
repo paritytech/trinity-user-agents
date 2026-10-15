@@ -80,8 +80,8 @@ fn replacement_waits_for_old_session_cleanup() {
 	let subtree =
 		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
 			.unwrap();
-	let revision = pairing.grants_for_tests().lifecycle().revision();
-	block_on(pairing.grants_for_tests().remember_auto_signing_key(
+	let revision = pairing.accounts().grants_for_tests().lifecycle().revision();
+	block_on(pairing.accounts().grants_for_tests().remember_auto_signing_key(
 		&host.session_state(),
 		&session,
 		revision,
@@ -108,12 +108,12 @@ fn replacement_waits_for_old_session_cleanup() {
 	block_on(cleanup);
 	block_on(activation).unwrap();
 	assert!(
-		!block_on(pairing.grants_for_tests().auto_signing_key(&session, "myapp.dot"))
+		!block_on(pairing.accounts().grants_for_tests().auto_signing_key(&session, "myapp.dot"))
 			.unwrap()
 			.is_some()
 	);
-	let revision = pairing.grants_for_tests().lifecycle().revision();
-	block_on(pairing.grants_for_tests().remember_auto_signing_key(
+	let revision = pairing.accounts().grants_for_tests().lifecycle().revision();
+	block_on(pairing.accounts().grants_for_tests().remember_auto_signing_key(
 		&host.session_state(),
 		&session,
 		revision,
@@ -146,9 +146,10 @@ fn replacement_waits_for_old_session_cleanup() {
 			]
 		),
 	);
-	let key = block_on(pairing.grants_for_tests().auto_signing_key(&session, "myapp.dot"))
-		.unwrap()
-		.unwrap();
+	let key =
+		block_on(pairing.accounts().grants_for_tests().auto_signing_key(&session, "myapp.dot"))
+			.unwrap()
+			.unwrap();
 	assert_eq!(
 		(*key.as_secret_bytes(), *key.ring_vrf_domain_entropy()),
 		(subtree.secret.to_bytes(), [0x55; 32])
@@ -177,14 +178,16 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 			block_on(storage.write_core_storage(key, blob.clone())).unwrap();
 		}
 		let cache_key = (allowances::GrantScope::from_session(&session), "myapp.dot".to_string());
-		let revision = pairing.grants_for_tests().lifecycle().revision();
-		assert!(block_on(pairing.grants_for_tests().persist_product_subtree_if_current(
-			&host.session_state(),
-			&session,
-			revision,
-			cache_key,
-			[0xAB; 32],
-		)));
+		let revision = pairing.accounts().grants_for_tests().lifecycle().revision();
+		assert!(block_on(
+			pairing.accounts().grants_for_tests().persist_product_subtree_if_current(
+				&host.session_state(),
+				&session,
+				revision,
+				cache_key,
+				[0xAB; 32],
+			)
+		));
 		let (release, pause) = oneshot::channel();
 		*storage.pause.lock().unwrap() = Some((CoreStorageKey::AutoSigningKeys, pause));
 		*storage.failure.lock().unwrap() = Some(CoreStorageKey::AutoSigningKeys);

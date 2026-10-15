@@ -527,37 +527,6 @@ impl HostGrantStore {
 		allowances.retain(|key, _| !key.is_for_session(session_key));
 	}
 
-	/// Drop a product's Bulletin key from memory and storage before it is replaced.
-	pub async fn evict_bulletin_allowance(
-		&self,
-		session_state: &SessionState,
-		session: &SessionInfo,
-		lifecycle_epoch: u64,
-		product_id: &str,
-	) -> Result<(), AuthorityError> {
-		let _storage = self.persistence().await;
-		if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
-			return Err(AuthorityError::Disconnected);
-		}
-		self.bulletin_allowances
-			.lock()
-			.expect("bulletin allowance cache mutex poisoned")
-			.remove(&AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin));
-		if self.keeping == GrantKeeping::Paired {
-			allowances::remove_allowance_key(
-				&*self.storage,
-				session,
-				product_id,
-				AllowanceResource::Bulletin,
-			)
-			.await?;
-		}
-		if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
-			return Err(AuthorityError::Disconnected);
-		}
-		Ok(())
-	}
-
 	/// Validate and retain delegated signing authority for the selected session.
 	///
 	/// A wallet's own host keeps it in memory for this activation; a paired host stores it.

@@ -925,6 +925,118 @@ mod tests {
 		(services, signing_host)
 	}
 
+	/// Metadata for the People chain the signing fixture is configured for.
+	#[cfg(not(target_arch = "wasm32"))]
+	const PEOPLE_METADATA: &[u8] =
+		include_bytes!("../../tests/fixtures/paseo-next-v2-metadata-v16.scale");
+
+	/// An existing statement-store allowance must be served without resolving a
+	/// ring or submitting anything. The cache and the scan are covered on their
+	/// own; this pins the composition, so removing the early return fails here
+	/// rather than passing quietly.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn an_existing_allowance_is_served_without_touching_the_ring() {
+		use futures::FutureExt;
+
+		use crate::{
+			host_logic::product_account::{
+				derive_full_person_ring_vrf_entropy, derive_sr25519_hard_path,
+			},
+			runtime::statement_allowance::slot,
+		};
+
+		let product_id = "myapp.dot";
+		let allowance =
+			derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", product_id])
+				.expect("allowance derivation succeeds");
+		// The scan reads slot 0 first; answering it with an entry naming the
+		// allowance account is the "already allocated" case.
+		let slot_entry = (allowance.public.to_bytes(), 0u32, 0u64).encode();
+		let people_row = slot::testing::slot_row(
+			derive_full_person_ring_vrf_entropy(&ENTROPY, NETWORK_SUFFIX),
+			NETWORK_SUFFIX.as_bytes(),
+			slot::current_period(statement_current_unix_secs()),
+			&[Some(format!(r#""0x{}""#, hex::encode(&slot_entry)))],
+		);
+
+		// Keyed by method, not by request order: this path decodes ~450 KiB of
+		// metadata between two requests, which outruns the ordered script's
+		// fixed-poll pump on a loaded runner.
+		let platform = Arc::new(StubPlatform {
+			rpc_method_responses: vec![
+				(
+					"state_getRuntimeVersion",
+					r#"{"specVersion":1000000,"transactionVersion":1}"#.to_string(),
+				),
+				("chain_getBlockHash", format!(r#""0x{}""#, hex::encode([0u8; 32]))),
+				(
+					"Metadata_metadata_at_version",
+					format!(r#""0x{}""#, hex::encode(Some(PEOPLE_METADATA.to_vec()).encode()),),
+				),
+				// The scan bound, read through the `Resources` view functions.
+				(
+					"RuntimeViewFunction_execute_view_function",
+					format!(r#""0x{}""#, hex::encode(Ok::<Vec<u8>, ()>(20u32.encode()).encode()),),
+				),
+				(
+					"RuntimeViewFunction_execute_view_function",
+					format!(r#""0x{}""#, hex::encode(Ok::<Vec<u8>, ()>(10u32.encode()).encode()),),
+				),
+				// The network suffix, read once before the scan.
+				("state_getStorage", format!(r#""0x{}""#, hex::encode(b"paseo".to_vec().encode()))),
+				("state_queryStorageAt", people_row),
+				// The LitePeople row, read alongside People's, is empty.
+				("state_queryStorageAt", r#"[{"block":"0xb10c","changes":[]}]"#.to_string()),
+			],
+			..Default::default()
+		});
+		let (_services, signing_host) = signing_fixture(platform.clone());
+
+		// Bounded, because the failure mode of losing the early return is a
+		// wait on a chain read the stub deliberately does not answer — an
+		// unbounded test would hang instead of reporting. The bound is generous
+		// because it is catching a hang, not asserting latency.
+		let allocation = futures::executor::block_on(async {
+			let session = signing_host.wallet_for_tests().current_session().unwrap();
+			futures::select! {
+				result = signing_host.wallet_for_tests().allocate_statement_store_allowance(
+					&session,
+					product_id,
+					OnExistingAllowancePolicy::Ignore,
+				)
+				.fuse() => result,
+				_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
+					panic!("allocation blocked on a chain read it should not have made")
+				}
+			}
+		})
+		.expect("an existing allowance is returned");
+
+		assert_eq!(allocation.secret, allowance.secret.to_bytes().to_vec());
+
+		let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
+		let methods: Vec<String> = sent
+			.iter()
+			.filter_map(|request| {
+				let value: serde_json::Value = serde_json::from_str(request).ok()?;
+				value.get("method")?.as_str().map(ToString::to_string)
+			})
+			.collect();
+
+		// `find_including_rings` opens with `chain_getFinalizedHead`, so none of
+		// these means no ring was resolved.
+		assert_eq!(
+			methods.iter().filter(|method| *method == "chain_getFinalizedHead").count(),
+			0,
+			"a ring was resolved for an allowance already in place: {methods:?}"
+		);
+		assert!(
+			!methods.iter().any(|method| method.starts_with("author_submit")),
+			"an extrinsic was submitted for an allowance already in place: {methods:?}"
+		);
+	}
+
 	#[test]
 	fn responder_advertises_and_signs_with_the_local_uid_identity() {
 		let (_services, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
