@@ -128,6 +128,7 @@ private extension WKWebViewJSEngine {
 
         let config = WKWebViewConfiguration()
         config.userContentController = contentController
+        config.applicationNameForUserAgent = settings.applicationNameForUserAgent
 
         for (scheme, handler) in urlSchemeHandlers {
             config.setURLSchemeHandler(handler, forURLScheme: scheme)
