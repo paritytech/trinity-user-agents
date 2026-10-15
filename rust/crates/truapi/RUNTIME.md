@@ -275,6 +275,7 @@ that can't mean it:
   builds report them as unavailable) and do need metadata, which they take from
   the `RuntimeServices`-owned per-chain cache rather than re-reading it per
   call.
+- `WalletAccountHolder`: owns the active wallet on a signing host. Only its `with_keys` reads the root entropy, after checking that the call's session is still the installed wallet activation, so a lock or a wallet switch fails signing, issuance and pairing answers that began under the previous wallet.
 - `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
 - `HostGrantStore`: holds the keys and public subtrees a host keeps for its products, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session or other products' calls.
 
