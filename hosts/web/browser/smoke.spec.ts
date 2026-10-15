@@ -133,8 +133,17 @@ async function signInWith(page: Page, mnemonic: string): Promise<void> {
 
 async function openAddress(page: Page, address: string): Promise<void> {
   await page.fill("#address", address);
+  // `fill` reports success on a field that cannot take focus, such as one
+  // under a panel that covers it, and the text then goes nowhere.
+  expect(await page.inputValue("#address")).toBe(address);
   await page.press("#address", "Enter");
 }
+
+/** Whether the address bar is inert, as it is while a panel covers it. */
+const addressInert = (page: Page): Promise<boolean> =>
+  page.evaluate(
+    () => document.getElementById("address")!.closest("[inert]") !== null,
+  );
 
 /** The product page's frame once its own script ran. */
 async function productFrame(page: Page, origin: string): Promise<Frame> {
@@ -393,6 +402,13 @@ describe("the loading indicator", () => {
         try {
           const page = await openHost(context);
           await signIn(page);
+          if (label === "mobile") {
+            // On a narrow screen the menu covers the product, and the address
+            // bar takes no input until the menu is closed, as for a user.
+            expect(await addressInert(page)).toBe(true);
+            await page.click('[data-close="menu"]');
+          }
+          expect(await addressInert(page)).toBe(false);
           await recordLoading(page);
 
           await openAddress(page, NAME);
