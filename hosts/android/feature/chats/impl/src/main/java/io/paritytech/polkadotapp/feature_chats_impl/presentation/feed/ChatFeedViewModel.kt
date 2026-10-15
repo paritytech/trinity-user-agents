@@ -148,6 +148,7 @@ class ChatFeedViewModel @Inject constructor(
         chatId = chatId,
         roomPolicy = roomPolicy,
         feedSnapshot = feedSnapshot,
+        origins = originDisplayResolver,
         screen = object : ChatProductRoomController.Screen {
             override fun showMenu(type: ChatMenuType) = menuState.update { it.copy(isVisible = true, type = type) }
 

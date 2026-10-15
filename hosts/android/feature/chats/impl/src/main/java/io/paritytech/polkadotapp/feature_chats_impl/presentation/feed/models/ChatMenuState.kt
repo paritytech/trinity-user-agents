@@ -16,6 +16,9 @@ sealed interface ChatMenuType {
 
     /** A product action opens [url] after the user confirms it. */
     data class ProductLinkConfirmation(val url: String) : ChatMenuType
+
+    /** The participants of a product room. The product room state holds the list. */
+    data object Participants : ChatMenuType
 }
 
 enum class ChatMenuAction {

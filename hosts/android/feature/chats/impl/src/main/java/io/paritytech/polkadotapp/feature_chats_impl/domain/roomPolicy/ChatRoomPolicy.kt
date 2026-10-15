@@ -29,6 +29,8 @@ data class ChatRoomPolicy(
     val suggestions: List<String>,
     val slashCommands: Set<String>,
     val productQueries: Set<ProductQuery>,
+    /** Changes at each configuration that the product sets, so a screen asks its questions again. */
+    val configGeneration: Long,
 ) {
     enum class MessageStore {
         /** The host database keeps the messages. */
@@ -123,6 +125,7 @@ data class ChatRoomPolicy(
             suggestions = emptyList(),
             slashCommands = emptySet(),
             productQueries = emptySet(),
+            configGeneration = 0,
         )
 
         fun from(declarations: ChatRoomDeclarations?): ChatRoomPolicy {
@@ -152,6 +155,7 @@ data class ChatRoomPolicy(
                 suggestions = declarations.suggestions.orEmpty().map { it.text },
                 slashCommands = declarations.commands.orEmpty().mapTo(mutableSetOf()) { it.name },
                 productQueries = config.productQueries(),
+                configGeneration = declarations.configGeneration,
             )
         }
     }

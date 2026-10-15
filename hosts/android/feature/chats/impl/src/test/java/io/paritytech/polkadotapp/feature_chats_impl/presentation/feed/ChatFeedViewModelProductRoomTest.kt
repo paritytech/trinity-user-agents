@@ -14,8 +14,12 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigi
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageAction
@@ -23,9 +27,13 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedI
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPagingState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatAvatar
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageOriginDisplay
+import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatParticipantAppearanceFactory
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductLinkOpener
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
@@ -69,6 +77,17 @@ class ChatFeedViewModelProductRoomTest {
         paging = ChatPagingState.Complete,
         readiness = ChatRoomReadiness.READY,
     )
+    private val feed = MutableStateFlow(snapshot)
+    private val origins = object : MessageOriginDisplayResolver {
+        override fun displayOf(messageOrigin: ChatMessageOrigin) = MessageOriginDisplay("Weather", ChatAvatar.Url("https://weather"))
+    }
+    private val querying = mockk<ProductChatQuerying> {
+        coEvery { participantsCount(any()) } returns Result.success(3)
+        coEvery { participantsByIds(any(), any()) } answers { Result.success(secondArg<List<String>>().map(::participant)) }
+        coEvery { participantsPage(any(), null, 100) } returns Result.success(
+            ProductParticipantsPage(listOf(participant("alice"), participant("bob")), next = null),
+        )
+    }
     private val menu = ChatMessageMenuModel.Custom(
         listOf(
             productAction("pin", ChatActionHandlerModel.Callback),
@@ -78,7 +97,9 @@ class ChatFeedViewModelProductRoomTest {
 
     private val interactor = mockk<ChatFeedInteractor>(relaxed = true) {
         every { observeRoomPolicy(roomId) } returns policy
-        every { subscribeMessages(roomId) } returns flowOf(snapshot)
+        every { subscribeMessages(roomId) } returns feed
+        coEvery { getMessageOriginDisplayResolver(any()) } returns origins
+        coEvery { roomQuerying(roomId) } returns querying
         coEvery { getLastRevealedTimestamp(any()) } returns null
         coEvery { productMessageMenu(any(), any(), any()) } returns Result.success(menu)
         coEvery { sendUserEvent(any(), any()) } returns Result.success(Unit)
@@ -166,6 +187,42 @@ class ChatFeedViewModelProductRoomTest {
         assertEquals(ChatMenuType.ProductLinkConfirmation("polkadot://weather.dot/help"), model.menuState.value.type)
     }
 
+    @Test
+    fun `a room that declares its participants counts them, names the authors and lists them`() = runBlocking<Unit> {
+        policy.value = ChatRoomPolicy.Defaults.copy(productQueries = setOf(ChatRoomPolicy.ProductQuery.PARTICIPANTS))
+        feed.value = snapshot.copy(messages = listOf(storedMessage.copy(originParticipantId = "alice")))
+        val model = viewModel()
+
+        val participants = withTimeout(5_000) {
+            model.productRoomState.first { it.participants.count == 3 && it.participants.authors.isNotEmpty() }.participants
+        }
+
+        assertEquals(true, participants.declared)
+        assertEquals("Alice", participants.authors.getValue("message-1").name)
+
+        model.onProductRoomAction(ProductRoomAction.ShowParticipants)
+
+        assertEquals(ChatMenuType.Participants, model.menuState.value.type)
+        val list = withTimeout(5_000) { model.productRoomState.first { it.participants.list.participants.size == 2 }.participants.list }
+        assertEquals(listOf("Alice", "Bob"), list.participants.map { it.name })
+        assertEquals(false, list.hasMore)
+    }
+
+    @Test
+    fun `a room that does not declare its participants shows no count and no authors`() = runBlocking<Unit> {
+        policy.value = ChatRoomPolicy.Defaults
+        feed.value = snapshot.copy(messages = listOf(storedMessage.copy(originParticipantId = "alice")))
+
+        val participants = viewModel().productRoomState.value.participants
+
+        assertEquals(false, participants.declared)
+        assertEquals(null, participants.count)
+        coVerify(exactly = 0) { querying.participantsCount(any()) }
+    }
+
+    private fun participant(id: String) =
+        ChatParticipantEntryModel(id, ChatParticipantModel.Custom(nickname = id.replaceFirstChar { it.uppercase() }, avatar = null))
+
     private fun toolbarAction(id: String, handler: ChatActionHandlerModel) =
         ChatToolbarActionModel(actionId = id, label = id, icon = ChatResourceModel.Inline("image/png", byteArrayOf(1).toDataByteArray()), handler = handler)
 
@@ -196,7 +253,12 @@ class ChatFeedViewModelProductRoomTest {
         attachmentExecutor = mockk(relaxed = true),
         dispatchers = TestCoroutineDispatchers(UnconfinedTestDispatcher()),
         resourceResolver = mockk(relaxed = true),
-        productRoomFactory = ChatProductRoomController.Factory(interactor, resourceResolver, productLinkOpener),
+        productRoomFactory = ChatProductRoomController.Factory(
+            interactor = interactor,
+            resourceResolver = resourceResolver,
+            productLinkOpener = productLinkOpener,
+            appearances = ChatParticipantAppearanceFactory(mockk(relaxed = true), resourceResolver),
+        ),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk<CallStateTracker> { every { observeActiveCall() } returns flowOf(null) },
     )

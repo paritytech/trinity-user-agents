@@ -26,6 +26,7 @@ import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButto
 import io.paritytech.polkadotapp.design.components.dropdown.NovaDropdownMenu
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDropdown
+import io.paritytech.polkadotapp.design.components.icon.vectors.PeopleOutline
 import io.paritytech.polkadotapp.design.components.image.NovaAsyncImage
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -42,7 +43,9 @@ private val ProductButtonSize = 48.dp
 @Composable
 internal fun ProductToolbarButtons(
     toolbar: ProductToolbarUiModel,
+    showsParticipants: Boolean,
     onClick: (actionId: String) -> Unit,
+    onParticipantsClick: () -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         toolbar.inline.forEach { item ->
@@ -51,6 +54,18 @@ internal fun ProductToolbarButtons(
 
         if (toolbar.overflow.isNotEmpty()) {
             ProductToolbarOverflow(items = toolbar.overflow, onClick = onClick)
+        }
+
+        if (showsParticipants) {
+            val label = stringResource(RCommon.string.chat_participants_title)
+            PolkadotIconButton(
+                modifier = Modifier.semantics { contentDescription = label },
+                icon = NovaIcons.PeopleOutline,
+                onClick = onParticipantsClick,
+                style = PolkadotButtonStyle.ghost(),
+                size = PolkadotIconButtonSize.mediumIncreased(),
+                shape = PolkadotButtonShape.pill,
+            )
         }
     }
 }

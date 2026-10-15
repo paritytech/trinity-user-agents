@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUs
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
+import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -46,10 +48,12 @@ class ChatProductRoomController(
     private val chatId: ChatId,
     private val roomPolicy: Flow<ChatRoomPolicy?>,
     private val feedSnapshot: Flow<ChatFeedSnapshot>,
+    origins: Flow<MessageOriginDisplayResolver>,
     private val screen: Screen,
     private val interactor: ChatFeedInteractor,
     private val resourceResolver: ChatResourceResolver,
     private val productLinkOpener: ChatProductLinkOpener,
+    appearances: ChatParticipantAppearanceFactory,
 ) {
     /** What the controller asks of the room screen. */
     interface Screen {
@@ -72,9 +76,19 @@ class ChatProductRoomController(
             if (actions.any { it.icon != null }) emit(actions.toToolbar(actions.resolveIcons()))
         }
 
-    val uiState: StateFlow<ProductRoomUiState> = toolbar
-        .map { ProductRoomUiState(toolbar = it) }
-        .stateIn(scope, SharingStarted.Eagerly, ProductRoomUiState.None)
+    private val participants = ProductRoomParticipants(
+        scope = scope,
+        chatId = chatId,
+        roomPolicy = roomPolicy,
+        feedSnapshot = feedSnapshot,
+        origins = origins,
+        appearances = appearances,
+        querying = { interactor.roomQuerying(chatId) },
+    )
+
+    val uiState: StateFlow<ProductRoomUiState> = combine(toolbar, participants.uiState) { toolbar, participants ->
+        ProductRoomUiState(toolbar = toolbar, participants = participants)
+    }.stateIn(scope, SharingStarted.Eagerly, ProductRoomUiState.None)
 
     private val _messageMenu = MutableStateFlow<ProductMessageMenuState?>(null)
     val messageMenu: StateFlow<ProductMessageMenuState?> = _messageMenu.asStateFlow()
@@ -112,7 +126,16 @@ class ChatProductRoomController(
         when (action) {
             is ProductRoomAction.OpenLink -> openLink(action.url)
             is ProductRoomAction.Toolbar -> pressToolbar(action.actionId)
+            ProductRoomAction.ShowParticipants -> showParticipants()
+            ProductRoomAction.LoadMoreParticipants -> participants.loadMore()
+            // The sheet of one participant comes with the participant menus.
+            is ProductRoomAction.SelectParticipant -> Unit
         }
+    }
+
+    private fun showParticipants() {
+        screen.showMenu(ChatMenuType.Participants)
+        if (participants.uiState.value.list.participants.isEmpty()) participants.loadMore()
     }
 
     private fun pressToolbar(actionId: String) {
@@ -156,12 +179,15 @@ class ChatProductRoomController(
         private val interactor: ChatFeedInteractor,
         private val resourceResolver: ChatResourceResolver,
         private val productLinkOpener: ChatProductLinkOpener,
+        private val appearances: ChatParticipantAppearanceFactory,
     ) {
+        @Suppress("LongParameterList")
         fun <S> create(
             scope: S,
             chatId: ChatId,
             roomPolicy: Flow<ChatRoomPolicy?>,
             feedSnapshot: Flow<ChatFeedSnapshot>,
+            origins: Flow<MessageOriginDisplayResolver>,
             screen: Screen,
         ): ChatProductRoomController where S : ComputationalScope, S : MessageDisplay = ChatProductRoomController(
             scope = scope,
@@ -169,10 +195,12 @@ class ChatProductRoomController(
             chatId = chatId,
             roomPolicy = roomPolicy,
             feedSnapshot = feedSnapshot,
+            origins = origins,
             screen = screen,
             interactor = interactor,
             resourceResolver = resourceResolver,
             productLinkOpener = productLinkOpener,
+            appearances = appearances,
         )
     }
 }

@@ -29,10 +29,12 @@ internal fun ChatFeedToolbar(
     subtitle: String?,
     showAvatar: Boolean,
     productToolbar: ProductToolbarUiModel,
+    showsParticipants: Boolean,
     onBack: () -> Unit,
     onStartCallClick: (withVideo: Boolean) -> Unit,
     onMenuClick: () -> Unit,
     onProductToolbarClick: (actionId: String) -> Unit,
+    onParticipantsClick: () -> Unit,
 ) {
     val isLoaded = displayState is LoadingState.Loaded
     val displayData = displayState.dataOrNull
@@ -67,7 +69,7 @@ internal fun ChatFeedToolbar(
         }.toPersistentList()
     }
 
-    val hasProductButtons = isLoaded && (productToolbar.inline.isNotEmpty() || productToolbar.overflow.isNotEmpty())
+    val hasProductButtons = isLoaded && (productToolbar.inline.isNotEmpty() || productToolbar.overflow.isNotEmpty() || showsParticipants)
 
     PolkadotTopBar(
         navigationAction = rememberTopBarAction(action = onBack, icon = NovaIcons.ArrowLeft),
@@ -76,7 +78,14 @@ internal fun ChatFeedToolbar(
         actions = resolvedActions,
         leadingContent = leadingAvatar,
         extraActions = if (hasProductButtons) {
-            { ProductToolbarButtons(toolbar = productToolbar, onClick = onProductToolbarClick) }
+            {
+                ProductToolbarButtons(
+                    toolbar = productToolbar,
+                    showsParticipants = showsParticipants,
+                    onClick = onProductToolbarClick,
+                    onParticipantsClick = onParticipantsClick,
+                )
+            }
         } else {
             null
         },

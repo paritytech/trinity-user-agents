@@ -55,13 +55,18 @@ class ChatRoomPolicyTest {
 
     @Test
     fun `the declared configuration of the host default gives the defaults`() {
-        assertEquals(ChatRoomPolicy.Defaults, ChatRoomPolicy.from(declarations()))
+        assertEquals(ChatRoomPolicy.Defaults.copy(configGeneration = 1), ChatRoomPolicy.from(declarations()))
     }
 
     @Test
     fun `empty declarations give the defaults`() {
         assertEquals(ChatRoomPolicy.Defaults, ChatRoomPolicy.from(ChatRoomDeclarations.EMPTY))
-        assertEquals(ChatRoomPolicy.Defaults, ChatRoomPolicy.from(declarations(config = null)))
+        assertEquals(ChatRoomPolicy.Defaults.copy(configGeneration = 1), ChatRoomPolicy.from(declarations(config = null)))
+    }
+
+    @Test
+    fun `the policy carries the configuration generation, so a screen asks its questions again`() {
+        assertEquals(7L, ChatRoomPolicy.from(declarations().copy(configGeneration = 7)).configGeneration)
     }
 
     @Test

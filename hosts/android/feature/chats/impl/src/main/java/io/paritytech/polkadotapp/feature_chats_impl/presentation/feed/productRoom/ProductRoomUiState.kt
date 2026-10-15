@@ -8,10 +8,12 @@ import kotlinx.collections.immutable.persistentListOf
 @Immutable
 data class ProductRoomUiState(
     val toolbar: ProductToolbarUiModel,
+    val participants: ProductParticipantsUiState,
 ) {
     companion object {
         val None = ProductRoomUiState(
             toolbar = ProductToolbarUiModel(inline = persistentListOf(), overflow = persistentListOf()),
+            participants = ProductParticipantsUiState.None,
         )
     }
 }

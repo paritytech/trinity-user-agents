@@ -10,6 +10,8 @@ import io.paritytech.polkadotapp.design.components.bottomsheet.NovaModalBottomSh
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ParticipantListUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 
 @Composable
 fun ChatFeedMenu(
@@ -22,6 +24,8 @@ fun ChatFeedMenu(
     onBlockUserConfirm: () -> Unit,
     onDeleteMessageConfirm: (ChatMessageId) -> Unit,
     onProductLinkConfirm: (String) -> Unit,
+    participants: ParticipantListUiState,
+    onProductRoomAction: (ProductRoomAction) -> Unit,
 ) {
     NovaModalBottomSheet(
         isVisible = state.isVisible,
@@ -73,6 +77,14 @@ fun ChatFeedMenu(
                         DeleteMessageConfirmationContent(
                             onConfirm = { onDeleteMessageConfirm(it.messageId) },
                             onCancel = onDismiss
+                        )
+                    }
+
+                    ChatMenuType.Participants -> {
+                        ParticipantsListContent(
+                            state = participants,
+                            onLoadMore = { onProductRoomAction(ProductRoomAction.LoadMoreParticipants) },
+                            onSelect = { onProductRoomAction(ProductRoomAction.SelectParticipant(it)) },
                         )
                     }
 

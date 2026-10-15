@@ -54,7 +54,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatPageEdgeUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomReadinessUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.EmptyRoomPlaceholder
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatParticipantUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
+import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.flow.Flow
 import kotlin.math.abs
 
@@ -87,6 +90,8 @@ internal fun ChatFeed(
     onLoadOlderMessages: () -> Unit = {},
     onLoadNewerMessages: () -> Unit = {},
     onShowNewestMessages: () -> Unit = {},
+    authors: ImmutableMap<ChatMessageId, ChatParticipantUiModel> = persistentMapOf(),
+    onAuthorClick: (participantId: String) -> Unit = {},
 ) {
     val footerHeight = LocalChatFooterHeight.current
     var initialMessageIds by remember { mutableStateOf<Set<ChatMessageId>?>(null) }
@@ -324,6 +329,17 @@ internal fun ChatFeed(
                                 .DrawMessage(message as ChatMessageUiModel.Custom<Any?>, drawingContext)
                         }
                     }
+                }
+
+                // The layout is reversed, so the author line that comes after the message draws above it.
+                val author = authors[message.id]
+                val olderAuthor = olderMessage?.let { authors[it.id] }
+                if (author != null && (!grouping.isTopAttached || olderAuthor?.participantId != author.participantId)) {
+                    ChatMessageAuthorLine(
+                        modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.mediumIncreased),
+                        author = author,
+                        onClick = { onAuthorClick(author.participantId) },
+                    )
                 }
 
                 if (showGroupDateSeparator) {

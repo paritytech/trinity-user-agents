@@ -101,7 +101,7 @@ class ChatFeedViewModelTest {
         attachmentExecutor = mockk(relaxed = true),
         dispatchers = TestCoroutineDispatchers(UnconfinedTestDispatcher()),
         resourceResolver = mockk(relaxed = true),
-        productRoomFactory = ChatProductRoomController.Factory(interactor, mockk(relaxed = true), mockk(relaxed = true)),
+        productRoomFactory = ChatProductRoomController.Factory(interactor, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true)),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk(relaxed = true),
     )

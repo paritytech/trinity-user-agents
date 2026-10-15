@@ -27,6 +27,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionMo
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
@@ -37,6 +38,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFee
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.Product
@@ -225,6 +227,21 @@ class ProductChatExtension(
                     replyTo = message.replyTo?.let { ProductMessageIds.product(it, chatId) },
                 )
                 return runningWorker.messageMenu(room, productMessage)
+            }
+
+            override suspend fun participantsCount(chatId: ChatId): Result<Int> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.participantsCount(room)
+            }
+
+            override suspend fun participantsPage(chatId: ChatId, cursor: String?, pageSize: Int): Result<ProductParticipantsPage> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.participantsPage(room, cursor, pageSize)
+            }
+
+            override suspend fun participantsByIds(chatId: ChatId, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.participantsByIds(room, participantIds)
             }
         }
     }

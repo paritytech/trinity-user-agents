@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -54,6 +55,7 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ACTION_MENU_BLUR_RADIUS = 25.dp
 
@@ -152,6 +154,8 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onBlockUserConfirm = contract::onBlockUserConfirm,
         onDeleteMessageConfirm = contract::onDeleteMessageConfirm,
         onProductLinkConfirm = { contract.onProductRoomAction(ProductRoomAction.OpenLink(it)) },
+        participants = productRoomState.participants.list,
+        onProductRoomAction = contract::onProductRoomAction,
     )
 
     when (popupState) {
@@ -235,13 +239,17 @@ private fun ChatFeedScreenInternal(
                 ChatFeedToolbar(
                     displayState = displayState,
                     toolbarActions = toolbarActions,
-                    subtitle = roomState.subtitle,
+                    subtitle = productRoomState.participants.count
+                        ?.let { pluralStringResource(RCommon.plurals.chat_participants_count, it, it) }
+                        ?: roomState.subtitle,
                     showAvatar = config.showAvatar,
                     productToolbar = productRoomState.toolbar,
+                    showsParticipants = productRoomState.participants.declared,
                     onBack = onBackClick,
                     onStartCallClick = onStartCallClick,
                     onMenuClick = onMenuClick,
                     onProductToolbarClick = { onProductRoomAction(ProductRoomAction.Toolbar(it)) },
+                    onParticipantsClick = { onProductRoomAction(ProductRoomAction.ShowParticipants) },
                 )
             }
 
@@ -278,6 +286,8 @@ private fun ChatFeedScreenInternal(
                             onLoadOlderMessages = onLoadOlderMessages,
                             onLoadNewerMessages = onLoadNewerMessages,
                             onShowNewestMessages = onShowNewestMessages,
+                            authors = productRoomState.participants.authors,
+                            onAuthorClick = { onProductRoomAction(ProductRoomAction.SelectParticipant(it)) },
                         )
                     }
                 }

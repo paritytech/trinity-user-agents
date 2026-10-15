@@ -5,10 +5,12 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -52,6 +54,15 @@ interface ProductWorker : JsEventDispatcher {
 
     /** The menu of [message], whose ids are product ids (`message_actions_query`). */
     suspend fun messageMenu(roomId: ProductChatIdParameter, message: ProductRoomMessage): Result<ChatMessageMenuModel> =
+        Result.failure(ProductChatQueryException.Unavailable(cause = null))
+
+    suspend fun participantsCount(roomId: ProductChatIdParameter): Result<Int> =
+        Result.failure(ProductChatQueryException.Unavailable(cause = null))
+
+    suspend fun participantsPage(roomId: ProductChatIdParameter, cursor: String?, pageSize: Int): Result<ProductParticipantsPage> =
+        Result.failure(ProductChatQueryException.Unavailable(cause = null))
+
+    suspend fun participantsByIds(roomId: ProductChatIdParameter, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> =
         Result.failure(ProductChatQueryException.Unavailable(cause = null))
 
     fun renderMessage(

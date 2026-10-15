@@ -8,11 +8,13 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -24,9 +26,12 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMes
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCoreBody
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCount
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toModel
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toPage
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toQueryException
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toQueryMessage
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toResolved
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.CancellationException
@@ -56,10 +61,12 @@ import uniffi.truapi.ChatActionPayload
 import uniffi.truapi.ChatCommand
 import uniffi.truapi.ChatEvent
 import uniffi.truapi.ChatMessageContent
+import uniffi.truapi.ChatParticipantsQuery
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductChatMessageActionsQueryRequest
 import uniffi.truapi.ProductChatMessagesQueryRequest
+import uniffi.truapi.ProductChatParticipantsQueryRequest
 import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
@@ -153,6 +160,22 @@ class TrUAPIChatWorker(
     override suspend fun messageMenu(roomId: ProductChatIdParameter, message: ProductRoomMessage): Result<ChatMessageMenuModel> =
         query { execution ->
             execution.chatMessageActionsQuery(ProductChatMessageActionsQueryRequest(roomId.value, message.toQueryMessage())).menu.toModel()
+        }
+
+    override suspend fun participantsCount(roomId: ProductChatIdParameter): Result<Int> = query { execution ->
+        execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, ChatParticipantsQuery.Count)).toCount()
+    }
+
+    override suspend fun participantsPage(roomId: ProductChatIdParameter, cursor: String?, pageSize: Int): Result<ProductParticipantsPage> =
+        query { execution ->
+            val page = ChatParticipantsQuery.Page(cursor, pageSize.toUInt())
+            execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, page)).toPage()
+        }
+
+    override suspend fun participantsByIds(roomId: ProductChatIdParameter, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> =
+        query { execution ->
+            val byIds = ChatParticipantsQuery.ByIds(participantIds)
+            execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, byIds)).toResolved()
         }
 
     // The core holds the worker for each open query. A worker that is not running yet starts first, and an
