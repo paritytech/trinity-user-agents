@@ -54,6 +54,7 @@ import {
   waitForProcess,
 } from "./lib/android-emulator.mjs";
 import {
+  ANDROID_CHAT_V2_PERF,
   ANDROID_CHAT_V2_SCENARIOS,
   blockedRows,
   byScenarioNumber,
@@ -115,6 +116,11 @@ const onlyScenarios = (process.env.TRUAPI_ANDROID_E2E_CHAT_V2_ONLY ?? "")
   .split(",")
   .map((id) => id.trim())
   .filter(Boolean);
+/** Also drive the benchmark rows (B9) after the scenarios. */
+const runPerf =
+  process.env.TRUAPI_ANDROID_E2E_PERF === "1" ||
+  ANDROID_CHAT_V2_PERF.some((row) => onlyScenarios.includes(row.id));
+const ROWS = runPerf ? [...ANDROID_CHAT_V2_SCENARIOS, ...ANDROID_CHAT_V2_PERF] : ANDROID_CHAT_V2_SCENARIOS;
 /** Keep the installed app and its data (for development). */
 const reuseApp = process.env.TRUAPI_ANDROID_E2E_CHAT_V2_REUSE === "1";
 const keepEmulator = process.env.TRUAPI_ANDROID_E2E_KEEP_EMULATOR === "1";
@@ -184,6 +190,7 @@ const FEATURE_ROWS = {
   custom_bodies: "S7",
   mute_archive: "S54 to S56",
   search: "S61 to S63",
+  call_buttons: "S72 to S74",
 };
 
 const DRIVERS = {
@@ -874,6 +881,217 @@ const DRIVERS = {
     );
   },
 
+  // S69: the user sends a message and leaves the room at once. The wake of the message (W1) holds the worker, so the
+  // product still answers; then the worker stops; a message to the stopped worker wakes it again.
+  async S69({ note }) {
+    await openRoom("host");
+    await command("host", "/echo", { reply: true });
+    try {
+      const text = `w1 closed at once ${String(Date.now()).slice(-5)}`;
+      const logged = logMark();
+      await typeAndSend(text);
+      await showChatList();
+      const left = Date.now();
+      const woken = await waitForLog(
+        logged,
+        (line) => line.message.startsWith(`TrUAPI ${productHost} woken for message-in-flight host until `),
+        "the wake of the message",
+      );
+      const echo = await waitFor(
+        () => messages("host").find((message) => message.text.startsWith("echo MessagePosted") && message.text.includes(text)),
+        { timeoutMs: COMMAND_TIMEOUT_MS, message: `no echo of "${text}" stored` },
+      );
+      note(`\`${await screenshot(scenarioById("S69"), "list")}\``);
+      note(`"${text}" sent and the room left at once: logcat "${woken.message}", the product stored "${echo.text}" ${Math.round((Date.now() - left) / 1000)} s after the room closed`);
+
+      await waitFor(async () => (await workerPages()) === 0, {
+        timeoutMs: 120_000,
+        intervalMs: 2_000,
+        message: "the worker page still runs 120 s after the room closed",
+      });
+      const stoppedAfter = Math.round((Date.now() - left) / 1000);
+      expect(stoppedAfter >= 25, `the worker stopped ${stoppedAfter} s after the room closed, before the wake of 30 s ended`);
+      note(`the worker page was gone ${stoppedAfter} s after the room closed (the wake holds 30 s after the message went)`);
+
+      const stopped = `w1 to a stopped worker ${String(Date.now()).slice(-5)}`;
+      const asked = logMark();
+      hook([
+        ["--es", "product_id", productHost],
+        ["--es", "room_id", "host"],
+        ["--es", "message", stopped],
+      ]);
+      await waitForLog(asked, (line) => line.message.startsWith(`TrUAPI ${productHost} woken for message-in-flight host until `), "the wake of the message to the stopped worker");
+      const second = await waitFor(
+        () => messages("host").find((message) => message.text.startsWith("echo MessagePosted") && message.text.includes(stopped)),
+        { timeoutMs: ANSWER_TIMEOUT_MS * 2, message: `no echo of "${stopped}" stored` },
+      );
+      note(`a message to the stopped worker woke it, and the product stored "${second.text}"`);
+    } finally {
+      await command("host", "/echo", { reply: true });
+    }
+  },
+
+  // S72: the room declares calls; the header draws the buttons that it declares, and a press sends CallRequested.
+  async S72({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/features calls both", { reply: true });
+      const both = await waitScreen(
+        (screen) => findTag(screen, CALL_TAGS.audio) && findTag(screen, CALL_TAGS.video) && screen,
+        "both call buttons in the header",
+      );
+      note(`\`${await screenshot(scenarioById("S72"), "buttons")}\``);
+      const mark = eventMark();
+      const video = findTag(both, CALL_TAGS.video);
+      inputTap(serial, video.center.x, video.center.y);
+      const requested = await waitEvent(
+        mark,
+        (entry) => isCallEvent(entry, "CallRequested") && entry.data?.video === true,
+        "room_events CallRequested video=true",
+      );
+      await waitFor(() => messages("host").some((message) => message.text === "call requested video=true"), {
+        timeoutMs: COMMAND_TIMEOUT_MS,
+        message: 'no "call requested video=true" stored',
+      });
+      await waitScreen((screen) => findTag(screen, CALL_TAGS.bar) && screen, "the call bar of the call that the product starts");
+      note(`a press on the video button: CallRequested ${JSON.stringify(requested.data)} (seq ${requested.seq}); the product answered Active, and the bar shows`);
+
+      await command("host", "/call end", { reply: true });
+      await waitScreen((screen) => !findTag(screen, CALL_TAGS.bar) && screen, "no call bar");
+      await command("host", "/features calls audio", { reply: true });
+      await waitScreen((screen) => findTag(screen, CALL_TAGS.audio) && !findTag(screen, CALL_TAGS.video) && screen, "the audio button only");
+      await command("host", "/features calls off", { reply: true });
+      await waitScreen((screen) => !findTag(screen, CALL_TAGS.audio) && !findTag(screen, CALL_TAGS.video) && screen, "no call button");
+      note(`\`${await screenshot(scenarioById("S72"), "none")}\``);
+      note("`/features calls audio` shows the audio button only, `/features calls off` none; a build without call_buttons shows none (ProductRoomCallControllerTest), and this build lists call_buttons (S49)");
+    } finally {
+      await command("host", "/call end", { reply: true });
+      await command("host", "/features calls off", { reply: true });
+    }
+  },
+
+  // S73: a ringing call rings in the room, in the chat list, in an in-app banner and, with the app in the background,
+  // in a CallStyle notification. Accept and Decline answer it; a call that nobody answers stops after 60 s.
+  async S73({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/call ring", { reply: true });
+      const room = await waitScreen((screen) => findTag(screen, CALL_TAGS.ringing) && screen, "the ringing banner of the room");
+      const caller = rowTexts(room, CALL_TAGS.ringing);
+      expect(caller.includes("Incoming call"), `the banner shows ${JSON.stringify(caller)}`);
+      note(`\`${await screenshot(scenarioById("S73"), "ringing")}\``);
+      note(`/call ring: the room shows the banner ${JSON.stringify(caller)} with Accept and Decline`);
+
+      // The chat list: the row rings, and the in-app banner rings for the room.
+      await showChatList();
+      const ringAgain = logMark();
+      await hookCommand("host", "/call ring video");
+      const list = await waitScreen(
+        (screen) => rowNodes(screen, ROOMS.host.name).some((node) => /Incoming video call$/.test(node.text)) && findTag(screen, CALL_TAGS.inApp) && screen,
+        'the "Incoming video call" row and the in-app banner',
+      );
+      expect(findTag(list, CALL_TAGS.inApp), "no in-app banner");
+      await waitForLog(ringAgain, (line) => line.message.startsWith(`product call alert ${ROOMS.host.chat.toLowerCase()} banner `), "the banner alert in logcat");
+      note(`\`${await screenshot(scenarioById("S73"), "list")}\``);
+      note('/call ring video from the list: the row shows "Incoming video call" and the in-app banner shows');
+
+      // The app in the background: a CallStyle notification.
+      const background = logMark();
+      inputKeyEvent(serial, KEY.home);
+      await waitForLog(background, (line) => line.message.startsWith(`product call alert ${ROOMS.host.chat.toLowerCase()} notification `), "the notification alert in logcat");
+      const posted = await waitFor(() => callNotification(), { timeoutMs: COMMAND_TIMEOUT_MS, message: "no product call notification in dumpsys" });
+      note(`\`${await screenshot(scenarioById("S73"), "background")}\``);
+      note(`with the app in the background: a CallStyle notification (${posted})`);
+      const answered = await answerFromNotification();
+      note(answered);
+      amStart(serial, ["-n", launcherActivity]);
+      await waitFor(() => !callNotification() && true, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the notification stays with the app in the front" });
+
+      // Accept and Decline in the room.
+      await openRoom("host");
+      await command("host", "/call end", { reply: true });
+      await command("host", "/call ring", { reply: true });
+      let screen = await waitScreen((nodes) => findTag(nodes, CALL_TAGS.accept) && nodes, "Accept");
+      let mark = eventMark();
+      tapTag(screen, CALL_TAGS.accept);
+      const accept = await waitEvent(mark, (entry) => isCallEvent(entry, "CallAnswered") && entry.data?.accept === true, "CallAnswered accept=true");
+      await waitScreen((nodes) => findTag(nodes, CALL_TAGS.bar) && !findTag(nodes, CALL_TAGS.ringing) && nodes, "the call bar after Accept");
+      await command("host", "/call end", { reply: true });
+      await command("host", "/call ring", { reply: true });
+      screen = await waitScreen((nodes) => findTag(nodes, CALL_TAGS.decline) && nodes, "Decline");
+      mark = eventMark();
+      tapTag(screen, CALL_TAGS.decline);
+      const decline = await waitEvent(mark, (entry) => isCallEvent(entry, "CallAnswered") && entry.data?.accept === false, "CallAnswered accept=false");
+      await waitScreen((nodes) => !findTag(nodes, CALL_TAGS.ringing) && nodes, "no banner after Decline");
+      note(`Accept sent CallAnswered ${JSON.stringify(accept.data)} and the product showed the bar; Decline sent CallAnswered ${JSON.stringify(decline.data)} and the banner went`);
+
+      // Nobody answers: the banner goes after 60 s.
+      await command("host", "/call ring", { reply: true });
+      await waitScreen((nodes) => findTag(nodes, CALL_TAGS.ringing) && nodes, "the ringing banner");
+      const rang = Date.now();
+      await waitScreen((nodes) => !findTag(nodes, CALL_TAGS.ringing) && nodes, "no banner after 60 s", 90_000);
+      const after = Math.round((Date.now() - rang) / 1000);
+      expect(after >= 50, `the banner went after ${after} s`);
+      const listAfter = await showChatList();
+      expect(!rowNodes(listAfter, ROOMS.host.name).some((node) => /^Incoming/.test(node.text)), "the row still rings");
+      note(`a call that nobody answers: the banner went after ${after} s, and the row does not ring`);
+    } finally {
+      await openRoom("host");
+      await command("host", "/call end", { reply: true });
+    }
+  },
+
+  // S74: an active call without a media session shows the call bar with its timer. A tap on the bar sends CallOpened,
+  // End sends CallEnded.
+  async S74({ note }) {
+    await openRoom("host");
+    try {
+      const sent = Date.now();
+      await command("host", "/call active", { reply: true });
+      await waitScreen((screen) => findTag(screen, CALL_TAGS.bar) && screen, "the call bar");
+      await delay(2_500);
+      // A dump can take seconds on a busy host, so the check reads the timer twice and compares it with the clock.
+      const first = await readCallTimer();
+      expect(first.seconds >= 2 && first.seconds <= (first.at - sent) / 1000 + 2, `the timer shows ${first.text} ${Math.round((first.at - sent) / 1000)} s after /call active`);
+      await delay(2_000);
+      const second = await readCallTimer();
+      expect(second.seconds > first.seconds, `the timer stays at ${first.text} (then ${second.text})`);
+      const screen = second.screen;
+      const timer = `${first.text}, then ${second.text}`;
+      note(`\`${await screenshot(scenarioById("S74"), "bar")}\``);
+      const bar = findTag(screen, CALL_TAGS.bar);
+      let mark = eventMark();
+      inputTap(serial, bar.bounds.left + 120, bar.center.y);
+      const opened = await waitEvent(mark, (entry) => isCallEvent(entry, "CallOpened"), "CallOpened");
+      mark = eventMark();
+      tapTag(parseUiNodes(uiDump(serial)), CALL_TAGS.end);
+      const ended = await waitEvent(mark, (entry) => isCallEvent(entry, "CallEnded"), "CallEnded");
+      await waitScreen((nodes) => !findTag(nodes, CALL_TAGS.bar) && nodes, "no call bar after End");
+      note(`/call active: the bar shows the timer ${timer}; a tap sent CallOpened ${JSON.stringify(opened.data)}, End sent CallEnded ${JSON.stringify(ended.data)}, and the product cleared the call`);
+    } finally {
+      await command("host", "/call end", { reply: true });
+    }
+  },
+
+  // B9: a notification wake of the room, as the receiving layer will start it (O28: the debug hook stands in), to a
+  // fresh preview "Woken by <watch>". Two cold wakes (no worker runs) and one warm wake, in the foreground.
+  async B9({ note }) {
+    await showChatList();
+    const times = [];
+    for (const watch of ["b9-cold-1", "b9-cold-2"]) {
+      await waitFor(async () => (await workerPages()) === 0, {
+        timeoutMs: 150_000,
+        intervalMs: 2_000,
+        message: "the worker page still runs: no cold start",
+      });
+      times.push([watch, await timedWake(watch)]);
+    }
+    times.push(["b9-warm", await timedWake("b9-warm")]);
+    note(times.map(([watch, ms]) => `${watch} ${ms} ms`).join(", "));
+    note("from the wake hook to the stored preview \"Woken by <watch>\" (chat_room_declarations.preview), the app in the foreground on the chat list");
+    await command("host", "/preview none", { reply: true });
+  },
+
   async S7({ note }) {
     await openRoom("host");
     const before = messages("host");
@@ -1204,7 +1422,7 @@ function expect(condition, message) {
 }
 
 function scenarioById(id) {
-  return ANDROID_CHAT_V2_SCENARIOS.find((scenario) => scenario.id === id);
+  return ROWS.find((scenario) => scenario.id === id);
 }
 
 async function startServer() {
@@ -1735,9 +1953,107 @@ async function pasteInto(field, text) {
   await delay(800);
 }
 
+// ------------------------------------------------------------- wakes and calls
+
+/** The test tags of the call parts of a product room (`ProductRoomCallTags`). */
+const CALL_TAGS = {
+  audio: "chat_call_button_audio",
+  video: "chat_call_button_video",
+  ringing: "chat_call_ringing_banner",
+  accept: "chat_call_accept",
+  decline: "chat_call_decline",
+  bar: "chat_call_bar",
+  timer: "chat_call_timer",
+  end: "chat_call_end",
+  inApp: "chat_call_in_app_banner",
+};
+
+function isCallEvent(entry, kind) {
+  return entry.via === "room_events" && entry.room === "host" && entry.kind === kind;
+}
+
+function tapTag(screen, tag) {
+  const node = findTag(screen, tag);
+  expect(node, `no ${tag} on screen; it shows ${screenSummary(screen)}`);
+  inputTap(serial, node.center.x, node.center.y);
+}
+
+/** The texts inside the node tagged `tag`. */
+function rowTexts(screen, tag) {
+  const box = findTag(screen, tag)?.bounds;
+  if (!box) return [];
+  return screen
+    .filter((node) => node.text && node.center.y >= box.top && node.center.y <= box.bottom && node.center.x >= box.left && node.center.x <= box.right)
+    .map((node) => node.text);
+}
+
+/** The text of the call timer in seconds, with the screen and the time of the dump. */
+async function readCallTimer() {
+  const screen = await waitScreen((nodes) => findTag(nodes, CALL_TAGS.timer) && nodes, "the call timer");
+  const text = findTag(screen, CALL_TAGS.timer).text;
+  const parts = text.split(":").map(Number);
+  expect(parts.length >= 2 && parts.every(Number.isFinite), `the timer shows "${text}"`);
+  return { text, seconds: parts.reduce((total, part) => total * 60 + part, 0), at: Date.now(), screen };
+}
+
+/** The notification of a ringing product room that the system shows, or undefined. */
+function callNotification() {
+  const dump = shell(serial, ["dumpsys", "notification", "--noredact"]).stdout;
+  const key = dump.split(/\r?\n/).find((line) => line.includes(`product-room-call.${ROOMS.host.chat.toLowerCase()}`));
+  return key?.trim().slice(0, 160);
+}
+
+/**
+ * Answer in the notification shade: the product gets CallAnswered and the room opens. The shade of a headless
+ * emulator can lay out the buttons of a call notification differently, so this step notes what it saw.
+ */
+async function answerFromNotification() {
+  const mark = eventMark();
+  shell(serial, ["cmd", "statusbar", "expand-notifications"]);
+  await delay(1_500);
+  const shade = parseUiNodes(uiDump(serial));
+  // The system labels the answer button of a video call "Video", and wraps the label in direction marks.
+  const answer = shade.find((node) => /(^|[^\p{L}])(Answer|Video)[^\p{L}]*$/u.test(node.text) && !/Incoming/.test(node.text));
+  if (!answer) {
+    shell(serial, ["cmd", "statusbar", "collapse"]);
+    return `the shade showed no Answer button (${screenSummary(shade)}); Answer from the notification is not driven`;
+  }
+  inputTap(serial, answer.center.x, answer.center.y);
+  const answered = await waitEvent(mark, (entry) => isCallEvent(entry, "CallAnswered") && entry.data?.accept === true, "CallAnswered from the notification", 45_000);
+  await waitScreen((screen) => findTag(screen, CALL_TAGS.bar) && screen, "the room with the call bar after Answer", 45_000);
+  currentRoom = "host";
+  const shot = await screenshot(scenarioById("S73"), "answered");
+  return `\`${shot}\`; Answer in the notification sent CallAnswered ${JSON.stringify(answered.data)} and opened the room with the call bar`;
+}
+
+/** Wake the host room through the debug hook, and give the time to the stored preview "Woken by <watch>". */
+async function timedWake(watch) {
+  const wanted = Buffer.from(`Woken by ${watch}`).toString("hex").toUpperCase();
+  const logged = logMark();
+  const started = Date.now();
+  hook([
+    ["--es", "product_id", productHost],
+    ["--es", "room_id", "host"],
+    ["--es", "wake", watch],
+  ]);
+  await waitFor(() => previewHex().includes(wanted), {
+    timeoutMs: 90_000,
+    intervalMs: 150,
+    message: `no preview "Woken by ${watch}" stored`,
+  });
+  const elapsed = Date.now() - started;
+  const ack = await waitForLog(logged, (line) => line.tag === E2E_TAG && line.message.startsWith("woken "), "the ack of the wake hook");
+  expect(ack.message.includes("held until="), `the wake was not held: ${ack.message}`);
+  // The answer to Woken also sends a notification; its first prompt asks for the permission of the product.
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) dismissPrompts(parseUiNodes(uiDump(serial)));
+  return elapsed;
+}
+
 // ------------------------------------------------------------- evidence
 
-const DEVTOOLS_PORT = 9339;
+/** The host port of the WebView DevTools socket; a second run on the same host needs another one. */
+const DEVTOOLS_PORT = Number(process.env.TRUAPI_ANDROID_E2E_DEVTOOLS_PORT ?? 9339);
 
 /** The `location.origin` of a WebView page, through its DevTools socket. */
 async function pageOrigin(socketUrl) {
@@ -2048,7 +2364,7 @@ async function main() {
     step("wait for the product to finish its start");
     await waitProductStarted();
 
-    for (const scenario of ANDROID_CHAT_V2_SCENARIOS) {
+    for (const scenario of ROWS) {
       if (onlyScenarios.length > 0 && !onlyScenarios.includes(scenario.id)) continue;
       step(`${scenario.id} ${scenario.title}`);
       rows.push(await runScenario(scenario));
@@ -2057,7 +2373,7 @@ async function main() {
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
     console.error(`\nthe run stopped: ${error instanceof Error ? error.stack : error}`);
-    const remaining = ANDROID_CHAT_V2_SCENARIOS.filter(
+    const remaining = ROWS.filter(
       (scenario) =>
         !rows.some((existing) => existing.id === scenario.id) &&
         (onlyScenarios.length === 0 || onlyScenarios.includes(scenario.id)),
@@ -2087,7 +2403,7 @@ async function main() {
   const reportPath = resolve(outDir, "diagnosis-report.md");
   writeFileSync(reportPath, `${report}${notes.join("\n")}\n`);
 
-  const expected = ANDROID_CHAT_V2_SCENARIOS.filter(
+  const expected = ROWS.filter(
     (scenario) => scenario.drive && (onlyScenarios.length === 0 || onlyScenarios.includes(scenario.id)),
   );
   const failures = scenarioFailures(rows, expected);

@@ -73,7 +73,8 @@ row format of the iOS report.
 
 | Kind       | Scenarios                                                                        | Row                                           |
 | ---------- | -------------------------------------------------------------------------------- | --------------------------------------------- |
-| Driven     | S1 to S4, S6 to S14, S49, S54, S55 and S61 (`host` room), S11, S15 to S24 and S46 (`source` room), S56 and S63 (both rooms) | `pass`, or `fail` with the first failed check |
+| Driven     | S1 to S4, S6 to S14, S49, S54, S55, S61, S69 and S72 to S74 (`host` room), S11, S15 to S24 and S46 (`source` room), S56 and S63 (both rooms) | `pass`, or `fail` with the first failed check |
+| Benchmark  | B9, only with `TRUAPI_ANDROID_E2E_PERF=1` or `B9` in `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY`, after the scenarios | `pass` with the times, or `fail` |
 | Not driven | S62                                                                              | `skip: needs P10.5.1 sample`                  |
 | Not driven | S5 (the sample has no command that calls `delete_room`)                          | `skip` with that reason                       |
 | Not driven | S25 to S41                                                                       | `skip: needs P8.6`                            |
@@ -103,6 +104,11 @@ the app. The launcher fails when a driven row fails or has no row.
 | S55      | a swipe to the start: the "Archived" row and no room row; the room stays archived after `/post text`; the archived section shows it, and a swipe there brings it back |
 | S56      | the host room muted always and the source room archived, the app restarted: the first room events of the new worker are both `UserStateChanged` |
 | S63      | with no worker page, the list search shows both rooms for "Sample", the host message for "crème", nothing for a text that only the source product keeps, and no worker starts |
+| S69      | `/echo`, a message sent and Back at once: the wake of the message in logcat (`TrUAPI <product> woken for message-in-flight host`), the echo stored; the worker page goes 30 s or more after the room closed; a `message` hook to the stopped worker wakes it and gets its echo |
+| S72      | `/features calls both`: both header buttons (`chat_call_button_audio`, `chat_call_button_video`); a press sends `CallRequested` and the product answers with a call bar; `audio` shows one button, `off` none |
+| S73      | `/call ring`: the banner of the room; `/call ring video` from the list: the row shows "Incoming video call" and the in-app banner shows; Home: the `CallStyle` notification in `dumpsys notification` (and Answer in the shade, when the shade shows it); Accept and Decline in the room send `CallAnswered`; a call that nobody answers goes after 60 s |
+| S74      | `/call active`: the bar with its timer; a tap on the bar sends `CallOpened`, End sends `CallEnded` |
+| B9       | on the chat list with no worker page, the `wake` hook (`ChatWakeReason.Notification`, in place of the receiving layer, O28) to the stored preview "Woken by <watch>": two cold wakes and one warm wake |
 
 ## Troubleshooting
 
@@ -112,5 +118,7 @@ the app. The launcher fails when a driven row fails or has no row.
 - The app shows "The environment has been reset" after `pm clear`, and the product asks to submit a preimage at its
   first start. The launcher answers "Dismiss" and "Don't allow"; `/post rich` then shows the missing-preimage
   placeholder.
+- Two runs on one host need their own ports: `TRUAPI_ANDROID_E2E_CHAT_PRODUCT_URL=http://127.0.0.1:<port>` for the
+  product server and `TRUAPI_ANDROID_E2E_DEVTOOLS_PORT` for the WebView DevTools socket.
 - `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY=S15,S17` runs some scenarios only, and `TRUAPI_ANDROID_E2E_CHAT_V2_REUSE=1` keeps the
   installed app and its data. Both are for work on the launcher; a report from them is not a full run.

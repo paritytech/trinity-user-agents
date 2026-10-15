@@ -219,6 +219,34 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S69",
+    title: "a message sent and the room closed at once still gets the product's echo and preview (wake W1)",
+    mode: "host",
+    phase: "P10.4",
+    drive: true,
+  },
+  {
+    id: "S72",
+    title: "calls shows the header buttons on a host with call_buttons and a press sends CallRequested; no buttons without the declaration",
+    mode: "host",
+    phase: "P10.7",
+    drive: true,
+  },
+  {
+    id: "S73",
+    title: "Ringing rings in the room and the list; Accept and Decline send CallAnswered; the banner clears after 60 s",
+    mode: "host",
+    phase: "P10.7",
+    drive: true,
+  },
+  {
+    id: "S74",
+    title: "Active without a session shows the call bar with its timer; Open and End send CallOpened and CallEnded",
+    mode: "host",
+    phase: "P10.7",
+    drive: true,
+  },
+  {
     id: "S4",
     title: "every preview variant in the chat list",
     mode: "host",
@@ -282,6 +310,23 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     title: "configuration generation reload",
     mode: "host",
     phase: "P8.8",
+  },
+]);
+
+/**
+ * The benchmark rows of the test plan (04-TESTING section 5) that the
+ * launcher drives on Android. They run only when asked for, with
+ * `TRUAPI_ANDROID_E2E_PERF=1` or by their id in
+ * `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY`, after the scenarios.
+ */
+export const ANDROID_CHAT_V2_PERF = Object.freeze([
+  {
+    id: "B9",
+    title: "notification wake to fresh preview, cold worker (foreground)",
+    mode: "host",
+    phase: "P10.4",
+    perf: true,
+    drive: true,
   },
 ]);
 
@@ -415,9 +460,10 @@ function decodeXml(value) {
   });
 }
 
-/** The scenarios in the order of their number, for the report. */
+/** The scenarios in the order of their number, then the benchmark rows, for the report. */
 export function byScenarioNumber(rows) {
-  const number = (row) => Number(row.id.replace(/^S/, ""));
+  const number = (row) =>
+    row.id.startsWith("B") ? 1_000 + Number(row.id.slice(1)) : Number(row.id.replace(/^S/, ""));
   return [...rows].sort((a, b) => number(a) - number(b));
 }
 

@@ -11,5 +11,8 @@ object E2EAcks {
 
     fun customRendererUpdate(productId: String) = "custom_renderer_update product=$productId"
 
+    fun woken(productId: String, roomId: String, watchId: String, outcome: String) =
+        "woken product=$productId room=$roomId watch=$watchId $outcome"
+
     fun error(hook: String, reason: String) = "error $hook $reason"
 }
