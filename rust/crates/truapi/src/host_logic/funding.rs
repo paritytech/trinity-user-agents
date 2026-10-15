@@ -11,7 +11,7 @@
 //! session.
 
 use parity_scale_codec::{Decode, Encode};
-use tracing::warn;
+use tracing::error;
 use truapi::latest::{
 	FundingAssignment, FundingDirection, FundingFailure, FundingFrameTarget, FundingUpdate,
 	GenericError, HostFundingReportError, HostFundingStatusSubscribeItem,
@@ -34,6 +34,10 @@ const TOP_UP_LIMIT: usize = 3;
 /// cannot hold the session and its worker for good. A bank transfer can take
 /// days, so this is longer than the unassigned window.
 const PROVIDER_SILENCE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+/// Version of the stored sessions blob, which leads it as a `u16`. A change
+/// to how [`FundingSession`] encodes bumps it, and [`decode_sessions`] keeps
+/// reading every earlier version, so an upgrade keeps the sessions in flight.
+const SESSIONS_FORMAT: u16 = 2;
 
 /// What the core knows about one session, independent of any host surface.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -492,12 +496,15 @@ pub enum FundingSessionError {
 	},
 }
 
-/// `target` as the host may show it: a page and its return URL must be https
-/// URLs with a host and no credentials. A page is passed on as parsed, so the
-/// host opens exactly what was checked.
+/// `target` as the host may show it: an App route must stay inside the
+/// provider's App, and a page and its return URL must be https URLs with a
+/// host and no credentials. A page is passed on as parsed, so the host opens
+/// exactly what was checked.
 pub fn checked_frame_target(target: FundingFrameTarget) -> Option<FundingFrameTarget> {
 	match target {
-		FundingFrameTarget::App { route } => Some(FundingFrameTarget::App { route }),
+		FundingFrameTarget::App { route } => {
+			app_route_stays_inside(&route).then_some(FundingFrameTarget::App { route })
+		},
 		FundingFrameTarget::Page { url, return_url } => Some(FundingFrameTarget::Page {
 			url: checked_page_url(&url)?,
 			return_url: match return_url {
@@ -506,6 +513,17 @@ pub fn checked_frame_target(target: FundingFrameTarget) -> Option<FundingFrameTa
 			},
 		}),
 	}
+}
+
+/// Whether `route`, resolved against the provider's App, stays on it: no
+/// scheme, no host and no scheme-relative `//`.
+fn app_route_stays_inside(route: &str) -> bool {
+	const APP: &str = "https://app.invalid/";
+	let Ok(base) = Url::parse(APP) else {
+		return false;
+	};
+	base.join(route)
+		.is_ok_and(|joined| joined.scheme() == "https" && joined.host_str() == Some("app.invalid"))
 }
 
 fn checked_page_url(raw: &str) -> Option<String> {
@@ -545,24 +563,79 @@ pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<Fundi
 
 /// Read every persisted session.
 ///
-/// A blob that does not decode is discarded with a warning rather than
-/// returned as an error, so one bad write cannot disable funding for good.
+/// A blob that does not decode is moved to
+/// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as no sessions, so
+/// one bad write cannot disable funding for good and the next store cannot
+/// overwrite sessions it never read. If it cannot be moved, loading fails and
+/// the blob stays where it is.
 pub async fn load_sessions(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<FundingSession>, FundingSessionError> {
+	let storage_error = |err: GenericError| FundingSessionError::Storage { reason: err.reason };
 	let Some(blob) = storage
 		.read_core_storage(CoreStorageKey::FundingSessions)
 		.await
-		.map_err(|err| FundingSessionError::Storage { reason: err.reason })?
+		.map_err(storage_error)?
 	else {
 		return Ok(Vec::new());
 	};
-	match Vec::<FundingSession>::decode(&mut blob.as_slice()) {
-		Ok(sessions) if sessions.encoded_size() == blob.len() => Ok(sessions),
-		_ => {
-			warn!("discarding undecodable funding sessions");
-			Ok(Vec::new())
-		},
+	if let Some(sessions) = decode_sessions(&blob) {
+		return Ok(sessions);
+	}
+	error!(bytes = blob.len(), "funding sessions do not decode; keeping them aside");
+	storage
+		.write_core_storage(CoreStorageKey::FundingSessionsUnreadable, blob)
+		.await
+		.map_err(storage_error)?;
+	Ok(Vec::new())
+}
+
+/// Decode a stored sessions blob of any version this core reads, or `None`
+/// when it is not one.
+fn decode_sessions(blob: &[u8]) -> Option<Vec<FundingSession>> {
+	let input = &mut &blob[..];
+	let sessions = match u16::decode(input).ok()? {
+		1 => Vec::<SessionV1>::decode(input)
+			.ok()?
+			.into_iter()
+			.map(FundingSession::from)
+			.collect(),
+		SESSIONS_FORMAT => Vec::<FundingSession>::decode(input).ok()?,
+		_ => return None,
+	};
+	input.is_empty().then_some(sessions)
+}
+
+/// A session as stored in format 1, before providers served sessions.
+#[derive(Encode, Decode)]
+struct SessionV1 {
+	intent: String,
+	owner_product_id: Option<String>,
+	direction: FundingDirection,
+	amount: Option<u128>,
+	stage: FundingStage,
+	opened_at_ms: u64,
+	deadline_ms: u64,
+	acknowledged: bool,
+}
+
+impl From<SessionV1> for FundingSession {
+	fn from(session: SessionV1) -> Self {
+		Self {
+			intent: session.intent,
+			owner_product_id: session.owner_product_id,
+			direction: session.direction,
+			amount: session.amount,
+			stage: session.stage,
+			opened_at_ms: session.opened_at_ms,
+			deadline_ms: session.deadline_ms,
+			acknowledged: session.acknowledged,
+			provider_id: None,
+			assigned_at_ms: None,
+			cancel_requested: false,
+			updates: Vec::new(),
+			started: Vec::new(),
+		}
 	}
 }
 
@@ -575,7 +648,10 @@ pub async fn store_sessions(
 		storage.clear_core_storage(CoreStorageKey::FundingSessions).await
 	} else {
 		storage
-			.write_core_storage(CoreStorageKey::FundingSessions, sessions.encode())
+			.write_core_storage(
+				CoreStorageKey::FundingSessions,
+				(SESSIONS_FORMAT, sessions).encode(),
+			)
 			.await
 	};
 	written.map_err(|err| FundingSessionError::Storage { reason: err.reason })
@@ -627,6 +703,25 @@ mod tests {
 				None,
 				Some(FundingFrameTarget::App { route: "/kyc".to_string() }),
 			)
+		);
+	}
+
+	#[test]
+	fn an_app_route_stays_inside_the_provider_app() {
+		let route = |route: &str| {
+			checked_frame_target(FundingFrameTarget::App { route: route.to_string() }).is_some()
+		};
+
+		assert_eq!(
+			[
+				route("/kyc"),
+				route("deposit?step=2"),
+				route("//evil.example/x"),
+				route("https://evil.example/"),
+				route("javascript:alert(1)"),
+				route("\\\\evil.example"),
+			],
+			[true, true, false, false, false, false]
 		);
 	}
 
@@ -1009,14 +1104,65 @@ mod tests {
 	}
 
 	#[test]
-	fn an_undecodable_blob_reads_as_no_sessions() {
+	fn an_undecodable_blob_is_kept_aside_and_reads_as_no_sessions() {
 		let storage = stub_platform();
-		let mut blob = vec![session(FundingDirection::In)].encode();
+		let mut blob = (SESSIONS_FORMAT, vec![session(FundingDirection::In)]).encode();
 		blob.push(0xff);
-		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob))
+		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
 			.expect("written");
 
 		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
+		assert_eq!(
+			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
+			Ok(Some(blob))
+		);
+	}
+
+	#[test]
+	fn sessions_stored_before_providers_served_them_still_load() {
+		let storage = stub_platform();
+		let stored = SessionV1 {
+			intent: "fs_1".to_string(),
+			owner_product_id: Some("wallet.dot".to_string()),
+			direction: FundingDirection::In,
+			amount: Some(100),
+			stage: FundingStage::Open,
+			opened_at_ms: NOW,
+			deadline_ms: NOW + SESSION_WINDOW_MS,
+			acknowledged: false,
+		};
+		block_on(
+			storage
+				.write_core_storage(CoreStorageKey::FundingSessions, (1u16, vec![stored]).encode()),
+		)
+		.expect("written");
+
+		let loaded = block_on(load_sessions(storage.as_ref())).expect("loaded");
+
+		assert_eq!(
+			loaded,
+			vec![FundingSession::new(
+				"fs_1".to_string(),
+				Some("wallet.dot".to_string()),
+				FundingDirection::In,
+				Some(100),
+				NOW,
+			)]
+		);
+	}
+
+	#[test]
+	fn a_blob_of_an_unknown_version_is_kept_aside() {
+		let storage = stub_platform();
+		let blob = (SESSIONS_FORMAT + 1, vec![session(FundingDirection::In)]).encode();
+		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
+			.expect("written");
+
+		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
+		assert_eq!(
+			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
+			Ok(Some(blob))
+		);
 	}
 
 	#[test]

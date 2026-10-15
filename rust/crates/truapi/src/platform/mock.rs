@@ -737,6 +737,7 @@ fn core_key(key: &CoreStorageKey) -> String {
 			format!("core:product-manifest:{product_id}")
 		},
 		CoreStorageKey::FundingSessions => "core:funding-sessions".to_string(),
+		CoreStorageKey::FundingSessionsUnreadable => "core:funding-sessions-unreadable".to_string(),
 		CoreStorageKey::AllowanceKeys { session_id } => {
 			format!("core:allowance-keys:{session_id}")
 		},
@@ -937,6 +938,7 @@ fn device_permission_key(request: &latest::HostDevicePermissionRequest) -> &'sta
 		Request::Clipboard => "Clipboard",
 		Request::OpenUrl => "OpenUrl",
 		Request::Biometrics => "Biometrics",
+		Request::Motion => "Motion",
 	}
 }
 

@@ -1453,9 +1453,13 @@ pub enum CoreStorageKey {
 		product_id: String,
 	},
 	/// Funding sessions: every live one plus a bounded tail of settled ones,
-	/// as one SCALE blob.
+	/// as one versioned SCALE blob.
 	#[codec(index = 13)]
 	FundingSessions,
+	/// The last funding sessions blob the core could not read, kept as it was
+	/// so a stored session is never overwritten unread.
+	#[codec(index = 17)]
+	FundingSessionsUnreadable,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1510,6 +1514,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
 		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
 		CoreStorageKey::FundingSessions => ("FundingSessions", None),
+		CoreStorageKey::FundingSessionsUnreadable => ("FundingSessionsUnreadable", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2471,6 +2476,7 @@ mod tests {
 				None,
 			),
 			(CoreStorageKey::FundingSessions, "FundingSessions", None),
+			(CoreStorageKey::FundingSessionsUnreadable, "FundingSessionsUnreadable", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
 			assert_eq!(description.kind, kind);
