@@ -7,7 +7,7 @@ import Individuality
 import ChainRegistry
 
 protocol RemoteContactOperationMaking: RemoteContactResolving {
-    func search(by query: String) -> CompoundOperationWrapper<[Chat.RemoteContact]>
+    func search(by query: String) async throws -> [Chat.RemoteContact]
 }
 
 enum RemoteContactOperationFactoryError: Error {
@@ -15,17 +15,17 @@ enum RemoteContactOperationFactoryError: Error {
 }
 
 final class RemoteContactOperationFactory {
-    private let resourcesOperationMaker: ResourcesPalletOperationMaking
+    private let dotnsGatewayOperationMaker: DotnsGatewayOperationMaking
     private let usernameOperationFactory: UsernameOperationFactoryProtocol
 
     init(
         chainRegistry: ChainRegistryProtocol = ChainRegistryFacade.sharedRegistry,
-        connectionChainId: ChainModel.Id = AppConfig.Chains.chatChain,
+        connectionChainId: ChainModel.Id = AppConfig.Chains.assethubChain,
         operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue
     ) {
         usernameOperationFactory = UsernameOperationFactory(tokenProvider: JWTTokenManager.shared)
 
-        resourcesOperationMaker = ResourcesPalletOperationFactory(
+        dotnsGatewayOperationMaker = DotnsGatewayOperationFactory(
             chainId: connectionChainId,
             chainRegistry: chainRegistry,
             operationQueue: operationQueue
@@ -34,65 +34,29 @@ final class RemoteContactOperationFactory {
 }
 
 extension RemoteContactOperationFactory: RemoteContactOperationMaking {
-    func search(by query: String) -> CompoundOperationWrapper<[Chat.RemoteContact]> {
-        let searchWrapper = usernameOperationFactory.searchUsernameWrapper(
-            for: UsernameRequestModel(prefix: query)
-        )
+    func search(by query: String) async throws -> [Chat.RemoteContact] {
+        let models = try await usernameOperationFactory
+            .searchUsernameWrapper(for: UsernameRequestModel(prefix: query))
+            .asyncExecute()
 
-        let searchMapOperation = ClosureOperation<[AccountId]> {
-            let models = try searchWrapper.targetOperation.extractNoCancellableResultData()
-            return try models
-                .filter { $0.status != .failed }
-                .map { model in
-                    try model.accountId.toAccountId()
-                }
-                .distinct()
-        }
+        let accountIds = try models
+            .filter { $0.status != .failed }
+            .map { try $0.accountId.toAccountId() }
+            .distinct()
 
-        searchMapOperation.addDependency(searchWrapper.targetOperation)
+        let accountNames = try await dotnsGatewayOperationMaker.accountNames(for: accountIds, blockHash: nil)
 
-        let consumerWrapper = resourcesOperationMaker.makeConsumerWrapperByAccountId(
-            { try searchMapOperation.extractNoCancellableResultData() },
-            blockHash: nil
-        )
-
-        consumerWrapper.addDependency(operations: [searchMapOperation])
-
-        let mapOperation = ClosureOperation {
-            let consumers = try consumerWrapper.targetOperation.extractNoCancellableResultData()
-
-            // we could have broken records during mapping here
-            return consumers.compactMap { consumer in
-                try? Chat.RemoteContact(consumer: consumer)
-            }
-        }
-
-        mapOperation.addDependency(consumerWrapper.targetOperation)
-
-        return consumerWrapper
-            .insertingHead(operations: [searchMapOperation])
-            .insertingHead(operations: searchWrapper.allOperations)
-            .insertingTail(operation: mapOperation)
-    }
-
-    private func fetch(by accountId: AccountId) -> CompoundOperationWrapper<Chat.RemoteContact?> {
-        let wrapper = resourcesOperationMaker.makeConsumerWrapperByAccountId({ [accountId] }, blockHash: nil)
-
-        let mappingOperation = ClosureOperation<Chat.RemoteContact?> {
-            guard let consumer = try wrapper.targetOperation.extractNoCancellableResultData().first else {
-                return nil
-            }
-
-            return try Chat.RemoteContact(consumer: consumer)
-        }
-
-        mappingOperation.addDependency(wrapper.targetOperation)
-
-        return wrapper.insertingTail(operation: mappingOperation)
+        // we could have broken records during mapping here
+        return accountNames.compactMap { try? Chat.RemoteContact(accountName: $0) }
     }
 
     func fetch(by accountId: AccountId) async throws -> Chat.RemoteContact? {
-        let wrapper: CompoundOperationWrapper<Chat.RemoteContact?> = fetch(by: accountId)
-        return try await wrapper.asyncExecute()
+        let accountNames = try await dotnsGatewayOperationMaker.accountNames(for: [accountId], blockHash: nil)
+
+        guard let accountName = accountNames.first else {
+            return nil
+        }
+
+        return try Chat.RemoteContact(accountName: accountName)
     }
 }

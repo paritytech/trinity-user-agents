@@ -350,8 +350,9 @@ either way the core calls `presentFunding`.
 
 The core owns the sessions. While `presentFunding` waits, the session is live:
 list its providers with `fundingCandidates(intent:)`, price it with
-`getFundingQuote(intent:ask:)` (each provider's row arrives through
-`fundingQuoteChanged`, `pending` first), hand it to the chosen provider with
+`getFundingQuote(intent:ask:)` (the quote list arrives through
+`fundingQuotesChanged` with the request id the call returned, `pending` rows
+first, and again at each refresh), hand it to the chosen provider with
 `selectFundingProvider(intent:providerId:quoteId:)`, and only then answer
 `.started`. Answering `.dismissed` discards the session. A provider that needs
 one of its own screens asks through `presentProviderFrame`, answered `.closed`
@@ -363,6 +364,35 @@ feed the host's in-flight and history views, refreshed on
 until the host records them with `acknowledgeFundingSession(intent:)`.
 `setFundingProviders(_:)` lists the providers the host ships with their Worker
 manifests; amounts cross as decimal strings of CASH units.
+
+## Payments
+
+A host with a wallet serves top-ups, payments and the spendable balance by
+installing `TopUpHostBridge`, `PaymentHostBridge` and `BalanceHostBridge` once
+on the runtime, before any product opens. A runtime without one answers the
+matching calls `Unsupported`.
+
+```swift
+runtime.setTopUp(wallet)
+runtime.setPayments(wallet)
+runtime.setBalance(wallet)
+
+// Later, from the wallet's own status and balance streams:
+runtime.notifyTopUpStatus(productId: productId, id: id, status: .claiming)
+runtime.notifyPaymentStatus(productId: productId, id: id, status: .completed)
+runtime.notifyBalance(purse: nil, available: "1500000000")
+```
+
+The core checks the session, the source keys, a positive amount and the
+product's balance access, so the host never prompts for balance access. A
+payment the balance cannot cover throws `HostPaymentError.InsufficientBalance`,
+which the core turns into `Rejected` for a product without balance access. The
+balance is what a payment can spend now, as a decimal string of CASH units.
+
+`topUpStatus` and `paymentStatus` answer the current status of an id inline,
+or `nil` when the host holds none. Every later status goes through
+`notifyTopUpStatus` and `notifyPaymentStatus`, ending with a terminal one; the
+core relays each to the products following that id.
 
 ## Architecture
 

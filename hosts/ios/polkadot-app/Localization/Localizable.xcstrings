@@ -979,6 +979,17 @@
         }
       }
     },
+    "chatCallStatusConnecting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting..."
+          }
+        }
+      }
+    },
     "chatCallStatusContacting" : {
       "extractionState" : "manual",
       "localizations" : {

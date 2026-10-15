@@ -2,6 +2,8 @@ import Foundation
 import TrUAPIHost
 import Products
 import ChainRegistry
+import Foundation_iOS
+import FoundationExt
 import SubstrateSdk
 import BulletinChain
 import DesignSystem
@@ -77,12 +79,10 @@ private extension RustRuntimeEnvironment {
         chatMessaging: (any ProductChatMessaging)? = nil,
         pocket: (any PocketHostBridge)? = nil
     ) throws -> ExecutionModel {
-        let chainConnections = TrUAPIChainConnectionPool(
-            engineResolver: { [chainRegistry] genesisHash in
-                chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                    chainRegistry.getConnection(for: chain.chainId)
-                }
-            },
+        let chainConnections = TrUAPIV2SpecConnectionPool(
+            chainRegistry: chainRegistry,
+            applicationHandler: ApplicationHandler(),
+            dateProvider: NowDateProvider(),
             logger: logger
         )
 

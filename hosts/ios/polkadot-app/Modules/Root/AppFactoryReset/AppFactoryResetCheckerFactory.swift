@@ -9,12 +9,12 @@
 
     struct AppFactoryResetCheckerFactory: AppFactoryResetCheckerFactoryProtocol {
         let operationQueue: OperationQueue
-        let usernameChain: ChainModel.Id
+        let identityChain: ChainModel.Id
 
         func makeChecker(chainRegistry: ChainRegistryProtocol) -> AppFactoryResetChecker {
             let identityService = IdentityService(
                 chainRegistry: chainRegistry,
-                chain: usernameChain,
+                chain: identityChain,
                 operationQueue: operationQueue,
                 logger: Logger.shared
             )
