@@ -16,7 +16,10 @@ export function decodeTextMessage(hex) {
 /** Title line the Chat diagnosis worker renders its report under. */
 export const CHAT_DIAGNOSIS_HEADING = "## Truapi Chat Diagnosis";
 
-/** Host gaps the Android launcher accepts: the shared core has no bot registry to register into. */
+/**
+ * The `register_bot` refusal of a host that keeps no bot personas. No launcher accepts it any more: the Android app
+ * keeps personas since P10.6.3. It stays for a host that lists no `bot_personas`.
+ */
 export const REGISTER_BOT_GAP = [
   { method: "Chat/register_bot", details: /no bot registry|not supported/ },
 ];

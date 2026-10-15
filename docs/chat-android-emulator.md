@@ -73,7 +73,7 @@ row format of the iOS report.
 
 | Kind       | Scenarios                                                                        | Row                                           |
 | ---------- | -------------------------------------------------------------------------------- | --------------------------------------------- |
-| Driven     | S1 to S4, S6 to S14, S49, S54, S55 and S61 (`host` room), S11, S15 to S24 and S46 (`source` room), S56 and S63 (both rooms) | `pass`, or `fail` with the first failed check |
+| Driven     | S1 to S4, S6 to S14, S49, S53, S54, S55, S61 and S64 to S67 (`host` room), S11, S15 to S24, S46 and S68 (`source` room), S56 and S63 (both rooms) | `pass`, or `fail` with the first failed check |
 | Not driven | S62                                                                              | `skip: needs P10.5.1 sample`                  |
 | Not driven | S5 (the sample has no command that calls `delete_room`)                          | `skip` with that reason                       |
 | Not driven | S25 to S41                                                                       | `skip: needs P8.6`                            |
@@ -103,14 +103,9 @@ the app. The launcher fails when a driven row fails or has no row.
 | S55      | a swipe to the start: the "Archived" row and no room row; the room stays archived after `/post text`; the archived section shows it, and a swipe there brings it back |
 | S56      | the host room muted always and the source room archived, the app restarted: the first room events of the new worker are both `UserStateChanged` |
 | S63      | with no worker page, the list search shows both rooms for "Sample", the host message for "crème", nothing for a text that only the source product keeps, and no worker starts |
-
-## Troubleshooting
-
-- The product server listens on `127.0.0.1` of the host, and `adb reverse` connects to it from the adb server. An adb
-  server that runs in a sandbox that blocks local connections gives `net::ERR_CONNECTION_REFUSED` in the worker WebView;
-  restart it outside the sandbox with `adb kill-server && adb start-server`.
-- The app shows "The environment has been reset" after `pm clear`, and the product asks to submit a preimage at its
-  first start. The launcher answers "Dismiss" and "Don't allow"; `/post rich` then shows the missing-preimage
-  placeholder.
-- `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY=S15,S17` runs some scenarios only, and `TRUAPI_ANDROID_E2E_CHAT_V2_REUSE=1` keeps the
-  installed app and its data. Both are for work on the launcher; a report from them is not a full run.
+| S53      | `/bot add helper Helper`: `bot helper New` and a `chat_bots` row; `/bot post helper …` stored with `originParticipantId` `bot:helper` and drawn under the author "Helper" with no `participants_query`; a repeat answers `Exists` and renames it; `/bot typing helper` gives the activity line "Helper Two: Sample is typing"; `/bot post ghost` is refused with "unknown bot ghost" |
+| S64      | `/thread <id>`: the thread room in `chat_rooms` and a `chat_message_meta` row; the chip under the root reads "3 replies" with the unread dot; the list has no thread row; a tap opens "Thread" with the parent name, the pinned root (`chat_thread_root`) and the three replies; Back shows the root. Deleting the parent is not driven: the sample runs commands only in `host`, `source` and its thread rooms |
+| S65      | `/branches <id> 3`: a tap on › sends `BranchSelected`, and "Branch 2 of 3" moves the control to 2/3; with `/slow 15000` the next tap shows the spinner, the app logs `truapi.chat.branch … no answer` after 5 s and the control is back at 2/3, then the late answer moves it to 3/3 |
+| S66      | `/reason`: the row collapses to "Thought for 4 s" with the content description "Reasoning, collapsed", a tap gives "Reasoning, expanded" and the text, and the list row does not show the reasoning text. The "Thinking…" state of the sample lasts about one second, so a screen dump catches it only sometimes |
+| S67      | `/post rich`: no "Read aloud" without `/features readaloud on`; with it, the entry speaks (`truapi.chat.readAloud speak N characters, marks false`), the footer shows Stop, and Back logs `truapi.chat.readAloud stop` |
+| S68      | `/branches <id> 3` in the `source` room: a `chat_message_meta` row; after the room closes and loads its pages again through `messages_query`, the control 1/3 is back |

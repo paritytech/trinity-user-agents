@@ -184,6 +184,11 @@ const FEATURE_ROWS = {
   custom_bodies: "S7",
   mute_archive: "S54 to S56",
   search: "S61 to S63",
+  bot_personas: "S53",
+  threads: "S64",
+  branches: "S65",
+  reasoning_rows: "S66 and S68",
+  read_aloud: "S67",
 };
 
 const DRIVERS = {
@@ -636,6 +641,300 @@ const DRIVERS = {
     note(
       `the app lists ${listed.join(", ") || "none"}; the product read ${read.join(", ") || "none"}; inline ${match[2]} B, preimage ${match[3]} B; the rows of the listed names: ${listed.map((name) => `${name} ${FEATURE_ROWS[name]}`).join(", ") || "none"}`,
     );
+  },
+
+  // S53: a persona of the product draws with its name and icon in the host
+  // room, with no participants query, also in the activity line; a repeat
+  // renames it, and an unknown persona is refused.
+  async S53({ note }) {
+    await openRoom("host");
+    const asked = eventMark();
+    const before = messages("host");
+    await command("host", "/bot add helper Helper");
+    const registered = await waitFor(
+      () => addedMessages("host", before).find((message) => /^bot helper (New|Exists)$/.test(message.text))?.text,
+      { timeoutMs: COMMAND_TIMEOUT_MS, message: "no answer to /bot add" },
+    );
+    const stored = await waitFor(() => personaRows().find((row) => row.botId === "helper"), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "chat_bots has no persona helper",
+    });
+    expect(stored.name === "Helper", `chat_bots names helper "${stored.name}"`);
+    note(`/bot add helper Helper: the product read "${registered}"; chat_bots keeps helper "${stored.name}"`);
+
+    const posted = messages("host");
+    await command("host", "/bot post helper Hello from the persona");
+    const spoken = await waitFor(
+      () => addedMessages("host", posted).find((message) => message.text === "Hello from the persona"),
+      { timeoutMs: COMMAND_TIMEOUT_MS, message: "the persona message is not stored" },
+    );
+    expect(spoken.participant === "bot:helper", `the persona message is stored as "${spoken.participant}"`);
+    await scrollToNewest();
+    await waitScreen((screen) => authorAbove(screen, "Hello from the persona", "Helper") && screen, 'the author "Helper" above the persona message');
+    note(`\`${await screenshot(scenarioById("S53"), "author")}\``);
+
+    const renamed = messages("host");
+    await command("host", "/bot add helper Helper Two");
+    await waitFor(() => addedMessages("host", renamed).some((message) => message.text === "bot helper Exists"), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: 'no "bot helper Exists" after the repeat',
+    });
+    await waitFor(() => personaRows().find((row) => row.botId === "helper")?.name === "Helper Two", {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "chat_bots did not take the new name",
+    });
+    await scrollToNewest();
+    await waitScreen((screen) => authorAbove(screen, "Hello from the persona", "Helper Two") && screen, 'the new name "Helper Two" above the persona message');
+
+    await command("host", "/bot typing helper", { reply: true });
+    const typing = await waitScreen((screen) => findText(screen, "Helper Two: Sample is typing") && screen, 'the activity line "Helper Two: Sample is typing"');
+    expect(typing, "no activity line");
+    note(`\`${await screenshot(scenarioById("S53"), "activity")}\``);
+    await command("host", "/activity off", { reply: true });
+
+    const ghost = messages("host");
+    await command("host", "/bot post ghost Boo");
+    const refused = await waitFor(
+      () => addedMessages("host", ghost).find((message) => message.text.startsWith("error /bot post ghost Boo"))?.text,
+      { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unknown persona was not refused" },
+    );
+    expect(/unknown bot ghost/.test(refused), `the refusal reads "${refused}"`);
+    const queried = eventsSince(asked).filter((entry) => entry.via === "participants_query");
+    expect(queried.length === 0, `the app asked participants_query ${queried.length} time(s)`);
+    note(
+      `the persona message is stored with originParticipantId bot:helper and drawn under the author "Helper" with no participants_query; the repeat answered Exists and renamed it to "Helper Two"; the activity line reads "Helper Two: Sample is typing"; /bot post ghost was refused: "${refused}"`,
+    );
+  },
+
+  // S64: a thread chip under the root opens the thread room, which the list
+  // does not show; Back returns to the root.
+  async S64({ note }) {
+    await openRoom("host");
+    await command("host", "/bot add helper Helper");
+    await command("host", "/post text");
+    const root = await newestPlainText("host");
+    await command("host", `/thread ${root}`, { reply: true });
+    const threadRoom = `thread-host-${root}`;
+    const threadChat = chatIdHex(extensionId, threadRoom);
+    await waitFor(() => sql(`SELECT id FROM chat_rooms WHERE id = X'${threadChat}'`)[0], {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: `chat_rooms has no ${threadRoom}`,
+    });
+    await waitFor(() => metaRows("host").some((row) => row.messageId === root), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: `chat_message_meta has no row for ${root}`,
+    });
+    await findInFeed(plainText(root));
+    const rooted = await waitScreen((screen) => chipUnder(screen, plainText(root)) && screen, `the thread chip under ${root}`);
+    const chip = chipUnder(rooted, plainText(root));
+    const chipText = rooted.filter((node) => insideOf(node, chip)).map((node) => node.text).join(" ");
+    expect(/\b3 replies\b/.test(chipText), `the chip reads "${chipText}"`);
+    const unread = rooted.some((node) => node.tag === "chat_thread_unread" && insideOf(node, chip));
+    note(`\`${await screenshot(scenarioById("S64"), "root")}\``);
+
+    const list = await showChatList();
+    expect(!findText(list, "Thread"), "the chat list shows the thread room");
+    await openRoom("host");
+    await findInFeed(plainText(root));
+    const again = await waitScreen((screen) => chipUnder(screen, plainText(root)) && screen, "the chip after the list");
+    const target = chipUnder(again, plainText(root));
+    inputTap(serial, target.center.x, target.center.y);
+    currentRoom = undefined;
+    const thread = await waitScreen(
+      (screen) =>
+        findText(screen, "Thread") &&
+        findText(screen, ROOMS.host.name) &&
+        findTag(screen, "chat_thread_root") &&
+        findText(screen, "Reply 3 from bot:helper") &&
+        screen,
+      "the thread room with its header, the pinned root and the replies",
+    );
+    const bar = findTag(thread, "chat_thread_root");
+    expect(thread.some((node) => plainText(root).test(node.text) && insideOf(node, bar)), "the pinned root is not the root message");
+    for (const reply of ["Reply 1 from p1", "Reply 2 from p2"]) expect(findText(thread, reply), `no "${reply}"`);
+    expect(authorAbove(thread, "Reply 3 from bot:helper", "Helper"), 'the persona reply has no author "Helper"');
+    note(`\`${await screenshot(scenarioById("S64"), "thread")}\``);
+
+    inputKeyEvent(serial, KEY.back);
+    const back = await waitScreen(
+      (screen) => findTag(screen, "chat_message_input") && findText(screen, ROOMS.host.name) && findText(screen, plainText(root)) && screen,
+      "the host room at the root after Back",
+    );
+    expect(back, "Back did not return to the root");
+    currentRoom = "host";
+
+    note(
+      `/thread ${root}: ${threadRoom} in chat_rooms and a meta row for ${root}; the chip reads "${chipText}"${unread ? " with the unread dot" : ""}; the list has no thread row; a tap opens "Thread" with "${ROOMS.host.name}", the pinned root and the replies from p1, p2 and the persona "Helper"; Back shows the root again. Deleting the parent is not driven: the sample runs commands only in host, source and its thread rooms, so no thread of the throwaway room that /room delete removes can be made (RealDeleteRoomUseCaseTest covers the cascade)`,
+    );
+  },
+
+  // S65: the branch arrows send BranchSelected; the product's answer moves
+  // the position; an answer later than 5 s leaves the control at the stored
+  // position, and the late answer then moves it.
+  async S65({ note }) {
+    await openRoom("host");
+    await command("host", "/post text");
+    const id = await newestPlainText("host");
+    await command("host", `/branches ${id} 3`, { reply: true });
+    await findInFeed(plainText(id));
+    let screen = await waitScreen((nodes) => branchUnder(nodes, plainText(id))?.position.text === "1/3" && nodes, "the branch control 1/3");
+    let mark = eventMark();
+    let control = branchUnder(screen, plainText(id));
+    inputTap(serial, control.next.center.x, control.next.center.y);
+    const selected = await waitEvent(
+      mark,
+      (entry) => entry.via === "room_events" && entry.room === "host" && entry.kind === "BranchSelected" && Number(entry.data?.index) === 2,
+      "BranchSelected { index: 2 }",
+    );
+    screen = await waitScreen(
+      (nodes) => findText(nodes, "Branch 2 of 3") && branchUnder(nodes, /^Branch 2 of 3$/)?.position.text === "2/3" && !findTag(nodes, "chat_branch_waiting") && nodes,
+      'the answer "Branch 2 of 3" at 2/3',
+    );
+    note(`\`${await screenshot(scenarioById("S65"), "answered")}\``);
+
+    // The product answers 15 s late; the app gives up after 5 s and logs it. Screen dumps are slow, so the margin is wide.
+    await command("host", "/slow 15000", { reply: true });
+    try {
+      control = branchUnder(parseUiNodes(uiDump(serial)), /^Branch 2 of 3$/);
+      expect(control, "no branch control under Branch 2 of 3");
+      mark = eventMark();
+      const logged = logMark();
+      const tapped = Date.now();
+      inputTap(serial, control.next.center.x, control.next.center.y);
+      await waitScreen((nodes) => findTag(nodes, "chat_branch_waiting") && nodes, "the spinner of the control", 4_000);
+      note(`\`${await screenshot(scenarioById("S65"), "waiting", 200)}\``);
+      const gaveUp = await waitForLog(logged, (line) => /^truapi\.chat\.branch .*: no answer for 3 in 5000 ms$/.test(line.message), "the 5 s time-out of the control", 12_000);
+      note(`the control gave up ${((Date.now() - tapped) / 1000).toFixed(1)} s after the tap ("${gaveUp.message}")`);
+      const reverted = await waitScreen(
+        (nodes) => !findTag(nodes, "chat_branch_waiting") && branchUnder(nodes, /^Branch 2 of 3$/)?.position.text === "2/3" && nodes,
+        "the control back at 2/3 with no spinner",
+        3_000,
+      );
+      expect(!findTag(reverted, "chat_branch_waiting"), "the spinner is still there after 5 s");
+      expect(branchUnder(reverted, /^Branch 2 of 3$/)?.position.text === "2/3", "the control is not back at 2/3 after 5 s");
+      note(`\`${await screenshot(scenarioById("S65"), "reverted", 100)}\``);
+      expect(Date.now() - tapped < 15_000, "the check of the revert came after the late answer");
+      await waitScreen((nodes) => branchUnder(nodes, /^Branch 3 of 3$/)?.position.text === "3/3" && nodes, "the late answer at 3/3", 30_000);
+      await waitEvent(mark, (entry) => entry.via === "room_events" && entry.kind === "BranchSelected" && Number(entry.data?.index) === 3, "BranchSelected { index: 3 }");
+    } finally {
+      await command("host", "/slow 0", { reply: true, timeoutMs: 45_000 });
+    }
+    note(
+      `a tap on › sent BranchSelected ${JSON.stringify(selected.data)}; the product's Edited "Branch 2 of 3" and meta moved the control to 2/3; with /slow 15000 the next tap showed the spinner, after 5 s the control was back at 2/3 with no spinner, and the late answer moved it to 3/3`,
+    );
+  },
+
+  // S66: a reasoning row reads "Thinking…" while the message is Preparing,
+  // then "Thought for 4 s" collapsed; a tap expands it; TalkBack reads its
+  // state; it is never the list preview.
+  async S66({ note }) {
+    await openRoom("host");
+    await scrollToNewest();
+    const before = messages("host");
+    await typeAndSend("/reason");
+    const states = new Set();
+    let thinkingShot;
+    const started = Date.now();
+    while (Date.now() - started < 20_000) {
+      const screen = parseUiNodes(uiDump(serial));
+      const row = screen.find((node) => /^Reasoning, (expanded|collapsed)$/.test(node.description));
+      if (row?.description === "Reasoning, expanded" && findText(screen, "Thinking…")) {
+        if (!states.has("thinking")) thinkingShot = await screenshot(scenarioById("S66"), "thinking", 0);
+        states.add("thinking");
+        if (screen.some((node) => node.tag === "chat_reasoning_text" && /^The user/.test(node.text))) states.add("streamed");
+      }
+      if (row && findText(screen, "Thought for 4 s") && row.description === "Reasoning, collapsed") {
+        states.add("collapsed");
+        break;
+      }
+    }
+    expect(states.has("collapsed"), `the row did not collapse to "Thought for 4 s" (seen: ${[...states].join(", ") || "nothing"})`);
+    // The stored search text of a message keeps its first body until P8.9, so it is "The".
+    const reasoning = addedMessages("host", before).find((message) => /^The( user asked|$)/.test(message.text));
+    expect(reasoning, "no reasoning message stored");
+    const collapsed = parseUiNodes(uiDump(serial));
+    expect(!collapsed.some((node) => node.tag === "chat_reasoning_text"), "the collapsed row shows its text");
+    note(`\`${await screenshot(scenarioById("S66"), "collapsed")}\``);
+    const header = collapsed.find((node) => node.description === "Reasoning, collapsed");
+    inputTap(serial, header.center.x, header.center.y);
+    const expanded = await waitScreen(
+      (screen) => screen.some((node) => node.description === "Reasoning, expanded") && screen.some((node) => node.tag === "chat_reasoning_text" && /The user asked/.test(node.text)) && screen,
+      "the expanded row with its text",
+    );
+    expect(expanded, "no expanded row");
+    note(`\`${await screenshot(scenarioById("S66"), "expanded")}\``);
+    const list = await showChatList();
+    const row = rowNodes(list, ROOMS.host.name);
+    expect(!row.some((node) => /The user asked/.test(node.text)), `the list preview is the reasoning row: ${row.map((node) => node.text).join(" | ")}`);
+    note(`\`${await screenshot(scenarioById("S66"), "list")}\``);
+    note(
+      `${states.has("thinking") ? `"Thinking…" with the streamed text (\`${thinkingShot}\`), then ` : "the Thinking state was shorter than one screen dump; "}"Thought for 4 s" with the content description "Reasoning, collapsed"; a tap gives "Reasoning, expanded" and the text; the host row of the list shows "${row.map((node) => node.text).filter(Boolean).join(" | ")}", not the reasoning row`,
+    );
+  },
+
+  // S67: Read aloud is in the menu only with read_aloud, speaks RichText as
+  // plain text, and stops when the user leaves the room.
+  async S67({ note }) {
+    await openRoom("host");
+    await command("host", "/features readaloud off", { reply: true });
+    await command("host", "/post rich");
+    await waitFor(() => messages("host").some((message) => /^# Rich text sample/.test(message.text)), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "the rich message is not stored",
+    });
+    const without = await openRichMenu();
+    expect(!findText(without, "Read aloud"), "Read aloud without read_aloud");
+    inputKeyEvent(serial, KEY.back);
+    await delay(800);
+
+    await command("host", "/features readaloud on", { reply: true });
+    await delay(1_500);
+    const menu = await openRichMenu();
+    expect(findText(menu, "Read aloud"), `no Read aloud with read_aloud; the menu shows ${menuLabels(menu).join(", ")}`);
+    note(`\`${await screenshot(scenarioById("S67"), "menu", 300)}\``);
+    const logged = logMark();
+    tapText(menu, "Read aloud");
+    const spoke = await waitForLog(logged, (line) => line.message.startsWith("truapi.chat.readAloud speak "), "the speak line");
+    const match = /speak (\d+) characters, marks (true|false)/.exec(spoke.message);
+    expect(match && match[2] === "false", `the spoken text has Markdown marks: ${spoke.message}`);
+    const speaking = await waitScreen((screen) => findTag(screen, "chat_read_aloud_stop") && screen, 'the "Stop" line while it speaks', 10_000).catch(() => undefined);
+    const engine = logLines(logged).find((line) => /truapi\.chat\.readAloud (unavailable|failed|done)/.test(line.message));
+    if (speaking) note(`\`${await screenshot(scenarioById("S67"), "speaking", 200)}\``);
+    inputKeyEvent(serial, KEY.back);
+    currentRoom = undefined;
+    const stopped = await waitForLog(logged, (line) => /truapi\.chat\.readAloud (stop|done|unavailable|failed)/.test(line.message), "the end of the speech", 10_000);
+    expect(speaking, `no Stop line while it speaks${engine ? `: ${engine.message}` : ""}`);
+    expect(/readAloud stop$/.test(stopped.message), `the speech ended with "${stopped.message}" before the user left`);
+    await delay(1_000);
+    const after = parseUiNodes(uiDump(serial));
+    expect(!findTag(after, "chat_read_aloud_stop"), "the Stop line is still on screen after leaving");
+    await command("host", "/features readaloud off", { reply: true });
+    note(
+      `without read_aloud the menu of the rich message has no Read aloud; with it, Read aloud spoke ${match[1]} characters with no Markdown marks (logcat ${JSON.stringify(spoke.message)}), the footer showed Stop, and Back stopped the speech ("${stopped.message}")`,
+    );
+  },
+
+  // S68: the meta of a message of the product-source room is kept by the
+  // host, so its branch control comes back when the room loads its pages again.
+  async S68({ note }) {
+    await openRoom("source");
+    await command("source", "/post text");
+    const id = await newestPlainText("source");
+    await command("source", `/branches ${id} 3`, { reply: true });
+    await waitFor(() => metaRows("source").some((row) => row.messageId === id), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: `chat_message_meta has no row for ${id}`,
+    });
+    await findInFeed(plainText(id));
+    await waitScreen((nodes) => branchUnder(nodes, plainText(id))?.position.text === "1/3" && nodes, "the branch control 1/3");
+    note(`\`${await screenshot(scenarioById("S68"), "before")}\``);
+    const reloaded = eventMark();
+    await reopenRoom("source");
+    await waitEvent(reloaded, (entry) => entry.via === "messages_query" && entry.room === "source", "a new messages_query page");
+    await findInFeed(plainText(id));
+    await waitScreen((nodes) => branchUnder(nodes, plainText(id))?.position.text === "1/3" && nodes, "the branch control after the reload");
+    note(`\`${await screenshot(scenarioById("S68"), "after")}\``);
+    note(`/branches ${id} 3 in the product-source room: a chat_message_meta row; after the room closed and loaded its pages again through messages_query, the control 1/3 is back under the message`);
   },
 
   // S61: the host searches the messages it keeps, without case and
@@ -1590,6 +1889,74 @@ async function screenshot(scenario, suffix, settleMs = 800) {
   const name = `s${number}-${suffix}.png`;
   screencap(serial, resolve(outDir, name));
   return name;
+}
+
+// ------------------------------------- personas, threads, branches, reasoning
+
+/** The personas of the sample product, from `chat_bots`. */
+function personaRows() {
+  return sql(`SELECT botId, name FROM chat_bots WHERE extensionId = '${extensionId}'`);
+}
+
+/** The meta rows of a room, from `chat_message_meta`. */
+function metaRows(room) {
+  return sql(`SELECT messageId, timestamp FROM chat_message_meta WHERE chatId = X'${ROOMS[room].chat}'`);
+}
+
+/** Whether `node` lies inside the bounds of `container`. */
+function insideOf(node, container) {
+  return (
+    node.center.x >= container.bounds.left &&
+    node.center.x <= container.bounds.right &&
+    node.center.y >= container.bounds.top &&
+    node.center.y <= container.bounds.bottom
+  );
+}
+
+/** Whether the author line `name` shows just above the bubble that shows `text`. */
+function authorAbove(screen, text, name) {
+  const bubble = findText(screen, text);
+  if (!bubble) return false;
+  return screen.some((node) => node.text === name && node.center.y < bubble.center.y && bubble.center.y - node.center.y < 220);
+}
+
+/**
+ * Long-press the newest rich message of the sample, on its inline image (the Markdown text of a rich message is not
+ * a node of the screen dump), and give the screen with its menu.
+ */
+async function openRichMenu() {
+  await scrollToNewest();
+  let image;
+  for (let attempt = 0; attempt < 8 && !image; attempt += 1) {
+    image = parseUiNodes(uiDump(serial)).find(
+      (node) => node.description === "Inline sample image" && node.center.y > 380 && node.center.y < 2050,
+    );
+    if (!image) await scrollOlder(500);
+  }
+  expect(image, "no image of the rich message on screen");
+  inputLongPress(serial, image.center.x, image.center.y);
+  return waitScreen((nodes) => findText(nodes, "Copy") && nodes, "the menu of the rich message");
+}
+
+/** The thread chip under the bubble that shows `text`, or undefined. */
+function chipUnder(screen, text) {
+  const bubble = findText(screen, text);
+  if (!bubble) return undefined;
+  return screen.find(
+    (node) => node.tag === "chat_thread_chip" && node.center.y > bubble.center.y && node.bounds.top - bubble.bounds.bottom < 260,
+  );
+}
+
+/** The branch control under the bubble that shows `text`: its position and its arrows, or undefined. */
+function branchUnder(screen, text) {
+  const bubble = findText(screen, text);
+  if (!bubble) return undefined;
+  const position = screen
+    .filter((node) => node.tag === "chat_branch_position" && node.center.y > bubble.center.y && node.bounds.top - bubble.bounds.bottom < 260)
+    .sort((a, b) => a.center.y - b.center.y)[0];
+  if (!position) return undefined;
+  const near = (tag) => screen.find((node) => node.tag === tag && Math.abs(node.center.y - position.center.y) < 60);
+  return { position, previous: near("chat_branch_previous"), next: near("chat_branch_next") };
 }
 
 // ----------------------------------------------- mute, archive and search

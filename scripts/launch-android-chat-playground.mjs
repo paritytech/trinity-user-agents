@@ -25,7 +25,6 @@ import {
 } from "./lib/android-emulator.mjs";
 import {
   CHAT_DIAGNOSIS_HEADING,
-  REGISTER_BOT_GAP,
   labelChatDiagnosisReport,
 } from "./lib/chat-diagnosis-report.mjs";
 import { delay, runAsync, waitFor } from "./lib/process.mjs";
@@ -277,9 +276,8 @@ try {
     step("wait for the diagnosis report in chat_messages");
     const report = await waitForChatMessage(CHAT_DIAGNOSIS_HEADING, watermark);
     assertNotTruncated(report);
-    const hostReport = labelChatDiagnosisReport(report, "Android", {
-      acceptedFailures: REGISTER_BOT_GAP,
-    });
+    // The app keeps bot personas (P10.6.3), so `Chat/register_bot` must pass like every other row.
+    const hostReport = labelChatDiagnosisReport(report, "Android");
     mkdirSync(dirname(reportPath), { recursive: true });
     writeFileSync(reportPath, `${hostReport}\n`);
     console.log(`    report written to ${reportPath}`);
