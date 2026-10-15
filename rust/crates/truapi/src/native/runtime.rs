@@ -401,16 +401,17 @@ impl NativeTrUApiHostRuntime {
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports [`WorkerTransition::Start`] to the runtime's
 	/// [`HostCallbacks::worker_demand_changed`]; pair every call with one
-	/// [`Self::release_worker`].
+	/// [`Self::release_worker`]. An id that is not a product id is logged and
+	/// dropped.
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire(&product_id);
+		self.runtime.worker_ledger().acquire_for_host(&product_id);
 	}
 
 	/// Release one reference. The last one reports
 	/// [`WorkerTransition::Stop`], after which the host may stop the worker;
 	/// releasing with none held is a no-op.
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release(&product_id);
+		self.runtime.worker_ledger().release_for_host(&product_id);
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is

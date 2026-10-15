@@ -27,7 +27,7 @@ use crate::platform::SigningHostConfig;
 use crate::platform::{
 	ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
 	PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
-	ProductExecutionKind, ProviderError, RuntimeConfigValidationError, ScannerPlatform,
+	ProductExecutionKind, ProductId, ProviderError, RuntimeConfigValidationError, ScannerPlatform,
 };
 use futures::{
 	channel::mpsc,
@@ -842,14 +842,14 @@ struct WasmWorkerDemand {
 }
 
 impl crate::host_logic::worker::WorkerDemandObserver for WasmWorkerDemand {
-	fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
+	fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
 		let name = match transition {
 			WorkerTransition::Start => "Start",
 			WorkerTransition::Stop => "Stop",
 		};
 		let _ = self.changed.call2(
 			&JsValue::NULL,
-			&JsValue::from_str(product_id),
+			&JsValue::from_str(product_id.as_str()),
 			&JsValue::from_str(name),
 		);
 	}
@@ -1113,17 +1113,18 @@ impl WasmPairingHostRuntime {
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports `"Start"` to the host's `workerDemandChanged`
-	/// callback. Pair every call with one `releaseWorker`.
+	/// callback. Pair every call with one `releaseWorker`. An id that is not a
+	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire(&product_id);
+		self.runtime.worker_ledger().acquire_for_host(&product_id);
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
 	/// host may stop the worker; releasing with none held is a no-op.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release(&product_id);
+		self.runtime.worker_ledger().release_for_host(&product_id);
 	}
 }
 
@@ -1380,17 +1381,18 @@ impl WasmSigningHostRuntime {
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports `"Start"` to the host's `workerDemandChanged`
-	/// callback. Pair every call with one `releaseWorker`.
+	/// callback. Pair every call with one `releaseWorker`. An id that is not a
+	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire(&product_id);
+		self.runtime.worker_ledger().acquire_for_host(&product_id);
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
 	/// host may stop the worker; releasing with none held is a no-op.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release(&product_id);
+		self.runtime.worker_ledger().release_for_host(&product_id);
 	}
 }
 

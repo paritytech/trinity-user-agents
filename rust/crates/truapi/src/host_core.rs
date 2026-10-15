@@ -2005,7 +2005,7 @@ mod tests {
 			},
 			worker::WorkerTransition,
 		},
-		test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
+		test_support::{StubPlatform, runtime_config, test_product_id, test_spawner, wait_until},
 	};
 	use parity_scale_codec::Encode;
 	use std::sync::atomic::Ordering;
@@ -2870,7 +2870,7 @@ mod tests {
 			transitions: Mutex<Vec<(String, WorkerTransition)>>,
 		}
 		impl crate::host_logic::worker::WorkerDemandObserver for RecordingDemand {
-			fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
+			fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
 				self.transitions
 					.lock()
 					.expect("transition mutex poisoned")
@@ -2897,7 +2897,7 @@ mod tests {
 			services.worker_ledger.install_demand_observer(demand.clone()),
 			"the observer installs once"
 		);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
 
 		let render = runtime
 			.control()
@@ -2906,10 +2906,10 @@ mod tests {
 				payload: vec![],
 			})
 			.expect("a Worker connection may render");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 1);
 
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
 		assert_eq!(
 			demand.transitions.lock().expect("transition mutex poisoned").as_slice(),
 			[
@@ -2998,7 +2998,7 @@ mod tests {
 		let (runtime, sink) = render_runtime();
 		let services = runtime.admin.product_runtime().services().clone();
 		let mut render = start_render(&runtime, "loyalty");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 1);
 
 		let request_id = render_request_id(&sink, 0);
 		deliver_render_frame(
@@ -3010,12 +3010,12 @@ mod tests {
 		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
 
 		assert_eq!(
-			services.worker_ledger.count("worker.dot"),
+			services.worker_ledger.count(&test_product_id("worker.dot")),
 			0,
 			"an ended stream holds no reference, whether or not the handle lives on"
 		);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3042,12 +3042,12 @@ mod tests {
 		));
 
 		assert_eq!(
-			services.worker_ledger.count("worker.dot"),
+			services.worker_ledger.count(&test_product_id("worker.dot")),
 			0,
 			"an interrupt ends the stream, so the reference goes with it"
 		);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3063,9 +3063,9 @@ mod tests {
 			core::task::Poll::Ready(Some(Err(truapi::CallError::MalformedFrame { .. })))
 		));
 
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3073,14 +3073,14 @@ mod tests {
 		let (runtime, _sink) = render_runtime();
 		let services = runtime.admin.product_runtime().services().clone();
 		let mut render = start_render(&runtime, "loyalty");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 1);
 
 		runtime.dispose();
 		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
 
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3089,7 +3089,7 @@ mod tests {
 		let services = runtime.admin.product_runtime().services().clone();
 		let mut first = start_render(&runtime, "loyalty");
 		let second = start_render(&runtime, "rewards");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 2);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 2);
 
 		let request_id = render_request_id(&sink, 0);
 		deliver_render_frame(
@@ -3099,17 +3099,17 @@ mod tests {
 			crate::frame::encode_clean_interrupt(),
 		);
 		assert!(matches!(poll_render(&mut first), core::task::Poll::Ready(None)));
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 1);
 
 		drop(first);
 		assert_eq!(
-			services.worker_ledger.count("worker.dot"),
+			services.worker_ledger.count(&test_product_id("worker.dot")),
 			1,
 			"dropping a stream that already released must not release again"
 		);
 
 		drop(second);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3377,12 +3377,12 @@ mod tests {
 			),
 		))
 		.expect("begin operation");
-		assert_eq!(host.services().worker_ledger.count("myapp.dot"), 1);
+		assert_eq!(host.services().worker_ledger.count(&test_product_id("myapp.dot")), 1);
 
 		runtime.dispose();
 
 		assert_eq!(
-			host.services().worker_ledger.count("myapp.dot"),
+			host.services().worker_ledger.count(&test_product_id("myapp.dot")),
 			0,
 			"disposing a connection drops the demand its open operations held"
 		);

@@ -10,6 +10,8 @@ use std::{
 	sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
+use crate::platform::ProductId;
+
 /// What the host does with a product's worker after demand on it changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
@@ -29,7 +31,7 @@ pub enum WorkerTransition {
 /// behalf, such as an open render stream.
 pub trait WorkerDemandObserver: Send + Sync {
 	/// Demand on `product_id` crossed zero in the direction `transition`.
-	fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition);
+	fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition);
 }
 
 /// Counts and the transitions they have produced but not yet reported.
@@ -37,9 +39,9 @@ pub trait WorkerDemandObserver: Send + Sync {
 struct LedgerState {
 	/// Reference counts keyed by product id. A product with no references has
 	/// no entry.
-	references: HashMap<String, usize>,
+	references: HashMap<ProductId, usize>,
 	/// Transitions in ledger order, waiting for the draining thread.
-	pending: VecDeque<(String, WorkerTransition)>,
+	pending: VecDeque<(ProductId, WorkerTransition)>,
 	/// Whether a thread is already draining `pending`.
 	draining: bool,
 }
@@ -59,15 +61,15 @@ impl WorkerLedger {
 
 	/// Take one reference on the product's worker. The first one reports
 	/// [`WorkerTransition::Start`] to the installed observer.
-	pub fn acquire(&self, product_id: &str) {
+	pub fn acquire(&self, product_id: &ProductId) {
 		{
 			let mut state = self.state();
-			let count = state.references.entry(product_id.to_string()).or_insert(0);
+			let count = state.references.entry(product_id.clone()).or_insert(0);
 			*count += 1;
 			if *count != 1 {
 				return;
 			}
-			state.pending.push_back((product_id.to_string(), WorkerTransition::Start));
+			state.pending.push_back((product_id.clone(), WorkerTransition::Start));
 		}
 		self.drain();
 	}
@@ -75,7 +77,7 @@ impl WorkerLedger {
 	/// Release one reference. The last one reports [`WorkerTransition::Stop`]
 	/// to the installed observer. Releasing a product with no reference is a
 	/// no-op.
-	pub fn release(&self, product_id: &str) {
+	pub fn release(&self, product_id: &ProductId) {
 		{
 			let mut state = self.state();
 			let Some(count) = state.references.get_mut(product_id) else {
@@ -88,9 +90,25 @@ impl WorkerLedger {
 			// The last one: an entry is dropped rather than left at zero, so
 			// every stored count is at least one and none of this can wrap.
 			state.references.remove(product_id);
-			state.pending.push_back((product_id.to_string(), WorkerTransition::Stop));
+			state.pending.push_back((product_id.clone(), WorkerTransition::Stop));
 		}
 		self.drain();
+	}
+
+	/// [`Self::acquire`] for a product the host names by string. An id that is
+	/// not a product id is logged and dropped, since no product runs under it.
+	pub fn acquire_for_host(&self, product_id: &str) {
+		if let Some(product_id) = host_product_id(product_id) {
+			self.acquire(&product_id);
+		}
+	}
+
+	/// [`Self::release`] for a product the host names by string, dropping an
+	/// id that is not a product id as [`Self::acquire_for_host`] does.
+	pub fn release_for_host(&self, product_id: &str) {
+		if let Some(product_id) = host_product_id(product_id) {
+			self.release(&product_id);
+		}
 	}
 
 	/// Install the host's observer for every transition the ledger produces.
@@ -111,7 +129,7 @@ impl WorkerLedger {
 
 	/// References currently held on a product's worker.
 	#[cfg(test)]
-	pub fn count(&self, product_id: &str) -> usize {
+	pub fn count(&self, product_id: &ProductId) -> usize {
 		self.state().references.get(product_id).copied().unwrap_or(0)
 	}
 
@@ -166,6 +184,14 @@ impl WorkerLedger {
 	}
 }
 
+fn host_product_id(product_id: &str) -> Option<ProductId> {
+	ProductId::parse(product_id)
+		.inspect_err(
+			|error| tracing::warn!(%error, "worker reference for an id that is not a product id"),
+		)
+		.ok()
+}
+
 /// Clears [`LedgerState::draining`] for a drain that ends without clearing it
 /// itself, which is a delivery unwinding out of an observer panic, so the
 /// transitions queued behind it stay drainable by the next `acquire` or
@@ -193,6 +219,7 @@ mod tests {
 	use std::sync::Weak;
 
 	use super::*;
+	use crate::test_support::test_product_id;
 
 	/// Observer recording every transition in delivery order.
 	#[derive(Default)]
@@ -207,7 +234,7 @@ mod tests {
 	}
 
 	impl WorkerDemandObserver for Recorder {
-		fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
+		fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
 			self.seen
 				.lock()
 				.expect("recorder mutex poisoned")
@@ -225,11 +252,11 @@ mod tests {
 	#[test]
 	fn first_reference_starts_and_last_release_stops() {
 		let (ledger, recorder) = observed();
-		ledger.acquire("a.dot");
-		ledger.acquire("a.dot");
-		ledger.release("a.dot");
-		ledger.release("a.dot");
-		ledger.acquire("a.dot");
+		ledger.acquire(&test_product_id("a.dot"));
+		ledger.acquire(&test_product_id("a.dot"));
+		ledger.release(&test_product_id("a.dot"));
+		ledger.release(&test_product_id("a.dot"));
+		ledger.acquire(&test_product_id("a.dot"));
 		assert_eq!(
 			recorder.seen(),
 			vec![
@@ -243,11 +270,11 @@ mod tests {
 	#[test]
 	fn releasing_without_a_reference_is_a_no_op() {
 		let (ledger, recorder) = observed();
-		ledger.release("a.dot");
+		ledger.release(&test_product_id("a.dot"));
 		assert!(recorder.seen().is_empty());
-		ledger.acquire("a.dot");
-		ledger.release("a.dot");
-		ledger.release("a.dot");
+		ledger.acquire(&test_product_id("a.dot"));
+		ledger.release(&test_product_id("a.dot"));
+		ledger.release(&test_product_id("a.dot"));
 		assert_eq!(
 			recorder.seen(),
 			vec![
@@ -255,16 +282,35 @@ mod tests {
 				("a.dot".to_string(), WorkerTransition::Stop),
 			]
 		);
-		assert_eq!(ledger.count("a.dot"), 0);
+		assert_eq!(ledger.count(&test_product_id("a.dot")), 0);
+	}
+
+	#[test]
+	fn a_host_reference_counts_under_the_normalized_product_id() {
+		// Two spellings of one product would otherwise be two workers, and an
+		// id no product runs under would start a worker with nothing to serve.
+		let (ledger, recorder) = observed();
+		ledger.acquire_for_host("A.dot");
+		ledger.acquire_for_host("a.dot");
+		ledger.acquire_for_host("a_b.dot");
+		ledger.release_for_host("a.dot");
+		ledger.release_for_host("A.DOT");
+		assert_eq!(
+			recorder.seen(),
+			vec![
+				("a.dot".to_string(), WorkerTransition::Start),
+				("a.dot".to_string(), WorkerTransition::Stop),
+			]
+		);
 	}
 
 	#[test]
 	fn products_are_counted_separately() {
 		let (ledger, recorder) = observed();
-		ledger.acquire("a.dot");
-		ledger.acquire("b.dot");
-		ledger.release("a.dot");
-		ledger.release("b.dot");
+		ledger.acquire(&test_product_id("a.dot"));
+		ledger.acquire(&test_product_id("b.dot"));
+		ledger.release(&test_product_id("a.dot"));
+		ledger.release(&test_product_id("b.dot"));
 		assert_eq!(
 			recorder.seen(),
 			vec![
@@ -288,7 +334,7 @@ mod tests {
 	}
 
 	impl WorkerDemandObserver for Reentrant {
-		fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
+		fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
 			self.seen.lock().expect("recorder mutex poisoned").push(transition);
 			{
 				let mut reenter_on = self.reenter_on.lock().expect("gate mutex poisoned");
@@ -313,8 +359,8 @@ mod tests {
 		});
 		assert!(ledger.install_demand_observer(observer.clone()));
 
-		ledger.acquire("a.dot");
-		ledger.release("a.dot");
+		ledger.acquire(&test_product_id("a.dot"));
+		ledger.release(&test_product_id("a.dot"));
 
 		// The nested pair runs while the outer `Stop` is still on the stack, so
 		// its own `Start`/`Stop` are delivered after it, by the outer drain.
@@ -327,7 +373,7 @@ mod tests {
 				WorkerTransition::Stop,
 			]
 		);
-		assert_eq!(ledger.count("a.dot"), 0);
+		assert_eq!(ledger.count(&test_product_id("a.dot")), 0);
 	}
 
 	/// Observer that reports what it was given and then blocks in its first
@@ -339,7 +385,7 @@ mod tests {
 	}
 
 	impl WorkerDemandObserver for Gated {
-		fn worker_demand_changed(&self, _product_id: &str, transition: WorkerTransition) {
+		fn worker_demand_changed(&self, _product_id: &ProductId, transition: WorkerTransition) {
 			self.seen.lock().expect("recorder mutex poisoned").push(transition);
 			let gate = self.gate.lock().expect("gate mutex poisoned").take();
 			let Some(gate) = gate else {
@@ -365,7 +411,7 @@ mod tests {
 
 		let starting = std::thread::spawn({
 			let ledger = ledger.clone();
-			move || ledger.acquire("a.dot")
+			move || ledger.acquire(&test_product_id("a.dot"))
 		});
 		entered_rx.recv().expect("observer never ran");
 
@@ -374,14 +420,14 @@ mod tests {
 		// instead of overtaking on this thread.
 		std::thread::spawn({
 			let ledger = ledger.clone();
-			move || ledger.release("a.dot")
+			move || ledger.release(&test_product_id("a.dot"))
 		})
 		.join()
 		.expect("stop thread panicked");
 		assert_eq!(seen(), vec![WorkerTransition::Start]);
-		assert_eq!(ledger.count("a.dot"), 0);
+		assert_eq!(ledger.count(&test_product_id("a.dot")), 0);
 
-		ledger.acquire("a.dot");
+		ledger.acquire(&test_product_id("a.dot"));
 		assert_eq!(seen(), vec![WorkerTransition::Start]);
 
 		gate_tx.send(()).expect("observer gone");
@@ -405,7 +451,7 @@ mod tests {
 	}
 
 	impl WorkerDemandObserver for Counter {
-		fn worker_demand_changed(&self, _product_id: &str, _transition: WorkerTransition) {
+		fn worker_demand_changed(&self, _product_id: &ProductId, _transition: WorkerTransition) {
 			*self.delivered.lock().expect("counter mutex poisoned") += 1;
 		}
 	}
@@ -416,13 +462,13 @@ mod tests {
 		// A host that counts before it listens still owns the reference, so
 		// the transition has to survive the wait rather than be dropped: the
 		// count never crosses zero again to produce a second one.
-		ledger.acquire("a.dot");
+		ledger.acquire(&test_product_id("a.dot"));
 
 		let recorder = Arc::new(Recorder::default());
 		assert!(ledger.install_demand_observer(recorder.clone()));
 		assert_eq!(recorder.seen(), vec![("a.dot".to_string(), WorkerTransition::Start)]);
 
-		ledger.release("a.dot");
+		ledger.release(&test_product_id("a.dot"));
 		assert_eq!(
 			recorder.seen(),
 			vec![
@@ -464,7 +510,7 @@ mod tests {
 				std::thread::spawn(move || {
 					// One product per thread, so each round owes exactly one
 					// `Start` and one `Stop` per thread whatever the order.
-					let product_id = format!("product-{index}.dot");
+					let product_id = test_product_id(&format!("product-{index}.dot"));
 					for _ in 0..ROUNDS {
 						start.wait();
 						ledger.acquire(&product_id);
@@ -496,7 +542,7 @@ mod tests {
 	}
 
 	impl WorkerDemandObserver for PanicsOnFirstCall {
-		fn worker_demand_changed(&self, _product_id: &str, transition: WorkerTransition) {
+		fn worker_demand_changed(&self, _product_id: &ProductId, transition: WorkerTransition) {
 			let mut called_before = self.called_before.lock().expect("gate mutex poisoned");
 			if !*called_before {
 				*called_before = true;
@@ -517,17 +563,17 @@ mod tests {
 		assert!(ledger.install_demand_observer(observer.clone()));
 
 		let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-			ledger.acquire("a.dot");
+			ledger.acquire(&test_product_id("a.dot"));
 		}));
 		assert!(unwound.is_err(), "the panic should propagate to acquire");
 
 		// A later transition still reaches the observer: the drain flag was
 		// reset despite the earlier delivery unwinding.
-		ledger.release("a.dot");
+		ledger.release(&test_product_id("a.dot"));
 		assert_eq!(
 			*observer.seen.lock().expect("recorder mutex poisoned"),
 			vec![WorkerTransition::Stop]
 		);
-		assert_eq!(ledger.count("a.dot"), 0);
+		assert_eq!(ledger.count(&test_product_id("a.dot")), 0);
 	}
 }

@@ -93,8 +93,8 @@ pub struct CallbackPlatform {
 }
 
 impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
-	fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
-		self.callbacks.worker_demand_changed(product_id.to_string(), transition);
+	fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
+		self.callbacks.worker_demand_changed(product_id.clone(), transition);
 	}
 }
 

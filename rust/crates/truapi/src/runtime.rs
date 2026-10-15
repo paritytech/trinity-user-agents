@@ -1044,12 +1044,12 @@ impl ProductRuntimeHost {
 
 	/// Hold worker demand until the matching [`Self::release_worker_reference`].
 	pub fn acquire_worker_reference(&self) {
-		self.services.worker_ledger.acquire(self.product.product_id.as_str());
+		self.services.worker_ledger.acquire(&self.product.product_id);
 	}
 
 	/// Release one core-held reference on this connection's product worker.
 	pub fn release_worker_reference(&self) {
-		self.services.worker_ledger.release(self.product.product_id.as_str());
+		self.services.worker_ledger.release(&self.product.product_id);
 	}
 
 	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.

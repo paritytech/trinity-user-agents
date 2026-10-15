@@ -4796,7 +4796,7 @@ fn an_open_operation_holds_worker_demand_until_it_ends() {
 		.expect("begin operation");
 
 	assert_eq!(
-		ledger.count("myapp.dot"),
+		ledger.count(&test_product_id("myapp.dot")),
 		1,
 		"an open operation is demand on the worker, so the host is told to run it"
 	);
@@ -4807,7 +4807,11 @@ fn an_open_operation_holds_worker_demand_until_it_ends() {
 	))
 	.expect("end operation");
 
-	assert_eq!(ledger.count("myapp.dot"), 0, "ending the last operation drops the demand it held");
+	assert_eq!(
+		ledger.count(&test_product_id("myapp.dot")),
+		0,
+		"ending the last operation drops the demand it held"
+	);
 }
 
 #[test]
@@ -4838,13 +4842,13 @@ fn ending_an_operation_twice_releases_only_the_demand_it_held() {
 
 	let first = begin();
 	begin();
-	assert_eq!(ledger.count("myapp.dot"), 2);
+	assert_eq!(ledger.count(&test_product_id("myapp.dot")), 2);
 
 	end(first);
 	end(first);
 
 	assert_eq!(
-		ledger.count("myapp.dot"),
+		ledger.count(&test_product_id("myapp.dot")),
 		1,
 		"a repeated end is idempotent, so it cannot drop the demand the other operation holds"
 	);
@@ -4865,7 +4869,7 @@ impl DemandRecorder {
 impl crate::host_logic::worker::WorkerDemandObserver for DemandRecorder {
 	fn worker_demand_changed(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		transition: crate::host_logic::worker::WorkerTransition,
 	) {
 		self.transitions
@@ -4958,7 +4962,7 @@ fn a_cancelled_begin_ends_the_operation_the_host_started() {
 		);
 		std::thread::yield_now();
 	}
-	assert_eq!(host.services().worker_ledger.count("myapp.dot"), 0);
+	assert_eq!(host.services().worker_ledger.count(&test_product_id("myapp.dot")), 0);
 }
 
 #[test]
@@ -4980,7 +4984,7 @@ fn a_failed_end_still_drops_the_demand_the_operation_held() {
 			}),
 		))
 		.expect("begin operation");
-	assert_eq!(ledger.count("myapp.dot"), 1);
+	assert_eq!(ledger.count(&test_product_id("myapp.dot")), 1);
 
 	let ended = futures::executor::block_on(host.end_operation(
 		&cx,
@@ -4989,7 +4993,7 @@ fn a_failed_end_still_drops_the_demand_the_operation_held() {
 	assert!(ended.is_err(), "the host's failure still reaches the product");
 
 	assert_eq!(
-		ledger.count("myapp.dot"),
+		ledger.count(&test_product_id("myapp.dot")),
 		0,
 		"the product declared the operation over, so the core stops counting it \
          whatever the host made of the call"
@@ -5009,12 +5013,12 @@ fn dropping_a_connection_releases_the_demand_its_open_operations_held() {
 		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
 	))
 	.expect("begin operation");
-	assert_eq!(services.worker_ledger.count("myapp.dot"), 1);
+	assert_eq!(services.worker_ledger.count(&test_product_id("myapp.dot")), 1);
 
 	drop(host);
 
 	assert_eq!(
-		services.worker_ledger.count("myapp.dot"),
+		services.worker_ledger.count(&test_product_id("myapp.dot")),
 		0,
 		"a product that goes away without ending its operations leaves no demand behind"
 	);

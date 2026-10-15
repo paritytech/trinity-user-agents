@@ -172,7 +172,7 @@ pub trait HostCallbacks: Send + Sync {
 	/// [`NativeTrUApiHostRuntime::release_worker`], often the caller's own
 	/// thread and re-entrantly: hand the transition off rather than blocking
 	/// on another thread from inside it.
-	fn worker_demand_changed(&self, product_id: String, transition: WorkerTransition);
+	fn worker_demand_changed(&self, product_id: ProductId, transition: WorkerTransition);
 
 	/// A device finished pairing with this signing host.
 	///
