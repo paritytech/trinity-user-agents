@@ -426,7 +426,8 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   `funding_session`, `funding_progress`, `funding_sessions`, `set_funding_providers`,
   `funding_candidates`, `funding_countries`, `funding_amount_limits`,
   `detected_funding_country`, `get_funding_quote`, `stop_funding_quotes`,
-  `select_funding_provider`, `cancel_funding`, `acknowledge_funding_session`
+  `select_funding_provider`, `cancel_funding`, `confirm_funding_cancel`,
+  `acknowledge_funding_session`
   and `funding_in_progress`. Amounts cross the FFI as decimal strings.
   Sessions are stored as a versioned blob, and the core keeps reading every
   earlier format, so an upgrade keeps the sessions in flight; a blob it
@@ -563,14 +564,19 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   it completes (`Collecting`); a partial claim counts what the host claimed.
   Statuses are read again with backoff until the host decides, and a top-up
   or payment the host still does not know an hour after it was named counts
-  as nothing moved. Once funds move, the provider can no longer fail the
-  session and nothing expires it. Before that, an unassigned session expires
-  24 hours after it opened and an assigned one 7 days after its provider last
-  reported, until the provider has seen the user's payment. A cancel ends an unassigned session, asks the provider of an
-  assigned one, ends it when asked again before the provider answered, and is
-  refused once the provider has seen the user's payment. An overlay closed
-  after the user chose a provider keeps the session as started and asks the
-  provider to stop.
+  as nothing moved. Money moved once the provider started funds for the
+  session, named or not, or saw the user's payment; from then on only the
+  provider ends the session, and it cannot fail it once funds started.
+  Before that, an unassigned session expires 24 hours after it opened and an
+  assigned one 7 days after its provider last reported. `cancel_funding`
+  answers what a cancel did: it ends an unassigned session; before money
+  moved it asks the provider and ends the session when asked again; after,
+  it asks the provider, who answers `CancelRefused` or `CancelOffer`, and the
+  host answers the offer with `confirm_funding_cancel`, which the provider
+  hears as `CancelAccepted` or `CancelDeclined`; an inbound session whose
+  credit started answers `TooLate`. An overlay closed after the user chose a
+  provider keeps the session as started and asks the provider to stop unless
+  money moved.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with

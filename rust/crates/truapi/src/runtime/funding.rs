@@ -35,8 +35,9 @@ use truapi::latest::{
 use super::services::RuntimeServices;
 use crate::{
 	host_logic::funding::{
-		CancelOutcome, FundingChoice, FundingSession, FundingSessionError, SaveRefusal, Settlement,
-		StartedFunds, load_sessions, named_funds, retained, store_sessions,
+		CancelConfirmation, CancelOutcome, FundingChoice, FundingSession, FundingSessionError,
+		SaveRefusal, Settlement, StartedFunds, load_sessions, named_funds, retained,
+		store_sessions,
 	},
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
@@ -184,9 +185,7 @@ impl FundingRegistry {
 		let replay: Vec<_> = assigned
 			.into_iter()
 			.flat_map(|session| {
-				let cancel = session.cancel_requested.then(|| {
-					HostFundingServeSubscribeItem::Cancel { intent: session.intent.clone() }
-				});
+				let cancel = session.pending_cancel_item();
 				core::iter::once(HostFundingServeSubscribeItem::Assigned {
 					session: Box::new(session.assignment()),
 				})
@@ -444,8 +443,12 @@ impl FundingRegistry {
 				};
 				let outcome = session.cancel(now_ms);
 				let provider = session.provider_id.clone();
-				let changed =
-					if outcome == CancelOutcome::Refused { Vec::new() } else { vec![target] };
+				let changed = match outcome {
+					CancelOutcome::Ended | CancelOutcome::Requested => vec![target],
+					CancelOutcome::Pending | CancelOutcome::TooLate | CancelOutcome::Refused => {
+						Vec::new()
+					},
+				};
 				((outcome, provider), changed)
 			})
 			.await?;
@@ -456,6 +459,45 @@ impl FundingRegistry {
 			);
 		}
 		Ok(outcome)
+	}
+
+	/// Answer the provider's cancel offer on session `intent`, and pass the
+	/// answer to the provider.
+	pub async fn confirm_cancel(
+		&self,
+		storage: &(impl CoreStorage + ?Sized),
+		now_ms: u64,
+		intent: &str,
+		accept: bool,
+	) -> Result<CancelConfirmation, FundingSessionError> {
+		let target = intent.to_string();
+		let (confirmation, provider) = self
+			.commit(storage, now_ms, move |sessions| {
+				let Some(session) = sessions.get_mut(&target) else {
+					return ((CancelConfirmation::NoOffer, None), Vec::new());
+				};
+				let confirmation = session.confirm_cancel(accept, now_ms);
+				let provider = session.provider_id.clone();
+				let changed = match confirmation {
+					CancelConfirmation::NoOffer => Vec::new(),
+					_ => vec![target],
+				};
+				((confirmation, provider), changed)
+			})
+			.await?;
+		let item = match confirmation {
+			CancelConfirmation::Accepted => {
+				Some(HostFundingServeSubscribeItem::CancelAccepted { intent: intent.to_string() })
+			},
+			CancelConfirmation::Declined | CancelConfirmation::Lapsed => {
+				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: intent.to_string() })
+			},
+			CancelConfirmation::NoOffer => None,
+		};
+		if let (Some(item), Some(provider)) = (item, provider) {
+			self.serve_item(&provider, item);
+		}
+		Ok(confirmation)
 	}
 
 	/// Watch one session, receiving its current stage immediately. A terminal
@@ -578,9 +620,21 @@ impl FundingRegistry {
 		// one leaving the overlay: started, though nothing in it changed.
 		let announces = !edited.is_empty();
 		changed.extend(edited);
+		let mut lapsed = Vec::new();
 		for session in working.values_mut() {
 			if session.expire_if_due(now_ms) {
 				changed.push(session.intent.clone());
+			}
+			if session.lapse_cancel_offer(now_ms) {
+				changed.push(session.intent.clone());
+				lapsed.extend(session.provider_id.clone().map(|provider| {
+					(
+						provider,
+						HostFundingServeSubscribeItem::CancelDeclined {
+							intent: session.intent.clone(),
+						},
+					)
+				}));
 			}
 			if !session.serves_provider() {
 				session.saved = None;
@@ -616,6 +670,9 @@ impl FundingRegistry {
 			}
 		}
 		drop(loaded);
+		for (provider, item) in lapsed {
+			self.serve_item(&provider, item);
+		}
 		self.announce();
 		self.follow_sessions();
 		Ok(result)
@@ -768,7 +825,7 @@ impl FundingRegistry {
 	}
 
 	fn next_deadline(&self) -> Option<u64> {
-		self.lock_sessions().values().filter_map(FundingSession::expires_at).min()
+		self.lock_sessions().values().filter_map(FundingSession::next_alarm_ms).min()
 	}
 
 	/// Tell subscribers about a session's current stage and queue it for the
@@ -986,15 +1043,22 @@ impl RuntimeServices {
 			.await
 	}
 
-	/// Cancel session `intent` at the user's request. Returns whether the
-	/// cancel was taken: the session ended, or its provider was asked to
-	/// stop.
-	pub async fn cancel_funding(&self, intent: &str) -> Result<bool, FundingSessionError> {
-		let outcome = self
-			.funding()
+	/// Cancel session `intent` at the user's request, and say what that did.
+	pub async fn cancel_funding(&self, intent: &str) -> Result<CancelOutcome, FundingSessionError> {
+		self.funding()
 			.cancel(self.platform.as_ref(), current_unix_millis(), intent)
-			.await?;
-		Ok(outcome != CancelOutcome::Refused)
+			.await
+	}
+
+	/// Answer the provider's cancel offer on session `intent`.
+	pub async fn confirm_funding_cancel(
+		&self,
+		intent: &str,
+		accept: bool,
+	) -> Result<CancelConfirmation, FundingSessionError> {
+		self.funding()
+			.confirm_cancel(self.platform.as_ref(), current_unix_millis(), intent, accept)
+			.await
 	}
 
 	/// Hand open session `intent` to the provider the user chose, which must
@@ -1221,14 +1285,14 @@ impl RuntimeServices {
 					});
 				}
 				// A provider took the session while the overlay was up, so it
-				// runs as started; unless funds already move, the provider is
+				// runs as started; unless money already moved, the provider is
 				// asked to stop, as the user left without starting.
 				let now_ms = current_unix_millis();
 				registry
 					.start(storage, now_ms, &session.intent)
 					.await
 					.map_err(OpenFundingError::Session)?;
-				if registry.get(&session.intent).is_some_and(|kept| !kept.funds_moving()) {
+				if registry.get(&session.intent).is_some_and(|kept| !kept.money_moved()) {
 					registry
 						.cancel(storage, now_ms, &session.intent)
 						.await

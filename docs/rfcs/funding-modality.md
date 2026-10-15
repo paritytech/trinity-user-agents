@@ -90,7 +90,9 @@ pub trait FundingProvider {
 ```rust
 enum HostFundingServeSubscribeItem {
     Assigned { session: FundingAssignment },  // chosen for this provider, or still in flight on open
-    Cancel { intent: String },                // the user asked to stop
+    Cancel { intent: String },                // the user asked to cancel
+    CancelAccepted { intent: String },        // the user accepted the provider's CancelOffer
+    CancelDeclined { intent: String },        // the user declined it, or it lapsed
     Quote { ask_id: String, ask: FundingQuoteAsk },
 }
 
@@ -106,7 +108,9 @@ struct FundingAssignment {
 ```
 
 The stream replays every session still in flight and every unanswered ask when it opens, so a restarted worker carries
-on without its own bookkeeping. A worker answers `Cancel` by reporting `Failed { Cancelled }` if it can still stop.
+on without its own bookkeeping, including a cancel it has not answered and the user's answer to its offer. Before money
+moved, a worker answers `Cancel` by reporting `Failed { Cancelled }` if it can still stop. After, it answers with
+`CancelOffer` or `CancelRefused` (see [Cancel](#cancel)).
 
 ### `answer_quote`
 
@@ -180,6 +184,8 @@ enum FundingUpdate {
     Payout { outcome: FundingPayout },                // Out: once, after release
     Refunding { top_up_id: [u8; 32], amount: u128 }, // Out: once, after a failed payout
     PayoutRetrying,                                   // Out: after release, before Payout, at each retry
+    CancelRefused { reason: String },                 // answers a Cancel, outside the order
+    CancelOffer { fee: u128, refund: u128, expires_at: Option<u64> }, // answers a Cancel, outside the order
 }
 
 enum FundingDeposit {
@@ -250,22 +256,19 @@ after the payout and any refund.
   `Released` outcome. The provider keeps the session until it has reported the payout and any refund, whether or not
   the host recorded it, and nothing expires it meanwhile. A provider that never reports its payout therefore holds the
   session, and its worker, for good.
-- **Funds moving locks the session.** Once a top-up or payment request is named, the provider can no longer fail the
-  session, the user can no longer cancel it and nothing expires it.
-- **Cancel** ends a session no provider serves and asks the assigned provider otherwise. Asked again before the
-  provider answered, it ends the session as `Failed { Cancelled }` and the core lets the worker go. It is refused
-  once the user's payment reached the provider.
+- **Money moving locks the session.** Money moved once the provider started a top-up or payment request for the
+  session, named or not, or reported `PaymentReceived`. From then on only the provider ends the session: it cannot
+  fail it once funds started, no cancel ends it and nothing expires it. A worker can stop between starting funds and
+  naming them, so a recorded start locks the session as a named one does.
 - **Expiry** ends a session as `Failed { Expired }`: 24 hours after it opened while no provider has taken it, and 7
-  days after the provider's last update while it is assigned and the user's payment has not reached the provider, so
-  a provider that went silent cannot hold it. A bank transfer can take days, so a provider that keeps reporting keeps
-  the session. Once the provider holds the user's payment, nothing expires the session: that would write off money
-  still owed to the user.
+  days after the provider's last update while it is assigned and no money moved, so a provider that went silent cannot
+  hold it. A bank transfer can take days, so a provider that keeps reporting keeps the session.
 - **Closing the overlay after choosing a provider** keeps the session as started, since the provider may already be
-  working on it, and asks the provider to stop unless funds move.
+  working on it, and asks the provider to stop unless money moved.
 - **One status per session.** The host words a typed status: waiting for the transfer, payment or deposit by rail,
   converting, initiated, converting to the asset or preparing the payout, retrying the top-up or the payout, taking
-  longer once the provider
-  has been silent past the chosen quote's `eta_secs`, and how it ended.
+  longer once the provider has been silent past the chosen quote's `eta_secs`, the user's cancel while it is open
+  (requested, offered, refused, cancelling), and how it ended, including cancelled with what the refund returned.
 - **Ids are scoped.** The core hashes the provider's product into every top-up and payment id it hands the host, and
   follows them under the same id.
 
@@ -289,6 +292,24 @@ The host app can be closed or crash at any point; a session carries on from its 
 
 A worker keeps running while the user is elsewhere in the app. Running with the app in the background is out of
 scope for now.
+
+## Cancel
+
+`cancel_funding` answers `Ended`, `Requested`, `Pending`, `TooLate` or `Refused` (ended, or its overlay is up).
+
+- **No provider serves the session:** it ends as `Failed { Cancelled }`.
+- **Before money moved:** the provider gets `Cancel` and stops with `Failed { Cancelled }`. Asked again, the session
+  ends as `Failed { Cancelled }` and the worker is let go, so a provider that went silent cannot hold it.
+- **After money moved:** a cancel is a request and never ends the session. The provider answers `CancelRefused
+  { reason }`, and the session carries on, or `CancelOffer { fee, refund, expires_at }`, amounts in the user's balance
+  units. The host shows the offer from the session's `cancel` and answers it with `confirm_funding_cancel`, which the
+  provider hears as `CancelAccepted` or `CancelDeclined`. An offer past `expires_at` is declined. A user who declined or
+  was refused may ask again. On `CancelAccepted` the provider settles:
+  - an outbound session is refunded with a top-up the provider names in `Refunding { top_up_id, amount }`, at most the
+    debit, and ends as cancelled with what was refunded;
+  - an inbound session before any credit ends with `Failed { Refunded }` once the provider returned the user's payment.
+- **Inbound after its credit started:** too late. `cancel_funding` answers `TooLate`, the host tells the user, and the
+  provider is not asked.
 
 ## Trade-offs
 
