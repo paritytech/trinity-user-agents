@@ -78,11 +78,11 @@ fun ProductPocketCardDetails(
     // One WebView per product: a screen still drawn for another card must not take it.
     val session = shownProduct?.takeIf { it.url == card.key.launchUrl() }?.session
 
-    // A product not held yet is asked for only once the card has arrived, so its WebView is not built
-    // while the card is still travelling. The fold starts after the arrival, so the shared-element
-    // transition lands on the card's real bounds; showFace returns as the fold starts, so the page is
-    // requested while it animates. Applied once: a recreated screen must not fold away a face the user
-    // has pulled back.
+    // The product is asked for only once the card has arrived, so its WebView is not built while the
+    // card is still travelling. The fold starts after the arrival, so the shared-element transition
+    // lands on the card's real bounds; showFace returns as the fold starts, so the page is requested
+    // while it animates. Applied once: a recreated screen must not fold away a face the user has
+    // pulled back.
     val arrival = LocalNavAnimatedVisibilityScope.current?.transition
     val arrived = arrival == null || arrival.currentState == EnterExitState.Visible
     val leaving = arrival?.targetState == EnterExitState.PostExit
@@ -100,8 +100,7 @@ fun ProductPocketCardDetails(
     }
 
     // A card being left stays composed while it fades out, and the next card's requests are for that
-    // card's fold alone. A held product's requests wait for its card to settle, so the fold never
-    // starts mid-flight.
+    // card's fold alone. Requests wait for the card to settle, so the fold never starts mid-flight.
     LaunchedEffect(session, fold, leaving) {
         if (leaving) return@LaunchedEffect
         session?.faceShownRequests?.collect { request ->
@@ -114,8 +113,7 @@ fun ProductPocketCardDetails(
         }
     }
 
-    // Products draw their own loading state, so the host's spinner is for one that is clearly late.
-    // Counted from the card opening, as the product is asked for only once the card settles.
+    // Products draw their own loading state, so the host's spinner is only for one that is clearly late.
     val slowToOpen by produceState(initialValue = false, leaving) {
         value = false
         if (!leaving) {
@@ -202,8 +200,7 @@ private fun ExpandedProductContent(
     val loadProgress by (session?.loadProgress ?: noProgressYet).collectAsStateWithLifecycle()
     val webView by (session?.webView ?: noWebViewYet).collectAsStateWithLifecycle()
 
-    // Once the product has painted once it owns the space; its own navigations must not blank it, and
-    // the screen closing over it must not bring a spinner.
+    // Once the product has painted once it owns the space; its own navigations or closing must not blank it.
     var productShowing by remember { mutableStateOf(session?.loadProgress?.value == DotNsLoadProgress.Completed) }
     LaunchedEffect(loadProgress) {
         if (loadProgress == DotNsLoadProgress.Completed) productShowing = true
@@ -222,8 +219,7 @@ private fun ExpandedProductContent(
             productShowing -> ProductWebViewHost(
                 modifier = Modifier
                     .fillMaxSize()
-                    .windowInsetsPadding(LocalAppNavigationBarInsets.current)
-                    .testTag(PocketTestTags.PRODUCT_PAGE),
+                    .windowInsetsPadding(LocalAppNavigationBarInsets.current),
                 webView = webView,
             )
 

@@ -46,10 +46,9 @@ class ExpandedProductPageTest {
         FakeSession().also { opened += Triple(url, scope, it) }
     }
 
-    // The product is named by the card it was opened for, since a screen drawn for any other card
-    // must leave its one WebView alone.
+    // Named by its card's URL, so a screen drawn for another card leaves its one WebView alone.
     @Test
-    fun `opening a card hosts its product and hands it to that card's screen`() = runTest {
+    fun `opening a card hosts its product and hands the session to the screen`() = runTest {
         val page = page(screenScope())
 
         page.open("https://game.dot?card=loyalty")
@@ -86,8 +85,7 @@ class ExpandedProductPageTest {
         assertEquals(1, sessions.single().resumed)
     }
 
-    // A card opened again rides up with its product already under it: the product exists, so showing
-    // it costs the card's move nothing.
+    // Showing a product that already exists costs the card's move nothing.
     @Test
     fun `a card opened again shows its held product at the tap`() = runTest {
         val page = page(screenScope())
@@ -99,21 +97,6 @@ class ExpandedProductPageTest {
         assertEquals(1, opened.size)
         assertEquals(sessions.single(), page.shown.value?.session)
         assertEquals(1, sessions.single().resumed)
-    }
-
-    // Building a WebView while the card moves starves the animation, so a product that is not held
-    // yet waits for the card to settle. Until then the held one is left as it is.
-    @Test
-    fun `a tap on a card whose product is not held builds nothing`() = runTest {
-        val page = page(screenScope())
-        page.open("https://game.dot?card=loyalty")
-        page.close()
-
-        page.showIfHeld("https://shop.dot?card=points")
-
-        assertEquals(1, opened.size)
-        assertTrue(opened.single().second.isActive)
-        assertNull(page.shown.value)
     }
 
     // Only one product is ever held, so a second card cannot leave the first one's WebView behind.

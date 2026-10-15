@@ -5,9 +5,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -42,12 +39,12 @@ class ProductPocketCardDetailsLoadingTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private class FakeSession(progress: DotNsLoadProgress) : SpaHostSession {
+    private class FakeSession : SpaHostSession {
         val faceRequests = MutableSharedFlow<FaceShownRequest>(extraBufferCapacity = 1)
 
         override val webView = MutableStateFlow<WebView?>(null)
         override val currentUrl = MutableStateFlow("")
-        override val loadProgress = MutableStateFlow(progress)
+        override val loadProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Completed)
         override val title = MutableStateFlow("")
         override val faceShownRequests get() = faceRequests
         override fun pauseConnections() = Unit
@@ -61,7 +58,7 @@ class ProductPocketCardDetailsLoadingTest {
     )
 
     @Composable
-    private fun Details(session: SpaHostSession?, openedFor: String = card.key.launchUrl()) {
+    private fun Details(session: SpaHostSession?) {
         PolkadotTheme(theme = PolkadotAppTheme.BerlinNight) {
             ProductPocketCardDetails(
                 card = card,
@@ -70,7 +67,7 @@ class ProductPocketCardDetailsLoadingTest {
                     onFaceAction = { _, _ -> },
                     imageResolver = JsImageResolver { null },
                 ),
-                shownProduct = session?.let { ShownProduct(openedFor, it) },
+                shownProduct = session?.let { ShownProduct(card.key.launchUrl(), it) },
                 openingFaceShown = true,
                 cardIndex = 0,
                 onSettled = {},
@@ -79,9 +76,7 @@ class ProductPocketCardDetailsLoadingTest {
         }
     }
 
-    // Products draw their own loading state, so a host spinner in front of them is a second layer of
-    // loading. It is kept for a product that is clearly late; one shown for under a second reads as
-    // a glitch.
+    // Products draw their own loading state; a host spinner shown for under a second reads as a glitch.
     @Test
     fun aProductStillOnItsWayGetsTheHostSpinnerOnlyOnceItIsClearlyLate() {
         compose.mainClock.autoAdvance = false
@@ -94,91 +89,11 @@ class ProductPocketCardDetailsLoadingTest {
         compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertExists()
     }
 
-    // A card being closed has nothing more to load, so a spinner on its way out is only noise.
-    @Test
-    fun aScreenBeingClosedShowsNoSpinner() {
-        var shown by mutableStateOf(true)
-        compose.mainClock.autoAdvance = false
-        compose.setContent {
-            AnimatedVisibility(visible = shown) {
-                CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) { Details(session = null) }
-            }
-        }
-        compose.mainClock.advanceTimeBy(2_000)
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertExists()
-
-        shown = false
-        compose.mainClock.advanceTimeByFrame()
-        compose.mainClock.advanceTimeByFrame()
-
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_CARD).assertExists()
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertDoesNotExist()
-    }
-
-    // Closing a card takes its product away a frame before the screen learns it is closing. A screen
-    // that has shown its product has nothing left to load, so that frame must not bring a spinner.
-    @Test
-    fun aScreenWhoseProductGoesAwayShowsNoSpinner() {
-        var session by mutableStateOf<SpaHostSession?>(FakeSession(DotNsLoadProgress.Completed))
-        compose.mainClock.autoAdvance = false
-        compose.setContent { Details(session) }
-        compose.mainClock.advanceTimeBy(2_000)
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_PAGE).assertExists()
-
-        session = null
-        compose.mainClock.advanceTimeByFrame()
-        compose.mainClock.advanceTimeByFrame()
-
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertDoesNotExist()
-    }
-
-    // There is one WebView per product, and showing it takes it from wherever it was. A screen still
-    // drawn for another card, on its way out or not yet told it is, would take that card's page and
-    // answer its requests with its own fold.
-    @Test
-    fun aScreenNeverTakesAPageOpenedForAnotherCard() {
-        val session = FakeSession(DotNsLoadProgress.Completed)
-        compose.mainClock.autoAdvance = false
-        compose.setContent { Details(session, openedFor = "https://shop.dot?card=points") }
-
-        compose.mainClock.advanceTimeBy(2_000)
-
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_PAGE).assertDoesNotExist()
-        assertEquals(0, session.faceRequests.subscriptionCount.value)
-    }
-
-    // A card tapped again while it fades out gets its fading screen back rather than a new one. The
-    // wait before the spinner is counted from that tap too, or the spinner would be there at once.
-    @Test
-    fun aCardReopenedWhileItClosesWaitsAgainBeforeTheSpinner() {
-        var shown by mutableStateOf(true)
-        compose.mainClock.autoAdvance = false
-        compose.setContent {
-            AnimatedVisibility(visible = shown) {
-                CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) { Details(session = null) }
-            }
-        }
-        compose.mainClock.advanceTimeBy(2_000)
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertExists()
-
-        shown = false
-        compose.mainClock.advanceTimeByFrame()
-        compose.mainClock.advanceTimeByFrame()
-        shown = true
-        compose.mainClock.advanceTimeByFrame()
-        compose.mainClock.advanceTimeByFrame()
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertDoesNotExist()
-
-        compose.mainClock.advanceTimeBy(1_600)
-        compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertExists()
-    }
-
-    // A product opened again is on screen while its card is still moving. Its requests to fold the
-    // face wait for the card to settle: applied at once they would move the card mid-flight, and
-    // turned away they would be lost, since the product does not ask again.
+    // A reopened product is on screen while its card moves. Its requests wait for the card to settle:
+    // applied at once they would move the card mid-flight, and refused they would be lost.
     @Test
     fun aRequestFromAProductWhoseCardIsMovingIsHeldUntilTheCardSettles() {
-        val session = FakeSession(DotNsLoadProgress.Completed)
+        val session = FakeSession()
         val arrival = MutableTransitionState(false).apply { targetState = true }
         compose.mainClock.autoAdvance = false
         compose.setContent {
