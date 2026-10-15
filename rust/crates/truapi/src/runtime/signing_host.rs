@@ -579,6 +579,7 @@ impl SigningHost {
 		if let Some(session) = self.current_local_session() &&
 			let Ok(context) = self.native_chat_context(&session)
 		{
+			self.native_chat.ensure_host_channel(context.clone());
 			self.native_chat.resume_wallet_recovery(context);
 		}
 	}

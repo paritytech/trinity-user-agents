@@ -276,7 +276,7 @@ fn wanted(
 
 /// A queued reference whose statement lifetime is over.
 fn lapsed(entry: &Outgoing, now: u64) -> bool {
-	entry.kind.profile_scope().is_some() &&
+	(entry.kind.profile_scope().is_some() || entry.kind == OutgoingKind::HostChannelBootstrap) &&
 		entry.statement.expiry.is_none_or(|expiry| (expiry >> 32) <= now)
 }
 
@@ -517,6 +517,9 @@ impl NativeChatActor {
 		self: &Arc<Self>,
 		context: &NativeChatContext,
 	) {
+		if let Err(error) = self.publish_host_channel_bootstraps(context).await {
+			tracing::debug!(?error, "host channel bootstrap deferred");
+		}
 		if let Err(error) = self.publish_profile_reference(context).await {
 			tracing::debug!(?error, "native Chat profile relay deferred");
 		}

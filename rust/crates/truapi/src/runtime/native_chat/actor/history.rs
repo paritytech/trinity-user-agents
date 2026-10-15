@@ -193,6 +193,7 @@ impl NativeChatActor {
 		// Profile references are the Host's, not the product's: collected here,
 		// stored after the open commits, and cut out of what the product sees.
 		let mut profile_references = Vec::new();
+		let mut host_channel_bootstraps = Vec::new();
 		let mut stripped = false;
 		while let Some((mut bytes, depth)) = work.pop() {
 			context.require_current()?;
@@ -301,6 +302,16 @@ impl NativeChatActor {
 						profile_references.push(frame);
 					}
 				},
+				OpenedDeviceMessage::HostChannelBootstrap(frame) => {
+					if !super::receive::valid_peer_timestamp(frame.timestamp, current_unix_secs()) {
+						return Err(Error::InvalidStatement);
+					}
+					// As a profile frame: never forwarded, live frames only.
+					stripped = true;
+					if depth == 0 {
+						host_channel_bootstraps.push(frame);
+					}
+				},
 			}
 		}
 		let rich = self.prepare_rich(context, peer, &request_id, rich).await?;
@@ -315,6 +326,8 @@ impl NativeChatActor {
 				})
 				.await?;
 			self.record_profile_references(context, peer, profile_references).await?;
+			self.record_host_channel_bootstraps(context, peer, host_channel_bootstraps)
+				.await?;
 			// Preserve the original canonical request only when no history
 			// expansion or removal of private frames was needed.
 			let plaintext = if had_history || had_rich || stripped {
@@ -364,6 +377,8 @@ impl NativeChatActor {
 		}
 		let delivery = HistoryDelivery { id, peer, sender, route, request_id, pages, imports };
 		self.record_profile_references(context, peer, profile_references).await?;
+		self.record_host_channel_bootstraps(context, peer, host_channel_bootstraps)
+			.await?;
 		let valid = context.session_valid.clone();
 		self.store
 			.update(move |state| {

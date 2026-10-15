@@ -4,6 +4,7 @@
 
 mod files;
 mod history;
+mod host_channel;
 mod profile;
 mod receive;
 #[cfg(test)]
@@ -153,6 +154,8 @@ enum OutgoingKind {
 	ProfileReference([u8; 32]),
 	/// Personal grants never replace an app scope's pending frame.
 	PersonalProfileReference([u8; 32]),
+	/// This host's half of the host channel, sent once per peer per session.
+	HostChannelBootstrap,
 }
 
 impl OutgoingKind {
@@ -410,6 +413,10 @@ pub(super) struct NativeChatActor {
 	file_transfer_gate: futures::lock::Mutex<()>,
 	file_export_gate: futures::lock::Mutex<()>,
 	file_cursor: AtomicUsize,
+	/// Peers this session already queued a host-channel bootstrap for. Not
+	/// persisted: a restart sends again, and a later frame replaces the
+	/// earlier one on the peer's side.
+	host_channel_bootstrapped: std::sync::Mutex<std::collections::HashSet<[u8; 32]>>,
 }
 
 impl NativeChatActor {
@@ -475,6 +482,7 @@ impl NativeChatActor {
 			file_transfer_gate: futures::lock::Mutex::new(()),
 			file_export_gate: futures::lock::Mutex::new(()),
 			file_cursor: AtomicUsize::new(0),
+			host_channel_bootstrapped: std::sync::Mutex::new(std::collections::HashSet::new()),
 		});
 		actor.store.read(|state| actor.validate_state(state)).await??;
 		Ok(actor)

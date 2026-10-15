@@ -1915,6 +1915,16 @@ pub enum CoreStorageKey {
 		/// Host-selected Chat network.
 		genesis_hash: [u8; 32],
 	},
+	/// The host-channel keys this wallet's contacts handed over in a Chat
+	/// bootstrap frame, one per peer (seity `doc/HOST_CHANNEL_PLAN.md`).
+	/// Public keys only; the pair secret is derived on use.
+	#[codec(index = 20)]
+	HostChannelPeers {
+		/// Wallet whose contacts sent the keys.
+		root_public_key: [u8; 32],
+		/// Host-selected Chat network.
+		genesis_hash: [u8; 32],
+	},
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1978,6 +1988,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::ProfilePersonalReferencesReceived { .. } => {
 			("ProfilePersonalReferencesReceived", None)
 		},
+		CoreStorageKey::HostChannelPeers { .. } => ("HostChannelPeers", None),
 		CoreStorageKey::NativeChatFileChunk { product_id, .. } => {
 			("NativeChatFileChunk", Some(product_id))
 		},

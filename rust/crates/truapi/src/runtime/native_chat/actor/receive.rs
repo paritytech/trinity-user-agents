@@ -904,6 +904,14 @@ fn exchange_digest(messages: &[OpenedDeviceMessage]) -> Result<[u8; 32], Error> 
 				hasher.update(digest);
 				continue;
 			},
+			OpenedDeviceMessage::HostChannelBootstrap(frame) => {
+				hasher.update(&[8]);
+				let bytes =
+					(frame.message_id.as_str(), frame.timestamp, frame.channel_public_key).encode();
+				hasher.update(&(bytes.len() as u32).to_le_bytes());
+				hasher.update(&bytes);
+				continue;
+			},
 			OpenedDeviceMessage::ProfileReference(frame) => {
 				let personal = frame.scope == crate::runtime::profile::ProfileScope::Personal;
 				hasher.update(&[if personal { 7 } else { 6 }]);
