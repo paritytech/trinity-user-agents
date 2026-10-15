@@ -9,8 +9,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -31,6 +34,7 @@ import io.paritytech.polkadotapp.designsystem.colors.LocalPolkadotColors
 import io.paritytech.polkadotapp.designsystem.colors.PolkadotColorsPalette
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatHeaderRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
@@ -41,10 +45,19 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatRoomUnavailableLine
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.MessageActionMenuDropdown
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.ReactionDetailsDialog
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatActivityLine
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatCommandCatalogue
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatInputRow
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatSuggestionsStrip
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ProductCustomFooter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.menu.ChatFeedMenu
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.LocalChatFeedTimestampAnchor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.*
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomExtrasUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.catalogueFor
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.inputText
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.LocalChatMessageTimeFormatter
@@ -52,6 +65,7 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ACTION_MENU_BLUR_RADIUS = 25.dp
 
@@ -68,6 +82,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
     val customAppearance by contract.customAppearance.collectAsStateWithLifecycle()
     val revealingMessageId by contract.revealingMessageId.collectAsStateWithLifecycle()
     val roomState by contract.roomState.collectAsStateWithLifecycle()
+    val productRoomState by contract.productRoomState.collectAsStateWithLifecycle()
     val popupState = contract.popupState.collectAsStateWithLifecycle().value
     var menuLayoutInfo by remember { mutableStateOf<MessageLayoutInfo?>(null) }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -110,6 +125,8 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onMessageRevealComplete = contract::onMessageRevealComplete,
         toolbarActions = toolbarActions,
         roomState = roomState,
+        productRoomState = productRoomState,
+        onProductRoomAction = contract::onProductRoomAction,
         highlightEvents = contract.highlightEvents,
         scrollToPosition = contract.scrollToPosition,
         onBackClick = contract::onBackClick,
@@ -146,6 +163,10 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onBlockUserRequest = contract::onBlockUserRequest,
         onBlockUserConfirm = contract::onBlockUserConfirm,
         onDeleteMessageConfirm = contract::onDeleteMessageConfirm,
+        onProductLinkConfirm = { contract.onProductRoomAction(ProductRoomAction.OpenLink(it)) },
+        participants = productRoomState.participants.list,
+        participantSheet = productRoomState.participantSheet,
+        onProductRoomAction = contract::onProductRoomAction,
     )
 
     when (popupState) {
@@ -182,6 +203,8 @@ private fun ChatFeedScreenInternal(
     onMessageRevealComplete: (ChatMessageId) -> Unit,
     toolbarActions: ImmutableList<ChatToolbarAction>,
     roomState: ChatRoomUiState,
+    productRoomState: ProductRoomUiState,
+    onProductRoomAction: (ProductRoomAction) -> Unit,
     highlightEvents: Flow<HighlightedMessage>,
     scrollToPosition: Flow<Int>,
     onBackClick: () -> Unit,
@@ -227,11 +250,17 @@ private fun ChatFeedScreenInternal(
                 ChatFeedToolbar(
                     displayState = displayState,
                     toolbarActions = toolbarActions,
-                    subtitle = roomState.subtitle,
+                    subtitle = productRoomState.participants.count
+                        ?.let { pluralStringResource(RCommon.plurals.chat_participants_count, it, it) }
+                        ?: roomState.subtitle,
                     showAvatar = config.showAvatar,
+                    productToolbar = productRoomState.toolbar,
+                    showsParticipants = productRoomState.participants.declared,
                     onBack = onBackClick,
                     onStartCallClick = onStartCallClick,
                     onMenuClick = onMenuClick,
+                    onProductToolbarClick = { onProductRoomAction(ProductRoomAction.Toolbar(it)) },
+                    onParticipantsClick = { onProductRoomAction(ProductRoomAction.ShowParticipants) },
                 )
             }
 
@@ -268,32 +297,68 @@ private fun ChatFeedScreenInternal(
                             onLoadOlderMessages = onLoadOlderMessages,
                             onLoadNewerMessages = onLoadNewerMessages,
                             onShowNewestMessages = onShowNewestMessages,
+                            authors = productRoomState.participants.authors,
+                            onAuthorClick = { onProductRoomAction(ProductRoomAction.SelectParticipant(it)) },
                         )
                     }
                 }
 
-                Box(
+                val density = LocalDensity.current
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
+                        .onSizeChanged { footerHeight = with(density) { it.height.toDp() } }
                 ) {
-                    ChatInputRow(
+                    ProductRoomExtrasSlot(
+                        extras = productRoomState.extras,
                         inputState = chatInputUiState,
-                        username = username,
-                        onClearReply = onClearReply,
-                        onClearEdit = onClearEdit,
-                        onMessageChange = onMessageChange,
-                        onSendMessageClick = onSendMessageClick,
-                        onPayClick = onPayClick,
-                        onAttachClick = onAttachClick,
-                        onAcceptChatRequest = onAcceptChatRequest,
-                        onDeclineChatRequest = onDeclineChatRequest,
-                        onUnblockUserClick = onUnblockUserClick,
-                        onHeightChanged = { footerHeight = it },
+                        onSuggestion = { onProductRoomAction(ProductRoomAction.Suggestion(it)) },
+                        onCommand = { onMessageChange(it.inputText()) },
                     )
+
+                    val customFooter = productRoomState.customFooter
+                    if (customFooter != null) {
+                        ProductCustomFooter(renderer = customFooter, onHeightChanged = {})
+                    } else {
+                        ChatInputRow(
+                            inputState = chatInputUiState,
+                            username = username,
+                            onClearReply = onClearReply,
+                            onClearEdit = onClearEdit,
+                            onMessageChange = onMessageChange,
+                            onSendMessageClick = onSendMessageClick,
+                            onPayClick = onPayClick,
+                            onAttachClick = onAttachClick,
+                            onAcceptChatRequest = onAcceptChatRequest,
+                            onDeclineChatRequest = onDeclineChatRequest,
+                            onUnblockUserClick = onUnblockUserClick,
+                            onHeightChanged = {},
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+/** The activity line, the quick replies while the input is empty, and the `/` catalogue while the user types a command. */
+@Composable
+private fun ProductRoomExtrasSlot(
+    extras: ProductRoomExtrasUiState,
+    inputState: ChatInputUiState,
+    onSuggestion: (String) -> Unit,
+    onCommand: (ChatCommandModel) -> Unit,
+) {
+    val inputText = (inputState as? ChatInputUiState.SendMessage)?.messageState?.inputMessage
+    val catalogue = remember(inputText, extras.commands) { extras.commands.catalogueFor(inputText.orEmpty()) }
+
+    extras.activity?.let { ChatActivityLine(text = it) }
+
+    if (catalogue.isNotEmpty()) {
+        ChatCommandCatalogue(commands = catalogue, onSelect = onCommand)
+    } else if (inputText?.isEmpty() == true && extras.suggestions.isNotEmpty()) {
+        ChatSuggestionsStrip(suggestions = extras.suggestions, onSelect = onSuggestion)
     }
 }
 
@@ -365,6 +430,8 @@ private fun ChatFeedPreview() {
                     onMessageRevealComplete = {},
                     toolbarActions = persistentListOf(ChatToolbarAction.VIDEO_CALL),
                     roomState = ChatRoomUiState.PersonChat,
+                    productRoomState = ProductRoomUiState.None,
+                    onProductRoomAction = {},
                     highlightEvents = emptyFlow(),
                     scrollToPosition = emptyFlow(),
                     onBackClick = {},

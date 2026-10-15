@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.c
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -15,6 +16,8 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.ContentCopy
 import io.paritytech.polkadotapp.design.components.icon.vectors.Edit
 import io.paritytech.polkadotapp.design.components.icon.vectors.ReplyArrow
 import io.paritytech.polkadotapp.design.components.icon.vectors.Trash
+import io.paritytech.polkadotapp.design.components.image.NovaAsyncImage
+import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -32,7 +35,7 @@ internal fun ActionMenuList(
     state: MessagePopUpUiState.ActionMenu,
     onMessageAction: (MessageAction) -> Unit
 ) {
-    if (state.allowedMenuActions.isEmpty()) return
+    if (state.allowedMenuActions.isEmpty() && !state.productActionsLoading) return
 
     PolkadotSurface(
         modifier = modifier,
@@ -45,7 +48,17 @@ internal fun ActionMenuList(
                 vertical = PolkadotTheme.spacings.small
             )
         ) {
-            state.allowedMenuActions.forEach { action ->
+            state.allowedMenuActions.forEachIndexed { index, action ->
+                val startsProductSection = action is AllowedMessageMenuAction.Custom &&
+                    index > 0 && state.allowedMenuActions[index - 1] !is AllowedMessageMenuAction.Custom
+                if (startsProductSection) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = PolkadotTheme.spacings.tiny),
+                        thickness = PolkadotTheme.borders.default,
+                        color = PolkadotTheme.colors.stroke.secondary,
+                    )
+                }
+
                 when (action) {
                     is AllowedMessageMenuAction.Reply -> {
                         ActionMenuItem(
@@ -95,9 +108,83 @@ internal fun ActionMenuList(
                             isDestructive = true,
                         )
                     }
+
+                    is AllowedMessageMenuAction.Custom -> {
+                        ProductActionMenuItem(
+                            action = action,
+                            onClick = { onMessageAction(MessageAction.ProductMenuAction(state.message, action.actionId)) },
+                        )
+                    }
                 }
             }
+
+            if (state.productActionsLoading) {
+                ProductActionsLoadingItem()
+            }
         }
+    }
+}
+
+@Composable
+private fun ProductActionMenuItem(
+    action: AllowedMessageMenuAction.Custom,
+    onClick: () -> Unit,
+) {
+    val color = if (action.isDestructive) PolkadotTheme.colors.fg.error else PolkadotTheme.colors.fg.primary
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(
+                horizontal = PolkadotTheme.spacings.mediumIncreased,
+                vertical = PolkadotTheme.spacings.smallIncreased
+            ),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(modifier = Modifier.size(20.dp)) {
+            if (action.icon != null) {
+                NovaAsyncImage(
+                    modifier = Modifier.size(20.dp),
+                    model = action.icon,
+                    contentDescription = null,
+                )
+            }
+        }
+
+        HorizontalSpacer { smallIncreased }
+
+        NovaText(
+            text = action.label,
+            style = PolkadotTheme.typography.body.large,
+            color = color
+        )
+    }
+}
+
+@Composable
+private fun ProductActionsLoadingItem() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = PolkadotTheme.spacings.mediumIncreased,
+                vertical = PolkadotTheme.spacings.smallIncreased
+            ),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        NovaCircularProgressIndicator(
+            modifier = Modifier.size(20.dp),
+            strokeWidth = 2.dp,
+        )
+
+        HorizontalSpacer { smallIncreased }
+
+        NovaText(
+            text = stringResource(RCommon.string.chat_product_menu_loading),
+            style = PolkadotTheme.typography.body.large,
+            color = PolkadotTheme.colors.fg.tertiary
+        )
     }
 }
 

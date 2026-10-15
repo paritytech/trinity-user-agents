@@ -66,10 +66,7 @@ class ProductChatHostBridge(
     }
 
     override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) {
-        val room = requireRoom(roomId)
-        // A footer that the product draws waits for P8.6.
-        if (footer is ChatRoomFooter.Custom) throw HostRejection.Rejected("this host does not draw a custom chat footer")
-        chatMessaging.setRoomFooter(room, footer.toModel()).orReject()
+        chatMessaging.setRoomFooter(requireRoom(roomId), footer.toModel()).orReject()
     }
 
     override suspend fun listRooms(): List<ChatRoom> =

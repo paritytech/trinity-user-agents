@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRe
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
@@ -25,7 +26,11 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatReactionDetailModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
@@ -36,6 +41,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFee
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -43,6 +50,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.productRoomId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatId
+import io.paritytech.polkadotapp.feature_products_api.model.toUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
@@ -109,7 +117,7 @@ class ProductChatExtension(
     // Strong ref to the messaging target bound weakly onto the shared worker; held for our lifetime.
     private var chatMessaging: ProductChatMessaging? = null
 
-    // A footer that the product draws hides the input until the host can draw it (P8.6).
+    // Only an Input footer shows the input: an Empty footer shows nothing, a Custom one shows the tree of the product.
     override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> {
         if (chatId.productRoomId(id) == null) return flowOf(true)
         return declarationsRepository.observe(chatId)
@@ -127,6 +135,9 @@ class ProductChatExtension(
         ProductChatMenuRenderer(product, chatId, removable = origin == ProductChatExtensionOrigin.InstalledByUser)
 
     override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*> = chatPreviewDelegate
+
+    override fun customFooterRenderer(chatId: ChatId): CustomChatFooterRenderer? =
+        chatId.productRoomId(id)?.let { ProductFooterRenderer(it, runningWorker) }
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {
@@ -189,6 +200,8 @@ class ProductChatExtension(
         Timber.d("Disposed product bot: ${product.name}")
     }
 
+    override fun productAppAddress(chatId: ChatId): String? = chatId.productRoomId(id)?.let { product.id.toUrl() }
+
     override fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle? {
         if (chatId.productRoomId(id) == null) return null
         return object : ChatRoomLifecycle {
@@ -214,6 +227,40 @@ class ProductChatExtension(
             override suspend fun userAction(chatId: ChatId, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
                 val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
                 return runningWorker.userAction(room, action.withProductIds(chatId))
+            }
+
+            override suspend fun messageMenu(chatId: ChatId, message: ProductRoomMessage): Result<ChatMessageMenuModel> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                val productMessage = message.copy(
+                    messageId = ProductMessageIds.product(message.messageId, chatId),
+                    replyTo = message.replyTo?.let { ProductMessageIds.product(it, chatId) },
+                )
+                return runningWorker.messageMenu(room, productMessage)
+            }
+
+            override suspend fun participantsCount(chatId: ChatId): Result<Int> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.participantsCount(room)
+            }
+
+            override suspend fun participantsPage(chatId: ChatId, cursor: String?, pageSize: Int): Result<ProductParticipantsPage> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.participantsPage(room, cursor, pageSize)
+            }
+
+            override suspend fun participantsByIds(chatId: ChatId, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.participantsByIds(room, participantIds)
+            }
+
+            override suspend fun reactions(chatId: ChatId, messageId: String): Result<List<ChatReactionDetailModel>> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.reactions(room, ProductMessageIds.product(messageId, chatId))
+            }
+
+            override suspend fun participantMenu(chatId: ChatId, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.participantMenu(room, entry)
             }
         }
     }
@@ -262,6 +309,7 @@ class ProductChatExtension(
         return when (val content = content) {
             is ChatMessage.Content.Text,
             is ChatMessage.Content.RichText,
+            is ChatMessage.Content.ProductBody,
             -> ProductRoomEvent.MessagePosted(id, content, replyToMessageId?.let(::productId))
             is ChatMessage.Content.Edited -> ProductRoomEvent.UserEdited(productId(content.messageId), content.content)
             is ChatMessage.Content.Reacted -> ProductRoomEvent.UserReacted(productId(content.messageId), content.content.emoji, placed = true)

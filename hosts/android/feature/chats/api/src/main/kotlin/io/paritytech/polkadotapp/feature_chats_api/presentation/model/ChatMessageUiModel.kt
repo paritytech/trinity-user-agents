@@ -315,6 +315,8 @@ sealed class MessagePopUpUiState {
         val allowedMenuActions: ImmutableList<AllowedMessageMenuAction>,
         /** The emoji that the picker offers. Null offers all emoji. */
         val allowedReactions: ImmutableList<String>?,
+        /** The product of the room did not answer the menu of the message yet. The menu shows a loading row. */
+        val productActionsLoading: Boolean,
     ) : MessagePopUpUiState()
 }
 
@@ -348,6 +350,9 @@ sealed interface MessageAction {
     data class ActionPress(val message: ChatMessageUiModel, val actionId: String) : MessageAction
     data class Delete(val message: ChatMessageUiModel) : MessageAction
     data class Retry(val message: ChatMessageUiModel) : MessageAction
+
+    /** A product entry of the message menu. */
+    data class ProductMenuAction(val message: ChatMessageUiModel, val actionId: String) : MessageAction
     data object DismissActionMenu : MessageAction
 }
 
@@ -358,4 +363,7 @@ sealed interface AllowedMessageMenuAction {
     data object ViewEditHistory : AllowedMessageMenuAction
     data object Delete : AllowedMessageMenuAction
     data object Retry : AllowedMessageMenuAction
+
+    /** An entry of the product of the room. [icon] is what the image loader draws, or null. */
+    data class Custom(val actionId: String, val label: String, val icon: Any?, val isDestructive: Boolean) : AllowedMessageMenuAction
 }

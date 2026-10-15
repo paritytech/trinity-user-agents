@@ -11,8 +11,24 @@ import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.utils.ActivityResultExecutor
 import io.paritytech.polkadotapp.common.utils.InformationSize
 import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import java.io.File
 import javax.inject.Inject
+
+/** A kind of attachment that the input offers. */
+enum class AttachmentKind { PHOTO, VIDEO, FILE }
+
+/** A person chat takes photos and videos. A product room takes the kinds that its footer allows (02-DESIGN §6.6). */
+fun ChatRoomPolicy?.attachmentKinds(): Set<AttachmentKind> {
+    if (this == null) return setOf(AttachmentKind.PHOTO, AttachmentKind.VIDEO)
+
+    val input = (footer as? ChatRoomPolicy.Footer.TextInput)?.input ?: return emptySet()
+    return buildSet {
+        if (input.allowsPhoto) add(AttachmentKind.PHOTO)
+        if (input.allowsVideo) add(AttachmentKind.VIDEO)
+        if (input.allowsFile) add(AttachmentKind.FILE)
+    }
+}
 
 data class AttachmentResult(
     val uri: Uri,
@@ -26,11 +42,19 @@ class AttachmentExecutor @Inject constructor(
 ) : ActivityResultExecutor<AttachmentResult?>(contextManager.requireActivity()) {
     private var cameraFile: File? = null
     private var cameraAllowed: Boolean = true
+    private var allowedKinds: Set<AttachmentKind> = setOf(AttachmentKind.PHOTO, AttachmentKind.VIDEO)
 
     override fun createIntent(): Intent {
         val getContentIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
             type = "*/*"
-            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+            // A file can be of any type, so the picker offers every type when files are allowed.
+            if (AttachmentKind.FILE !in allowedKinds) {
+                val mimeTypes = buildList {
+                    if (AttachmentKind.PHOTO in allowedKinds) add("image/*")
+                    if (AttachmentKind.VIDEO in allowedKinds) add("video/*")
+                }
+                putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
+            }
             addCategory(Intent.CATEGORY_OPENABLE)
         }
 
@@ -82,5 +106,9 @@ class AttachmentExecutor @Inject constructor(
     // later we are going to rework it with in-app custom picker anyway
     fun setCameraAllowed(isAllowed: Boolean) {
         cameraAllowed = isAllowed
+    }
+
+    fun setAllowedKinds(kinds: Set<AttachmentKind>) {
+        allowedKinds = kinds
     }
 }

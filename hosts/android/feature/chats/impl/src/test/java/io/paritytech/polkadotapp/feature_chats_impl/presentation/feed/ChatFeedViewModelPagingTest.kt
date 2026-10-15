@@ -25,6 +25,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.Ch
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatPageEdgeUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomReadinessUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
@@ -206,6 +207,7 @@ class ChatFeedViewModelPagingTest {
         attachmentExecutor = mockk(relaxed = true),
         dispatchers = TestCoroutineDispatchers(UnconfinedTestDispatcher()),
         resourceResolver = mockk(relaxed = true),
+        productRoomFactory = ChatProductRoomController.Factory(interactor, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true)),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk<CallStateTracker> { every { observeActiveCall() } returns flowOf(null) },
     )

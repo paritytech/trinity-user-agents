@@ -6,12 +6,18 @@ import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatReactionDetailModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -22,8 +28,12 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMes
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCoreBody
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCount
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toModel
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toPage
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toQueryException
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toQueryMessage
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toResolved
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.CancellationException
@@ -53,9 +63,14 @@ import uniffi.truapi.ChatActionPayload
 import uniffi.truapi.ChatCommand
 import uniffi.truapi.ChatEvent
 import uniffi.truapi.ChatMessageContent
+import uniffi.truapi.ChatParticipantsQuery
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
+import uniffi.truapi.ProductChatMessageActionsQueryRequest
 import uniffi.truapi.ProductChatMessagesQueryRequest
+import uniffi.truapi.ProductChatParticipantActionsQueryRequest
+import uniffi.truapi.ProductChatParticipantsQueryRequest
+import uniffi.truapi.ProductChatReactionsQueryRequest
 import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
@@ -146,6 +161,39 @@ class TrUAPIChatWorker(
         }
     }
 
+    override suspend fun messageMenu(roomId: ProductChatIdParameter, message: ProductRoomMessage): Result<ChatMessageMenuModel> =
+        query { execution ->
+            execution.chatMessageActionsQuery(ProductChatMessageActionsQueryRequest(roomId.value, message.toQueryMessage())).menu.toModel()
+        }
+
+    override suspend fun participantsCount(roomId: ProductChatIdParameter): Result<Int> = query { execution ->
+        execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, ChatParticipantsQuery.Count)).toCount()
+    }
+
+    override suspend fun participantsPage(roomId: ProductChatIdParameter, cursor: String?, pageSize: Int): Result<ProductParticipantsPage> =
+        query { execution ->
+            val page = ChatParticipantsQuery.Page(cursor, pageSize.toUInt())
+            execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, page)).toPage()
+        }
+
+    override suspend fun participantsByIds(roomId: ProductChatIdParameter, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> =
+        query { execution ->
+            val byIds = ChatParticipantsQuery.ByIds(participantIds)
+            execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, byIds)).toResolved()
+        }
+
+    override suspend fun reactions(roomId: ProductChatIdParameter, messageId: String): Result<List<ChatReactionDetailModel>> =
+        query { execution ->
+            execution.chatReactionsQuery(ProductChatReactionsQueryRequest(roomId.value, messageId))
+                .reactions
+                .map { ChatReactionDetailModel(it.participantId, it.emoji) }
+        }
+
+    override suspend fun participantMenu(roomId: ProductChatIdParameter, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =
+        query { execution ->
+            execution.chatParticipantActionsQuery(ProductChatParticipantActionsQueryRequest(roomId.value, entry.toCore())).menu.toModel()
+        }
+
     // The core holds the worker for each open query. A worker that is not running yet starts first, and an
     // unavailable worker is asked once more after a second (02-DESIGN §3.6, §5.1).
     private suspend fun <T> query(ask: suspend (TrUAPIProductExecution) -> T): Result<T> {
@@ -210,7 +258,6 @@ class TrUAPIChatWorker(
         return outcome.logFailure("truapi.chat.event for ${productId.value}")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     override fun renderMessage(
         roomId: ProductChatIdParameter?,
         messageId: ChatMessageId,
@@ -223,6 +270,28 @@ class TrUAPIChatWorker(
             messageId = productMessageId(roomId, messageId),
             messageType = messageType,
         )
+        return render(context, messageData.value)
+    }
+
+    // The footer render request has an empty payload (02-DESIGN §13 item 14).
+    override fun renderFooter(roomId: ProductChatIdParameter): Flow<Result<JsWidget>> =
+        render(RenderContext.ChatFooter(roomId.value), ByteArray(0))
+
+    override fun dispatchFooterEvent(roomId: ProductChatIdParameter, actionId: String, eventType: JsUiEvent.Type) {
+        val execution = workers.currentExecution(productId)
+        if (execution == null) {
+            Timber.w("TrUAPI chat footer event for %s/%s dropped: no running execution", productId.value, roomId.value)
+            return
+        }
+        runCatching {
+            execution.publishRendererAction(
+                HostRendererActionSubscribeItem(RenderContext.ChatFooter(roomId.value), actionId, eventType.toActionPayload()),
+            )
+        }.logFailure("truapi.renderer.footer action '$actionId' for ${productId.value}")
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun render(context: RenderContext, payload: ByteArray): Flow<Result<JsWidget>> {
         return workers.executionState(productId)
             .distinctUntilChanged()
             .flatMapLatest { state ->
@@ -231,7 +300,7 @@ class TrUAPIChatWorker(
                     is WorkerExecutionState.Failed ->
                         flowOf(Result.failure(ExecutionUnavailableException(state.reason)))
                     null -> emptyFlow()
-                    is WorkerExecutionState.Running -> state.execution.chatRender(context, messageData.value)
+                    is WorkerExecutionState.Running -> state.execution.chatRender(context, payload)
                 }
             }
             .conflate()
@@ -301,7 +370,7 @@ class TrUAPIChatWorker(
     // Reopened under flatMapLatest, not above it: a stop or a replacement execution then cancels
     // the backoff wait, and a failure cannot overtake the node drawn just before it by cancelling
     // the scope that drains flatMapLatest's channel.
-    private fun TrUAPIProductExecution.chatRender(context: RenderContext.ChatMessage, payload: ByteArray): Flow<Result<JsWidget>> =
+    private fun TrUAPIProductExecution.chatRender(context: RenderContext, payload: ByteArray): Flow<Result<JsWidget>> =
         flow {
             var drew = false
             render(ProductRendererRenderRequest(context, payload))
@@ -316,7 +385,13 @@ class TrUAPIChatWorker(
         }
             // The execution went away, not the render: end quietly and let the replacement draw.
             .catch { cause -> if (cause !is CancellationException) throw cause }
-            .reopenAfterFailure("TrUAPI chat render for ${productId.value}/${context.messageId}")
+            .reopenAfterFailure("TrUAPI chat render for ${productId.value}/${context.label()}")
+
+    private fun RenderContext.label(): String = when (this) {
+        is RenderContext.ChatMessage -> messageId
+        is RenderContext.ChatFooter -> "footer:$roomId"
+        else -> toString()
+    }
 
     private class StreamDrewNothing : Exception("the render stream ended without drawing")
 

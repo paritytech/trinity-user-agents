@@ -2,6 +2,10 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatVariant
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatBuiltInMessageActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.inMenuOrder
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.AllowedMessageMenuAction
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.isIncoming
@@ -72,6 +76,44 @@ class ChatMenuActionsProvider @Inject constructor() {
         val allowedReactions = roomPolicy?.messageMenu?.allowedReactions
         return userInputState.canSendMessage() && allowedReactions?.isEmpty() != true
     }
+
+    /**
+     * The entries of a message menu after the answer of `message_actions_query` (02-DESIGN §6.6). `Custom` gives only
+     * the entries of the product. `ExtendBuiltIn` gives the host entries without `hidden`, then the entries of the
+     * product. A destructive product entry goes last. No answer gives the host entries.
+     */
+    fun applyProductMenu(
+        hostActions: List<AllowedMessageMenuAction>,
+        menu: ChatMessageMenuModel?,
+        icons: Map<String, Any>,
+    ): List<AllowedMessageMenuAction> = when (menu) {
+        null -> hostActions
+        is ChatMessageMenuModel.Custom -> menu.actions.inMenuOrder().map { it.toMenuAction(icons) }
+        is ChatMessageMenuModel.ExtendBuiltIn -> {
+            val shown = hostActions.filter { action -> action.builtIn()?.let { it !in menu.hidden } ?: true }
+            shown + menu.actions.inMenuOrder().map { it.toMenuAction(icons) }
+        }
+    }
+
+    /** The emoji bar stays unless the product menu leaves out the reactions. */
+    fun canLeaveReactions(hostAllows: Boolean, menu: ChatMessageMenuModel?): Boolean = when (menu) {
+        null -> hostAllows
+        is ChatMessageMenuModel.Custom -> false
+        is ChatMessageMenuModel.ExtendBuiltIn -> hostAllows && ChatBuiltInMessageActionModel.REACT !in menu.hidden
+    }
+
+    private fun AllowedMessageMenuAction.builtIn(): ChatBuiltInMessageActionModel? = when (this) {
+        AllowedMessageMenuAction.Reply -> ChatBuiltInMessageActionModel.REPLY
+        is AllowedMessageMenuAction.Copy -> ChatBuiltInMessageActionModel.COPY
+        is AllowedMessageMenuAction.Edit -> ChatBuiltInMessageActionModel.EDIT
+        AllowedMessageMenuAction.Delete -> ChatBuiltInMessageActionModel.DELETE
+        AllowedMessageMenuAction.Retry -> ChatBuiltInMessageActionModel.RETRY
+        AllowedMessageMenuAction.ViewEditHistory,
+        is AllowedMessageMenuAction.Custom -> null
+    }
+
+    private fun ChatProductActionModel.toMenuAction(icons: Map<String, Any>) =
+        AllowedMessageMenuAction.Custom(actionId = actionId, label = label, icon = icons[actionId], isDestructive = destructive)
 
     private fun MutableList<AllowedMessageMenuAction>.tryAddCopy(message: ChatMessageUiModel) {
         val editableText = extractCopiableText(message) ?: return

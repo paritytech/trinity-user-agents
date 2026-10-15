@@ -878,6 +878,25 @@
     <string name="chat_reply_earlier_message">Earlier message</string>
     <string name="chat_feed_page_failed">Messages did not load. Tap to try again.</string>
     <string name="chat_product_room_unavailable">The app does not answer. You see the messages that loaded before.</string>
+    <string name="chat_product_menu_loading">Loading…</string>
+    <string name="chat_product_link_question">Open this link?</string>
+    <string name="chat_product_link_open">Open</string>
+    <string name="chat_product_toolbar_more">More actions</string>
+    <string name="chat_participants_title">Participants</string>
+    <string name="chat_participants_failed">Participants did not load. Tap to try again.</string>
+    <plurals name="chat_participants_count">
+        <item quantity="one">%d participant</item>
+        <item quantity="other">%d participants</item>
+    </plurals>
+    <string name="chat_participant_person">Person #%1$s</string>
+    <string name="chat_participant_contact">Contact %1$s</string>
+    <string name="chat_participant_kind_product">App</string>
+    <string name="chat_participant_kind_person">Person</string>
+    <string name="chat_participant_kind_lite_person">Account</string>
+    <string name="chat_participant_kind_contact">Contact</string>
+    <string name="chat_participant_kind_guest">Guest</string>
+    <string name="chat_participant_copy_address">Copy address</string>
+    <string name="chat_participant_open_product">Open app</string>
 
     <string name="notification_channel_name_video_game">Weekly game</string>
     <string name="notification_channel_description_video_game">Notifications about upcoming weekly games</string>

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.tooling.preview.Preview
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -23,6 +25,8 @@ fun MessageReactions(
     modifier: Modifier = Modifier,
     reactions: ImmutableList<ChatMessageUiModel.Reaction>,
     onReactionClick: (String) -> Unit,
+    // A long press asks who reacted (02-DESIGN §6.5).
+    onReactionLongClick: () -> Unit = {},
 ) {
     FlowRow(
         modifier = modifier,
@@ -35,6 +39,7 @@ fun MessageReactions(
                 count = reaction.count,
                 isReactedByTheUser = reaction.reactedByUser,
                 onClick = { onReactionClick(reaction.emoji) },
+                onLongClick = onReactionLongClick,
             )
         }
     }
@@ -46,12 +51,16 @@ private fun ReactionChip(
     count: Int,
     isReactedByTheUser: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
+    val shape = PolkadotTheme.shapes.full
     PolkadotSurface(
-        shape = PolkadotTheme.shapes.full,
+        modifier = Modifier
+            .clip(shape)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = shape,
         color = if (isReactedByTheUser) PolkadotTheme.colors.bg.surface.container else PolkadotTheme.colors.bg.action.tertiary,
         border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.cutout),
-        onClick = onClick
     ) {
         Row(
             modifier = Modifier.padding(

@@ -5,24 +5,31 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomPreviewData
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaItemModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -69,7 +76,7 @@ class ProductChatExtensionTest {
         ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, ProductChatExtensionOrigin.PlacedByHost)
 
     private fun placedByHost(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, ProductChatExtensionOrigin.PlacedByHost)
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, ProductChatExtensionOrigin.PlacedByHost)
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
@@ -232,6 +239,27 @@ class ProductChatExtensionTest {
     }
 
     @Test
+    fun `an attachment of the user reaches the product as a posted message with its inline media`() = runTest {
+        val worker = RecordingWorker()
+        val media = ChatMediaItemModel.Image(
+            ChatResourceModel.Inline("image/jpeg", byteArrayOf(1).toDataByteArray()),
+            ChatMediaMetaModel("image/jpeg", sizeBytes = 1, width = 1, height = 1, placeholder = null, alt = null),
+        )
+        val message = ChatMessage.new(
+            chatId = room,
+            content = ChatMessage.Content.ProductBody(ProductMessageBody.RichText(text = null, media = listOf(media))),
+            origin = ChatMessageOrigin.User,
+        )
+
+        withChatHost(incoming = flowOf(message)) { extension(FakeRefCounter(worker)).startGlobalWork() }
+
+        assertEquals(
+            listOf(ProductChatIdParameter(ROOM) to ProductRoomEvent.MessagePosted(message.id, message.content, null)),
+            worker.roomEvents,
+        )
+    }
+
+    @Test
     fun `a room whose product keeps the messages sends no user event`() = runTest {
         val worker = RecordingWorker()
         val productSource = ChatRoomDeclarations.EMPTY.copy(config = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true))
@@ -383,5 +411,27 @@ class ProductChatExtensionTest {
         requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.DeleteMessage("m2"))
 
         assertEquals(listOf<ChatUserActionModel>(ChatUserActionModel.Retry("m1"), ChatUserActionModel.DeleteMessage("m2")), worker.userActions)
+    }
+
+    @Test
+    fun `a message menu question names the message and its reply by the product ids`() = runTest {
+        val worker = RecordingWorker()
+        val extension = extension(FakeRefCounter(worker))
+        withChatHost(ownRooms = flowOf(listOf(room))) { extension.startGlobalWork() }
+        val message = ProductRoomMessage(
+            messageId = ProductMessageIds.stored("m1", room),
+            participantId = "product",
+            timestamp = 1L,
+            content = ChatMessage.Content.Text("hi"),
+            status = ProductMessageStatusModel.SENT,
+            replyTo = ProductMessageIds.stored("m0", room),
+            editedAt = null,
+            reactions = emptyList(),
+        )
+
+        val menu = requireNotNull(extension.roomQuerying(room)).messageMenu(room, message)
+
+        assertEquals(RecordingWorker.MENU, menu.getOrNull())
+        assertEquals(listOf(message.copy(messageId = "m1", replyTo = "m0")), worker.menuQuestions)
     }
 }

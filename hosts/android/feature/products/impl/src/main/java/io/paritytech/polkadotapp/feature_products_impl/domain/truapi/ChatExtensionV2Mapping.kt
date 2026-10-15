@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionButtonModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionHandlerModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionsLayoutModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputConfigModel
@@ -22,7 +21,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActio
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
-import uniffi.truapi.ChatActionHandler
 import uniffi.truapi.ChatActionLayout
 import uniffi.truapi.ChatActions
 import uniffi.truapi.ChatActivity
@@ -102,10 +100,7 @@ fun ChatToolbarAction.toModel() = ChatToolbarActionModel(
     actionId = actionId,
     label = label,
     icon = icon.toModel(),
-    handler = when (val handler = handler) {
-        is ChatActionHandler.Deeplink -> ChatActionHandlerModel.Deeplink(handler.url)
-        ChatActionHandler.Callback -> ChatActionHandlerModel.Callback
-    },
+    handler = handler.toModel(),
 )
 
 fun ChatSuggestion.toModel() = ChatSuggestionModel(suggestionId, text, sendsText)

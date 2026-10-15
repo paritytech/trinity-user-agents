@@ -11,6 +11,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomAc
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomDeclarationsWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.RealChatRoomActivityRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.RealChatRoomDeclarationsRepository
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.BitmapProductImageShrinker
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.ProductImageShrinker
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.RealProductFeedListeners
 
 /** The bindings of Chat Extension v2: room declarations, the activity line and product rooms. */
@@ -28,6 +30,9 @@ interface ChatExtensionV2Module {
 
     @Binds
     fun bindChatRoomActivityWriter(impl: RealChatRoomActivityRepository): ChatRoomActivityWriter
+
+    @Binds
+    fun bindProductImageShrinker(impl: BitmapProductImageShrinker): ProductImageShrinker
 
     @Binds
     fun bindProductFeedListeners(impl: RealProductFeedListeners): ProductFeedListeners

@@ -145,6 +145,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWork
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealWorkerBootFactory
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootFactory
+import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.ChatRoomLinkDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketTabDeepLinkHandler
@@ -255,6 +256,10 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindPocketTabDeepLinkHandler(impl: PocketTabDeepLinkHandler): DeepLinkHandler
+
+    @Binds
+    @IntoSet
+    fun bindChatRoomLinkDeepLinkHandler(impl: ChatRoomLinkDeepLinkHandler): DeepLinkHandler
 
     @Binds
     fun bindProductLocalStorage(impl: RealProductLocalStorage): ProductLocalStorage

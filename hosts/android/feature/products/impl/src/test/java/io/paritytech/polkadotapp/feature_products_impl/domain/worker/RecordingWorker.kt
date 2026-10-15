@@ -2,8 +2,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -18,6 +20,12 @@ class RecordingWorker : ProductWorker {
     val roomCalls = mutableListOf<Pair<String, ProductChatIdParameter>>()
     var briefHolds = 0
     val userActions = mutableListOf<ChatUserActionModel>()
+    val menuQuestions = mutableListOf<ProductRoomMessage>()
+
+    override suspend fun messageMenu(roomId: ProductChatIdParameter, message: ProductRoomMessage): Result<ChatMessageMenuModel> {
+        menuQuestions += message
+        return Result.success(MENU)
+    }
 
     override suspend fun userAction(roomId: ProductChatIdParameter, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
         userActions += action
@@ -59,5 +67,9 @@ class RecordingWorker : ProductWorker {
 
     override fun dispatchEvent(event: JsUiEvent) {
         events += event
+    }
+
+    companion object {
+        val MENU = ChatMessageMenuModel.Custom(emptyList())
     }
 }
