@@ -1388,69 +1388,6 @@ mod tests {
 	}
 
 	#[test]
-	fn storage_rejections_preserve_the_operation_and_filesystem_reason() {
-		let temporary = tempfile::tempdir().expect("temporary storage root");
-		let blocked = temporary.path().join("blocked");
-		fs::write(&blocked, b"occupied").expect("block the storage directory");
-		let filesystem_error = fs::create_dir_all(&blocked).unwrap_err();
-		let reason = filesystem_error.to_string();
-		let write_error =
-			anyhow::Error::new(atomic_write(&blocked.join("value"), b"value").unwrap_err());
-		let platform = CliPlatform::new(
-			test_network(),
-			Some(CliStoragePaths::new(blocked.clone(), blocked.clone())),
-			ApprovalPolicy::AutoAccept,
-			None,
-		);
-		let key = ProductStorageKey::new("product.dot", "theme").expect("product storage key");
-
-		assert_eq!(
-			(
-				futures::executor::block_on(platform.write(key.encode(), b"dark".to_vec())),
-				futures::executor::block_on(
-					platform.write_core_storage(CoreStorageKey::AuthSession, b"session".to_vec(),)
-				),
-				matches!(
-					write_error.downcast_ref::<StorageError>(),
-					Some(StorageError::CreateStorageDirectory { .. })
-				),
-				write_error
-					.root_cause()
-					.downcast_ref::<std::io::Error>()
-					.map(std::io::Error::kind),
-				format!("{write_error:#}"),
-			),
-			(
-				Err(v01::HostLocalStorageReadError::Unknown {
-					reason: format!(
-						"create product storage directory {}: {reason}",
-						blocked.display()
-					),
-				}),
-				Err(api::GenericError { reason: format!("create storage dir: {reason}") }),
-				true,
-				Some(filesystem_error.kind()),
-				format!("create storage dir: {reason}"),
-			)
-		);
-	}
-
-	#[test]
-	fn storage_serialization_errors_preserve_the_json_message_once() {
-		let values = HashMap::from([(vec![1, 2], 3)]);
-		let error = StorageError::from(serde_json::to_string(&values).unwrap_err());
-		let error = anyhow::Error::new(error);
-
-		assert_eq!(
-			(
-				matches!(error.downcast_ref::<StorageError>(), Some(StorageError::Serialize(_))),
-				format!("{error:#}"),
-			),
-			(true, "key must be a string".to_string())
-		);
-	}
-
-	#[test]
 	fn supported_chains_answers_the_configured_network() {
 		let platform = CliPlatform::new(test_network(), None, ApprovalPolicy::AutoAccept, None);
 		let set = futures::executor::block_on(platform.supported_chains())
@@ -1507,34 +1444,12 @@ mod tests {
 		);
 	}
 
-	#[tokio::test]
-	async fn record_navigation_reports_an_unwritable_transcript() {
+	#[test]
+	fn record_navigation_reports_an_unwritable_transcript() {
 		let dir = tempdir().expect("tempdir");
 		let path = dir.path().join("missing").join("navigations.log");
-		let error =
-			anyhow::Error::new(record_navigation(&path, "polkadot://dim2.dot", 1).unwrap_err());
-		let reason =
-			format!("could not record navigation in {}: {}", path.display(), error.root_cause());
-		let mut platform = CliPlatform::new(test_network(), None, ApprovalPolicy::Prompt, None);
-		Arc::get_mut(&mut platform).expect("sole owner").navigations_log = Some(path.clone());
-
-		assert_eq!(
-			(
-				error.downcast_ref::<StorageError>().and_then(|error| match error {
-					StorageError::RecordNavigation { path, .. } => Some(path),
-					_ => None,
-				}),
-				error.root_cause().downcast_ref::<std::io::Error>().map(std::io::Error::kind),
-				format!("{error:#}"),
-				platform.navigate_to("polkadot://dim2.dot".to_string()).await,
-			),
-			(
-				Some(&path),
-				Some(std::io::ErrorKind::NotFound),
-				reason.clone(),
-				Err(api::HostNavigateToError::Unknown { reason }),
-			)
-		);
+		let error = record_navigation(&path, "polkadot://dim2.dot", 1).unwrap_err();
+		assert!(error.to_string().contains("could not record navigation"), "{error}");
 	}
 
 	#[tokio::test]

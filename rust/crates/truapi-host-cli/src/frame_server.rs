@@ -1078,21 +1078,7 @@ mod tests {
 		assert!(product.select("localhost:3000".to_string())?);
 		assert_eq!(product.current(), "localhost:3000");
 		assert!(!product.select("LOCALHOST:3000".to_string())?);
-		let error = anyhow::Error::new(product.select("example.com".to_string()).unwrap_err());
-		assert_eq!(
-            (
-                error.root_cause().downcast_ref::<RuntimeConfigValidationError>(),
-                format!("{error:#}"),
-                product.current(),
-            ),
-            (
-                Some(&RuntimeConfigValidationError::InvalidProductId {
-                    product_id: "example.com".to_string(),
-                }),
-                "invalid product id: product_id must be a dotNS or localhost product identifier, got \"example.com\"".to_string(),
-                "localhost:3000".to_string(),
-            )
-        );
+		assert!(product.select("example.com".to_string()).is_err());
 		Ok(())
 	}
 

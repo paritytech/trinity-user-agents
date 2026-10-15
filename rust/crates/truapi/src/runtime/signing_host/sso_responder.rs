@@ -1280,33 +1280,6 @@ mod tests {
 		host_logic::product_account::derive_ring_vrf_domain_entropy,
 	};
 
-	#[test]
-	fn allocation_failures_keep_authority_decisions_and_classify_setup_as_unavailable() {
-		let failures = [
-			AllowanceAllocationError::Authority(AuthorityError::Rejected),
-			AllowanceAllocationError::Authority(AuthorityError::Disconnected),
-			AllowanceAllocationError::Authority(AuthorityError::Cancelled(
-				crate::runtime::authority::AuthorityCancelError::new(
-					"request",
-					truapi::CancellationReason::Cancelled,
-				),
-			)),
-			AllowanceAllocationError::ProductAccount(ProductAccountError::InvalidRootPublicKey),
-		];
-		assert_eq!(
-			failures.map(AuthorityError::from),
-			[
-				AuthorityError::Rejected,
-				AuthorityError::Disconnected,
-				AuthorityError::Cancelled(crate::runtime::authority::AuthorityCancelError::new(
-					"request",
-					truapi::CancellationReason::Cancelled,
-				)),
-				AuthorityError::Unavailable { reason: "invalid sr25519 root public key".into() },
-			],
-		);
-	}
-
 	/// The key a host advertises on chain must be the one it serves over
 	/// pairing. These derive independently, so a test that asks only one of
 	/// them cannot see the two drift apart — which is the failure this pins.

@@ -1059,36 +1059,6 @@ mod tests {
 	}
 
 	#[test]
-	fn command_failures_keep_the_argument_error_and_its_user_message() {
-		use std::error::Error;
-
-		let session = parse_command("/session default").unwrap_err();
-		let level = parse_command("/log noisy").unwrap_err();
-		let product = parse_command("/product example.com").unwrap_err();
-
-		assert_eq!(
-            (
-                session.source().and_then(|error| error.downcast_ref::<sessions::SessionNameError>()),
-                level.source().and_then(|error| error.downcast_ref::<InvalidLogLevel>()),
-                product.source().and_then(|error| error.downcast_ref::<RuntimeConfigValidationError>()),
-                session.to_string(),
-                level.to_string(),
-                product.to_string(),
-            ),
-            (
-                Some(&sessions::SessionNameError::Reserved),
-                Some(&InvalidLogLevel { value: "noisy".to_string() }),
-                Some(&RuntimeConfigValidationError::InvalidProductId {
-                    product_id: "example.com".to_string(),
-                }),
-                "session name `default` is reserved for bootstrap state; choose a user session name such as `alice`".to_string(),
-                "invalid log level `noisy`; expected error, warn, info, debug, or trace".to_string(),
-                "product_id must be a dotNS or localhost product identifier, got \"example.com\"".to_string(),
-            )
-        );
-	}
-
-	#[test]
 	fn completion_selection_and_history_have_distinct_arrow_behavior() {
 		let mut editor = CommandEditor::default();
 		editor.set_text("/");

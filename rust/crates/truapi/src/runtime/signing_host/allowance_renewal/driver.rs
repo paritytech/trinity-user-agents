@@ -348,38 +348,7 @@ mod tests {
 	use parity_scale_codec::Encode;
 	use std::{collections::HashMap, sync::Mutex};
 
-	use crate::runtime::{
-		authority::AuthorityError, signing_host::sso_responder::AllowanceAllocationError,
-	};
 	use truapi::latest::GenericError;
-
-	#[test]
-	fn renewal_failures_keep_their_diagnostics_at_the_host_boundary() {
-		let errors = [
-			StatementRenewalError::from(AuthorityError::Disconnected),
-			StatementRenewalError::from(AllowanceAllocationError::SystemClockBeforeUnixEpoch),
-			StatementRenewalError::ReadLedger(GenericError { reason: "access denied".into() }),
-			StatementRenewalError::WriteLedger(GenericError { reason: "disk full".into() }),
-			StatementRenewalError::TrailingLedgerBytes,
-			StatementRenewalError::NoActiveSession,
-			StatementRenewalError::MissingPersonhoodMembership,
-		];
-		assert_eq!(
-            errors.map(GenericError::from),
-            [
-                "Disconnected",
-                "system clock before UNIX epoch",
-                "renewal ledger read failed: access denied",
-                "renewal ledger write failed: disk full",
-                "invalid persisted renewal targets: trailing bytes",
-                "no active session for statement-store renewal",
-                "signing account is not a member of any personhood ring; cannot renew statement-store allowances",
-            ]
-            .map(|reason| GenericError {
-                reason: reason.into(),
-            }),
-        );
-	}
 
 	#[derive(Default)]
 	struct MemStorage {

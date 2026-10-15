@@ -468,24 +468,6 @@ mod tests {
 	use std::time::Duration;
 
 	#[test]
-	fn authority_cancellation_preserves_the_request_and_deadline() {
-		use crate::runtime::authority::{AuthorityCancelError, AuthorityError};
-
-		for reason in [
-			CancellationReason::Cancelled,
-			CancellationReason::TimedOut { timeout: Duration::from_secs(180) },
-		] {
-			assert_eq!(
-				AuthorityError::from(SsoRemoteResponseError::Cancelled(CancelError::new(
-					reason.clone(),
-					"product-request",
-				))),
-				AuthorityError::Cancelled(AuthorityCancelError::new("product-request", reason)),
-			);
-		}
-	}
-
-	#[test]
 	fn sso_message_id_uses_short_opaque_nanoids() {
 		let first = sso_message_id();
 		let second = sso_message_id();

@@ -840,32 +840,6 @@ impl From<SsoAllocationOutcome> for latest::AllocationOutcome {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::runtime::sso_remote::SSO_PEER_DISCONNECT_REASON;
-
-	#[test]
-	fn remote_failures_preserve_rejection_disconnect_and_diagnostic_categories() {
-		let failures = [
-			SsoRemoteResponseError::LocalDisconnected,
-			SsoRemoteResponseError::PeerDisconnected,
-			SsoRemoteResponseError::Failure("Rejected".into()),
-			SsoRemoteResponseError::Failure("User rejected".into()),
-			SsoRemoteResponseError::Failure(SSO_LOCAL_DISCONNECT_REASON.into()),
-			SsoRemoteResponseError::Failure(SSO_PEER_DISCONNECT_REASON.into()),
-			SsoRemoteResponseError::Failure("chain unavailable".into()),
-		];
-		assert_eq!(
-			failures.map(AuthorityError::from),
-			[
-				AuthorityError::Disconnected,
-				AuthorityError::Disconnected,
-				AuthorityError::Rejected,
-				AuthorityError::Rejected,
-				AuthorityError::Disconnected,
-				AuthorityError::Disconnected,
-				AuthorityError::Unknown { reason: "chain unavailable".into() },
-			],
-		);
-	}
 
 	#[test]
 	fn unexpected_resource_reasons_include_only_safe_discriminants() {

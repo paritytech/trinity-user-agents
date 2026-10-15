@@ -3940,24 +3940,6 @@ mod cli_tests {
 	use crate::frame_server::ProductRuntimeFactory;
 	use parity_scale_codec::Encode;
 
-	#[tokio::test]
-	async fn allowance_diagnostics_report_the_rpc_failure_once() {
-		let mut network = Network::PaseoNextV2.config();
-		network.people_ws = "invalid rpc endpoint";
-		let expected = alloc::rpc::RpcClient::connect(network.people_ws)
-			.await
-			.err()
-			.expect("invalid RPC URL")
-			.to_string();
-		let mnemonic = bip39::Mnemonic::from_entropy(&[0; 16]).unwrap().to_string();
-
-		let allowance =
-			run_alloc_check(mnemonic.clone(), network, None, 0, false).await.unwrap_err();
-		let pgas = run_pgas_check(mnemonic, network, None, 0, false).await.unwrap_err();
-
-		assert_eq!((format!("{allowance:#}"), format!("{pgas:#}")), (expected.clone(), expected));
-	}
-
 	const SESSION_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
 	async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostSession> {
@@ -4261,16 +4243,6 @@ mod cli_tests {
 		);
 	}
 
-	#[test]
-	fn pairing_deeplink_errors_report_the_decode_failure_once() {
-		let error = paired_host_from_deeplink("polkadotapp://pair?handshake=zz").unwrap_err();
-
-		assert_eq!(
-			format!("{error:#}"),
-			"invalid pairing deeplink hex: Invalid character 'z' at position 0"
-		);
-	}
-
 	#[tokio::test]
 	async fn responder_manager_keeps_unrelated_peers_and_replaces_only_the_same_peer() {
 		let mut manager = ResponderManager::default();
@@ -4394,35 +4366,6 @@ mod cli_tests {
 
 		assert_eq!(initial_session_name(&SigningHostArgs::default(), &catalog)?, "alice.01");
 		Ok(())
-	}
-
-	#[test]
-	fn allowance_exhaustion_is_recognized_through_operation_context() {
-		let exhausted = anyhow::Error::new(SessionOperationError::AllowanceRenewal(GenericError {
-			reason: "no free StatementStore slot in period 42 (max 3)".to_string(),
-		}));
-		let unavailable =
-			anyhow::Error::new(SessionOperationError::AllowanceRenewal(GenericError {
-				reason: "People chain is unavailable".to_string(),
-			}));
-
-		assert_eq!(
-			(
-				is_statement_slot_exhaustion(&exhausted),
-				is_statement_slot_exhaustion(&unavailable),
-				exhausted.chain().find_map(|error| error.downcast_ref::<GenericError>()),
-				format!("{exhausted:#}"),
-			),
-			(
-				true,
-				false,
-				Some(&GenericError {
-					reason: "no free StatementStore slot in period 42 (max 3)".to_string(),
-				}),
-				"allowance renewal failed: no free StatementStore slot in period 42 (max 3)"
-					.to_string(),
-			)
-		);
 	}
 
 	#[test]

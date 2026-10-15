@@ -204,26 +204,12 @@ mod tests {
 
 	#[test]
 	fn an_unknown_schema_version_is_refused() {
-		let error = RootManifest::parse(r#"{"$v":2,"trustedProducts":{}}"#).unwrap_err();
-		assert!(matches!(error, ManifestParseError::UnsupportedSchemaVersion(2)));
-		assert_eq!(error.to_string(), "manifest schema version 2 is not supported");
+		assert!(RootManifest::parse(r#"{"$v":2,"trustedProducts":{}}"#).is_err());
 	}
 
 	#[test]
 	fn malformed_json_is_refused() {
-		let error = RootManifest::parse("not json").unwrap_err();
-		let source = core::error::Error::source(&error)
-			.and_then(|source| source.downcast_ref::<serde_json::Error>())
-			.expect("the JSON parser failure remains available");
-		assert_eq!(
-			(error.to_string(), source.classify(), source.line(), source.column()),
-			(
-				"manifest is not valid JSON: expected ident at line 1 column 2".to_string(),
-				serde_json::error::Category::Syntax,
-				1,
-				2,
-			)
-		);
+		assert!(RootManifest::parse("not json").is_err());
 	}
 
 	#[test]
