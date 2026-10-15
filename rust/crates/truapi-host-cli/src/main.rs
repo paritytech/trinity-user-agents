@@ -27,6 +27,7 @@ mod pocket;
 mod product_config;
 mod qr_scanner;
 mod register_name;
+mod request_decisions;
 mod scanner;
 mod script_project;
 mod script_runner;
@@ -1162,6 +1163,7 @@ async fn run_pairing_host(
 	let base_path = state_base_path(args.base_path);
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context())?;
+	request_decisions::ensure_test_network(&network)?;
 	let product_id = product.current();
 	let storage_paths = CliStoragePaths::pairing(base_path.join(network.id));
 	let (terminal_ui, ui_handle) = if interactive {
@@ -1283,6 +1285,7 @@ async fn run_signing_host(
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
 	let initial_session_names = session_catalog.list()?;
+	request_decisions::ensure_test_network(&network)?;
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new(
 			network.id,
@@ -1358,6 +1361,18 @@ async fn run_signing_host(
 				url: serve_frame_url,
 				auto_accept,
 			});
+			if let Some(decisions) = request_decisions::RequestDecisions::from_env() &&
+				!auto_accept
+			{
+				terminal_ui::output_success(
+					"Confirmations wait for outside decisions",
+					Some(format!(
+						"{} ({})",
+						decisions.dir().display(),
+						request_decisions::DECISIONS_DIR_ENV
+					)),
+				);
+			}
 			let code = match dev_command {
 				Some(command) => run_dev_command(command).await?,
 				None => {

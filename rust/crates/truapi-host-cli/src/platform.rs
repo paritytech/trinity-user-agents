@@ -117,6 +117,10 @@ pub struct CliPlatform {
 	/// Navigation transcript (`TRUAPI_NAVIGATIONS_LOG`): one JSON line
 	/// `{"url":…,"at":<unix ms>}` per destination the core accepted.
 	navigations_log: Option<PathBuf>,
+	/// Outside decisions (`TRUAPI_DECISIONS_DIR`): without `--auto-accept`,
+	/// each confirmation waits for another process to answer it through this
+	/// directory instead of the terminal (request_decisions.rs).
+	request_decisions: Option<crate::request_decisions::RequestDecisions>,
 	ui: Option<UiHandle>,
 	/// Serializes interactive CLI prompts so concurrent confirmations don't
 	/// interleave on stdin.
@@ -195,6 +199,7 @@ impl CliPlatform {
 			approval: Mutex::new(approval),
 			approvals_log: std::env::var_os("TRUAPI_APPROVALS_LOG").map(PathBuf::from),
 			navigations_log: std::env::var_os("TRUAPI_NAVIGATIONS_LOG").map(PathBuf::from),
+			request_decisions: crate::request_decisions::RequestDecisions::from_env(),
 			ui,
 			prompt_lock: AsyncMutex::new(()),
 		})
@@ -358,7 +363,18 @@ impl CliPlatform {
 			},
 			ApprovalPolicy::Prompt => {
 				let _guard = self.prompt_lock.lock().await;
-				if let Some(ui) = &self.ui {
+				if let Some(decisions) = &self.request_decisions {
+					// One request at a time, like the terminal prompt.
+					let decided = decisions.decide(action, &detail, kind).await;
+					tracing::info!(
+						id = decided.id,
+						action,
+						reason = decided.reason,
+						approved = decided.decision != PermissionDecision::Deny,
+						"outside decision"
+					);
+					decided.decision
+				} else if let Some(ui) = &self.ui {
 					ui.decide(action, detail, kind).await
 				} else {
 					prompt_decision(action, &detail, kind).await
@@ -1399,6 +1415,39 @@ mod tests {
 			.navigate_to("polkadot://dim2.dot".to_string())
 			.await
 			.expect("navigate_to");
+	}
+
+	#[tokio::test]
+	async fn outside_decisions_answer_prompt_confirmations_one_by_one() {
+		let dir = tempdir().expect("tempdir");
+		let decisions_dir = dir.path().join("decisions");
+		let approvals = dir.path().join("approvals.log");
+		let mut platform = CliPlatform::new(test_network(), None, ApprovalPolicy::Prompt, None);
+		{
+			let owned = Arc::get_mut(&mut platform).expect("sole owner");
+			owned.request_decisions = Some(crate::request_decisions::RequestDecisions::new(
+				decisions_dir.clone(),
+				Duration::from_secs(5),
+			));
+			owned.approvals_log = Some(approvals.clone());
+		}
+		let answers = tokio::spawn(async move {
+			for (id, answer) in [(1, "n"), (2, "y")] {
+				let request = decisions_dir.join(format!("{id}.request.json"));
+				while !request.exists() {
+					tokio::time::sleep(Duration::from_millis(5)).await;
+				}
+				std::fs::write(decisions_dir.join(format!("{id}.decision")), answer)
+					.expect("answer");
+			}
+		});
+		assert!(!platform.decide("sign raw data", "first".to_string()).await);
+		assert!(platform.decide("sign raw data", "second".to_string()).await);
+		answers.await.expect("answers");
+		assert_eq!(
+			std::fs::read_to_string(&approvals).expect("approvals transcript"),
+			"denied sign raw data\napproved sign raw data\n"
+		);
 	}
 
 	#[tokio::test]
