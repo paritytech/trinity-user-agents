@@ -19,7 +19,7 @@ use crate::{
 			AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, Allowance,
 			AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 			CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-			SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
 		},
 		authority_cancellation_error,
 		contacts::ContactHandles,
@@ -408,14 +408,15 @@ impl AccountHolder for WalletAccountHolder {
 		}
 	}
 
-	async fn product_subtree_public_key(
-		&self,
-		invocation: AccountInvocation<'_>,
+	async fn product_subtree_public_key<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
 		product_id: &ProductId,
-	) -> Result<[u8; 32], AuthorityError> {
+	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		self.with_keys(invocation.session, |keys| {
 			Ok(keys.product_subtree_keypair(product_id)?.public.to_bytes())
 		})
+		.map(SubtreeResolution::Known)
 	}
 
 	async fn sign_vrf(
@@ -637,6 +638,23 @@ impl AccountHolder for WalletAccountHolder {
 		self.record_registration(invocation.session, handle, request.ring, public_key)
 			.await?;
 		Ok(public_key)
+	}
+
+	async fn record_ring_vrf_key(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRegisterRingVrfKeyRequest,
+		public_key: [u8; 32],
+	) -> Result<(), RingVrfError> {
+		self.require_current_session(invocation.session)?;
+		let handle = Self::caller_key_handle(&invocation, request.index)?;
+		if self.derive_ring_vrf_member(invocation.session, &handle).await? != public_key {
+			return Err(RingVrfError::Unknown {
+				reason: "the kept AutoSigning key derives a different ring-VRF key".to_string(),
+			});
+		}
+		self.record_registration(invocation.session, handle, request.ring, public_key)
+			.await
 	}
 
 	async fn list_ring_vrf_keys(
