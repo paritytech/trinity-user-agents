@@ -367,6 +367,15 @@ export function removeReversePort(serial, port) {
   return adb(["reverse", "--remove", `tcp:${port}`], { serial });
 }
 
+/**
+ * Copy a file of the host to the device, and add it to the media store, so
+ * that the document picker lists it.
+ */
+export function pushFile(serial, source, destination) {
+  adbOrThrow(["push", source, destination], { serial });
+  adbShell(serial, ["content", "call", "--uri", "content://media/", "--method", "scan_volume", "--arg", "external_primary"]);
+}
+
 export function grantPermission(serial, packageName, permission) {
   const result = adbShell(serial, ["pm", "grant", packageName, permission]);
   return { granted: result.status === 0, output: `${result.stdout}${result.stderr}`.trim() };
