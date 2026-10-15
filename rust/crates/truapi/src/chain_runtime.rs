@@ -245,7 +245,7 @@ pub trait RuntimeChainProvider: Send + Sync {
 /// those budgets collide: four products plus the core's own client is a fifth
 /// follow the node refuses. Each product runtime gets its own connection, and
 /// the core's internal traffic keeps one of its own.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum ConnectionScope {
 	/// The core's own traffic: metadata, transaction assembly, internal reads.
 	Core,
@@ -285,21 +285,15 @@ pub struct ChainRuntime {
 	/// Which caller this view belongs to. Cheap to re-scope: every other
 	/// field is shared, so two scopes see the same maps under different keys.
 	scope: ConnectionScope,
-	/// Open connections, keyed by [`Self::connection_key`], which is the scope
-	/// and the genesis hash rather than the genesis hash alone. Two callers on
-	/// one chain are two entries, because a node budgets follows per connection.
-	connections: Arc<Mutex<HashMap<String, Arc<ChainConnection>>>>,
-	/// In-flight `connect` calls under the same key, so concurrent first users
-	/// of a chain share one rather than racing and orphaning the loser's socket.
-	connection_setups: Arc<Mutex<HashMap<String, ConnectionSetup>>>,
+	/// Open connections, grouped by scope and then keyed by genesis hash.
+	/// A scope's group exists only while that scope is live, so releasing one
+	/// takes the whole group with it and a connect still in flight has nowhere
+	/// to land. Two callers on one chain are two entries, because a node
+	/// budgets follows per connection.
+	connections: Arc<Mutex<HashMap<ConnectionScope, HashMap<String, ConnectionEntry>>>>,
 	/// Follow setup in flight, keyed by genesis hash and local follow id, so a
 	/// follow-bound request can await the setup rather than miss the follow.
 	follow_starts: FollowStartRegistry,
-	/// Scope prefixes that have been released. A connect already in flight when
-	/// its scope ended must not insert its result: `core_instance` never repeats,
-	/// so a resurrected entry is never asked for again and never evicted. Grows
-	/// by one short string per product runtime the session ever opened.
-	released_scopes: Arc<Mutex<HashSet<String>>>,
 	/// Synchronously registered follow intents, keyed by scope and genesis hash.
 	/// Alias cardinality includes setup tasks that have not yet been polled.
 	follow_intents: Arc<Mutex<HashMap<String, HashSet<String>>>>,
@@ -343,11 +337,12 @@ impl ChainRuntime {
 			provider,
 			spawner,
 			scope: ConnectionScope::Core,
-			connections: Arc::new(Mutex::new(HashMap::new())),
-			connection_setups: Arc::new(Mutex::new(HashMap::new())),
+			connections: Arc::new(Mutex::new(HashMap::from([(
+				ConnectionScope::Core,
+				HashMap::new(),
+			)]))),
 			follow_starts: Arc::new(ParkingMutex::new(HashMap::new())),
 			follow_intents: Arc::new(Mutex::new(HashMap::new())),
-			released_scopes: Arc::new(Mutex::new(HashSet::new())),
 			transaction_operations: Arc::new(Mutex::new(BTreeMap::new())),
 			next_transaction_operation_id: Arc::new(AtomicU64::new(1)),
 		}
@@ -356,7 +351,9 @@ impl ChainRuntime {
 	/// This runtime seen as `scope`. Shares every map with the original, so a
 	/// product's connections live beside the core's rather than replacing them.
 	pub fn for_product(&self, core_instance: u64) -> Self {
-		Self { scope: ConnectionScope::Product(core_instance), ..self.clone() }
+		let scope = ConnectionScope::Product(core_instance);
+		self.connections.lock().unwrap().entry(scope).or_default();
+		Self { scope, ..self.clone() }
 	}
 
 	/// Map key for this scope's connection to `genesis_hash`. Two scopes on the
@@ -374,24 +371,20 @@ impl ChainRuntime {
 	/// first would also destroy the route `cleanup_follow` uses to find the
 	/// connection, so a later teardown could no longer abort anything.
 	///
-	/// The scope is latched as released before the sweep, so a connect still
-	/// in flight does not insert its result afterwards.
+	/// Pending connections occupy an entry too; completion cannot restore an
+	/// entry removed by teardown.
 	pub fn release_scope(&self) {
 		let prefix = format!("{}:", self.scope.key_prefix());
 
-		let dropped: Vec<Arc<ChainConnection>> = {
-			// Latched while `connections` is held, so a setup that has already
-			// read the latch cannot insert between the read and the sweep.
-			let mut connections = self.connections.lock().unwrap();
-			self.released_scopes.lock().unwrap().insert(prefix.clone());
-			let keys: Vec<String> =
-				connections.keys().filter(|key| key.starts_with(&prefix)).cloned().collect();
-			keys.iter().filter_map(|key| connections.remove(key)).collect()
-		};
-		self.connection_setups
+		let dropped: Vec<Arc<ChainConnection>> = self
+			.connections
 			.lock()
 			.unwrap()
-			.retain(|key, _| !key.starts_with(&prefix));
+			.remove(&self.scope)
+			.into_iter()
+			.flat_map(|connections| connections.into_values())
+			.filter_map(|entry| entry.ready().cloned())
+			.collect();
 
 		// `follow_intents` already holds exactly this scope's follow ids, so
 		// sweeping `follow_starts` against them needs no assumption about how
@@ -845,52 +838,62 @@ impl ChainRuntime {
 	) -> Result<Arc<ChainConnection>, RuntimeFailure> {
 		let key = self.connection_key(genesis_hash);
 		let setup = {
-			let mut connections = self.connections.lock().unwrap();
+			let mut scopes = self.connections.lock().unwrap();
+			let connections =
+				scopes.get_mut(&self.scope).ok_or_else(|| RuntimeFailure::unavailable(method))?;
 			match connections.get(&key) {
-				Some(connection) if !connection.is_closed() => return Ok(connection.clone()),
-				Some(_) => {
-					connections.remove(&key);
+				Some(ConnectionEntry::Ready(connection)) if !connection.is_closed() => {
+					return Ok(connection.clone());
 				},
-				None => {},
-			}
-			// Single-flight the provider connect (same shape as
-			// `follow_setups`): concurrent first connections for the same
-			// chain share one in-flight `connect` instead of racing the
-			// insert and orphaning the loser's connection.
-			let mut setups = self.connection_setups.lock().unwrap();
-			if let Some(existing) = setups.get(&key) {
-				existing.clone()
-			} else {
-				let provider = self.provider.clone();
-				let spawner = self.spawner.clone();
-				let connections = self.connections.clone();
-				let setups_map = self.connection_setups.clone();
-				let setup_key = key.clone();
-				let genesis_hash = genesis_hash.to_owned();
-				let released = self.released_scopes.clone();
-				let released_prefix = format!("{}:", self.scope.key_prefix());
-				let setup: ConnectionSetup = async move {
-					let result = provider.connect(genesis_hash.clone()).await.and_then(|rpc| {
-						let connection = ChainConnection::new(rpc, spawner, genesis_hash);
-						let mut connections = connections.lock().unwrap();
-						// The scope can end while this connect is in flight. Caching
-						// the result then would reinstate an entry nothing asks for
-						// again, which is the growth `release_scope` exists to stop.
-						// Failing rather than returning it also stops a follow
-						// attaching a pump to a connection nothing can reach.
-						if released.lock().unwrap().contains(&released_prefix) {
+				Some(ConnectionEntry::Connecting { setup, .. }) => setup.clone(),
+				_ => {
+					let provider = self.provider.clone();
+					let spawner = self.spawner.clone();
+					let registry = Arc::downgrade(&self.connections);
+					let scope = self.scope;
+					let setup_key = key.clone();
+					let genesis_hash = genesis_hash.to_owned();
+					let identity = Arc::new(());
+					let setup_identity = identity.clone();
+					let setup: ConnectionSetup = async move {
+						let result = provider
+							.connect(genesis_hash.clone())
+							.await
+							.map(|rpc| ChainConnection::new(rpc, spawner, genesis_hash));
+						let registry = registry
+							.upgrade()
+							.ok_or_else(|| RuntimeFailure::unavailable("remote_chain_connect"))?;
+						let mut scopes = registry.lock().unwrap();
+						let connections = scopes
+							.get_mut(&scope)
+							.ok_or_else(|| RuntimeFailure::unavailable("remote_chain_connect"))?;
+						let Some(ConnectionEntry::Connecting { identity, .. }) =
+							connections.get(&setup_key)
+						else {
+							return Err(RuntimeFailure::unavailable("remote_chain_connect"));
+						};
+						if !Arc::ptr_eq(identity, &setup_identity) {
 							return Err(RuntimeFailure::unavailable("remote_chain_connect"));
 						}
-						connections.insert(setup_key.clone(), connection.clone());
-						Ok(connection)
-					});
-					setups_map.lock().unwrap().remove(&setup_key);
-					result
-				}
-				.boxed()
-				.shared();
-				setups.insert(key, setup.clone());
-				setup
+						match &result {
+							Ok(connection) => {
+								connections
+									.insert(setup_key, ConnectionEntry::Ready(connection.clone()));
+							},
+							Err(_) => {
+								connections.remove(&setup_key);
+							},
+						}
+						result
+					}
+					.boxed()
+					.shared();
+					connections.insert(
+						key,
+						ConnectionEntry::Connecting { identity, setup: setup.clone() },
+					);
+					setup
+				},
 			}
 		};
 
@@ -1042,10 +1045,32 @@ impl ChainRuntime {
 			.lock()
 			.remove(&(genesis_hash.to_vec(), local_follow_id.to_string()));
 		let key = self.connection_key(genesis_hash);
-		let Some(connection) = self.connections.lock().unwrap().get(&key).cloned() else {
+		let Some(connection) = self
+			.connections
+			.lock()
+			.unwrap()
+			.get(&self.scope)
+			.and_then(|connections| connections.get(&key))
+			.and_then(ConnectionEntry::ready)
+			.cloned()
+		else {
 			return;
 		};
 		connection.unfollow(local_follow_id);
+	}
+}
+
+enum ConnectionEntry {
+	Connecting { identity: Arc<()>, setup: ConnectionSetup },
+	Ready(Arc<ChainConnection>),
+}
+
+impl ConnectionEntry {
+	fn ready(&self) -> Option<&Arc<ChainConnection>> {
+		match self {
+			Self::Connecting { .. } => None,
+			Self::Ready(connection) => Some(connection),
+		}
 	}
 }
 
@@ -2637,7 +2662,7 @@ mod tests {
 
 		// Same chain, three scopes, three connections.
 		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 3);
-		assert_eq!(core.connections.lock().unwrap().len(), 3);
+		assert_eq!(core.connections.lock().unwrap().values().map(HashMap::len).sum::<usize>(), 3);
 	}
 
 	/// Re-scoping shares the maps rather than starting a fresh runtime, so a
@@ -2655,7 +2680,7 @@ mod tests {
 			.expect("second");
 
 		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 1);
-		assert_eq!(core.connections.lock().unwrap().len(), 1);
+		assert_eq!(core.connections.lock().unwrap().values().map(HashMap::len).sum::<usize>(), 1);
 	}
 
 	/// A product's follow budget is its own. Four follows for one product must
@@ -2714,8 +2739,15 @@ mod tests {
 		};
 		let mut per_connection = Vec::new();
 		for _ in 0..200 {
-			per_connection =
-				core.connections.lock().unwrap().values().map(established).collect::<Vec<_>>();
+			per_connection = core
+				.connections
+				.lock()
+				.unwrap()
+				.values()
+				.flat_map(|connections| connections.values())
+				.filter_map(ConnectionEntry::ready)
+				.map(established)
+				.collect::<Vec<_>>();
 			if per_connection.iter().sum::<usize>() == 5 {
 				break;
 			}
@@ -2749,11 +2781,18 @@ mod tests {
 		}
 		futures::executor::block_on(core.connection_for("release_test", &genesis))
 			.expect("core connection");
-		assert_eq!(core.connections.lock().unwrap().len(), 3);
+		assert_eq!(core.connections.lock().unwrap().values().map(HashMap::len).sum::<usize>(), 3);
 
 		product.release_scope();
 
-		let remaining: Vec<String> = core.connections.lock().unwrap().keys().cloned().collect();
+		let remaining: Vec<String> = core
+			.connections
+			.lock()
+			.unwrap()
+			.values()
+			.flat_map(|connections| connections.keys())
+			.cloned()
+			.collect();
 		assert_eq!(remaining.len(), 1, "the product's connections outlived it");
 		assert!(
 			remaining[0].starts_with("core:"),
@@ -2845,13 +2884,27 @@ mod tests {
 			.is_ok()
 		});
 		for _ in 0..200 {
-			if core.connection_setups.lock().unwrap().len() == 1 {
+			if core
+				.connections
+				.lock()
+				.unwrap()
+				.values()
+				.flat_map(|connections| connections.values())
+				.filter(|entry| matches!(entry, ConnectionEntry::Connecting { .. }))
+				.count() == 1
+			{
 				break;
 			}
 			std::thread::sleep(std::time::Duration::from_millis(10));
 		}
 		assert_eq!(
-			core.connection_setups.lock().unwrap().len(),
+			core.connections
+				.lock()
+				.unwrap()
+				.values()
+				.flat_map(|connections| connections.values())
+				.filter(|entry| matches!(entry, ConnectionEntry::Connecting { .. }))
+				.count(),
 			1,
 			"the connect never reached the provider",
 		);
@@ -2867,7 +2920,14 @@ mod tests {
 		}
 		let succeeded = handle.join().expect("connect thread");
 
-		let remaining: Vec<String> = core.connections.lock().unwrap().keys().cloned().collect();
+		let remaining: Vec<String> = core
+			.connections
+			.lock()
+			.unwrap()
+			.values()
+			.flat_map(|connections| connections.keys())
+			.cloned()
+			.collect();
 		assert!(
 			remaining.is_empty(),
 			"a connect in flight reinstated the released scope: {remaining:?}",
@@ -2894,8 +2954,88 @@ mod tests {
 
 		first.release_scope();
 
-		let remaining: Vec<String> = core.connections.lock().unwrap().keys().cloned().collect();
+		let remaining: Vec<String> = core
+			.connections
+			.lock()
+			.unwrap()
+			.values()
+			.flat_map(|connections| connections.keys())
+			.cloned()
+			.collect();
 		assert_eq!(remaining, vec!["p2:".to_owned() + &encode_hex(&genesis)]);
+	}
+
+	#[test]
+	fn a_queued_follow_cannot_open_a_connection_after_product_release() {
+		let queued = Arc::new(Mutex::new(Vec::<BoxFuture<'static, ()>>::new()));
+		let queue = queued.clone();
+		let spawner: Spawner = Arc::new(move |task| queue.lock().unwrap().push(task));
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider, spawner);
+		let product = core.for_product(1);
+		let mut follow = product.remote_chain_head_follow(
+			"c1:queued".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0xab; 32], with_runtime: false },
+		);
+		let task = queued.lock().unwrap().pop().expect("queued follow setup");
+
+		product.release_scope();
+		let completed = task.now_or_never();
+		let connections_empty =
+			!core.connections.lock().unwrap().contains_key(&ConnectionScope::Product(1));
+
+		assert_eq!(
+			(completed, connections_empty, follow.next().now_or_never()),
+			(Some(()), true, Some(Some(Err(RuntimeFailure::unavailable(FOLLOW_METHOD)))),),
+			"closing the product must reject follow setup queued before teardown",
+		);
+	}
+
+	#[test]
+	fn a_failed_connection_can_be_retried() {
+		struct FailOnceProvider {
+			attempted: AtomicBool,
+			inner: ScriptedProvider,
+		}
+
+		#[async_trait]
+		impl RuntimeChainProvider for FailOnceProvider {
+			async fn connect(
+				&self,
+				genesis_hash: Vec<u8>,
+			) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+				if !self.attempted.swap(true, Ordering::SeqCst) {
+					return Err(RuntimeFailure::unavailable("remote_chain_connect"));
+				}
+				self.inner.connect(genesis_hash).await
+			}
+		}
+
+		let provider = Arc::new(FailOnceProvider {
+			attempted: AtomicBool::new(false),
+			inner: ScriptedProvider::new(|_| None),
+		});
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+		let failed =
+			futures::executor::block_on(runtime.connection_for("retry", &genesis)).map(|_| ());
+		let retried =
+			futures::executor::block_on(runtime.connection_for("retry", &genesis)).map(|_| ());
+		assert_eq!(
+			(failed, retried, provider.inner.connect_calls.load(Ordering::SeqCst)),
+			(Err(RuntimeFailure::unavailable("retry")), Ok(()), 1),
+		);
+	}
+
+	#[test]
+	fn closed_products_do_not_accumulate_in_the_connection_registry() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider, spawner_for_tests());
+		for instance in 1..=1_000 {
+			core.for_product(instance).release_scope();
+		}
+		let remaining: Vec<_> = core.connections.lock().unwrap().keys().copied().collect();
+		assert_eq!(remaining, vec![ConnectionScope::Core]);
 	}
 
 	#[test]
