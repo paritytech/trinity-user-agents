@@ -442,6 +442,24 @@ pub enum AccountGrantOutcome {
 	},
 }
 
+/// Where a product's public subtree comes from.
+pub enum SubtreeResolution<'a> {
+	/// The holder derived it without asking anyone.
+	Known([u8; 32]),
+	/// A request to the account holder, sent only when awaited.
+	Ask(futures::future::BoxFuture<'a, Result<[u8; 32], AuthorityError>>),
+}
+
+impl SubtreeResolution<'_> {
+	/// The subtree, asking the account holder when it is not known.
+	pub async fn resolve(self) -> Result<[u8; 32], AuthorityError> {
+		match self {
+			Self::Known(public_key) => Ok(public_key),
+			Self::Ask(request) => request.await,
+		}
+	}
+}
+
 /// How a host keeps the grants its account holder issues.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GrantKeeping {
@@ -483,11 +501,11 @@ pub trait AccountHolder: Send + Sync + 'static {
 	) -> Result<AccountGrant, AuthorityError>;
 
 	/// Resolve the public hard subtree under the selected account holder.
-	async fn product_subtree_public_key(
-		&self,
-		invocation: AccountInvocation<'_>,
+	async fn product_subtree_public_key<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
 		product_id: String,
-	) -> Result<[u8; 32], AuthorityError>;
+	) -> Result<SubtreeResolution<'a>, AuthorityError>;
 
 	/// Sign an RFC-0023 Merlin transcript with a product account.
 	async fn sign_vrf(
@@ -551,6 +569,15 @@ pub trait AccountHolder: Send + Sync + 'static {
 		invocation: AccountInvocation<'_>,
 		request: HostAccountRegisterRingVrfKeyRequest,
 	) -> Result<HostAccountRegisterRingVrfKeyResponse, RingVrfError>;
+
+	/// Record a key the host derived from the calling product's kept
+	/// AutoSigning key, so the holder stays the registry's only writer.
+	async fn record_ring_vrf_key(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRegisterRingVrfKeyRequest,
+		public_key: [u8; 32],
+	) -> Result<(), RingVrfError>;
 
 	/// List an owner's registered ring-VRF keys, keeping the registry this host reads current.
 	async fn list_ring_vrf_keys(
