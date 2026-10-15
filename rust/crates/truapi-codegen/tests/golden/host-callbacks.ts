@@ -223,7 +223,7 @@ export type CoreStorageKey =
   | { tag: "ProductManifest"; value: { productId: string } }
   /**
    * Funding sessions: every live one plus a bounded tail of settled ones,
-   * as one SCALE blob.
+   * as one versioned SCALE blob.
    */
   | { tag: "FundingSessions"; value?: undefined }
   /**
@@ -240,7 +240,12 @@ export type CoreStorageKey =
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
-  | { tag: "FundingSupport"; value?: undefined };
+  | { tag: "FundingSupport"; value?: undefined }
+  /**
+   * The last funding sessions blob the core could not read, kept as it was
+   * so a stored session is never overwritten unread.
+   */
+  | { tag: "FundingSessionsUnreadable"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -347,6 +352,12 @@ export interface FundingPresentation {
  * The providers' quotes for one ask, as the host draws its provider list.
  */
 export interface FundingQuoteList {
+  /**
+   * The request this list answers, as `request_funding_quotes` returned
+   * it. A host shows only the lists of its latest request.
+   */
+  requestId: bigint;
+
   /**
    * One row per provider asked, in the host's provider order.
    */
@@ -935,6 +946,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       }>,
       PublishedProducts: S._void,
       FundingSupport: S._void,
+      FundingSessionsUnreadable: S._void,
     }),
 );
 
@@ -1026,6 +1038,7 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
 export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
   (): S.Codec<FundingQuoteList> =>
     S.Struct({
+      requestId: S.u64,
       rows: S.Vector(FundingQuoteRow),
       best: S.Option(S.str),
       refreshAtMs: S.u64,

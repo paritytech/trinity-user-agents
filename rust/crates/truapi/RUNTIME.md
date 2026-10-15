@@ -424,9 +424,15 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
   `funding_session`, `funding_progress`, `funding_sessions`, `set_funding_providers`,
-  `funding_candidates`, `funding_countries`, `detected_funding_country`,
-  `get_funding_quote`, `stop_funding_quotes`, `select_funding_provider`,
-  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  `funding_candidates`, `funding_countries`, `funding_amount_limits`,
+  `detected_funding_country`, `get_funding_quote`, `stop_funding_quotes`,
+  `select_funding_provider`, `cancel_funding`, `acknowledge_funding_session`
+  and `funding_in_progress`. Amounts cross the FFI as decimal strings.
+  Sessions are stored as a versioned blob, and the core keeps reading every
+  earlier format, so an upgrade keeps the sessions in flight; a blob it
+  cannot read is kept under `FundingSessionsUnreadable` rather than
+  overwritten. `funding_in_progress` reads storage when funding has not
+  resumed yet, so a host can ask at launch.
   The host owns the funding history. A session is stored only once the user
   starts it in the overlay. `funding_sessions` lists sessions in flight first,
   then ended ones the host has not recorded, each newest first. An ended
@@ -466,26 +472,37 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   serves Funding. A crypto ask names the `network` it moves on, one a route's
   `networks` declares, and the networks quotes confirmed join the candidate's
   routes. A refusal of only the amount is kept as the candidate's `limits`
-  (minimum and maximum per rail, asset and network), so the host can show
-  them before quoting; a later quote for the same ask keeps them.
+  (minimum and maximum per rail, asset, network and country), each for 12
+  hours from its own refusal: a later quote does not renew it, and a quote at
+  an amount it rules out clears it. `funding_amount_limits(intent, rail,
+  asset, network, country)` combines them across every provider into the
+  range the amount screen enforces: the smallest minimum and the largest
+  maximum, with no bound while any provider has not shown one. The host's
+  own product floor applies on top. A quote carries its asset's
+  `asset_decimals`, so the host shows asset amounts without knowing the
+  asset.
   An ask that names no country takes the one the host's
   `detected_country` answers (coarse location if already permitted, then
   SIM or network country, then locale region, without any permission
-  prompt), reused for an hour; the user's own choice is passed as the ask's
-  country. `funding_countries(intent, rail, asset)` says what the core knows
+  prompt), kept only when it is an ISO 3166-1 alpha-2 code and reused for an
+  hour, or asked again after a minute when it found none; the user's own
+  choice is passed as the ask's country. `funding_countries(intent, rail, asset)` says what the core knows
   about each country for the host's picker: `Supported` with the lowest
   minimum a provider showed there, from manifest routes and recent answers,
   or `Unsupported` when every answer naming it refused it; a country nothing
   names is left out.
   Natively the list arrives through `funding_quotes_changed` as a
-  `FundingQuoteList`: the rows in the host's provider order, `best` (the
-  least to pay inbound, the most to receive outbound, the earliest row on a
-  tie), which the host selects until the user picks another, and
-  `refresh_at_ms`. The core asks every provider again each minute, the rows
-  going back to `Pending`, until the session is assigned or ends, the host
-  asks for another ask, or calls `stop_funding_quotes`.
+  `FundingQuoteList`: the `request_id` `get_funding_quote` returned, the
+  rows in the host's provider order, `best` (the least to pay inbound, the
+  most to receive outbound, the earliest row on a tie, among providers the
+  session can be handed to), which the host selects until the user picks
+  another, and `refresh_at_ms`. The core asks every provider again each
+  minute, the rows going back to `Pending`, until the session is assigned or
+  ends, the host asks for another ask, or calls `stop_funding_quotes`; from
+  then on no list of that request arrives, mid round too.
   `select_funding_provider` hands a session to the provider the user chose,
-  which must be one of those candidates, on the quote it was chosen by, which
+  which must be one quotes are asked of (its manifest serves Funding,
+  whatever routes it declares), on the quote it was chosen by, which
   must be one core offered for the session, not yet expired and, when the
   session has an amount, pricing that amount in balance units (what it
   credits inbound, what it debits outbound); a session opened without an

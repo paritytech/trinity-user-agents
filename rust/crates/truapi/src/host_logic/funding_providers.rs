@@ -59,20 +59,68 @@ pub struct LearnedSupport {
 	pub network: Option<String>,
 	/// The ask's country, when it named one.
 	pub country: Option<String>,
+	/// The amount the ask priced, in balance units.
+	pub asked: u128,
 	/// Whether the provider serves it: it quoted, or refused only the amount.
 	pub supported: bool,
-	/// The smallest amount it takes, from its latest `BelowMinimum`.
-	pub min: Option<u128>,
-	/// The largest amount it takes, from its latest `AboveMaximum`.
-	pub max: Option<u128>,
+	/// The smallest amount it takes, from a `BelowMinimum`, with when that
+	/// refusal came.
+	pub min: Option<LearnedLimit>,
+	/// The largest amount it takes, from an `AboveMaximum`, with when that
+	/// refusal came.
+	pub max: Option<LearnedLimit>,
 	/// When the answer came, in Unix milliseconds.
 	pub learned_at_ms: u64,
+}
+
+/// An amount limit a provider's refusal showed, and when.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct LearnedLimit {
+	/// The limit, in balance units.
+	pub amount: u128,
+	/// When the refusal came, in Unix milliseconds.
+	pub learned_at_ms: u64,
+}
+
+impl LearnedLimit {
+	/// The limit, while it is still trusted at `now_ms`.
+	pub fn fresh(limit: Option<Self>, now_ms: u64) -> Option<u128> {
+		limit
+			.filter(|limit| now_ms.saturating_sub(limit.learned_at_ms) < LEARNED_SUPPORT_TTL_MS)
+			.map(|limit| limit.amount)
+	}
 }
 
 impl LearnedSupport {
 	/// Whether this is still trusted at `now_ms`.
 	pub fn is_fresh(&self, now_ms: u64) -> bool {
 		now_ms.saturating_sub(self.learned_at_ms) < LEARNED_SUPPORT_TTL_MS
+	}
+
+	/// Whether the provider quoted the ask, rather than refusing it.
+	pub fn quoted(&self) -> bool {
+		self.supported && self.min.is_none() && self.max.is_none()
+	}
+
+	/// Keep the limits `known`, an earlier answer to the same ask, showed,
+	/// each while it is trusted on its own clock and this answer does not
+	/// contradict it: a quote at an amount below a known minimum, or above a
+	/// known maximum, shows that limit no longer holds.
+	pub fn keep_limits_of(&mut self, known: &Self) {
+		let quoted = self.quoted();
+		let now_ms = self.learned_at_ms;
+		if self.min.is_none() {
+			self.min = known.min.filter(|min| {
+				LearnedLimit::fresh(Some(*min), now_ms).is_some() &&
+					!(quoted && self.asked < min.amount)
+			});
+		}
+		if self.max.is_none() {
+			self.max = known.max.filter(|max| {
+				LearnedLimit::fresh(Some(*max), now_ms).is_some() &&
+					!(quoted && self.asked > max.amount)
+			});
+		}
 	}
 
 	/// Whether `other` is about the same provider and ask.
@@ -99,8 +147,9 @@ pub struct FundingUnsupported {
 	pub country: Option<String>,
 }
 
-/// The amounts a provider takes for a rail, asset and network, as its quote
-/// refusals showed them, so the host can show the limits before quoting.
+/// The amounts a provider takes for a rail, asset, network and country, as
+/// its quote refusals showed them, so the host can show the limits before
+/// quoting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingLimit {
@@ -110,6 +159,8 @@ pub struct FundingLimit {
 	pub asset: String,
 	/// The network, for crypto.
 	pub network: Option<String>,
+	/// The country the ask named, or `None` for an ask that named none.
+	pub country: Option<String>,
 	/// The smallest amount it takes, in balance units, when known.
 	pub min: Option<u128>,
 	/// The largest amount it takes, in balance units, when known.
@@ -169,13 +220,18 @@ impl FundingCandidate {
 				support.is_fresh(now_ms)
 		});
 		for support in fresh {
-			if support.min.is_some() || support.max.is_some() {
+			let (min, max) = (
+				LearnedLimit::fresh(support.min, now_ms),
+				LearnedLimit::fresh(support.max, now_ms),
+			);
+			if min.is_some() || max.is_some() {
 				limits.push(FundingLimit {
 					rail: support.rail,
 					asset: support.asset.clone(),
 					network: support.network.clone(),
-					min: support.min,
-					max: support.max,
+					country: support.country.clone(),
+					min,
+					max,
 				});
 			}
 			if support.supported {
@@ -225,6 +281,70 @@ fn confirm(routes: &mut Vec<FundingRoute>, support: &LearnedSupport) {
 		!countries.contains(country)
 	{
 		countries.push(country.clone());
+	}
+}
+
+/// The amounts a session can take on one rail, asset, network and country,
+/// across every provider, as their refusals showed: the smallest amount
+/// some provider takes, and the largest. A provider whose limit is unknown
+/// may take any amount, so a bound is only known once every provider showed
+/// one.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingAmountLimits {
+	/// The smallest amount any provider takes, in balance units, when every
+	/// provider showed a minimum.
+	pub min: Option<u128>,
+	/// The largest amount any provider takes, in balance units, when every
+	/// provider showed a maximum.
+	pub max: Option<u128>,
+}
+
+/// One ask's rail, asset, network and country, as limits are kept by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LimitScope<'a> {
+	/// Which way value moves.
+	pub direction: FundingDirection,
+	/// The rail.
+	pub rail: FundingRail,
+	/// The asset symbol.
+	pub asset: &'a str,
+	/// The network, for crypto.
+	pub network: Option<&'a str>,
+	/// The country, or `None` for an ask that named none.
+	pub country: Option<&'a str>,
+}
+
+/// [`FundingAmountLimits`] for `scope` across `provider_ids`, from what
+/// `learned` still trusts at `now_ms`.
+pub fn amount_limits(
+	provider_ids: &[String],
+	learned: &[LearnedSupport],
+	scope: LimitScope<'_>,
+	now_ms: u64,
+) -> FundingAmountLimits {
+	if provider_ids.is_empty() {
+		return FundingAmountLimits::default();
+	}
+	let mut mins = Vec::new();
+	let mut maxes = Vec::new();
+	for provider_id in provider_ids {
+		let record = learned.iter().find(|support| {
+			&support.provider_id == provider_id &&
+				support.direction == scope.direction &&
+				support.rail == scope.rail &&
+				support.asset == scope.asset &&
+				support.network.as_deref() == scope.network &&
+				support.country.as_deref() == scope.country &&
+				support.is_fresh(now_ms)
+		});
+		mins.push(record.and_then(|support| LearnedLimit::fresh(support.min, now_ms)));
+		maxes.push(record.and_then(|support| LearnedLimit::fresh(support.max, now_ms)));
+	}
+	let all = |limits: Vec<Option<u128>>| limits.into_iter().collect::<Option<Vec<_>>>();
+	FundingAmountLimits {
+		min: all(mins).and_then(|mins| mins.into_iter().min()),
+		max: all(maxes).and_then(|maxes| maxes.into_iter().max()),
 	}
 }
 
@@ -308,7 +428,7 @@ pub fn country_support(
 				support.is_fresh(now_ms)
 		}) {
 			if let Some(country) = &support.country {
-				note(country, support.supported, support.min);
+				note(country, support.supported, LearnedLimit::fresh(support.min, now_ms));
 			}
 		}
 	}
@@ -337,11 +457,16 @@ mod tests {
 			asset: "EUR".to_string(),
 			network: None,
 			country: Some("DE".to_string()),
+			asked: 1_000,
 			supported,
 			min: None,
 			max: None,
 			learned_at_ms: at_ms,
 		}
+	}
+
+	fn limit(amount: u128) -> Option<LearnedLimit> {
+		Some(LearnedLimit { amount, learned_at_ms: NOW })
 	}
 
 	fn manifest(funding: &str) -> WorkerManifest {
@@ -437,7 +562,7 @@ mod tests {
 			asset: "USDT".to_string(),
 			network: Some("polkadot".to_string()),
 			country: None,
-			min: Some(10_000_000),
+			min: limit(10_000_000),
 			..learned(true, NOW)
 		};
 
@@ -465,6 +590,7 @@ mod tests {
 					rail: FundingRail::Crypto,
 					asset: "USDT".to_string(),
 					network: Some("polkadot".to_string()),
+					country: None,
 					min: Some(10_000_000),
 					max: None,
 				}],
@@ -480,11 +606,11 @@ mod tests {
 		let declared = manifest(
 			r#"{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"],"countries":["PT","DE"]}]}"#,
 		);
-		let in_country = |country: &str, supported, min| LearnedSupport {
+		let in_country = |country: &str, supported, min: Option<u128>| LearnedSupport {
 			rail: FundingRail::Card,
 			country: Some(country.to_string()),
 			supported,
-			min,
+			min: min.and_then(limit),
 			..learned(true, NOW)
 		};
 		let providers = [
@@ -546,5 +672,46 @@ mod tests {
 		};
 
 		assert_eq!((candidate(None), candidate(Some(&without_funding))), (None, None));
+	}
+
+	// The range is the union of what providers take: the smallest minimum
+	// and the largest maximum, and no bound at all while some provider has
+	// not shown one, since it may take any amount.
+	#[test]
+	fn amount_limits_span_every_provider() {
+		let scope = LimitScope {
+			direction: FundingDirection::In,
+			rail: FundingRail::Bank,
+			asset: "EUR",
+			network: None,
+			country: Some("DE"),
+		};
+		let refused = |provider_id: &str, min: Option<u128>, max: Option<u128>| LearnedSupport {
+			provider_id: provider_id.to_string(),
+			min: min.and_then(limit),
+			max: max.and_then(limit),
+			..learned(true, NOW)
+		};
+		let ids = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+		let learned = [
+			refused("a.dot", Some(2_000), Some(50_000)),
+			refused("b.dot", Some(1_500), None),
+			LearnedSupport { country: Some("PT".to_string()), ..refused("c.dot", Some(10), None) },
+		];
+
+		assert_eq!(
+			(
+				amount_limits(&ids(&["a.dot", "b.dot"]), &learned, scope, NOW),
+				amount_limits(&ids(&["a.dot"]), &learned, scope, NOW),
+				amount_limits(&ids(&["a.dot", "c.dot"]), &learned, scope, NOW),
+				amount_limits(&[], &learned, scope, NOW),
+			),
+			(
+				FundingAmountLimits { min: Some(1_500), max: None },
+				FundingAmountLimits { min: Some(2_000), max: Some(50_000) },
+				FundingAmountLimits { min: None, max: None },
+				FundingAmountLimits::default(),
+			)
+		);
 	}
 }
