@@ -1,6 +1,7 @@
 import CoreData
 import Foundation
 import Operation_iOS
+import os
 
 extension Chat {
     /// How long the user mutes a product room (07-LATER §6.2).
@@ -78,10 +79,19 @@ struct ChatRoomUserStateReader: ChatRoomUserStateReading {
 
 /// Writes the user state of a product room through ``ChatRoomUserStateRecording``, which stores it and sends
 /// `UserStateChanged` to the product. The list actions and the menu of the room header call it.
+///
+/// A change that changes nothing does not tell the product. A mute that ended goes away with the next change, so
+/// the product does not get an old end time. One change completes before the next starts, so two quick taps do
+/// not read the same old state.
 final class ChatRoomUserStateService: ChatRoomUserStateServicing, @unchecked Sendable {
+    /// Gives the next state from the current state and the time of the change.
+    typealias Change = @Sendable (Chat.RoomUserState, Date) -> Chat.RoomUserState
+
     private let reader: ChatRoomUserStateReading
     private let recorder: ChatRoomUserStateRecording
     private let now: @Sendable () -> Date
+    /// The last change. The next change waits for it.
+    private let lastChange = OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
 
     init(
         reader: ChatRoomUserStateReading,
@@ -98,18 +108,51 @@ final class ChatRoomUserStateService: ChatRoomUserStateServicing, @unchecked Sen
     }
 
     func mute(_ chatId: Chat.Id, for duration: Chat.MuteDuration) async throws {
-        let current = try await reader.state(of: chatId)
-        let mutedUntil = duration.mutedUntil(from: now())
-        try await recorder.record(Chat.RoomUserState(mutedUntil: mutedUntil, archived: current.archived), for: chatId)
+        try await update(chatId) { current, date in
+            Chat.RoomUserState(mutedUntil: duration.mutedUntil(from: date), archived: current.archived)
+        }
     }
 
     func unmute(_ chatId: Chat.Id) async throws {
-        let current = try await reader.state(of: chatId)
-        try await recorder.record(Chat.RoomUserState(mutedUntil: nil, archived: current.archived), for: chatId)
+        try await update(chatId) { current, _ in
+            Chat.RoomUserState(mutedUntil: nil, archived: current.archived)
+        }
     }
 
     func setArchived(_ archived: Bool, for chatId: Chat.Id) async throws {
-        let current = try await reader.state(of: chatId)
-        try await recorder.record(Chat.RoomUserState(mutedUntil: current.mutedUntil, archived: archived), for: chatId)
+        try await update(chatId) { current, _ in
+            Chat.RoomUserState(mutedUntil: current.mutedUntil, archived: archived)
+        }
+    }
+}
+
+private extension ChatRoomUserStateService {
+    func update(_ chatId: Chat.Id, change: @escaping Change) async throws {
+        let task: Task<Void, Error> = lastChange.withLockUnchecked { last in
+            let previous = last
+            let task = Task {
+                await previous?.value
+                try await self.apply(change, to: chatId)
+            }
+            last = Task { _ = try? await task.value }
+            return task
+        }
+
+        try await task.value
+    }
+
+    func apply(_ change: Change, to chatId: Chat.Id) async throws {
+        let date = now()
+        let stored = try await reader.state(of: chatId)
+        let current = stored.isMuted(at: date)
+            ? stored
+            : Chat.RoomUserState(mutedUntil: nil, archived: stored.archived)
+        let next = change(current, date)
+
+        guard next != stored else {
+            return
+        }
+
+        try await recorder.record(next, for: chatId)
     }
 }

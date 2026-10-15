@@ -16,17 +16,48 @@ extension Chat.LocalMessage.Content {
         /// The text alternative of each media item, in the order of `media`, for VoiceOver (P7.2). Empty when no
         /// item has one, and for a message that a host stored before it kept them.
         let alts: [String?]
+        /// The kind of each media item, in the order of `media`. Empty for a message that a host stored before it
+        /// kept them. Then ``info(at:)`` reads the kind from the source.
+        let items: [ProductMediaInfo]
 
-        init(text: String?, media: [String], alts: [String?] = []) {
+        init(text: String?, media: [String], alts: [String?] = [], items: [ProductMediaInfo] = []) {
             self.text = text
             self.media = media
             self.alts = alts.contains { $0 != nil } ? alts : []
+            self.items = items.count == media.count ? items : []
         }
 
         /// The text alternative of the media item at `index`.
         func alt(at index: Int) -> String? {
             alts.indices.contains(index) ? alts[index] : nil
         }
+
+        /// The kind of the media item at `index`. Without a stored kind, an inline `video/` source is a video, and
+        /// any other source is an image.
+        func info(at index: Int) -> ProductMediaInfo {
+            if items.indices.contains(index) {
+                return items[index]
+            }
+
+            let source = media.indices.contains(index) ? media[index] : ""
+            let isVideo = source.prefix(16).lowercased().hasPrefix("data:video/")
+            return ProductMediaInfo(kind: isVideo ? .video : .image, mimeType: "", fileName: nil, sizeBytes: nil)
+        }
+    }
+
+    /// What the host knows of one media item of a product body, beside its source (02-DESIGN §6.2).
+    struct ProductMediaInfo: Equatable {
+        enum Kind: UInt8, Equatable {
+            case image = 0
+            case video = 1
+            case file = 2
+        }
+
+        let kind: Kind
+        let mimeType: String
+        /// The name of a file. Nil for an image and a video.
+        let fileName: String?
+        let sizeBytes: UInt64?
     }
 
     struct ProductActions: Equatable {
@@ -107,6 +138,7 @@ extension Chat.LocalMessage.Content.ProductBody: ScaleCodable {
 extension Chat.LocalMessage.Content.ProductRichText: ScaleCodable {
     /// The text alternatives come last, after the fields of the first layout. The body is the last value of the
     /// stored content, so a row that a host stored before has no bytes left for them.
+    /// The kinds of the media items come after the text alternatives, for the same reason (PARITY row 4).
     init(scaleDecoder: any ScaleDecoding) throws {
         text = try ScaleOption<String>(scaleDecoder: scaleDecoder).value
         media = try [String](scaleDecoder: scaleDecoder)
@@ -114,12 +146,37 @@ extension Chat.LocalMessage.Content.ProductRichText: ScaleCodable {
             ? try [ScaleOption<String>](scaleDecoder: scaleDecoder).map(\.value)
             : []
         self.alts = alts.contains { $0 != nil } ? alts : []
+        let items = scaleDecoder.remained > 0
+            ? try [Chat.LocalMessage.Content.ProductMediaInfo](scaleDecoder: scaleDecoder)
+            : []
+        self.items = items.count == media.count ? items : []
     }
 
     func encode(scaleEncoder: any ScaleEncoding) throws {
         try ScaleOption(value: text).encode(scaleEncoder: scaleEncoder)
         try media.encode(scaleEncoder: scaleEncoder)
         try alts.map { ScaleOption(value: $0) }.encode(scaleEncoder: scaleEncoder)
+        try items.encode(scaleEncoder: scaleEncoder)
+    }
+}
+
+extension Chat.LocalMessage.Content.ProductMediaInfo: ScaleCodable {
+    init(scaleDecoder: any ScaleDecoding) throws {
+        let rawKind = try UInt8(scaleDecoder: scaleDecoder)
+        guard let kind = Kind(rawValue: rawKind) else {
+            throw ScaleCodingError.unexpectedDecodedValue
+        }
+        self.kind = kind
+        mimeType = try String(scaleDecoder: scaleDecoder)
+        fileName = try ScaleOption<String>(scaleDecoder: scaleDecoder).value
+        sizeBytes = try ScaleOption<UInt64>(scaleDecoder: scaleDecoder).value
+    }
+
+    func encode(scaleEncoder: any ScaleEncoding) throws {
+        try kind.rawValue.encode(scaleEncoder: scaleEncoder)
+        try mimeType.encode(scaleEncoder: scaleEncoder)
+        try ScaleOption(value: fileName).encode(scaleEncoder: scaleEncoder)
+        try ScaleOption(value: sizeBytes).encode(scaleEncoder: scaleEncoder)
     }
 }
 

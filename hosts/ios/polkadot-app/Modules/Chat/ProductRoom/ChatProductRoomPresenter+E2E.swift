@@ -93,6 +93,12 @@ extension ChatProductRoomPresenter {
 
         // swiftlint:disable:next cyclomatic_complexity
         private func runE2E(_ action: TrUAPIE2EHostAction) {
+            // A full-screen media viewer takes the room screen out of the window, so `dismiss` runs before the
+            // check of the window.
+            if action.action == "dismiss", action.room == roomId {
+                dismissMediaViewer()
+                return
+            }
             guard action.room == roomId, view?.controller.view.window != nil else { return }
             logger.debug("[e2e:ui] action \(roomId) \(action.action) \(action.argument ?? "") \(action.target ?? "")")
 
@@ -151,6 +157,8 @@ extension ChatProductRoomPresenter {
             case "chip",
                  "branch",
                  "reasoning": runAddition(action)
+            case "media": runMedia(message: action.target ?? "last", index: action.argument.flatMap(Int.init) ?? 0)
+            case "show-more": action.target.flatMap(e2eMessageId).map { expandText(of: $0) }
             default:
                 if !runCallE2E(action) { logger.warning("[e2e:ui] unknown action \(action.action)") }
             }
@@ -177,6 +185,42 @@ extension ChatProductRoomPresenter {
             default:
                 toggleReasoning(of: messageId)
             }
+        }
+
+        /// A tap on the media item at `index` of a message (PARITY row 4). The marker `presented` names the screen
+        /// that the room shows after the tap.
+        private func runMedia(message: String, index: Int) {
+            guard let messageId = e2eMessageId(message), let request = mediaRequest(of: messageId, at: index) else {
+                mark("media", "\(message) \(index) missing")
+                return
+            }
+
+            Task { [weak self] in
+                guard let self, await openMedia(request) else { return }
+                try? await Task.sleep(for: .seconds(1))
+                mark("presented", mediaViewer().map { String(describing: type(of: $0)) } ?? "none")
+            }
+        }
+
+        /// The screen in front of the room screen: a presented viewer, or the document preview that the navigation
+        /// pushes.
+        private func mediaViewer() -> UIViewController? {
+            guard let controller = view?.controller else { return nil }
+            if let presented = controller.presentedViewController {
+                return presented
+            }
+            let top = controller.navigationController?.topViewController
+            return top === controller ? nil : top
+        }
+
+        private func dismissMediaViewer() {
+            guard let controller = view?.controller else { return }
+            if let presented = controller.presentedViewController {
+                presented.dismiss(animated: false)
+            } else if controller.navigationController?.topViewController !== controller {
+                controller.navigationController?.popToViewController(controller, animated: false)
+            }
+            mark("presented", "none")
         }
 
         /// Deletes the outbox entries of the room, so that a row starts with none, also after a run that stopped.

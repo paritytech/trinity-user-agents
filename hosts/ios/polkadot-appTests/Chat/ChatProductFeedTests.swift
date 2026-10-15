@@ -430,7 +430,15 @@ struct BodyCase: CustomTestStringConvertible, Sendable {
                 .image(resource: .preimage(key: key), meta: meta("image/jpeg")),
                 .video(resource: .preimage(key: key), meta: meta("video/mp4"))
             ]),
-            content: .productBody(.richText(.init(text: "look", media: [pngSource, keySource, keySource])))
+            content: .productBody(.richText(.init(
+                text: "look",
+                media: [pngSource, keySource, keySource],
+                items: [
+                    .init(kind: .image, mimeType: "image/png", fileName: nil, sizeBytes: nil),
+                    .init(kind: .image, mimeType: "image/jpeg", fileName: nil, sizeBytes: nil),
+                    .init(kind: .video, mimeType: "video/mp4", fileName: nil, sizeBytes: nil)
+                ]
+            )))
         ),
         BodyCase(
             testDescription: "file",
@@ -445,13 +453,21 @@ struct BodyCase: CustomTestStringConvertible, Sendable {
                 text: "report"
             )))
         ),
+        // PARITY row 4: the media bubble draws a file among the images as a row.
         BodyCase(
             testDescription: "file among images",
             body: .richText(text: nil, media: [
                 .image(resource: .inline(mimeType: "image/png", bytes: png), meta: meta("image/png")),
-                .file(resource: .preimage(key: key), meta: meta("application/pdf"), fileName: "r.pdf")
+                .file(resource: .preimage(key: key), meta: meta("application/pdf", size: 2_048), fileName: "r.pdf")
             ]),
-            content: .productBody(.richText(.init(text: nil, media: [pngSource])))
+            content: .productBody(.richText(.init(
+                text: nil,
+                media: [pngSource, keySource],
+                items: [
+                    .init(kind: .image, mimeType: "image/png", fileName: nil, sizeBytes: nil),
+                    .init(kind: .file, mimeType: "application/pdf", fileName: "r.pdf", sizeBytes: 2_048)
+                ]
+            )))
         ),
         BodyCase(
             testDescription: "actions",

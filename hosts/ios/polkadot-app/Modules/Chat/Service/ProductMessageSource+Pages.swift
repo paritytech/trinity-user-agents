@@ -254,6 +254,7 @@ extension ProductMessageSource {
                 shouldRetry: { Self.isUnavailable($0) || $0 as? ChatQueryError == .refused(.notAvailable) },
                 operation: { [querying] in try await querying.messagesPage(request) }
             )
+            recordPreparing(item.messages)
             return .page(item)
         } catch let error as ChatQueryError {
             logger.warning("Page \(anchor) of room \(roomId) failed: \(error)")
@@ -272,6 +273,24 @@ extension ProductMessageSource {
         } catch {
             logger.warning("Page \(anchor) of room \(roomId) failed: \(error)")
             return .unavailable
+        }
+    }
+
+    /// Records the status of each message of a participant of the product in a page.
+    ///
+    /// The feed updates give the status only while the room is open or the worker runs. A page gives the
+    /// status that the product keeps, so a reasoning row of a room that opens again reads "Thinking".
+    func recordPreparing(_ pageMessages: [ChatMessage]) {
+        guard let preparingMessages else {
+            return
+        }
+
+        for message in pageMessages where !message.isFromUser {
+            preparingMessages.setPreparing(
+                message.status == .preparing,
+                productMessageId: message.messageId,
+                chatId: chatId
+            )
         }
     }
 

@@ -11,11 +11,17 @@ public struct ChatMessageTextView: View, Hashable {
     }
 
     public var body: some View {
-        styledText
-            .foregroundStyle(Color(viewModel.textColor))
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .environment(\.openURL, OpenURLAction(handler: openLinkAction(viewModel.openLink)))
+        VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
+            styledText
+                .foregroundStyle(Color(viewModel.textColor))
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .environment(\.openURL, OpenURLAction(handler: openLinkAction(viewModel.openLink)))
+
+            if let collapse = viewModel.collapse {
+                ChatShowMoreButton(title: collapse.title, color: Color(viewModel.textColor), action: collapse.onExpand)
+            }
+        }
     }
 
     /// The text of a product follows the text size that the user picks (P7.2). The other texts keep the size
@@ -49,6 +55,8 @@ public extension ChatMessageTextView {
         let openLink: ((URL) -> Void)?
         /// The text follows the text size that the user picks. Only the texts of products do.
         let scalesWithTextSize: Bool
+        /// The "Show more" button of a long text that shows only its start. Nil for a text that shows in full.
+        let collapse: ChatTextCollapse?
 
         public init(
             text: String,
@@ -61,21 +69,46 @@ public extension ChatMessageTextView {
             self.statusPlaceholderImage = statusPlaceholderImage
             openLink = nil
             scalesWithTextSize = false
+            collapse = nil
         }
 
-        /// Product rich text: the Markdown subset of ``ChatMarkdownText``.
+        /// Product rich text: the Markdown subset of ``ChatMarkdownText``. A text longer than
+        /// ``ChatTextCollapse/collapsedLength`` shows only its start when `collapse` is not nil.
         public init(
             markdown: String,
             textColor: UIColor,
             statusPlaceholderImage: UIImage? = nil,
-            openLink: ((URL) -> Void)?
+            openLink: ((URL) -> Void)?,
+            collapse: ChatTextCollapse? = nil
         ) {
             rawText = markdown
             self.textColor = textColor
-            attributedText = ChatMarkdownText.attributedString(from: markdown)
+            let full = ChatMarkdownText.attributedString(from: markdown)
+            let start = collapse.flatMap { _ in ChatTextCollapse.collapsed(full) }
+            attributedText = start ?? full
             self.statusPlaceholderImage = statusPlaceholderImage
             self.openLink = openLink
             scalesWithTextSize = true
+            self.collapse = start == nil ? nil : collapse
+        }
+
+        /// The `Text` body of a product (02-DESIGN §6.1): plain text, with no Markdown and no links. A text longer
+        /// than ``ChatTextCollapse/collapsedLength`` shows only its start when `collapse` is not nil.
+        public init(
+            plainText text: String,
+            textColor: UIColor,
+            statusPlaceholderImage: UIImage? = nil,
+            collapse: ChatTextCollapse? = nil
+        ) {
+            rawText = text
+            self.textColor = textColor
+            let full = AttributedString(text)
+            let start = collapse.flatMap { _ in ChatTextCollapse.collapsed(full) }
+            attributedText = start ?? full
+            self.statusPlaceholderImage = statusPlaceholderImage
+            openLink = nil
+            scalesWithTextSize = true
+            self.collapse = start == nil ? nil : collapse
         }
 
         /// Initializer for pre-built attributed text (e.g., diff highlighting)
@@ -90,6 +123,7 @@ public extension ChatMessageTextView {
             self.statusPlaceholderImage = statusPlaceholderImage
             openLink = nil
             scalesWithTextSize = false
+            collapse = nil
         }
 
         public static func == (lhs: ViewModel, rhs: ViewModel) -> Bool {
@@ -97,7 +131,8 @@ public extension ChatMessageTextView {
                 lhs.rawText == rhs.rawText &&
                 lhs.textColor == rhs.textColor &&
                 lhs.statusPlaceholderImage == rhs.statusPlaceholderImage &&
-                lhs.scalesWithTextSize == rhs.scalesWithTextSize
+                lhs.scalesWithTextSize == rhs.scalesWithTextSize &&
+                lhs.collapse?.title == rhs.collapse?.title
         }
 
         public func hash(into hasher: inout Hasher) {
@@ -106,6 +141,17 @@ public extension ChatMessageTextView {
             hasher.combine(textColor)
             hasher.combine(statusPlaceholderImage)
             hasher.combine(scalesWithTextSize)
+            hasher.combine(collapse?.title)
+        }
+
+        /// True when the text shows only its start.
+        public var isCollapsed: Bool {
+            collapse != nil
+        }
+
+        /// The characters that the text shows.
+        public var shownText: String {
+            String(attributedText.characters)
         }
     }
 }

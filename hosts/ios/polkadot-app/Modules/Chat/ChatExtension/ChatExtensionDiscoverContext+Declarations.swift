@@ -65,8 +65,9 @@ extension ChatExtensionDiscoverContext {
     }
 
     /// Writes the configuration in one transaction with the discard of the messages, so a room never shows
-    /// the messages of the other store (02-DESIGN §13 item 8). An unchanged configuration writes nothing, so an
-    /// open room does not reload its policy at each start of the worker.
+    /// the messages of the other store (02-DESIGN §13 item 8). Each call starts a new generation, also with an
+    /// unchanged configuration (02-DESIGN §8.2, O9). An open room then reloads its policy and asks the product
+    /// again for its participants and its menus, as on Android.
     func setRoomConfig(
         for chatBot: ChatExtensionBotProtocol,
         roomId: String,
@@ -80,10 +81,6 @@ extension ChatExtensionDiscoverContext {
             }
 
             let stored = Chat.RoomDeclarations(entity: chat.roomMetadata).effectiveConfig
-            guard stored != config else {
-                return
-            }
-
             if stored.productSource != config.productSource {
                 try Self.discardMessages(of: chat, chatId: chatId, in: context)
             }

@@ -8,28 +8,47 @@ public struct ChatMarkdownText: View, Hashable {
     let markdown: String
     let attributedText: AttributedString
     let onOpenLink: ((URL) -> Void)?
+    /// The "Show more" button of a long text that shows only its start. Nil for a text that shows in full.
+    let collapse: ChatTextCollapse?
 
-    public init(markdown: String, onOpenLink: ((URL) -> Void)?) {
+    /// - Parameter collapse: When not nil, a text longer than ``ChatTextCollapse/collapsedLength`` shows only its
+    ///   start and the button.
+    public init(markdown: String, onOpenLink: ((URL) -> Void)?, collapse: ChatTextCollapse? = nil) {
         self.markdown = markdown
-        attributedText = Self.attributedString(from: markdown)
+        let full = Self.attributedString(from: markdown)
+        let start = collapse.flatMap { _ in ChatTextCollapse.collapsed(full) }
+        attributedText = start ?? full
         self.onOpenLink = onOpenLink
+        self.collapse = start == nil ? nil : collapse
     }
 
     public var body: some View {
-        // The text follows the text size that the user picks (P7.2).
-        Text(attributedText)
-            .scaledTypography(.paragraphLarge)
-            .foregroundStyle(.fgPrimary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .environment(\.openURL, OpenURLAction(handler: openLinkAction(onOpenLink)))
+        VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
+            // The text follows the text size that the user picks (P7.2).
+            Text(attributedText)
+                .scaledTypography(.paragraphLarge)
+                .foregroundStyle(.fgPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .environment(\.openURL, OpenURLAction(handler: openLinkAction(onOpenLink)))
+
+            if let collapse {
+                ChatShowMoreButton(title: collapse.title, color: .fgPrimary, action: collapse.onExpand)
+            }
+        }
+    }
+
+    /// True when the text shows only its start.
+    public var isCollapsed: Bool {
+        collapse != nil
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.markdown == rhs.markdown
+        lhs.markdown == rhs.markdown && lhs.isCollapsed == rhs.isCollapsed
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(markdown)
+        hasher.combine(isCollapsed)
     }
 
     public static func attributedString(from markdown: String) -> AttributedString {

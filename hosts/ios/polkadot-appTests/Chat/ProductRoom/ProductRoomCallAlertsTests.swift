@@ -1,6 +1,7 @@
 import Foundation
 import os
 import Testing
+import UIKit
 @testable import polkadot_app
 
 /// The alerts of a ringing product room outside its room screen (07-LATER §11.2, scenario S73).
@@ -85,19 +86,55 @@ struct ProductRoomCallAlertsTests {
         #expect(surface.banners.isEmpty)
     }
 
+    /// PARITY row 40: the app comes back to the foreground while a room rings. The local notification goes away and
+    /// the in-app banner shows.
+    @Test func theReturnToTheForegroundReplacesTheNotificationWithTheBanner() async {
+        surface.isInBackground = true
+        let alerts = makeAlerts()
+        store.set(.ringing(callId: "c1", video: false, caller: nil), for: room)
+        await alerts.handle(Chat.RoomCallChange(chatId: room, call: store.call(for: room)))
+
+        await alerts.returnToForeground()
+
+        #expect(notifications.removed == [ProductRoomCallAlerts.notificationIdentifier(room)])
+        #expect(surface.banners == [.init(title: "Lobby", subtitle: String(localized: .ChatCall.ringingTitle))])
+    }
+
+    /// PARITY row 40: the foreground notification of the app starts the same change. A room whose screen is in front
+    /// loses its notification and shows no banner.
+    @Test func theForegroundNotificationShowsTheBannerOfARoomThatIsNotInFront() async {
+        surface.isInBackground = true
+        let center = NotificationCenter()
+        let alerts = makeAlerts(notificationCenter: center)
+        let other = Chat.Id.chatExtension("game.dot", roomId: "other")
+        await alerts.handle(Chat.RoomCallChange(chatId: room, call: .ringing(callId: "c1", video: false, caller: nil)))
+        await alerts.handle(Chat.RoomCallChange(chatId: other, call: .ringing(callId: "c2", video: false, caller: nil)))
+        store.set(.ringing(callId: "c1", video: false, caller: nil), for: room)
+        store.set(.ringing(callId: "c2", video: false, caller: nil), for: other)
+        surface.roomInFront = other
+
+        center.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        for _ in 0 ..< 400 where notifications.removed.count < 2 || surface.banners.isEmpty {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(Set(notifications.removed) == Set([room, other].map(ProductRoomCallAlerts.notificationIdentifier)))
+        #expect(surface.banners == [.init(title: "Lobby", subtitle: String(localized: .ChatCall.ringingTitle))])
+    }
+
     @Test func theRoomLinkEscapesTheRoomId() {
         #expect(ProductRoomCallAlerts.roomLink(productId: "game.dot", roomId: "a b")
             == "polkadot://game.dot/-/chat/a%20b")
     }
 
-    private func makeAlerts() -> ProductRoomCallAlerts {
+    private func makeAlerts(notificationCenter: NotificationCenter = NotificationCenter()) -> ProductRoomCallAlerts {
         let alerts = ProductRoomCallAlerts(
             store: store,
             notifications: notifications,
             roomName: { _ in "Lobby" },
             logger: StubLogger()
         )
-        alerts.start(surface: surface, notificationCenter: NotificationCenter())
+        alerts.start(surface: surface, notificationCenter: notificationCenter)
         return alerts
     }
 }

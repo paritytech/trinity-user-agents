@@ -450,6 +450,26 @@ private let productId = "product.dot"
 private let roomId = "lobby"
 
 extension ProductMessageSourceTests {
+    /// PARITY row 23 (S66): a page records which messages of the product are `Preparing`, so a reasoning row of
+    /// a room that opens again reads "Thinking". A message of the user is not recorded.
+    @Test func aPageRecordsThePreparingMessagesOfTheProduct() async {
+        let preparing = ChatPreparingMessageStore()
+        let chatId = Chat.Id.chatExtension(productId, roomId: roomId)
+        preparing.setPreparing(true, productMessageId: "done", chatId: chatId)
+        let querying = ScriptedProductChatQuerying(page: { _ in
+            .init(messages: [
+                productMessage(1, id: "done"),
+                productMessage(2, id: "thinking", status: .preparing),
+                productMessage(3, id: "mine", origin: "user", status: .preparing)
+            ], next: nil)
+        })
+        let source = makeSource(querying, preparing: preparing)
+
+        await open(source)
+
+        #expect(preparing.preparingMessageIds(in: chatId) == ["thinking"])
+    }
+
     /// P7.3: the worker ends while a send waits for its answer (06-OPEN-ITEMS O26). The send fails, the room is
     /// unavailable, and the window keeps the messages that it has.
     @Test func aSendWhoseWorkerEndsFailsAndTheRoomKeepsItsMessages() async throws {
@@ -473,7 +493,8 @@ extension ProductMessageSourceTests {
 private func makeSource(
     _ querying: ScriptedProductChatQuerying,
     cache: ProductMessageCache = ProductMessageCache(),
-    reportsSeen: Bool = false
+    reportsSeen: Bool = false,
+    preparing: ChatPreparingMessageTracking? = nil
 ) -> ProductMessageSource {
     ProductMessageSource(
         chatId: .chatExtension(productId, roomId: roomId),
@@ -483,6 +504,7 @@ private func makeSource(
         cache: cache,
         settings: .init(retryDelay: .milliseconds(1), reportsSeen: reportsSeen),
         now: { 1_000_000 },
+        preparingMessages: preparing,
         logger: StubLogger()
     )
 }

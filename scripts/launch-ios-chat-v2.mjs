@@ -108,6 +108,7 @@ const NAVIGATIONS = [
   "archived",
   "search-open",
   "search-select",
+  "dismiss",
 ];
 
 /** `TRUAPI_IOS_E2E_ONLY=S3,S4` drives these scenarios only, to work on one row. */

@@ -52,6 +52,48 @@ struct ChatRoomUserStateServiceTests {
         ])
     }
 
+    /// PARITY row 24: a change that changes nothing stores nothing and does not tell the product.
+    @Test func aChangeThatChangesNothingIsNotPublished() async throws {
+        try await createRoom()
+        let service = service()
+
+        try await service.unmute(fixture.chatId("lobby"))
+        try await service.setArchived(false, for: fixture.chatId("lobby"))
+        try await service.setArchived(true, for: fixture.chatId("lobby"))
+        try await service.setArchived(true, for: fixture.chatId("lobby"))
+
+        #expect(publisher.events.map(\.event) == [
+            .userStateChanged(Chat.RoomUserState(mutedUntil: nil, archived: true))
+        ])
+    }
+
+    /// PARITY row 24: the next change removes a mute that ended, so the product does not get an old end time.
+    @Test func theNextChangeRemovesAMuteThatEnded() async throws {
+        try await createRoom()
+        try await service(now: Self.now.addingTimeInterval(-7_200)).mute(fixture.chatId("lobby"), for: .oneHour)
+
+        try await service().setArchived(true, for: fixture.chatId("lobby"))
+
+        let expected = Chat.RoomUserState(mutedUntil: nil, archived: true)
+        #expect(try await service().state(of: fixture.chatId("lobby")) == expected)
+        #expect(publisher.events.last?.event == .userStateChanged(expected))
+    }
+
+    /// PARITY row 24: changes that start together run one after the other, so no change loses the other half.
+    @Test func changesThatStartTogetherKeepEachOther() async throws {
+        try await createRoom()
+        let service = service()
+        let chatId = fixture.chatId("lobby")
+
+        async let muted: Void = service.mute(chatId, for: .always)
+        async let archived: Void = service.setArchived(true, for: chatId)
+        _ = try await (muted, archived)
+
+        let expected = Chat.RoomUserState(mutedUntil: Chat.RoomUserState.mutedForever, archived: true)
+        #expect(try await service.state(of: chatId) == expected)
+        #expect(publisher.events.count == 2)
+    }
+
     @Test func aRoomThatTheAppDoesNotStoreHasTheDefaultState() async throws {
         #expect(try await service().state(of: fixture.chatId("missing")) == .default)
     }
@@ -144,7 +186,7 @@ private extension ChatRoomUserStateServiceTests {
         _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "lobby", name: "Lobby", icon: nil)
     }
 
-    func service() -> ChatRoomUserStateService {
+    func service(now: Date = Self.now) -> ChatRoomUserStateService {
         ChatRoomUserStateService(
             reader: ChatRoomUserStateReader(storageFacade: fixture.storageFacade),
             recorder: ChatRoomUserStateRecorder(
@@ -152,7 +194,7 @@ private extension ChatRoomUserStateServiceTests {
                 publisher: publisher,
                 logger: StubLogger()
             ),
-            now: { Self.now }
+            now: { now }
         )
     }
 

@@ -52,8 +52,10 @@ enum ProductStageFailure: Error, Equatable, Sendable {
 protocol ProductAttachmentStaging: Sendable {
     /// Stages the bytes and gives the preimage key. Throws ``ProductStageFailure``.
     func stage(productId: String, roomId: String, mimeType: String, bytes: Data) async throws -> Data
-    /// Keeps the worker of the product while the host stages and sends, also after the room screen closes.
-    func holdWorker(productId: String)
+    /// Keeps the worker of the product while the host stages and sends, also after the room screen closes. Returns
+    /// when the worker runs, or after a bound. The core reads the declaration of the room through the open execution
+    /// (D36), so a stage before the worker runs can fail with `NotDeclared`.
+    func holdWorker(productId: String) async
     func releaseWorker(productId: String)
 }
 
@@ -272,7 +274,7 @@ private extension ProductAttachmentStager {
         await delivery.show(entry, preview: preview)
         emit(.changed(entry, preview: preview))
 
-        staging.holdWorker(productId: entry.productId)
+        await staging.holdWorker(productId: entry.productId)
         defer { staging.releaseWorker(productId: entry.productId) }
 
         do {

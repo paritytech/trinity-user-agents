@@ -67,6 +67,8 @@
  * `{file:<name>}` a file the launcher put in the app's tmp directory.
  */
 const SOURCE = "source";
+/** A text of the user over the 3,000 characters after which a product text collapses (02-DESIGN §6.1). */
+const LONG_TEXT = "Show more ".repeat(320).trim();
 
 /** How long a staged attachment has to reach the live Bulletin chain. */
 const STAGING_TIMEOUT_MS = 180_000;
@@ -115,7 +117,7 @@ export const IOS_CHAT_FEATURE_ROWS = Object.freeze({
   commands: ["S39"],
   activity: ["S40"],
   // S49 itself also checks that a Custom body reaches the renderer.
-  custom_bodies: ["S7"],
+  custom_bodies: ["S7", "S7m", "S7t"],
   custom_footer: ["S35"],
   inline_attachments: ["S36"],
   room_links: ["S27", "S24"],
@@ -311,6 +313,97 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
             { contentType: 247, added: 4 },
             { contentType: 252, added: 1 },
           ],
+        },
+      ],
+    },
+  },
+  {
+    id: "S7m",
+    title:
+      "a tap opens product media: an image full screen, a video in the player, a file in the document preview; a missing preimage opens nothing, so the bubble offers Retry",
+    mode: "host",
+    phase: "P4",
+    drive: {
+      // PARITY row 4. `/post rich` asks for PreimageSubmit and tries to
+      // store its second image first, so the harness waits for the message.
+      // The harness identity has no Bulletin allowance, so the second image
+      // is a preimage that no lookup finds. Each `media` marker names what
+      // the tap did, and the `presented` marker names the screen in front
+      // after it. The count of new product bodies is since the row started, and
+      // the window marker shows that the screen drew the new body.
+      phases: [
+        {
+          steps: ["/post rich"],
+          expect: [
+            { contentType: 247, added: 1, timeoutMs: 120_000 },
+            { ui: "window", match: ":in-[a-z]+:productBody$" },
+          ],
+        },
+        {
+          steps: [{ host: "media", target: "{lastProduct}", argument: "0" }],
+          expect: [
+            { ui: "media", match: "^image opened media\\.png$" },
+            { ui: "presented", match: "QLPreviewController" },
+          ],
+          shot: "image",
+        },
+        {
+          steps: [
+            { host: "dismiss" },
+            { host: "media", target: "{lastProduct}", argument: "1" },
+          ],
+          expect: [
+            { ui: "media", match: "^image failed$", timeoutMs: 180_000 },
+          ],
+          shot: "retry",
+        },
+        {
+          steps: ["/post video"],
+          expect: [{ contentType: 247, added: 2 }, { ui: "window", match: ":in-[a-z]+:productBody$" }],
+        },
+        {
+          steps: [{ host: "media", target: "{lastProduct}", argument: "0" }],
+          expect: [
+            { ui: "media", match: "^video opened media\\.mp4$" },
+            { ui: "presented", match: "PlayerViewController" },
+          ],
+          shot: "video",
+        },
+        {
+          steps: [{ host: "dismiss" }, "/post file"],
+          expect: [{ contentType: 247, added: 3 }, { ui: "window", match: ":in-[a-z]+:productBody$" }],
+        },
+        {
+          steps: [{ host: "media", target: "{lastProduct}", argument: "0" }],
+          expect: [
+            { ui: "media", match: "^file opened sample\\.pdf$" },
+            { ui: "presented", match: "^(?!none$)" },
+          ],
+          shot: "file",
+        },
+      ],
+      after: [{ host: "dismiss" }],
+    },
+  },
+  {
+    id: "S7t",
+    title:
+      "a product Text draws plain, and a text over 3,000 characters shows Show more until the user expands it",
+    mode: "host",
+    phase: "P4",
+    drive: {
+      // PARITY rows 3 and 5. The text of the user in a product room is a
+      // `Text` body too, so the harness sends the long text itself.
+      phases: [
+        {
+          steps: [{ host: "send", argument: LONG_TEXT }, { wait: 1_500 }],
+          expect: [{ ui: "text-{lastUser}", match: "^collapsed$" }],
+          shot: "collapsed",
+        },
+        {
+          steps: [{ host: "show-more", target: "{memory:lastUser}" }],
+          expect: [{ ui: "text-{memory:lastUser}", match: "^expanded$" }],
+          shot: "expanded",
         },
       ],
     },
@@ -1043,15 +1136,10 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
       phases: [
         {
           // The room asks the count when it opens and when its
-          // configuration changes. `/participants` keeps the configuration
-          // when the room declares participants already, so the room opens
-          // again.
-          steps: [
-            "/participants 6",
-            { host: "list" },
-            { host: "open" },
-            { wait: 1_000 },
-          ],
+          // configuration generation changes. Each `set_room_config` starts a
+          // new generation (02-DESIGN §8.2, O9), also when `/participants`
+          // keeps the configuration, so the open room asks again.
+          steps: ["/participants 6", { wait: 1_000 }],
           expect: [
             { ui: "header", match: "^10 participants$" },
             { ui: "author-p1", match: "Person #1" },
@@ -1239,13 +1327,22 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     drive: {
       // The first phase opens the room screen, and then no step opens it
       // again. Each `set_room_config` writes a new generation, and the open
-      // screen draws the new policy.
+      // screen draws the new policy. The last phase sends the same
+      // configuration again: the policy marker repeats only when its value
+      // changes, so a new marker is a new generation (O9).
       phases: [
         {
           steps: [{ host: "list" }, { host: "open" }, "/allowed 👍"],
           expect: [
             { console: "[e2e:ui] policy host generation=" },
             { ui: "allowed", match: "^👍$" },
+          ],
+        },
+        {
+          steps: ["/allowed"],
+          expect: [
+            { console: "[e2e:ui] policy host generation=" },
+            { ui: "allowed", match: "^all$" },
           ],
         },
         {
