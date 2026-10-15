@@ -101,8 +101,11 @@ enum ProductRoomScreens {
 
     private static var entries: [Entry] = []
 
+    /// Records a room screen that opens. The in-app banner of its room goes away, because the user sees the call
+    /// in the room. For example, a tap on the local notification brings the app back and opens the room.
     static func register(_ presenter: ChatProductRoomPresenter) {
         entries = entries.filter { $0.presenter != nil } + [Entry(presenter)]
+        ProductRoomCallWindowSurface.shared.hideBanner(for: presenter.chatId)
     }
 
     /// True when a screen of the room is in a window and not hidden. A navigation stack takes the view of a screen

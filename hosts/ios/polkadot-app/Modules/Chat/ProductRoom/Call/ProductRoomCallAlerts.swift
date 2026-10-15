@@ -38,7 +38,8 @@ struct ProductRoomCallNotification: Equatable {
 
 /// The alerts of a ringing product room outside its room screen (07-LATER §11.2, scenario S73): an in-app banner when
 /// another screen of the app is in front, and a time-sensitive local notification when the app is in the background.
-/// A ringing call that is in the store when the app goes to the background also gets the notification.
+/// A ringing call that is in the store when the app goes to the background also gets the notification. When the app
+/// comes back to the foreground, the notification of a room that still rings goes away and the in-app banner shows.
 ///
 /// A product rings only while its worker runs, so a room of a closed app does not ring (no CallKit, D31).
 @MainActor
@@ -90,6 +91,16 @@ final class ProductRoomCallAlerts {
                     guard let self else { return }
                     Task { await self.notifyRingingRooms() }
                 }
+            },
+            notificationCenter.addObserver(
+                forName: UIApplication.willEnterForegroundNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    Task { await self.returnToForeground() }
+                }
             }
         ]
     }
@@ -111,20 +122,23 @@ final class ProductRoomCallAlerts {
 
         if surface.isInBackground {
             await notify(change.chatId, callId: callId, video: video)
-        } else if surface.showsRoom(change.chatId) {
-            mark(change.chatId, "room \(callId)")
         } else {
-            let title = await roomName(change.chatId) ?? change.chatId.extensionId ?? ""
-            guard case .ringing = store.call(for: change.chatId) else { return }
-            surface.showBanner(
-                title: title,
-                subtitle: ChatRoomCallViewModel.ringingTitle(video: video),
-                for: change.chatId
-            ) { [weak surface, chatId = change.chatId] in
-                surface?.hideBanner(for: chatId)
-                surface?.openRoom(chatId)
+            await showInApp(change.chatId, callId: callId, video: video)
+        }
+    }
+
+    /// Removes the local notification of each ringing room and shows the in-app banner, because the app came back
+    /// to the foreground (PARITY row 40). The app is still in the background when it tells this, so the alerts do
+    /// not read the state of the app here.
+    func returnToForeground() async {
+        for change in store.allCalls() {
+            guard case let .ringing(callId, video, _) = change.call else {
+                continue
             }
-            mark(change.chatId, "banner \(callId)")
+            if notified.removeValue(forKey: change.chatId) != nil {
+                notifications.remove(identifier: Self.notificationIdentifier(change.chatId))
+            }
+            await showInApp(change.chatId, callId: callId, video: video)
         }
     }
 
@@ -141,6 +155,28 @@ final class ProductRoomCallAlerts {
 }
 
 private extension ProductRoomCallAlerts {
+    /// Shows the in-app banner of a ringing room, or nothing when the screen of the room is in front.
+    func showInApp(_ chatId: Chat.Id, callId: String, video: Bool) async {
+        guard let surface else { return }
+
+        guard !surface.showsRoom(chatId) else {
+            mark(chatId, "room \(callId)")
+            return
+        }
+
+        let title = await roomName(chatId) ?? chatId.extensionId ?? ""
+        guard case .ringing = store.call(for: chatId) else { return }
+        surface.showBanner(
+            title: title,
+            subtitle: ChatRoomCallViewModel.ringingTitle(video: video),
+            for: chatId
+        ) { [weak surface] in
+            surface?.hideBanner(for: chatId)
+            surface?.openRoom(chatId)
+        }
+        mark(chatId, "banner \(callId)")
+    }
+
     func notify(_ chatId: Chat.Id, callId: String, video: Bool) async {
         guard let productId = chatId.extensionId, let roomId = chatId.roomId, notified[chatId] != callId else {
             return
