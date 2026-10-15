@@ -73,7 +73,8 @@ row format of the iOS report.
 
 | Kind       | Scenarios                                                                        | Row                                           |
 | ---------- | -------------------------------------------------------------------------------- | --------------------------------------------- |
-| Driven     | S1 to S4, S6 to S14 and S49 (`host` room), S11, S15 to S24 and S46 (`source` room) | `pass`, or `fail` with the first failed check |
+| Driven     | S1 to S4, S6 to S14, S49, S54, S55 and S61 (`host` room), S11, S15 to S24 and S46 (`source` room), S56 and S63 (both rooms) | `pass`, or `fail` with the first failed check |
+| Not driven | S62                                                                              | `skip: needs P10.5.1 sample`                  |
 | Not driven | S5 (the sample has no command that calls `delete_room`)                          | `skip` with that reason                       |
 | Not driven | S25 to S41                                                                       | `skip: needs P8.6`                            |
 | Not driven | S44, S47                                                                         | `skip: needs P8.8`                            |
@@ -97,6 +98,11 @@ the app. The launcher fails when a driven row fails or has no row.
 | S12–S14  | `/echo`, then send, reply, edit, react, delete from the menu; the Actions press; `/commands`, then `/help` as `Command`                      |
 | S4, S6   | `/preview` variants in the chat list rows; the list with the product server stopped                                                          |
 | S49      | `/caps`: the stored answer has the names that the app logs (`truapi.chat.capabilities`), each with a row above, and the bounds 1 MiB and 0 |
+| S61      | the user sends "Crème brûlée at the CAFÉ", `/post all` pushes it out of the screen; the search action of the header finds it for "creme BRULEE" and "café", and a tap shows it in the feed |
+| S54      | a swipe to the end and "For 1 hour": `mutedUntil` in `chat_room_declarations`, `UserStateChanged` in the event log (the core keeps it until a message starts the worker), the speaker icon and the grey count in the row; `/notify` and `/notify 3` show nothing (`dumpsys notification`); after the unmute `/notify` shows one. Today the `/notify` part fails: the app refuses the notifications permission of a chat worker before the mute rule runs |
+| S55      | a swipe to the start: the "Archived" row and no room row; the room stays archived after `/post text`; the archived section shows it, and a swipe there brings it back |
+| S56      | the host room muted always and the source room archived, the app restarted: the first room events of the new worker are both `UserStateChanged` |
+| S63      | with no worker page, the list search shows both rooms for "Sample", the host message for "crème", nothing for a text that only the source product keeps, and no worker starts |
 
 ## Troubleshooting
 
