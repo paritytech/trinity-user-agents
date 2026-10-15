@@ -23,6 +23,59 @@ import { parseUiMarkers } from "./ios-chat-v2-scenarios.mjs";
 import { userDataDatabase } from "./ios-simulator.mjs";
 import { captureOptional, delay, waitFor } from "./process.mjs";
 
+/**
+ * The text of a stored message (`ZCDMESSAGECONTENT.ZDATA`, the SCALE
+ * `ChatMessageContent`, in hex): the text of a `Text` message, or the text of
+ * an `Actions` message (a message with buttons, such as a contact request)
+ * followed by its action ids in brackets. Other kinds give undefined.
+ */
+export function decodeMessageText(hex) {
+  const encoded = Buffer.from(hex, "hex");
+  if (encoded[0] === 0) return decodeTextMessage(hex);
+  // `Actions(ChatActions { text: Option<String>, actions, layout })`.
+  if (encoded[0] !== 2) return undefined;
+  let offset = 1;
+  let text = "";
+  if (encoded[offset] === 1) {
+    [text, offset] = string(encoded, offset + 1);
+  } else {
+    offset += 1;
+  }
+  // Each `ChatAction` is `{ action_id: String, title: String }`.
+  const count = compact(encoded, offset);
+  offset += count.bytes;
+  const ids = [];
+  for (let index = 0; index < count.value; index += 1) {
+    const [id, afterId] = string(encoded, offset);
+    const [, afterTitle] = string(encoded, afterId);
+    ids.push(id);
+    offset = afterTitle;
+  }
+  return ids.length > 0 ? `${text} [${ids.join(", ")}]` : text;
+}
+
+/** The SCALE `String` at `offset`, and the offset after it. */
+function string(encoded, offset) {
+  const length = compact(encoded, offset);
+  const start = offset + length.bytes;
+  return [
+    encoded.subarray(start, start + length.value).toString("utf8"),
+    start + length.value,
+  ];
+}
+
+function compact(encoded, offset) {
+  const first = encoded[offset];
+  const mode = first & 0b11;
+  if (mode === 0) return { value: first >> 2, bytes: 1 };
+  if (mode === 1) return { value: encoded.readUInt16LE(offset) >> 2, bytes: 2 };
+  if (mode === 2)
+    return { value: encoded.readUInt32LE(offset) >>> 2, bytes: 4 };
+  throw new Error(
+    "a SCALE compact value this large is not expected in a message",
+  );
+}
+
 /** The users of a run, one for each simulator. */
 export const USERS = ["a", "b"];
 
@@ -242,7 +295,7 @@ export class SimulatorUser {
     return (values ?? "")
       .split(/\r?\n/)
       .filter(Boolean)
-      .map((value) => decodeTextMessage(value))
+      .map((value) => decodeMessageText(value))
       .filter((text) => text !== undefined);
   }
 

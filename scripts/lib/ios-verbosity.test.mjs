@@ -9,6 +9,7 @@ import { test } from "node:test";
 
 import {
   WORKER_MANIFEST,
+  decodeMessageText,
   launchEnvironment,
   readIdentity,
 } from "./ios-verbosity.mjs";
@@ -93,4 +94,46 @@ test("the hold of the harness stays an option", () => {
     holdWorker: true,
   });
   assert.equal(environment.SIMCTL_CHILD_TRUAPI_IOS_E2E_HOLD_WORKER, "1");
+});
+
+/** The SCALE `String` of `text` (short texts only). */
+function scaleString(text) {
+  const bytes = Buffer.from(text, "utf8");
+  return Buffer.concat([Buffer.from([bytes.length << 2]), bytes]);
+}
+
+test("a text message reads as its text", () => {
+  const hex = Buffer.concat([Buffer.from([0]), scaleString("hello")]).toString(
+    "hex",
+  );
+  assert.equal(decodeMessageText(hex), "hello");
+});
+
+test("a message with buttons reads as its text and its action ids", () => {
+  const hex = Buffer.concat([
+    Buffer.from([2, 1]),
+    scaleString("bob wants to connect"),
+    Buffer.from([2 << 2]),
+    scaleString("accept"),
+    scaleString("Accept"),
+    scaleString("reject"),
+    scaleString("Reject"),
+    Buffer.from([1]),
+  ]).toString("hex");
+  assert.equal(decodeMessageText(hex), "bob wants to connect [accept, reject]");
+});
+
+test("a message with buttons and no text reads as its action ids", () => {
+  const hex = Buffer.concat([
+    Buffer.from([2, 0]),
+    Buffer.from([1 << 2]),
+    scaleString("ok"),
+    scaleString("OK"),
+    Buffer.from([0]),
+  ]).toString("hex");
+  assert.equal(decodeMessageText(hex), " [ok]");
+});
+
+test("other kinds of message have no text", () => {
+  assert.equal(decodeMessageText("06"), undefined);
 });

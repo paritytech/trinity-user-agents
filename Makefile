@@ -244,8 +244,8 @@ ios-chat-v2-run: ios-build ## Run the Chat Extension v2 sample product (playgrou
 	TRUAPI_IOS_E2E_BUNDLE="$(IOS_BUNDLE)" \
 	node scripts/launch-ios-chat-v2.mjs
 
-ios-verbosity-run: ## Run the wasm chat product in TRUAPI_IOS_E2E_VERBOSITY_WASM on two iPhone simulators with live accounts (build the app first).
-	TRUAPI_IOS_E2E_APP="$(IOS_APP)" \
+ios-verbosity-run: ## Run the wasm chat product in TRUAPI_IOS_E2E_VERBOSITY_WASM on two iPhone simulators with live accounts (build the app first; TRUAPI_IOS_E2E_APP selects another app).
+	TRUAPI_IOS_E2E_APP="$(or $(TRUAPI_IOS_E2E_APP),$(IOS_APP))" \
 	TRUAPI_IOS_E2E_BUNDLE="$(IOS_BUNDLE)" \
 	node scripts/launch-ios-verbosity.mjs
 
