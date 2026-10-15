@@ -195,9 +195,10 @@ pub enum FundingUpdate {
 		/// The payout's outcome.
 		outcome: FundingPayout,
 	},
-	/// Outbound: after a failed payout, the provider started a top-up with
-	/// `payment.topUp` to give the user back what it holds. Allowed once.
-	/// The session records what the top-up claimed as refunded.
+	/// Outbound: after a failed payout, or a cancel the user accepted, the
+	/// provider started a top-up with `payment.topUp` to give the user back
+	/// what it holds. Allowed once. The session records what the top-up
+	/// claimed as refunded.
 	Refunding {
 		/// Id the top-up was started with.
 		top_up_id: [u8; 32],
@@ -207,6 +208,26 @@ pub enum FundingUpdate {
 	/// Outbound: a payout attempt failed and the provider is trying again.
 	/// Allowed after `Released` and before `Payout`, as often as it retries.
 	PayoutRetrying,
+	/// The provider will not cancel a session the user asked to cancel once
+	/// money moved. The session carries on. Outside the order of steps.
+	CancelRefused {
+		/// Why, shown to the user.
+		reason: String,
+	},
+	/// The provider can cancel a session the user asked to cancel once money
+	/// moved, on these terms. The user accepts or declines in the host, and
+	/// the provider hears which on its serve stream. After an accepted offer
+	/// it refunds an outbound session with `Refunding`, or ends an inbound
+	/// one with `Failed { Refunded }`. Outside the order of steps.
+	CancelOffer {
+		/// What the provider keeps, in the user's payment balance units.
+		fee: u128,
+		/// What the user gets back, in the user's payment balance units.
+		refund: u128,
+		/// When the offer lapses, in Unix milliseconds. A lapsed offer is
+		/// declined.
+		expires_at: Option<u64>,
+	},
 }
 
 /// How a provider's payout to the user went after an outbound session was
@@ -288,8 +309,9 @@ pub enum HostFundingServeSubscribeItem {
 		/// The session.
 		session: Box<FundingAssignment>,
 	},
-	/// The user asked to cancel a session. The provider reports `Failed`
-	/// with `Cancelled` if it can still stop.
+	/// The user asked to cancel a session. Before money moved the provider
+	/// reports `Failed` with `Cancelled` if it can still stop. After, it
+	/// answers with `CancelOffer` or `CancelRefused`.
 	Cancel {
 		/// Session to cancel.
 		intent: String,
@@ -301,6 +323,18 @@ pub enum HostFundingServeSubscribeItem {
 		ask_id: String,
 		/// What to price.
 		ask: FundingQuoteAsk,
+	},
+	/// The user accepted the provider's `CancelOffer`. The provider settles
+	/// the cancel: it refunds the user and ends the session.
+	CancelAccepted {
+		/// The session.
+		intent: String,
+	},
+	/// The user declined the provider's `CancelOffer`, or it lapsed. The
+	/// session carries on.
+	CancelDeclined {
+		/// The session.
+		intent: String,
 	},
 }
 
