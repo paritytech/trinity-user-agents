@@ -7,7 +7,7 @@ use crate::{
 		RemoteMessage, RemoteMessageData, SignRawWithLegacyAccountRequest, SignRequest, v1,
 	},
 	platform::SignRawReview,
-	runtime::{signing_host::sso_service::SigningHostSsoService, sso_service::Dispatch},
+	runtime::sso_service::Dispatch,
 };
 use parity_scale_codec::{Decode, Encode};
 use truapi::versioned::signing::{
@@ -86,7 +86,7 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
 			let (_, activation) = signing_runtime_with_platform(platform.clone());
 			futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
 				.unwrap();
-			let service = SigningHostSsoService::new(activation);
+			let service = activation.sso_responder().service_for_tests();
 			let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
 			let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
 			let product = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
@@ -129,7 +129,8 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
 				let request = SignRequest::decode(&mut encoded.as_slice()).unwrap();
 				RemoteMessage::request("proof".into(), request)
 			};
-			let Dispatch::Response(answer) = futures::executor::block_on(service.answer(message))
+			let Ok(Dispatch::Response(answer)) =
+				futures::executor::block_on(service.answer(message))
 			else {
 				panic!("expected signing response")
 			};

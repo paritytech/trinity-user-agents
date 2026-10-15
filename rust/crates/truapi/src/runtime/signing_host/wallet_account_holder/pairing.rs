@@ -16,6 +16,26 @@ use crate::{
 use parity_scale_codec::Encode;
 
 impl WalletAccountHolder {
+	/// Verify both keys of an externally owned SSO transport.
+	pub fn require_sso_identity(
+		&self,
+		session: &AuthoritySession,
+		statement_public_key: [u8; 32],
+		encryption_public_key: [u8; 32],
+	) -> Result<(), AuthorityError> {
+		self.with_keys(session, |keys| {
+			let (identity, _) = keys.responder_identity().map_err(product_authority_error)?;
+			if identity.statement_public_key != statement_public_key ||
+				identity.encryption_public_key != encryption_public_key
+			{
+				return Err(AuthorityError::Unavailable {
+					reason: "SSO transport identity does not match the active wallet".to_string(),
+				});
+			}
+			Ok(())
+		})
+	}
+
 	/// Derive transport material for a peer under the selected activation.
 	pub fn sso_session(
 		&self,

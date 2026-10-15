@@ -311,6 +311,59 @@ pub enum CreateTransactionAuthorityRequest {
 	IdentityAccount(LegacyAccountTxPayload),
 }
 
+impl SignPayloadAuthorityRequest {
+	/// Canonical review for this selected signing request.
+	pub fn review(&self, caller: AccountCaller<'_>) -> crate::platform::UserConfirmationReview {
+		use crate::platform::{SignPayloadReview, UserConfirmationReview};
+		UserConfirmationReview::SignPayload(match self {
+			Self::Product(request) => SignPayloadReview::Product {
+				calling_product_id: caller.product_id().map(str::to_string),
+				request: request.clone(),
+			},
+			Self::LegacyAccount { request, .. } => {
+				SignPayloadReview::LegacyAccount(request.clone())
+			},
+		})
+	}
+}
+
+impl SignRawAuthorityRequest {
+	/// Canonical review, including the original legacy request and watermark.
+	pub fn review(
+		&self,
+		caller: AccountCaller<'_>,
+		watermarked: bool,
+	) -> crate::platform::UserConfirmationReview {
+		use crate::platform::{SignRawReview, UserConfirmationReview};
+		UserConfirmationReview::SignRaw(match self {
+			Self::Product(request) => SignRawReview::Product {
+				calling_product_id: caller.product_id().map(str::to_string),
+				request: request.clone(),
+				watermarked,
+			},
+			Self::LegacyAccount { request, .. } => {
+				SignRawReview::LegacyAccount { request: request.clone(), watermarked }
+			},
+		})
+	}
+}
+
+impl CreateTransactionAuthorityRequest {
+	/// Canonical review for a transaction, including resolved contact data.
+	pub fn review(&self, caller: AccountCaller<'_>) -> crate::platform::UserConfirmationReview {
+		use crate::platform::{CreateTransactionReview, UserConfirmationReview};
+		UserConfirmationReview::CreateTransaction(match self {
+			Self::Product(payload) => CreateTransactionReview::Product {
+				calling_product_id: caller.product_id().map(str::to_string),
+				payload: payload.clone(),
+			},
+			Self::LegacyAccount { request, .. } | Self::IdentityAccount(request) => {
+				CreateTransactionReview::LegacyAccount(request.clone())
+			},
+		})
+	}
+}
+
 /// Whether blessed `calling_product_id` is using its own account, `owner`.
 pub(crate) fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
 	use crate::platform::{has_trusted_remote_permissions, normalize_product_identifier};
