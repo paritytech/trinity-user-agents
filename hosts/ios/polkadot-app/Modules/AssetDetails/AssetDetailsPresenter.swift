@@ -138,7 +138,6 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
     func didReceive(coinageAmounts: CoinageAmounts, holdings: CoinageHoldings) {
         self.coinageAmounts = coinageAmounts
         self.holdings = holdings
-        FundingActivityCenter.shared.spendable = coinageAmounts.availableNow
         provideAssetBalance()
         provideCoinageBreakdown()
     }

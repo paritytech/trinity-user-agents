@@ -14,7 +14,7 @@ final class SearchAccountPresenter {
     private var addressInputViewModel = InputViewModel.createAccountInputViewModel(for: "")
     private let recipientViewModelFactory: RecipientViewModelFactoryProtocol
     private var currentSearch = CurrentSearch(query: "", latestResult: nil, didReceiveWaiting: false)
-    private var showsSelfTransfer = true
+    private var showsSelfTransfer = FundingAvailability.isAvailable
     private var lastContent: SearchAccountViewModel.Content = .empty
 
     init(
@@ -89,7 +89,7 @@ extension SearchAccountPresenter: SearchAccountPresenterProtocol {
     func searchAccount(_ account: String?) {
         let query = account?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         currentSearch = CurrentSearch(query: query, latestResult: nil, didReceiveWaiting: false)
-        showsSelfTransfer = query.isEmpty
+        showsSelfTransfer = FundingAvailability.isAvailable && query.isEmpty
         refreshSelfTransferVisibility()
         interactor.searchAccount(for: account)
     }

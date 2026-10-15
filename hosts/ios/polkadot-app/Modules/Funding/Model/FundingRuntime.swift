@@ -13,6 +13,13 @@ protocol FundingRuntime: AnyObject, Sendable {
     func getFundingQuote(intent: String, ask: FundingQuoteAsk) -> UInt64
     func stopFundingQuotes(intent: String)
     func fundingCountries(intent: String, rail: FundingRail, asset: String) -> [FundingCountry]
+    func fundingAmountLimits(
+        intent: String,
+        rail: FundingRail,
+        asset: String,
+        network: String?,
+        country: String?
+    ) -> FundingAmountLimits
     func detectedFundingCountry() async -> String?
     func selectFundingProvider(intent: String, providerId: String, quoteId: String?) async throws -> Bool
     func cancelFunding(intent: String) async throws -> Bool

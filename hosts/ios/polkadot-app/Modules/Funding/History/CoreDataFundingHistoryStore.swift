@@ -1,21 +1,36 @@
 import CoreData
 import Foundation
 import Operation_iOS
+import StructuredConcurrency
 import TrUAPIHost
 
 /// The host's funding history, one row per ended session, keyed by its id so
-/// writing a session again updates its row.
+/// writing a session again updates its row. A row that does not read is
+/// skipped and logged, so it cannot take the rest of the history with it.
 final class CoreDataFundingHistoryStore: FundingHistoryStoring, @unchecked Sendable {
     private let repository: AnyDataProviderRepository<FundingRecord>
+    private let databaseService: CoreDataServiceProtocol
 
     init(storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared) {
         repository = AnyDataProviderRepository(
             storageFacade.createRepository(mapper: AnyCoreDataMapper(FundingRecordMapper()))
         )
+        databaseService = storageFacade.databaseService
     }
 
     func records() async throws -> [FundingRecord] {
-        try await repository.fetchAllOperation(with: RepositoryFetchOptions()).asyncExecute()
+        try await databaseService.performRead { context in
+            let mapper = FundingRecordMapper()
+            let entities = try context.fetch(NSFetchRequest<CDFundingRecord>(entityName: "CDFundingRecord"))
+            return entities.compactMap { entity in
+                do {
+                    return try mapper.transform(entity: entity)
+                } catch {
+                    Logger.shared.error("[funding] skipped history row \(entity.identifier ?? "?"): \(error)")
+                    return nil
+                }
+            }
+        }
     }
 
     func save(_ record: FundingRecord) async throws {
@@ -58,6 +73,7 @@ extension FundingRecordMapper: CoreDataMapperProtocol {
             settledAmount: entity.settledAmount,
             paidAmount: entity.paidAmount,
             paidAsset: entity.paidAsset,
+            paidDecimals: entity.paidDecimals.map(\.uint8Value),
             paidNetwork: entity.paidNetwork,
             outcome: outcome,
             payout: entity.payout.flatMap { FundingRecord.Payout(storageValue: $0, reason: entity.payoutReason) },
@@ -79,6 +95,7 @@ extension FundingRecordMapper: CoreDataMapperProtocol {
         entity.settledAmount = model.settledAmount
         entity.paidAmount = model.paidAmount
         entity.paidAsset = model.paidAsset
+        entity.paidDecimals = model.paidDecimals.map { NSNumber(value: $0) }
         entity.paidNetwork = model.paidNetwork
         entity.outcome = model.outcome.storageValue
         entity.failureCode = model.outcome.failure?.code

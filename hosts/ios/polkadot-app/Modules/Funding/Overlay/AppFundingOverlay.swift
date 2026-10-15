@@ -7,8 +7,9 @@ import UIKit
 @MainActor
 protocol FundingOverlayEnvironment: AnyObject {
     var cash: FundingCash { get }
-    /// What the user can spend now, for the withdraw screen's balance check.
-    var spendable: Decimal? { get }
+    /// What a payment can spend now, for the withdraw screen's balance
+    /// check; `nil` when the balance cannot be read.
+    func spendable() async -> Decimal?
     var branding: FundingProviderBranding { get }
 
     /// Presents over whatever is on screen; false when nothing is.
@@ -52,7 +53,7 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
 
     func fundingSessionChanged(intent: String, status _: HostFundingStatusSubscribeItem) {
         if let runtime {
-            Task.detached { await FundingResumeMarker.record(runtime) }
+            FundingResumeMarker.record(runtime)
         }
         Task { @MainActor in coordinator?.sessionChanged(intent: intent) }
     }
@@ -113,18 +114,26 @@ final class FundingOverlayCoordinator {
         self.environment = environment
     }
 
+    /// Answers `.dismissed` and takes the sheet down if the core stops
+    /// waiting first.
     func presentFunding(intent: String, direction: FundingDirection, amount: U128?) async -> FundingPresentOutcome {
-        guard let model = makeModel(intent: intent, direction: direction, amount: amount) else { return .dismissed }
+        guard !Task.isCancelled,
+              let model = makeModel(intent: intent, direction: direction, amount: amount)
+        else { return .dismissed }
 
-        return await withCheckedContinuation { continuation in
-            var answered = false
-            model.onOutcome = { outcome in
-                guard !answered else { return }
-                answered = true
-                continuation.resume(returning: outcome)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                var answered = false
+                model.onOutcome = { outcome in
+                    guard !answered else { return }
+                    answered = true
+                    continuation.resume(returning: outcome)
+                }
+
+                presentSheet(for: model)
             }
-
-            presentSheet(for: model)
+        } onCancel: {
+            Task { @MainActor [weak model] in model?.close() }
         }
     }
 
@@ -162,27 +171,33 @@ final class FundingOverlayCoordinator {
         _ = environment.present(sheet)
     }
 
+    /// Answers `.dismissed` and takes the frame down if the core stops
+    /// waiting first.
     func presentFrame(providerId: String, intent: String, route: String) async -> FundingFrameOutcome {
         let brand = await environment.branding.brand(for: providerId)
-        guard let page = environment.providerPage(providerId: providerId, route: route, title: brand.name) else {
-            return .dismissed
-        }
+        guard !Task.isCancelled,
+              let page = environment.providerPage(providerId: providerId, route: route, title: brand.name)
+        else { return .dismissed }
 
         let rail = flows[intent]?.rail ?? runtime?.fundingSession(intent: intent)?.choice?.rail ?? .card
 
-        return await withCheckedContinuation { continuation in
-            let frame = FundingProviderFrameController(
-                page: page,
-                showsSentFunds: rail == .bank
-            ) { [weak self] outcome in
-                self?.frames[intent] = nil
-                continuation.resume(returning: outcome)
-            }
-            frames[intent] = frame
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let frame = FundingProviderFrameController(
+                    page: page,
+                    showsSentFunds: rail == .bank
+                ) { [weak self] outcome in
+                    self?.frames[intent] = nil
+                    continuation.resume(returning: outcome)
+                }
+                frames[intent] = frame
 
-            if !environment.present(frame) {
-                frame.finish(.dismissed)
+                if !environment.present(frame) {
+                    frame.finish(.dismissed)
+                }
             }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.frames[intent]?.finish(.dismissed) }
         }
     }
 
@@ -190,17 +205,24 @@ final class FundingOverlayCoordinator {
     /// `.returned` when it reaches `returnUrl` and `.dismissed` when the user
     /// closes it.
     func presentPage(url: String, returnUrl: String?) async -> FundingFrameOutcome {
-        guard let pageURL = URL(string: url) else { return .dismissed }
+        guard !Task.isCancelled, let pageURL = URL(string: url) else { return .dismissed }
 
-        return await withCheckedContinuation { continuation in
-            let page = FundingWebPageController(
-                url: pageURL,
-                returnURL: returnUrl.flatMap(URL.init(string:)),
-                completion: continuation.resume(returning:)
-            )
-            if !environment.present(page) {
-                page.finish(.dismissed)
+        let presented = PresentedPage()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let page = FundingWebPageController(
+                    url: pageURL,
+                    returnURL: returnUrl.flatMap(URL.init(string:))
+                ) { outcome in
+                    continuation.resume(returning: outcome)
+                }
+                presented.controller = page
+                if !environment.present(page) {
+                    page.finish(.dismissed)
+                }
             }
+        } onCancel: {
+            Task { @MainActor in presented.controller?.finish(.dismissed) }
         }
     }
 
@@ -221,17 +243,23 @@ private extension FundingOverlayCoordinator {
     func makeModel(intent: String, direction: FundingDirection, amount: U128?) -> FundingFlowModel? {
         guard let runtime else { return nil }
 
-        return FundingFlowModel(
+        let model = FundingFlowModel(
             context: .init(
                 intent: intent,
                 direction: direction,
                 amount: amount,
-                cash: environment.cash,
-                spendable: environment.spendable
+                cash: environment.cash
             ),
             runtime: runtime,
             branding: environment.branding
         )
+        if direction == .out {
+            Task { [environment, weak model] in
+                let spendable = await environment.spendable()
+                model?.spendable = spendable
+            }
+        }
+        return model
     }
 
     func presentSheet(for model: FundingFlowModel, onAppear: (() -> Void)? = nil) {
@@ -382,4 +410,11 @@ private extension UIViewController {
         sheetPresentationController?.prefersGrabberVisible = true
         sheetPresentationController?.preferredCornerRadius = 32
     }
+}
+
+/// The page a ``FundingOverlayCoordinator/presentPage(url:returnUrl:)`` call
+/// shows, for its cancellation to take down.
+@MainActor
+private final class PresentedPage: Sendable {
+    weak var controller: FundingWebPageController?
 }

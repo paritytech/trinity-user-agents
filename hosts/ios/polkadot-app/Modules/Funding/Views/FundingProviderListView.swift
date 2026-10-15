@@ -112,7 +112,7 @@ private extension FundingProviderListView {
             let providerSide = model.direction == .in ? quote.sendAmount : quote.receiveAmount
             let cashSide = model.direction == .in ? quote.receiveAmount : quote.sendAmount
             VStack(alignment: .trailing, spacing: 2) {
-                Text(verbatim: "≈ " + model.quoteUnit.formatWithCode(providerSide))
+                Text(verbatim: "≈ " + model.quoteUnit(quote).formatWithCode(providerSide))
                     .typography(.bodyMediumEmphasized)
                     .foregroundStyle(.fgPrimary)
                 Text(.Funding.providersFor(amount: model.cash.label(model.cash.decimal(cashSide))))

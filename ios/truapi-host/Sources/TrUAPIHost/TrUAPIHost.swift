@@ -1017,6 +1017,19 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingCountries(intent: intent, rail: rail, asset: asset)
     }
 
+    /// The amounts session `intent` can take on `rail`, `asset`, `network`
+    /// and `country` across every provider. The minimum is never below the
+    /// product floor.
+    public func fundingAmountLimits(
+        intent: String,
+        rail: FundingRail,
+        asset: String,
+        network: String?,
+        country: String?
+    ) -> FundingAmountLimits {
+        inner.fundingAmountLimits(intent: intent, rail: rail, asset: asset, network: network, country: country)
+    }
+
     /// The country quotes go by until the user picks one.
     public func detectedFundingCountry() async -> String? {
         await inner.detectedFundingCountry()

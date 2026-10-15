@@ -73,7 +73,7 @@ private extension FundingAmountView {
                 .typography(.captionMedium)
                 .foregroundStyle(.fgError)
         } else {
-            Text(minimumCaption(model.learnedLimits.min))
+            Text(minimumCaption(model.amountLimits.min))
                 .typography(.captionMedium)
                 .foregroundStyle(.fgSecondary)
         }

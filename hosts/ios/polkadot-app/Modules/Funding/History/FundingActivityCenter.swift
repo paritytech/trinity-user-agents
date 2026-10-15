@@ -15,9 +15,6 @@ import TrUAPIHost
 final class FundingActivityCenter {
     static let shared = FundingActivityCenter(store: CoreDataFundingHistoryStore())
 
-    /// What the user can spend now, as the CASH card last showed it.
-    var spendable: Decimal?
-
     private(set) var inFlight: [FundingActivityItem] = []
     private(set) var history: [FundingActivityItem] = []
 
@@ -138,7 +135,13 @@ private extension FundingActivityCenter {
     /// The store's rows, plus any ended session the store could not take, so
     /// nothing the core still holds goes missing from the list.
     func loadStored(coreSessions: [FundingRecord]) async {
-        let stored = await (try? store.records()) ?? []
+        let stored: [FundingRecord]
+        do {
+            stored = try await store.records()
+        } catch {
+            Logger.shared.error("[funding] reading the history failed: \(error)")
+            stored = []
+        }
         let storedIds = Set(stored.map(\.intent))
         let records = stored + coreSessions.filter { !storedIds.contains($0.intent) }
 

@@ -26,7 +26,7 @@ struct FundingProgressView: View {
                 inProgress
             }
         }
-        .task { await follow() }
+        .task(id: model.progress?.longerAtMs) { await follow() }
     }
 }
 
@@ -80,7 +80,7 @@ private extension FundingProgressView {
     }
 
     var quotedSendAmount: String? {
-        model.chosenQuote.map { model.quoteUnit.format($0.sendAmount) }
+        model.chosenQuote.map { model.quoteUnit($0).format($0.sendAmount) }
     }
 
     /// A transfer the user has not made yet can still be called off; a card
@@ -171,7 +171,7 @@ private extension FundingProgressView {
             case (.out, _):
                 feesRow(
                     String(localized: .Funding.summaryWithdrawCaption),
-                    model.chosenQuote.map { model.quoteUnit.format($0.receiveAmount) }
+                    model.chosenQuote.map { model.quoteUnit($0).format($0.receiveAmount) }
                 )
                 arrivesRow
             }
@@ -264,14 +264,18 @@ private extension FundingProgressView {
         .padding(.vertical, DSSpacings.small)
     }
 
-    /// Reads the session again while the screen is up, besides the core's
-    /// change events, so a session the core now counts as taking longer
-    /// turns amber in time.
+    /// The core's change events keep the screen current, except for a
+    /// session turning to taking longer, which no report announces: read the
+    /// session again at the time the core gave for it.
     func follow() async {
-        while !Task.isCancelled {
-            if model.hasStarted { model.refreshSession() }
-            try? await Task.sleep(for: .seconds(3))
+        guard model.hasStarted, let longerAtMs = model.progress?.longerAtMs else { return }
+
+        let wait = Date(milliseconds: longerAtMs).timeIntervalSinceNow
+        if wait > 0 {
+            try? await Task.sleep(for: .seconds(wait))
         }
+        guard !Task.isCancelled else { return }
+        model.refreshSession()
     }
 }
 
@@ -298,13 +302,13 @@ struct FundingStepBar: View {
     /// provider, is prepared and paid out.
     static func title(_ step: FundingStep, direction: FundingDirection) -> String {
         let out = direction == .out
+        let payment: LocalizedStringResource = out ? .Funding.progressStepSending : .Funding.progressStepPayment
+        let conversion: LocalizedStringResource = out ? .Funding.progressStepPreparing : .Funding.progressStepConversion
         return switch step {
         case .started: String(localized: .Funding.progressStepStarted)
-        case .payment:
-            out ? String(localized: .Funding.progressStepSending) : String(localized: .Funding.progressStepPayment)
+        case .payment: String(localized: payment)
         case .approved: String(localized: .Funding.progressStepApproved)
-        case .conversion:
-            out ? String(localized: .Funding.progressStepPreparing) : String(localized: .Funding.progressStepConversion)
+        case .conversion: String(localized: conversion)
         case .added: String(localized: .Funding.progressStepAdded)
         case .sent: String(localized: .Funding.progressStepReceived)
         case .payout: String(localized: .Funding.progressStepPayout)

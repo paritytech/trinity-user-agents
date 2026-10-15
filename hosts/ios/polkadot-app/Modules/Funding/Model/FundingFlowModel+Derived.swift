@@ -27,26 +27,23 @@ extension FundingFlowModel {
         amount > 0 && amountIssue == nil && availableRails.contains(rail)
     }
 
-    /// The smallest amount the funding screens take on any rail.
-    static let minimumAmount: Decimal = 10
+    /// The range the core says this rail, asset, network and country take
+    /// across every provider, product floor included.
+    var amountLimits: (min: Decimal, max: Decimal?) {
+        let limits = runtime.fundingAmountLimits(
+            intent: intent,
+            rail: rail,
+            asset: askedAsset ?? "",
+            network: rail == .crypto ? network : nil,
+            country: country?.code
+        )
+        return (cash.decimal(limits.min) ?? 0, cash.decimal(limits.max))
+    }
 
-    /// The lowest minimum and highest maximum any provider has refused with
-    /// for this rail, which the core learns and keeps on the candidates. The
-    /// minimum is never below ``minimumAmount`` or the payment country's own
-    /// minimum; no provider refusing yet means no maximum to show.
-    var learnedLimits: (min: Decimal, max: Decimal?) {
-        let limits = servingCandidates
-            .flatMap(\.limits)
-            .filter { limit in
-                limit.rail == rail
-                    && (asset == nil || limit.asset.caseInsensitiveCompare(asset ?? "") == .orderedSame)
-                    && (network == nil || limit.network == nil || limit.network == network)
-            }
-
-        let refusedMinimum = limits.compactMap { cash.decimal($0.min) }.min() ?? Self.minimumAmount
-        let maximum = limits.compactMap { cash.decimal($0.max) }.max()
-        let countryMinimum = country.flatMap { minimum(country: $0.code) } ?? 0
-        return (max(refusedMinimum, Self.minimumAmount, countryMinimum), maximum)
+    /// The asset an ask on this rail names: the chosen token for crypto,
+    /// the payment currency otherwise.
+    var askedAsset: String? {
+        ask?.asset ?? (rail == .crypto ? asset : fiatAsset)
     }
 
     var amountIssue: FundingAmountIssue? {
@@ -58,7 +55,7 @@ extension FundingFlowModel {
             return refused
         }
 
-        let limits = learnedLimits
+        let limits = amountLimits
         if amount > 0, amount < limits.min {
             return .belowMinimum(limits.min)
         }
@@ -100,9 +97,10 @@ extension FundingFlowModel {
         return listed.first ?? country?.currencyCode ?? "USD"
     }
 
-    /// The asset the quote's provider-side figures are counted in.
-    var quoteUnit: FundingAssetUnit {
-        FundingAssetUnit(code: ask?.asset ?? session?.choice?.asset ?? fiatAsset)
+    /// The asset `quote`'s provider-side figures are counted in, with the
+    /// decimals the quote carries.
+    func quoteUnit(_ quote: FundingQuote) -> FundingAssetUnit {
+        FundingAssetUnit(code: ask?.asset ?? session?.choice?.asset ?? fiatAsset, decimals: quote.assetDecimals)
     }
 }
 
@@ -168,11 +166,12 @@ extension FundingFlowModel {
         return seen.map(FundingNetwork.init(id:))
     }
 
-    /// The lowest minimum a provider has refused with on this network.
+    /// The lowest minimum a provider has refused with on this network, in
+    /// the payment country.
     func minimum(network id: String) -> Decimal? {
         candidates
             .flatMap(\.limits)
-            .filter { $0.rail == .crypto && $0.network == id }
+            .filter { $0.rail == .crypto && $0.network == id && ($0.country == nil || $0.country == country?.code) }
             .compactMap { cash.decimal($0.min) }
             .min()
     }

@@ -29,13 +29,13 @@ final class FundingFlowModel {
         let direction: FundingDirection
         let amount: U128?
         let cash: FundingCash
-        let spendable: Decimal?
     }
 
     let intent: String
     let direction: FundingDirection
     let cash: FundingCash
-    let spendable: Decimal?
+    /// What a payment can spend now, once the app has read it.
+    var spendable: Decimal?
 
     var rail: FundingRail
     var amountText: String
@@ -57,6 +57,9 @@ final class FundingFlowModel {
     /// The country the core detected, which the country list leads with.
     private(set) var detectedCountry: PaymentCountry?
     private(set) var ask: FundingQuoteAsk?
+    /// The core's id for the latest quote request: lists answering an
+    /// earlier one are dropped.
+    private var quoteRequestId: UInt64?
     private(set) var brands: [String: FundingProviderBrand] = [:]
     private(set) var isStarting = false
     private(set) var hasStarted = false
@@ -89,7 +92,6 @@ final class FundingFlowModel {
         intent = context.intent
         direction = context.direction
         cash = context.cash
-        spendable = context.spendable
         self.runtime = runtime
         self.branding = branding
         amountText = context.amount.map { Self.text(for: context.cash.decimal($0)) } ?? ""
@@ -320,6 +322,8 @@ extension FundingFlowModel {
     }
 
     func receive(quotes: FundingQuoteList) {
+        guard quotes.requestId == quoteRequestId else { return }
+
         rows = Dictionary(quotes.rows.map { ($0.providerId, $0.state) }) { _, latest in latest }
         bestProviderId = quotes.best
         quotesRefreshAt = Date(milliseconds: quotes.refreshAtMs)
@@ -407,13 +411,12 @@ extension FundingFlowModel {
         quotesRefreshAt = nil
         bestProviderId = nil
         rows = Dictionary(uniqueKeysWithValues: servingCandidates.map { ($0.providerId, .pending) })
-        runtime.getFundingQuote(intent: intent, ask: newAsk)
+        quoteRequestId = runtime.getFundingQuote(intent: intent, ask: newAsk)
     }
 
     /// What the core has learned about each country for this rail and asset.
     func loadCountrySupport() {
-        let asked = ask?.asset ?? (rail == .crypto ? asset : fiatAsset)
-        guard let asked else {
+        guard let asked = askedAsset else {
             countrySupport = [:]
             return
         }

@@ -1,10 +1,11 @@
+import Coinage
 import Foundation
 import Products
 import UIKit
 import UIKitExt
 
-/// The app around the funding overlay: the payment asset, the balance the
-/// CASH card last showed, products as the app opens them, and the shared
+/// The app around the funding overlay: the payment asset, the balance a
+/// payment can spend, products as the app opens them, and the shared
 /// router the host's own prompts present from.
 @MainActor
 final class AppFundingEnvironment: FundingOverlayEnvironment {
@@ -31,8 +32,23 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         .current
     }
 
-    var spendable: Decimal? {
-        FundingActivityCenter.shared.spendable
+    /// What a payment can spend: private value plus value still gaining
+    /// privacy, as the payment path checks it.
+    func spendable() async -> Decimal? {
+        guard let dependencies: TruApiDependenciesLocator = RootDependencyLocator.getDependency(),
+              let support: PaymentsSupport = dependencies.getDependency(),
+              let balanceService = try? await support.coinageService.coinageBalanceService()
+        else { return nil }
+
+        do {
+            for try await balance in balanceService.balanceStream.prefix(1) {
+                let planks = balance.availablePrivate + balance.gainingPrivacy.amount
+                return balanceService.denominationContext.decimal(fromPlanks: planks)
+            }
+        } catch {
+            Logger.shared.error("[funding] reading the spendable balance failed: \(error)")
+        }
+        return nil
     }
 
     func present(_ controller: UIViewController) -> Bool {

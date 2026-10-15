@@ -28,6 +28,8 @@ struct FundingRecord: Identifiable, Equatable {
     /// screen can show it once the core has dropped the quote.
     let paidAmount: U128?
     let paidAsset: String?
+    /// Decimals of `paidAsset`, as the quote counted it.
+    let paidDecimals: UInt8?
     /// The crypto network the value moved on: the one the provider named for
     /// the deposit, or the one the quote was asked for.
     let paidNetwork: String?
@@ -70,6 +72,7 @@ extension FundingRecord {
             session.direction == .in ? choice.quote.sendAmount : choice.quote.receiveAmount
         }
         paidAsset = session.choice?.asset
+        paidDecimals = session.choice?.quote.assetDecimals
         paidNetwork = progress?.deposit.flatMap(\.network) ?? session.choice?.network
         outcome = settled.outcome
         payout = progress?.payout.map(Payout.init)

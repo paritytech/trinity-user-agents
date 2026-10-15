@@ -33,7 +33,9 @@ struct FundingDepositView: View {
             }
         }
         .fundingToast($copied)
-        .task { await follow() }
+        .onChange(of: paymentSeen, initial: true) { _, seen in
+            if seen { model.showProgress() }
+        }
     }
 }
 
@@ -161,21 +163,13 @@ private extension FundingDepositView {
         .buttonStyle(.plain)
     }
 
-    /// Follows the session while the screen is up: the deposit can arrive or
-    /// change, and once the funds are seen or the session ends the progress
-    /// screen takes over.
-    func follow() async {
-        while !Task.isCancelled {
-            if model.hasStarted {
-                model.refreshSession()
-                let ended = model.session.map { !$0.stage.isOpen } ?? false
-                if ended || model.hasReached(.payment) {
-                    model.showProgress()
-                    return
-                }
-            }
-            try? await Task.sleep(for: .seconds(3))
-        }
+    /// Once the funds are seen or the session ends, the progress screen takes
+    /// over. The core's change events keep the session current.
+    var paymentSeen: Bool {
+        guard model.hasStarted else { return false }
+
+        let ended = model.session.map { !$0.stage.isOpen } ?? false
+        return ended || model.hasReached(.payment)
     }
 
     static func shortened(_ address: String) -> String {

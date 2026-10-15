@@ -134,6 +134,7 @@
         <attribute name="outcome" attributeType="String"/>
         <attribute name="paidAmount" optional="YES" attributeType="String"/>
         <attribute name="paidAsset" optional="YES" attributeType="String"/>
+        <attribute name="paidDecimals" optional="YES" attributeType="Integer 16" usesScalarValueType="NO"/>
         <attribute name="paidNetwork" optional="YES" attributeType="String"/>
         <attribute name="payout" optional="YES" attributeType="String"/>
         <attribute name="payoutReason" optional="YES" attributeType="String"/>

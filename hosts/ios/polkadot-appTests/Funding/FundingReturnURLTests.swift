@@ -77,4 +77,26 @@ struct FundingReturnURLTests {
 
         #expect(FundingReturnURL.displayOrigin(of: page) == "widget.provider.example:8443")
     }
+
+    @Test
+    func thePageLoadsOnlyHttps() throws {
+        let secure = try #require(URL(string: "https://kyc.provider.example/check"))
+        let plain = try #require(URL(string: "http://kyc.provider.example/check"))
+        let blank = try #require(URL(string: "about:blank"))
+
+        #expect(FundingReturnURL.allowsNavigation(to: secure, mainFrame: true))
+        #expect(!FundingReturnURL.allowsNavigation(to: plain, mainFrame: true))
+        #expect(!FundingReturnURL.allowsNavigation(to: blank, mainFrame: true))
+    }
+
+    @Test
+    func aFrameInsideThePageMayHoldItsOwnDocuments() throws {
+        let blank = try #require(URL(string: "about:blank"))
+        let plain = try #require(URL(string: "http://tracker.example/pixel"))
+        let app = try #require(URL(string: "tel:+15550100"))
+
+        #expect(FundingReturnURL.allowsNavigation(to: blank, mainFrame: false))
+        #expect(!FundingReturnURL.allowsNavigation(to: plain, mainFrame: false))
+        #expect(!FundingReturnURL.allowsNavigation(to: app, mainFrame: false))
+    }
 }

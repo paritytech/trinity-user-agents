@@ -63,7 +63,7 @@ private extension FundingSummaryView {
     var headline: some View {
         if let quote = model.selectedQuote {
             let units = model.direction == .in ? quote.sendAmount : quote.receiveAmount
-            Text(verbatim: model.quoteUnit.format(units))
+            Text(verbatim: model.quoteUnit(quote).format(units))
                 .typography(.displayLarge)
                 .foregroundStyle(.fgPrimary)
                 .lineLimit(1)

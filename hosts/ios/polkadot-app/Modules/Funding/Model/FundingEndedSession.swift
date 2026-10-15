@@ -64,8 +64,11 @@ extension FundingEndedSession {
     /// while the core still holds it.
     var quotedAmount: String? {
         let quoted = quote.map { direction == .in ? $0.sendAmount : $0.receiveAmount }
-        guard let units = record.paidAmount ?? quoted, let asset = record.paidAsset ?? record.asset else { return nil }
-        return FundingAssetUnit(code: asset).format(units)
+        guard let units = record.paidAmount ?? quoted,
+              let asset = record.paidAsset ?? record.asset,
+              let decimals = record.paidDecimals ?? quote?.assetDecimals
+        else { return nil }
+        return FundingAssetUnit(code: asset, decimals: decimals).format(units)
     }
 
     /// The CASH asked for, when the CASH that moved differs from it.

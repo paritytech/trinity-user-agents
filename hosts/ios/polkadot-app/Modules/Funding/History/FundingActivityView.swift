@@ -244,22 +244,30 @@ private extension FundingActivityRow {
     }
 
     func inProgressText(_ status: FundingStatus) -> String? {
+        waitingText(status) ?? movingText(status)
+    }
+
+    /// The line for a session waiting on the user or the provider.
+    func waitingText(_ status: FundingStatus) -> String? {
         switch status {
         case .waitingForPayment: String(localized: .Funding.activityWaitingPayment)
         case .waitingForTransfer: String(localized: .Funding.activityWaitingTransfer)
         case .waitingForDeposit: String(localized: .Funding.activityWaitingDeposit)
-        case .convertingToCash: String(localized: .Funding.activityConverting(symbol: cash.symbol))
         case .retrying: String(localized: .Funding.activityRetrying)
         case .retryingPayout: String(localized: .Funding.activityRetryingPayout)
         case .takingLonger: String(localized: .Funding.activityDelayed)
+        default: nil
+        }
+    }
+
+    /// The line for a session whose value is on its way.
+    func movingText(_ status: FundingStatus) -> String? {
+        switch status {
+        case .convertingToCash: String(localized: .Funding.activityConverting(symbol: cash.symbol))
         case .transactionInitiated: String(localized: .Funding.activityInitiated)
         case .preparingPayout: String(localized: .Funding.activityPreparingPayout)
         case let .convertingTo(asset): String(localized: .Funding.activityConvertingOut(asset: asset))
-        case .toppedUp,
-             .sent,
-             .refunded,
-             .payoutFailed,
-             .failed: nil
+        default: nil
         }
     }
 

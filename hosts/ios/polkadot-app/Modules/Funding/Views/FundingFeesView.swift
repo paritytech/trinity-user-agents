@@ -25,9 +25,9 @@ struct FundingFeesView: View {
 private extension FundingFeesView {
     /// Fees are counted in what the user pays: the ask's asset for value in,
     /// the balance for value out.
-    func feeText(_ units: U128) -> String {
+    func feeText(_ units: U128, of quote: FundingQuote) -> String {
         if model.direction == .in {
-            return model.quoteUnit.format(units)
+            return model.quoteUnit(quote).format(units)
         }
         return model.cash.label(model.cash.decimal(units))
     }
@@ -36,11 +36,11 @@ private extension FundingFeesView {
         let total = (Decimal(string: quote.providerFee) ?? 0) + (Decimal(string: quote.networkFee) ?? 0)
 
         return VStack(spacing: DSSpacings.small) {
-            line(String(localized: .Funding.feesProvider), feeText(quote.providerFee))
-            line(String(localized: .Funding.feesNetwork), feeText(quote.networkFee))
+            line(String(localized: .Funding.feesProvider), feeText(quote.providerFee, of: quote))
+            line(String(localized: .Funding.feesNetwork), feeText(quote.networkFee, of: quote))
             line(String(localized: .Funding.feesSwapping), String(localized: .Funding.feesVariable))
             Divider().overlay(Color.strokePrimary)
-            line(String(localized: .Funding.feesTotal), feeText(NSDecimalNumber(decimal: total).stringValue))
+            line(String(localized: .Funding.feesTotal), feeText(NSDecimalNumber(decimal: total).stringValue, of: quote))
             Divider().overlay(Color.strokePrimary)
 
             HStack(alignment: .firstTextBaseline) {
@@ -48,7 +48,7 @@ private extension FundingFeesView {
                     .typography(.bodyLarge)
                     .foregroundStyle(.fgSecondary)
                 Spacer()
-                Text(verbatim: feeText(quote.sendAmount))
+                Text(verbatim: feeText(quote.sendAmount, of: quote))
                     .typography(.headlineSmall)
                     .foregroundStyle(.fgPrimary)
             }
@@ -70,11 +70,11 @@ private extension FundingFeesView {
 
     /// What one CASH is worth in the provider-side asset, from the quote.
     func rate(_ quote: FundingQuote) -> String? {
-        let providerSide = model.quoteUnit.decimal(model.direction == .in ? quote.sendAmount : quote.receiveAmount)
+        let providerSide = model.quoteUnit(quote).decimal(model.direction == .in ? quote.sendAmount : quote.receiveAmount)
         let cashSide = model.cash.decimal(model.direction == .in ? quote.receiveAmount : quote.sendAmount)
         guard cashSide > 0 else { return nil }
 
-        let perCash = model.quoteUnit.format(decimal: (providerSide / cashSide).fundingRounded(scale: 4))
+        let perCash = model.quoteUnit(quote).format(decimal: (providerSide / cashSide).fundingRounded(scale: 4))
         return "\(model.cash.label(1)) ≈ \(perCash)"
     }
 

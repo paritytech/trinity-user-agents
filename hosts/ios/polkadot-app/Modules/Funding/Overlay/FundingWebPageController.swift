@@ -10,9 +10,12 @@ import WebKit
 /// app with the page's origin in the host's own bar.
 ///
 /// An onramp hands over to the provider behind it, so the page moves between
-/// origins and the bar follows it. Reaching the return URL closes the frame
-/// and answers `Returned` with the full URL navigated to. Closing it, or the
-/// frame going off screen any other way, answers `Dismissed`.
+/// origins and the bar follows it. The page and every window it opens stay on
+/// https: a navigation anywhere else is refused, and the bar's padlock shows
+/// only while the page on screen loaded entirely over https. The page reaching
+/// the return URL closes the frame and answers `Returned` with the full URL
+/// navigated to. Closing it, or the frame going off screen any other way,
+/// answers `Dismissed`.
 final class FundingWebPageController: UIViewController {
     private let url: URL
     private let returnURL: URL?
@@ -20,6 +23,7 @@ final class FundingWebPageController: UIViewController {
     private let origin = FundingWebPageOrigin()
     private var completion: ((FundingFrameOutcome) -> Void)?
     private var urlObservation: NSKeyValueObservation?
+    private var secureObservation: NSKeyValueObservation?
 
     init(url: URL, returnURL: URL?, completion: @escaping (FundingFrameOutcome) -> Void) {
         self.url = url
@@ -74,7 +78,11 @@ final class FundingWebPageController: UIViewController {
             MainActor.assumeIsolated {
                 guard let self, let current = webView.url else { return }
                 self.origin.host = FundingReturnURL.displayOrigin(of: current)
+                self.refreshSecurity()
             }
+        }
+        secureObservation = webView.observe(\.hasOnlySecureContent, options: [.new]) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.refreshSecurity() }
         }
         webView.load(URLRequest(url: url))
     }
@@ -84,6 +92,10 @@ final class FundingWebPageController: UIViewController {
         if isBeingDismissed || presentingViewController == nil {
             finish(.dismissed)
         }
+    }
+
+    private func refreshSecurity() {
+        origin.isSecure = webView.url?.scheme?.lowercased() == "https" && webView.hasOnlySecureContent
     }
 
     /// Answers the core once and takes the frame down.
@@ -105,29 +117,34 @@ extension FundingWebPageController: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        guard let target = navigationAction.request.url,
-              let returnURL,
-              FundingReturnURL.matches(target, returnURL: returnURL)
-        else {
-            decisionHandler(.allow)
+        guard let target = navigationAction.request.url else {
+            decisionHandler(.cancel)
             return
         }
 
-        decisionHandler(.cancel)
-        finish(.returned(url: target.absoluteString))
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        if isMainFrame, let returnURL, FundingReturnURL.matches(target, returnURL: returnURL) {
+            decisionHandler(.cancel)
+            finish(.returned(url: target.absoluteString))
+            return
+        }
+
+        decisionHandler(FundingReturnURL.allowsNavigation(to: target, mainFrame: isMainFrame) ? .allow : .cancel)
     }
 }
 
 extension FundingWebPageController: WKUIDelegate {
-    /// A window the page opens, such as a card issuer's 3-D Secure check,
-    /// loads in place of the page.
+    /// An https window the page opens, such as a card issuer's 3-D Secure
+    /// check, loads in place of the page.
     func webView(
         _ webView: WKWebView,
         createWebViewWith _: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction,
         windowFeatures _: WKWindowFeatures
     ) -> WKWebView? {
-        if navigationAction.targetFrame == nil {
+        if navigationAction.targetFrame == nil,
+           let target = navigationAction.request.url,
+           FundingReturnURL.allowsNavigation(to: target, mainFrame: true) {
             webView.load(navigationAction.request)
         }
         return nil
@@ -167,6 +184,17 @@ enum FundingReturnURL {
             && path(of: candidate) == path(of: target)
     }
 
+    /// Whether a frame may load `url`. The page itself loads only https; a
+    /// frame inside it may also hold the inert documents a page builds for
+    /// itself (`about:`, `blob:`, `data:`).
+    static func allowsNavigation(to url: URL, mainFrame: Bool) -> Bool {
+        switch url.scheme?.lowercased() {
+        case "https": true
+        case "about", "blob", "data": !mainFrame
+        default: false
+        }
+    }
+
     /// The host, with its port when it is not the scheme's default.
     static func displayOrigin(of url: URL) -> String {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
@@ -204,6 +232,7 @@ private extension FundingWebPageController {
 @Observable
 private final class FundingWebPageOrigin {
     var host = ""
+    var isSecure = false
 }
 
 private struct FundingWebPageTopBar: View {
@@ -212,9 +241,11 @@ private struct FundingWebPageTopBar: View {
 
     var body: some View {
         HStack(spacing: DSSpacings.small) {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.fgSecondary)
+            if origin.isSecure {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.fgSecondary)
+            }
             Text(origin.host)
                 .typography(.bodyMedium)
                 .foregroundStyle(.fgPrimary)
