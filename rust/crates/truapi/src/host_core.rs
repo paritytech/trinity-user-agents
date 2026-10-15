@@ -876,9 +876,9 @@ impl SigningHostRuntime {
 			.unwrap_or_default()
 	}
 
-	/// Live quotes for funding session `intent`: one row per candidate
-	/// serving `ask`'s rail and asset, `Pending` and then `Quoted` or
-	/// `Unavailable` as each provider answers or runs out of time.
+	/// Live quotes for funding session `intent`: one row per funding
+	/// provider, whatever routes its manifest declares, `Pending` and then
+	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
 	pub fn get_funding_quote(
 		&self,
 		intent: &str,

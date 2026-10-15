@@ -988,14 +988,11 @@ impl RuntimeServices {
 		)
 		.map_err(|error| FundingSessionError::InvalidProvider { reason: error.to_string() })?;
 		let registry = self.funding();
-		if let Some(session) = registry.get(intent) &&
-			!self.funding_providers().is_candidate(&provider.product_id, session.direction)
+		if registry.get(intent).is_some() &&
+			!self.funding_providers().is_quote_target(&provider.product_id)
 		{
 			return Err(FundingSessionError::InvalidProvider {
-				reason: format!(
-					"{} is not a funding provider for this session",
-					provider.product_id
-				),
+				reason: format!("{} is not a funding provider", provider.product_id),
 			});
 		}
 		let choice = match quote_id {
