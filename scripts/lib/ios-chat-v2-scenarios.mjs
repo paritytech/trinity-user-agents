@@ -324,17 +324,23 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     mode: "host",
     phase: "P4",
     drive: {
-      // PARITY row 4. The second image of `/post rich` is a preimage that
-      // the harness identity cannot store (no Bulletin allowance), so its
-      // lookup fails. Each `media` marker names what the tap did, and the
-      // `presented` marker names the screen in front after it.
+      // PARITY row 4. `/post rich` asks for PreimageSubmit and tries to
+      // store its second image first, so the harness waits for the message.
+      // The harness identity has no Bulletin allowance, so the second image
+      // is a preimage that no lookup finds. Each `media` marker names what
+      // the tap did, and the `presented` marker names the screen in front
+      // after it. The count of new product bodies is since the row started, and
+      // the window marker shows that the screen drew the new body.
       phases: [
         {
-          steps: [
-            "/post rich",
-            { wait: 1_500 },
-            { host: "media", target: "{lastProduct}", argument: "0" },
+          steps: ["/post rich"],
+          expect: [
+            { contentType: 247, added: 1, timeoutMs: 120_000 },
+            { ui: "window", match: ":in-[a-z]+:productBody$" },
           ],
+        },
+        {
+          steps: [{ host: "media", target: "{lastProduct}", argument: "0" }],
           expect: [
             { ui: "media", match: "^image opened media\\.png$" },
             { ui: "presented", match: "QLPreviewController" },
@@ -347,16 +353,16 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
             { host: "media", target: "{lastProduct}", argument: "1" },
           ],
           expect: [
-            { ui: "media", match: "^image failed$", timeoutMs: 90_000 },
+            { ui: "media", match: "^image failed$", timeoutMs: 180_000 },
           ],
           shot: "retry",
         },
         {
-          steps: [
-            "/post video",
-            { wait: 1_500 },
-            { host: "media", target: "{lastProduct}", argument: "0" },
-          ],
+          steps: ["/post video"],
+          expect: [{ contentType: 247, added: 2 }, { ui: "window", match: ":in-[a-z]+:productBody$" }],
+        },
+        {
+          steps: [{ host: "media", target: "{lastProduct}", argument: "0" }],
           expect: [
             { ui: "media", match: "^video opened media\\.mp4$" },
             { ui: "presented", match: "PlayerViewController" },
@@ -364,12 +370,11 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
           shot: "video",
         },
         {
-          steps: [
-            { host: "dismiss" },
-            "/post file",
-            { wait: 1_500 },
-            { host: "media", target: "{lastProduct}", argument: "0" },
-          ],
+          steps: [{ host: "dismiss" }, "/post file"],
+          expect: [{ contentType: 247, added: 3 }, { ui: "window", match: ":in-[a-z]+:productBody$" }],
+        },
+        {
+          steps: [{ host: "media", target: "{lastProduct}", argument: "0" }],
           expect: [
             { ui: "media", match: "^file opened sample\\.pdf$" },
             { ui: "presented", match: "^(?!none$)" },
