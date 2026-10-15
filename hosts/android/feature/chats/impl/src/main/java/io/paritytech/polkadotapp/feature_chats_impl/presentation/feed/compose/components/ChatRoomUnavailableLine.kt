@@ -6,6 +6,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotButtonSize
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
@@ -26,7 +29,8 @@ internal fun ChatRoomUnavailableLine(
     onRetry: () -> Unit,
 ) {
     PolkadotSurface(
-        modifier = modifier,
+        // TalkBack tells the user when the room stops to answer.
+        modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
         color = PolkadotTheme.colors.bg.surface.nested,
     ) {
         Row(

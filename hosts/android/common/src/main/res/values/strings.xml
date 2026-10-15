@@ -877,6 +877,18 @@
     <string name="chat_media_open_image">Open image</string>
     <string name="chat_media_open_file">Open file</string>
     <string name="chat_media_failed">Did not load. Tap to try again.</string>
+    <string name="chat_media_play_video">Play video</string>
+    <string name="chat_attach">Attach</string>
+    <plurals name="chat_reaction_count">
+        <item quantity="one">%1$s, %2$d reaction</item>
+        <item quantity="other">%1$s, %2$d reactions</item>
+    </plurals>
+    <string name="chat_reaction_yours">You reacted</string>
+    <string name="chat_reaction_toggle">Change your reaction</string>
+    <string name="chat_reaction_show_who">Show who reacted</string>
+    <string name="chat_suggestion_select">Select</string>
+    <string name="chat_command_insert">Insert command</string>
+    <string name="chat_participant_show">Show participant</string>
     <string name="chat_message_too_long">The message is too long. Make it shorter and send it again.</string>
     <string name="chat_message_action_failed">The app did not take the action. Try again.</string>
     <string name="chat_reply_earlier_message">Earlier message</string>

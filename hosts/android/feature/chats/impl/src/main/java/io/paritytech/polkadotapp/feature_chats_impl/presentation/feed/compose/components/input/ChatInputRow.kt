@@ -31,6 +31,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -348,7 +350,9 @@ private fun TitledBanner(
                     end = PolkadotTheme.spacings.tiny
                 )
             ) {
+                val closeLabel = stringResource(RCommon.string.common_close)
                 PolkadotIconButton(
+                    modifier = Modifier.semantics { contentDescription = closeLabel },
                     icon = NovaIcons.Close,
                     onClick = onClose,
                     style = PolkadotButtonStyle.ghost(),

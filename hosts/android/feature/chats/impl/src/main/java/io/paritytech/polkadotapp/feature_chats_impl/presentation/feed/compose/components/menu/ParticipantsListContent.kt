@@ -15,6 +15,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.avatar.PolkadotAvatar
@@ -38,7 +42,9 @@ fun ParticipantsListContent(
 ) {
     Column(modifier = Modifier.padding(vertical = PolkadotTheme.spacings.mediumIncreased)) {
         NovaText(
-            modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.large),
+            modifier = Modifier
+                .padding(horizontal = PolkadotTheme.spacings.large)
+                .semantics { heading() },
             text = stringResource(RCommon.string.chat_participants_title),
             style = PolkadotTheme.typography.headline.small,
             color = PolkadotTheme.colors.fg.primary,
@@ -66,7 +72,13 @@ internal fun ParticipantRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(onClickLabel = stringResource(RCommon.string.chat_participant_show), onClick = onClick)
+                } else {
+                    Modifier.semantics(mergeDescendants = true) { }
+                },
+            )
             .padding(horizontal = PolkadotTheme.spacings.large, vertical = PolkadotTheme.spacings.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -103,7 +115,7 @@ private fun ParticipantsPagingRow(
         NovaText(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onLoadMore)
+                .clickable(role = Role.Button, onClick = onLoadMore)
                 .padding(PolkadotTheme.spacings.large),
             text = stringResource(RCommon.string.chat_participants_failed),
             style = PolkadotTheme.typography.body.medium,
@@ -112,9 +124,11 @@ private fun ParticipantsPagingRow(
     } else {
         LaunchedEffect(state.participants.size) { onLoadMore() }
 
+        val loading = stringResource(RCommon.string.chat_product_menu_loading)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .semantics { contentDescription = loading }
                 .padding(PolkadotTheme.spacings.mediumIncreased),
             contentAlignment = Alignment.Center,
         ) {
