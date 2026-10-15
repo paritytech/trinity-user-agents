@@ -39,32 +39,41 @@ extension RemoteContactOperationFactory: RemoteContactOperationMaking {
             for: UsernameRequestModel(prefix: query)
         )
 
-        let searchMapOperation = ClosureOperation<[AccountId]> {
+        let searchMapOperation = ClosureOperation<[AccountId: Set<Data>]> {
             let models = try searchWrapper.targetOperation.extractNoCancellableResultData()
             return try models
                 .filter { $0.status != .failed }
-                .map { model in
-                    try model.accountId.toAccountId()
+                .reduce(into: [AccountId: Set<Data>]()) { usernamesByAccountId, model in
+                    let accountId = try model.accountId.toAccountId()
+                    usernamesByAccountId[accountId, default: []].insert(Data(model.username.value.utf8))
                 }
-                .distinct()
         }
 
         searchMapOperation.addDependency(searchWrapper.targetOperation)
 
         let consumerWrapper = resourcesOperationMaker.makeConsumerWrapperByAccountId(
-            { try searchMapOperation.extractNoCancellableResultData() },
+            { try Array(searchMapOperation.extractNoCancellableResultData().keys) },
             blockHash: nil
         )
 
         consumerWrapper.addDependency(operations: [searchMapOperation])
 
         let mapOperation = ClosureOperation {
+            let backendUsernames = try searchMapOperation.extractNoCancellableResultData()
             let consumers = try consumerWrapper.targetOperation.extractNoCancellableResultData()
 
             // we could have broken records during mapping here
-            return consumers.compactMap { consumer in
-                try? Chat.RemoteContact(consumer: consumer)
-            }
+            return consumers
+                .filter { consumer in
+                    guard let usernames = backendUsernames[consumer.accountId] else {
+                        return false
+                    }
+
+                    return consumer.info.hasAnyUsername(in: usernames)
+                }
+                .compactMap { consumer in
+                    try? Chat.RemoteContact(consumer: consumer)
+                }
         }
 
         mapOperation.addDependency(consumerWrapper.targetOperation)
@@ -94,5 +103,12 @@ extension RemoteContactOperationFactory: RemoteContactOperationMaking {
     func fetch(by accountId: AccountId) async throws -> Chat.RemoteContact? {
         let wrapper: CompoundOperationWrapper<Chat.RemoteContact?> = fetch(by: accountId)
         return try await wrapper.asyncExecute()
+    }
+}
+
+private extension ResourcesPallet.ConsumerInfo {
+    func hasAnyUsername(in usernames: Set<Data>) -> Bool {
+        let onChainUsernames = [liteUsername, fullUsername?.wrappedValue].compactMap { $0 }
+        return onChainUsernames.contains { usernames.contains($0) }
     }
 }
