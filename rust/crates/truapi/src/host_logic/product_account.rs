@@ -170,7 +170,7 @@ pub fn derive_ring_vrf_domain_entropy(
 	root_entropy: &[u8],
 	product_id: &ProductId,
 ) -> Result<[u8; 32], ProductAccountError> {
-	ring_vrf_domain_entropy(root_entropy, product_id.as_str())
+	derive_ring_vrf_domain_entropy_from_junction(root_entropy, product_id.as_str())
 }
 
 /// [`derive_ring_vrf_entropy`] over a junction string, which the reserved
@@ -180,11 +180,15 @@ fn ring_vrf_entropy(
 	junction: &str,
 	derivation_index: &truapi::v01::DerivationIndex,
 ) -> Result<[u8; 32], ProductAccountError> {
-	let domain = ring_vrf_domain_entropy(root_entropy, junction)?;
+	let domain = derive_ring_vrf_domain_entropy_from_junction(root_entropy, junction)?;
 	Ok(derive_ring_vrf_entropy_from_domain(&domain, derivation_index))
 }
 
-fn ring_vrf_domain_entropy(
+/// [`derive_ring_vrf_domain_entropy`] over a junction taken as written rather
+/// than parsed as a product id: the reserved personhood path, and an
+/// AutoSigning allocation, which derives from the id exactly as the paired host
+/// sent it.
+pub fn derive_ring_vrf_domain_entropy_from_junction(
 	root_entropy: &[u8],
 	junction: &str,
 ) -> Result<[u8; 32], ProductAccountError> {

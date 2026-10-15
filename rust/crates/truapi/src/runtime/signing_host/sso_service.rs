@@ -31,7 +31,9 @@ use crate::{
 		},
 		sso_wire::ResponseOutcome,
 	},
-	host_logic::product_account::{derive_ring_vrf_domain_entropy, product_public_key_to_address},
+	host_logic::product_account::{
+		derive_ring_vrf_domain_entropy_from_junction, product_public_key_to_address,
+	},
 	runtime::{
 		authority::{
 			AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest, ProductAuthority,
@@ -230,7 +232,7 @@ impl SigningHostSsoService {
 	async fn allocate(
 		&self,
 		session: &AuthoritySession,
-		calling_product_id: &ProductId,
+		calling_product_id: &str,
 		resource: api::AllocatableResource,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<SsoAllocationOutcome, AllowanceAllocationError> {
@@ -280,12 +282,17 @@ impl SigningHostSsoService {
 				})
 			},
 			api::AllocatableResource::AutoSigning => {
-				let product_root_private_key = signing_host
-					.product_subtree_secret(calling_product_id)
-					.map_err(AllowanceAllocationError::Authority)?;
 				let root_entropy = signing_host.root_entropy()?;
+				let product_id = ProductId::parse(calling_product_id).map_err(|err| {
+					AllowanceAllocationError::Authority(AuthorityError::Unavailable {
+						reason: err.to_string(),
+					})
+				})?;
+				let product_root_private_key = signing_host
+					.product_subtree_secret(&product_id)
+					.map_err(AllowanceAllocationError::Authority)?;
 				let ring_vrf_domain_entropy =
-					derive_ring_vrf_domain_entropy(&root_entropy, calling_product_id)
+					derive_ring_vrf_domain_entropy_from_junction(&root_entropy, calling_product_id)
 						.map_err(super::product_authority_error)
 						.map_err(AllowanceAllocationError::Authority)?;
 				Ok(SsoAllocationOutcome::Allocated(SsoAllocatedResource::AutoSigning {
@@ -394,12 +401,8 @@ impl SigningHostSsoService {
 	) -> ResourceAllocationResponse {
 		let mut failures = Vec::new();
 		let payload = async {
-			// Refused before the prompt: nothing can be allocated to an id
-			// that names no product, so there is nothing to ask the user.
-			let calling_product_id =
-				ProductId::parse(&request.calling_product_id).map_err(|err| err.to_string())?;
 			let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
-				calling_product_id: calling_product_id.to_string(),
+				calling_product_id: request.calling_product_id.clone(),
 				resources: request.resources.clone(),
 			});
 			match self.prompt(cx, review).await {
@@ -423,7 +426,12 @@ impl SigningHostSsoService {
 					return Err(WITHDRAWN.to_string());
 				}
 				let outcome = self
-					.allocate(&cx.session, &calling_product_id, resource, request.on_existing)
+					.allocate(
+						&cx.session,
+						&request.calling_product_id,
+						resource,
+						request.on_existing,
+					)
 					.await;
 				self.signing_host
 					.require_current_session(&cx.session)
@@ -501,10 +509,14 @@ impl SigningHostSsoService {
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountSignVrfRequest>,
 	) -> SignVrfResponse {
-		let calling_product_id = ProductId::parse(&request.calling_product_id)
-			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
 		self.signing_host
-			.sign_vrf_request(&cx.call, &cx.session, &calling_product_id, request.payload, false)
+			.sign_vrf_request(
+				&cx.call,
+				&cx.session,
+				&request.calling_product_id,
+				request.payload,
+				false,
+			)
 			.await
 			.map_err(api::HostAccountSignVrfError::from)
 	}

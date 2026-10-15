@@ -412,7 +412,7 @@ impl SigningHost {
 			&self.services,
 			self,
 			session,
-			product_id,
+			product_id.as_str(),
 			policy,
 		)
 		.await?;
@@ -778,7 +778,7 @@ impl SigningHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: &ProductId,
+		calling_product_id: &str,
 		request: v01::HostAccountSignVrfRequest,
 		authenticated_caller: bool,
 	) -> Result<v01::VrfSignature, AuthorityError> {
@@ -786,16 +786,16 @@ impl SigningHost {
 		validate_vrf_transcript(&request).map_err(|reason| AuthorityError::Unknown { reason })?;
 		let keypair = self.product_keypair(&request.account)?;
 		let (current, activation_generation) = self.require_current_session(session)?;
-		let granted = authenticated_caller &&
-			super::authority::is_blessed_owner(
-				calling_product_id,
-				&request.account.dot_ns_identifier,
-			) || self.has_auto_signing_grant(
-			activation_generation,
-			current.public_key,
-			calling_product_id,
-			&request.account.dot_ns_identifier,
-		);
+		let owner = &request.account.dot_ns_identifier;
+		let granted = ProductId::parse(calling_product_id).is_ok_and(|caller| {
+			authenticated_caller && super::authority::is_blessed_owner(&caller, owner) ||
+				self.has_auto_signing_grant(
+					activation_generation,
+					current.public_key,
+					&caller,
+					owner,
+				)
+		});
 		if !granted {
 			let confirmed = super::until_cancelled(
 				cx,
@@ -959,7 +959,8 @@ impl ProductAuthority for SigningHost {
 		calling_product_id: &ProductId,
 		request: v01::HostAccountSignVrfRequest,
 	) -> Result<v01::VrfSignature, AuthorityError> {
-		self.sign_vrf_request(cx, session, calling_product_id, request, true).await
+		self.sign_vrf_request(cx, session, calling_product_id.as_str(), request, true)
+			.await
 	}
 
 	async fn sign_payload(
@@ -1336,7 +1337,7 @@ impl ProductAuthority for SigningHost {
 						&self.services,
 						self,
 						session,
-						product_id,
+						product_id.as_str(),
 						OnExistingAllowancePolicy::Increase,
 					)
 					.await
@@ -1347,7 +1348,7 @@ impl ProductAuthority for SigningHost {
 						&self.services,
 						self,
 						session,
-						product_id,
+						product_id.as_str(),
 						index,
 						OnExistingAllowancePolicy::Increase,
 					)
@@ -1426,7 +1427,7 @@ impl ProductAuthority for SigningHost {
 			&self.services,
 			self,
 			session,
-			product_id,
+			product_id.as_str(),
 			OnExistingAllowancePolicy::Ignore,
 		)
 		.await
@@ -1447,7 +1448,7 @@ impl ProductAuthority for SigningHost {
 			&self.services,
 			self,
 			session,
-			product_id,
+			product_id.as_str(),
 			OnExistingAllowancePolicy::Increase,
 		)
 		.await
