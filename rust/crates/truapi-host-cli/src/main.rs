@@ -715,10 +715,9 @@ async fn run_pgas_check(
 		);
 	}
 	// The widest membership the signer actually holds; a claim needs exactly one.
-	let Some(membership) = memberships.first() else {
+	let Some(ring) = memberships.first() else {
 		bail!("member is not in the last {lookback} rings of any collection (onboarding pending)");
 	};
-	let ring = membership;
 
 	let revision = alloc::ring::read_ring_revision(
 		&people_rpc,
@@ -780,7 +779,7 @@ async fn run_pgas_check(
 		signer: &signer,
 		network_suffix: &network_suffix,
 		target: &target,
-		ring: membership,
+		ring,
 	})
 	.await
 	.map_err(|err| anyhow::anyhow!("claim failed: {err}"))?;
