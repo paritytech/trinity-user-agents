@@ -17,10 +17,11 @@ use crate::{
 		HostGetUserIdRequest, HostGetUserIdResponse, HostRequestLoginError,
 		HostRequestLoginRequest, HostRequestLoginResponse,
 	},
-	wire, wire_trait,
+	wasm_env, wire, wire_trait,
 };
 
 /// Account lookup, aliasing, and proof generation.
+#[wasm_env]
 #[wire_trait(id = 2)]
 #[crate::async_trait]
 pub trait Account: Send + Sync {

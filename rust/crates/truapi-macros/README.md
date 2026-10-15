@@ -10,6 +10,8 @@ the thin public entry points, which Rust requires at the proc-macro crate root.
 | --- | --- | --- |
 | [`service`](src/service.rs) | TrUAPI service trait | Required middleware metadata for codegen |
 | [`wire`](src/wire.rs) | TrUAPI method | Wire IDs and flags for codegen |
+| [`guest_main`](src/guest_main.rs) | Async entry point of a wasm product worker, as `truapi::main` in a worker | The exports the host starts the worker and delivers events through |
+| [`wasm_env`](src/wasm_env.rs) | TrUAPI service trait | Wasm worker imports: host linking under `wasm-worker`, guest bindings under `guest` |
 | [`versioned_type!`](src/versioned_type.rs) | Versioned envelope declarations | SCALE enums and version conversion traits |
 | [`sso_service`](src/sso_service.rs) | Dedicated inherent impl of SSO handlers | Request/response conversions, exhaustive dispatch, and message naming/correlation helpers |
 

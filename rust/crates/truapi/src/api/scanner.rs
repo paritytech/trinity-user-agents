@@ -3,7 +3,7 @@
 use crate::{
 	CallContext, CallError,
 	versioned::scanner::{HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse},
-	wire, wire_trait,
+	wasm_env, wire, wire_trait,
 };
 
 /// QR codes and barcodes scanned through the host's own viewfinder.
@@ -13,6 +13,7 @@ use crate::{
 /// code is the consent. The host does not act on what it scanned, so a link
 /// comes back as text. A product that needs the camera for anything else keeps
 /// using `getUserMedia` under the `Camera` permission.
+#[wasm_env]
 #[wire_trait(id = 25)]
 #[crate::async_trait]
 pub trait Scanner: Send + Sync {

@@ -7,13 +7,14 @@ use crate::{
 		HostWorkerBeginOperationResponse, HostWorkerEndOperationError,
 		HostWorkerEndOperationRequest, HostWorkerEndOperationResponse,
 	},
-	wire, wire_trait,
+	wasm_env, wire, wire_trait,
 };
 
 /// Worker background-operation APIs.
 ///
 /// The host keeps a product's worker running while it holds at least one open
 /// operation, which is how a worker outlives the surface that started it.
+#[wasm_env]
 #[wire_trait(id = 19)]
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]

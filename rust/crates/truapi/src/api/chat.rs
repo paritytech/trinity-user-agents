@@ -31,10 +31,11 @@ use crate::{
 		ProductChatSearchQueryRequest, ProductChatUserActionError, ProductChatUserActionItem,
 		ProductChatUserActionRequest,
 	},
-	wire, wire_trait,
+	wasm_env, wire, wire_trait,
 };
 
 /// Chat room, bot, and message APIs.
+#[wasm_env]
 #[wire_trait(id = 4)]
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]

@@ -50,6 +50,10 @@ pub mod api;
 pub mod v01;
 pub mod v02;
 pub mod versioned;
+pub mod wasm_abi;
+
+#[cfg(all(feature = "guest", target_arch = "wasm32"))]
+pub mod guest;
 
 /// A 32-byte value, passed as plain bytes on FFI surfaces. Version-neutral:
 /// the FFI conversion below applies to `[u8; 32]` fields in every protocol
@@ -497,7 +501,7 @@ pub mod latest {
 	pub type RemotePermissionResponse = LatestOf<versioned::permissions::RemotePermissionResponse>;
 }
 
-pub use truapi_macros::{service, wire, wire_trait};
+pub use truapi_macros::{service, wasm_env, wire, wire_trait};
 
 /// Wire codec version this crate defines. Frames address a method with a
 /// `(trait, method)` byte pair. The handshake accepts only this version, and
@@ -833,6 +837,9 @@ pub mod native;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
+#[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
+mod wasm_worker;
+
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native_debug;
@@ -847,6 +854,8 @@ pub mod durable;
 
 #[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
+#[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
+pub use wasm_worker::{WasmEnv, WasmWorker, WasmWorkerError};
 
 #[cfg(feature = "runtime")]
 pub use host_core::{

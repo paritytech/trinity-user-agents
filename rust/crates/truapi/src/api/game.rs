@@ -6,10 +6,11 @@ use crate::{
 		HostCancelNextGameError, HostCancelNextGameRequest, HostCancelNextGameResponse,
 		HostRemindNextGameError, HostRemindNextGameRequest, HostRemindNextGameResponse,
 	},
-	wire, wire_trait,
+	wasm_env, wire, wire_trait,
 };
 
 /// Reminders for a product's next game.
+#[wasm_env]
 #[wire_trait(id = 21)]
 #[crate::async_trait]
 pub trait Game: Send + Sync {

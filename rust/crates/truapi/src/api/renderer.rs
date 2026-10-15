@@ -7,10 +7,11 @@ use crate::{
 		HostRendererActionSubscribeRequest, ProductRendererRenderError, ProductRendererRenderItem,
 		ProductRendererRenderRequest,
 	},
-	wire, wire_trait,
+	wasm_env, wire, wire_trait,
 };
 
 /// Product-rendered bodies and the actions triggered inside them.
+#[wasm_env]
 #[wire_trait(id = 17)]
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]

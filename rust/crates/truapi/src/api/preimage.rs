@@ -7,10 +7,11 @@ use crate::{
 		RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitError,
 		RemotePreimageSubmitRequest, RemotePreimageSubmitResponse,
 	},
-	wire, wire_trait,
+	wasm_env, wire, wire_trait,
 };
 
 /// Preimage lookup and submission methods.
+#[wasm_env]
 #[wire_trait(id = 11)]
 #[crate::async_trait]
 pub trait Preimage: Send + Sync {

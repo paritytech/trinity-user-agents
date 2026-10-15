@@ -6,10 +6,11 @@ use crate::{
 		HostDevicePermissionError, HostDevicePermissionRequest, HostDevicePermissionResponse,
 		RemotePermissionError, RemotePermissionRequest, RemotePermissionResponse,
 	},
-	wire, wire_trait,
+	wasm_env, wire, wire_trait,
 };
 
 /// Permission request methods.
+#[wasm_env]
 #[wire_trait(id = 10)]
 #[crate::async_trait]
 pub trait Permissions: Send + Sync {

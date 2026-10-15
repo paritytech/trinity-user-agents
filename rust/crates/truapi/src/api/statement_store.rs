@@ -11,10 +11,11 @@ use crate::{
 		RemoteStatementStoreSubmitResponse, RemoteStatementStoreSubscribeError,
 		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest,
 	},
-	wire, wire_trait,
+	wasm_env, wire, wire_trait,
 };
 
 /// Statement store methods.
+#[wasm_env]
 #[wire_trait(id = 14)]
 #[crate::async_trait]
 pub trait StatementStore: Send + Sync {

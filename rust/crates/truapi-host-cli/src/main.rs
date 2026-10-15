@@ -36,6 +36,7 @@ mod signing_shell;
 mod stack;
 mod terminal_ui;
 mod update;
+mod worker;
 
 use std::{
 	collections::HashMap,
@@ -3304,6 +3305,10 @@ async fn pairing_interactive_loop(
 					Err(error) => ui.error(error.to_string()),
 				}
 			},
+			ShellCommand::Worker(path) => {
+				let product_id = product.current();
+				run_pairing_worker(&runtime, &product_id, &path, input, &mut ui).await?;
+			},
 			ShellCommand::Pair(_) |
 			ShellCommand::Devices(_) |
 			ShellCommand::Approval(_) |
@@ -3313,6 +3318,37 @@ async fn pairing_interactive_loop(
 			},
 		}
 	}
+}
+
+async fn run_pairing_worker(
+	runtime: &PairingHostRuntime,
+	product_id: &str,
+	path: &std::path::Path,
+	label: String,
+	ui: &mut ActiveTerminalUi,
+) -> Result<()> {
+	let activity_checkpoint = ui.activity_checkpoint();
+	let handle = ui.handle();
+	let operation = async {
+		let admin = runtime.product_admin(worker::context(product_id)?);
+		worker::run(admin, path, move |line| handle.script_stdout(line)).await
+	};
+	match ui.drive(label, operation).await? {
+		DriveResult::Complete(Ok(())) => {},
+		DriveResult::Complete(Err(error)) => {
+			ui.finish_activities_since(
+				activity_checkpoint,
+				ActivityState::Failed,
+				"Stopped after an error",
+			);
+			ui.error_with_causes(&error);
+		},
+		DriveResult::Cancelled => {
+			ui.finish_activities_since(activity_checkpoint, ActivityState::Cancelled, "Cancelled");
+			ui.error("command cancelled");
+		},
+	}
+	Ok(())
 }
 
 async fn run_pairing_login(
@@ -3715,6 +3751,11 @@ async fn execute_interactive_operation(
 			terminal_ui::output_event(SystemEvent::ScriptExit { code: status.code().unwrap_or(1) });
 		},
 		ShellCommand::Script(_) => bail!("script selection must be handled by the terminal UI"),
+		ShellCommand::Worker(path) => {
+			ensure_signer(session).await?;
+			let admin = session.runtime.product_admin(worker::context(product_id)?);
+			worker::run(admin, &path, move |line| ui.script_stdout(line)).await?;
+		},
 		ShellCommand::Session(SessionCommand::Switch(name)) => {
 			switch_session(session, name).await?;
 		},
@@ -3791,6 +3832,11 @@ async fn execute_non_interactive_command(
 			if !status.success() {
 				bail!("script exited with code {code}");
 			}
+		},
+		ShellCommand::Worker(path) => {
+			ensure_signer(session).await?;
+			let admin = session.runtime.product_admin(worker::context(&product.current())?);
+			worker::run(admin, &path, |line| println!("{line}")).await?;
 		},
 		ShellCommand::Help => println!("{HELP_TEXT}"),
 		ShellCommand::Clear | ShellCommand::Quit => {},

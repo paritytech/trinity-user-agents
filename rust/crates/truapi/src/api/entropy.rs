@@ -5,10 +5,11 @@ use crate::{
 	versioned::entropy::{
 		HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse,
 	},
-	wire, wire_trait,
+	wasm_env, wire, wire_trait,
 };
 
 /// Deterministic entropy derivation.
+#[wasm_env]
 #[wire_trait(id = 6)]
 #[crate::async_trait]
 pub trait Entropy: Send + Sync {
