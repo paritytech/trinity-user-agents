@@ -26,6 +26,8 @@ mod platform;
 mod renderer;
 mod runtime;
 mod subscribers;
+#[cfg(feature = "wasm-worker")]
+mod wasm_worker;
 mod ws_bridge;
 
 pub use crate::{
@@ -53,6 +55,8 @@ pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
+#[cfg(feature = "wasm-worker")]
+pub use wasm_worker::{NativeWasmWorkerEnd, NativeWasmWorkerObserver, WASM_WORKER_LOG_MARKER};
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use parity_scale_codec::{DecodeLimit, Encode};

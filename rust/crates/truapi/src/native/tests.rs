@@ -152,6 +152,8 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<String>>,
+	/// Every core log line, as its marker and its detail.
+	pub core_logs: Mutex<Vec<(String, String)>>,
 	pub face_requests: Mutex<Vec<bool>>,
 	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
@@ -222,6 +224,7 @@ impl EventCallbacks {
 	pub fn new() -> Self {
 		Self {
 			logs: Mutex::new(Vec::new()),
+			core_logs: Mutex::new(Vec::new()),
 			chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
 			chat_created_rooms: Mutex::new(Vec::new()),
 			chat_bot_status: Mutex::new(v01::ChatBotRegistrationStatus::New),
@@ -270,8 +273,9 @@ impl EventCallbacks {
 
 #[async_trait::async_trait]
 impl HostCallbacks for EventCallbacks {
-	fn on_core_log(&self, marker: String, _detail: String) {
-		self.logs.lock().expect("logs mutex poisoned").push(marker);
+	fn on_core_log(&self, marker: String, detail: String) {
+		self.logs.lock().expect("logs mutex poisoned").push(marker.clone());
+		self.core_logs.lock().expect("core logs mutex poisoned").push((marker, detail));
 	}
 	fn worker_demand_changed(&self, product_id: String, transition: WorkerTransition) {
 		self.worker_demand

@@ -28,7 +28,9 @@ demangle-name-section = false
 dwarf-debug-info = false
 
 [features]
-default = ["runtime", "wasm-signing-host"]
+# The native hosts (the iOS and Android cores, the CLI) run wasm workers, so the
+# default build carries the sandbox. The browser bundles name their features.
+default = ["runtime", "wasm-signing-host", "wasm-worker"]
 # The host runtime: dispatcher, frames, host logic, native and WASM surfaces.
 # Without it the crate is the protocol definitions alone, which is what
 # codegen reads and builds against.
