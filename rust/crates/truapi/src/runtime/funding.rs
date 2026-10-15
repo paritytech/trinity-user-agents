@@ -91,6 +91,10 @@ pub struct FundingRegistry {
 	writes: AsyncMutex<bool>,
 	/// Whether a task is waiting on the next deadline.
 	sweeping: AtomicBool,
+	/// The deadline that task sleeps toward, and how to wake it when an
+	/// earlier one appears: an idle assigned session can leave it asleep for
+	/// days while a new session expires in hours.
+	sweep_alarm: Mutex<Option<(u64, mpsc::UnboundedSender<()>)>>,
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
 	/// Each provider's open `serve_subscribe` streams, by product id.
 	servers: Mutex<Servers>,
@@ -406,7 +410,9 @@ impl FundingRegistry {
 	}
 
 	/// Cancel session `intent` at the user's request: end it if no provider
-	/// serves it, otherwise ask the provider to stop.
+	/// serves it, otherwise ask the provider to stop. A session whose overlay
+	/// is still up is not the host's to cancel yet: the overlay ends it by
+	/// closing.
 	pub async fn cancel(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -416,7 +422,9 @@ impl FundingRegistry {
 		let target = intent.to_string();
 		let (outcome, provider) = self
 			.commit(storage, now_ms, move |sessions| {
-				let Some(session) = sessions.get_mut(&target) else {
+				let Some(session) =
+					sessions.get_mut(&target).filter(|_| !self.lock_presenting().contains(&target))
+				else {
 					return ((CancelOutcome::Refused, None), Vec::new());
 				};
 				let outcome = session.cancel(now_ms);
@@ -483,7 +491,8 @@ impl FundingRegistry {
 
 	/// The user started presented session `intent`: store it and announce
 	/// it. A session that cannot be stored is discarded, as the caller is
-	/// told it failed.
+	/// told it failed; until then it stays presented, so no other commit
+	/// stores it.
 	async fn start(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -526,7 +535,9 @@ impl FundingRegistry {
 	}
 
 	/// Apply `edit` to a copy of the sessions, persist the result, then make it
-	/// current and notify every session `edit` names.
+	/// current and notify every session `edit` names. An edit may move
+	/// sessions in or out of the overlay; when the write fails, that move is
+	/// undone along with the rest.
 	///
 	/// Persisted sessions are loaded first on the first call, and every
 	/// commit expires the sessions past their deadline, so a long suspend
@@ -539,6 +550,7 @@ impl FundingRegistry {
 	) -> Result<R, FundingSessionError> {
 		let mut loaded = self.writes.lock().await;
 		let before = self.lock_sessions().clone();
+		let presenting_before = self.lock_presenting().clone();
 		let mut working = before.clone();
 		let mut changed = Vec::new();
 		if !*loaded {
@@ -572,7 +584,10 @@ impl FundingRegistry {
 					.cloned()
 					.collect()
 			};
-			store_sessions(storage, &started).await?;
+			if let Err(error) = store_sessions(storage, &started).await {
+				*self.lock_presenting() = presenting_before;
+				return Err(error);
+			}
 			*self.lock_sessions() =
 				kept.into_iter().map(|session| (session.intent.clone(), session)).collect();
 		}
@@ -675,13 +690,25 @@ impl FundingRegistry {
 	/// task ends once none can or the registry is dropped.
 	pub fn keep_expiring(self: &Arc<Self>, services: &RuntimeServices) {
 		if self.sweeping.swap(true, Ordering::AcqRel) {
+			self.wake_sweep_if_earlier();
 			return;
 		}
 		let registry = Arc::downgrade(self);
 		let storage: Arc<dyn Platform> = services.platform.clone();
+		let (alarm, mut woken) = mpsc::unbounded();
 		(services.spawner)(Box::pin(async move {
 			while let Some(wait_ms) = Self::next_wait(&registry) {
-				futures_timer::Delay::new(Duration::from_millis(wait_ms)).await;
+				if let Some(live) = registry.upgrade() {
+					let until_ms = current_unix_millis().saturating_add(wait_ms);
+					*live.lock_sweep_alarm() = Some((until_ms, alarm.clone()));
+					// A session that arrived before the alarm was set found
+					// no alarm to ring.
+					if live.next_deadline().is_some_and(|next_ms| next_ms < until_ms) {
+						continue;
+					}
+				}
+				let delay = futures_timer::Delay::new(Duration::from_millis(wait_ms));
+				futures::future::select(delay, woken.next()).await;
 				let Some(live) = registry.upgrade() else {
 					return;
 				};
@@ -691,6 +718,19 @@ impl FundingRegistry {
 				}
 			}
 		}));
+	}
+
+	/// Wake the expiry task when a session now expires before the deadline
+	/// it sleeps toward.
+	fn wake_sweep_if_earlier(&self) {
+		let Some(next_ms) = self.next_deadline() else {
+			return;
+		};
+		if let Some((until_ms, alarm)) = self.lock_sweep_alarm().as_ref() &&
+			next_ms < *until_ms
+		{
+			let _ = alarm.unbounded_send(());
+		}
 	}
 
 	/// Milliseconds until the earliest open deadline, or `None` once nothing
@@ -727,7 +767,8 @@ impl FundingRegistry {
 				subscribers.remove(&session.intent);
 			}
 		}
-		if self.platform.get().is_some() {
+		// The host hears of a session once the user starts it.
+		if self.platform.get().is_some() && !self.lock_presenting().contains(&session.intent) {
 			self.lock_announcements().pending.push_back((session.intent.clone(), item));
 		}
 	}
@@ -759,6 +800,10 @@ impl FundingRegistry {
 
 	fn lock_announcements(&self) -> MutexGuard<'_, Announcements> {
 		lock(&self.announcements)
+	}
+
+	fn lock_sweep_alarm(&self) -> MutexGuard<'_, Option<(u64, mpsc::UnboundedSender<()>)>> {
+		self.sweep_alarm.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 
 	fn lock_presenting(&self) -> MutexGuard<'_, HashSet<String>> {
@@ -805,6 +850,9 @@ pub enum OpenFundingError {
 	/// The user closed the overlay before starting.
 	#[display("funding dismissed")]
 	Dismissed,
+	/// The amount sought is zero.
+	#[display("funding amount must be positive")]
+	InvalidAmount,
 	/// The session could not be stored.
 	#[display("{_0}")]
 	Session(FundingSessionError),
@@ -819,6 +867,31 @@ const RESUME_RETRY_FIRST: Duration = Duration::from_secs(1);
 const RESUME_RETRY_LONGEST: Duration = Duration::from_secs(60);
 
 impl RuntimeServices {
+	/// Install the host's funding surface and resume the sessions stored
+	/// before a restart. Set-once; returns whether this call installed it.
+	pub fn install_funding_platform(self: &Arc<Self>, platform: Arc<dyn FundingPlatform>) -> bool {
+		let installed = self.funding().install_platform(platform);
+		if installed {
+			self.resume_funding();
+		}
+		installed
+	}
+
+	/// Open a session on the host's own behalf and show the overlay. Returns
+	/// the session id, or `None` when the user closed the overlay without
+	/// starting.
+	pub async fn open_host_funding(
+		self: &Arc<Self>,
+		direction: FundingDirection,
+		amount: Option<u128>,
+	) -> Result<Option<String>, GenericError> {
+		match self.open_funding(None, direction, amount).await {
+			Ok(session) => Ok(Some(session.intent)),
+			Err(OpenFundingError::Dismissed) => Ok(None),
+			Err(error) => Err(GenericError { reason: error.to_string() }),
+		}
+	}
+
 	/// Load persisted sessions and arm expiry for them, so sessions from
 	/// before a restart end on time and the host hears of them.
 	pub fn resume_funding(self: &Arc<Self>) {
@@ -1071,6 +1144,9 @@ impl RuntimeServices {
 	) -> Result<FundingSession, OpenFundingError> {
 		let registry = self.funding();
 		let platform = registry.platform().ok_or(OpenFundingError::Unsupported)?;
+		if amount == Some(0) {
+			return Err(OpenFundingError::InvalidAmount);
+		}
 		let now_ms = current_unix_millis();
 		let session = FundingSession::new(
 			format!("fs_{}", nanoid::nanoid!(10)),
@@ -1595,5 +1671,55 @@ mod tests {
 
 		assert!(failed.is_err());
 		assert_eq!(registry.get("fs_1"), Some(session("fs_1", NOW)));
+	}
+
+	#[test]
+	fn a_session_whose_start_failed_is_not_stored_by_a_later_commit() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		block_on(registry.present(storage.as_ref(), NOW, session("fs_1", NOW))).expect("presented");
+		let failing = crate::test_support::StubPlatform {
+			local_storage_error: Some("disk full"),
+			..Default::default()
+		};
+
+		let started = block_on(registry.commit(&failing, NOW, |_| {
+			registry.lock_presenting().remove("fs_1");
+			((), vec!["fs_1".to_string()])
+		}));
+		// Another commit stores before the failed start is discarded.
+		insert(&registry, storage.as_ref(), session("fs_2", NOW));
+
+		assert!(started.is_err());
+		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(vec![session("fs_2", NOW)]));
+	}
+
+	#[test]
+	fn a_session_whose_overlay_is_up_cannot_be_cancelled() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		block_on(registry.present(storage.as_ref(), NOW, session("fs_1", NOW))).expect("presented");
+
+		assert_eq!(
+			block_on(registry.cancel(storage.as_ref(), NOW, "fs_1")),
+			Ok(CancelOutcome::Refused)
+		);
+		assert_eq!(registry.get("fs_1").map(|session| session.is_terminal()), Some(false));
+	}
+
+	#[test]
+	fn an_earlier_deadline_wakes_the_expiry_task() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		let (alarm, mut woken) = mpsc::unbounded();
+		*registry.lock_sweep_alarm() = Some((NOW + 7 * DAY_MS, alarm));
+
+		registry.wake_sweep_if_earlier();
+		assert!(woken.try_next().is_err(), "nothing open, nothing to wake for");
+
+		insert(&registry, storage.as_ref(), session("fs_1", NOW));
+		registry.wake_sweep_if_earlier();
+
+		assert_eq!(woken.try_next(), Ok(Some(())));
 	}
 }

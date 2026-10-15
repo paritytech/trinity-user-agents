@@ -39,7 +39,24 @@ class CoinageRenderThread(
     private var areaWidth = 0f
     private var stripHeight = CoinageStripLayout.Options().height
     private var gridBudget = DEFAULT_GRID_BUDGET
+    private var focus: CoinageArrangement.Focus? = null
+    private var window = 0f
     private var needsRetarget = true
+    private var needsFollow = false
+    private var needsDraw = false
+    private val taps = ArrayList<Tap>()
+
+    /** How tall the coins alone came out at the last retarget, for placing the band under or over them. */
+    private var coinsHeight = 0f
+    private var focusTop: Float? = null
+
+    /**
+     * The window the last swapped frame was drawn for, in points. The view moves the surface to it as that
+     * frame is latched, so the coins and the surface's position change together rather than a frame apart.
+     */
+    @Volatile
+    var drawnWindow = 0f
+        private set
 
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
@@ -51,13 +68,18 @@ class CoinageRenderThread(
 
     private var lastFrame = 0L
 
+    /**
+     * Only a width change re-aims the coins: both arrangements are laid out against the width alone, and
+     * re-aiming on a height change restarted every coin's stagger, which read as a hitch.
+     */
     fun resize(width: Int, height: Int, density: Float) = synchronized(lock) {
         if (width == pixelWidth && height == pixelHeight && density == this.density) return@synchronized
+
+        if (width != pixelWidth || density != this.density) needsRetarget = true
 
         pixelWidth = width
         pixelHeight = height
         this.density = density
-        needsRetarget = true
         wake()
     }
 
@@ -66,23 +88,38 @@ class CoinageRenderThread(
         isExpanded: Boolean,
         areaWidth: Float,
         stripHeight: Float,
-        gridBudget: Float
+        gridBudget: Float,
+        focus: CoinageArrangement.Focus?,
+        window: Float
     ) = synchronized(lock) {
-        if (coins == this.coins &&
-            isExpanded == this.isExpanded &&
-            areaWidth == this.areaWidth &&
-            stripHeight == this.stripHeight &&
-            gridBudget == this.gridBudget
-        ) {
-            return@synchronized
-        }
+        val relaid = coins != this.coins ||
+            isExpanded != this.isExpanded ||
+            areaWidth != this.areaWidth ||
+            stripHeight != this.stripHeight ||
+            gridBudget != this.gridBudget ||
+            focus?.id != this.focus?.id ||
+            focus?.band != this.focus?.band
+        val scrolled = !relaid && focus != this.focus
+        val redrawn = window != this.window
 
         this.coins = coins
         this.isExpanded = isExpanded
         this.areaWidth = areaWidth
         this.stripHeight = stripHeight
         this.gridBudget = gridBudget
-        needsRetarget = true
+        this.focus = focus
+        this.window = window
+
+        if (relaid) needsRetarget = true
+        if (scrolled) needsFollow = true
+
+        if (redrawn) needsDraw = true
+        if (relaid || scrolled || redrawn) wake()
+    }
+
+    /** Answers on the render thread, against where every coin has got to by the next frame. */
+    fun tap(x: Float, y: Float, onResult: (String?) -> Unit) = synchronized(lock) {
+        taps += Tap(x, y, onResult)
         wake()
     }
 
@@ -150,7 +187,9 @@ class CoinageRenderThread(
             }
 
             if (!frame()) {
-                synchronized(lock) { if (!needsRetarget) awake = false }
+                synchronized(lock) {
+                    if (!needsRetarget && !needsFollow && !needsDraw && taps.isEmpty()) awake = false
+                }
             }
         }
     }
@@ -168,6 +207,9 @@ class CoinageRenderThread(
         val height: Int
         val scale: Float
         val retarget: Boolean
+        val follow: Boolean
+        val offset: Float
+        val pending: List<Tap>
 
         synchronized(lock) {
             width = pixelWidth
@@ -175,14 +217,22 @@ class CoinageRenderThread(
             scale = density
             retarget = needsRetarget
             needsRetarget = false
+            follow = needsFollow
+            needsFollow = false
+            needsDraw = false
+            offset = window
+            pending = taps.toList()
+            taps.clear()
         }
 
         if (width <= 0 || height <= 0) return false
 
-        if (retarget) retarget(ready.designs)
+        if (retarget) retarget(ready.designs) else if (follow) follow()
+
+        for (tap in pending) tap.onResult(CoinageScene.coinAt(tap.x, tap.y, field))
 
         val moved = advance()
-        val batches = CoinageScene.batches(field, ready.designs)
+        val batches = CoinageScene.batches(field, ready.designs, offset)
 
         ready.draw(
             batches = batches,
@@ -195,6 +245,7 @@ class CoinageRenderThread(
         )
 
         EGL14.eglSwapBuffers(display, eglSurface)
+        drawnWindow = offset
 
         return field.isMoving || moved
     }
@@ -232,6 +283,7 @@ class CoinageRenderThread(
         val width: Float
         val strip: Float
         val budget: Float
+        val picked: CoinageArrangement.Focus?
 
         synchronized(lock) {
             snapshot = coins
@@ -239,6 +291,7 @@ class CoinageRenderThread(
             width = areaWidth
             strip = stripHeight
             budget = gridBudget
+            picked = focus
         }
 
         if (width <= 0f) return
@@ -249,7 +302,8 @@ class CoinageRenderThread(
             areaWidth = width,
             areaHeight = budget,
             designs = designs,
-            stripHeight = strip
+            stripHeight = strip,
+            focus = picked
         )
 
         field.retarget(
@@ -260,8 +314,27 @@ class CoinageRenderThread(
             stagger = if (expanded) CoinageCoinField.Stagger.FROM_BACK else CoinageCoinField.Stagger.FROM_FRONT
         )
 
+        coinsHeight = result.coinsHeight
+        focusTop = result.focusTop
         report(CoinageCoinsMetrics(blocks = result.blocks, runs = result.runs))
         lastFrame = 0L
+    }
+
+    /**
+     * Keeps the picked coin at the foot of the screen as the page scrolls: the coin alone is re-aimed, on its
+     * spring and with no stagger, and the other coins stay where they are.
+     */
+    private fun follow() {
+        val picked = synchronized(lock) { focus } ?: return
+
+        if (field.members.none { it.coin.id == picked.id }) return
+
+        val top = CoinageArrangement.bandTop(picked, coinsHeight)
+
+        if (top == focusTop) return
+
+        focusTop = top
+        field.move(picked.id, CoinageArrangement.pickedCentreX(), CoinageArrangement.pickedCentreY(top))
     }
 
     private fun wake() {
@@ -349,6 +422,8 @@ class CoinageRenderThread(
         const val SHUTDOWN_WAIT = 500L
     }
 }
+
+private class Tap(val x: Float, val y: Float, val onResult: (String?) -> Unit)
 
 /**
  * Where the coins came out, so the card can rule their runs and label their blocks.

@@ -45,7 +45,10 @@ pub enum FundingFailure {
 	Other {
 		/// Stable machine-readable code.
 		code: String,
-		/// Human-readable text, already localized by the host.
+		/// Human-readable text. A provider's failure carries its own text; a
+		/// failure the core decides carries English text with a code hosts
+		/// can translate: `not_claimed` when nothing reached the balance,
+		/// `payment_failed` when the user's payment did not go through.
 		message: String,
 	},
 }
@@ -74,6 +77,8 @@ pub enum HostFundingError {
 	NotConnected,
 	/// The user dismissed the funding screen without starting a session.
 	Rejected,
+	/// The amount sought is zero.
+	InvalidAmount,
 	/// Catch-all.
 	Unknown {
 		/// Human-readable failure reason.

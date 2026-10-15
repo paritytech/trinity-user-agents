@@ -300,11 +300,7 @@ impl PairingHostRuntime {
 	/// serving any product runtime.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_funding_platform"))]
 	pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
-		let installed = self.services.funding().install_platform(platform);
-		if installed {
-			self.services.resume_funding();
-		}
-		installed
+		self.services.install_funding_platform(platform)
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance card's
@@ -316,11 +312,7 @@ impl PairingHostRuntime {
 		direction: v01::FundingDirection,
 		amount: Option<u128>,
 	) -> Result<Option<String>, v01::GenericError> {
-		match self.services.open_funding(None, direction, amount).await {
-			Ok(session) => Ok(Some(session.intent)),
-			Err(crate::runtime::OpenFundingError::Dismissed) => Ok(None),
-			Err(error) => Err(v01::GenericError { reason: error.to_string() }),
-		}
+		self.services.open_host_funding(direction, amount).await
 	}
 
 	/// Install the host's [`GamePlatform`], which holds each product's game
@@ -818,11 +810,7 @@ impl SigningHostRuntime {
 	/// serving any product runtime.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_platform"))]
 	pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
-		let installed = self.services.funding().install_platform(platform);
-		if installed {
-			self.services.resume_funding();
-		}
-		installed
+		self.services.install_funding_platform(platform)
 	}
 
 	/// Session `intent`'s progress as the host draws it: the steps for its
@@ -950,11 +938,7 @@ impl SigningHostRuntime {
 		direction: v01::FundingDirection,
 		amount: Option<u128>,
 	) -> Result<Option<String>, v01::GenericError> {
-		match self.services.open_funding(None, direction, amount).await {
-			Ok(session) => Ok(Some(session.intent)),
-			Err(crate::runtime::OpenFundingError::Dismissed) => Ok(None),
-			Err(error) => Err(v01::GenericError { reason: error.to_string() }),
-		}
+		self.services.open_host_funding(direction, amount).await
 	}
 
 	/// Install the host's [`GamePlatform`], which holds each product's game
