@@ -77,9 +77,10 @@ fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
 	futures::executor::block_on(async {
 		let session = signing_host.current_session().expect("a session is active");
 		let cx = CallContext::default();
+		let product_id = test_product_id(PRODUCT_ID);
 		futures::select! {
 			result = signing_host
-				.statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string())
+				.statement_store_allowance_key(&cx, &session, &product_id)
 				.fuse() => result,
 			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
 				panic!("the proof blocked on a chain read")
@@ -103,7 +104,7 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 		.lock()
 		.expect("local AutoSigning grant mutex poisoned")
 		.statement_allowance_keys
-		.insert(product_id.to_string(), (period, secret_key()));
+		.insert(test_product_id(product_id), (period, secret_key()));
 }
 
 fn current_generation(signing_host: &SigningHostRole) -> u64 {
@@ -120,7 +121,7 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str, period: u32) -> 
 		.lock()
 		.expect("local AutoSigning grant mutex poisoned");
 	state
-		.statement_allowance_key(state.activation_generation, product_id, period)
+		.statement_allowance_key(state.activation_generation, &test_product_id(product_id), period)
 		.expect("the generation is current")
 		.map(|key| key.secret)
 }
@@ -204,7 +205,7 @@ fn a_replaced_session_is_not_served_the_new_sessions_key() {
 				.local_grants
 				.lock()
 				.expect("local AutoSigning grant mutex poisoned")
-				.statement_allowance_key(stale_generation, PRODUCT_ID, PERIOD),
+				.statement_allowance_key(stale_generation, &test_product_id(PRODUCT_ID), PERIOD),
 			Err(AuthorityError::Disconnected)
 		),
 		"a request validated under the replaced session was served a key"
@@ -224,7 +225,7 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 		.expect("local AutoSigning grant mutex poisoned")
 		.remember_statement_allowance_key(
 			stale_generation,
-			PRODUCT_ID.to_string(),
+			test_product_id(PRODUCT_ID),
 			PERIOD,
 			secret_key(),
 		);

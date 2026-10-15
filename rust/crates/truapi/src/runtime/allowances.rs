@@ -1,6 +1,6 @@
 //! Retained allowance scopes and paired-session storage encoding.
 
-use crate::platform::{CoreStorage, CoreStorageKey};
+use crate::platform::{CoreStorage, CoreStorageKey, ProductId};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::GenericError;
 
@@ -20,7 +20,7 @@ pub enum AllowanceResource {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AllowanceCacheKey {
 	session: SsoSessionKey,
-	product_id: String,
+	product_id: ProductId,
 	resource: AllowanceResource,
 }
 
@@ -28,10 +28,10 @@ impl AllowanceCacheKey {
 	/// Cache key for the session's SSO pair; fails when the session has none.
 	pub fn new(
 		session: &SessionInfo,
-		product_id: &str,
+		product_id: &ProductId,
 		resource: AllowanceResource,
 	) -> Result<Self, AuthorityError> {
-		Ok(Self { session: sso_cache_key(session)?, product_id: product_id.to_string(), resource })
+		Ok(Self { session: sso_cache_key(session)?, product_id: product_id.clone(), resource })
 	}
 
 	/// Whether this key belongs to the given SSO session.
@@ -40,8 +40,8 @@ impl AllowanceCacheKey {
 	}
 
 	/// Whether this key belongs to the given product.
-	pub fn is_for_product(&self, product_id: &str) -> bool {
-		self.product_id == product_id
+	pub fn is_for_product(&self, product_id: &ProductId) -> bool {
+		&self.product_id == product_id
 	}
 }
 
@@ -56,13 +56,13 @@ struct StoredAllowanceEntry {
 pub async fn read_allowance_key(
 	storage: &(impl CoreStorage + ?Sized),
 	session: &SessionInfo,
-	product_id: &str,
+	product_id: &ProductId,
 	resource: AllowanceResource,
 ) -> Result<Option<Vec<u8>>, AuthorityError> {
 	let entries = read_entries(storage, session).await?;
 	Ok(entries
 		.into_iter()
-		.find(|entry| entry.product_id == product_id && entry.resource == resource)
+		.find(|entry| entry.product_id == product_id.as_str() && entry.resource == resource)
 		.map(|entry| entry.slot_account_key))
 }
 
@@ -71,12 +71,13 @@ pub async fn read_allowance_key(
 pub async fn write_allowance_key(
 	storage: &(impl CoreStorage + ?Sized),
 	session: &SessionInfo,
-	product_id: &str,
+	product_id: &ProductId,
 	resource: AllowanceResource,
 	slot_account_key: Vec<u8>,
 ) -> Result<(), AuthorityError> {
 	let mut entries = read_entries(storage, session).await?;
-	entries.retain(|entry| !(entry.product_id == product_id && entry.resource == resource));
+	entries
+		.retain(|entry| !(entry.product_id == product_id.as_str() && entry.resource == resource));
 	entries.push(StoredAllowanceEntry {
 		product_id: product_id.to_string(),
 		resource,
@@ -93,12 +94,13 @@ pub async fn write_allowance_key(
 pub async fn remove_allowance_key(
 	storage: &(impl CoreStorage + ?Sized),
 	session: &SessionInfo,
-	product_id: &str,
+	product_id: &ProductId,
 	resource: AllowanceResource,
 ) -> Result<(), AuthorityError> {
 	let mut entries = read_entries(storage, session).await?;
 	let before = entries.len();
-	entries.retain(|entry| !(entry.product_id == product_id && entry.resource == resource));
+	entries
+		.retain(|entry| !(entry.product_id == product_id.as_str() && entry.resource == resource));
 	if entries.len() == before {
 		return Ok(());
 	}
@@ -113,7 +115,7 @@ pub async fn remove_allowance_key(
 pub async fn clear_product_allowance_keys(
 	storage: &(impl CoreStorage + ?Sized),
 	session: &SessionInfo,
-	product_id: &str,
+	product_id: &ProductId,
 ) -> Result<(), AuthorityError> {
 	let key = storage_key(session)?;
 	let Some(blob) = storage.read_core_storage(key.clone()).await.map_err(storage_error)? else {
@@ -126,7 +128,7 @@ pub async fn clear_product_allowance_keys(
 		},
 	};
 	let before = entries.len();
-	entries.retain(|entry| entry.product_id != product_id);
+	entries.retain(|entry| entry.product_id != product_id.as_str());
 	if entries.len() == before {
 		return Ok(());
 	}
@@ -204,7 +206,7 @@ mod tests {
 	use super::*;
 	use std::{collections::HashMap, sync::Mutex};
 
-	use crate::test_support::sso_session_info;
+	use crate::test_support::{sso_session_info, test_product_id};
 
 	#[derive(Default)]
 	struct MemStorage {
@@ -244,7 +246,7 @@ mod tests {
 			write_allowance_key(
 				&storage,
 				&session,
-				"dotli.localhost",
+				&test_product_id("dotli.dot"),
 				AllowanceResource::Bulletin,
 				vec![1; 64],
 			)
@@ -253,7 +255,7 @@ mod tests {
 			write_allowance_key(
 				&storage,
 				&session,
-				"dotli.localhost",
+				&test_product_id("dotli.dot"),
 				AllowanceResource::StatementStore,
 				vec![2; 64],
 			)
@@ -264,7 +266,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					"dotli.localhost",
+					&test_product_id("dotli.dot"),
 					AllowanceResource::Bulletin
 				)
 				.await
@@ -275,7 +277,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					"dotli.localhost",
+					&test_product_id("dotli.dot"),
 					AllowanceResource::StatementStore
 				)
 				.await
@@ -286,7 +288,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					"other.localhost",
+					&test_product_id("other.dot"),
 					AllowanceResource::Bulletin
 				)
 				.await
@@ -305,7 +307,7 @@ mod tests {
 			write_allowance_key(
 				&storage,
 				&session,
-				"dotli.localhost",
+				&test_product_id("dotli.dot"),
 				AllowanceResource::Bulletin,
 				vec![1; 64],
 			)
@@ -316,7 +318,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					"dotli.localhost",
+					&test_product_id("dotli.dot"),
 					AllowanceResource::Bulletin
 				)
 				.await

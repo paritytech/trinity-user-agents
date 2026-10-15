@@ -1408,7 +1408,7 @@ pub fn derive_product_subtree_public_key(
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
 	let product_id = crate::platform::ProductId::parse(&product_id)
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
-	crate::host_logic::product_account::derive_product_subtree_keypair(&root, product_id.as_str())
+	crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
 		.map(|keypair| keypair.public.to_bytes().to_vec())
 		.map_err(|err| JsValue::from_str(&err.to_string()))
 }

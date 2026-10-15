@@ -141,8 +141,7 @@ impl StatementStore for ProductRuntimeHost {
 				if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
 					statement_store_rpc::is_no_allowance_rejection(&reason)
 				{
-					self.authority
-						.forget_statement_store_allowance_key(self.product_id().as_str(), signer);
+					self.authority.forget_statement_store_allowance_key(self.product_id(), signer);
 				}
 				CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
 					reason: format!("statement-store submit failed: {reason}"),
@@ -331,7 +330,7 @@ impl ProductRuntimeHost {
 			latest::ProductAccountId { dot_ns_identifier: owner.to_string(), derivation_index };
 		let session = self.authority.current_session().ok_or(StatementProofFailure::NoSession)?;
 		let signer = self
-			.product_account_public_key(cx, &session, &product_account_id)
+			.product_account_public_key(cx, &session, &owner, &product_account_id.derivation_index)
 			.await
 			.map_err(|err| StatementProofFailure::UnableToSign(err.to_string()))?;
 		let fields = statement_fields_from_v01(statement)
@@ -361,7 +360,7 @@ impl ProductRuntimeHost {
 			self.authority.sign_statement_store_product_payload(
 				&cx,
 				&session,
-				Some(self.product_id().as_str()),
+				Some(self.product_id()),
 				product_account_id,
 				payload,
 			),
@@ -380,11 +379,7 @@ impl ProductRuntimeHost {
 		let cx = remote_authority_context(cx);
 		let allowance = remote_authority_call(
 			&cx,
-			self.authority.statement_store_allowance_key(
-				&cx,
-				&session,
-				self.product_id().to_string(),
-			),
+			self.authority.statement_store_allowance_key(&cx, &session, self.product_id()),
 		)
 		.await
 		.map_err(statement_authority_failure)?;
@@ -473,7 +468,7 @@ mod tests {
 		test_support::{
 			StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
 			sso_session_info, sso_success_response_script, statement, stub_platform,
-			submitted_remote_message, subscribe_ack_frame, test_spawner,
+			submitted_remote_message, subscribe_ack_frame, test_product_id, test_spawner,
 		},
 	};
 	use futures::StreamExt;
@@ -508,9 +503,7 @@ mod tests {
 		};
 		futures::executor::block_on(crate::platform::CoreStorage::write_core_storage(
 			platform,
-			ProductId::parse(owner)
-				.expect("test product identifier is valid")
-				.manifest_cache_key(),
+			test_product_id(owner).manifest_cache_key(),
 			entry.encode(),
 		))
 		.expect("stub core storage accepts the entry");
@@ -555,7 +548,11 @@ mod tests {
 		let host =
 			ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
 		let session = sso_session_info();
-		host.test_cache_product_subtree(&session, "myapp.dot", session.public_key);
+		host.test_cache_product_subtree(
+			&session,
+			&test_product_id("myapp.dot"),
+			session.public_key,
+		);
 		host.test_session_state().set_session(session);
 		let cx = CallContext::default();
 		let request = RemoteStatementStoreCreateProofRequest::V1(
@@ -582,7 +579,8 @@ mod tests {
 		let statement = statement();
 		let payload = statement_payload(statement.clone());
 		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-		let product_keypair = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+		let product_keypair =
+			derive_product_keypair(&root, &test_product_id("myapp.dot"), index_bytes(0)).unwrap();
 		let expected_signer = product_keypair.public.to_bytes();
 		let cx = CallContext::default();
 		let request = RemoteStatementStoreCreateProofRequest::V1(
@@ -615,7 +613,8 @@ mod tests {
 		let statement = statement();
 		let payload = statement_payload(statement.clone());
 		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-		let owner = derive_product_keypair(&root, "dim2.paseo", index_bytes(0)).unwrap();
+		let owner =
+			derive_product_keypair(&root, &test_product_id("dim2.paseo"), index_bytes(0)).unwrap();
 		let request = RemoteStatementStoreCreateProofRequest::V1(
 			latest::RemoteStatementStoreCreateProofRequest {
 				product_account_id: account_id("dim2.paseo", 0),

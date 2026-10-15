@@ -1485,7 +1485,7 @@ async fn product_subtree_public_key(
 	let mut cx = CallContext::default();
 	cx.set_timeout(timeout);
 
-	let call = authority.product_subtree_public_key(&cx, &session, product_id.into()).fuse();
+	let call = authority.product_subtree_public_key(&cx, &session, &product_id).fuse();
 	let deadline = futures_timer::Delay::new(timeout).fuse();
 	pin_mut!(call, deadline);
 	futures::select! {
@@ -2335,9 +2335,11 @@ mod tests {
 		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
 		let session = crate::test_support::sso_session_info();
 		install_session_after_boot(&runtime, &platform, session.clone());
-		runtime
-			.pairing_host
-			.cache_product_subtree_for_test(&session, "myapp.dot", [9; 32]);
+		runtime.pairing_host.cache_product_subtree_for_test(
+			&session,
+			&crate::test_support::test_product_id("myapp.dot"),
+			[9; 32],
+		);
 
 		let key =
 			futures::executor::block_on(runtime.product_subtree_public_key("myapp.dot", Some(1)))

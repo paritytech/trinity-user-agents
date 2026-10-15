@@ -2727,7 +2727,7 @@ mod tests {
 		};
 		let checked_by_runtime = cross_product_signature_key(
 			&PRODUCT.product_id,
-			&ProductId::parse("dim2.dot").expect("test product identifier is valid"),
+			&crate::test_support::test_product_id("dim2.dot"),
 			CrossProductSignatureKind::Payload,
 		);
 

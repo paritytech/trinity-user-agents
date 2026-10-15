@@ -38,6 +38,7 @@ use crate::{
 		session::{SessionInfo, SessionState, SsoSessionInfo},
 		statement_store::parse_new_statements_result,
 	},
+	platform::ProductId,
 };
 
 use futures::{
@@ -324,7 +325,7 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError> {
 		let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
 		let lifecycle_epoch = self.current_session_lifecycle_epoch();
@@ -333,7 +334,7 @@ impl PairingHost {
 			return Ok(public_key);
 		}
 		let public_key = self
-			.call(cx, session, ProductSubtreeRequest { product_id })
+			.call(cx, session, ProductSubtreeRequest { product_id: product_id.to_string() })
 			.await
 			.map_err(remote_authority_error)?
 			.map_err(remote_authority_error)?;
@@ -351,19 +352,23 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		calling_product_id: String,
+		calling_product_id: &ProductId,
 		request: latest::HostAccountSignVrfRequest,
 	) -> Result<latest::VrfSignature, AuthorityError> {
-		self.call(cx, session, ProductRequest { calling_product_id, payload: request })
-			.await
-			.map_err(remote_authority_error)?
-			.map_err(|err| match err {
-				latest::HostAccountSignVrfError::NotConnected => AuthorityError::Disconnected,
-				latest::HostAccountSignVrfError::Rejected => AuthorityError::Rejected,
-				latest::HostAccountSignVrfError::Unknown { reason } => {
-					AuthorityError::Unknown { reason }
-				},
-			})
+		self.call(
+			cx,
+			session,
+			ProductRequest { calling_product_id: calling_product_id.to_string(), payload: request },
+		)
+		.await
+		.map_err(remote_authority_error)?
+		.map_err(|err| match err {
+			latest::HostAccountSignVrfError::NotConnected => AuthorityError::Disconnected,
+			latest::HostAccountSignVrfError::Rejected => AuthorityError::Rejected,
+			latest::HostAccountSignVrfError::Unknown { reason } => {
+				AuthorityError::Unknown { reason }
+			},
+		})
 	}
 
 	/// Forward a payload-signing request to the paired signing host.
@@ -555,7 +560,7 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: String,
+		product_id: &ProductId,
 		request: latest::HostRequestResourceAllocationRequest,
 	) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
 		let lifecycle_epoch = self.current_session_lifecycle_epoch();
@@ -564,7 +569,7 @@ impl PairingHost {
 				cx,
 				session,
 				ResourceAllocationRequest {
-					calling_product_id: product_id.clone(),
+					calling_product_id: product_id.to_string(),
 					resources: request.resources,
 					on_existing: OnExistingAllowancePolicy::Increase,
 				},
@@ -572,7 +577,7 @@ impl PairingHost {
 			.await
 			.map_err(remote_authority_error)?
 			.map_err(remote_authority_error)?;
-		self.cache_allowance_outcomes(cx, session, lifecycle_epoch, &product_id, &outcomes)
+		self.cache_allowance_outcomes(cx, session, lifecycle_epoch, product_id, &outcomes)
 			.await?;
 		Ok(latest::HostRequestResourceAllocationResponse {
 			outcomes: outcomes.into_iter().map(Into::into).collect(),
@@ -584,7 +589,7 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: &str,
+		product_id: &ProductId,
 		resource: latest::AllocatableResource,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<SsoAllocatedResource, AuthorityError> {
@@ -618,11 +623,11 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
 		let lifecycle_epoch = self.current_session_lifecycle_epoch();
 		if let Some(cached) = self
-			.cached_statement_store_allowance_key(session, lifecycle_epoch, &product_id)
+			.cached_statement_store_allowance_key(session, lifecycle_epoch, product_id)
 			.await?
 		{
 			return Ok(cached);
@@ -631,7 +636,7 @@ impl PairingHost {
 			.remote_allowance_slot(
 				cx,
 				session,
-				&product_id,
+				product_id,
 				latest::AllocatableResource::StatementStoreAllowance,
 				OnExistingAllowancePolicy::Ignore,
 			)
@@ -641,7 +646,7 @@ impl PairingHost {
 				self.cache_statement_store_allowance_key(
 					session,
 					lifecycle_epoch,
-					&product_id,
+					product_id,
 					slot_account_key,
 				)
 				.await
@@ -656,12 +661,11 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		let lifecycle_epoch = self.current_session_lifecycle_epoch();
-		if let Some(cached) = self
-			.cached_bulletin_allowance_key(session, lifecycle_epoch, &product_id)
-			.await?
+		if let Some(cached) =
+			self.cached_bulletin_allowance_key(session, lifecycle_epoch, product_id).await?
 		{
 			return Ok(cached);
 		}
@@ -681,10 +685,10 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		let lifecycle_epoch = self.current_session_lifecycle_epoch();
-		self.evict_bulletin_allowance_key(session, lifecycle_epoch, &product_id).await?;
+		self.evict_bulletin_allowance_key(session, lifecycle_epoch, product_id).await?;
 		self.allocate_bulletin_allowance_key(
 			cx,
 			session,
@@ -700,14 +704,14 @@ impl PairingHost {
 		cx: &CallContext,
 		session: &SessionInfo,
 		lifecycle_epoch: u64,
-		product_id: String,
+		product_id: &ProductId,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		match self
 			.remote_allowance_slot(
 				cx,
 				session,
-				&product_id,
+				product_id,
 				latest::AllocatableResource::BulletinAllowance,
 				on_existing,
 			)
@@ -717,7 +721,7 @@ impl PairingHost {
 				self.cache_bulletin_allowance_key(
 					session,
 					lifecycle_epoch,
-					&product_id,
+					product_id,
 					slot_account_key,
 				)
 				.await
@@ -731,7 +735,7 @@ impl PairingHost {
 		cx: &CallContext,
 		session: &SessionInfo,
 		lifecycle_epoch: u64,
-		product_id: &str,
+		product_id: &ProductId,
 		outcomes: &[SsoAllocationOutcome],
 	) -> Result<(), AuthorityError> {
 		for outcome in outcomes {
@@ -760,9 +764,8 @@ impl PairingHost {
 						product_root_private_key,
 						ring_vrf_domain_entropy,
 					} => {
-						let expected_product_subtree_public_key = self
-							.remote_product_subtree_public_key(cx, session, product_id.to_string())
-							.await?;
+						let expected_product_subtree_public_key =
+							self.remote_product_subtree_public_key(cx, session, product_id).await?;
 						self.remember_auto_signing_key(
 							session,
 							lifecycle_epoch,

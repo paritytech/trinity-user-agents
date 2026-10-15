@@ -499,7 +499,7 @@ impl ProductRuntimeHost {
 	pub fn test_cache_product_subtree(
 		&self,
 		session: &SessionInfo,
-		product_id: &str,
+		product_id: &ProductId,
 		public_key: [u8; 32],
 	) {
 		self.authority.cache_product_subtree_for_test(session, product_id, public_key);
@@ -580,23 +580,17 @@ impl ProductRuntimeHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_account_id: &latest::ProductAccountId,
+		owner: &ProductId,
+		derivation_index: &latest::DerivationIndex,
 	) -> Result<[u8; 32], AuthorityError> {
 		let cx = remote_authority_context(cx);
 		let subtree = remote_authority_call(
 			&cx,
-			self.authority.product_subtree_public_key(
-				&cx,
-				session,
-				product_account_id.dot_ns_identifier.clone(),
-			),
+			self.authority.product_subtree_public_key(&cx, session, owner),
 		)
 		.await?;
-		derive_product_public_key(
-			subtree,
-			derivation_index_bytes(&product_account_id.derivation_index),
-		)
-		.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
+		derive_product_public_key(subtree, derivation_index_bytes(derivation_index))
+			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
 	}
 
 	async fn legacy_slot_zero_public_key(
@@ -607,10 +601,8 @@ impl ProductRuntimeHost {
 		self.product_account_public_key(
 			cx,
 			session,
-			&v01::ProductAccountId {
-				dot_ns_identifier: self.product_id().to_string(),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
+			self.product_id(),
+			&v01::DerivationIndex::Index(0),
 		)
 		.await
 		.map_err(|err| err.to_string())

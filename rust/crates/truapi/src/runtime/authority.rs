@@ -2,7 +2,7 @@
 //!
 //! Local and paired hosts use the same request and session types.
 
-use crate::platform::ProductContext;
+use crate::platform::{ProductContext, ProductId};
 use async_trait::async_trait;
 use std::sync::Arc;
 use truapi::{
@@ -265,12 +265,9 @@ pub enum CreateTransactionAuthorityRequest {
 }
 
 /// Whether blessed `calling_product_id` is using its own account, `owner`.
-pub(crate) fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
-	use crate::platform::ProductId;
-	ProductId::parse(calling_product_id).is_ok_and(|caller| {
-		caller.has_trusted_remote_permissions() &&
-			ProductId::parse(owner).is_ok_and(|owner| owner == caller)
-	})
+pub fn is_blessed_owner(calling_product_id: &ProductId, owner: &str) -> bool {
+	calling_product_id.has_trusted_remote_permissions() &&
+		ProductId::parse(owner).is_ok_and(|owner| &owner == calling_product_id)
 }
 
 /// Whether this product account can sign without confirmation.
@@ -322,7 +319,7 @@ pub trait ProductAuthority: Send + Sync {
 	fn cache_product_subtree_for_test(
 		&self,
 		_session: &SessionInfo,
-		_product_id: &str,
+		_product_id: &ProductId,
 		_public_key: [u8; 32],
 	) {
 	}
@@ -346,21 +343,21 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError>;
 
 	/// Whether subtree resolution needs SSO and host consent.
 	async fn subtree_resolution_reaches_account_holder(
 		&self,
 		session: &AuthoritySession,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> bool;
 
 	/// Whether this product account can sign without confirmation.
 	async fn auto_signing_status(
 		&self,
 		session: &AuthoritySession,
-		calling_product_id: &str,
+		calling_product_id: &ProductId,
 		account: &ProductAccountId,
 	) -> Result<AutoSigningGrant, AuthorityError>;
 
@@ -369,7 +366,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: String,
+		calling_product_id: &ProductId,
 		request: HostAccountSignVrfRequest,
 	) -> Result<VrfSignature, AuthorityError>;
 
@@ -380,7 +377,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
+		calling_product_id: Option<&ProductId>,
 		request: SignPayloadAuthorityRequest,
 	) -> Result<HostSignPayloadResponse, AuthorityError>;
 
@@ -391,7 +388,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
+		calling_product_id: Option<&ProductId>,
 		request: SignRawAuthorityRequest,
 		watermarked: bool,
 	) -> Result<HostSignPayloadResponse, AuthorityError>;
@@ -403,7 +400,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
+		calling_product_id: Option<&ProductId>,
 		request: CreateTransactionAuthorityRequest,
 	) -> Result<HostCreateTransactionResponse, AuthorityError>;
 
@@ -458,7 +455,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: String,
+		product_id: &ProductId,
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, AuthorityError>;
 
@@ -467,12 +464,13 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError>;
 
 	/// Forget the cached key only if it matches `public_key`, preserving any
 	/// replacement. Hosts without a local cache use the no-op default.
-	fn forget_statement_store_allowance_key(&self, _product_id: &str, _public_key: [u8; 32]) {}
+	fn forget_statement_store_allowance_key(&self, _product_id: &ProductId, _public_key: [u8; 32]) {
+	}
 
 	/// Whether a preimage submission is kept in the core instead of being sent
 	/// to the Bulletin chain.
@@ -490,7 +488,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError>;
 
 	/// Invalidate the cached Bulletin key and increase or recreate its allowance
@@ -499,7 +497,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError>;
 
 	/// Sign exact statement-store proof bytes with a product-derived account.
@@ -507,7 +505,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
+		calling_product_id: Option<&ProductId>,
 		account: ProductAccountId,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError>;
@@ -516,7 +514,7 @@ pub trait ProductAuthority: Send + Sync {
 	fn derive_entropy(
 		&self,
 		session: &AuthoritySession,
-		product_id: &str,
+		product_id: &ProductId,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError>;
 

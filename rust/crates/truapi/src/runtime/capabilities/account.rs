@@ -77,10 +77,7 @@ impl Account for ProductRuntimeHost {
 				}
 			} else if self
 				.authority
-				.subtree_resolution_reaches_account_holder(
-					&session,
-					&product_account_id.dot_ns_identifier,
-				)
+				.subtree_resolution_reaches_account_holder(&session, &owner)
 				.await
 			{
 				let approved = until_cancelled(
@@ -100,7 +97,12 @@ impl Account for ProductRuntimeHost {
 			}
 
 			let public_key = self
-				.product_account_public_key(cx, &session, &product_account_id)
+				.product_account_public_key(
+					cx,
+					&session,
+					&owner,
+					&product_account_id.derivation_index,
+				)
 				.await
 				.map_err(account_get_authority_error)?;
 
@@ -341,7 +343,7 @@ impl Account for ProductRuntimeHost {
 			let cx = remote_authority_context(cx);
 			remote_authority_call(
 				&cx,
-				self.authority.sign_vrf(&cx, &session, self.product_id().to_string(), request),
+				self.authority.sign_vrf(&cx, &session, self.product_id(), request),
 			)
 			.await
 			.map_err(vrf_call_error)

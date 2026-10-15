@@ -57,6 +57,7 @@ use crate::{
 		},
 		statement_store::{build_signed_statement, parse_new_statements_result},
 	},
+	platform::ProductId,
 	runtime::{
 		authority::{AuthorityError, AuthoritySession},
 		services::RuntimeServices,
@@ -919,7 +920,7 @@ pub async fn allocate_statement_store_allowance(
 	services: &RuntimeServices,
 	signing_host: &SigningHost,
 	session: &AuthoritySession,
-	product_id: &str,
+	product_id: &ProductId,
 	policy: OnExistingAllowancePolicy,
 ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
 	use super::allowance_renewal::{self, StatementRenewalTarget};
@@ -931,7 +932,7 @@ pub async fn allocate_statement_store_allowance(
 	signing_host.require_current_session(session)?;
 	let entropy = signing_host.root_entropy()?;
 	let allowance =
-		derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id])?;
+		derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id.as_str()])?;
 	// Test signatures use real keys without claiming on-chain registration.
 	#[cfg(feature = "test-host")]
 	if signing_host.grants_allowances_unchecked() {
@@ -1049,7 +1050,7 @@ pub async fn allocate_bulletin_allowance(
 	services: &RuntimeServices,
 	signing_host: &SigningHost,
 	session: &AuthoritySession,
-	product_id: &str,
+	product_id: &ProductId,
 	policy: OnExistingAllowancePolicy,
 ) -> Result<Vec<u8>, AllowanceAllocationError> {
 	use crate::runtime::statement_allowance::{
@@ -1059,7 +1060,8 @@ pub async fn allocate_bulletin_allowance(
 
 	signing_host.require_current_session(session)?;
 	let entropy = signing_host.root_entropy()?;
-	let allowance = derive_sr25519_hard_path(&entropy, &["allowance", "bulletin", product_id])?;
+	let allowance =
+		derive_sr25519_hard_path(&entropy, &["allowance", "bulletin", product_id.as_str()])?;
 	#[cfg(feature = "test-host")]
 	if signing_host.grants_allowances_unchecked() {
 		return Ok(allowance.secret.to_bytes().to_vec());
@@ -1155,7 +1157,7 @@ pub async fn allocate_smart_contract_allowance(
 	services: &RuntimeServices,
 	signing_host: &SigningHost,
 	session: &AuthoritySession,
-	product_id: &str,
+	product_id: &ProductId,
 	derivation_index: api::DerivationIndex,
 	policy: OnExistingAllowancePolicy,
 ) -> Result<(), AllowanceAllocationError> {
@@ -1267,6 +1269,7 @@ mod tests {
 			sso_wire::ResponseOutcome,
 		},
 		host_logic::product_account::derive_ring_vrf_domain_entropy,
+		test_support::test_product_id,
 	};
 
 	/// The key a host advertises on chain must be the one it serves over
@@ -1413,12 +1416,13 @@ mod tests {
 		// because it is catching a hang, not asserting latency.
 		let allocation = futures::executor::block_on(async {
 			let session = signing_host.current_session().unwrap();
+			let product_id = test_product_id(product_id);
 			futures::select! {
 				result = allocate_statement_store_allowance(
 					&services,
 					&signing_host,
 					&session,
-					product_id,
+					&product_id,
 					OnExistingAllowancePolicy::Ignore,
 				)
 				.fuse() => result,
@@ -1950,10 +1954,10 @@ mod tests {
 		});
 		let (_, signing_host) = signing_fixture(platform);
 		let expected_secret = signing_host
-			.product_subtree_secret("myapp.dot")
+			.product_subtree_secret(&test_product_id("myapp.dot"))
 			.expect("product subtree secret derives");
 		let expected_ring_vrf_domain_entropy =
-			derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot")
+			derive_ring_vrf_domain_entropy(&ENTROPY, &test_product_id("myapp.dot"))
 				.expect("ring-VRF domain entropy derives");
 
 		let response = answer(
@@ -1975,6 +1979,77 @@ mod tests {
 				product_root_private_key: expected_secret,
 				ring_vrf_domain_entropy: expected_ring_vrf_domain_entropy,
 			})]
+		);
+	}
+
+	/// The pairing host sends the calling product id as it holds it. Both
+	/// AutoSigning secrets come from its normalized form, so they belong to the
+	/// same product as every key the runtime derives for it.
+	#[test]
+	fn auto_signing_allocation_derives_both_secrets_from_the_normalized_product_id() {
+		let platform = Arc::new(StubPlatform {
+			resource_allocation_confirmed: true,
+			..StubPlatform::default()
+		});
+		let (_, signing_host) = signing_fixture(platform);
+		let product_id = test_product_id("myapp.dot");
+		let expected = SsoAllocatedResource::AutoSigning {
+			product_root_private_key: signing_host
+				.product_subtree_secret(&product_id)
+				.expect("product subtree secret derives"),
+			ring_vrf_domain_entropy: derive_ring_vrf_domain_entropy(&ENTROPY, &product_id)
+				.expect("ring-VRF domain entropy derives"),
+		};
+
+		let response = answer(
+			&signing_host,
+			"alloc-auto-signing-mixed-case",
+			v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
+				calling_product_id: "MyApp.dot".to_string(),
+				resources: vec![api::AllocatableResource::AutoSigning],
+				on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
+			}),
+		);
+
+		let v1::RemoteMessage::ResourceAllocationResponse(response) = response else {
+			panic!("expected resource allocation response");
+		};
+		assert_eq!(response.payload.unwrap(), vec![SsoAllocationOutcome::Allocated(expected)]);
+	}
+
+	/// Nothing can be allocated to an id that names no product, so the user is
+	/// not asked to approve it.
+	#[test]
+	fn an_allocation_for_an_id_that_names_no_product_is_refused_before_the_prompt() {
+		let platform = Arc::new(StubPlatform {
+			resource_allocation_confirmed: true,
+			..StubPlatform::default()
+		});
+		let (_, signing_host) = signing_fixture(platform.clone());
+
+		let response = answer(
+			&signing_host,
+			"alloc-not-a-product",
+			v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
+				calling_product_id: "example.com".to_string(),
+				resources: vec![api::AllocatableResource::AutoSigning],
+				on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
+			}),
+		);
+
+		let v1::RemoteMessage::ResourceAllocationResponse(response) = response else {
+			panic!("expected resource allocation response");
+		};
+		assert_eq!(
+			(
+				response.payload.is_err(),
+				platform
+					.resource_allocation_reviews
+					.lock()
+					.expect("reviews mutex poisoned")
+					.len(),
+			),
+			(true, 0),
 		);
 	}
 
@@ -2237,11 +2312,13 @@ mod tests {
 		};
 		let root =
 			derive_root_keypair_from_entropy(&ENTROPY).expect("fixture entropy derives root");
-		let expected =
-			crate::host_logic::product_account::derive_product_subtree_keypair(&root, "browse.dot")
-				.expect("fixture derives subtree")
-				.public
-				.to_bytes();
+		let expected = crate::host_logic::product_account::derive_product_subtree_keypair(
+			&root,
+			&test_product_id("browse.dot"),
+		)
+		.expect("fixture derives subtree")
+		.public
+		.to_bytes();
 		assert_eq!(response.responding_to, "subtree-1");
 		assert_eq!(response.payload, Ok(expected));
 	}

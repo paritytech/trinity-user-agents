@@ -96,10 +96,7 @@ mod tests {
 	}
 
 	fn label(product_id: &str) -> String {
-		crate::platform::ProductId::parse(product_id)
-			.expect("test product identifier is valid")
-			.bare_label()
-			.to_string()
+		crate::test_support::test_product_id(product_id).bare_label().to_string()
 	}
 
 	#[test]

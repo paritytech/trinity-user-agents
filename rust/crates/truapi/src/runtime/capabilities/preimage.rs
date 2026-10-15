@@ -129,11 +129,8 @@ impl Preimage for ProductRuntimeHost {
 			);
 			let allowance = remote_authority_call(
 				&authority_cx,
-				self.authority.bulletin_allowance_key(
-					&authority_cx,
-					&session,
-					self.product_id().to_string(),
-				),
+				self.authority
+					.bulletin_allowance_key(&authority_cx, &session, self.product_id()),
 			)
 			.await
 			.map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
@@ -161,7 +158,7 @@ impl Preimage for ProductRuntimeHost {
 						self.authority.refresh_bulletin_allowance_key(
 							&authority_cx,
 							&session,
-							self.product_id().to_string(),
+							self.product_id(),
 						),
 					)
 					.await

@@ -86,7 +86,7 @@ impl Signing for ProductRuntimeHost {
 				self.authority.sign_payload(
 					&cx,
 					&session,
-					Some(self.product_id().as_str()),
+					Some(self.product_id()),
 					SignPayloadAuthorityRequest::Product(inner),
 				),
 			)
@@ -214,7 +214,7 @@ impl Signing for ProductRuntimeHost {
 				self.authority.create_transaction(
 					&cx,
 					&session,
-					Some(self.product_id().as_str()),
+					Some(self.product_id()),
 					CreateTransactionAuthorityRequest::Product(inner),
 				),
 			)
@@ -275,7 +275,7 @@ impl Signing for ProductRuntimeHost {
 				self.authority.sign_payload(
 					&cx,
 					&session,
-					Some(self.product_id().as_str()),
+					Some(self.product_id()),
 					SignPayloadAuthorityRequest::LegacyAccount {
 						product_account: latest::ProductAccountId {
 							dot_ns_identifier: self.product_id().to_string(),
@@ -386,7 +386,7 @@ impl Signing for ProductRuntimeHost {
 				self.authority.create_transaction(
 					&cx,
 					&session,
-					Some(self.product_id().as_str()),
+					Some(self.product_id()),
 					authority_request,
 				),
 			)
@@ -414,9 +414,7 @@ impl ProductRuntimeHost {
 		session: &AuthoritySession,
 		account: &latest::ProductAccountId,
 	) -> Result<AutoSigningGrant, AuthorityError> {
-		self.authority
-			.auto_signing_status(session, self.product_id().as_str(), account)
-			.await
+		self.authority.auto_signing_status(session, self.product_id(), account).await
 	}
 
 	async fn sign_raw_with_watermark(
@@ -474,7 +472,7 @@ impl ProductRuntimeHost {
 			self.authority.sign_raw(
 				&cx,
 				&session,
-				Some(self.product_id().as_str()),
+				Some(self.product_id()),
 				SignRawAuthorityRequest::Product(inner),
 				watermarked,
 			),
@@ -531,7 +529,7 @@ impl ProductRuntimeHost {
 			self.authority.sign_raw(
 				&cx,
 				&session,
-				Some(self.product_id().as_str()),
+				Some(self.product_id()),
 				authority_request,
 				watermarked,
 			),

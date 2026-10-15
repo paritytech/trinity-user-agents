@@ -101,14 +101,13 @@ use crate::{
 fn test_product_subtree(product_id: &str) -> [u8; 32] {
 	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16])
 		.expect("test entropy derives a root");
-	crate::host_logic::product_account::derive_product_subtree_keypair(&root, product_id)
-		.expect("test product id derives a subtree")
-		.public
-		.to_bytes()
-}
-
-fn test_product_id(product_id: &str) -> ProductId {
-	ProductId::parse(product_id).expect("test product identifier is valid")
+	crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&test_product_id(product_id),
+	)
+	.expect("test product id derives a subtree")
+	.public
+	.to_bytes()
 }
 
 fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
@@ -117,15 +116,23 @@ fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 }
 
 fn install_pairing_session(host: &ProductRuntimeHost, session: SessionInfo) {
-	let product_id = host.product_id().as_str();
+	let product_id = host.product_id();
 	if session.sso.is_some() {
-		host.test_cache_product_subtree(&session, product_id, test_product_subtree(product_id));
+		host.test_cache_product_subtree(
+			&session,
+			product_id,
+			test_product_subtree(product_id.as_str()),
+		);
 	}
 	host.test_session_state().set_session(session);
 }
 
 fn cache_test_product_subtree(host: &ProductRuntimeHost, session: &SessionInfo, product_id: &str) {
-	host.test_cache_product_subtree(session, product_id, test_product_subtree(product_id));
+	host.test_cache_product_subtree(
+		session,
+		&test_product_id(product_id),
+		test_product_subtree(product_id),
+	);
 }
 
 #[test]
@@ -5453,9 +5460,11 @@ fn resource_allocation_accepts_confirmation_then_returns_sso_response() {
 fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<StubPlatform> {
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&test_product_id("myapp.dot"),
+	)
+	.unwrap();
 	Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
         // A grant skips confirmation, except for a call naming contacts.
@@ -5474,7 +5483,7 @@ fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<St
                                     ring_vrf_domain_entropy:
                                         crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
                                             &[0xAB; 16],
-                                            "myapp.dot",
+                                            &test_product_id("myapp.dot"),
                                         )
                                         .unwrap(),
                                 },
@@ -5526,8 +5535,12 @@ fn granted_pairing_host() -> (Arc<StubPlatform>, ProductRuntimeHost) {
 fn granted_keypair() -> schnorrkel::Keypair {
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	crate::host_logic::product_account::derive_product_keypair(&root, "myapp.dot", index_bytes(0))
-		.unwrap()
+	crate::host_logic::product_account::derive_product_keypair(
+		&root,
+		&test_product_id("myapp.dot"),
+		index_bytes(0),
+	)
+	.unwrap()
 }
 
 #[test]
@@ -5891,9 +5904,11 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 	let session = sso_session_info();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&test_product_id("myapp.dot"),
+	)
+	.unwrap();
 	let product_root_private_key = subtree.secret.to_bytes();
 	let platform = Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
@@ -5911,7 +5926,7 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
                                     ring_vrf_domain_entropy:
                                         crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
                                             &[0xAB; 16],
-                                            "myapp.dot",
+                                            &test_product_id("myapp.dot"),
                                         )
                                         .unwrap(),
                                 },
@@ -5960,7 +5975,7 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 
 	let keypair = crate::host_logic::product_account::derive_product_keypair(
 		&root,
-		"myapp.dot",
+		&test_product_id("myapp.dot"),
 		index_bytes(0),
 	)
 	.unwrap();
@@ -6013,12 +6028,14 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
 
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&test_product_id("myapp.dot"),
+	)
+	.unwrap();
 	let domain = crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
 		&[0xAB; 16],
-		"myapp.dot",
+		&test_product_id("myapp.dot"),
 	)
 	.unwrap();
 	futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
@@ -6201,9 +6218,11 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 	let stale_epoch = pairing_host.current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&test_product_id("myapp.dot"),
+	)
+	.unwrap();
 
 	futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
 	futures::executor::block_on(pairing_host.set_connected_session_for_tests(session.clone()));
@@ -6221,7 +6240,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 			&session,
 			stale_epoch,
-			"myapp.dot",
+			&test_product_id("myapp.dot"),
 			subtree.secret.to_bytes().to_vec(),
 		));
 	let Err(statement_store_error) = statement_store_result else {
@@ -6230,7 +6249,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 	let bulletin_result = futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		stale_epoch,
-		"myapp.dot",
+		&test_product_id("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	));
 	let Err(bulletin_error) = bulletin_result else {
@@ -6277,18 +6296,24 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 	let stale_epoch = pairing_host.current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let first =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
-	let other =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "other.dot")
-			.unwrap();
+	let first = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&test_product_id("myapp.dot"),
+	)
+	.unwrap();
+	let other = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&test_product_id("other.dot"),
+	)
+	.unwrap();
 
-	for (product_id, subtree) in [("myapp.dot", &first), ("other.dot", &other)] {
+	for (product_id, subtree) in
+		[(test_product_id("myapp.dot"), &first), (test_product_id("other.dot"), &other)]
+	{
 		futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 			&session,
 			stale_epoch,
-			product_id,
+			product_id.as_str(),
 			subtree.public.to_bytes(),
 			subtree.secret.to_bytes(),
 			[0x42; 32],
@@ -6297,14 +6322,14 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 			&session,
 			stale_epoch,
-			product_id,
+			&product_id,
 			subtree.secret.to_bytes().to_vec(),
 		))
 		.unwrap();
 		futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 			&session,
 			stale_epoch,
-			product_id,
+			&product_id,
 			subtree.secret.to_bytes().to_vec(),
 		))
 		.unwrap();
@@ -6330,7 +6355,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_statement_store_allowance_key(
 			&session,
 			current_epoch,
-			"myapp.dot",
+			&test_product_id("myapp.dot"),
 		))
 		.unwrap()
 		.is_none()
@@ -6339,7 +6364,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_statement_store_allowance_key(
 			&session,
 			current_epoch,
-			"other.dot",
+			&test_product_id("other.dot"),
 		))
 		.unwrap()
 		.is_some()
@@ -6348,7 +6373,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_bulletin_allowance_key(
 			&session,
 			current_epoch,
-			"myapp.dot",
+			&test_product_id("myapp.dot"),
 		))
 		.unwrap()
 		.is_none()
@@ -6357,7 +6382,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_bulletin_allowance_key(
 			&session,
 			current_epoch,
-			"other.dot",
+			&test_product_id("other.dot"),
 		))
 		.unwrap()
 		.is_some()
@@ -6378,7 +6403,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 			&session,
 			stale_epoch,
-			"myapp.dot",
+			&test_product_id("myapp.dot"),
 			first.secret.to_bytes().to_vec(),
 		)),
 		Err(AuthorityError::Disconnected)
@@ -6406,9 +6431,11 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&test_product_id("myapp.dot"),
+	)
+	.unwrap();
 	futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 		&session,
 		lifecycle_epoch,
@@ -6421,14 +6448,14 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 	futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 		&session,
 		lifecycle_epoch,
-		"myapp.dot",
+		&test_product_id("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
-		"myapp.dot",
+		&test_product_id("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
@@ -6461,20 +6488,22 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&test_product_id("myapp.dot"),
+	)
+	.unwrap();
 	futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 		&session,
 		lifecycle_epoch,
-		"myapp.dot",
+		&test_product_id("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
-		"myapp.dot",
+		&test_product_id("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
@@ -6547,9 +6576,11 @@ fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 	let session = sso_session_info();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&test_product_id("myapp.dot"),
+	)
+	.unwrap();
 	let platform = Arc::new(StubPlatform::default());
 	let legacy_key = CoreStorageKey::AutoSigningKey { product_id: "myapp.dot".to_string() };
 	platform
@@ -7737,7 +7768,7 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
-		"myapp.dot",
+		&test_product_id("myapp.dot"),
 		[0x42; 64].to_vec(),
 	))
 	.expect("the wallet's allowance is cached");

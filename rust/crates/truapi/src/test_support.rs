@@ -30,12 +30,13 @@ use crate::platform::{
 	CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
 	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
 	Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext,
+	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext, ProductId,
 	ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
 	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
 	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
 	UserConfirmationReview,
 };
+
 use futures::{
 	Stream,
 	stream::{self, BoxStream, StreamExt},
@@ -54,6 +55,11 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 mod scripted_chain;
 
 pub use scripted_chain::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
+
+/// A product id a test names, which must parse.
+pub fn test_product_id(product_id: &str) -> ProductId {
+	ProductId::parse(product_id).expect("test product identifier is valid")
+}
 
 /// Block until `condition` holds, failing with `message` after two seconds.
 /// Background runtime tasks run on their own threads, so a test that observes

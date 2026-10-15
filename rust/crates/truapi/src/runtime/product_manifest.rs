@@ -124,11 +124,11 @@ async fn protocol_registry<T: DotnsTransport + ?Sized>(
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::test_support::test_product_id;
 
 	/// The node a product id resolves to on a network serving `tld`.
 	fn node_on(tld: &str, product_id: &str) -> [u8; 32] {
-		let product_id = ProductId::parse(product_id).expect("test product identifier is valid");
-		namehash_under(&tld_node(tld), product_id.bare_label())
+		namehash_under(&tld_node(tld), test_product_id(product_id).bare_label())
 	}
 
 	#[test]

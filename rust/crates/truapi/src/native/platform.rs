@@ -6,8 +6,8 @@ use std::sync::{
 use crate::platform::{
 	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
 	JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-	PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview, async_trait,
+	PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage, ProviderError,
+	ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
 };
 use futures::{
 	channel::mpsc,
@@ -671,7 +671,7 @@ const TERMINAL_RANK: u8 = 3;
 /// following an id: each starts at the host's current status and shows every
 /// later one once, never stepping back, and ends at a terminal one.
 struct StatusRelay<T> {
-	followers: Mutex<Subscribers<(String, crate::Bytes32), T>>,
+	followers: Mutex<Subscribers<(ProductId, crate::Bytes32), T>>,
 	/// How far along a status is; [`TERMINAL_RANK`] ends a stream.
 	rank: fn(&T) -> u8,
 }
@@ -683,10 +683,10 @@ impl<T: Clone + Send + 'static> StatusRelay<T> {
 
 	/// Deliver a later `status` of `product_id`'s `id` to everyone following
 	/// it; a terminal one ends their streams.
-	fn notify(&self, product_id: String, id: crate::Bytes32, status: T) {
+	fn notify(&self, product_id: &ProductId, id: crate::Bytes32, status: T) {
 		let terminal = (self.rank)(&status) == TERMINAL_RANK;
 		let mut followers = self.lock_followers();
-		let key = (product_id, id);
+		let key = (product_id.clone(), id);
 		followers.send(&key, &status);
 		if terminal {
 			followers.end(&key);
@@ -697,7 +697,7 @@ impl<T: Clone + Send + 'static> StatusRelay<T> {
 	/// now; an error ends the stream there.
 	fn follow<E: Send + 'static>(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		id: crate::Bytes32,
 		current: impl FnOnce() -> Result<T, E>,
 	) -> BoxStream<'static, Result<T, E>> {
@@ -733,7 +733,7 @@ impl<T: Clone + Send + 'static> StatusRelay<T> {
 
 	fn lock_followers(
 		&self,
-	) -> std::sync::MutexGuard<'_, Subscribers<(String, crate::Bytes32), T>> {
+	) -> std::sync::MutexGuard<'_, Subscribers<(ProductId, crate::Bytes32), T>> {
 		self.followers.lock().expect("status followers mutex poisoned")
 	}
 }
@@ -756,7 +756,7 @@ impl TopUpCallbackPlatform {
 	/// following it; a terminal one ends their streams.
 	pub fn notify_status(
 		&self,
-		product_id: String,
+		product_id: &ProductId,
 		id: crate::Bytes32,
 		status: v01::HostPaymentTopUpStatusSubscribeItem,
 	) {
@@ -795,7 +795,7 @@ impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 		Result<v01::HostPaymentTopUpStatusSubscribeItem, v01::HostPaymentTopUpStatusSubscribeError>,
 	> {
 		let product_id = product.product_id.to_string();
-		self.statuses.follow(product_id.clone(), id, || {
+		self.statuses.follow(product.product_id.clone(), id, || {
 			match self.top_up.top_up_status(product_id, id) {
 				Ok(Some(status)) => Ok(status),
 				Ok(None) => Err(v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound),
@@ -825,7 +825,7 @@ impl PaymentCallbackPlatform {
 	/// following it; a terminal one ends their streams.
 	pub fn notify_status(
 		&self,
-		product_id: String,
+		product_id: &ProductId,
 		id: crate::Bytes32,
 		status: v01::HostPaymentStatusSubscribeItem,
 	) {
@@ -862,7 +862,7 @@ impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 		Result<v01::HostPaymentStatusSubscribeItem, v01::HostPaymentStatusSubscribeError>,
 	> {
 		let product_id = product.product_id.to_string();
-		self.statuses.follow(product_id.clone(), id, || {
+		self.statuses.follow(product.product_id.clone(), id, || {
 			match self.payments.payment_status(product_id, id) {
 				Ok(Some(status)) => Ok(status),
 				Ok(None) => Err(v01::HostPaymentStatusSubscribeError::PaymentNotFound),
@@ -937,7 +937,7 @@ mod status_relay_tests {
 
 	use futures::executor::block_on;
 
-	use crate::platform::TopUpPlatform;
+	use crate::{platform::TopUpPlatform, test_support::test_product_id};
 
 	/// A top-up engine holding one status per id, and nothing else.
 	struct Engine(
@@ -981,12 +981,12 @@ mod status_relay_tests {
 		let missing = platform.subscribe_top_up_status(&product(), [2; 32]);
 
 		platform.notify_status(
-			"fund.dot".into(),
+			&test_product_id("fund.dot"),
 			[1; 32],
 			v01::HostPaymentTopUpStatusSubscribeItem::Claiming,
 		);
 		platform.notify_status(
-			"fund.dot".into(),
+			&test_product_id("fund.dot"),
 			[1; 32],
 			v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
 		);
@@ -1027,7 +1027,7 @@ mod status_relay_tests {
 			.insert([1; 32], v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true });
 		let core_pass = platform.subscribe_top_up_status(&product(), [1; 32]);
 		let verdict = v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true };
-		platform.notify_status("fund.dot".into(), [1; 32], verdict.clone());
+		platform.notify_status(&test_product_id("fund.dot"), [1; 32], verdict.clone());
 
 		assert_eq!(
 			(block_on(core_pass.collect::<Vec<_>>()), block_on(product_stream.collect::<Vec<_>>()),),
@@ -1056,7 +1056,7 @@ mod status_relay_tests {
 			v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
 			v01::HostPaymentTopUpStatusSubscribeItem::NotClaimed,
 		] {
-			platform.notify_status("fund.dot".into(), [1; 32], status);
+			platform.notify_status(&test_product_id("fund.dot"), [1; 32], status);
 		}
 		let _ = platform.subscribe_top_up_status(&product(), [2; 32]);
 
@@ -1111,7 +1111,7 @@ mod status_relay_tests {
 		let followed = platform.subscribe_payment_status(&product(), [1; 32]);
 		let missing = platform.subscribe_payment_status(&product(), [2; 32]);
 		platform.notify_status(
-			"fund.dot".into(),
+			&test_product_id("fund.dot"),
 			[1; 32],
 			v01::HostPaymentStatusSubscribeItem::Completed,
 		);

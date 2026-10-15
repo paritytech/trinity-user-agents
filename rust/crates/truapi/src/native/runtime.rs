@@ -273,7 +273,8 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Report a later status of `product_id`'s top-up `id` to the products
-	/// following it.
+	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`. A
+	/// status for an id that is not a product id is logged and dropped.
 	pub fn notify_top_up_status(
 		&self,
 		product_id: String,
@@ -281,7 +282,12 @@ impl NativeTrUApiHostRuntime {
 		status: v01::HostPaymentTopUpStatusSubscribeItem,
 	) {
 		if let Some(platform) = self.top_up.get() {
-			platform.notify_status(product_id, id, status);
+			match ProductId::parse(&product_id) {
+				Ok(product_id) => platform.notify_status(&product_id, id, status),
+				Err(error) => {
+					tracing::warn!(%error, "top-up status for an id that is not a product id")
+				},
+			}
 		}
 	}
 
@@ -294,7 +300,8 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Report a later status of `product_id`'s payment `id` to the products
-	/// following it.
+	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`. A
+	/// status for an id that is not a product id is logged and dropped.
 	pub fn notify_payment_status(
 		&self,
 		product_id: String,
@@ -302,7 +309,12 @@ impl NativeTrUApiHostRuntime {
 		status: v01::HostPaymentStatusSubscribeItem,
 	) {
 		if let Some(platform) = self.payments.get() {
-			platform.notify_status(product_id, id, status);
+			match ProductId::parse(&product_id) {
+				Ok(product_id) => platform.notify_status(&product_id, id, status),
+				Err(error) => {
+					tracing::warn!(%error, "payment status for an id that is not a product id")
+				},
+			}
 		}
 	}
 

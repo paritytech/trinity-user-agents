@@ -268,11 +268,7 @@ fn has_well_formed_labels(normalized: &str) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::platform::DOTNS_TLDS;
-
-	fn id(product_id: &str) -> ProductId {
-		ProductId::parse(product_id).expect("test product identifier is valid")
-	}
+	use crate::{platform::DOTNS_TLDS, test_support::test_product_id};
 
 	#[test]
 	fn trusted_remote_permission_labels_match_the_bare_product_label() {
@@ -443,35 +439,44 @@ mod tests {
 
 	#[test]
 	fn the_bare_label_drops_the_tld() {
-		assert_eq!(id("dim2.dot").bare_label(), "dim2");
-		assert_eq!(id("dim2.paseo").bare_label(), "dim2");
-		assert_eq!(id("localhost").bare_label(), "localhost");
+		assert_eq!(test_product_id("dim2.dot").bare_label(), "dim2");
+		assert_eq!(test_product_id("dim2.paseo").bare_label(), "dim2");
+		assert_eq!(test_product_id("localhost").bare_label(), "localhost");
 	}
 
 	#[test]
 	fn an_executable_carries_the_label_of_the_product_it_belongs_to() {
-		assert_eq!(id("app.dim2.dot").bare_label(), "dim2");
-		assert_eq!(id("widget.dim2.dot").bare_label(), "dim2");
-		assert_eq!(id("worker.dim2.paseo").bare_label(), "dim2");
-		assert_eq!(id("funding.dim2.dot").bare_label(), "dim2");
+		assert_eq!(test_product_id("app.dim2.dot").bare_label(), "dim2");
+		assert_eq!(test_product_id("widget.dim2.dot").bare_label(), "dim2");
+		assert_eq!(test_product_id("worker.dim2.paseo").bare_label(), "dim2");
+		assert_eq!(test_product_id("funding.dim2.dot").bare_label(), "dim2");
 	}
 
 	#[test]
 	fn a_subname_of_another_domain_takes_that_domains_label() {
-		assert_eq!(id("dim2.attacker.dot").bare_label(), "attacker");
+		assert_eq!(test_product_id("dim2.attacker.dot").bare_label(), "attacker");
 	}
 
 	#[test]
 	fn one_product_on_one_network_is_its_executables_under_one_tld() {
-		assert!(id("app.dim2.dot").same_product_on_one_network(&id("dim2.dot")));
-		assert!(!id("dim2.paseo").same_product_on_one_network(&id("dim2.dot")));
-		assert!(!id("dim2.attacker.dot").same_product_on_one_network(&id("dim2.dot")));
+		assert!(
+			test_product_id("app.dim2.dot")
+				.same_product_on_one_network(&test_product_id("dim2.dot"))
+		);
+		assert!(
+			!test_product_id("dim2.paseo")
+				.same_product_on_one_network(&test_product_id("dim2.dot"))
+		);
+		assert!(
+			!test_product_id("dim2.attacker.dot")
+				.same_product_on_one_network(&test_product_id("dim2.dot"))
+		);
 	}
 
 	#[test]
 	fn decoding_normalizes_and_rejects_what_parsing_rejects() {
 		let frame = "DIM2.Dot".to_string().encode();
-		assert_eq!(ProductId::decode(&mut frame.as_slice()), Ok(id("dim2.dot")));
+		assert_eq!(ProductId::decode(&mut frame.as_slice()), Ok(test_product_id("dim2.dot")));
 		let frame = "evil.com".to_string().encode();
 		assert!(ProductId::decode(&mut frame.as_slice()).is_err());
 	}

@@ -67,8 +67,8 @@ fn a_context_grant_signs_with_the_granting_products_account() {
 	// The account that signed is the one the grant was published for, not the
 	// caller's own: a product acting for another does not sign as itself.
 	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root derives");
-	let owner =
-		derive_product_keypair(&root, "dim2.paseo", index_bytes(0)).expect("owner key derives");
+	let owner = derive_product_keypair(&root, &test_product_id("dim2.paseo"), index_bytes(0))
+		.expect("owner key derives");
 	let preimage = crate::host_internal::transaction::extrinsic_payload_preimage(
 		&crate::test_support::sign_payload_data(),
 	)
