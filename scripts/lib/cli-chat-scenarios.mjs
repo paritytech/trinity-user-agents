@@ -71,6 +71,18 @@ export const CLI_CHAT_SCENARIOS = Object.freeze([
       "a restarted worker receives UserStateChanged for every muted or archived room before live events",
     mode: "host",
   },
+  {
+    id: "S57",
+    title:
+      "a 3 MiB photo and a 6 MiB file are staged and arrive as Preimage media in both modes; the product reads them",
+    mode: "host, source",
+  },
+  {
+    id: "S58",
+    title:
+      "without preimage_attachments or above 8 MiB the attachment is refused and nothing is uploaded",
+    mode: "host",
+  },
 ]);
 
 function cell(value) {

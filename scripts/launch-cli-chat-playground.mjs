@@ -608,7 +608,7 @@ async function drive(chat) {
       throw new Error(
         `the product read ${read.join(",")}, the page lists ${listed.join(",")}`,
       );
-    if (match[2] !== String(1024 * 1024) || match[3] !== "0")
+    if (match[2] !== String(1024 * 1024) || match[3] !== String(8 * 1024 * 1024))
       throw new Error(`bounds inline ${match[2]} B, preimage ${match[3]} B`);
     return `${await chat.shot("s49-host.png")}; ${read.length} features, inline ${match[2]} B, preimage ${match[3]} B`;
   });
@@ -819,6 +819,54 @@ async function drive(chat) {
     return `the restarted worker (boot ${boot + 1}) heard ${first.join(", ")} first`;
   });
 
+  // S57 needs a Bulletin chain that stores 3 MiB and 6 MiB in one
+  // transaction. The dev page stages on the live chain, whose
+  // `MaxTransactionSize` is 2 MiB, so the core refuses those sizes there
+  // (open item O32). The test host, which keeps preimages in the core, runs
+  // S57; here the row is a skip with that reason.
+  const MIB = 1024 * 1024;
+  const upload = async (input, name, mimeType, size) => {
+    const buffer = Buffer.alloc(size);
+    for (let index = 0; index < size; index++) buffer[index] = index % 251;
+    await page.setInputFiles(input, { name, mimeType, buffer });
+  };
+  rows.push({
+    ...byId.S57,
+    result: "skip",
+    durationMs: 0,
+    evidence:
+      "the live Bulletin chain stores at most 2 MiB in one transaction (O32); S57 runs on the test host",
+  });
+  console.log(`skip ${byId.S57.id} ${byId.S57.title}`);
+
+  // S58: no declaration, or a file above 8 MiB, uploads and sends nothing.
+  await scenario(rows, byId.S58, async () => {
+    await chat.room("host");
+    await chat.command("host", "/footer photo");
+    await chat.command("host", "/features preimage off");
+    const status = () => page.$eval("#status", (node) => node.innerText);
+    const since = chat.log.length;
+    await upload("#attach-file", "undeclared.pdf", "application/pdf", 3 * MIB);
+    await chat.until(
+      async () => /not sent: .*does not declare preimage attachments/.test(await status()),
+      "the refusal of an undeclared room",
+    );
+    const undeclared = await status();
+    await chat.command("host", "/features preimage on");
+    await upload("#attach-file", "huge.pdf", "application/pdf", 8 * MIB + 1);
+    await chat.until(
+      async () => /not sent: huge\.pdf .* above 8\.0 MB/.test(await status()),
+      "the refusal above 8 MiB",
+    );
+    const huge = await status();
+    await sleep(500);
+    const sent = chat.log.slice(since).filter((entry) => entry.via === "media");
+    if (sent.length > 0) throw new Error(`the product received ${sent.length} media item(s)`);
+    await chat.command("host", "/features preimage off");
+    await chat.command("host", "/footer input");
+    return `"${undeclared}"; "${huge}"`;
+  });
+
   return rows;
 }
 
@@ -875,7 +923,10 @@ async function main() {
       `cli chat: ${failures.length} scenario row(s) failed or are missing:\n${failures.join("\n")}`,
     );
   }
-  console.log(`cli chat: ${rows.length} scenarios passed`);
+  const skipped = rows.filter((row) => row.result === "skip").length;
+  console.log(
+    `cli chat: ${rows.length - skipped} scenarios passed, ${skipped} skipped`,
+  );
 }
 
 main().then(
