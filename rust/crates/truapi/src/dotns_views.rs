@@ -2,8 +2,8 @@
 //! runtime's manifest readers.
 
 use crate::host_logic::dotns_gateway::{
-    DotnsTransport, DotnsViewError, call_bytes32, call_no_args, decode_address, decode_bool,
-    decode_string, namehash_under, registry_key,
+    DotnsError, DotnsTransport, DotnsViewError, call_bytes32, call_no_args, decode_address,
+    decode_bool, decode_string, namehash_under, registry_key,
 };
 
 /// The TLD of networks whose `DotnsProtocolRegistry` has no `tld()` view;
@@ -58,15 +58,15 @@ pub async fn protocol_component<T: DotnsTransport + ?Sized>(
     transport: &mut T,
     protocol_registry: &[u8; 20],
     name: &str,
-) -> Result<[u8; 20], String> {
+) -> Result<[u8; 20], DotnsError> {
     let output = transport
         .view(
             protocol_registry,
             call_bytes32("get(bytes32)", &registry_key(name)),
         )
         .await
-        .map_err(|err| format!("ProtocolRegistry.get({name}): {err}"))?;
-    decode_address(&output).map_err(|err| format!("ProtocolRegistry.get({name}): {err}"))
+        .map_err(|err| err.with_context(format!("ProtocolRegistry.get({name})")))?;
+    decode_address(&output).map_err(|err| err.with_context(format!("ProtocolRegistry.get({name})")))
 }
 
 /// The network TLD with its leading dot (`.paseo`), read from
@@ -78,14 +78,15 @@ pub async fn protocol_component<T: DotnsTransport + ?Sized>(
 pub async fn network_tld<T: DotnsTransport + ?Sized>(
     transport: &mut T,
     registry: &[u8; 20],
-) -> Result<String, String> {
+) -> Result<String, DotnsError> {
     match transport.view(registry, call_no_args("tld()")).await {
         Ok(output) => {
-            return decode_string(&output).map_err(|err| format!("ProtocolRegistry.tld(): {err}"));
+            return decode_string(&output)
+                .map_err(|err| err.with_context("ProtocolRegistry.tld()"));
         }
         Err(DotnsViewError::Reverted(_)) => {}
-        Err(DotnsViewError::Failed(reason)) => {
-            return Err(format!("ProtocolRegistry.tld(): {reason}"));
+        Err(error @ DotnsViewError::Failed(_)) => {
+            return Err(error.with_context("ProtocolRegistry.tld()"));
         }
     }
     let dotns_registry_output = transport
@@ -94,23 +95,20 @@ pub async fn network_tld<T: DotnsTransport + ?Sized>(
             call_bytes32("get(bytes32)", &registry_key("registry")),
         )
         .await
-        .map_err(|err| format!("ProtocolRegistry.get(registry): {err}"))?;
+        .map_err(|err| err.with_context("ProtocolRegistry.get(registry)"))?;
     let dotns_registry = decode_address(&dotns_registry_output)
-        .map_err(|err| format!("ProtocolRegistry.get(registry): {err}"))?;
+        .map_err(|err| err.with_context("ProtocolRegistry.get(registry)"))?;
     let exists_output = transport
         .view(
             &dotns_registry,
             call_bytes32("recordExists(bytes32)", &tld_node(TLD_WITHOUT_VIEW)),
         )
         .await
-        .map_err(|err| format!("DotnsRegistry.recordExists: {err}"))?;
-    if decode_bool(&exists_output).map_err(|err| format!("DotnsRegistry.recordExists: {err}"))? {
+        .map_err(|err| err.with_context("DotnsRegistry.recordExists"))?;
+    if decode_bool(&exists_output).map_err(|err| err.with_context("DotnsRegistry.recordExists"))? {
         Ok(TLD_WITHOUT_VIEW.to_string())
     } else {
-        Err(format!(
-            "ProtocolRegistry has no tld() view and the registry holds no record for \
-             {TLD_WITHOUT_VIEW:?}; the network TLD cannot be determined"
-        ))
+        Err(DotnsError::MissingTld)
     }
 }
 

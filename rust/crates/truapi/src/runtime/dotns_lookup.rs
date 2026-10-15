@@ -25,7 +25,7 @@ use crate::chain_runtime::{
 use tracing::{debug, info};
 
 use crate::host_logic::dotns_gateway::{
-    DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, encode_revive_call, view_output,
+    DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, encode_revive_call, view_output,
 };
 
 /// Budget for one step of a lookup: opening the follow, one storage read, one
@@ -59,7 +59,7 @@ impl<'a> DotnsLookup<'a> {
         chain: &'a ChainRuntime,
         asset_hub_chain_genesis_hash: [u8; 32],
         label: &str,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, DotnsViewError> {
         let genesis_hash = asset_hub_chain_genesis_hash.to_vec();
         let lookup_id = DOTNS_LOOKUP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let follow_id = format!("truapi:dotns:{lookup_id}:{label}");
@@ -107,7 +107,7 @@ impl<'a> DotnsLookup<'a> {
 #[async_trait::async_trait]
 impl DotnsTransport for DotnsLookup<'_> {
     /// Reads one storage value at the pinned block. `Ok(None)` when absent.
-    async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+    async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
         let response = self
             .chain
             .remote_chain_head_storage(RemoteChainHeadStorageRequest {
@@ -121,7 +121,7 @@ impl DotnsTransport for DotnsLookup<'_> {
                 child_trie: None,
             })
             .await
-            .map_err(|failure| failure.reason())?;
+            .map_err(|failure| DotnsError::Storage(failure.reason()))?;
         let operation_id = started_operation_id(response.operation)?;
         let value = wait_for_chain_head_storage_value(
             &mut self.follow,
@@ -163,7 +163,9 @@ impl DotnsTransport for DotnsLookup<'_> {
                     follow_id = %self.follow_id,
                     "dotNS storage was inaccessible, which is not the same as absent"
                 );
-                Err("Asset Hub storage was inaccessible".to_string())
+                Err(DotnsError::Storage(
+                    "Asset Hub storage was inaccessible".to_string(),
+                ))
             }
         }
     }
@@ -185,16 +187,14 @@ impl DotnsTransport for DotnsLookup<'_> {
             })
             .await
             .map_err(|failure| DotnsViewError::Failed(failure.reason()))?;
-        let operation_id =
-            started_operation_id(response.operation).map_err(DotnsViewError::Failed)?;
+        let operation_id = started_operation_id(response.operation)?;
         let output = wait_for_chain_head_call_output(
             &mut self.follow,
             &operation_id,
             "Asset Hub",
             OPERATION_TIMEOUT,
         )
-        .await
-        .map_err(DotnsViewError::Failed)?;
+        .await?;
         let result = view_output(&output);
         debug!(
             target: "truapi::dotns",

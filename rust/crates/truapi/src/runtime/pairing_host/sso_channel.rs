@@ -4,13 +4,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::super::authority::{
-    AuthorityCancelError, AuthorityError, BulletinAllowanceKey, CreateTransactionAuthorityRequest,
+    AuthorityError, BulletinAllowanceKey, CreateTransactionAuthorityRequest,
     SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
 };
 use super::super::sso_remote::{
-    RemoteResponseWait, SSO_LOCAL_DISCONNECT_REASON, SSO_PEER_DISCONNECT_REASON,
-    SsoRemoteResponseError, SsoSessionKey, fresh_statement_expiry, reply_matcher, sso_message_id,
-    statement_subscription_stream, subscribe_statement_topic, wait_for_sso_remote_response,
+    RemoteResponseWait, SSO_LOCAL_DISCONNECT_REASON, SsoRemoteResponseError, SsoSessionKey,
+    fresh_statement_expiry, reply_matcher, sso_message_id, statement_subscription_stream,
+    subscribe_statement_topic, wait_for_sso_remote_response,
 };
 use super::super::statement_store_rpc::{self, StatementStoreRpc};
 use super::PairingHost;
@@ -199,10 +199,11 @@ impl PairingHost {
         let message_id = message_id.to_string();
         (self.spawner)(Box::pin(async move {
             let submitted = match withdrawal {
-                Ok(statement) => statement_store
-                    .submit_fire_and_forget(statement, "SSO statement-store")
-                    .await
-                    .map_err(|err| err.to_string()),
+                Ok(statement) => {
+                    statement_store
+                        .submit_fire_and_forget(statement, "SSO statement-store")
+                        .await
+                }
                 Err(reason) => Err(reason),
             };
             if let Err(reason) = submitted {
@@ -232,14 +233,12 @@ impl PairingHost {
             return Err(SsoRemoteResponseError::LocalDisconnected);
         }
         let message_id = sso_message_id();
-        let statement = self
-            .build_request_channel_statement(
-                sso,
-                message_id.clone(),
-                RemoteMessage::request(message_id.clone(), request),
-                Some(message_id.clone()),
-            )
-            .map_err(SsoRemoteResponseError::Failure)?;
+        let statement = self.build_request_channel_statement(
+            sso,
+            message_id.clone(),
+            RemoteMessage::request(message_id.clone(), request),
+            Some(message_id.clone()),
+        )?;
         let rpc_client = self
             .statement_store
             .client("SSO statement-store")
@@ -332,8 +331,7 @@ impl PairingHost {
         }
         let public_key = self
             .call(cx, session, ProductSubtreeRequest { product_id })
-            .await
-            .map_err(remote_authority_error)?
+            .await?
             .map_err(remote_authority_error)?;
         if !self
             .persist_product_subtree_if_current(session, lifecycle_epoch, cache_key, public_key)
@@ -360,8 +358,7 @@ impl PairingHost {
                 payload: request,
             },
         )
-        .await
-        .map_err(remote_authority_error)?
+        .await?
         .map_err(|err| match err {
             latest::HostAccountSignVrfError::NotConnected => AuthorityError::Disconnected,
             latest::HostAccountSignVrfError::Rejected => AuthorityError::Rejected,
@@ -393,8 +390,7 @@ impl PairingHost {
             },
         };
         self.call(cx, session, SignRequest::Payload(Box::new(request)))
-            .await
-            .map_err(remote_authority_error)?
+            .await?
             .map_err(remote_authority_error)
     }
 
@@ -421,8 +417,7 @@ impl PairingHost {
                         SignRequest::RawUnwatermarkedDeprecated(request)
                     },
                 )
-                .await
-                .map_err(remote_authority_error)?
+                .await?
                 .map_err(remote_authority_error),
             SignRawAuthorityRequest::LegacyAccount { account, request } => {
                 let request = SignRawWithLegacyAccountRequest {
@@ -436,14 +431,12 @@ impl PairingHost {
                             session,
                             SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request),
                         )
-                        .await
-                        .map_err(remote_authority_error)?
+                        .await?
                         .map_err(remote_authority_error);
                 }
                 let signature = self
                     .call(cx, session, request)
-                    .await
-                    .map_err(remote_authority_error)?
+                    .await?
                     .map_err(remote_authority_error)?;
                 Ok(latest::HostSignPayloadResponse {
                     signature,
@@ -508,8 +501,7 @@ impl PairingHost {
                 .await
             }
         };
-        signed
-            .map_err(remote_authority_error)?
+        signed?
             .map(|transaction| latest::HostCreateTransactionResponse { transaction })
             .map_err(remote_authority_error)
     }
@@ -521,9 +513,7 @@ impl PairingHost {
         session: &SessionInfo,
         request: ProductRequest<latest::HostAccountGetAliasRequest>,
     ) -> Result<latest::HostAccountGetAliasResponse, RingVrfError> {
-        self.call(cx, session, request)
-            .await
-            .map_err(ring_vrf_transport_error)?
+        self.call(cx, session, request).await?
     }
 
     /// Forward a ring-VRF proof request to the paired signing host.
@@ -533,9 +523,7 @@ impl PairingHost {
         session: &SessionInfo,
         request: ProductRequest<latest::HostAccountCreateProofRequest>,
     ) -> Result<latest::HostAccountCreateProofResponse, RingVrfError> {
-        self.call(cx, session, request)
-            .await
-            .map_err(ring_vrf_transport_error)?
+        self.call(cx, session, request).await?
     }
 
     /// Forward a ring-VRF key registration request to the paired signing host.
@@ -545,9 +533,7 @@ impl PairingHost {
         session: &SessionInfo,
         request: ProductRequest<latest::HostAccountRegisterRingVrfKeyRequest>,
     ) -> Result<[u8; 32], RingVrfError> {
-        self.call(cx, session, request)
-            .await
-            .map_err(ring_vrf_transport_error)?
+        self.call(cx, session, request).await?
     }
 
     /// Forward a ring-VRF key listing request to the paired signing host.
@@ -557,9 +543,7 @@ impl PairingHost {
         session: &SessionInfo,
         request: ProductRequest<latest::HostAccountListRingVrfKeysRequest>,
     ) -> Result<Vec<latest::RegisteredRingVrfKey>, RingVrfError> {
-        self.call(cx, session, request)
-            .await
-            .map_err(ring_vrf_transport_error)?
+        self.call(cx, session, request).await?
     }
 
     /// Forward a direct ring-VRF signing request to the paired signing host.
@@ -569,9 +553,7 @@ impl PairingHost {
         session: &SessionInfo,
         request: ProductRequest<latest::HostAccountRingVrfSignRequest>,
     ) -> Result<Vec<u8>, RingVrfError> {
-        self.call(cx, session, request)
-            .await
-            .map_err(ring_vrf_transport_error)?
+        self.call(cx, session, request).await?
     }
 
     /// Ask the paired signing host to allocate product resources, caching any
@@ -594,8 +576,7 @@ impl PairingHost {
                     on_existing: OnExistingAllowancePolicy::Increase,
                 },
             )
-            .await
-            .map_err(remote_authority_error)?
+            .await?
             .map_err(remote_authority_error)?;
         self.cache_allowance_outcomes(cx, session, lifecycle_epoch, &product_id, &outcomes)
             .await?;
@@ -624,8 +605,7 @@ impl PairingHost {
                     on_existing,
                 },
             )
-            .await
-            .map_err(remote_authority_error)?
+            .await?
             .map_err(remote_authority_error)?;
         match outcomes.into_iter().next() {
             Some(SsoAllocationOutcome::Allocated(resource)) => Ok(resource),
@@ -818,10 +798,6 @@ pub fn session_matches_key(session_state: &SessionState, key: SsoSessionKey) -> 
     })
 }
 
-fn ring_vrf_transport_error(reason: SsoRemoteResponseError) -> RingVrfError {
-    remote_authority_error(reason).into()
-}
-
 fn allowance_name(resource: &latest::AllocatableResource) -> &'static str {
     match resource {
         latest::AllocatableResource::StatementStoreAllowance => "statement-store allowance",
@@ -838,22 +814,8 @@ fn unexpected_resource(label: &str, resource: &SsoAllocatedResource) -> Authorit
     }
 }
 
-fn remote_authority_error(reason: impl Into<SsoRemoteResponseError>) -> AuthorityError {
-    match reason.into() {
-        SsoRemoteResponseError::Cancelled(err) => AuthorityError::Cancelled(
-            AuthorityCancelError::new(err.remote_message_id(), err.reason()),
-        ),
-        SsoRemoteResponseError::LocalDisconnected | SsoRemoteResponseError::PeerDisconnected => {
-            AuthorityError::Disconnected
-        }
-        SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
-            "Rejected" | "User rejected" => AuthorityError::Rejected,
-            SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => {
-                AuthorityError::Disconnected
-            }
-            _ => AuthorityError::Unknown { reason },
-        },
-    }
+fn remote_authority_error(reason: String) -> AuthorityError {
+    SsoRemoteResponseError::from(reason).into()
 }
 
 #[instrument(skip_all, fields(runtime.method = "sso.peer_disconnect.monitor"))]
@@ -905,6 +867,34 @@ impl From<SsoAllocationOutcome> for latest::AllocationOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::sso_remote::SSO_PEER_DISCONNECT_REASON;
+
+    #[test]
+    fn remote_failures_preserve_rejection_disconnect_and_diagnostic_categories() {
+        let failures = [
+            SsoRemoteResponseError::LocalDisconnected,
+            SsoRemoteResponseError::PeerDisconnected,
+            SsoRemoteResponseError::Failure("Rejected".into()),
+            SsoRemoteResponseError::Failure("User rejected".into()),
+            SsoRemoteResponseError::Failure(SSO_LOCAL_DISCONNECT_REASON.into()),
+            SsoRemoteResponseError::Failure(SSO_PEER_DISCONNECT_REASON.into()),
+            SsoRemoteResponseError::Failure("chain unavailable".into()),
+        ];
+        assert_eq!(
+            failures.map(AuthorityError::from),
+            [
+                AuthorityError::Disconnected,
+                AuthorityError::Disconnected,
+                AuthorityError::Rejected,
+                AuthorityError::Rejected,
+                AuthorityError::Disconnected,
+                AuthorityError::Disconnected,
+                AuthorityError::Unknown {
+                    reason: "chain unavailable".into(),
+                },
+            ],
+        );
+    }
 
     #[test]
     fn unexpected_resource_reasons_include_only_safe_discriminants() {

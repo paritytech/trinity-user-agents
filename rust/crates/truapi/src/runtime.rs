@@ -166,7 +166,7 @@ enum LegacySigner {
     Identity([u8; 32]),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, derive_more::From)]
 enum LegacySignerError {
     Unavailable,
     ProductDerivation(String),
@@ -836,10 +836,7 @@ impl ProductRuntimeHost {
         if session.identity_account_id == Some(requested_key) {
             return Ok(LegacySigner::Identity(requested_key));
         }
-        let product_public_key = self
-            .legacy_slot_zero_public_key(cx, session)
-            .await
-            .map_err(LegacySignerError::ProductDerivation)?;
+        let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
         if requested_key == product_public_key {
             return Ok(LegacySigner::Product);
         }

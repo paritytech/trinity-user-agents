@@ -66,7 +66,7 @@ pub struct PairingDeviceIdentity {
 }
 
 /// Errors that can occur while generating pairing bootstrap material.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq, Eq, derive_more::From)]
 pub enum PairingBootstrapError {
     /// The platform randomness source failed.
     #[error("failed to generate random pairing material: {0}")]
@@ -81,10 +81,10 @@ pub enum PairingBootstrapError {
 pub enum PairingDeeplinkDecodeError {
     /// The `handshake` payload is not valid hex.
     #[error("invalid pairing deeplink hex: {0}")]
-    InvalidHex(#[source] hex::FromHexError),
+    InvalidHex(#[from] hex::FromHexError),
     /// The decoded bytes are not a valid handshake proposal.
     #[error("invalid pairing handshake proposal: {0}")]
-    InvalidHandshakeProposal(#[source] parity_scale_codec::Error),
+    InvalidHandshakeProposal(#[from] parity_scale_codec::Error),
     /// The proposal decoded successfully but extra bytes remained.
     #[error("invalid pairing handshake proposal: trailing bytes")]
     TrailingBytes,
@@ -154,11 +154,9 @@ pub fn decode_pairing_deeplink(
         Some((_, hex_payload)) => hex_payload,
         None => deeplink,
     };
-    let encoded =
-        hex::decode(hex_payload.trim()).map_err(PairingDeeplinkDecodeError::InvalidHex)?;
+    let encoded = hex::decode(hex_payload.trim())?;
     let mut input = encoded.as_slice();
-    let proposal = VersionedHandshakeProposal::decode(&mut input)
-        .map_err(PairingDeeplinkDecodeError::InvalidHandshakeProposal)?;
+    let proposal = VersionedHandshakeProposal::decode(&mut input)?;
     if !input.is_empty() {
         return Err(PairingDeeplinkDecodeError::TrailingBytes);
     }
@@ -594,9 +592,8 @@ pub fn bootstrap_topic(
 
 fn generate_statement_store_keypair() -> Result<([u8; 64], [u8; 32]), PairingBootstrapError> {
     let mut seed = [0u8; 32];
-    getrandom::getrandom(&mut seed).map_err(PairingBootstrapError::Random)?;
-    let mini_secret =
-        MiniSecretKey::from_bytes(&seed).map_err(PairingBootstrapError::Sr25519Key)?;
+    getrandom::getrandom(&mut seed)?;
+    let mini_secret = MiniSecretKey::from_bytes(&seed)?;
     let keypair = mini_secret.expand_to_keypair(ExpansionMode::Ed25519);
     Ok((keypair.secret.to_bytes(), keypair.public.to_bytes()))
 }
@@ -604,7 +601,7 @@ fn generate_statement_store_keypair() -> Result<([u8; 64], [u8; 32]), PairingBoo
 /// Generate a random X25519 keypair as `(secret, public)`.
 pub fn generate_x25519_keypair() -> Result<([u8; 32], [u8; 32]), PairingBootstrapError> {
     let mut secret_bytes = [0u8; 32];
-    getrandom::getrandom(&mut secret_bytes).map_err(PairingBootstrapError::Random)?;
+    getrandom::getrandom(&mut secret_bytes)?;
     Ok((secret_bytes, x25519_public_key(secret_bytes)))
 }
 

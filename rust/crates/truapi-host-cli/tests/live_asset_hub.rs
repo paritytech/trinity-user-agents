@@ -208,7 +208,7 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 // ---------------------------------------------------------------------------
 
 use truapi::host_logic::dotns_gateway::{
-    DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, call_bytes32, classify_labels,
+    DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, call_bytes32, classify_labels,
     decode_address, discover_pop_controller, encode_revive_call, is_dotted_lite_username,
     is_pop_issued, label_available, namehash_under, resolve_labels, selector, view_output,
 };
@@ -241,11 +241,11 @@ struct PlainRpc(alloc::rpc::RpcClient);
 
 #[truapi::platform::async_trait]
 impl DotnsTransport for PlainRpc {
-    async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+    async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
         self.0
             .get_storage(&key)
             .await
-            .map_err(|err| err.to_string())
+            .map_err(|err| DotnsError::Storage(err.to_string()))
     }
 
     async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {

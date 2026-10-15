@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::host_logic::dotns_gateway::{
-    DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, account_alias_key,
+    DotnsError, DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, account_alias_key,
     classify_labels, discover_pop_controller, encode_revive_call, label_available,
     lite_label_owner_key, resolve_labels, timestamp_now_key, view_output,
 };
@@ -193,13 +193,58 @@ fn account_id_value(entry: &str, value: Option<Vec<u8>>) -> Result<Option<[u8; 3
 
 #[async_trait]
 impl DotnsTransport for AssetHubReader {
-    async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+    async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
         self.raw_storage(&key)
             .await
-            .map_err(|err| format!("{err:#}"))
+            .map_err(|err| DotnsError::Storage(format!("{err:#}")))
     }
 
     async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
         self.raw_view(dest, input).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::value::RawValue;
+    use subxt_rpcs::client::{RawRpcFuture, RawRpcSubscription, RpcClientT};
+
+    use super::*;
+
+    struct TruncatedContractReply;
+
+    impl RpcClientT for TruncatedContractReply {
+        fn request_raw<'a>(
+            &'a self,
+            method: &'a str,
+            _params: Option<Box<RawValue>>,
+        ) -> RawRpcFuture<'a, Box<RawValue>> {
+            assert_eq!(method, "state_call");
+            Box::pin(async { Ok(RawValue::from_string(r#""0x""#.to_string()).unwrap()) })
+        }
+
+        fn subscribe_raw<'a>(
+            &'a self,
+            _subscription: &'a str,
+            _params: Option<Box<RawValue>>,
+            _unsubscribe: &'a str,
+        ) -> RawRpcFuture<'a, RawRpcSubscription> {
+            panic!("dotNS views do not subscribe")
+        }
+    }
+
+    #[tokio::test]
+    async fn identity_errors_report_the_contract_failure_once() {
+        let mut reader = AssetHubReader {
+            rpc: RpcClient::new(TruncatedContractReply),
+            pop_controller: Some([1; 20]),
+        };
+
+        let error = reader.dotns_identity(&[2; 32]).await.unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "DotnsPopController.pendingClaims: ContractResult truncated at weight"
+        );
     }
 }

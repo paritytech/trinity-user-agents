@@ -65,7 +65,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
         bail!("--link-lite {lite:?} is not a dotted lite username (`name.NN`)");
     }
     let who = derive_identity_keypair(&config.entropy, config.network.network_suffix)
-        .map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
+        .context("uid identity derivation failed")?;
     let who_public = who.public.to_bytes();
 
     let mut reader = AssetHubReader::connect(config.network.asset_hub_ws).await?;

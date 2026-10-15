@@ -13,7 +13,7 @@ use crate::host_logic::session::SsoSessionInfo;
 pub enum StatementSigningPayloadError {
     /// Payload bytes are not a sequence of SCALE statement fields.
     #[error("invalid statement signing payload: {0}")]
-    InvalidScale(#[source] parity_scale_codec::Error),
+    InvalidScale(#[from] parity_scale_codec::Error),
     /// Payload contains no fields.
     #[error("statement signing payload has no fields")]
     Empty,
@@ -288,10 +288,7 @@ fn decode_unsigned_statement_signing_payload_fields(
 ) -> Result<Vec<StatementField>, StatementSigningPayloadError> {
     let mut fields = Vec::new();
     while !input.is_empty() {
-        fields.push(
-            StatementField::decode(&mut input)
-                .map_err(StatementSigningPayloadError::InvalidScale)?,
-        );
+        fields.push(StatementField::decode(&mut input)?);
     }
     Ok(fields)
 }

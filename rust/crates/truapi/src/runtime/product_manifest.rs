@@ -24,8 +24,8 @@ use crate::host_internal::permissions::account_access_status;
 use crate::host_internal::product_manifest::{Granted, RootManifest, bare_product_label};
 use crate::host_internal::sso_messages::RingVrfError;
 use crate::host_logic::dotns_gateway::{
-    DotnsTransport, DotnsViewError, call_bytes32, call_no_args, decode_address, decode_string,
-    discover_pop_controller, namehash_under,
+    DotnsError, DotnsTransport, DotnsViewError, call_bytes32, call_no_args, decode_address,
+    decode_string, discover_pop_controller, namehash_under,
 };
 use crate::runtime::dotns_lookup::DotnsLookup;
 use crate::runtime::services::RuntimeServices;
@@ -51,7 +51,7 @@ pub async fn fetch_root_manifest(
     chain: &ChainRuntime,
     asset_hub_chain_genesis_hash: [u8; 32],
     product_id: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, DotnsError> {
     let mut lookup = DotnsLookup::pinned_to_best_block(
         chain,
         asset_hub_chain_genesis_hash,
@@ -70,9 +70,9 @@ pub async fn fetch_root_manifest(
     let resolver_output = lookup
         .view(&registry, call_bytes32("resolver(bytes32)", &node))
         .await
-        .map_err(|err| format!("DotnsRegistry.resolver(): {err}"))?;
+        .map_err(|error| error.with_context("DotnsRegistry.resolver()"))?;
     let resolver = decode_address(&resolver_output)
-        .map_err(|err| format!("DotnsRegistry.resolver(): {err}"))?;
+        .map_err(|error| error.with_context("DotnsRegistry.resolver()"))?;
     if resolver == [0u8; 20] {
         return Ok(None);
     }
@@ -88,12 +88,12 @@ pub async fn fetch_root_manifest(
         // The dotNS-issued default resolver does not implement `text`, which is
         // the same outcome as an unpublished manifest.
         Err(DotnsViewError::Reverted(_)) => return Ok(None),
-        Err(err @ DotnsViewError::Failed(_)) => {
-            return Err(format!("ContentResolver.text(): {err}"));
+        Err(source @ DotnsViewError::Failed(_)) => {
+            return Err(source.with_context("ContentResolver.text()"));
         }
     };
-    let manifest =
-        decode_string(&manifest_output).map_err(|err| format!("ContentResolver.text(): {err}"))?;
+    let manifest = decode_string(&manifest_output)
+        .map_err(|error| error.with_context("ContentResolver.text()"))?;
     if manifest.is_empty() {
         return Ok(None);
     }
@@ -111,17 +111,17 @@ pub async fn fetch_root_manifest(
 /// while username resolution kept working.
 async fn protocol_registry<T: DotnsTransport + ?Sized>(
     transport: &mut T,
-) -> Result<Option<[u8; 20]>, String> {
+) -> Result<Option<[u8; 20]>, DotnsError> {
     let Some(controller) = discover_pop_controller(transport).await? else {
         return Ok(None);
     };
     let output = transport
         .view(&controller, call_no_args("protocolRegistry()"))
         .await
-        .map_err(|err| format!("DotnsPopController.protocolRegistry(): {err}"))?;
+        .map_err(|error| error.with_context("DotnsPopController.protocolRegistry()"))?;
     decode_address(&output)
         .map(Some)
-        .map_err(|err| format!("DotnsPopController.protocolRegistry(): {err}"))
+        .map_err(|error| error.with_context("DotnsPopController.protocolRegistry()"))
 }
 
 #[cfg(test)]

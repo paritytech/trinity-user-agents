@@ -16,7 +16,7 @@ use web_time::Duration;
 
 use crate::chain_runtime::ChainRuntime;
 use crate::host_logic::dotns_gateway::{
-    DotnsIdentity, classify_labels, discover_pop_controller, resolve_labels,
+    DotnsError, DotnsIdentity, classify_labels, discover_pop_controller, resolve_labels,
 };
 use crate::host_logic::session::SessionInfo;
 use crate::runtime::dotns_lookup::DotnsLookup;
@@ -151,7 +151,7 @@ async fn lookup_dotns_identity(
     chain: &ChainRuntime,
     asset_hub_chain_genesis_hash: [u8; 32],
     account_id: [u8; 32],
-) -> Result<Option<DotnsIdentity>, String> {
+) -> Result<Option<DotnsIdentity>, DotnsError> {
     let lookup = async {
         let mut lookup = DotnsLookup::pinned_to_best_block(
             chain,

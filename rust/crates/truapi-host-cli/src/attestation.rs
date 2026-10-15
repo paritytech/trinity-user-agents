@@ -77,7 +77,7 @@ async fn backend_token(
     network_suffix: &str,
 ) -> Result<BackendToken> {
     let auth_client_id = derive_identity_keypair(auth_entropy, network_suffix)
-        .map_err(|err| anyhow::anyhow!("backend auth identity derivation failed: {err}"))?
+        .context("backend auth identity derivation failed")?
         .public
         .to_bytes();
     if let Ok(token) = std::env::var(IDENTITY_BACKEND_TOKEN_ENV)
@@ -166,7 +166,7 @@ async fn mint_backend_token(
         .context("challenge is not valid base64")?;
 
     let keypair = derive_identity_keypair(auth_entropy, network_suffix)
-        .map_err(|err| anyhow::anyhow!("backend auth identity derivation failed: {err}"))?;
+        .context("backend auth identity derivation failed")?;
     let client_id = keypair.public.to_bytes();
 
     // The proof signs SHA256(challenge || clientId || SHA256(body)). It must
@@ -234,7 +234,7 @@ where
     let refreshed = backend_token(client, backend_base, auth_entropy, network_suffix)
         .await
         .context("refresh identity backend token after 401 Unauthorized")?;
-    request(&refreshed.value).send().await.map_err(Into::into)
+    Ok(request(&refreshed.value).send().await?)
 }
 
 /// Inputs for one attestation run.
@@ -366,7 +366,7 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 /// whatever base the account record asked for.
 pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) -> Result<String> {
     let identity = derive_identity_keypair(entropy, network.network_suffix)
-        .map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
+        .context("uid identity derivation failed")?;
     let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
     reader
         .dotns_identity(&identity.public.to_bytes())
@@ -382,7 +382,7 @@ pub async fn lookup_registered_username(
     entropy: &[u8],
 ) -> Result<Option<String>> {
     let identity = derive_identity_keypair(entropy, network.network_suffix)
-        .map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
+        .context("uid identity derivation failed")?;
     let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
     let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
     Ok(identity.full_username.or(identity.lite_username))
@@ -527,10 +527,9 @@ fn normalize_searched_username(username: &str) -> String {
 /// `uid.<suffix>` identity account. Prints any recorded usernames. Used to
 /// confirm a pre-onboarded account.
 pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()> {
-    let root = derive_root_keypair_from_entropy(entropy)
-        .map_err(|err| anyhow::anyhow!("invalid entropy: {err}"))?;
+    let root = derive_root_keypair_from_entropy(entropy).context("invalid entropy")?;
     let identity = derive_identity_keypair(entropy, network.network_suffix)
-        .map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
+        .context("uid identity derivation failed")?;
     let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
     let identity_path = format!(
         "//product//{}/index_bytes(0)",
@@ -888,7 +887,7 @@ mod tests {
         let server = tokio::spawn(serve_auth_retry(listener));
         let entropy = [11u8; 16];
         let auth_client_id = derive_identity_keypair(&entropy, "paseo")
-            .map_err(|err| anyhow::anyhow!("derive test auth identity: {err}"))?
+            .context("derive test auth identity")?
             .public
             .to_bytes();
 

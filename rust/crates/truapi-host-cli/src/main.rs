@@ -140,8 +140,14 @@ impl LogLevel {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[display("invalid log level `{value}`; expected error, warn, info, debug, or trace")]
+struct InvalidLogLevel {
+    value: String,
+}
+
 impl FromStr for LogLevel {
-    type Err = String;
+    type Err = InvalidLogLevel;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim().to_ascii_lowercase().as_str() {
@@ -150,9 +156,9 @@ impl FromStr for LogLevel {
             "info" => Ok(Self::Info),
             "debug" => Ok(Self::Debug),
             "trace" => Ok(Self::Trace),
-            _ => Err(format!(
-                "invalid log level `{value}`; expected error, warn, info, debug, or trace"
-            )),
+            _ => Err(InvalidLogLevel {
+                value: value.to_string(),
+            }),
         }
     }
 }
@@ -187,27 +193,26 @@ fn load_log_level(base_path: &Path) -> Result<Option<LogLevel>> {
         .trim()
         .parse()
         .map(Some)
-        .map_err(anyhow::Error::msg)
         .with_context(|| format!("read saved log level from {}", path.display()))
 }
 
 fn store_log_level(base_path: &Path, level: LogLevel) -> Result<()> {
     let path = base_path.join(LOG_LEVEL_FILE);
     platform::atomic_write(&path, format!("{level}\n").as_bytes())
-        .map_err(anyhow::Error::msg)
         .with_context(|| format!("persist saved log level {}", path.display()))
 }
 
 #[derive(Clone)]
 struct LogController {
-    reload: Arc<dyn Fn(LogLevel) -> Result<(), String> + Send + Sync>,
+    reload: Arc<dyn Fn(LogLevel) -> Result<(), tracing_subscriber::reload::Error> + Send + Sync>,
     base_path: PathBuf,
 }
 
 impl LogController {
     fn set(&self, level: LogLevel) -> Result<()> {
         store_log_level(&self.base_path, level)?;
-        (self.reload)(level).map_err(anyhow::Error::msg)
+        (self.reload)(level)?;
+        Ok(())
     }
 }
 
@@ -532,9 +537,7 @@ async fn main() -> Result<()> {
     let (filter, reload) = tracing_subscriber::reload::Layer::new(filter);
     let log_controller = LogController {
         reload: Arc::new(move |level| {
-            reload
-                .reload(tracing_subscriber::EnvFilter::new(level.scoped_filter()))
-                .map_err(|error| error.to_string())
+            reload.reload(tracing_subscriber::EnvFilter::new(level.scoped_filter()))
         }),
         base_path,
     };
@@ -685,24 +688,12 @@ async fn run_pgas_check(
         None => [0u8; 32],
     };
 
-    let people_rpc = alloc::rpc::RpcClient::connect(network.people_ws)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let people_metadata = alloc::fetch_metadata(&people_rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let asset_hub_rpc = alloc::rpc::RpcClient::connect(network.asset_hub_ws)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let asset_hub_metadata = alloc::fetch_metadata(&asset_hub_rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let asset_hub_state = alloc::fetch_chain_state(&asset_hub_rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let network_suffix = alloc::slot::read_network_suffix(&asset_hub_rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    let people_rpc = alloc::rpc::RpcClient::connect(network.people_ws).await?;
+    let people_metadata = alloc::fetch_metadata(&people_rpc).await?;
+    let asset_hub_rpc = alloc::rpc::RpcClient::connect(network.asset_hub_ws).await?;
+    let asset_hub_metadata = alloc::fetch_metadata(&asset_hub_rpc).await?;
+    let asset_hub_state = alloc::fetch_chain_state(&asset_hub_rpc).await?;
+    let network_suffix = alloc::slot::read_network_suffix(&asset_hub_rpc).await?;
     println!(
         "asset hub: metadata V{} specVersion={} txVersion={} genesis=0x{}",
         asset_hub_metadata.metadata_version(),
@@ -719,9 +710,7 @@ async fn run_pgas_check(
         );
     }
     let memberships =
-        alloc::find_including_rings(&people_rpc, &people_metadata, &candidates, lookback)
-            .await
-            .map_err(anyhow::Error::msg)?;
+        alloc::find_including_rings(&people_rpc, &people_metadata, &candidates, lookback).await?;
     for membership in &memberships {
         println!(
             "member INCLUDED in {} ring_index={} exponent={} members={}",
@@ -744,8 +733,7 @@ async fn run_pgas_check(
         ring.ring_index,
         &ring.block_hash,
     )
-    .await
-    .map_err(anyhow::Error::msg)?;
+    .await?;
     println!("people ring revision={revision}");
     match pgas::await_ring_revision(
         &asset_hub_rpc,
@@ -760,13 +748,9 @@ async fn run_pgas_check(
         Err(err) => bail!("asset hub cannot authorize this ring: {err}"),
     }
 
-    let day = alloc::slot::current_period(
-        alloc::slot::read_chain_now_seconds(&asset_hub_rpc)
-            .await
-            .map_err(anyhow::Error::msg)?,
-    );
-    let max = alloc::slot::max_pgas_claims(&asset_hub_metadata, ring.collection)
-        .map_err(anyhow::Error::msg)?;
+    let day =
+        alloc::slot::current_period(alloc::slot::read_chain_now_seconds(&asset_hub_rpc).await?);
+    let max = alloc::slot::max_pgas_claims(&asset_hub_metadata, ring.collection)?;
     println!(
         "day={day} max_claims_per_day={max} target=0x{}",
         hex::encode(target)
@@ -849,18 +833,10 @@ async fn run_alloc_check(
         None => [0u8; 32],
     };
 
-    let rpc = alloc::rpc::RpcClient::connect(network.people_ws)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let metadata = alloc::fetch_metadata(&rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let chain_state = alloc::fetch_chain_state(&rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let network_suffix = alloc::slot::read_network_suffix(&rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    let rpc = alloc::rpc::RpcClient::connect(network.people_ws).await?;
+    let metadata = alloc::fetch_metadata(&rpc).await?;
+    let chain_state = alloc::fetch_chain_state(&rpc).await?;
+    let network_suffix = alloc::slot::read_network_suffix(&rpc).await?;
     println!(
         "chain: specVersion={} txVersion={} genesis=0x{}",
         chain_state.spec_version,
@@ -873,14 +849,10 @@ async fn run_alloc_check(
             "{} member=0x{} current_ring_index={}",
             candidate.collection,
             hex::encode(alloc::proof::member_key(candidate.entropy).await?),
-            alloc::ring::read_current_ring_index(&rpc, candidate.collection)
-                .await
-                .map_err(anyhow::Error::msg)?,
+            alloc::ring::read_current_ring_index(&rpc, candidate.collection).await?,
         );
     }
-    let memberships = alloc::find_including_rings(&rpc, &metadata, &candidates, lookback)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    let memberships = alloc::find_including_rings(&rpc, &metadata, &candidates, lookback).await?;
     if memberships.is_empty() {
         println!("member NOT in the last {lookback} rings of any collection (onboarding pending)");
     }
@@ -932,8 +904,7 @@ async fn run_alloc_check(
             &target,
             true,
         )
-        .await
-        .map_err(anyhow::Error::msg)?;
+        .await?;
         match alloc::register_statement_account_pooled(
             &rpc,
             &metadata,
@@ -1666,7 +1637,7 @@ async fn start_signing_host(
         match attestation::registered_lite_username(network, &explicit_signer.entropy).await {
             Ok(user_id) => explicit_signer.lite_username = Some(user_id),
             Err(error) => {
-                tracing::warn!(%error, "explicit signer has no resolvable dotNS username")
+                tracing::warn!(error = %format!("{error:#}"), "explicit signer has no resolvable dotNS username")
             }
         }
         signer = Some(explicit_signer);
@@ -1697,9 +1668,7 @@ async fn start_signing_host(
                 cached_signer.lite_username.clone(),
             )
             .await
-            .map_err(|error| {
-                anyhow::anyhow!("failed to activate cached session: {}", error.reason)
-            })?;
+            .context("failed to activate cached session")?;
         if let (Some(profile), Some(user_id)) = (&profile, &cached_signer.lite_username) {
             if let Some(account_name) = &cached_signer.account_name {
                 catalog.store_signer_binding(profile, user_id, account_name)?;
@@ -1824,7 +1793,7 @@ fn validate_signing_args(args: &SigningHostArgs) -> Result<()> {
         bail!("--session cannot be combined with --account");
     }
     if let Some(session) = session {
-        sessions::validate_selectable_name(&session).map_err(anyhow::Error::msg)?;
+        sessions::validate_selectable_name(&session)?;
     }
     if mnemonic.is_some() && prefix.is_some() {
         bail!(
@@ -1999,7 +1968,7 @@ async fn restore_paired_responders(session: &mut SigningHostSession) {
         return;
     }
     if let Err(error) = ensure_signer(session).await {
-        tracing::warn!(%error, "failed to activate the signer for saved paired devices");
+        tracing::warn!(error = %format!("{error:#}"), "failed to activate the signer for saved paired devices");
         return;
     }
     let mut renewal_targets = vec![StatementRenewalTarget::WalletSso];
@@ -2334,7 +2303,7 @@ async fn activate_current_signer(session: &mut SigningHostSession) -> Result<()>
         .runtime
         .activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
         .await
-        .map_err(|err| anyhow::anyhow!("failed to activate local session: {}", err.reason))?;
+        .context("failed to activate local session")?;
     if let (Some(profile), Some(user_id)) = (&session.profile, &signer.lite_username) {
         if let Some(account_name) = &signer.account_name {
             session
@@ -2363,7 +2332,7 @@ async fn prepare_own_allowance(session: &mut SigningHostSession) -> bool {
     use truapi::statement_allowance::renewal::TargetRenewalStatus;
 
     if let Err(error) = ensure_signer(session).await {
-        tracing::warn!(%error, "no signer to register the wallet allowance under");
+        tracing::warn!(error = %format!("{error:#}"), "no signer to register the wallet allowance under");
         return false;
     }
     if let Err(error) = session
@@ -2542,7 +2511,7 @@ async fn establish_paired_host(
 
     if let Err(error) = prepare_pairing_response(session, &candidate, &existing).await {
         if let Some(announced) = &announced {
-            report_pairing_failure(session, announced, error.to_string()).await;
+            report_pairing_failure(session, announced, format!("{error:#}")).await;
         }
         discard_new_pairing_candidate(session, &candidate, candidate_is_existing).await;
         return Err(error);
@@ -2553,13 +2522,13 @@ async fn establish_paired_host(
             .runtime
             .establish_pairing(deeplink)
             .await
-            .map_err(|error| anyhow::anyhow!("pairing failed: {}", error.reason))?;
+            .context("pairing failed")?;
         persist_paired_host(session, &candidate)
     }
     .await;
     if let Err(error) = result {
         if let Some(announced) = &announced {
-            report_pairing_failure(session, announced, error.to_string()).await;
+            report_pairing_failure(session, announced, format!("{error:#}")).await;
         }
         discard_new_pairing_candidate(session, &candidate, candidate_is_existing).await;
         return Err(error);
@@ -2586,7 +2555,8 @@ async fn discard_new_pairing_candidate(
 }
 
 fn is_statement_slot_exhaustion(err: &anyhow::Error) -> bool {
-    truapi::reports_exhausted_period(&err.to_string())
+    err.chain()
+        .any(|cause| truapi::reports_exhausted_period(&cause.to_string()))
 }
 
 fn signer_identity_may_rotate(auto_managed: bool, paired_host_count: usize) -> bool {
@@ -2635,9 +2605,7 @@ async fn renew_pairing_allowances(
         .runtime
         .track_statement_renewal_targets(targets)
         .await
-        .map_err(|error| {
-            anyhow::anyhow!("failed to record pairing allowances: {}", error.reason)
-        })?;
+        .context("failed to record pairing allowances")?;
     let report = match session.runtime.renew_statement_allowances().await {
         Ok(report) => report,
         Err(error) => {
@@ -2700,7 +2668,7 @@ async fn run_renew(session: &mut SigningHostSession) -> Result<()> {
         .runtime
         .renew_statement_allowances()
         .await
-        .map_err(|err| anyhow::anyhow!("allowance renewal failed: {}", err.reason))?;
+        .context("allowance renewal failed")?;
 
     let (mut renewed, mut fresh, mut failed, mut skipped) = (0usize, 0usize, 0usize, 0usize);
     for outcome in &report.outcomes {
@@ -2789,7 +2757,7 @@ async fn respond_to_deeplink(session: &mut SigningHostSession, deeplink: String)
         .runtime
         .resume_pairing(paired_sso_peer(&host))
         .await
-        .map_err(|err| anyhow::anyhow!("pairing failed: {}", err.reason))?;
+        .context("pairing failed")?;
     if exit == ResponderExit::PeerDisconnected && session.profile.is_some() {
         remove_paired_host_locally(session, &host.statement_account_id()).await?;
     }
@@ -3109,7 +3077,7 @@ async fn switch_session(session: &mut SigningHostSession, name: String) -> Resul
     if session.mnemonic.is_some() {
         bail!("session switching is unavailable when launched with --mnemonic");
     }
-    sessions::validate_selectable_name(&name).map_err(anyhow::Error::msg)?;
+    sessions::validate_selectable_name(&name)?;
     // A name that already provisioned a session was promoted to its Lite
     // username, so it selects that session rather than creating another.
     let name = session.catalog.resolve_session_name(&name)?;
@@ -3233,7 +3201,7 @@ async fn import_mnemonic_session(
         accounts::inspect_imported_signer(session.network, mnemonic.expose_secret()).await?;
     let username = imported.username().map(str::to_string);
     let session_name = imported.session_name().to_string();
-    sessions::validate_selectable_name(&session_name).map_err(anyhow::Error::msg)?;
+    sessions::validate_selectable_name(&session_name)?;
 
     let old_name = session
         .profile
@@ -3265,12 +3233,7 @@ async fn import_mnemonic_session(
     runtime
         .activate_local_session_with_identity(imported.entropy().to_vec(), username.clone())
         .await
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "failed to activate imported session {session_name:?}: {}",
-                error.reason
-            )
-        })?;
+        .with_context(|| format!("failed to activate imported session {session_name:?}"))?;
 
     let signer = accounts::persist_imported_signer(
         &profile.account_base_path,
@@ -3351,7 +3314,7 @@ async fn pairing_interactive_loop(
         let command = match parse_command(&input) {
             Ok(command) => command,
             Err(error) => {
-                ui.error(error);
+                ui.error(error.to_string());
                 continue;
             }
         };
@@ -3396,7 +3359,7 @@ async fn pairing_interactive_loop(
                         );
                     }
                     Ok(false) => ui.system(product.current()),
-                    Err(error) => ui.error(error.to_string()),
+                    Err(error) => ui.error(format!("{error:#}")),
                 }
             }
             ShellCommand::Quit => return Ok(()),
@@ -3545,7 +3508,7 @@ async fn signing_interactive_loop(
         let command = match parse_command(&input) {
             Ok(command) => command,
             Err(error) => {
-                ui.error(error);
+                ui.error(error.to_string());
                 continue;
             }
         };
@@ -3601,7 +3564,7 @@ async fn signing_interactive_loop(
                         );
                     }
                     Ok(false) => ui.system(product.current()),
-                    Err(error) => ui.error(error.to_string()),
+                    Err(error) => ui.error(format!("{error:#}")),
                 }
             }
             ShellCommand::Session(SessionCommand::Current) => {
@@ -4198,6 +4161,16 @@ mod cli_tests {
         );
     }
 
+    #[test]
+    fn pairing_deeplink_errors_report_the_decode_failure_once() {
+        let error = paired_host_from_deeplink("polkadotapp://pair?handshake=zz").unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "invalid pairing deeplink hex: Invalid character 'z' at position 0"
+        );
+    }
+
     #[tokio::test]
     async fn responder_manager_keeps_unrelated_peers_and_replaces_only_the_same_peer() {
         let mut manager = ResponderManager::default();
@@ -4330,6 +4303,22 @@ mod cli_tests {
             "alice.01"
         );
         Ok(())
+    }
+
+    #[test]
+    fn allowance_exhaustion_is_recognized_through_operation_context() {
+        let exhausted = anyhow::anyhow!("no free StatementStore slot in period 42 (max 3)")
+            .context("pairing allowance renewal failed");
+        let unavailable = anyhow::anyhow!("People chain is unavailable")
+            .context("pairing allowance renewal failed");
+
+        assert_eq!(
+            (
+                is_statement_slot_exhaustion(&exhausted),
+                is_statement_slot_exhaustion(&unavailable),
+            ),
+            (true, false)
+        );
     }
 
     #[test]

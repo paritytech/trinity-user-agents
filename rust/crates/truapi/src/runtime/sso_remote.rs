@@ -401,9 +401,7 @@ fn handle_sso_remote_statement_page<T>(
     let page = parse_new_statements_result("sso-remote".to_string(), value)
         .map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
     for statement in page.statements {
-        match decode_sso_session_statement(session, &statement, statement_request_id)
-            .map_err(SsoRemoteResponseError::Failure)?
-        {
+        match decode_sso_session_statement(session, &statement, statement_request_id)? {
             Some(SsoSessionStatement::RequestAccepted) => {
                 *request_accepted = true;
                 if let Some(response) = pending_remote_response.take() {
@@ -412,14 +410,14 @@ fn handle_sso_remote_statement_page<T>(
             }
             Some(SsoSessionStatement::RemoteMessages(messages)) => {
                 for message in messages {
-                    let message = message.map_err(SsoRemoteResponseError::Failure)?;
+                    let message = message?;
                     if message == v1::RemoteMessage::Disconnected {
                         return Err(SsoRemoteResponseError::PeerDisconnected);
                     }
                     let Some(matched) = matches(message) else {
                         continue;
                     };
-                    let response = matched.map_err(SsoRemoteResponseError::Failure)?;
+                    let response = matched?;
                     if *request_accepted {
                         return Ok(Some(response));
                     }
@@ -488,6 +486,26 @@ mod tests {
     use futures::stream;
     use parity_scale_codec::Encode;
     use std::time::Duration;
+
+    #[test]
+    fn authority_cancellation_preserves_the_request_and_deadline() {
+        use crate::runtime::authority::{AuthorityCancelError, AuthorityError};
+
+        for reason in [
+            CancellationReason::Cancelled,
+            CancellationReason::TimedOut {
+                timeout: Duration::from_secs(180),
+            },
+        ] {
+            assert_eq!(
+                AuthorityError::from(SsoRemoteResponseError::Cancelled(CancelError::new(
+                    reason.clone(),
+                    "product-request",
+                ))),
+                AuthorityError::Cancelled(AuthorityCancelError::new("product-request", reason)),
+            );
+        }
+    }
 
     #[test]
     fn sso_message_id_uses_short_opaque_nanoids() {

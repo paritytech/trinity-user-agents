@@ -772,7 +772,7 @@ struct SignerIdentity {
 fn identity_from_mnemonic(mnemonic: &str, network_suffix: &str) -> Result<SignerIdentity> {
     let entropy = mnemonic_entropy(mnemonic)?;
     let candidate = derive_identity_keypair(&entropy, network_suffix)
-        .map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
+        .context("uid identity derivation failed")?;
     let public_key = candidate.public.to_bytes();
     Ok(SignerIdentity {
         entropy,

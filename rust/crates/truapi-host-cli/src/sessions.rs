@@ -229,7 +229,7 @@ impl SessionCatalog {
     }
 
     pub fn profile(&self, name: &str) -> Result<SessionProfile> {
-        validate_name(name).map_err(anyhow::Error::msg)?;
+        validate_name(name)?;
         if name == DEFAULT_SESSION_NAME {
             return Ok(SessionProfile {
                 name: name.to_string(),
@@ -359,7 +359,7 @@ impl SessionCatalog {
         let SessionClearTarget::Named(name) = target else {
             return Ok(());
         };
-        validate_selectable_name(name).map_err(anyhow::Error::msg)?;
+        validate_selectable_name(name)?;
         let name = &self.resolve_session_name(name)?;
         if self.list()?.iter().any(|existing| existing == name) {
             Ok(())
@@ -429,7 +429,7 @@ impl SessionCatalog {
         profile: &SessionProfile,
         user_id: &str,
     ) -> Result<SessionProfile> {
-        validate_name(user_id).map_err(anyhow::Error::msg)?;
+        validate_name(user_id)?;
         let target_path = self.identity_path(user_id);
         if profile.path != target_path && !target_path.exists() {
             if profile.path == self.role_path {
@@ -749,28 +749,39 @@ fn write_paired_host_store(session_path: &Path, store: &PairedHostStore) -> Resu
     Ok(())
 }
 
+/// A session name cannot safely identify a user-owned profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+pub enum SessionNameError {
+    /// Names must fit a portable path component.
+    #[display("session name must contain between 1 and 64 characters")]
+    Length,
+    /// A profile cannot start with a separator or uppercase letter.
+    #[display("session name must start with a lowercase letter or digit")]
+    FirstCharacter,
+    /// Only portable lowercase profile names are accepted.
+    #[display("session name may contain only lowercase letters, digits, `.`, `_`, and `-`")]
+    Character,
+    /// The bootstrap profile is not a user-selectable session.
+    #[display(
+        "session name `default` is reserved for bootstrap state; choose a user session name such as `alice`"
+    )]
+    Reserved,
+}
+
 /// Validate a portable session name before using it as a path component.
-pub fn validate_name(name: &str) -> Result<(), String> {
+pub fn validate_name(name: &str) -> Result<(), SessionNameError> {
     if name.is_empty() || name.len() > 64 {
-        return Err("session name must contain between 1 and 64 characters".to_string());
+        return Err(SessionNameError::Length);
     }
     let mut bytes = name.bytes();
-    let Some(first) = bytes.next() else {
-        return Err("session name cannot be empty".to_string());
-    };
+    let first = bytes.next().expect("validated non-empty session name");
     if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
-        return Err("session name must start with a lowercase letter or digit".to_string());
+        return Err(SessionNameError::FirstCharacter);
     }
     if !bytes.all(|byte| {
         byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
     }) {
-        return Err(
-            "session name may contain only lowercase letters, digits, `.`, `_`, and `-`"
-                .to_string(),
-        );
-    }
-    if matches!(name, "." | "..") {
-        return Err("session name cannot be `.` or `..`".to_string());
+        return Err(SessionNameError::Character);
     }
     Ok(())
 }
@@ -779,13 +790,10 @@ pub fn validate_name(name: &str) -> Result<(), String> {
 ///
 /// `default` remains a private bootstrap profile and must not be exposed as a
 /// session users can create or switch to.
-pub fn validate_selectable_name(name: &str) -> Result<(), String> {
+pub fn validate_selectable_name(name: &str) -> Result<(), SessionNameError> {
     validate_name(name)?;
     if name == DEFAULT_SESSION_NAME {
-        return Err(
-            "session name `default` is reserved for bootstrap state; choose a user session name such as `alice`"
-                .to_string(),
-        );
+        return Err(SessionNameError::Reserved);
     }
     Ok(())
 }

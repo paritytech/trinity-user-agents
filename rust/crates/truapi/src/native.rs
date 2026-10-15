@@ -84,8 +84,11 @@ pub fn localhost_bridge_bootstrap_script(port: u16, token: String) -> String {
 /// deeplink this rejects is one no pairing call would have accepted either.
 #[uniffi::export]
 pub fn parse_pairing_deeplink(deeplink: String) -> Result<PairingProposal, NativePairingError> {
-    PairingProposal::from_deeplink(&deeplink)
-        .map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+    PairingProposal::from_deeplink(&deeplink).map_err(|error| {
+        NativePairingError::UndecodableDeeplink {
+            reason: error.to_string(),
+        }
+    })
 }
 
 /// Refuse a deeplink the core's decoder would refuse anyway, so the caller
@@ -94,7 +97,9 @@ pub fn parse_pairing_deeplink(deeplink: String) -> Result<PairingProposal, Nativ
 fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError> {
     PairingProposal::from_deeplink(deeplink)
         .map(|_| ())
-        .map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+        .map_err(|error| NativePairingError::UndecodableDeeplink {
+            reason: error.to_string(),
+        })
 }
 
 /// Whether `product_id` is a first-party product the host grants every

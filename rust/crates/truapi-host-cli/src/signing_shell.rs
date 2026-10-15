@@ -4,11 +4,11 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use truapi::platform::normalize_product_identifier;
+use truapi::platform::{RuntimeConfigValidationError, normalize_product_identifier};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::LogLevel;
 use crate::sessions;
+use crate::{InvalidLogLevel, LogLevel};
 
 /// Operation selected through `/product`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,14 +184,35 @@ pub enum ShellCommand {
     Quit,
 }
 
+/// Rejection of a command or one of its validated arguments.
+#[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error, derive_more::From)]
+pub enum CommandParseError {
+    /// Command syntax does not match its usage.
+    #[display("{reason}")]
+    #[from(String, &'static str)]
+    Usage {
+        /// Usage text shown at the command boundary.
+        reason: String,
+    },
+    /// The selected session is not a valid user profile.
+    #[from]
+    Session(sessions::SessionNameError),
+    /// The log filter names an unsupported level.
+    #[from]
+    LogLevel(InvalidLogLevel),
+    /// The product cannot be used as a protocol identifier.
+    #[from]
+    Product(RuntimeConfigValidationError),
+}
+
 /// Parse one slash command without invoking a shell.
-pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
+pub fn parse_command(input: &str) -> Result<ShellCommand, CommandParseError> {
     let input = input.trim();
     if input.is_empty() {
-        return Err("enter a command starting with `/`".to_string());
+        return Err("enter a command starting with `/`".into());
     }
     if !input.starts_with('/') {
-        return Err("commands start with `/`; use /help to list them".to_string());
+        return Err("commands start with `/`; use /help to list them".into());
     }
 
     let (name, argument) = input
@@ -207,10 +228,9 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
                     argument.to_string(),
                 )));
             }
-            let arguments = shlex::split(argument)
-                .ok_or_else(|| "invalid /pair image path quoting".to_string())?;
+            let arguments = shlex::split(argument).ok_or("invalid /pair image path quoting")?;
             if arguments.len() != 1 || argument.contains("://") {
-                return Err("usage: /pair [<image-path> | <polkadotapp://pair?...>]".to_string());
+                return Err("usage: /pair [<image-path> | <polkadotapp://pair?...>]".into());
             }
             Ok(ShellCommand::Pair(PairCommand::Image(PathBuf::from(
                 &arguments[0],
@@ -220,8 +240,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
             if argument.is_empty() || argument == "--list" {
                 return Ok(ShellCommand::Devices(DeviceCommand::List));
             }
-            let arguments =
-                shlex::split(argument).ok_or_else(|| "invalid /devices quoting".to_string())?;
+            let arguments = shlex::split(argument).ok_or("invalid /devices quoting")?;
             if arguments.first().is_some_and(|value| value == "--remove") {
                 let (statement_account_id, force) = match arguments.as_slice() {
                     [_, statement_account_id] => (statement_account_id, false),
@@ -230,7 +249,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
                     }
                     _ => {
                         return Err(
-                            "usage: /devices --remove <statement-account-id> [--force]".to_string()
+                            "usage: /devices --remove <statement-account-id> [--force]".into()
                         );
                     }
                 };
@@ -239,13 +258,13 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
                     force,
                 }));
             }
-            Err("usage: /devices [--list | --remove <statement-account-id> [--force]]".to_string())
+            Err("usage: /devices [--list | --remove <statement-account-id> [--force]]".into())
         }
         "/approval" => match argument {
             "" => Ok(ShellCommand::Approval(ApprovalCommand::Current)),
             "manual" => Ok(ShellCommand::Approval(ApprovalCommand::Manual)),
             "automatic" => Ok(ShellCommand::Approval(ApprovalCommand::Automatic)),
-            _ => Err("usage: /approval [manual|automatic]".to_string()),
+            _ => Err("usage: /approval [manual|automatic]".into()),
         },
         "/script" => {
             let command = match argument {
@@ -253,7 +272,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
                 "--run" => ScriptCommand::Run(None),
                 "--edit" => ScriptCommand::EditOnly,
                 "--new" => ScriptCommand::New(None),
-                "--" => return Err("usage: /script -- <path>".to_string()),
+                "--" => return Err("usage: /script -- <path>".into()),
                 _ => match argument.split_once(char::is_whitespace) {
                     Some(("--new", directory)) => {
                         ScriptCommand::New(Some(PathBuf::from(directory.trim())))
@@ -271,7 +290,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
         "/logout" => no_argument(name, argument, ShellCommand::Logout),
         "/log" => {
             if argument.is_empty() {
-                return Err("usage: /log <error|warn|info|debug|trace>".to_string());
+                return Err("usage: /log <error|warn|info|debug|trace>".into());
             }
             Ok(ShellCommand::Log(argument.parse::<LogLevel>()?))
         }
@@ -279,8 +298,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
             if argument.is_empty() {
                 return Ok(ShellCommand::Product(ProductCommand::Current));
             }
-            let product_id =
-                normalize_product_identifier(argument).map_err(|error| error.to_string())?;
+            let product_id = normalize_product_identifier(argument)?;
             Ok(ShellCommand::Product(ProductCommand::Switch(product_id)))
         }
         "/session" => {
@@ -288,7 +306,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
                 return Ok(ShellCommand::Session(SessionCommand::Current));
             }
             let arguments = shlex::split(argument)
-                .ok_or_else(|| "invalid /session quoting; close the mnemonic quote".to_string())?;
+                .ok_or("invalid /session quoting; close the mnemonic quote")?;
             let first = arguments.first().expect("non-empty session argument");
             match first.as_str() {
                 "--list" if arguments.len() == 1 => {
@@ -296,10 +314,10 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
                 }
                 "--clear" => {
                     let Some(name) = arguments.get(1) else {
-                        return Err("usage: /session --clear <name>".to_string());
+                        return Err("usage: /session --clear <name>".into());
                     };
                     if arguments.len() != 2 {
-                        return Err("usage: /session --clear <name>".to_string());
+                        return Err("usage: /session --clear <name>".into());
                     }
                     sessions::validate_selectable_name(name)?;
                     return Ok(ShellCommand::Session(SessionCommand::Clear(
@@ -313,7 +331,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
                 }
                 "--mnemonic" => {
                     if arguments.len() < 2 {
-                        return Err("usage: /session --mnemonic \"<BIP-39 phrase>\"".to_string());
+                        return Err("usage: /session --mnemonic \"<BIP-39 phrase>\"".into());
                     }
                     return Ok(ShellCommand::Session(SessionCommand::ImportMnemonic(
                         SecretMnemonic::new(arguments[1..].join(" ")),
@@ -322,10 +340,11 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
                 option if option.starts_with("--") => {
                     return Err(format!(
                         "unknown /session option `{option}`; use /help to list options"
-                    ));
+                    )
+                    .into());
                 }
                 _ if arguments.len() != 1 => {
-                    return Err("usage: /session <name>".to_string());
+                    return Err("usage: /session <name>".into());
                 }
                 _ => {}
             }
@@ -336,29 +355,32 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
         }
         "/renew" => no_argument(name, argument, ShellCommand::Renew),
         "/quit" => no_argument(name, argument, ShellCommand::Quit),
-        _ => Err(format!(
-            "unknown command `{name}`; use /help to list commands"
-        )),
+        _ => Err(format!("unknown command `{name}`; use /help to list commands").into()),
     }
 }
 
-fn parse_statement_account_id(value: &str) -> Result<[u8; 32], String> {
+fn parse_statement_account_id(value: &str) -> Result<[u8; 32], CommandParseError> {
     let value = value
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))
         .unwrap_or(value);
-    let bytes = hex::decode(value)
-        .map_err(|_| "statement account ID must be 32 bytes of hexadecimal".to_string())?;
-    bytes
-        .try_into()
-        .map_err(|_| "statement account ID must be 32 bytes of hexadecimal".to_string())
+    let bytes = hex::decode(value).map_err(|_| {
+        CommandParseError::from("statement account ID must be 32 bytes of hexadecimal")
+    })?;
+    bytes.try_into().map_err(|_| {
+        CommandParseError::from("statement account ID must be 32 bytes of hexadecimal")
+    })
 }
 
-fn no_argument(name: &str, argument: &str, command: ShellCommand) -> Result<ShellCommand, String> {
+fn no_argument(
+    name: &str,
+    argument: &str,
+    command: ShellCommand,
+) -> Result<ShellCommand, CommandParseError> {
     if argument.is_empty() {
         Ok(command)
     } else {
-        Err(format!("{name} does not accept arguments"))
+        Err(format!("{name} does not accept arguments").into())
     }
 }
 
@@ -1059,7 +1081,9 @@ mod tests {
             Ok(ShellCommand::Approval(ApprovalCommand::Automatic))
         );
         assert_eq!(
-            parse_command("/approval sometimes").unwrap_err(),
+            parse_command("/approval sometimes")
+                .unwrap_err()
+                .to_string(),
             "usage: /approval [manual|automatic]"
         );
     }
@@ -1069,6 +1093,7 @@ mod tests {
         assert!(
             parse_command("whoami")
                 .unwrap_err()
+                .to_string()
                 .contains("start with `/`")
         );
         assert!(parse_command("/whoami").is_err());
@@ -1089,7 +1114,7 @@ mod tests {
         assert!(parse_command("/product example.com").is_err());
         assert!(parse_command("/session ../escape").is_err());
         assert_eq!(
-            parse_command("/session --clear").unwrap_err(),
+            parse_command("/session --clear").unwrap_err().to_string(),
             "usage: /session --clear <name>"
         );
         assert!(parse_command("/session --clear alice bob").is_err());
@@ -1100,7 +1125,38 @@ mod tests {
         assert!(
             parse_command("/session default")
                 .unwrap_err()
+                .to_string()
                 .contains("reserved for bootstrap state")
+        );
+    }
+
+    #[test]
+    fn command_failures_keep_the_argument_error_and_its_user_message() {
+        use std::error::Error;
+
+        let session = parse_command("/session default").unwrap_err();
+        let level = parse_command("/log noisy").unwrap_err();
+        let product = parse_command("/product example.com").unwrap_err();
+
+        assert_eq!(
+            (
+                session.source().and_then(|error| error.downcast_ref::<sessions::SessionNameError>()),
+                level.source().and_then(|error| error.downcast_ref::<InvalidLogLevel>()),
+                product.source().and_then(|error| error.downcast_ref::<RuntimeConfigValidationError>()),
+                session.to_string(),
+                level.to_string(),
+                product.to_string(),
+            ),
+            (
+                Some(&sessions::SessionNameError::Reserved),
+                Some(&InvalidLogLevel { value: "noisy".to_string() }),
+                Some(&RuntimeConfigValidationError::InvalidProductId {
+                    product_id: "example.com".to_string(),
+                }),
+                "session name `default` is reserved for bootstrap state; choose a user session name such as `alice`".to_string(),
+                "invalid log level `noisy`; expected error, warn, info, debug, or trace".to_string(),
+                "product_id must be a dotNS or localhost product identifier, got \"example.com\"".to_string(),
+            )
         );
     }
 

@@ -1,4 +1,4 @@
-use super::{SigningHost, product_authority_error};
+use super::SigningHost;
 use crate::host_logic::product_account::{
     derive_identity_keypair, derive_root_keypair_from_entropy,
 };
@@ -42,10 +42,9 @@ impl LocalActivation for SigningHost {
         lite_username: Option<String>,
     ) -> Result<(), AuthorityError> {
         let secret = Zeroizing::new(secret);
-        let root = derive_root_keypair_from_entropy(&secret).map_err(product_authority_error)?;
+        let root = derive_root_keypair_from_entropy(&secret)?;
         let public_key = root.public.to_bytes();
-        let identity_account_id = derive_identity_keypair(&secret, self.network_suffix())
-            .map_err(product_authority_error)?
+        let identity_account_id = derive_identity_keypair(&secret, self.network_suffix())?
             .public
             .to_bytes();
         let identity_chat_private_key = derive_identity_chat_private_key(&secret);

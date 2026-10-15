@@ -69,7 +69,7 @@ impl ProductSelection {
     /// Validate and normalize the initial product id.
     pub fn new(product_id: String, execution_kind: ProductExecutionKind) -> Result<Arc<Self>> {
         let product = ProductContext::new_with_execution(product_id, execution_kind)
-            .map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
+            .context("invalid product id")?;
         let (current, _) = watch::channel(product);
         Ok(Arc::new(Self {
             current,
@@ -85,7 +85,7 @@ impl ProductSelection {
     /// Select a validated product, returning whether the selection changed.
     pub fn select(&self, product_id: String) -> Result<bool> {
         let product = ProductContext::new_with_execution(product_id, self.execution_kind)
-            .map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
+            .context("invalid product id")?;
         Ok(self.current.send_if_modified(|current| {
             if current == &product {
                 false
