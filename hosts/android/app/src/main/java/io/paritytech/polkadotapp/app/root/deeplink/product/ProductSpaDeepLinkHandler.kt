@@ -15,7 +15,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
-import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.isPocketTarget
+import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.isHostTarget
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -29,9 +29,9 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
     override suspend fun canHandle(data: Uri): Boolean {
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false
         if (!DotNsUtils.isDotDomain(data.asWebUri(), tld)) return false
-        // Pocket is the host's own target and is answered elsewhere; every other route under the
-        // reserved segment still opens as an App page, as it did before Pocket claimed one.
-        if (data.isPocketTarget()) return false
+        // Pocket and chat rooms are the host's own targets and are answered elsewhere; every other
+        // route under the reserved segment still opens as an App page.
+        if (data.isHostTarget()) return false
 
         return gate.opens(data.productId(tld))
     }

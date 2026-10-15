@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.net.Uri
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -16,12 +17,16 @@ import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
+import io.paritytech.polkadotapp.common.presentation.deeplink.asWebUri
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsNavigationType
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
+import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.isChatRoomTarget
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductTheme
@@ -118,6 +123,18 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     }
 
     /**
+     * A link into a chat room goes to the deeplink handlers, which open the room. A product opens its own rooms only
+     * (02-DESIGN §13 item 15).
+     */
+    private fun navigationType(callingProductId: ProductId, destination: Uri, tld: DotNsTld): DotNsNavigationType {
+        if (!destination.isChatRoomTarget() || !DotNsUtils.isDotDomain(destination.asWebUri(), tld)) {
+            return DotNsUtils.classifyNavigation(callingProductId.toUri(), destination, tld)
+        }
+        if (ProductId.fromUrl(destination.asWebUri(), tld).getOrNull() != callingProductId) throw HostNavigateToException.PermissionDenied()
+        return DotNsNavigationType.EXTERNAL
+    }
+
+    /**
      * Built in [attach], where the product id is known, so the storage
      * namespace and every product-scoped call are fixed at construction
      * instead of resolved from mutable state the callbacks trust.
@@ -147,7 +164,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             val tld = dotNsTldProvider.getTld().getOrElse {
                 throw HostNavigateToException.Unknown(it.message.orEmpty())
             }
-            val type = DotNsUtils.classifyNavigation(callingProductId.toUri(), destination, tld)
+            val type = navigationType(callingProductId, destination, tld)
             withContext(Dispatchers.Main) {
                 runCatching { navigation.handleNavigation(type, destination) }
                     .getOrElse {
