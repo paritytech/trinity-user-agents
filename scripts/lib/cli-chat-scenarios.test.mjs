@@ -29,6 +29,9 @@ test("the CLI page covers the scenarios of layer L", () => {
     "S49",
     "S51",
     "S53",
+    "S54",
+    "S55",
+    "S56",
     "S7",
     "S8",
   ]);

@@ -21,7 +21,13 @@
 // bundle is not there, or always with `--build`.
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join, relative, resolve } from "node:path";
@@ -62,11 +68,19 @@ function freePort() {
   });
 }
 
+/**
+ * Build the product for `PRODUCT_ID`, so the room links it sends name the
+ * product the host runs. A bundle built for another name is built again.
+ */
 function buildProduct() {
-  if (existsSync(WORKER_BUNDLE) && !process.argv.includes("--build")) return;
+  const built =
+    existsSync(WORKER_BUNDLE) &&
+    readFileSync(WORKER_BUNDLE, "utf8").includes(JSON.stringify(PRODUCT_ID));
+  if (built && !process.argv.includes("--build")) return;
   for (const args of [["install", "--frozen-lockfile"], ["build"]]) {
     const result = spawnSync("yarn", args, {
       cwd: PRODUCT_DIR,
+      env: { ...process.env, CHAT_V2_DOTNS_NAME: PRODUCT_ID },
       stdio: "inherit",
     });
     if (result.status !== 0)
@@ -689,6 +703,120 @@ async function drive(chat) {
     await chat.command("host", "/bot post ghost Boo");
     await chat.lastProductText(/unknown bot ghost/);
     return `${shot}; ${spoken.id} drawn as Helper with its icon, renamed to Helper Two, ghost refused`;
+  });
+
+  // S54: a muted room greys its badge and shows no notification of the
+  // product; the product hears UserStateChanged.
+  await scenario(rows, byId.S54, async () => {
+    const roomEvent = (since, muted) =>
+      chat.logLine(
+        (line) =>
+          line.via === "room_events" &&
+          line.room === "host" &&
+          line.kind === "UserStateChanged" &&
+          (line.data.mutedUntil !== null) === muted,
+        since,
+      );
+    const shown = () =>
+      page.$$eval('[data-notification][data-room="host"]', (nodes) => nodes.length);
+    await chat.command("host", "/preview badge 2");
+    let since = chat.log.length;
+    await page.click("#mute");
+    await page.click('[data-item="mute-1-hour"]');
+    await roomEvent(since, true);
+    await chat.until(
+      async () =>
+        (await page.$('[data-room-id="host"][data-muted="true"] .badge.muted')) !== null,
+      "the muted row with a grey badge",
+    );
+    const before = await shown();
+    await chat.command("host", "/notify");
+    await chat.lastProductText("ok /notify");
+    await sleep(1_000);
+    if ((await shown()) !== before)
+      throw new Error("a notification into the muted room was shown");
+    const muted = await chat.shot("s54-muted.png");
+    since = chat.log.length;
+    await page.click("#mute");
+    await roomEvent(since, false);
+    await chat.command("host", "/notify");
+    await chat.until(
+      async () => (await shown()) === before + 1,
+      "the notification once the room is unmuted",
+    );
+    await chat.command("host", "/preview none");
+    return `${muted}, ${await chat.shot("s54-unmuted.png")}; no notification while muted, one after`;
+  });
+
+  // S55: an archived room stays archived when a message arrives.
+  await scenario(rows, byId.S55, async () => {
+    const archivedRow = () => page.$("#archived");
+    const since = chat.log.length;
+    await page.click("#archive");
+    await chat.logLine(
+      (line) =>
+        line.via === "room_events" &&
+        line.room === "host" &&
+        line.data.archived === true,
+      since,
+    );
+    await chat.until(async () => (await archivedRow()) !== null, "the Archived row");
+    await chat.command("host", "/post text");
+    await chat.lastProductText(/^Plain text message/);
+    if ((await page.$('#rooms > [data-room-id="host"]:not([data-archived])')) !== null)
+      throw new Error("the room left the archived list when a message arrived");
+    await page.click("#archived");
+    await chat.until(
+      async () =>
+        (await page.$('[data-room-id="host"][data-archived="true"]')) !== null,
+      "the room in the archived list",
+    );
+    const shot = await chat.shot("s55-archived.png");
+    await page.click("#archive");
+    await chat.until(
+      async () =>
+        (await archivedRow()) === null &&
+        (await page.$('[data-room-id="host"]:not([data-archived])')) !== null,
+      "the room back in the list",
+    );
+    return `${shot}; archived through /post text, unarchived`;
+  });
+
+  // S56: the snapshot of the user state comes first on the room events of
+  // a restarted worker.
+  await scenario(rows, byId.S56, async () => {
+    await page.click("#mute");
+    await page.click('[data-item="mute-always"]');
+    await chat.room("source");
+    await page.click("#archive");
+    await chat.until(async () => (await page.$("#archived")) !== null, "source archived");
+    const boot = Math.max(...chat.log.map((line) => line.boot));
+    await page.click("#restart");
+    await page.waitForSelector('[data-room-id="host"]', { timeout: 30_000 });
+    const lines = await chat.until(
+      async () => {
+        const events = chat.log.filter(
+          (line) => line.boot > boot && line.via === "room_events",
+        );
+        return events.length >= 2 ? events : null;
+      },
+      "the room events of the restarted worker",
+      30_000,
+    );
+    const first = lines.slice(0, 2).map((line) => `${line.room} ${line.kind}`);
+    if (first.join(",") !== "host UserStateChanged,source UserStateChanged")
+      throw new Error(`the restarted worker heard ${first.join(", ")} first`);
+    if (lines[0].data.mutedUntil === null || lines[1].data.archived !== true)
+      throw new Error(`snapshot ${JSON.stringify(lines.slice(0, 2).map((line) => line.data))}`);
+    // Back to a plain start for the next run.
+    await chat.room("host");
+    await page.click("#mute");
+    await page.click("#archived");
+    await chat.room("source");
+    await page.click("#archive");
+    await chat.until(async () => (await page.$("#archived")) === null, "no archived room");
+    await chat.room("host");
+    return `the restarted worker (boot ${boot + 1}) heard ${first.join(", ")} first`;
   });
 
   return rows;

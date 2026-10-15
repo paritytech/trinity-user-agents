@@ -53,6 +53,24 @@ export const CLI_CHAT_SCENARIOS = Object.freeze([
       "register_bot answers New, then Exists and replaces the persona; a bot message draws its name and icon; an unknown persona is refused",
     mode: "host",
   },
+  {
+    id: "S54",
+    title:
+      "mute greys the badge, suppresses /notify into the room, and the product receives UserStateChanged",
+    mode: "host",
+  },
+  {
+    id: "S55",
+    title:
+      "archive moves the room to the archived list, where it stays after /post text; unarchive restores it",
+    mode: "host",
+  },
+  {
+    id: "S56",
+    title:
+      "a restarted worker receives UserStateChanged for every muted or archived room before live events",
+    mode: "host",
+  },
 ]);
 
 function cell(value) {
