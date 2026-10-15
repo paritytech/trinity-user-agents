@@ -461,7 +461,7 @@ describe("wakes", () => {
     running.fake.emitRoomEvent({ roomId: "host", event: { tag: "Woken", value: { watchId: "dev" } } });
     await running.product.idle();
 
-    expect((running.fake.callsOf("setRoomPreview") as { preview: { text?: { text: string } } }[]).at(-1)?.preview.text).toEqual({
+    expect((running.fake.callsOf("setRoomPreview") as { preview: { text?: { text: string; ongoing: boolean } } }[]).at(-1)?.preview.text).toEqual({
       text: "Woken by dev",
       ongoing: false,
     });
