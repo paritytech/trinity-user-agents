@@ -59,6 +59,16 @@ import {
   type ProductChainState,
 } from "./product-chain.js";
 import { StageLoading, documentsBeforeProduct } from "./loading.js";
+import {
+  DESTINATIONS,
+  DESTINATION_LABELS,
+  destinationOf,
+  loadAddresses,
+  resolveNavigation,
+  saveAddress,
+  type Destination,
+  type DockAddresses,
+} from "./shell.js";
 import { openProduct, type OpenProduct } from "./product.js";
 import {
   notOpenableText,
@@ -142,6 +152,15 @@ const productStatus = element("product-status");
 const productMore = element<HTMLDetailsElement>("product-more");
 const productDetails = element("product-details");
 const productFrame = element("product-frame");
+const productSlot = element("product-slot");
+const dockButtons = DESTINATIONS.map((destination) => ({
+  destination,
+  button: document.querySelector<HTMLButtonElement>(
+    `#dock [data-destination="${destination}"]`,
+  )!,
+}));
+const stageEmptyTitle = element("stage-empty-title");
+const stageEmptyNote = element("stage-empty-note");
 const stageLoadingPill = element("stage-loading-pill");
 const stageLoadingText = element("stage-loading-text");
 
@@ -286,6 +305,28 @@ let overrideOrigin: string | null = null;
 let sandboxStatus = "";
 
 /**
+ * The dock destination the product in front belongs to, or null for a product
+ * a link opened. Choosing a destination sends the one in front behind it
+ * instead of ending it, so Chat keeps running while Browse is open.
+ */
+let destination: Destination | null = null;
+let dockAddresses: DockAddresses = loadAddresses(
+  localStorage,
+  activeNetwork.id,
+);
+
+/** A product held behind the one in front, with the bookkeeping that belongs to it. */
+interface Held {
+  product: OpenProduct;
+  opened: Opened | null;
+  entered: boolean;
+  origin: string | null;
+  sandbox: string;
+  domains: string[];
+}
+const held = new Map<Destination, Held>();
+
+/**
  * Session changes and product opens run one at a time, in order. Opening a
  * product awaits the core, so without this a second open or a wallet switch
  * could start before the first open has a handle to dispose, and leave a
@@ -373,6 +414,7 @@ function renderControls(): void {
     !ready || product === null || activeWallet === null;
   renderWalletPanel();
   renderAddress();
+  renderDock();
 }
 
 /**
@@ -460,6 +502,36 @@ function renderProduct(): void {
   productMore.hidden = details === "";
   renderControls();
   void refreshProductAllowance();
+}
+
+/** Mark the dock: where the product in front belongs, and which destinations still run behind it. */
+function renderDock(): void {
+  const ready = runtime !== null && !queue.busy;
+  for (const { destination: id, button } of dockButtons) {
+    button.setAttribute("aria-current", String(destination === id));
+    button.dataset.live = String(
+      held.has(id) || (destination === id && product !== null),
+    );
+    button.disabled = !ready;
+    button.title =
+      dockAddresses[id] === ""
+        ? `${DESTINATION_LABELS[id]}: no product yet. Enter one in the address bar.`
+        : `${DESTINATION_LABELS[id]}: ${dockAddresses[id]}`;
+  }
+  const bare =
+    destination !== null &&
+    product === null &&
+    dockAddresses[destination] === ""
+      ? destination
+      : null;
+  stageEmptyTitle.textContent =
+    bare === null
+      ? "No product open"
+      : `${DESTINATION_LABELS[bare]} has no product yet`;
+  stageEmptyNote.textContent =
+    bare === null
+      ? "Pick Chat, Browse or Pocket, or enter an address above."
+      : "Enter a name or URL above. The host remembers it for this tab.";
 }
 
 const accountStatusList = element("account-status-rows");
@@ -839,6 +911,7 @@ function changeSession(
     const how = opened;
     const entered = openedWithOverride;
     const scope = overrideOrigin ?? "";
+    closeHeld();
     closeProduct();
     try {
       await change(runtime);
@@ -893,6 +966,137 @@ function closeProduct(): void {
   opened = null;
   sandboxStatus = "";
   renderProduct();
+}
+
+/** End every product held behind the one in front. They belong to the session that opened them. */
+function closeHeld(): void {
+  for (const entry of held.values()) entry.product.dispose();
+  held.clear();
+}
+
+/**
+ * Send the product in front behind the dock, still running, or end it when no
+ * destination owns it. Either way nothing is in front afterwards.
+ */
+function leaveFront(): void {
+  if (destination === null || product === null) {
+    closeProduct();
+    return;
+  }
+  loading.clear();
+  product.setVisible(false);
+  held.set(destination, {
+    product,
+    opened,
+    entered: openedWithOverride,
+    origin: overrideOrigin,
+    sandbox: sandboxStatus,
+    domains: askedDomains,
+  });
+  product = null;
+  opened = null;
+  sandboxStatus = "";
+  askedDomains = [];
+  openedWithOverride = false;
+  overrideOrigin = null;
+  renderProduct();
+}
+
+/** Bring a held product back in front exactly as it was left. */
+function resumeFront(back: Held): void {
+  product = back.product;
+  opened = back.opened;
+  openedWithOverride = back.entered;
+  overrideOrigin = back.origin;
+  sandboxStatus = back.sandbox;
+  askedDomains = back.domains;
+  product.setVisible(true);
+  addressInput.value = displayAddress(opened?.address ?? "", activeNetwork);
+  rememberFront();
+  renderProduct();
+  void refreshPermissions();
+}
+
+/** Keep this tab's way back to the product in front across a reload. */
+function rememberFront(): void {
+  if (product === null || opened === null) return;
+  sessionStorage.setItem(
+    tabProductKey(activeNetwork.id),
+    JSON.stringify({
+      address: opened.address,
+      productId: product.productId,
+      destination,
+    }),
+  );
+}
+
+/**
+ * Put a dock destination in front: resume it if it is running behind, else
+ * open its address. The product that was in front keeps running behind its own
+ * destination.
+ */
+function selectDestination(next: Destination): Promise<void> {
+  return serial(async (runtime) => {
+    if (destination === next && product !== null) return;
+    if (destination !== next) leaveFront();
+    destination = next;
+    const back = held.get(next);
+    if (back !== undefined) {
+      held.delete(next);
+      resumeFront(back);
+      return;
+    }
+    renderProduct();
+    const address = dockAddresses[next];
+    if (address === "") return;
+    await openSaved(runtime, address);
+  });
+}
+
+/** Open a saved address as it was opened before: the name or URL, with the id it derives. */
+async function openSaved(
+  runtime: WorkerPairingHostRuntime,
+  address: string,
+): Promise<void> {
+  let parsed: Address;
+  try {
+    parsed = parseTypedAddress(address, activeNetwork);
+  } catch (error) {
+    productStatus.textContent = errorText(error);
+    log(productStatus.textContent);
+    return;
+  }
+  const { id } = effectiveProductIdFor(parsed, "");
+  await openResolved(runtime, parsed, id, false);
+}
+
+/**
+ * A product asked the host to open `url`. A name of this network opens in
+ * front of the destination the request came from, which keeps running behind
+ * it. A destination's own product is resumed instead of opened twice.
+ */
+function navigateFromProduct(url: string): Promise<void> {
+  const where = resolveNavigation(url, activeNetwork);
+  if (where.kind === "external") {
+    window.open(where.url, "_blank", "noopener,noreferrer");
+    return Promise.resolve();
+  }
+  if (where.kind === "refused") {
+    log(`navigation refused: ${where.reason}`);
+    return Promise.reject(new Error(where.reason));
+  }
+  // The host has taken the request once it is queued. What it opens is
+  // reported in the menu and the log, not back to the product.
+  const known = destinationOf(where.address, dockAddresses, activeNetwork);
+  if (known !== null) void selectDestination(known);
+  else
+    void serial(async (runtime) => {
+      leaveFront();
+      destination = null;
+      renderProduct();
+      await openSaved(runtime, where.address);
+    });
+  return Promise.resolve();
 }
 
 /** Where a navigation ends up and how it got there. */
@@ -973,25 +1177,36 @@ async function openTarget(
   closeProduct();
   const op = loading.begin("Loading…");
   sandboxStatus = "";
+  // A product sent behind the dock while it loads must not write to the screen.
+  let handle: OpenProduct | null = null;
+  const inFront = (): boolean => handle === null || handle === product;
   try {
-    product = await openProduct(runtime, target.url, productId, productFrame, {
-      mounted: target.via === "name",
-      tap: createFrameTap(inspector, productId, runtime.coreWireSchemaHash),
-      onFrameLoad(count) {
-        if (count < documentsBeforeProduct(target.via)) return;
-        loading.finish(op);
-        sandboxStatus = "";
-        renderProduct();
-      },
-      onSandboxStatus(state, detail) {
-        sandboxStatus = `Sandbox: ${detail}`;
-        if (state === "error") {
+    handle = product = await openProduct(
+      runtime,
+      target.url,
+      productId,
+      productSlot,
+      {
+        mounted: target.via === "name",
+        tap: createFrameTap(inspector, productId, runtime.coreWireSchemaHash),
+        onFrameLoad(count) {
+          if (count < documentsBeforeProduct(target.via)) return;
           loading.finish(op);
-          log(`sandbox could not start the product: ${detail}`);
-        }
-        renderProduct();
+          if (!inFront()) return;
+          sandboxStatus = "";
+          renderProduct();
+        },
+        onSandboxStatus(state, detail) {
+          if (state === "error") {
+            loading.finish(op);
+            log(`sandbox could not start the product: ${detail}`);
+          }
+          if (!inFront()) return;
+          sandboxStatus = `Sandbox: ${detail}`;
+          renderProduct();
+        },
       },
-    });
+    );
     opened = {
       address: target.address,
       via: target.via,
@@ -1012,10 +1227,15 @@ async function openTarget(
       activeNetwork.id,
     );
     recentsMenu.refresh();
-    sessionStorage.setItem(
-      tabProductKey(activeNetwork.id),
-      JSON.stringify({ address: target.address, productId }),
-    );
+    rememberFront();
+    if (destination !== null)
+      dockAddresses = saveAddress(
+        localStorage,
+        activeNetwork.id,
+        destination,
+        target.address,
+      );
+    renderProduct();
     log(
       target.via === "name"
         ? `opened ${target.address} as ${productId} from ${target.url.href}`
@@ -1105,6 +1325,12 @@ function openAddress(): void {
   } catch (error) {
     productStatus.textContent = errorText(error);
     log(productStatus.textContent);
+    return;
+  }
+  const back = destinationOf(addressInput.value, dockAddresses, activeNetwork);
+  if (back !== null && back !== destination && held.has(back)) {
+    void selectDestination(back);
+    chrome.dismissCovering();
     return;
   }
   const { id: productId, source } = effectiveProductIdFor(
@@ -1231,6 +1457,9 @@ productIdReset.addEventListener("click", () => {
   productIdInput.focus();
 });
 
+for (const { destination: id, button } of dockButtons)
+  button.addEventListener("click", () => void selectDestination(id));
+
 closeButton.addEventListener("click", () => {
   void serial(async () => {
     closeProduct();
@@ -1248,8 +1477,7 @@ async function boot(): Promise<void> {
     storage,
     log,
     onAuthState: renderSession,
-    onProductNavigation: (url) =>
-      log(`dotNS navigation is not supported by this host: ${url}`),
+    navigate: navigateFromProduct,
     onNetworkAsked(domains) {
       askedDomains = [...new Set([...askedDomains, ...domains])];
     },
@@ -1306,6 +1534,8 @@ async function boot(): Promise<void> {
     const entered = last.productId !== derived;
     if (entered) productIdInput.value = last.productId;
     renderAddress();
+    destination = last.destination;
+    renderProduct();
     if (activeWallet)
       await serial((runtime) =>
         openResolved(runtime, last.parsed, last.productId, entered),
@@ -1316,6 +1546,7 @@ async function boot(): Promise<void> {
 function readTabProduct(): {
   address: string;
   productId: string;
+  destination: Destination | null;
   parsed: Address;
 } | null {
   try {
@@ -1323,10 +1554,18 @@ function readTabProduct(): {
       sessionStorage.getItem(tabProductKey(activeNetwork.id)) ?? "null",
     );
     if (typeof stored !== "object" || stored === null) return null;
-    const { address, productId } = stored as Record<string, unknown>;
+    const { address, productId, destination } = stored as Record<
+      string,
+      unknown
+    >;
     if (typeof address !== "string" || typeof productId !== "string")
       return null;
-    return { address, productId, parsed: parseTypedAddress(address, activeNetwork) };
+    return {
+      address,
+      productId,
+      destination: DESTINATIONS.find((known) => known === destination) ?? null,
+      parsed: parseTypedAddress(address, activeNetwork),
+    };
   } catch {
     return null;
   }

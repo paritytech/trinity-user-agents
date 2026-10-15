@@ -46,6 +46,12 @@ export const PRODUCT_FRAME_POLICY = "camera; microphone";
 export interface OpenProduct {
   url: URL;
   productId: string;
+  /**
+   * Show or hide the frame without ending it. A hidden product keeps its
+   * channel to the core and everything it holds in memory, and its prompts
+   * still reach the user.
+   */
+  setVisible(visible: boolean): void;
   dispose(): void;
 }
 
@@ -145,6 +151,9 @@ export async function openProduct(
   return {
     url,
     productId,
+    setVisible(visible) {
+      frame.iframe.style.display = visible ? "" : "none";
+    },
     dispose() {
       window.removeEventListener("message", onWindowMessage);
       frame.iframe.removeEventListener("load", onLoad);

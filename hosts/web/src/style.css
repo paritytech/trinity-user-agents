@@ -818,12 +818,98 @@ textarea {
 .product-frame {
   width: 100%;
   height: 100%;
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
   flex: none;
   transform-origin: center;
+}
+
+/* Every open product's frame sits here; only the one in front is shown. */
+.product-slot {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/*
+ * The host's own navigation, drawn inside the product rectangle as a phone
+ * host draws its tab bar, so a size chosen in the menu includes it.
+ */
+.dock {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  padding: 6px 8px max(6px, env(safe-area-inset-bottom));
+  background: #1b1b1f;
+  border-top: 1px solid #34343b;
+}
+
+.dock button {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  padding: 7px 4px 5px;
+  background: transparent;
+  color: #9b9ba6;
+  border: none;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+
+.dock button:hover:not(:disabled) {
+  color: #f1f1f4;
+}
+
+.dock button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dock button[aria-current="true"] {
+  color: #f1f1f4;
+  background: rgb(255 255 255 / 0.07);
+}
+
+.dock button[aria-current="true"]::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  width: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.dock svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+/* A destination whose product is still running behind the one in front. */
+.dock button[data-live="true"]::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: calc(50% - 17px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 2px #1b1b1f;
 }
 
 .product-frame.sized {

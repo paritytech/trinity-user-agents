@@ -424,3 +424,136 @@ describe("the loading indicator", () => {
     );
   }
 });
+
+describe("the dock", () => {
+  const destinations = (page: Page) =>
+    page.evaluate(() =>
+      Object.fromEntries(
+        [...document.querySelectorAll<HTMLElement>("#dock button")].map(
+          (button) => [
+            button.dataset.destination,
+            `${button.getAttribute("aria-current") === "true" ? "front" : "behind"}/${button.dataset.live === "true" ? "running" : "idle"}`,
+          ],
+        ),
+      ),
+    );
+
+  test(
+    "keeps a destination's product running while another is in front",
+    async () => {
+      const second = await startUrlProduct(target.origin);
+      const context = await newContext();
+      try {
+        // Chat and Browse point at two products on their own origins.
+        await context.addInitScript(
+          (addresses) => {
+            if (!localStorage.getItem("truapi-web-signing-host:dock:v1"))
+              localStorage.setItem(
+                "truapi-web-signing-host:dock:v1",
+                JSON.stringify(addresses),
+              );
+          },
+          { chat: urlProduct.url, browse: second.url, pocket: "" },
+        );
+        const page = await openHost(context);
+        await signIn(page);
+        expect(await destinations(page)).toEqual({
+          chat: "behind/idle",
+          browse: "behind/idle",
+          pocket: "behind/idle",
+        });
+
+        await page.click('#dock [data-destination="chat"]');
+        const chat = await productFrame(page, new URL(urlProduct.url).origin);
+        await chat.evaluate(() => {
+          (window as unknown as ProductWindow).__mark = 42;
+        });
+
+        await page.click('#dock [data-destination="browse"]');
+        const browse = await productFrame(page, new URL(second.url).origin);
+        expect(await destinations(page)).toEqual({
+          chat: "behind/running",
+          browse: "front/running",
+          pocket: "behind/idle",
+        });
+        // Only the product in front is shown; the other keeps its document.
+        expect(
+          await page
+            .locator("#product-slot iframe")
+            .evaluateAll((frames) =>
+              frames.map((frame) => (frame as HTMLElement).style.display),
+            ),
+        ).toEqual(["none", ""]);
+        expect(await page.inputValue("#address")).toBe(second.url);
+
+        await page.click('#dock [data-destination="chat"]');
+        expect(
+          await chat.evaluate(
+            () => (window as unknown as ProductWindow).__mark,
+          ),
+        ).toBe(42);
+        expect(await page.inputValue("#address")).toBe(urlProduct.url);
+        expect(browse.isDetached()).toBe(false);
+
+        // A destination with no product says so and takes one from the address bar.
+        await page.click('#dock [data-destination="pocket"]');
+        await page
+          .locator(".stage-empty")
+          .filter({ hasText: "Pocket has no product yet" })
+          .waitFor({ state: "visible" });
+        expect(await destinations(page)).toEqual({
+          chat: "behind/running",
+          browse: "behind/running",
+          pocket: "front/idle",
+        });
+      } finally {
+        await context.close();
+        second.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "ends every held product when the wallet changes",
+    async () => {
+      const second = await startUrlProduct(target.origin);
+      const context = await newContext();
+      try {
+        await context.addInitScript(
+          (addresses) => {
+            if (!localStorage.getItem("truapi-web-signing-host:dock:v1"))
+              localStorage.setItem(
+                "truapi-web-signing-host:dock:v1",
+                JSON.stringify(addresses),
+              );
+          },
+          { chat: urlProduct.url, browse: second.url, pocket: "" },
+        );
+        const page = await openHost(context);
+        await signIn(page);
+        await page.click('#dock [data-destination="chat"]');
+        await productFrame(page, new URL(urlProduct.url).origin);
+        await page.click('#dock [data-destination="browse"]');
+        await productFrame(page, new URL(second.url).origin);
+        expect(await page.locator("#product-slot iframe").count()).toBe(2);
+
+        await openMenu(page);
+        await page.click("#sign-out");
+        await page.waitForFunction(
+          () => document.querySelectorAll("#product-slot iframe").length === 1,
+        );
+        // Only the product in front is reopened, as the new session's own.
+        expect(await destinations(page)).toEqual({
+          chat: "behind/idle",
+          browse: "front/running",
+          pocket: "behind/idle",
+        });
+      } finally {
+        await context.close();
+        second.close();
+      }
+    },
+    TEST_MS,
+  );
+});
