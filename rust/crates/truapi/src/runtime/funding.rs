@@ -1571,11 +1571,11 @@ mod tests {
 		*registry.lock_sweep_alarm() = Some((NOW + 7 * DAY_MS, alarm));
 
 		registry.wake_sweep_if_earlier();
-		assert!(woken.try_next().is_err(), "nothing open, nothing to wake for");
+		assert!(woken.try_recv().is_err(), "nothing open, nothing to wake for");
 
 		insert(&registry, storage.as_ref(), session("fs_1", NOW));
 		registry.wake_sweep_if_earlier();
 
-		assert_eq!(woken.try_next(), Ok(Some(())));
+		assert_eq!(woken.try_recv(), Ok(()));
 	}
 }
