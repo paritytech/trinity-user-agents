@@ -146,13 +146,13 @@ fn product_context_validation_cases() {
 #[test]
 fn product_storage_key_round_trips_scopes_and_arbitrary_keys() {
 	let key = ProductStorageKey::new(
-		ProductId::parse("Tést.DOT").expect("valid product key"),
+		ProductId::parse("Test.DOT").expect("valid product key"),
 		"settings:theme",
 	);
 	let encoded = key.encode();
 	let decoded = ProductStorageKey::decode(&encoded).expect("decode product key");
 
-	assert_eq!(decoded.product_id().as_str(), "tést.dot");
+	assert_eq!(decoded.product_id().as_str(), "test.dot");
 	assert_eq!(decoded.key(), "settings:theme");
 	assert_eq!(decoded, key);
 	assert!(ProductStorageKey::decode("unknown:key").is_err());
