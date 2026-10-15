@@ -32,7 +32,7 @@ describe("AutoSigning e2e approvals transcript", () => {
     const lines = [
       "approved allocate resources",
       "denied sign VRF transcript",
-      "approved submit preimage",
+      "approved access another product account",
     ];
     expect(actionLines(lines, VRF_APPROVAL_ACTION)).toEqual([
       "denied sign VRF transcript",

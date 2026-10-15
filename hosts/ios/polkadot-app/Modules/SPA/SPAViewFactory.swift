@@ -9,6 +9,7 @@ import SubstrateStorageQuery
 import ChainRegistry
 import BulletinChain
 import TrUAPIHost
+import DesignSystem
 
 enum SPAViewFactory {
     @MainActor
@@ -196,6 +197,7 @@ extension SPAViewFactory {
             gameReminders: gameReminders,
             ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
             hostProvider: flowState.hostProvider,
+            themeManager: ThemeManager.shared,
             logger: Logger.shared
         )
 

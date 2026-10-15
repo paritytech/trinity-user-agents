@@ -18,12 +18,12 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ri
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfSignature
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfTranscriptItem
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
+import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.GetUserIdResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.LegacyAccountResult
@@ -46,7 +46,8 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 sealed interface ProductBotMessage {
-    data class Custom(val messageType: String, val data: DataByteArray) : ProductBotMessage
+    /** [alt] is the product's one-line description, shown where the message is listed rather than drawn. */
+    data class Custom(val messageType: String, val data: DataByteArray, val alt: String? = null) : ProductBotMessage
 
     data class Text(val text: String) : ProductBotMessage
 }

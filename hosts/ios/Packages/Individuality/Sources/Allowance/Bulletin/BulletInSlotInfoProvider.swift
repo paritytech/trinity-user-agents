@@ -10,6 +10,7 @@ import SubstrateSdkExt
 import SubstrateOperation
 import StructuredConcurrency
 import AsyncExtensions
+import IssueMonitoring
 
 public struct BulletInFreeSlotInfo {
     public let counter: UInt8
@@ -61,6 +62,10 @@ enum BulletInSlotInfoProviderError: Error {
     case authorizationWaitTimeout
 }
 
+extension BulletInSlotInfoProviderError: ReportableError {
+    var reportCode: String { "\(self)" }
+}
+
 public final class BulletInSlotInfoProvider {
     let bulletInChainId: ChainId
     let peopleChainId: ChainId
@@ -71,6 +76,7 @@ public final class BulletInSlotInfoProvider {
     let chainTimeProvider: ChainTimeProviding
 
     let storageRequestFactory: StorageRequestFactoryProtocol
+    let networkSuffixProvider: NetworkSuffixProviding
     let resourcesParameters: ResourcesParametersProviding
     let hopRuntimeApi: HopRuntimeApiProtocol
 
@@ -81,7 +87,8 @@ public final class BulletInSlotInfoProvider {
         keyResolver: BandersnatchKeyResolving,
         operationQueue: OperationQueue,
         chainTimeProvider: ChainTimeProviding,
-        resourcesParameters: ResourcesParametersProviding
+        resourcesParameters: ResourcesParametersProviding,
+        networkSuffixProvider: NetworkSuffixProviding
     ) {
         self.bulletInChainId = bulletInChainId
         self.peopleChainId = peopleChainId
@@ -90,6 +97,7 @@ public final class BulletInSlotInfoProvider {
         self.operationQueue = operationQueue
         self.chainTimeProvider = chainTimeProvider
         self.resourcesParameters = resourcesParameters
+        self.networkSuffixProvider = networkSuffixProvider
         bulletInBlockProvider = BlockInfoProvider(
             chainRegistry: chainRegistry,
             operationQueue: operationQueue,
@@ -130,10 +138,7 @@ extension BulletInSlotInfoProvider: BulletInSlotInfoProviding {
         let nowSeconds = try await chainTimeProvider.nowSeconds()
         let period = UInt32(TimeInterval(nowSeconds) / TimeInterval(periodDuration))
 
-        let networkSuffix = try await storageRequestFactory.readNetworkSuffix(
-            connection: peopleConnection,
-            codingFactory: codingFactory
-        )
+        let networkSuffix = try await networkSuffixProvider.networkSuffix()
 
         let aliases = try (0 ..< maxClaims).map { [networkSuffix] counter -> Data in
             let context = try ProductContextSuffix
