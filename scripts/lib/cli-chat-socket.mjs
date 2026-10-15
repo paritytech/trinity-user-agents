@@ -6,9 +6,10 @@
 // The helper speaks the protocol of the `/chat` page on its socket
 // `/chat/ws`: it keeps the rooms and the messages the host sends, and sends
 // the operations the page sends when a person types a message, presses a
-// button of a message, or runs a command. A test of a worker (a wasm worker
-// that `--worker-wasm` runs, or the JS worker of `--worker-bundle`) uses it
-// to see what the worker draws and to answer it.
+// button of a message, runs a command, or reads a page of a room that the
+// worker keeps (`productSource`). A test of a worker (a wasm worker that
+// `--worker-wasm` runs, or the JS worker of `--worker-bundle`) uses it to see
+// what the worker draws and to answer it.
 //
 //   const chat = await ChatSocket.connect("http://127.0.0.1:9955/chat");
 //   await chat.waitForMessage("actions", (m) => messageText(m) === "Press a button");
@@ -20,6 +21,7 @@
 //
 //   node scripts/lib/cli-chat-socket.mjs 9955 rooms
 //   node scripts/lib/cli-chat-socket.mjs 9955 messages actions
+//   node scripts/lib/cli-chat-socket.mjs 9955 page notes
 //   node scripts/lib/cli-chat-socket.mjs 9955 post actions "hello"
 //   node scripts/lib/cli-chat-socket.mjs 9955 press actions m1 yes
 //   node scripts/lib/cli-chat-socket.mjs 9955 command actions ping "some text"
@@ -271,8 +273,29 @@ export class ChatSocket {
   }
 
   /**
+   * Ask for one page of `roomId`, a room that the worker keeps, as the page
+   * does when it opens the room or scrolls. The host asks the worker. Gives
+   * the `ok` of the answer: `{ messages, next }`, oldest first.
+   */
+  page(
+    roomId,
+    {
+      before = true,
+      cursor = null,
+      pageSize = 50,
+      timeoutMs = DEFAULT_TIMEOUT_MS,
+    } = {},
+  ) {
+    return this.#ask(
+      { op: "messages", roomId, before, cursor, pageSize },
+      timeoutMs,
+    );
+  }
+
+  /**
    * Type `text` into `roomId` as the person. Gives the `ok` of the answer:
-   * `{ type: "Posted", message, workers }` in a room the host keeps.
+   * `{ type: "Posted", message, workers }` in a room the host keeps, and
+   * `{ type: "MessageCreated", message }` in a room the worker keeps.
    */
   post(roomId, text, { replyTo, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     return this.#ask(
@@ -392,7 +415,7 @@ async function main(argv) {
   const [target, command, ...rest] = argv;
   if (!target || !command) {
     console.error(
-      "usage: cli-chat-socket.mjs <port|url> rooms | messages <room> | post <room> <text> | press <room> <message> <action> | command <room> <name> [args] | watch",
+      "usage: cli-chat-socket.mjs <port|url> rooms | messages <room> | page <room> | post <room> <text> | press <room> <message> <action> | command <room> <name> [args] | watch",
     );
     return 2;
   }
@@ -405,6 +428,10 @@ async function main(argv) {
         break;
       case "messages":
         for (const message of chat.messages(rest[0]))
+          console.log(describeMessage(message));
+        break;
+      case "page":
+        for (const message of (await chat.page(rest[0])).messages)
           console.log(describeMessage(message));
         break;
       case "post":

@@ -191,6 +191,13 @@ test("the helper sends the operations of the page and matches each reply", async
           roomId: op.roomId,
           message: text("m3", "product", `echo: ${op.text}`),
         });
+      } else if (op.op === "messages") {
+        send({
+          kind: "answer",
+          op: "messages",
+          reqId: op.reqId,
+          ok: { messages: [text("n0", "product", "first")], next: null },
+        });
       } else if (op.op === "command" && op.command !== "ping") {
         send({
           kind: "error",
@@ -223,6 +230,10 @@ test("the helper sends the operations of the page and matches each reply", async
       /command refused: .*nope/,
     );
     assert.equal((await chat.command("actions", "ping", "a b")).op, "command");
+    assert.deepEqual(await chat.page("notes", { pageSize: 20 }), {
+      messages: [text("n0", "product", "first")],
+      next: null,
+    });
     assert.throws(
       () => chat.pressNewest("actions", "maybe"),
       /no message of actions/,
@@ -237,6 +248,14 @@ test("the helper sends the operations of the page and matches each reply", async
       { op: "trigger", roomId: "actions", messageId: "m1", actionId: "no" },
       { op: "command", roomId: "actions", command: "nope", payload: "" },
       { op: "command", roomId: "actions", command: "ping", payload: "a b" },
+      {
+        op: "messages",
+        roomId: "notes",
+        before: true,
+        cursor: null,
+        pageSize: 20,
+        reqId: 2,
+      },
     ]);
   } finally {
     chat.close();
@@ -244,14 +263,63 @@ test("the helper sends the operations of the page and matches each reply", async
   }
 });
 
-// The live check needs a built host and guest:
+// The live checks need a built host and guests:
 //   cargo build -p truapi-host-cli
 //   cargo build --manifest-path rust/guests/Cargo.toml --target wasm32-unknown-unknown --release
 //   TRUAPI_HOST_BIN=target/debug/truapi-host \
 //   CHAT_ACTIONS_WASM=rust/guests/target/wasm32-unknown-unknown/release/chat_actions_guest.wasm \
+//   CHAT_SOURCE_WASM=rust/guests/target/wasm32-unknown-unknown/release/chat_source_guest.wasm \
 //   node --test scripts/lib/cli-chat-socket.test.mjs
 const hostBin = process.env.TRUAPI_HOST_BIN;
 const guestWasm = process.env.CHAT_ACTIONS_WASM;
+const sourceWasm = process.env.CHAT_SOURCE_WASM;
+
+/**
+ * Run `truapi-host dev` with the wasm worker `wasm` as the Worker of
+ * `productId`, wait for the log line `ready`, and give the port and the
+ * output. `stop()` ends the host.
+ */
+async function devHost(wasm, productId, ready) {
+  const base = mkdtempSync(join(tmpdir(), "cli-chat-socket-"));
+  const port = 20_000 + Math.floor(Math.random() * 20_000);
+  const child = spawn(
+    hostBin,
+    [
+      "dev",
+      "--port",
+      String(port),
+      "--product-id",
+      productId,
+      "--worker-wasm",
+      wasm,
+      "--base-path",
+      base,
+      "--mnemonic",
+      "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const host = {
+    port,
+    output: "",
+    stop() {
+      child.kill("SIGTERM");
+      rmSync(base, { recursive: true, force: true });
+    },
+  };
+  child.stdout.on("data", (chunk) => (host.output += chunk));
+  child.stderr.on("data", (chunk) => (host.output += chunk));
+  try {
+    await waitFor(() => host.output.includes(ready), {
+      timeoutMs: 120_000,
+      message: () => `the worker did not start:\n${host.output}`,
+    });
+  } catch (error) {
+    host.stop();
+    throw error;
+  }
+  return host;
+}
 test(
   "a person acts in the rooms of a wasm worker that truapi-host dev runs",
   {
@@ -262,35 +330,14 @@ test(
   },
   async () => {
     assert.ok(existsSync(hostBin) && existsSync(guestWasm));
-    const base = mkdtempSync(join(tmpdir(), "cli-chat-socket-"));
-    const port = 20_000 + Math.floor(Math.random() * 20_000);
-    const child = spawn(
-      hostBin,
-      [
-        "dev",
-        "--port",
-        String(port),
-        "--product-id",
-        "chat-actions.dot",
-        "--worker-wasm",
-        guestWasm,
-        "--base-path",
-        base,
-        "--mnemonic",
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+    const host = await devHost(
+      guestWasm,
+      "chat-actions.dot",
+      "[worker] room actions ready",
     );
-    let output = "";
-    child.stdout.on("data", (chunk) => (output += chunk));
-    child.stderr.on("data", (chunk) => (output += chunk));
     let chat;
     try {
-      await waitFor(() => output.includes("[worker] room actions ready"), {
-        timeoutMs: 120_000,
-        message: () => `the worker did not start:\n${output}`,
-      });
-      chat = await ChatSocket.connect(port);
+      chat = await ChatSocket.connect(host.port);
       const menu = await chat.waitForMessage("actions", "Press a button");
       await chat.post("actions", "hello");
       await chat.waitForMessage("actions", "echo: hello");
@@ -298,11 +345,51 @@ test(
       await chat.waitForMessage("actions", `pressed yes on ${menu.messageId}`);
       await chat.command("actions", "ping", "a b");
       await chat.waitForMessage("actions", "command /ping a b");
-      assert.match(output, /\[worker\] command \/ping a b/);
+      assert.match(host.output, /\[worker\] command \/ping a b/);
     } finally {
       chat?.close();
-      child.kill("SIGTERM");
-      rmSync(base, { recursive: true, force: true });
+      host.stop();
+    }
+  },
+);
+
+test(
+  "a person reads and writes a room that a wasm worker keeps",
+  {
+    skip:
+      hostBin && sourceWasm
+        ? false
+        : "set TRUAPI_HOST_BIN and CHAT_SOURCE_WASM",
+  },
+  async () => {
+    assert.ok(existsSync(hostBin) && existsSync(sourceWasm));
+    const host = await devHost(
+      sourceWasm,
+      "chat-source.dot",
+      "[worker] room notes ready",
+    );
+    let chat;
+    try {
+      chat = await ChatSocket.connect(host.port);
+      await chat.waitForRoom("notes");
+      const first = await chat.page("notes");
+      const posted = await chat.post("notes", "hello");
+      const second = await chat.page("notes");
+
+      assert.deepEqual(first.messages.map(messageText), ["Welcome card"]);
+      assert.deepEqual(
+        [posted.type, posted.message.messageId, messageText(posted.message)],
+        ["MessageCreated", "n1", "hello"],
+      );
+      assert.deepEqual(second.messages.map(messageText), [
+        "Welcome card",
+        "hello",
+        "noted: hello",
+      ]);
+      assert.match(host.output, /\[worker\] stored n1: hello/);
+    } finally {
+      chat?.close();
+      host.stop();
     }
   },
 );
