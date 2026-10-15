@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 
@@ -26,8 +28,8 @@ data class ChatRoomPolicy(
     val placeholder: String?,
     val description: String?,
     val avatar: ChatResourceModel?,
-    val suggestions: List<String>,
-    val slashCommands: Set<String>,
+    val suggestions: List<ChatSuggestionModel>,
+    val commands: List<ChatCommandModel>,
     val productQueries: Set<ProductQuery>,
     /** Changes at each configuration that the product sets, so a screen asks its questions again. */
     val configGeneration: Long,
@@ -126,7 +128,7 @@ data class ChatRoomPolicy(
             description = null,
             avatar = null,
             suggestions = emptyList(),
-            slashCommands = emptySet(),
+            commands = emptyList(),
             productQueries = emptySet(),
             configGeneration = 0,
         )
@@ -155,8 +157,8 @@ data class ChatRoomPolicy(
                 placeholder = config.placeholder,
                 description = declarations.metadata.description,
                 avatar = declarations.metadata.avatar,
-                suggestions = declarations.suggestions.orEmpty().map { it.text },
-                slashCommands = declarations.commands.orEmpty().mapTo(mutableSetOf()) { it.name },
+                suggestions = declarations.suggestions.orEmpty(),
+                commands = declarations.commands.orEmpty(),
                 productQueries = config.productQueries(),
                 configGeneration = declarations.configGeneration,
             )

@@ -11,10 +11,13 @@ import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionHandlerModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
@@ -34,6 +37,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedI
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPagingState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatAvatar
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageOriginDisplay
@@ -88,6 +92,7 @@ class ChatFeedViewModelProductRoomTest {
         readiness = ChatRoomReadiness.READY,
     )
     private val feed = MutableStateFlow(snapshot)
+    private val activity = MutableStateFlow<ChatRoomActivityModel?>(null)
     private val origins = object : MessageOriginDisplayResolver {
         override fun displayOf(messageOrigin: ChatMessageOrigin) = MessageOriginDisplay("Weather", ChatAvatar.Url("https://weather"))
     }
@@ -111,6 +116,8 @@ class ChatFeedViewModelProductRoomTest {
         coEvery { getMessageOriginDisplayResolver(any()) } returns origins
         coEvery { roomQuerying(roomId) } returns querying
         every { subscribeUserInputState(any()) } returns flowOf(ChatUserInputState.Nothing)
+        every { observeRoomActivity(any()) } returns activity
+        coEvery { sendTextMessage(any(), any(), any()) } returns ChatSourceActionOutcome.Done
         coEvery { getLastRevealedTimestamp(any()) } returns null
         coEvery { productMessageMenu(any(), any(), any()) } returns Result.success(menu)
         coEvery { sendUserEvent(any(), any()) } returns Result.success(Unit)
@@ -325,6 +332,45 @@ class ChatFeedViewModelProductRoomTest {
 
         assertEquals(renderer, footer)
         assertEquals(null, model.footerRenderer.value)
+    }
+
+    @Test
+    fun `a quick reply that sends its text sends it, and another one sends SuggestionSelected`() = runBlocking<Unit> {
+        policy.value = ChatRoomPolicy.Defaults.copy(
+            suggestions = listOf(ChatSuggestionModel("yes", "Yes please", sendsText = true), ChatSuggestionModel("more", "More", sendsText = false)),
+        )
+        val model = viewModel()
+
+        model.onProductRoomAction(ProductRoomAction.Suggestion("yes"))
+        model.onProductRoomAction(ProductRoomAction.Suggestion("more"))
+
+        coVerify(timeout = 5_000) { interactor.sendTextMessage(roomId, "Yes please", null) }
+        coVerify(timeout = 5_000) { interactor.sendUserEvent(roomId, ChatRoomUserEvent.SuggestionSelected("more")) }
+        coVerify(exactly = 1) { interactor.sendTextMessage(any(), any(), any()) }
+    }
+
+    @Test
+    fun `the room shows the suggestions, the commands and the activity line`() = runBlocking<Unit> {
+        val command = ChatCommandModel("forecast", "The forecast of a city", argumentHint = "<city>")
+        policy.value = ChatRoomPolicy.Defaults.copy(suggestions = listOf(ChatSuggestionModel("yes", "Yes", sendsText = true)), commands = listOf(command))
+        val model = viewModel()
+
+        activity.value = ChatRoomActivityModel("Weather is typing", participantId = null)
+
+        val extras = withTimeout(5_000) { model.productRoomState.first { it.extras.activity != null }.extras }
+        assertEquals("Weather is typing", extras.activity)
+        assertEquals(listOf(command), extras.commands)
+        assertEquals(listOf("yes"), extras.suggestions.map { it.suggestionId })
+
+        activity.value = null
+        withTimeout(5_000) { model.productRoomState.first { it.extras.activity == null } }
+    }
+
+    @Test
+    fun `closing the room screen closes the room`() = runBlocking<Unit> {
+        viewModel().onScreenStopped()
+
+        verify { interactor.closeRoom(roomId) }
     }
 
     private fun participant(id: String) =

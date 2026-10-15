@@ -19,4 +19,7 @@ sealed interface ProductRoomAction {
 
     /** An entry of the sheet of the participant that the room shows. */
     data class ParticipantSheet(val entry: ParticipantSheetEntry) : ProductRoomAction
+
+    /** A press on a quick reply above the input. */
+    data class Suggestion(val suggestionId: String) : ProductRoomAction
 }

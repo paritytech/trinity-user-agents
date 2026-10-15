@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessag
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessagePopUpUiState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
@@ -72,6 +73,8 @@ class ChatProductRoomController(
         fun closeMenu()
 
         fun showFailure(error: Throwable)
+
+        fun showOutcome(outcome: ChatSourceActionOutcome)
     }
 
     private val toolbarActions = roomPolicy
@@ -105,13 +108,29 @@ class ChatProductRoomController(
         renderer.takeIf { policy?.footer == ChatRoomPolicy.Footer.Custom }
     }
 
+    /** The quick replies, the slash commands and the activity line (P6.8). */
+    private val extras = combine(roomPolicy, interactor.observeRoomActivity(chatId)) { policy, activity ->
+        ProductRoomExtrasUiState(
+            suggestions = policy?.suggestions.orEmpty().toImmutableList(),
+            commands = policy?.commands.orEmpty().toImmutableList(),
+            activity = activity?.text.takeIf { policy != null },
+        )
+    }
+
     val uiState: StateFlow<ProductRoomUiState> = combine(
         toolbar,
         participants.uiState,
         participantSheet,
         customFooter,
-    ) { toolbar, participants, sheet, customFooter ->
-        ProductRoomUiState(toolbar = toolbar, participants = participants, participantSheet = sheet, customFooter = customFooter)
+        extras,
+    ) { toolbar, participants, sheet, customFooter, extras ->
+        ProductRoomUiState(
+            toolbar = toolbar,
+            participants = participants,
+            participantSheet = sheet,
+            customFooter = customFooter,
+            extras = extras,
+        )
     }.stateIn(scope, SharingStarted.Eagerly, ProductRoomUiState.None)
 
     private val _reactionDetails = MutableStateFlow<MessagePopUpUiState.ReactionsDetails?>(null)
@@ -189,6 +208,7 @@ class ChatProductRoomController(
             ProductRoomAction.LoadMoreParticipants -> participants.loadMore()
             is ProductRoomAction.SelectParticipant -> showParticipant(action.participantId)
             is ProductRoomAction.ParticipantSheet -> selectSheetEntry(action.entry)
+            is ProductRoomAction.Suggestion -> selectSuggestion(action.suggestionId)
         }
     }
 
@@ -229,6 +249,18 @@ class ChatProductRoomController(
                 val action = participantSheetMenu?.actions()?.find { it.actionId == entry.actionId } ?: return
                 if (action.handler == ChatActionHandlerModel.Callback) screen.closeMenu()
                 perform(action.handler, ChatRoomUserEvent.ParticipantActionTriggered(participantId, entry.actionId))
+            }
+        }
+    }
+
+    /** A quick reply with `sends_text` sends its text as a message of the user. Another one sends `SuggestionSelected` only. */
+    private fun selectSuggestion(suggestionId: String) {
+        scope.launch {
+            val suggestion = roomPolicy.first()?.suggestions?.find { it.suggestionId == suggestionId } ?: return@launch
+            if (suggestion.sendsText) {
+                screen.showOutcome(interactor.sendTextMessage(chatId, suggestion.text, replyToMessageId = null))
+            } else {
+                interactor.sendUserEvent(chatId, ChatRoomUserEvent.SuggestionSelected(suggestionId)).onFailure(screen::showFailure)
             }
         }
     }

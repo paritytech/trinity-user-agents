@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_account_api.data.repository.getAccountByIdOrThrow
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallController
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomActivityRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactChatSessionManager
 import io.paritytech.polkadotapp.feature_chats_api.domain.interactors.AddContactUseCase
 import io.paritytech.polkadotapp.feature_chats_api.domain.interactors.RemoveContactUseCase
@@ -32,6 +33,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReaction
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatVariant
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
@@ -47,6 +49,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductCha
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomActivityWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload.FileUploadStarter
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatNotificationPublisher
@@ -120,6 +123,8 @@ class ChatFeedInteractor @Inject internal constructor(
     private val productRoomUserActions: ProductRoomUserActions,
     private val roomSourceContextFactory: ChatRoomSourceContextFactory,
     private val productAttachmentEncoder: ProductAttachmentEncoder,
+    private val activityRepository: ChatRoomActivityRepository,
+    private val activityWriter: ChatRoomActivityWriter,
 ) {
     private val roomSources = ConcurrentHashMap<ChatId, ChatRoomSourceContext>()
 
@@ -361,7 +366,14 @@ class ChatFeedInteractor @Inject internal constructor(
      */
     fun openRoom(chatId: ChatId) = roomSource(chatId).open()
 
-    fun closeRoom(chatId: ChatId) = roomSource(chatId).close()
+    /** Closes the room, which also clears its activity line (02-DESIGN §6.6). */
+    fun closeRoom(chatId: ChatId) {
+        activityWriter.set(chatId, null)
+        roomSource(chatId).close()
+    }
+
+    /** The activity line of a product room, for example "Bot is typing". */
+    fun observeRoomActivity(chatId: ChatId): Flow<ChatRoomActivityModel?> = activityRepository.observe(chatId)
 
     /** Opens the room again when the last open failed, then asks the product for the newest page. */
     fun retryRoom(chatId: ChatId) = roomSource(chatId).retry()

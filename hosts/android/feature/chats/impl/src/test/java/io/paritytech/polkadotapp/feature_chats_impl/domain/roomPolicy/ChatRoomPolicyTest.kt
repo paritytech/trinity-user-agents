@@ -37,7 +37,7 @@ class ChatRoomPolicyTest {
         assertTrue(policy.toolbar.isEmpty())
         assertNull(policy.placeholder)
         assertTrue(policy.suggestions.isEmpty())
-        assertTrue(policy.slashCommands.isEmpty())
+        assertTrue(policy.commands.isEmpty())
         assertTrue(policy.productQueries.isEmpty())
         assertTrue(policy.hostAppliesUserActions)
     }

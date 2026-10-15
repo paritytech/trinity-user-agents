@@ -159,6 +159,8 @@ class ChatFeedViewModel @Inject constructor(
             override fun closeMenu() = onCloseMenu()
 
             override fun showFailure(error: Throwable) = showPresentationError(UnexpectedPresentationError(error))
+
+            override fun showOutcome(outcome: ChatSourceActionOutcome) = showActionOutcome(outcome)
         },
     )
 

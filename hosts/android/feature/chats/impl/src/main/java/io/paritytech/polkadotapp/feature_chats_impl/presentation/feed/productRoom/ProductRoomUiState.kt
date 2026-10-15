@@ -13,6 +13,7 @@ data class ProductRoomUiState(
     val participantSheet: ParticipantSheetUiState?,
     /** The footer that the product draws in place of the input (`ChatRoomFooter::Custom`), or null. */
     val customFooter: CustomChatFooterRenderer?,
+    val extras: ProductRoomExtrasUiState,
 ) {
     companion object {
         val None = ProductRoomUiState(
@@ -20,6 +21,7 @@ data class ProductRoomUiState(
             participants = ProductParticipantsUiState.None,
             participantSheet = null,
             customFooter = null,
+            extras = ProductRoomExtrasUiState.None,
         )
     }
 }

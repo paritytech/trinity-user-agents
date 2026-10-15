@@ -9,7 +9,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -32,6 +34,7 @@ import io.paritytech.polkadotapp.designsystem.colors.LocalPolkadotColors
 import io.paritytech.polkadotapp.designsystem.colors.PolkadotColorsPalette
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatHeaderRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
@@ -42,13 +45,19 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatRoomUnavailableLine
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.MessageActionMenuDropdown
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.ReactionDetailsDialog
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatActivityLine
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatCommandCatalogue
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatInputRow
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatSuggestionsStrip
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ProductCustomFooter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.menu.ChatFeedMenu
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.LocalChatFeedTimestampAnchor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.*
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomExtrasUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.catalogueFor
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.inputText
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.LocalChatMessageTimeFormatter
@@ -294,14 +303,23 @@ private fun ChatFeedScreenInternal(
                     }
                 }
 
-                Box(
+                val density = LocalDensity.current
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
+                        .onSizeChanged { footerHeight = with(density) { it.height.toDp() } }
                 ) {
+                    ProductRoomExtrasSlot(
+                        extras = productRoomState.extras,
+                        inputState = chatInputUiState,
+                        onSuggestion = { onProductRoomAction(ProductRoomAction.Suggestion(it)) },
+                        onCommand = { onMessageChange(it.inputText()) },
+                    )
+
                     val customFooter = productRoomState.customFooter
                     if (customFooter != null) {
-                        ProductCustomFooter(renderer = customFooter, onHeightChanged = { footerHeight = it })
+                        ProductCustomFooter(renderer = customFooter, onHeightChanged = {})
                     } else {
                         ChatInputRow(
                             inputState = chatInputUiState,
@@ -315,12 +333,32 @@ private fun ChatFeedScreenInternal(
                             onAcceptChatRequest = onAcceptChatRequest,
                             onDeclineChatRequest = onDeclineChatRequest,
                             onUnblockUserClick = onUnblockUserClick,
-                            onHeightChanged = { footerHeight = it },
+                            onHeightChanged = {},
                         )
                     }
                 }
             }
         }
+    }
+}
+
+/** The activity line, the quick replies while the input is empty, and the `/` catalogue while the user types a command. */
+@Composable
+private fun ProductRoomExtrasSlot(
+    extras: ProductRoomExtrasUiState,
+    inputState: ChatInputUiState,
+    onSuggestion: (String) -> Unit,
+    onCommand: (ChatCommandModel) -> Unit,
+) {
+    val inputText = (inputState as? ChatInputUiState.SendMessage)?.messageState?.inputMessage
+    val catalogue = remember(inputText, extras.commands) { extras.commands.catalogueFor(inputText.orEmpty()) }
+
+    extras.activity?.let { ChatActivityLine(text = it) }
+
+    if (catalogue.isNotEmpty()) {
+        ChatCommandCatalogue(commands = catalogue, onSelect = onCommand)
+    } else if (inputText?.isEmpty() == true && extras.suggestions.isNotEmpty()) {
+        ChatSuggestionsStrip(suggestions = extras.suggestions, onSelect = onSuggestion)
     }
 }
 
