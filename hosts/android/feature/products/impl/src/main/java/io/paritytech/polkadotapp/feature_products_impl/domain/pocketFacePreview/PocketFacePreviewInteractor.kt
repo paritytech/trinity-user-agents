@@ -5,7 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
-import java.net.URI
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import javax.inject.Inject
 
 /**
@@ -18,23 +18,20 @@ class PocketFacePreviewInteractor @Inject constructor(
 ) {
     suspend fun loadFace(url: String): Result<JsWidget> = remoteFaces.fetch(url.trim()).map { it.toJsWidget() }
 
-    /**
-     * The developer serves the folder that becomes the worker archive, so an archive path is read from the
-     * face's own server. A Bulletin CID always goes to the gateway, as it does on a real card.
-     */
+    // The developer serves the folder that becomes the worker archive, so archive paths resolve on the face's server.
     suspend fun resolveImage(faceUrl: String, source: JsImageSource): Result<String> = when (source) {
         is JsImageSource.Archive -> runCatching { archiveImageUrl(faceUrl, source.path) }
         is JsImageSource.Bulletin -> ipfsContentLookup.getIpfsLinkFor(source.cid)
     }
 
     private fun archiveImageUrl(faceUrl: String, path: String): String {
-        // Checked before resolving: Android's URI drops a `..` above the root that the JVM keeps.
+        // Checked before resolving, which quietly drops a `..` above the root.
         require(".." !in path.split("/")) { "'$path' escapes the archive" }
 
-        val root = URI(faceUrl).resolve("/")
-        val image = root.resolve(URI(null, null, path, null))
+        val face = faceUrl.toHttpUrl()
+        val image = requireNotNull(face.resolve("/")?.resolve(path)) { "'$path' is not an archive path" }
 
-        require(image.scheme == root.scheme && image.rawAuthority == root.rawAuthority) {
+        require(image.scheme == face.scheme && image.host == face.host && image.port == face.port) {
             "'$path' leaves the face's server"
         }
 

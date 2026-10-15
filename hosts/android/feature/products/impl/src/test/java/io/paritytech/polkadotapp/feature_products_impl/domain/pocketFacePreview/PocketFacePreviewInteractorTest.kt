@@ -51,7 +51,7 @@ class PocketFacePreviewInteractorTest {
     }
 
     /**
-     * A face can come from anyone a tester is persuaded to trust. An archive path must never reach another
+     * A face can come from anyone a tester is persuaded to trust. An archive path must never point at another
      * server, a device on the tester's network, or a file on the phone.
      */
     @Test
