@@ -57,6 +57,13 @@ interface ProductSessionController {
     /** Reload the page of the tab with [id], which picks up the product's latest build. */
     fun reloadTab(id: Long)
 
+    /**
+     * Reload the active tab, clearing the WebView http cache first so a development server's changed bytes
+     * are not hidden behind the previous build. The cache is process-wide, so this drops every tab's cached
+     * responses. No-op when the active tab has no live WebView.
+     */
+    fun reload()
+
     /** Close the active tab (and fall back to the most recent remaining tab, if any). */
     fun closeActiveTab()
 

@@ -78,6 +78,7 @@ class RealProductSessionController @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dispatchers: CoroutineDispatchers,
     private val dotNsTldProvider: DotNsTldProvider,
+    private val devServers: DevServers,
 ) : ProductSessionController {
     private val appScope = CoroutineScope(SupervisorJob() + dispatchers.main)
 
@@ -142,6 +143,12 @@ class RealProductSessionController @Inject constructor(
 
     override fun closeActiveTab() {
         activeTabId.value?.let(::closeTab)
+    }
+
+    override fun reload() {
+        val webView = activeTabOrNull()?.webView?.value ?: return
+        webView.clearCache(true)
+        webView.reload()
     }
 
     override fun ensureActiveLive() {
@@ -256,7 +263,10 @@ class RealProductSessionController @Inject constructor(
             )
             this.provider = provider
 
-            provider.addOnPageStartedListener { url.value = it }
+            // A dev server tab keeps the address it was opened with, since the page's own navigation can drop
+            // the `product_id` it runs as, and a woken or restored tab is rebuilt from this address.
+            val keepsOpeningAddress = devServers.productAt(url.value) != null
+            provider.addOnPageStartedListener { if (!keepsOpeningAddress) url.value = it }
             provider.addOnPageFinishedListener {
                 title.value = webView.value?.title.orEmpty()
                 persist(this)
@@ -312,6 +322,7 @@ class RealProductSessionController @Inject constructor(
         url = url,
         isLoading = progress.isLoading(),
         loadFraction = (progress as? DotNsLoadProgress.Downloading)?.fraction,
+        isDevServer = devServers.productAt(url) != null,
     )
 
     private fun displayTitle(url: String, title: String): String =

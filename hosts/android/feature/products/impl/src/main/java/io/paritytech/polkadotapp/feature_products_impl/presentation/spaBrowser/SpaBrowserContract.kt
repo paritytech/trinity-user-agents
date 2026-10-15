@@ -9,6 +9,8 @@ interface SpaBrowserContract {
 
     fun onBackPressed()
 
+    fun onRefresh()
+
     fun onScreenStarted()
 
     fun onReloadForNewBuildConfirmed()
@@ -21,6 +23,7 @@ data class SpaBrowserUiState(
     val subtitle: String? = "",
     val loadProgress: DotNsLoadProgress = DotNsLoadProgress.Idle,
     val pageState: SpaBrowserPageState = SpaBrowserPageState.Content,
+    val isDevServer: Boolean = false,
     val isNewBuildPromptShown: Boolean = false,
 )
 

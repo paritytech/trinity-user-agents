@@ -8,6 +8,8 @@ data class DebugMenuState(
     val isClearingBackup: Boolean = false,
     val isSharingLogs: Boolean = false,
     val showSpaBrowserDialog: Boolean = false,
+    val devServerAvailable: Boolean = false,
+    val showDevServerDialog: Boolean = false,
     val hasJWTToken: Boolean = false,
     val coinageDebugWidgetsEnabled: Boolean = true,
     val truapiRuntimeEnabled: Boolean = true,

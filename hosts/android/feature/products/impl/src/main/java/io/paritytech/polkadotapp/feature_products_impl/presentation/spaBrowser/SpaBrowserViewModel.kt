@@ -95,6 +95,7 @@ class SpaBrowserViewModel @Inject constructor(
             subtitle = info?.host,
             loadProgress = load.toProgress(),
             pageState = load.toPageState(),
+            isDevServer = info?.isDevServer == true,
             // A check answers for the tab it started on, which may no longer be the one on screen.
             isNewBuildPromptShown = outdatedTabId != null && outdatedTabId == activeTabId,
         )
@@ -118,6 +119,10 @@ class SpaBrowserViewModel @Inject constructor(
         super.onCleared()
 
         productSessionController.resetVisitHistory()
+    }
+
+    override fun onRefresh() {
+        productSessionController.reload()
     }
 
     // Back unwinds the active tab's page history first, then the tab visit history (tabs stay open), and
