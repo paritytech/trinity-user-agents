@@ -124,6 +124,11 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         settleRequest()
     }
 
+    /// Gives back the hold of ``holdWorker()``. Only the harness of the simulator calls it (S6).
+    func releaseHeldWorker() {
+        releaseWorker()
+    }
+
     // MARK: - ChatRoomLifecycle
 
     /// Holds the worker for the open room screen, then sends `RoomOpened` (02-DESIGN §8.4). Throws when the

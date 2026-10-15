@@ -282,8 +282,16 @@ extension ProductBot: ChatExtensionBotProtocol {
 
                 #if targetEnvironment(simulator)
                     // The harness sends to the product while no room screen is open, so it holds the worker.
-                    if TrUAPIE2ECommandFeed.holdsWorker(for: product.id) {
-                        try await (runtime as? TrUAPIChatHandler)?.holdWorker()
+                    if TrUAPIE2ECommandFeed.holdsWorker(for: product.id),
+                       let handler = runtime as? TrUAPIChatHandler {
+                        try await handler.holdWorker()
+                        await TrUAPIE2EWorkerHolds.register(
+                            .init(
+                                release: { await handler.releaseHeldWorker() },
+                                hold: { try await handler.holdWorker() }
+                            ),
+                            productId: product.id
+                        )
                     }
 
                     // Drives the first user message for `make ios-chat-run`. The core

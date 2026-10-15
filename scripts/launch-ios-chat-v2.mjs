@@ -378,6 +378,9 @@ async function driveScenario(scenario) {
   const baseline = { contentTypes: contentTypeCounts(room) };
   const evidence = [];
   const shots = [];
+  // What an expectation with `scope: "previous"` reads from: the console and
+  // the event log since the previous phase started, not since its own phase.
+  let previous;
   try {
     for (const [index, phase] of scenario.drive.phases.entries()) {
       const mark = {
@@ -389,11 +392,18 @@ async function driveScenario(scenario) {
         await runStep(step, room);
       }
       for (const expectation of phase.expect) {
-        evidence.push(await check(expectation, { room, mark, baseline }));
+        evidence.push(
+          await check(expectation, {
+            room,
+            mark: expectation.scope === "previous" ? (previous ?? mark) : mark,
+            baseline,
+          }),
+        );
       }
       if (phase.shot || index === scenario.drive.phases.length - 1) {
         shots.push(await takeScreenshot(scenario, phase.shot));
       }
+      previous = mark;
     }
     return row(
       scenario,
@@ -501,6 +511,21 @@ async function check(expectation, { room, mark, baseline }) {
       { timeoutMs, message: `no message "${wanted}" stored in ${target}` },
     );
     return `stored "${wanted}"`;
+  }
+  if (expectation.storedMatch !== undefined) {
+    const pattern = new RegExp(fill(expectation.storedMatch, target));
+    let found;
+    await waitFor(
+      () => {
+        found = messageTexts(target).find((text) => pattern.test(text));
+        return found;
+      },
+      {
+        timeoutMs,
+        message: `no message matching /${pattern.source}/ stored in ${target}`,
+      },
+    );
+    return `stored "${found}"`;
   }
   if (expectation.metadata) {
     const columns = Object.keys(expectation.metadata);

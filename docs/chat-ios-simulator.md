@@ -49,24 +49,51 @@ TRUAPI_IOS_E2E_DEVICE=<udid> TRUAPI_IOS_E2E_APP=<path>/polkadot-app.app node scr
    the simulator-only harness (`TrUAPIE2EHostAction`, `ChatProductRoomPresenter+E2E.swift`) runs the code path of the
    gesture on the room screen that shows the room (`open` through the room link pipeline, `list`, `send`, `menu`,
    `confirm`, `toolbar`, `participants`, `participant`, `reactions`, `suggestion`, `type`, `attach`, `button`,
-   `footer-action`, `older`, `jump`, `retry`, `retry-room`, `back`, `bottom`). The launcher then waits for each
-   expectation: Core Data rows, the event log of the product, or the `[e2e:ui] <key> <room> <value>` console markers
-   that the room screen writes when what it shows changes (`window`, `readiness`, `toolbar`, `menu`, `footer`, `header`,
-   `author-<id>`, `sheet`, `reactions`, `suggestions`, `catalogue`, `activity`, `placeholder`, `allowed`, `failure`). It
-   takes a screenshot at the end of each scenario and where a phase asks for one.
+   `footer-action`, `older`, `jump`, `retry`, `retry-room`, `back`, `bottom`). Three actions act on the app instead of
+   one room: `release-worker` and `hold-worker` give back and take again the worker hold of the harness, and
+   `list-render` draws the chat list again from what the app stores. Two actions measure: `frames <seconds>` runs the
+   frame meter on the room screen, and `participants-scroll <rows>` scrolls the participant list to its end. The
+   launcher then waits for each expectation: Core Data rows, the event log of the product, or the
+   `[e2e:ui] <key> <room> <value>` console markers that the app writes when what it shows changes (`window`,
+   `readiness`, `toolbar`, `menu`, `footer`, `header`, `author-<id>`, `sheet`, `reactions`, `suggestions`, `catalogue`,
+   `activity`, `placeholder`, `allowed`, `failure`, `policy`, `screen`, `chat-list`, `perf-ready`, `frames`,
+   `perf-participants`). It takes a screenshot at the end of each scenario and where a phase asks for one.
 7. Writes `playground/test-results/ios-chat-v2/diagnosis-report.md`, `event-log.jsonl`, `app.log` and the screenshots.
 
 `TRUAPI_IOS_E2E_ONLY=S3,S25` drives the named scenarios only. The app keeps its data between runs, so a scenario checks
 what changed in the run and not absolute counts.
 
+The launcher builds the sample product with `yarn build`. When `yarn` is not on the `PATH`, put a shim that runs
+`npx -y yarn@1.22.22 "$@"` before it, or build the product first and set `TRUAPI_IOS_E2E_SKIP_PRODUCT_BUILD=1`.
+
 ## Rows
 
 The report has one row for each scenario of the test plan that names the iOS layer (04-TESTING section 4). The steps and
-the checks of each row are in `scripts/lib/ios-chat-v2-scenarios.mjs`.
+the checks of each row are in `scripts/lib/ios-chat-v2-scenarios.mjs`. Every row is driven:
 
-| Kind       | Scenarios                                                                                                                                                                | Row                                          |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
-| Driven     | S1 to S4, S7 to S22, S24 to S41, S46                                                                                                                                     | `pass` or `fail` with the first failed check |
-| Not driven | S5 (no command calls `delete_room`), S6 (the harness holds the worker), S23 (an uncaught error does not stop an iOS worker), S44 (no command exceeds the rate), S47 (P7) | `skip` with the reason                       |
+| Scenarios                            | How the launcher proves the row                                                                                                                                                                                                              |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1 to S4, S7 to S22, S24 to S41, S46 | Core Data rows, the event log of the product and the `[e2e:ui]` markers, as above                                                                                                                                                            |
+| S5                                   | `/room create` makes the room `throwaway`; with its screen open, `/room delete` removes the row and the screen closes (`screen removed`)                                                                                                     |
+| S6                                   | The list screen and `release-worker` let the core stop the worker (`[truapi] worker stopped`); `list-render` draws the product rooms from Core Data                                                                                          |
+| S23                                  | `/fail crash` makes the product throw outside a promise; the worker ends, the room shows `unavailable` with its window, and the next request (`retry-room`, or a `Seen` report that comes first) starts a new worker that hears `RoomOpened` |
+| S44                                  | `/flood` sends 25 edits at once; the core refuses the edits past 20 (`refused>=1`), the last edit is stored, and the `frames` marker gives the dropped frames and the number of list updates                                                 |
+| S47                                  | S47 changes `allowed_reactions` twice on an open room; each change writes a new `policy` generation marker without a reopen                                                                                                                  |
 
 The launcher fails when a driven row fails or has no row.
+
+## Performance rows
+
+`TRUAPI_IOS_E2E_PERF=1` also drives the rows B1 to B3 of 04-TESTING section 5 after the scenarios (P7.1). The numbers
+are in the evidence of each row. The app measures them with a simulator-only frame meter (`TrUAPIE2EFrameMeter`, a
+`CADisplayLink`): a frame time of 1.5 frames or more is a dropped frame.
+
+| Row | What it does                                                                          | Marker                                                     |
+| --- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| B1  | `/participants 10000`, opens the list, scrolls it to row 10,004 at 300 points a frame | `perf-participants`: frames, p95, max, dropped, footprint  |
+| B2  | `/history 50000`, opens the room (warm), then ends the worker and retries (cold)      | `perf-ready`: milliseconds from the open to a ready window |
+| B3  | the open room idle, then `/stream`, then `/flood`, each with the frame meter on       | `frames`: frames, p95, max, dropped, list updates          |
+
+B4 and B6 are unit tests that measure: run `ChatResourcePerformanceTests` with `TEST_RUNNER_TRUAPI_CHAT_PERF=1` and, for
+a file with the numbers, `TEST_RUNNER_TRUAPI_CHAT_PERF_OUT=<path>`. The numbers of the last run are in
+`HOST-CHAT-EXTENSION-V2/results/RESULTS.md`.

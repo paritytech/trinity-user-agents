@@ -29,9 +29,39 @@ import UIKit
                 let tabBar = UIApplication.shared.mainTabBarController
                 tabBar?.select(tab: .chat)
                 (tabBar?.view(for: .chat) as? UINavigationController)?.popToRootViewController(animated: false)
+            case "release-worker":
+                // S6: the harness gives back its hold, so the worker stops when no room screen holds it.
+                TrUAPIE2EWorkerHolds.release(productId: productId)
+            case "hold-worker":
+                TrUAPIE2EWorkerHolds.hold(productId: productId)
             default:
                 NotificationCenter.default.post(name: Self.notification, object: self)
             }
+        }
+    }
+
+    /// The worker holds of the harness, by product, so a scenario can let the worker stop and hold it again.
+    @MainActor
+    enum TrUAPIE2EWorkerHolds {
+        struct Hold {
+            let release: @Sendable () async -> Void
+            let hold: @Sendable () async throws -> Void
+        }
+
+        private static var holds: [String: Hold] = [:]
+
+        static func register(_ hold: Hold, productId: String) {
+            holds[productId] = hold
+        }
+
+        static func release(productId: String) {
+            guard let hold = holds[productId] else { return }
+            Task { await hold.release() }
+        }
+
+        static func hold(productId: String) {
+            guard let hold = holds[productId] else { return }
+            Task { try? await hold.hold() }
         }
     }
 #endif

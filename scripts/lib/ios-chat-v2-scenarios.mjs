@@ -22,6 +22,7 @@
  *
  * An expectation is one of:
  * - `{ stored }`: a text message the room stores (host-store rooms);
+ * - `{ storedMatch }`: a stored text message that matches the pattern;
  * - `{ metadata }`: columns of the room's `CDChatRoomMetadata` row;
  * - `{ gone: true }`: the app stores no chat for the room;
  * - `{ contentType, added }`: at least `added` more messages of this content
@@ -33,6 +34,9 @@
  * - `{ event }`: an event log entry of the product written in the phase,
  *   with `via`, `kind`, and an optional `data` substring;
  * - `{ console }`: an app console line written in the phase.
+ *
+ * `scope: "previous"` makes a `console` or `event` expectation read from the
+ * start of the previous phase instead of the start of its own phase.
  *
  * `{lastUser}` in a step or an expectation is the newest message of the
  * user in the room's window, as the app's `window` marker names it.
@@ -166,7 +170,41 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     title: "the chat list renders product rooms with the worker stopped",
     mode: "host",
     phase: "P3",
-    skip: "the harness holds the worker for its command feed, so it never stops in a run; ContactsListPreviewTests cover the stored rows",
+    drive: {
+      phases: [
+        {
+          // The list screen holds no worker, and the harness gives back its
+          // own hold, so the core stops the worker.
+          steps: [{ host: "list" }, { host: "release-worker" }],
+          expect: [
+            {
+              console:
+                "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
+              timeoutMs: 30_000,
+            },
+          ],
+        },
+        {
+          // The list draws again from what the app stores, with no worker.
+          steps: [{ host: "list-render" }, { wait: 1_000 }],
+          expect: [
+            {
+              console: "[e2e:ui] chat-list list rooms=",
+            },
+            { ui: "chat-list", room: "list", match: "Sample: product source" },
+            {
+              uiNot: "chat-list",
+              room: "list",
+              match: "^rooms=$",
+              settleMs: 500,
+            },
+          ],
+          shot: "stopped",
+        },
+      ],
+      // The harness holds the worker again for the next scenarios.
+      after: [{ host: "hold-worker" }, { wait: 4_000 }, { host: "open" }],
+    },
   },
   {
     id: "S7",
@@ -689,7 +727,28 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     title: "update_feed rate limit on screen",
     mode: "host",
     phase: "P4",
-    skip: "no command of the sample product sends more than 20 updates in a second; the core tests the bound",
+    drive: {
+      phases: [
+        {
+          // `/flood` sends 25 edits of one message at once. The core refuses
+          // the edits past the budget of 20, and the room screen draws at
+          // most one list update in each frame.
+          steps: [
+            { host: "list" },
+            { host: "open" },
+            { wait: 1_000 },
+            { host: "frames", argument: "5" },
+            "/flood",
+          ],
+          expect: [
+            { event: { via: "flood", kind: "Done" } },
+            { storedMatch: "^ok /flood accepted=\\d+ refused=[1-9]" },
+            { stored: "Flood of 25 edits" },
+            { console: "[e2e:ui] frames host frames=", timeoutMs: 15_000 },
+          ],
+        },
+      ],
+    },
   },
   {
     id: "S24",
@@ -1032,11 +1091,13 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     drive: {
       phases: [
         {
+          steps: [{ host: "list" }, { host: "open" }],
+          expect: [{ ui: "readiness", match: "^ready " }],
+        },
+        {
           // The send makes the product throw outside any promise. The
           // uncaught error ends the worker under the open room.
           steps: [
-            { host: "list" },
-            { host: "open" },
             "/post text",
             "/fail crash",
             { host: "send", argument: "crash the worker" },
@@ -1049,11 +1110,19 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
           shot: "unavailable",
         },
         {
-          // Retry asks for the newest page, which starts the worker again.
+          // Retry asks for the newest page. The first request after the
+          // fault starts the worker again: the retry, or a `Seen` report of
+          // the screen that came first, so the checks read from the crash on.
           steps: [{ host: "retry-room" }],
           expect: [
-            { console: "worker starts again after its fault" },
-            { event: { via: "action_subscribe", kind: "RoomOpened" } },
+            {
+              console: "worker starts again after its fault",
+              scope: "previous",
+            },
+            {
+              event: { via: "action_subscribe", kind: "RoomOpened" },
+              scope: "previous",
+            },
             { ui: "readiness", match: "^ready ", timeoutMs: 45_000 },
           ],
         },
