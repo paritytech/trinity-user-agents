@@ -20,6 +20,14 @@ use crate::{
 
 type Responder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 
+/// One connection's response sender. The provider and the connection hold the
+/// same slot rather than a clone each, so dropping it through either ends that
+/// connection's stream.
+type SenderSlot = Mutex<Option<fut_mpsc::UnboundedSender<String>>>;
+
+/// One connection's response stream, taken once by whoever reads it.
+type ReceiverSlot = Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>;
+
 /// Provider that echoes a canned response for every request it sees,
 /// driven by a `respond` closure. The closure receives each json-rpc
 /// request string and returns the response frames the test wants the
@@ -30,9 +38,10 @@ pub struct ScriptedProvider {
 	respond: Responder,
 	/// Every request frame the core sent, in order.
 	pub sent: Arc<Mutex<Vec<String>>>,
-	/// Response stream sender; dropping it ends the connection's responses.
-	pub sender: Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>,
-	receiver: Arc<Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>>,
+	/// First connection's response sender; dropping it ends that connection's
+	/// responses. Later connections each get their own.
+	pub sender: Arc<SenderSlot>,
+	receiver: Arc<ReceiverSlot>,
 	/// How many times the core asked for a connection.
 	pub connect_calls: Arc<AtomicUsize>,
 }
@@ -54,10 +63,11 @@ impl ScriptedProvider {
 		F: Fn(&str) -> Vec<String> + Send + Sync + 'static,
 	{
 		let (tx, rx) = fut_mpsc::unbounded();
+		let first: Arc<SenderSlot> = Arc::new(Mutex::new(Some(tx)));
 		Self {
 			respond: Arc::new(respond),
 			sent: Arc::new(Mutex::new(Vec::new())),
-			sender: Arc::new(Mutex::new(Some(tx))),
+			sender: first,
 			receiver: Arc::new(Mutex::new(Some(rx))),
 			connect_calls: Arc::new(AtomicUsize::new(0)),
 		}
@@ -67,8 +77,10 @@ impl ScriptedProvider {
 struct ScriptedConnection {
 	respond: Responder,
 	sent: Arc<Mutex<Vec<String>>>,
-	sender: Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>,
-	receiver: Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>,
+	/// This connection's own sender, so an answer goes back on the socket that
+	/// asked rather than on whichever one connected first.
+	sender: Arc<SenderSlot>,
+	receiver: ReceiverSlot,
 }
 
 impl JsonRpcConnection for ScriptedConnection {
@@ -82,13 +94,12 @@ impl JsonRpcConnection for ScriptedConnection {
 		}
 	}
 	fn responses(&self) -> BoxStream<'static, String> {
-		let rx = self
-			.receiver
+		self.receiver
 			.lock()
 			.unwrap()
 			.take()
-			.expect("ScriptedConnection::responses called twice");
-		rx.boxed()
+			.expect("ScriptedConnection::responses called twice")
+			.boxed()
 	}
 
 	fn close(&self) {
@@ -103,13 +114,26 @@ impl RuntimeChainProvider for ScriptedProvider {
 		_genesis_hash: Vec<u8>,
 	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
 		self.connect_calls.fetch_add(1, Ordering::SeqCst);
-		let receiver = self.receiver.lock().unwrap().take();
-		Ok(Arc::new(ScriptedConnection {
-			respond: self.respond.clone(),
-			sent: self.sent.clone(),
-			sender: self.sender.clone(),
-			receiver: Mutex::new(receiver),
-		}))
+		// The first connection takes the channel built with the provider, so
+		// `notification_sender` keeps reaching it. Each later one gets its own.
+		match self.receiver.lock().unwrap().take() {
+			Some(receiver) => Ok(Arc::new(ScriptedConnection {
+				respond: self.respond.clone(),
+				sent: self.sent.clone(),
+				sender: self.sender.clone(),
+				receiver: Mutex::new(Some(receiver)),
+			})),
+			None => {
+				let (tx, rx) = fut_mpsc::unbounded();
+				let slot: Arc<SenderSlot> = Arc::new(Mutex::new(Some(tx)));
+				Ok(Arc::new(ScriptedConnection {
+					respond: self.respond.clone(),
+					sent: self.sent.clone(),
+					sender: slot,
+					receiver: Mutex::new(Some(rx)),
+				}))
+			},
+		}
 	}
 }
 
