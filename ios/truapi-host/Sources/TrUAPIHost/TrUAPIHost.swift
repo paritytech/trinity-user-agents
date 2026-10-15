@@ -1394,6 +1394,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func startWsBridge(bindPort: UInt16) throws -> WsBridgeEndpoint
     func stopWsBridge()
+    /// Runs `wasm`, a product worker compiled to wasm, in the core in place of the bridge. The stream gives the end
+    /// of the worker one time and then finishes. ``stopWsBridge()`` and ``close()`` stop the worker.
+    func startWasmWorker(_ wasm: Data) throws -> AsyncStream<NativeWasmWorkerEnd>
     func close()
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
     func publishChatEvent(roomId: String, peer: String, event: ChatEvent) throws
@@ -1578,6 +1581,12 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func stopWsBridge() {
         inner.stopWsBridge()
+    }
+
+    public func startWasmWorker(_ wasm: Data) throws -> AsyncStream<NativeWasmWorkerEnd> {
+        let (ends, continuation) = AsyncStream.makeStream(of: NativeWasmWorkerEnd.self)
+        try inner.startWasmWorker(wasm: wasm, observer: WasmWorkerEndObserver(continuation: continuation))
+        return ends
     }
 
     public func close() {
@@ -1881,6 +1890,20 @@ private func rendererStream(
         subscription.cancel()
     }
     return stream
+}
+
+/// Gives the one end of a wasm worker to a stream, and then finishes the stream.
+private final class WasmWorkerEndObserver: NativeWasmWorkerObserver, @unchecked Sendable {
+    private let continuation: AsyncStream<NativeWasmWorkerEnd>.Continuation
+
+    init(continuation: AsyncStream<NativeWasmWorkerEnd>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func onEnd(end: NativeWasmWorkerEnd) {
+        continuation.yield(end)
+        continuation.finish()
+    }
 }
 
 private final class RendererStreamObserver: NativeRendererObserver, @unchecked Sendable {

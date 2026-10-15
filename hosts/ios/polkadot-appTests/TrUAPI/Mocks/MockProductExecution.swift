@@ -116,6 +116,30 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func stopWsBridge() {
         stopWsBridgeCallCount += 1
+        wasmWorkerEnd?.yield(.stopped)
+        wasmWorkerEnd?.finish()
+        wasmWorkerEnd = nil
+    }
+
+    /// The wasm modules given to `startWasmWorker`, in order.
+    private(set) var startedWasmWorkers: [Data] = []
+    /// The error that `startWasmWorker` throws, when set.
+    var wasmWorkerStartError: Error?
+    private var wasmWorkerEnd: AsyncStream<NativeWasmWorkerEnd>.Continuation?
+
+    func startWasmWorker(_ wasm: Data) throws -> AsyncStream<NativeWasmWorkerEnd> {
+        if let wasmWorkerStartError { throw wasmWorkerStartError }
+        startedWasmWorkers.append(wasm)
+        let (ends, continuation) = AsyncStream.makeStream(of: NativeWasmWorkerEnd.self)
+        wasmWorkerEnd = continuation
+        return ends
+    }
+
+    /// Ends the running wasm worker as the core does.
+    func endWasmWorker(_ end: NativeWasmWorkerEnd) {
+        wasmWorkerEnd?.yield(end)
+        wasmWorkerEnd?.finish()
+        wasmWorkerEnd = nil
     }
 
     func close() {
