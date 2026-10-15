@@ -233,10 +233,13 @@ impl ProductAccounts {
 			.await
 	}
 
-	/// Forget this product's kept Statement Store key if it is still `public_key`.
-	pub fn forget_statement_store_allowance_key(&self, public_key: [u8; 32]) {
-		self.authority
-			.forget_statement_store_allowance_key(&self.product.product_id, public_key);
+	/// Renew this product's retained statement sponsorship for `signer`.
+	pub async fn renew_statement_sponsorship(
+		&self,
+		cx: &CallContext,
+		signer: [u8; 32],
+	) -> Result<(), AuthorityError> {
+		self.authority.renew_statement_sponsorship(cx, &self.product, signer).await
 	}
 
 	/// Whether preimage submissions stay in the core instead of reaching Bulletin.

@@ -1010,6 +1010,16 @@ impl ProductAuthority for PairingHost {
 		PairingHost::statement_store_allowance_key(self, cx, session, product_id).await
 	}
 
+	/// The phone keeps renewing the statement allowances it issued, so a paired host sends nothing.
+	async fn renew_statement_sponsorship(
+		&self,
+		_cx: &CallContext,
+		_product: &ProductContext,
+		_signer: [u8; 32],
+	) -> Result<(), AuthorityError> {
+		Ok(())
+	}
+
 	async fn bulletin_allowance_key(
 		&self,
 		cx: &CallContext,

@@ -381,6 +381,32 @@ impl AccountHolder for WalletAccountHolder {
 		.boxed())
 	}
 
+	async fn renew_statement_sponsorship(
+		&self,
+		invocation: AccountInvocation<'_>,
+		account_id: [u8; 32],
+	) -> Result<(), AuthorityError> {
+		let AccountCaller::Local { product, .. } = invocation.caller else {
+			return Err(AuthorityError::Rejected);
+		};
+		self.require_current_session(invocation.session)?;
+		#[cfg(feature = "test-host")]
+		self.resource_controls
+			.refuse_withheld(&api::AllocatableResource::StatementStoreAllowance)?;
+		until_cancelled(
+			invocation.call,
+			self.ensure_statement_slot(
+				invocation.session,
+				&product.product_id,
+				account_id,
+				OnExistingAllowancePolicy::Ignore,
+			),
+		)
+		.await?
+		.map_err(AllowanceAllocationError::into_authority_error)?;
+		self.require_current_session(invocation.session)
+	}
+
 	async fn ensure_allowance(
 		&self,
 		invocation: AccountInvocation<'_>,

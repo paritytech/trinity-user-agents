@@ -527,17 +527,6 @@ impl HostGrantStore {
 		allowances.retain(|key, _| !key.is_for_session(session_key));
 	}
 
-	/// Forget a product's Statement Store key only while it is still `public_key`,
-	/// so a key the product was already given again is kept.
-	pub fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
-		self.statement_store_allowances
-			.lock()
-			.expect("statement-store allowance cache mutex poisoned")
-			.retain(|cache_key, (_, key)| {
-				!(cache_key.is_for_product(product_id) && key.public_key == public_key)
-			});
-	}
-
 	/// Drop a product's Bulletin key from memory and storage before it is replaced.
 	pub async fn evict_bulletin_allowance(
 		&self,
