@@ -13,9 +13,11 @@ pub use local_activation::LocalActivation;
 pub use wallet_account_holder::TrackedStatementRenewalTarget;
 pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::allowances::current_unix_secs;
 use super::{
 	HostSession, RuntimeServices,
-	allowances::{AllowanceResource, current_unix_secs},
+	allowances::AllowanceResource,
 	authority::{
 		AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
 		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
@@ -29,10 +31,12 @@ use super::{
 	sso_responder_service::SsoResponderService,
 	validate_vrf_transcript,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::runtime::statement_allowance;
 use crate::{
 	host_internal::sso_messages::{OnExistingAllowancePolicy, ProductRequest, RingVrfError},
 	host_logic::session::{SessionInfo, SessionState},
-	runtime::{auth_state::AuthStateMachine, statement_allowance},
+	runtime::auth_state::AuthStateMachine,
 };
 use futures::StreamExt;
 #[cfg(test)]
@@ -659,8 +663,7 @@ impl ProductAuthority for SigningHost {
 		self.wallet
 			.resource_controls()
 			.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
-		let period = statement_allowance::slot::current_period(current_unix_secs()?);
-		if let Some(AccountGrant::StatementStore { key, period: Some(kept_period) }) = self
+		if let Some(AccountGrant::StatementStore { key, .. }) = self
 			.grants
 			.cached_allowance(
 				&self.wallet.session_state(),
@@ -669,8 +672,9 @@ impl ProductAuthority for SigningHost {
 				&product_id,
 				AllowanceResource::StatementStore,
 			)
-			.await? && kept_period == period
+			.await?
 		{
+			self.wallet.require_current_session(session)?;
 			return Ok(key);
 		}
 		let grant = self
@@ -706,8 +710,43 @@ impl ProductAuthority for SigningHost {
 			self.submit_preimages_locally.load(core::sync::atomic::Ordering::Relaxed)
 	}
 
-	fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
-		self.grants.forget_statement_store_allowance_key(product_id, public_key);
+	async fn renew_statement_sponsorship(
+		&self,
+		cx: &CallContext,
+		product: &ProductContext,
+		signer: [u8; 32],
+	) -> Result<(), AuthorityError> {
+		let Some(authority_session) = self.wallet.current_session() else {
+			return Ok(());
+		};
+		let (session, revision) = self.grant_session(&authority_session)?;
+		let grant = match self
+			.grants
+			.cached_allowance(
+				&self.wallet.session_state(),
+				&session,
+				revision,
+				&product.product_id,
+				AllowanceResource::StatementStore,
+			)
+			.await
+		{
+			Ok(grant) => grant,
+			Err(error) => {
+				tracing::warn!(%error, product_id = %product.product_id, "could not identify statement sponsorship");
+				return Ok(());
+			},
+		};
+		if !matches!(grant, Some(AccountGrant::StatementStore { key, .. }) if key.public_key == signer)
+		{
+			return Ok(());
+		}
+		self.hold_session(&authority_session)?.require_revision(revision)?;
+		self.wallet
+			.renew_statement_sponsorship(local_invocation(cx, &authority_session, product), signer)
+			.await?;
+		self.hold_session(&authority_session)?.require_revision(revision)?;
+		Ok(())
 	}
 
 	async fn bulletin_allowance_key(

@@ -131,23 +131,6 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 6
 	})
 }
 
-/// The key the host serves for the product, bounded so a lookup that falls
-/// through to an unanswered chain read fails instead of hanging.
-fn served(signing_host: &SigningHostRole) -> Option<[u8; 64]> {
-	futures::executor::block_on(async {
-		let session = signing_host.current_session().expect("a session is active");
-		let cx = CallContext::default();
-		futures::select! {
-			result = signing_host
-				.statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string())
-				.fuse() => result.ok().map(|key| *key.as_secret_bytes()),
-			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
-				panic!("the lookup blocked on a chain read")
-			}
-		}
-	})
-}
-
 /// An existing statement-store allowance must be served without resolving a
 /// ring or submitting anything. The cache and the scan are covered on their
 /// own; this pins the composition, so removing the early return fails here
@@ -221,20 +204,17 @@ fn a_second_proof_in_the_same_session_sends_nothing_to_the_chain() {
 }
 
 #[test]
-fn a_new_period_looks_the_allowance_up_again() {
-	let signing_host = active_signing_host(Arc::new(StubPlatform {
-		chain_connect_error: Some("the chain is unreachable"),
-		..StubPlatform::default()
-	}));
+fn a_new_period_keeps_the_sponsorship_key_until_submission() {
+	let platform = chain_with_allocated_slot();
+	let signing_host = active_signing_host(platform.clone());
 	let period = slot::current_period(crate::unix_time::current_unix_secs());
-	remember(&signing_host, PRODUCT_ID, period);
-	let this_period = served(&signing_host);
 	remember(&signing_host, PRODUCT_ID, period.checked_sub(1).unwrap());
 
+	let signer = allowance_key(&signing_host).public_key;
 	assert_eq!(
-		(this_period, served(&signing_host)),
-		(Some(SECRET), None),
-		"the next period served the previous period's key"
+		(signer == secret_key().public_key, sent_rpc_count(&platform) > 0),
+		(true, false),
+		"proof creation reuses the key; submission renews its sponsorship",
 	);
 }
 
@@ -341,6 +321,7 @@ fn submit_answered(
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	remember(&signing_host, PRODUCT_ID, PERIOD);
+	signing_host.set_grant_allowances_unchecked(true);
 	let runtime = product_runtime_for(services, signing_host.clone(), PRODUCT_ID);
 
 	let submitted = futures::executor::block_on(runtime.submit(
@@ -372,13 +353,13 @@ fn submit_rejected(reason: &str, attempts: usize, signer: [u8; 32]) -> Arc<Signi
 }
 
 #[test]
-fn a_lasting_no_allowance_rejection_forgets_the_rejected_key() {
+fn a_rejected_submission_keeps_the_key_for_sponsorship_renewal() {
 	let signing_host = submit_rejected("noAllowance", SUBMIT_ATTEMPTS, secret_key().public_key);
 
 	assert_eq!(
 		remembered(&signing_host, PRODUCT_ID),
-		None,
-		"the next proof would reuse a key the store no longer accepts"
+		Some(SECRET),
+		"submission failure must not discard an issued sponsorship key"
 	);
 }
 
@@ -415,6 +396,51 @@ fn another_rejection_keeps_the_key() {
 		remembered(&signing_host, PRODUCT_ID),
 		Some(SECRET),
 		"a rejection that says nothing about the allowance must not evict the key"
+	);
+}
+
+#[test]
+fn only_a_retained_sponsorship_renews_without_another_approval() {
+	let platform = chain_with_allocated_slot();
+	let host = active_signing_host(platform.clone());
+	let key =
+		derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID]).unwrap();
+	let state = host.session_state();
+	let session = state.current().unwrap();
+	let revision = host.grants_for_tests().lifecycle().revision();
+	let product = crate::platform::ProductContext::new(PRODUCT_ID.to_string()).unwrap();
+	futures::executor::block_on(async {
+		host.grants_for_tests()
+			.retain_allowance(
+				&state,
+				&session,
+				revision,
+				PRODUCT_ID,
+				&AccountGrant::StatementStore {
+					key: StatementStoreAllowanceKey::from_secret_bytes(
+						key.secret.to_bytes().to_vec(),
+					)
+					.unwrap(),
+					period: Some(PERIOD),
+				},
+			)
+			.await
+			.unwrap();
+		host.renew_statement_sponsorship(&CallContext::default(), &product, [0x11; 32])
+			.await
+			.unwrap();
+		assert_eq!(sent_rpc_count(&platform), 0);
+		host.renew_statement_sponsorship(&CallContext::default(), &product, key.public.to_bytes())
+			.await
+			.unwrap();
+	});
+	assert_eq!(
+		(
+			sent_rpc_count(&platform) > 0,
+			platform.resource_allocation_reviews.lock().unwrap().len(),
+			remembered(&host, PRODUCT_ID)
+		),
+		(true, 0, Some(key.secret.to_bytes()))
 	);
 }
 
