@@ -35,6 +35,18 @@ export const CLI_CHAT_SCENARIOS = Object.freeze([
   },
   { id: "S8", title: "Edited replaces in place with edited", mode: "host" },
   { id: "S4", title: "every preview variant in the chat list", mode: "host" },
+  {
+    id: "S49",
+    title:
+      "capabilities lists exactly the features the page serves, and both bounds",
+    mode: "host",
+  },
+  {
+    id: "S51",
+    title:
+      "room features survive a worker restart; an unserved feature is stored and ignored",
+    mode: "host",
+  },
 ]);
 
 function cell(value) {

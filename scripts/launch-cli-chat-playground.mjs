@@ -559,6 +559,70 @@ async function drive(chat) {
     return `${shots.join(", ")}; ${steps.length} preview variants drawn`;
   });
 
+  // S49: the product reads from `capabilities` exactly the features the page
+  // lists, and both attachment bounds.
+  await scenario(rows, byId.S49, async () => {
+    const line = await page.$eval("#capabilities", (node) => node.innerText);
+    const listed = line.split(" · ")[0].split(", ").filter(Boolean);
+    await chat.command("host", "/caps");
+    const answer = await chat.until(async () => {
+      const last = (await chat.messages())
+        .filter((message) => message.origin === "product")
+        .at(-1);
+      return last?.text.includes("caps:") ? last.text : null;
+    }, "the capabilities message");
+    const match = /caps: (.*); inline (\d+) B; preimage (\d+) B/.exec(answer);
+    if (!match) throw new Error(`no capabilities in "${answer}"`);
+    const read = match[1] === "none" ? [] : match[1].split(", ");
+    if (read.join(",") !== listed.join(","))
+      throw new Error(
+        `the product read ${read.join(",")}, the page lists ${listed.join(",")}`,
+      );
+    if (match[2] !== String(1024 * 1024) || match[3] !== "0")
+      throw new Error(`bounds inline ${match[2]} B, preimage ${match[3]} B`);
+    return `${await chat.shot("s49-host.png")}; ${read.length} features, inline ${match[2]} B, preimage ${match[3]} B`;
+  });
+
+  // S51: the host keeps the features of a room whole across a worker
+  // restart, and marks a feature it does not serve without drawing it.
+  await scenario(rows, byId.S51, async () => {
+    const features = async () =>
+      (await page.$("#roomfeatures"))
+        ? await page.$eval("#roomfeatures", (node) => node.innerText)
+        : "";
+    await chat.command("host", "/features readaloud on");
+    await chat.command("host", "/features calls audio");
+    const declared =
+      "features: calls audio (not served), read aloud (not served)";
+    await chat.until(
+      async () => (await features()) === declared,
+      `"${declared}"`,
+    );
+    // Reloading the page restarts the worker; the host keeps the room.
+    await page.click("#restart");
+    await page.waitForSelector('[data-room-id="host"]', { timeout: 30_000 });
+    await chat.until(
+      async () =>
+        (await page.$eval("#worker", (node) => node.innerText)).includes(
+          "1 connected",
+        ),
+      "the worker after the restart",
+      30_000,
+    );
+    await chat.room("host");
+    await chat.until(
+      async () => (await features()) === declared,
+      `"${declared}" after the restart`,
+    );
+    await chat.command("host", "/features readaloud off");
+    await chat.command("host", "/features calls off");
+    await chat.until(
+      async () => (await features()) === "",
+      "no declared feature",
+    );
+    return `${await chat.shot("s51-host.png")}; ${declared} kept across the restart`;
+  });
+
   return rows;
 }
 
