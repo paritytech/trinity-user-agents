@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
@@ -33,12 +34,19 @@ interface ChatRoomDeclarationsWriter {
 
     suspend fun setFooter(chatId: ChatId, footer: ChatRoomFooterModel)
 
+    suspend fun setFeatures(chatId: ChatId, features: ChatRoomFeaturesModel)
+
     suspend fun delete(chatId: ChatId)
+}
+
+/** Reads which rooms are the thread of a message of another room. The chat list does not show them. */
+fun interface ChatThreadRooms {
+    fun observeThreadRoomIds(): Flow<Set<ChatId>>
 }
 
 class RealChatRoomDeclarationsRepository @Inject constructor(
     private val dao: ChatRoomDeclarationsDao,
-) : ChatRoomDeclarationsRepository, ChatRoomDeclarationsWriter {
+) : ChatRoomDeclarationsRepository, ChatRoomDeclarationsWriter, ChatThreadRooms {
     override fun observe(chatId: ChatId): Flow<ChatRoomDeclarations?> =
         dao.observe(chatId.toLocal()).map { it?.toDomain() }.distinctUntilChanged()
 
@@ -65,5 +73,16 @@ class RealChatRoomDeclarationsRepository @Inject constructor(
     override suspend fun setFooter(chatId: ChatId, footer: ChatRoomFooterModel) =
         dao.setFooter(chatId.toLocal(), footer.encode())
 
+    override suspend fun setFeatures(chatId: ChatId, features: ChatRoomFeaturesModel) =
+        dao.setFeatures(chatId.toLocal(), features.encode())
+
     override suspend fun delete(chatId: ChatId) = dao.delete(chatId.toLocal())
+
+    override fun observeThreadRoomIds(): Flow<Set<ChatId>> =
+        dao.observeDeclaredFeatures()
+            .map { rows ->
+                rows.filter { it.features.decodeFeatures()?.threadOf != null }
+                    .mapTo(mutableSetOf()) { ChatId.fromRawValue(it.chatId) }
+            }
+            .distinctUntilChanged()
 }

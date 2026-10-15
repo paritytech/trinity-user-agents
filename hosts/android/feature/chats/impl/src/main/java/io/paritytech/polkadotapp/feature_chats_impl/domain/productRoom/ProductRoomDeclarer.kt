@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewM
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatMessageMetaWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomActivityWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomDeclarationsWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
@@ -27,6 +28,7 @@ class ProductRoomDeclarer @Inject constructor(
     private val declarationsRepository: ChatRoomDeclarationsRepository,
     private val declarationsWriter: ChatRoomDeclarationsWriter,
     private val activityWriter: ChatRoomActivityWriter,
+    private val metaWriter: ChatMessageMetaWriter,
 ) {
     suspend fun declarations(extensionId: ChatExtensionId, chatId: ChatId): ChatRoomDeclarations? =
         if (chatId.isExtensionChat(extensionId)) declarationsRepository.get(chatId) else null
@@ -35,7 +37,10 @@ class ProductRoomDeclarer @Inject constructor(
         val current = declarationsRepository.get(chatId)?.effectiveConfig ?: ChatRoomConfigModel.HOST_DEFAULT
         if (current == config) return@declare
         // The messages of one store mode mean nothing in the other one, so they go with the change.
-        if (current.productSource != config.productSource) chatMessageRepository.deleteAllChatMessages(chatId)
+        if (current.productSource != config.productSource) {
+            chatMessageRepository.deleteAllChatMessages(chatId)
+            metaWriter.deleteRoom(chatId)
+        }
         declarationsWriter.setConfig(chatId, config)
     }
 

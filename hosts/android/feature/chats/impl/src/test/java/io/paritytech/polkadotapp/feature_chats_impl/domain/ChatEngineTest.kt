@@ -40,6 +40,8 @@ class ChatEngineTest {
         deleteRoomUseCase = mockk(),
         productRoomDeclarer = mockk(),
         productFeedApplier = mockk(),
+        productRoomAdditions = mockk(),
+        chatThreadRooms = mockk(),
     )
 
     private val contactAccountId = ByteArray(32) { 1 }.intoAccountId()

@@ -5,9 +5,13 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputConfigM
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputPaymentModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallsModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomUserStateModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatThreadParentModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy.BuiltInMessageAction
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy.ListBadge
@@ -186,5 +190,25 @@ class ChatRoomPolicyTest {
             withInput.footer,
         )
         assertEquals(ChatRoomPolicy.Footer.Empty, empty.footer)
+    }
+
+    @Test
+    fun `the policy carries the declared features, also those that the host does not serve`() {
+        val features = ChatRoomFeaturesModel.HOST_DEFAULT.copy(
+            calls = ChatRoomCallsModel(audio = true, video = true),
+            threadOf = ChatThreadParentModel("lobby", "m1"),
+        )
+
+        assertEquals(features, ChatRoomPolicy.from(declarations(features = features)).features)
+        assertEquals(ChatRoomFeaturesModel.HOST_DEFAULT, ChatRoomPolicy.from(declarations()).features)
+    }
+
+    @Test
+    fun `the policy carries the state that the user set, also for a room without declarations`() {
+        val state = ChatRoomUserStateModel(mutedUntil = ChatRoomUserStateModel.MUTED_WITHOUT_END, archived = false)
+
+        assertEquals(state, ChatRoomPolicy.from(null, state).userState)
+        assertEquals(state, ChatRoomPolicy.from(declarations(), state).userState)
+        assertTrue(state.isMutedAt(nowMs = Long.MAX_VALUE - 1))
     }
 }
