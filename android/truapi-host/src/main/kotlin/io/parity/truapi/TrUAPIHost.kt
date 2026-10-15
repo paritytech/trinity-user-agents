@@ -1164,9 +1164,14 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     /**
      * Stage a user attachment of a room as a preimage that the Bulletin
-     * allowance of the product pays for, and return its key. The core does not
-     * stage attachments yet: each call throws [NativeChatStageRejection], and
-     * `capabilities` never lists `preimage_attachments`.
+     * allowance of the product pays for, and return its key. The core throws
+     * [NativeChatStageRejection]: `NotDeclared` for a room whose features do
+     * not declare `preimage_attachments`, `TooLarge` above 8 MiB or above the
+     * Bulletin chain's per-transaction bound, `PermissionDenied` when the user
+     * refused `PreimageSubmit` for the product (the core prompts through the
+     * product's open Worker execution when the user did not decide yet),
+     * `AllowanceUnavailable` and `SubmitFailed`. Staging needs no worker
+     * reference.
      */
     @Throws(NativeChatStageRejection::class)
     suspend fun stageChatAttachment(
