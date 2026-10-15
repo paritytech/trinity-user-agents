@@ -292,8 +292,8 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   (`product_source_rooms`, `reaction_details`, `participants`, `message_menus`,
   `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`,
   `inline_attachments`, `preimage_attachments`, `search`, `bot_personas`,
-  `mute_archive`, `threads`, `branches`, `reasoning_rows`, `read_aloud`) and
-  both attachment bounds. The host keeps what a product declares with
+  `mute_archive`, `threads`, `branches`, `reasoning_rows`, `read_aloud`,
+  `call_buttons`) and both attachment bounds. The host keeps what a product declares with
   `set_room_features` whole, and the room header lists each declared feature,
   marked "not served" where the host does not serve it. The host also keeps the
   meta of each message (`set_message_meta`), the call of each room
@@ -327,6 +327,13 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   offers **Read aloud** on text, Markdown read as plain text and a custom
   body's preview, spoken by the browser, with a **Stop** line in the footer
   until it ends or you leave the room.
+- **Calls.** A room that declares `calls` shows an audio and a video button
+  in the header, which send `CallRequested`. A `Ringing` call shows a banner
+  with the caller, **Accept** and **Decline** (`CallAnswered`), and "Incoming
+  call" in the list, until the product clears it or 60 s pass. An `Active`
+  call shows a bar with its timer, **Open** for a call without a media session
+  (`CallOpened`) and **End** (`CallEnded`). No media path: the host does not
+  list `room_calls`.
 - **Wake.** **Wake** in the room header stands in for an authenticated
   notification on watch `dev` for the room: the core holds the product's
   worker for 30 s and sends `Woken`, at most 12 times for each product in one
@@ -374,8 +381,8 @@ then a `room`, `roomDeleted`, `bot`, `message` or `notification` event as each l
 operation per thing a person does: `post`, `edit`, `delete`, `react`, `seen`,
 `retry`, `trigger`, `command`, `messageAction`, `participantAction`, `toolbar`,
 `suggestion`, `open`, `close`, `attach` (a photo, video or file in base64,
-inline or staged), `search`, `branch` (sends `BranchSelected`), `wake` and
-`userState` (which mutes or archives a room
+inline or staged), `search`, `branch` (sends `BranchSelected`), `wake`,
+`callRequest`, `callAnswer`, `callOpen`, `callEnd` and `userState` (which mutes or archives a room
 and sends `UserStateChanged` to `chat.roomEventsSubscribe()`; `mutedForever`
 mutes with no end), and the queries
 `messages`, `reactions`, `participants`, `messageActions` and

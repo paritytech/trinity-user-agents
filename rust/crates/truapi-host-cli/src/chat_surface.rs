@@ -40,8 +40,8 @@ use truapi::{
 		ActionTrigger, ChatBuiltInMessageAction, ChatCommand, ChatEvent, ChatMediaItem,
 		ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageMenu, ChatPageAnchor,
 		ChatParticipant, ChatParticipantEntry, ChatParticipantMenu, ChatParticipantsQuery,
-		ChatProductAction, ChatResource, ChatRoomEvent, ChatUserAction,
-		HostChatActionSubscribeItem, HostChatRoomEventsSubscribeItem,
+		ChatProductAction, ChatResource, ChatRoomCall, ChatRoomCalls, ChatRoomEvent,
+		ChatUserAction, HostChatActionSubscribeItem, HostChatRoomEventsSubscribeItem,
 		ProductChatMessageActionsQueryItem, ProductChatMessageActionsQueryRequest,
 		ProductChatMessagesQueryItem, ProductChatMessagesQueryRequest,
 		ProductChatParticipantActionsQueryItem, ProductChatParticipantActionsQueryRequest,
@@ -444,6 +444,27 @@ enum PageOp {
 		room_id: String,
 		participant_id: String,
 	},
+	/// The user pressed the audio or the video call button of the header.
+	CallRequest {
+		room_id: String,
+		video: bool,
+	},
+	/// The user accepted or declined the call that rings.
+	CallAnswer {
+		room_id: String,
+		call_id: String,
+		accept: bool,
+	},
+	/// The user tapped the call bar of a call without a media session.
+	CallOpen {
+		room_id: String,
+		call_id: String,
+	},
+	/// The user pressed "End" on the call bar.
+	CallEnd {
+		room_id: String,
+		call_id: String,
+	},
 	/// The development stand-in for a notification that arrived on watch
 	/// `dev` for the room: a notification wake of the product.
 	Wake {
@@ -734,6 +755,18 @@ impl ChatSurface {
 				reply_to.clone(),
 				source,
 			),
+			PageOp::CallRequest { .. } |
+			PageOp::CallAnswer { .. } |
+			PageOp::CallOpen { .. } |
+			PageOp::CallEnd { .. } => {
+				let (buttons, call) = self.chat.room_call(&room_id).unwrap_or_default();
+				match call_event(op, buttons, call.as_ref()) {
+					Ok(event) => {
+						Applied::Now(self.deliver_room_event(op_name(op), &room_id, event))
+					},
+					Err(reason) => Applied::Now(error_reply(reason)),
+				}
+			},
 			PageOp::Wake { req_id, .. } => {
 				let Some(worker) = self.newest_worker() else {
 					return Applied::Now(error_reply("no worker is connected to wake".to_string()));
@@ -1333,6 +1366,10 @@ fn op_room(op: &PageOp) -> &str {
 		PageOp::Search { room_id, .. } |
 		PageOp::Branch { room_id, .. } |
 		PageOp::Wake { room_id, .. } |
+		PageOp::CallRequest { room_id, .. } |
+		PageOp::CallAnswer { room_id, .. } |
+		PageOp::CallOpen { room_id, .. } |
+		PageOp::CallEnd { room_id, .. } |
 		PageOp::UserState { room_id, .. } => room_id,
 	}
 }
@@ -1382,6 +1419,10 @@ fn op_name(op: &PageOp) -> &'static str {
 		PageOp::Search { .. } => "search",
 		PageOp::Branch { .. } => "branch",
 		PageOp::Wake { .. } => "wake",
+		PageOp::CallRequest { .. } => "callRequest",
+		PageOp::CallAnswer { .. } => "callAnswer",
+		PageOp::CallOpen { .. } => "callOpen",
+		PageOp::CallEnd { .. } => "callEnd",
 		PageOp::UserState { .. } => "userState",
 	}
 }
@@ -1453,6 +1494,44 @@ fn user_action_error_json(error: &ProductChatUserActionError) -> Value {
 		ProductChatUserActionError::Unknown { reason } => {
 			json!({ "tag": "Unknown", "reason": reason })
 		},
+	}
+}
+
+/// The room event of a call operation, when the room shows what it presses:
+/// the call button, the ringing call, or the call bar of an active call.
+fn call_event(
+	op: &PageOp,
+	buttons: Option<ChatRoomCalls>,
+	call: Option<&ChatRoomCall>,
+) -> Result<ChatRoomEvent, String> {
+	match (op, call) {
+		(PageOp::CallRequest { video, .. }, _) => {
+			let shown =
+				buttons.is_some_and(|buttons| if *video { buttons.video } else { buttons.audio });
+			if !shown {
+				return Err(format!(
+					"the room shows no {} call button",
+					if *video { "video" } else { "audio" }
+				));
+			}
+			Ok(ChatRoomEvent::CallRequested { video: *video })
+		},
+		(
+			PageOp::CallAnswer { call_id, accept, .. },
+			Some(ChatRoomCall::Ringing { call_id: ringing, .. }),
+		) if call_id == ringing => {
+			Ok(ChatRoomEvent::CallAnswered { call_id: call_id.clone(), accept: *accept })
+		},
+		(
+			PageOp::CallOpen { call_id, .. },
+			Some(ChatRoomCall::Active { call_id: active, media_session: None, .. }),
+		) if call_id == active => Ok(ChatRoomEvent::CallOpened { call_id: call_id.clone() }),
+		(PageOp::CallEnd { call_id, .. }, Some(ChatRoomCall::Active { call_id: active, .. }))
+			if call_id == active =>
+		{
+			Ok(ChatRoomEvent::CallEnded { call_id: call_id.clone() })
+		},
+		_ => Err("the room shows no such call".to_string()),
 	}
 }
 
@@ -2742,6 +2821,72 @@ mod tests {
 					watch_id: "dev".to_string()
 				}
 			)]
+		);
+	}
+
+	// S72 to S74: a call button, an answer, the call bar and End reach the
+	// product only where the room shows them.
+	#[test]
+	fn the_call_controls_of_a_room_reach_the_product() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+		let op = |value: Value| now(&surface, value)["kind"].clone();
+		let declare = |call: Option<ChatRoomCall>| {
+			futures::executor::block_on(surface.chat().set_chat_room_call(
+				&product(),
+				truapi::latest::HostChatSetRoomCallRequest { room_id: "daily".to_string(), call },
+			))
+			.expect("the room exists");
+		};
+
+		assert_eq!(op(json!({"op":"callRequest","roomId":"daily","video":false})), "error");
+		futures::executor::block_on(surface.chat().set_chat_room_features(
+			&product(),
+			truapi::latest::HostChatSetRoomFeaturesRequest {
+				room_id: "daily".to_string(),
+				features: truapi::latest::ChatRoomFeatures {
+					calls: Some(ChatRoomCalls { audio: true, video: false }),
+					..Default::default()
+				},
+			},
+		))
+		.expect("the room exists");
+		assert_eq!(op(json!({"op":"callRequest","roomId":"daily","video":true})), "error");
+		assert_eq!(op(json!({"op":"callRequest","roomId":"daily","video":false})), "delivered");
+		declare(Some(ChatRoomCall::Ringing {
+			call_id: "c1".to_string(),
+			video: false,
+			caller: None,
+		}));
+		assert_eq!(
+			op(json!({"op":"callAnswer","roomId":"daily","callId":"c1","accept":true})),
+			"delivered"
+		);
+		declare(Some(ChatRoomCall::Active {
+			call_id: "c1".to_string(),
+			video: false,
+			started_at: 1,
+			media_session: None,
+		}));
+		assert_eq!(op(json!({"op":"callOpen","roomId":"daily","callId":"c1"})), "delivered");
+		assert_eq!(op(json!({"op":"callEnd","roomId":"daily","callId":"c2"})), "error");
+		assert_eq!(op(json!({"op":"callEnd","roomId":"daily","callId":"c1"})), "delivered");
+
+		let events: Vec<_> = worker
+			.room_events
+			.lock()
+			.expect("not poisoned")
+			.iter()
+			.map(|item| item.event.clone())
+			.collect();
+		assert_eq!(
+			events,
+			[
+				ChatRoomEvent::CallRequested { video: false },
+				ChatRoomEvent::CallAnswered { call_id: "c1".to_string(), accept: true },
+				ChatRoomEvent::CallOpened { call_id: "c1".to_string() },
+				ChatRoomEvent::CallEnded { call_id: "c1".to_string() },
+			]
 		);
 	}
 

@@ -42,14 +42,15 @@ use truapi::{
 		ChatCommandSpec, ChatFeedUpdate, ChatMediaItem, ChatMediaMeta, ChatMessage,
 		ChatMessageBody, ChatMessageContent, ChatMessageMeta, ChatMessageOrigin, ChatMessageStatus,
 		ChatParticipantEntry, ChatReactionSummary, ChatResource, ChatRoom, ChatRoomBadge,
-		ChatRoomCall, ChatRoomConfig, ChatRoomFeatures, ChatRoomFooter, ChatRoomMetadata,
-		ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview, ChatRoomRegistrationStatus,
-		ChatSuggestion, ChatToolbarAction, ChatUserAction, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatDeleteRoomRequest,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetMessageMetaRequest, HostChatSetRoomActivityRequest,
-		HostChatSetRoomCallRequest, HostChatSetRoomCommandsRequest, HostChatSetRoomConfigRequest,
+		ChatRoomCall, ChatRoomCalls, ChatRoomConfig, ChatRoomFeatures, ChatRoomFooter,
+		ChatRoomMetadata, ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview,
+		ChatRoomRegistrationStatus, ChatSuggestion, ChatToolbarAction, ChatUserAction,
+		GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
+		HostChatCreateRoomResponse, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetMessageMetaRequest, HostChatSetRoomActivityRequest, HostChatSetRoomCallRequest,
+		HostChatSetRoomCommandsRequest, HostChatSetRoomConfigRequest,
 		HostChatSetRoomFeaturesRequest, HostChatSetRoomFooterRequest,
 		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest,
 		HostChatSetRoomSuggestionsRequest, HostChatSetRoomToolbarRequest, HostChatUpdateFeedError,
@@ -74,7 +75,7 @@ const SENT_A_MESSAGE: &str = "Sent a message";
 /// `CHAT_FEATURE_NAMES`. The page has no renderer and no room links, so
 /// `custom_bodies`, `custom_footer` and `room_links` are not here. A P10 item
 /// adds its name when the page serves it.
-pub const CLI_CHAT_FEATURES: [&str; 18] = [
+pub const CLI_CHAT_FEATURES: [&str; 19] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -93,6 +94,7 @@ pub const CLI_CHAT_FEATURES: [&str; 18] = [
 	"branches",
 	"reasoning_rows",
 	"read_aloud",
+	"call_buttons",
 ];
 
 /// A room this host created, with everything the product declared about it.
@@ -467,6 +469,18 @@ impl CliChatHost {
 	/// exists.
 	pub fn room_config(&self, room_id: &str) -> Option<ChatRoomConfig> {
 		self.lock().rooms.get(room_id).map(|room| room.config.clone())
+	}
+
+	/// The call buttons `room_id` declares and the call it shows, if the
+	/// room exists.
+	pub fn room_call(
+		&self,
+		room_id: &str,
+	) -> Option<(Option<ChatRoomCalls>, Option<ChatRoomCall>)> {
+		self.lock()
+			.rooms
+			.get(room_id)
+			.map(|room| (room.features.calls, room.call.clone()))
 	}
 
 	/// Whether `room_id` declared the command `name`. Only a declared name

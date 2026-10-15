@@ -135,7 +135,11 @@ nav h2 { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: upp
 .avatar.sm { width: 28px; height: 28px; border-radius: 8px; font-size: 12px; }
 .bots { margin-top: 18px; }
 .bot { display: flex; align-items: center; gap: 10px; padding: 6px 18px; color: var(--muted); font-size: 13px; }
-section { display: grid; grid-template-rows: auto auto 1fr auto; min-height: 0; }
+section { display: grid; grid-template-rows: auto auto auto 1fr auto; min-height: 0; }
+#callarea > div { display: flex; align-items: center; gap: 10px; padding: 8px 22px; border-bottom: 1px solid var(--line); font: 13px var(--ui); }
+#callbanner { background: rgba(92, 224, 160, 0.12); }
+#callbar { background: rgba(214, 255, 92, 0.1); }
+#callarea .spacer { flex: 1; }
 #searchbar { padding: 8px 22px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
 #searchbar input { font: 13px var(--ui); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
 #searchresults .hit { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; padding: 5px 2px; font: 12px var(--ui); }
@@ -329,6 +333,7 @@ aside[hidden], section[hidden] { display: none; }
   <div class="gutter" id="gutter-rooms" title="Drag to resize"></div>
   <section id="chat-pane">
     <div class="roomhead" id="roomhead"></div>
+    <div id="callarea"></div>
     <div id="searchbar" hidden>
       <input id="searchtext" type="search" placeholder="Search this room" spellcheck="false">
       <div id="searchresults"></div>
@@ -423,7 +428,11 @@ const state = {
   speaking: null,
   // The message a thread room opened from: { roomId, messageId }.
   threadReturn: null,
+  // callId -> when the page first saw it ring, in ms.
+  ringingSince: new Map(),
 };
+// A ringing call clears from the screen after 60 s without an answer.
+const RINGING_MS = 60000;
 const $ = (id) => document.getElementById(id);
 let statusTimer = null;
 let reqSeq = 0;
@@ -855,7 +864,7 @@ function roomRow(room) {
   if (room.list && room.list.pinned) name.appendChild(el("span", "pin", "PIN"));
   if (isMuted(room)) name.appendChild(el("span", "muted", "\u{1F507}"));
   text.appendChild(name);
-  const line = room.list && room.list.text;
+  const line = ringing(room) ? { text: "Incoming call", ongoing: true } : room.list && room.list.text;
   if (line) {
     const node = el("span", line.ongoing ? "line ongoing dots" : "line", line.text);
     node.dataset.preview = line.text;
@@ -1217,6 +1226,18 @@ function renderHeader2() {
     toggle.onclick = () => toggleSearch(room);
     head.appendChild(toggle);
   }
+  const calls = room.features && room.features.calls;
+  if (calls && state.capabilities.features.includes("call_buttons")) {
+    for (const [video, shown, label, id] of [[false, calls.audio, "\u{1F4DE}", "call-audio"], [true, calls.video, "\u{1F3A5}", "call-video"]]) {
+      if (!shown) continue;
+      const b = el("button", null, label);
+      b.type = "button";
+      b.id = id;
+      b.title = video ? "Video call" : "Audio call";
+      b.onclick = () => send({ op: "callRequest", roomId: room.roomId, video });
+      head.appendChild(b);
+    }
+  }
   const wake = el("button", null, "Wake");
   wake.type = "button";
   wake.id = "wake";
@@ -1232,6 +1253,50 @@ function renderHeader2() {
   head.appendChild(userStateNode(room));
   head.appendChild(toolbarNode(room));
 }
+
+// The call that rings in a room, until 60 s after the page first saw it.
+function ringing(room) {
+  const call = room && room.call;
+  if (!call || call.type !== "Ringing" || !state.capabilities.features.includes("call_buttons")) return null;
+  if (!state.ringingSince.has(call.callId)) state.ringingSince.set(call.callId, Date.now());
+  return Date.now() - state.ringingSince.get(call.callId) < RINGING_MS ? call : null;
+}
+
+function elapsed(ms) {
+  const seconds = Math.max(0, Math.floor((Date.now() - Number(ms)) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+// The ringing banner with Accept and Decline, or the call bar with its
+// timer, Open (for a call without a media session) and End.
+function renderCall() {
+  const area = $("callarea");
+  area.textContent = "";
+  const room = roomOf(state.selected);
+  if (!room || !state.capabilities.features.includes("call_buttons")) return;
+  const call = room.call;
+  const answer = (accept) => send({ op: "callAnswer", roomId: room.roomId, callId: call.callId, accept });
+  const button = (label, id, onClick) => { const b = el("button", null, label); b.type = "button"; b.id = id; b.onclick = onClick; return b; };
+  if (ringing(room)) {
+    const banner = el("div");
+    banner.id = "callbanner";
+    banner.dataset.callId = call.callId;
+    const caller = call.caller || PRODUCT;
+    banner.append(avatar(persona(caller) ? persona(caller).icon : null, participantName(room.roomId, caller), true),
+      el("span", null, `${participantName(room.roomId, caller)} is calling${call.video ? " (video)" : ""}`), el("span", "spacer"),
+      button("Accept", "call-accept", () => answer(true)), button("Decline", "call-decline", () => answer(false)));
+    area.appendChild(banner);
+  } else if (call && call.type === "Active") {
+    const bar = el("div");
+    bar.id = "callbar";
+    bar.dataset.callId = call.callId;
+    bar.append(el("span", null, `${call.video ? "Video" : "Audio"} call`), el("span", "dots", elapsed(call.startedAt)), el("span", "spacer"));
+    if (!call.mediaSession) bar.appendChild(button("Open", "call-open", () => send({ op: "callOpen", roomId: room.roomId, callId: call.callId })));
+    bar.appendChild(button("End", "call-end", () => send({ op: "callEnd", roomId: room.roomId, callId: call.callId })));
+    area.appendChild(bar);
+  }
+}
+setInterval(() => { renderCall(); if ([...state.rooms.values()].some((room) => room.call)) renderRooms(); }, 1000);
 
 // A room the host keeps is searched by the host. A room the product keeps
 // shows search only when it declares `search` and the host serves it.
@@ -1406,6 +1471,7 @@ function toolbarNode(room) {
 
 function renderRoom(forceBottom) {
   renderHeader2();
+  renderCall();
   renderSearch();
   const thread = $("thread");
   const pinned = forceBottom || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60;
