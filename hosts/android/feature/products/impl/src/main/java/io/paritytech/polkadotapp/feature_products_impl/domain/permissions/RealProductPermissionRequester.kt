@@ -9,6 +9,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -39,7 +40,11 @@ class RealProductPermissionRequester @Inject constructor(
         val context = ProductPermissionContext(productId, permissions)
         try {
             permissionContextHolder.set(context)
-            productsRouter.openPermissionPrompt(context.id)
+            // A prompt that does not show gets no answer, and the wait would hold every later request.
+            if (!productsRouter.openPermissionPrompt(context.id)) {
+                Timber.w("No screen shows the permission prompt of %s; the request is refused", productId.value)
+                return@withLock PermissionDecision.Deny
+            }
             context.awaitDecision()
         } finally {
             withContext(NonCancellable) {

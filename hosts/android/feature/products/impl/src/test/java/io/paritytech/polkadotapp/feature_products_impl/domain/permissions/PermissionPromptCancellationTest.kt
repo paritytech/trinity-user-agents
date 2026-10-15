@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModelStore
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
@@ -139,6 +140,30 @@ class PermissionPromptCancellationTest {
         assertNull(router.currentId)
     }
 
+    @Test
+    fun `a prompt that a navigation removes before an answer refuses the request`() = runBlocking<Unit> {
+        val pending = requestPermission()
+        yield()
+        val store = ViewModelStore()
+        store.put("prompt", prompt(requireNotNull(holder.get()).id))
+
+        store.clear()
+        yield()
+
+        assertEquals(PermissionDecision.Deny, pending.await())
+        assertNull(holder.get())
+    }
+
+    @Test
+    fun `a prompt that no screen can show refuses the request at once`() = runBlocking<Unit> {
+        router.canShow = false
+
+        val decision = requestPermission().await()
+
+        assertEquals(PermissionDecision.Deny, decision)
+        assertNull(holder.get())
+    }
+
     private fun verifyCleanup(cancel: Boolean) = runBlocking<Unit> {
         val first = requestPermission()
         yield()
@@ -178,13 +203,16 @@ class PermissionPromptCancellationTest {
         var currentId: String? = null
         var closeGate: CompletableDeferred<Unit>? = null
         var stateSaved = false
+        var canShow = true
         val events = mutableListOf<String>()
 
         override fun back() = error("Permission prompts must close by request ID")
 
         override suspend fun openPermissionPrompt(requestId: String) = withContext(Dispatchers.Main) {
+            if (!canShow) return@withContext false
             currentId = requestId
             events += "open:$requestId"
+            true
         }
 
         override suspend fun closePermissionPrompt(requestId: String?) = withContext(Dispatchers.Main) {

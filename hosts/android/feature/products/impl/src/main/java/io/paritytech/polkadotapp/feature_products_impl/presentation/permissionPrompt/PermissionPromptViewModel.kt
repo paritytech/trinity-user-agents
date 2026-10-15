@@ -37,6 +37,14 @@ class PermissionPromptViewModel @Inject constructor(
     private fun deliver(decision: PermissionDecision) {
         permissionContext?.deliver(decision)
     }
+
+    // A navigation that clears the back stack (the splash screen to the main screen, a chat link) can remove the
+    // prompt before the user answers. The request then gets a refusal, because the requester waits for an answer
+    // and holds every later request. A refusal is not stored, so the product can ask again.
+    override fun onCleared() {
+        deliver(PermissionDecision.Deny)
+        super.onCleared()
+    }
 }
 
 private fun ProductPermissionContext.toUiState(): PermissionPromptUiState {

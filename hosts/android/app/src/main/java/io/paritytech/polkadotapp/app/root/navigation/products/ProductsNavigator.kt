@@ -63,11 +63,12 @@ class ProductsNavigator @Inject constructor(
         )
     }
 
-    override suspend fun openPermissionPrompt(requestId: String) = withContext(dispatchers.main) {
-        performNavigation(
-            R.id.action_global_to_permissionPromptBottomSheet,
-            bundleOf(PermissionPromptBottomSheet.REQUEST_ID to requestId),
-        )
+    override suspend fun openPermissionPrompt(requestId: String): Boolean = withContext(dispatchers.main) {
+        val controller = navigationHolder.navController ?: return@withContext false
+        val action = R.id.action_global_to_permissionPromptBottomSheet
+        if (controller.currentDestination?.getAction(action) == null) return@withContext false
+        controller.navigate(action, bundleOf(PermissionPromptBottomSheet.REQUEST_ID to requestId))
+        true
     }
 
     override suspend fun closePermissionPrompt(requestId: String?) = withContext(dispatchers.main) {
