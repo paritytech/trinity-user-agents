@@ -114,8 +114,19 @@ async function openSection(page: Page, selector: string): Promise<void> {
 
 /** Import the public test phrase, which signs the tab in. */
 async function signIn(page: Page): Promise<void> {
+  await signInWith(page, TEST_MNEMONIC);
+}
+
+/**
+ * A BIP-39 test vector phrase, for checks the public development phrase is
+ * refused for. It holds nothing.
+ */
+const SYNTHETIC_MNEMONIC =
+  "letter advice cage absurd amount doctor acoustic avoid letter advice cage above";
+
+async function signInWith(page: Page, mnemonic: string): Promise<void> {
   await openSection(page, "#import");
-  await page.fill("#mnemonic", TEST_MNEMONIC);
+  await page.fill("#mnemonic", mnemonic);
   await page.click("#add-wallet");
   await page.locator("#session").filter({ hasNotText: "Signed out" }).waitFor();
 }
@@ -439,12 +450,10 @@ describe("the dock", () => {
     );
 
   test(
-    "keeps a destination's product running while another is in front",
+    "keeps Browse's product running while a host screen is in front",
     async () => {
-      const second = await startUrlProduct(target.origin);
       const context = await newContext();
       try {
-        // Chat and Browse point at two products on their own origins.
         await context.addInitScript(
           (addresses) => {
             if (!localStorage.getItem("truapi-web-signing-host:dock:v1"))
@@ -453,7 +462,7 @@ describe("the dock", () => {
                 JSON.stringify(addresses),
               );
           },
-          { chat: urlProduct.url, browse: second.url },
+          { browse: urlProduct.url },
         );
         const page = await openHost(context);
         await signIn(page);
@@ -463,66 +472,54 @@ describe("the dock", () => {
           pocket: "behind/idle",
         });
 
-        await page.click('#dock [data-destination="chat"]');
-        const chat = await productFrame(page, new URL(urlProduct.url).origin);
-        await chat.evaluate(() => {
+        await page.click('#dock [data-destination="browse"]');
+        const browse = await productFrame(page, new URL(urlProduct.url).origin);
+        await browse.evaluate(() => {
           (window as unknown as ProductWindow).__mark = 42;
         });
 
-        await page.click('#dock [data-destination="browse"]');
-        const browse = await productFrame(page, new URL(second.url).origin);
+        // Chat is drawn by the host. The product behind it keeps running, hidden.
+        await page.click('#dock [data-destination="chat"]');
+        await page.locator("#chat-screen").waitFor({ state: "visible" });
         expect(await destinations(page)).toEqual({
-          chat: "behind/running",
-          browse: "front/running",
+          chat: "front/idle",
+          browse: "behind/running",
           pocket: "behind/idle",
         });
-        // Only the product in front is shown; the other keeps its document.
         expect(
           await page
             .locator("#product-slot iframe")
             .evaluateAll((frames) =>
               frames.map((frame) => (frame as HTMLElement).style.display),
             ),
-        ).toEqual(["none", ""]);
-        expect(await page.inputValue("#address")).toBe(second.url);
+        ).toEqual(["none"]);
 
-        await page.click('#dock [data-destination="chat"]');
+        await page.click('#dock [data-destination="pocket"]');
+        await page.locator("#pocket-screen").waitFor({ state: "visible" });
+        expect(await page.locator("#chat-screen").isHidden()).toBe(true);
+        expect(await destinations(page)).toEqual({
+          chat: "behind/idle",
+          browse: "behind/running",
+          pocket: "front/idle",
+        });
+
+        await page.click('#dock [data-destination="browse"]');
         expect(
-          await chat.evaluate(
+          await browse.evaluate(
             () => (window as unknown as ProductWindow).__mark,
           ),
         ).toBe(42);
         expect(await page.inputValue("#address")).toBe(urlProduct.url);
-        expect(browse.isDetached()).toBe(false);
-
-        // Pocket is drawn by the host. The products behind it keep running.
-        await page.click('#dock [data-destination="pocket"]');
-        await page.locator("#pocket-screen").waitFor({ state: "visible" });
-        expect(await destinations(page)).toEqual({
-          chat: "behind/running",
-          browse: "behind/running",
-          pocket: "front/idle",
-        });
-        // The Pocket screen covers the stage; the product frames are hidden.
-        expect(
-          await page
-            .locator("#product-slot iframe")
-            .evaluateAll((frames) =>
-              frames.map((frame) => (frame as HTMLElement).style.display),
-            ),
-        ).toEqual(["none", "none"]);
       } finally {
         await context.close();
-        second.close();
       }
     },
     TEST_MS,
   );
 
   test(
-    "ends every held product when the wallet changes",
+    "ends a held product when the wallet changes",
     async () => {
-      const second = await startUrlProduct(target.origin);
       const context = await newContext();
       try {
         await context.addInitScript(
@@ -533,30 +530,120 @@ describe("the dock", () => {
                 JSON.stringify(addresses),
               );
           },
-          { chat: urlProduct.url, browse: second.url },
+          { browse: urlProduct.url },
         );
         const page = await openHost(context);
         await signIn(page);
-        await page.click('#dock [data-destination="chat"]');
-        await productFrame(page, new URL(urlProduct.url).origin);
         await page.click('#dock [data-destination="browse"]');
-        await productFrame(page, new URL(second.url).origin);
-        expect(await page.locator("#product-slot iframe").count()).toBe(2);
+        await productFrame(page, new URL(urlProduct.url).origin);
+        await page.click('#dock [data-destination="chat"]');
+        expect(await page.locator("#product-slot iframe").count()).toBe(1);
 
         await openMenu(page);
         await page.click("#sign-out");
         await page.waitForFunction(
-          () => document.querySelectorAll("#product-slot iframe").length === 1,
+          () => document.querySelectorAll("#product-slot iframe").length === 0,
         );
-        // Only the product in front is reopened, as the new session's own.
+        // Nothing was in front, so nothing is reopened for the new session.
         expect(await destinations(page)).toEqual({
-          chat: "behind/idle",
-          browse: "front/running",
+          chat: "front/idle",
+          browse: "behind/idle",
           pocket: "behind/idle",
         });
+        // The screen follows the session change, which lands after the frame closes.
+        await page
+          .locator(".chat-empty-title")
+          .filter({ hasText: "Sign in to chat" })
+          .waitFor();
       } finally {
         await context.close();
-        second.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "refuses Chat for the public phrase and stores nothing",
+    async () => {
+      const context = await newContext();
+      try {
+        const page = await openHost(context);
+        await page.click('#dock [data-destination="chat"]');
+        await page.locator("#chat-screen").waitFor({ state: "visible" });
+        expect(await page.locator("#product-slot iframe").count()).toBe(0);
+        expect(await page.locator(".chat-empty-title").innerText()).toBe(
+          "Sign in to chat",
+        );
+
+        await signIn(page);
+        await page
+          .locator(".chat-empty-title")
+          .filter({ hasText: "Chat is unavailable" })
+          .waitFor();
+        expect(await page.locator(".chat-empty-body").innerText()).toContain(
+          "public development phrase",
+        );
+        expect(
+          await page.getAttribute("#chat-screen", "data-chat-engine"),
+        ).toBe("off");
+        expect(
+          await page.evaluate(() =>
+            Object.keys(localStorage).filter((key) => key.includes(":chat:")),
+          ),
+        ).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "starts Chat at sign-in, with Chat hidden, and stops it at sign-out",
+    async () => {
+      const context = await newContext();
+      // No chain traffic: the light client gets no peer, so nothing is read
+      // or published, while the engine still starts and subscribes.
+      await context.routeWebSocket(/.*/, (socket) => socket.close());
+      try {
+        const page = await openHost(context);
+        await signInWith(page, SYNTHETIC_MNEMONIC);
+        // Chat runs for the session while Browse or Pocket is in front.
+        await page.waitForFunction(
+          () =>
+            document.querySelector<HTMLElement>("#chat-screen")?.dataset
+              .chatEngine !== "off",
+        );
+        expect(await page.locator("#chat-screen").isHidden()).toBe(true);
+
+        await page.click('#dock [data-destination="chat"]');
+        // The host derives the identity and chat key and does not run when
+        // either differs from what the core reports.
+        const who = page.locator(".chat-identity-who");
+        await who.waitFor();
+        const identity = (await page.getAttribute("#session", "title"))?.match(
+          /Identity account (0x[0-9a-f]{64})/,
+        )?.[1];
+        expect(identity).toBeDefined();
+        expect(await who.getAttribute("title")).toContain(
+          `Identity account ${identity}`,
+        );
+        // There are no controls to turn chat or writes on.
+        expect(
+          await page.locator('[data-action^="chat-"], .chat-toggle').count(),
+        ).toBe(0);
+
+        await openMenu(page);
+        await page.click("#sign-out");
+        await page
+          .locator(".chat-empty-title")
+          .filter({ hasText: "Sign in to chat" })
+          .waitFor();
+        expect(
+          await page.getAttribute("#chat-screen", "data-chat-engine"),
+        ).toBe("off");
+      } finally {
+        await context.close();
       }
     },
     TEST_MS,

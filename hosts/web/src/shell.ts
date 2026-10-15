@@ -8,7 +8,7 @@ export const DESTINATIONS = ["chat", "browse", "pocket"] as const;
 export type Destination = (typeof DESTINATIONS)[number];
 
 /** Destinations that open a product. The others are screens the host draws itself. */
-export const PRODUCT_DESTINATIONS = ["chat", "browse"] as const;
+export const PRODUCT_DESTINATIONS = ["browse"] as const;
 export type ProductDestination = (typeof PRODUCT_DESTINATIONS)[number];
 
 export function isProductDestination(
@@ -31,12 +31,11 @@ export type DockAddresses = Record<ProductDestination, string>;
 
 /** What a destination opens before the user chooses. Only names known to be published are listed. */
 const DEFAULTS: Record<string, Partial<DockAddresses>> = {
-  paseo: { chat: "chat-spa-verbosity.paseo", browse: "browse.paseo" },
+  paseo: { browse: "browse.paseo" },
 };
 
 export function defaultAddresses(network: string): DockAddresses {
   return {
-    chat: "",
     browse: "",
     ...DEFAULTS[normalizeNetwork(network)],
   };
