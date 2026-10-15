@@ -6,21 +6,21 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 > The following is a prototype, reference implementation, and proof-of-concept. This open source code is provided for research, experimentation, and developer education only. This code has not been audited, is actively experimental, and may contain bugs, vulnerabilities, or incomplete features. Use at your own risk.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](./LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/paritytech/host-rust-core/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/paritytech/host-rust-core/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-rustdoc-blue?style=flat-square)](https://paritytech.github.io/host-rust-core)
+[![CI](https://img.shields.io/github/actions/workflow/status/paritytech/trinity-user-agents/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/paritytech/trinity-user-agents/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-rustdoc-blue?style=flat-square)](https://paritytech.github.io/trinity-user-agents)
 [![Playground](https://img.shields.io/badge/playground-live-success?style=flat-square)](https://truapi-playground.paseo.li/)
 
 
 ## Documentation
 
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
-- [Rust API reference](https://paritytech.github.io/host-rust-core/)
+- [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
 ## Try it
 
-Browse the published Rust API docs at [paritytech.github.io/host-rust-core](https://paritytech.github.io/host-rust-core).
+Browse the published Rust API docs at [paritytech.github.io/trinity-user-agents](https://paritytech.github.io/trinity-user-agents).
 
 The interactive playground lets you browse every method, edit request payloads, and call or subscribe to them live against a connected host. It also drives an end-to-end **Diagnosis** that produces a per-host pass/fail report ([playground/README.md → Diagnosis](playground/README.md#diagnosis)). The explorer aggregates those reports into a cross-host **Compatibility** matrix ([explorer/README.md → Host compatibility matrix](explorer/README.md#host-compatibility-matrix)).
 
@@ -31,10 +31,20 @@ The interactive playground lets you browse every method, edit request payloads, 
 `truapi-host` runs a TrUAPI host on your machine, so you can develop and test a product without a phone or a desktop host build:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 ```
 
 Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
+
+`truapi-host signing-host --session <name>` opens an interactive session and
+restores or creates its signer. `/session <name>` switches to the saved account
+or resumes an unfinished setup. In `exec` mode, `--session` selects the command's
+session; inspection and clearing commands do not create accounts. A username
+base such as `workbench` selects the most recently created local session with
+that base; `workbench.42` selects that exact session. Creating an account from a
+session name requires at least six lowercase ASCII letters after digits and
+separators are omitted. A new `/session foo` fails immediately as too short;
+existing saved accounts and aliases still restore normally.
 
 The signing host registers its built-in full and lite personhood keys when an
 authorized product first lists `peopl.<network suffix>` (for example,
@@ -123,6 +133,7 @@ hosts/ios/                 iOS host app; resolves the core from this tree
 hosts/android/             Android host app
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
+e2e/host-playground/       host-playground suite run inside the native host apps; see its README
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
@@ -163,7 +174,7 @@ outputs; `scripts/rebuild.sh` regenerates them along with the xcframework
 (`make xcframework` + `make uniffi`); see
 [`ios/truapi-host/README.md`](ios/truapi-host/README.md).
 The container publishes the shared client and a temporary MessagePort adapter for
-older SDKs. The adapter's removal is tracked in [#881](https://github.com/paritytech/host-rust-core/issues/881);
+older SDKs. The adapter's removal is tracked in [#881](https://github.com/paritytech/trinity-user-agents/issues/881);
 CLI and iframe MessagePort transports remain supported.
 The [container permission boundary](js/container/README.md) documents the protected
 operations and the built-ins that remain mutable for product compatibility.
@@ -178,6 +189,7 @@ for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
 session-record cleanup remain on the wallet side.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
+SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`
 encoding for `with_signed_transaction`.
 
@@ -227,6 +239,19 @@ host owns where the bytes live. The crate stores nothing itself: a host implemen
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
 control of quota and of whether the bytes are backed up or encrypted.
 
+### Durable transactions
+
+Native signing hosts keep a ledger of signed transactions in the core database,
+so a payment or transfer is followed to a verdict across crashes and restarts.
+A domain in the core registers presigned mortal extrinsics; the core broadcasts
+them once the rows commit, watches each one, and decides whatever it no longer
+watches from the chain. Signed bytes are never stored, so a transaction left
+live by a previous process is decided by recovery rather than sent again.
+
+The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
+run a background task that awaits `runDurableRecovery()`, which returns once
+nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+
 ### Wire debugger
 
 [`@parity/truapi-debugger`](js/packages/truapi-debugger) is the consumer for the
@@ -254,7 +279,7 @@ so `make dev` leaves the board empty with no error.
 1. The protocol is defined as Rust traits in [`rust/crates/truapi/`](rust/crates/truapi/), with each trait tagged `#[wire_trait(id = N)]` and each method tagged `#[wire(id = N)]` for a stable byte-level `(trait, method)` dispatch table. Every method's doc comment must carry a ` ```ts ` example, which codegen extracts into the playground's EXAMPLE tab; the build fails if any method is missing one.
 2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in `js/packages/truapi/`.
 3. Higher-level SDKs wrap the typed client; the transport encodes SCALE frames and ships them over WebSocket, `MessagePort`, or `postMessage` in iframe mode to the host.
-4. The host decodes the frame, dispatches to the matching trait method, encodes the response, and ships it back.
+4. The host decodes the frame and dispatches to the matching trait method. Capability handlers use `latest` payloads internally and convert responses, subscription items, and domain errors to the request version before the host encodes and sends them.
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
@@ -272,6 +297,12 @@ make wasm     # rebuild truapi WASM artifacts under js/packages/truapi-host/dist
 
 CI regenerates the shared bindings before building and testing both npm
 packages, so generated client and host callback changes are checked together.
+
+CI and `make check` enforce Rust formatting, including the runtime module tree, and Prettier formatting for the JS host package. Run `make fmt` and `npm run format --prefix js/packages/truapi-host` to apply the same rules locally. Use `make fmt-check` or `format:check` for the JS package to check without writing. Rust uses the nightly in `nightly-toolchain` and the [Polkadot SDK formatting rules](https://github.com/paritytech/polkadot-sdk/blob/master/.rustfmt.toml) with edition 2024.
+
+Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
+
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
 
 Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, while protocol boundaries preserve error variants and reason strings. CLI filesystem and session errors retain concrete causes and their operation or path.
 
@@ -309,6 +340,21 @@ a pass means the host and the product agree on what happened rather than
 resting on the product's word. The report lands at
 `explorer/diagnosis-reports/pocket/signing-host-cli.md` and feeds the explorer's
 Pocket compatibility matrix.
+
+`Game` (`remind_next_game`, `cancel_next_game`) serves only the game product,
+`dim2` on every network, and answers `Unsupported` to any other. The battery
+runs as another product, so it skips the `Game` service, and so does the
+playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
+roles still install an in-memory `CliGameHost` that never rings anything. The
+`truapi` runtime tests cover the product gate, the start-time check, a call
+withdrawn before it reaches the host, the absence of any permission prompt, and
+host failures.
+
+`Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
+"Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
+it from `TRUAPI_SCAN_TEXT`, or with a dismissal when it is unset, so the
+battery runs it. The playground's
+Diagnosis skips it, since dot.li has no viewfinder and answers `Unsupported`.
 
 To run the playground locally in a plain browser tab, against a signing host on
 your own machine:
@@ -435,8 +481,15 @@ crates. `SIM_ONLY=1` halves it by skipping
 the device slice, which is enough for Simulator but not for an archive.
 
 Because the app builds against the core in this tree, a core change that breaks
-it fails here rather than at the next version bump. Every pull request touching
-the app, or the crates its bindings come from, runs:
+it fails here rather than at the next version bump. Every push to main runs the
+jobs below, and so does a pull request touching the app, or the crates its
+bindings come from, once it is labelled `ios-simulator-build`. They are macOS
+jobs, so a pull request without the label runs none of them. CI's
+`iOS package (Swift + WebKit)` job still compiles the TrUAPIHost package against
+the core on a pull request touching `ios/` or the core crates, but the app itself
+is compiled before merge only with the label. The first time a pull request
+touches the iOS or Android app, `build-label-hint.yml` comments with the labels
+that build it: `ios-simulator-build`, `ios-device-build` and `android-device-build`.
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
@@ -456,6 +509,12 @@ xcrun simctl launch booted io.parity.polkadotapp.develop
 
 It is an arm64 simulator slice, so it needs an Apple Silicon Mac and cannot be
 installed on a device.
+
+### A product from your Mac on a phone
+
+Debug builds of both apps open a product from a development server on your Mac,
+on the simulator, the emulator or a phone, without a deploy. See
+[docs/dev-server-on-a-phone.md](docs/dev-server-on-a-phone.md).
 
 ### A build that installs on a phone
 
@@ -490,19 +549,25 @@ branch to this repository to get one.
 ### Android builds that reach testers
 
 Two workflows deliver through Firebase App Distribution, which reaches a named
-tester group rather than anyone holding a link. That matters beyond
-convenience: these builds carry configuration that should not be public, so
-attaching them to a release is not an option.
+tester group. The nightly also attaches its APKs to a public GitHub prerelease,
+so anything built into a nightly is public.
 
 `android-nightly.yml` runs daily at 22:00 UTC, two hours after the iOS
-nightly starts, so the two never overlap. Each announcement lists the pull
+nightly starts, so the two never overlap. It publishes both flavours on a
+GitHub prerelease, `app-gp-nightly.apk` and `app-vanilla-nightly.apk` (without
+Google Play services), and sends the gp one to Firebase App Distribution.
+Every run on `main` also refreshes the `nightly-android` release, so the latest
+build always downloads from the same two links:
+`https://github.com/paritytech/trinity-user-agents/releases/download/nightly-android/app-gp-nightly.apk`
+and the same path ending in `app-vanilla-nightly.apk`.
+Each announcement links both APKs and lists the pull
 requests the build carries, with breaking changes, the titles carrying `!`,
 listed first and marked `Breaking:`. Both nightlies skip a scheduled night
 when `main` has not moved past what their last successful run built. `android-debug-distribution.yml` runs
-when a pull request merges to `main`, and answers what `main` does right now.
-It builds the merge commit rather than the pull request's merge preview, which
-is computed while the request is open and would otherwise ship a tree missing
-whatever landed first.
+on every push to `main`, and answers what `main` does right now. It builds the
+pushed commit, the one that landed. A push rather than the pull request's merge
+event, because the Firebase identity is bound to `main`, and a pull request
+event's token never matches that binding.
 
 Both authenticate by federation. The run proves its identity with its OIDC
 token and receives a short lived credential, so no long lived key for that
@@ -531,7 +596,10 @@ Variables: `APPLICATION_ID`, `APPLICATION_NAME`, `CURRENCY_SYMBOL`,
 `LOG_COLLECTION_EMAIL`, `PRIVACY_POLICY_URL`, `TERMS_OF_USE_URL`,
 `SENTRY_ORG`, `SENTRY_PROJECT`, `GAME_RESULTS_FALLBACK_URL`,
 `REFERRAL_WEB_HOST`, `CONTACT_EMAIL`, `ANDROID_FIREBASE_GROUP`,
-`ANDROID_FIREBASE_DEBUG_GROUP`.
+`ANDROID_FIREBASE_DEBUG_GROUP`, and optionally `IOS_BUNDLE_ID`, the iOS app's
+bundle id the Android app names as the APNs topic for chat pushes to iOS
+contacts. It defaults to `io.parity.polkadotapp`, matching the iOS nightly;
+debug builds append `.develop` and safetynet `.safety`, as the iOS builds do.
 
 `GOOGLE_PROJECT_ID` carries an `L` suffix. It is interpolated into a Java
 `long` literal, and a twelve digit project number overflows an `int` without
@@ -623,6 +691,31 @@ make ios-chat-host-playground-run
 
 Run both integrations with one iOS build using `make ios-chat-all`.
 
+The Android twin of that launcher runs the same TrUAPI Playground worker
+against the shared core inside a headless emulator, and writes its report to
+`playground/test-results/android-chat/diagnosis-report.md`:
+
+```bash
+cd hosts/android && ./gradlew :app:assembleVanillaDebug && cd -
+make android-chat-playground-run
+```
+
+Prerequisites:
+
+- an Android SDK on `ANDROID_HOME`, with the `truapi-chat-e2e` AVD created
+- the Rust Android targets (`make android-jni`, which needs `cargo-ndk` and the NDK)
+- a `python` on `PATH`, which the rust-android-gradle linker wrapper shells out to
+- a stub `hosts/android/app/google-services.json`
+- a debug keystore configured in `hosts/android/local.properties`
+- the debug `applicationId` `com.example.polkadot.debug`; a fork that renames it
+  must pass `TRUAPI_ANDROID_E2E_PACKAGE`
+
+The `TRUAPI_ANDROID_E2E_*` environment variables override every default
+(device, APK, product, room, message, username, URL, report path); they
+mirror the iOS `TRUAPI_IOS_E2E_*` ones.
+
+The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md).
+
 ## Regenerate the TypeScript client
 
 When the Rust trait surface changes:
@@ -652,7 +745,7 @@ use a different state directory while debugging.
 Pushes to `main` build and deploy:
 
 - The playground to the dotNS label [`truapi-playground`](https://truapi-playground.paseo.li/), live as `truapi-playground.paseo`, via [`.github/workflows/deploy-playground.yml`](.github/workflows/deploy-playground.yml).
-- The Rust API docs to [https://paritytech.github.io/host-rust-core](https://paritytech.github.io/host-rust-core) via [`.github/workflows/deploy-docs.yml`](.github/workflows/deploy-docs.yml).
+- The Rust API docs to [https://paritytech.github.io/trinity-user-agents](https://paritytech.github.io/trinity-user-agents) via [`.github/workflows/deploy-docs.yml`](.github/workflows/deploy-docs.yml).
 
 ## Release
 

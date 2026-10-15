@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.design.components.button.icon
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -41,7 +42,8 @@ fun PolkadotIconButton(
     style: PolkadotButtonStyle = PolkadotButtonStyle.primary(),
     size: PolkadotIconButtonSize = PolkadotIconButtonSize.extraLarge(),
     shape: Shape = PolkadotButtonShape.rounded,
-    interactionSource: MutableInteractionSource? = null
+    interactionSource: MutableInteractionSource? = null,
+    border: BorderStroke? = null,
 ) {
     val interactive = enabled && !loading
 
@@ -55,6 +57,7 @@ fun PolkadotIconButton(
         rippleColor = style.rippleColor,
         contentPadding = size.padding,
         interactionSource = interactionSource,
+        border = border,
         content = {
             Box {
                 val progressAlpha by animateFloatAsState(

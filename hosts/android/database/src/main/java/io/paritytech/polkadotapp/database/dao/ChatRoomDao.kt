@@ -38,7 +38,7 @@ abstract class ChatRoomDao {
                COALESCE(counts.unseenCount, 0) AS unseenCount,
                COALESCE(counts.hasUnseenReaction, 0) AS hasUnseenReaction,
                m.id AS msg_id, m.chatId AS msg_chatId, m.timestamp AS msg_timestamp,
-               m.updatedAt AS msg_updatedAt,
+               m.updatedAt AS msg_updatedAt, m.sortOrder AS msg_sortOrder,
                m.origintype AS msg_origintype, m.originkey AS msg_originkey,
                m.status AS msg_status, COALESCE(rev.type, m.type) AS msg_type,
                m.searchableContent AS msg_searchableContent,
@@ -55,13 +55,13 @@ abstract class ChatRoomDao {
         LEFT JOIN chat_messages m ON m.id = (
             SELECT lm.id FROM chat_messages lm
             WHERE lm.chatId = r.id AND lm.isInternal = 0 AND lm.type != 'EDITED'
-            ORDER BY lm.timestamp DESC
+            ORDER BY lm.sortOrder DESC, lm.timestamp DESC
             LIMIT 1
         )
         LEFT JOIN message_revisions rev ON rev.messageId = m.id AND rev.timestamp = (
             SELECT MAX(r2.timestamp) FROM message_revisions r2 WHERE r2.messageId = m.id
         )
-        ORDER BY COALESCE(m.timestamp, r.createdAt) DESC
+        ORDER BY m.sortOrder DESC, COALESCE(m.timestamp, r.createdAt) DESC
         """
     )
     abstract fun subscribeChatSummaries(): Flow<List<ChatRoomSummaryLocal>>

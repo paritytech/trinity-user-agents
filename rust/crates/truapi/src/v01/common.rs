@@ -6,6 +6,6 @@ use parity_scale_codec::{Decode, Encode};
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display, Error, From)]
 #[display("{reason}")]
 pub struct GenericError {
-    /// Human-readable failure reason.
-    pub reason: String,
+	/// Human-readable failure reason.
+	pub reason: String,
 }

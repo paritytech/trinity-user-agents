@@ -3,6 +3,7 @@ import AsyncExtensions
 import PolkadotUI
 import StructuredConcurrency
 import FoundationExt
+import ChainRegistry
 
 protocol ChainStatusProviding: Actor {
     nonisolated func statusStream() -> AnyAsyncSequence<[ChainConnectionStatusViewModel]>
@@ -24,6 +25,7 @@ actor ChainStatusProvider {
     private let anchorProvider: ChainLivenessAnchorProviding
     private let appStateStreamFactory: ApplicationStateStreamFactory
     private let statementStoreStatusProvider: StatementStoreStatusProviding
+    private let chainRegistry: ChainRegistryProtocol
     private let logger: LoggerProtocol
 
     private nonisolated let rowsSubject: AsyncCurrentValueSubject<[ChainConnectionStatusViewModel]>
@@ -50,6 +52,7 @@ actor ChainStatusProvider {
         anchorProvider: ChainLivenessAnchorProviding,
         appStateStreamFactory: ApplicationStateStreamFactory,
         statementStoreStatusProvider: StatementStoreStatusProviding,
+        chainRegistry: ChainRegistryProtocol,
         logger: LoggerProtocol
     ) {
         self.networkStatusService = networkStatusService
@@ -57,17 +60,15 @@ actor ChainStatusProvider {
         self.anchorProvider = anchorProvider
         self.appStateStreamFactory = appStateStreamFactory
         self.statementStoreStatusProvider = statementStoreStatusProvider
+        self.chainRegistry = chainRegistry
         self.logger = logger
 
         let seededStatuses = ChainConnectionTarget.allCases
             .reduce(into: [ChainConnectionTarget: NetworkStatus]()) { $0[$1] = .connecting }
 
         statuses = seededStatuses
-        liveness = ChainConnectionTarget.allCases.reduce(into: [:]) { dict, target in
-            dict[target] = ChainLiveness(blockPeriod: target.expectedBlockTime)
-        }
         rowsSubject = AsyncCurrentValueSubject(
-            Self.makeRows(statuses: seededStatuses, statementStore: .connecting)
+            Self.makeRows(statuses: seededStatuses, statementStore: .connecting, liveness: [:])
         )
     }
 
@@ -133,6 +134,7 @@ extension ChainStatusProvider {
             // Without this a drop-and-reconnect keeps captioning the row with its pre-drop data.
             await blockProvider.clear(for: target)
         } else if previousStatus != .connected, status == .connected {
+            applyBlockTime(for: target)
             startAnchor(for: target, at: date)
         }
 
@@ -175,7 +177,11 @@ extension ChainStatusProvider {
     }
 
     func emitRows(at date: Date = Date()) {
-        let rawRows = Self.makeRows(statuses: statuses, statementStore: statementStoreStatus)
+        let rawRows = Self.makeRows(
+            statuses: statuses,
+            statementStore: statementStoreStatus,
+            liveness: liveness
+        )
         let indicatedRows = indicateRows(rawRows, at: date)
 
         guard indicatedRows != lastEmittedRows else { return }
@@ -259,7 +265,8 @@ extension ChainStatusProvider {
 
     static func makeRows(
         statuses: [ChainConnectionTarget: NetworkStatus],
-        statementStore: StatementStoreStatus
+        statementStore: StatementStoreStatus,
+        liveness: [ChainConnectionTarget: ChainLiveness]
     ) -> [ChainConnectionStatusViewModel] {
         let targetRows = ChainConnectionTarget.allCases.map { target in
             let state = (statuses[target] ?? .connecting).connectionState
@@ -272,7 +279,7 @@ extension ChainStatusProvider {
                 icon: target.statusIcon,
                 indication: ChainStatusIndication.resolve(state: state, liveness: nil),
                 liveness: nil,
-                expectedBlockSeconds: target.expectedBlockTime.timeInterval
+                expectedBlockSeconds: (liveness[target]?.blockPeriod ?? target.fallbackBlockTime).timeInterval
             )
         }
 
@@ -293,6 +300,17 @@ extension ChainStatusProvider {
             expectedBlockSeconds: 0,
             showsChainMetrics: false
         )
+    }
+
+    /// Rebuilding the window is safe because the caller re-anchors right after.
+    private func applyBlockTime(for target: ChainConnectionTarget) {
+        let resolved = target.blockTime(from: chainRegistry.getChain(for: target.chainId))
+
+        guard resolved != liveness[target]?.blockPeriod else {
+            return
+        }
+
+        liveness[target] = ChainLiveness(blockPeriod: resolved)
     }
 
     private func startAnchor(for target: ChainConnectionTarget, at date: Date) {

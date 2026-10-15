@@ -32,6 +32,7 @@ fun ChatMessage.toLocal(
         id = id,
         timestamp = timestamp,
         updatedAt = System.currentTimeMillis(),
+        sortOrder = ChatMessageLocal.UNORDERED,
         origin = origin.toLocal(),
         status = status.toLocal(),
         type = type,

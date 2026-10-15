@@ -68,7 +68,7 @@ needs the Remote Config parameters from §3.
 
 | Variable | Used for | If empty |
 |----------|----------|----------|
-| `SENTRY_DSN` | Sentry crash/issue reporting DSN (`TESTNET_FEATURE` builds only) | Issue monitoring disabled |
+| `SENTRY_DSN` | Sentry crash/issue reporting DSN (ignored unless the build links Sentry — see §9) | Issue monitoring disabled |
 | `MELD_BASIC_AUTH_TOKEN` | Meld fiat on-ramp basic auth (`<key>:<secret>`, base64) | Fiat on-ramp auth unset |
 
 ### Signing & distribution — GitHub Actions secrets (not needed for local simulator runs)
@@ -117,8 +117,11 @@ set in `ios-firebase-debug-distribution.yml` (default `polkadotapp-ios`) and can
 overridden per run.
 
 Backend and on-chain endpoints (identity backend, IPFS gateway, DotNS
-contracts, game dashboard) are **not** build-time variables: the app fetches
+contracts) are **not** build-time variables: the app fetches
 them at runtime via Firebase Remote Config — see §3.
+
+Keys the app no longer reads are listed in neither table. Retiring their entries in
+the Firebase console is a separate operational step.
 
 ---
 
@@ -158,7 +161,6 @@ Required for the app to start:
 | `ipfs_gateway_url` | string | IPFS gateway used to fetch DotNS-published dApp content. |
 | `dot_ns_config` | JSON object | `{"resolverContractAddress": "<hex>", "registryContractAddress": "<hex>"}` — DotNS contracts on the Asset Hub chain (`pallet-revive`). `registryContractAddress` may be omitted or empty, which disables manifest resolution. |
 | `coinage_instance_id` | string | Decimal `UInt32` — the Coinage instance the app pays through. |
-| `game_dashboard_url` | string | DIM2 game dashboard base URL. Required only in builds compiled with `TESTNET_FEATURE`; ignored otherwise. |
 
 Optional — an absent key disables or degrades the feature it drives:
 
@@ -169,10 +171,7 @@ Optional — an absent key disables or degrades the feature it drives:
 | `funding_domain` | string | Legacy DotNS label of the funding dApp; read only when `funding_config.onrampUrl` is absent. |
 | `cross_chain_transfers`, `xcm_general_config` | JSON | XCM transfer routes for the deposit flow (`XcmTransfersSyncService`). Deposits via XCM stay unavailable without them. |
 | `transaction_extension_versions` | JSON object | `{"<chainId>": <uint8>}` — transaction-extension version per chain; defaults to `0`. |
-| `collectibles_enabled` | bool | Shows the collectibles entry on the wallet screen. |
 | `payment_asset_config` | JSON object | `{"symbol": "CASH", "iconSquareUrl": "https://…/square.svg", "iconWideUrl": "https://…/wide.svg"}` — the payment asset's symbol and logos: a square mark for amounts and payment messages, a wide mark-plus-wordmark for the balance card, as absolute web URLs (SVG or PNG; an SVG must not set `fill="none"` on its root element, which the iOS renderer cannot draw). Each field is optional; anything missing or failing to load falls back to the bundled brand (`BRAND_CASH_SYMBOL` and the built-in mark). Logos are fetched as soon as the config is applied and kept cached by URL, so a change shows on the next config refresh without an app update; publish a changed logo under a new URL. Test assets live in `docs/assets/payment-asset/`. |
-| `collectibles_fallback_url` | string | Web URL used when the collectibles dApp cannot be resolved through DotNS. |
-| `game_results_fallback_url` | string | Web URL used when the game-results dApp cannot be resolved through DotNS. |
 | `app_sharing_url` | string | Download link included in the message the ID card's Share button composes ("Download it at {link} and add me – my username is {username}."). Without it the message is shared without the link sentence. |
 
 **Chain ids per environment.** `KnownChainId` (`polkadot-app/AppConfig/KnownChains.swift`)
@@ -327,11 +326,19 @@ service-account JSON, or `--service-credentials-file`).
 
 ## 9. Crash symbols (Sentry)
 
-Sentry is disabled for `Release` builds — the SDK is only compiled into
-`TESTNET_FEATURE` configurations (`Debug`/`DevCI`/`Nightly`). Accordingly, the
-**"Upload Debug Symbols to Sentry"** Xcode build phase uploads dSYMs on all
+Sentry is **linked only when the build environment sets `ISSUE_MONITORING=sentry`**.
+`Packages/IssueMonitoring/Package.swift` reads it at resolve time, so without it
+sentry-cocoa never enters the dependency graph.
+
+Fastlane sets the variable for every configuration except `Release`, caches
+resolved packages per flavour, and `verify_no_issue_monitoring` fails the build on
+any Sentry symbol or DSN found in the archive. Local `Debug` builds and the nightly
+simulator build also run without Sentry, since neither sets the variable.
+
+The **"Upload Debug Symbols to Sentry"** Xcode build phase uploads dSYMs on all
 configurations except `Debug` and `Release`, and only when `sentry-cli` is
-installed; otherwise it prints a warning and continues.
+installed; otherwise it prints a warning and continues. The `distribute_testflight`
+lane skips its `sentry_debug_files_upload` for `Release` on the same grounds.
 
 > The build phase currently hardcodes `SENTRY_ORG` and `SENTRY_PROJECT` (set to
 > the upstream project). **Change these to your own org/project** — or remove

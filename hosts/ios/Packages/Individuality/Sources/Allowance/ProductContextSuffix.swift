@@ -8,6 +8,8 @@ import SubstrateSdk
 /// `support/src/context.rs`. A wrong input produces a valid-looking alias that only the chain
 /// rejects — change nothing here without a matching change in the pallet.
 enum ProductContextSuffix {
+    /// `resources::notification` — family 1.
+    case notificationSlot(period: UInt32, seq: UInt8)
     /// `personhood::statement_store_slot` — family 2.
     case statementStoreSlot(period: UInt32, seq: UInt32)
     /// `personhood::long_term_storage` — family 3.
@@ -21,6 +23,8 @@ enum ProductContextSuffix {
     private static let systemPrefix = Data("sys/".utf8)
     private static let suffixLength = 32
 
+    /// Family number for `resources::notification`.
+    private static let notificationFamily: UInt32 = 1
     /// Family number for `personhood::statement_store_slot`.
     private static let statementStoreSlotFamily: UInt32 = 2
     /// Family number for `personhood::long_term_storage`.
@@ -32,6 +36,8 @@ enum ProductContextSuffix {
     /// `"sys/" ++ LE(family) ++ LE(first) ++ tail`, zero-padded to 32 bytes.
     var bytes: Data {
         switch self {
+        case let .notificationSlot(period, seq):
+            Self.rawSuffix(family: Self.notificationFamily, first: period, tail: seq)
         case let .statementStoreSlot(period, seq):
             Self.rawSuffix(family: Self.statementStoreSlotFamily, first: period, second: seq)
         case let .longTermStorage(period, counter):

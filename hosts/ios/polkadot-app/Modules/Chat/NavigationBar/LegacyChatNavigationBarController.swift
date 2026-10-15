@@ -43,26 +43,4 @@ final class LegacyChatNavigationBarController: ChatNavigationBarControlling {
     }
 
     func update(headerConfiguration _: ChatHeaderConfiguration) {}
-
-    func setPinnedTitle(_ title: String?) {
-        if let title {
-            navigationItem?.title = nil
-            navigationItem?.titleView = Self.makePlainTitleLabel(text: title)
-        } else {
-            navigationItem?.title = nil
-            navigationItem?.titleView = titleView
-        }
-    }
-}
-
-private extension LegacyChatNavigationBarController {
-    static func makePlainTitleLabel(text: String) -> UILabel {
-        let label = UILabel()
-        label.font = .title18SemiBold()
-        label.textColor = .white
-        label.textAlignment = .center
-        label.text = text
-        label.accessibilityId(AccessibilityID.Game.weeklyTitle)
-        return label
-    }
 }

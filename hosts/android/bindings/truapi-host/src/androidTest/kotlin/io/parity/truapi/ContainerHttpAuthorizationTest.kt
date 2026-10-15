@@ -40,6 +40,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.io.path.createTempDirectory
 
 @RunWith(AndroidJUnit4::class)
 class ContainerHttpAuthorizationTest {
@@ -64,6 +65,7 @@ class ContainerHttpAuthorizationTest {
             bulletinChainGenesisHash = ByteArray(32),
             assetHubChainGenesisHash = ByteArray(32),
             networkSuffix = "paseo",
+            databaseDirectory = createTempDirectory("truapi").toString(),
         )
 
         TrUAPIHostRuntime(bridge, config).use { runtime ->

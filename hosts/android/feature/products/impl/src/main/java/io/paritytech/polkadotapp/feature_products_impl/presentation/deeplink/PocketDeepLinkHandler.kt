@@ -11,13 +11,14 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.isPocketTarget
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardIdentifier
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketPublishError
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.PocketDeeplink
@@ -30,8 +31,9 @@ import javax.inject.Inject
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
- * `polkadotapp://<product>.<tld>/-/pocket/{add,open}?card=<id>`. The first segment `-` is reserved
- * for host-handled targets, so the product App handler leaves these alone.
+ * `polkadotapp://<product>.<tld>/-/pocket/{add,open}?card=<id>`, and `/-/pocket` alone for the
+ * collection. The first segment `-` is reserved for host-handled targets, so the product App handler
+ * leaves these alone.
  */
 internal class PocketDeepLinkHandler @Inject constructor(
     private val dispatchers: CoroutineDispatchers,
@@ -39,6 +41,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
     private val parser: PocketDeeplinkParser,
     private val publishedCards: PublishedPocketCards,
     private val collection: PocketCollection,
+    private val cardOpenRequests: PocketCardOpenRequests,
     private val gate: ProductDeepLinkGate,
     private val router: ProductsRouter,
     @param:ApplicationContext private val context: Context,
@@ -73,16 +76,25 @@ internal class PocketDeepLinkHandler @Inject constructor(
         }
     }
 
-    private suspend fun dispatch(productId: ProductId, deeplink: PocketDeeplink): Result<DeeplinkProcessingOutcome> {
-        val key = runCatching { PocketCardKey(productId, PocketCardIdentifier.screen(deeplink.cardId)) }
-            .getOrElse { return Result.failure(it) }
+    private suspend fun dispatch(productId: ProductId, deeplink: PocketDeeplink): Result<DeeplinkProcessingOutcome> =
+        when (deeplink) {
+            is PocketDeeplink.Collection -> Result.success(DeeplinkProcessingOutcome.Navigate { router.openWalletTab() })
+            is PocketDeeplink.Card -> dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId)))
+        }
+
+    private suspend fun dispatchCard(key: PocketCardKey): Result<DeeplinkProcessingOutcome> {
         val present = collection.observeCards().first().any { it.key == key }
 
         // A card already held is opened, whichever action asked for it. One that is not held has to
         // be approved before it can be opened, so both actions lead to the same offer; what the
         // product publishes decides whether there is one to make.
         return if (present) {
-            Result.success(DeeplinkProcessingOutcome.Navigate { router.openPocketCard(key) })
+            Result.success(
+                DeeplinkProcessingOutcome.Navigate {
+                    cardOpenRequests.request(key)
+                    router.openWalletTab()
+                },
+            )
         } else {
             offerToAdd(key)
         }

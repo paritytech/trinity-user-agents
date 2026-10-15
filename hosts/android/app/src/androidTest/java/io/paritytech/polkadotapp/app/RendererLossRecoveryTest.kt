@@ -36,6 +36,7 @@ import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import kotlin.io.path.createTempDirectory
 
 @RunWith(AndroidJUnit4::class)
 class RendererLossRecoveryTest {
@@ -128,6 +129,7 @@ class RendererLossRecoveryTest {
             bulletinChainGenesisHash = ByteArray(32),
             assetHubChainGenesisHash = ByteArray(32),
             networkSuffix = "paseo",
+            databaseDirectory = createTempDirectory("truapi").toString(),
         )
 
         // Reading the client is what dials the host, so each fresh page reports its own connection.

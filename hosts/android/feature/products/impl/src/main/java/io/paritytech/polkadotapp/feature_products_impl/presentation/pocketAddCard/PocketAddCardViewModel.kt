@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCard
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocketAddCard.PocketAddCardInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocketAddCard.PocketAddCardOffer
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -79,7 +80,7 @@ class PocketAddCardViewModel @Inject constructor(
     private fun PocketAddCardOffer.toUiState(adding: Boolean) = PocketAddCardUiState(
         productName = productName,
         title = title,
-        face = face,
+        face = face.toJsWidget(),
         imageResolver = imageResolver,
         adding = adding,
     )

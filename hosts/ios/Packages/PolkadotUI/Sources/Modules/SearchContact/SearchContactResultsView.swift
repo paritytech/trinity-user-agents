@@ -118,7 +118,6 @@ public final class SearchContactResultsView: DiffableCollectionViewProviderView<
         updateStatusFloor(for: status)
         noResultsLabel.attributedText = status.message
         noResultsLabel.setHidden(status.message == nil)
-        loadingView.bind(text: status.loaderText)
         loadingView.setLoading(status.showsLoader)
     }
 
@@ -135,16 +134,13 @@ public extension SearchContactResultsView {
     struct StatusViewModel {
         public let message: NSAttributedString?
         public let showsLoader: Bool
-        public let loaderText: String?
 
         public init(
             message: NSAttributedString? = nil,
-            showsLoader: Bool = false,
-            loaderText: String? = nil
+            showsLoader: Bool = false
         ) {
             self.message = message
             self.showsLoader = showsLoader
-            self.loaderText = loaderText
         }
     }
 
@@ -323,10 +319,7 @@ extension SearchContactResultsView: UICollectionViewDelegate {
     let layout = SearchContactResultsView()
     let viewModel = SearchContactResultsView.ViewModel(
         sections: [],
-        status: SearchContactResultsView.StatusViewModel(
-            showsLoader: true,
-            loaderText: "Search is taking longer than usual"
-        )
+        status: SearchContactResultsView.StatusViewModel(showsLoader: true)
     )
     layout.bind(viewModel: viewModel)
     return layout
@@ -387,13 +380,6 @@ private final class SearchContactLoadingView: UIView {
         $0.tintColor = .fgPrimary
     }
 
-    private let textLabel: Label = create {
-        $0.numberOfLines = 0
-        $0.textAlignment = .center
-        $0.typography = .bodyLargeEmphasized
-        $0.textColor = .fgSecondary
-    }
-
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
@@ -403,11 +389,6 @@ private final class SearchContactLoadingView: UIView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-
-    func bind(text: String?) {
-        textLabel.text = text
-        textLabel.setHidden(text == nil)
     }
 
     func setLoading(_ loading: Bool) {
@@ -422,16 +403,10 @@ private final class SearchContactLoadingView: UIView {
 
     private func setupLayout() {
         addSubview(loadingView)
-        addSubview(textLabel)
 
         loadingView.snp.makeConstraints {
             $0.center.equalToSuperview()
             $0.size.equalTo(Constants.loadingViewSize)
-        }
-
-        textLabel.snp.makeConstraints {
-            $0.top.equalTo(loadingView.snp.bottom).offset(DSSpacings.small)
-            $0.leading.trailing.equalToSuperview().inset(DSSpacings.large)
         }
     }
 }

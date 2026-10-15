@@ -94,11 +94,16 @@ platform :ios do
       groups: distribute_external && !external_group.empty? ? [external_group] : nil
     )
 
+    # Release links no Sentry, so there is nothing to symbolicate and no reason
+    # to ship sources to a third party. Mirrors base_build_app's issue_monitoring_enabled.
+    #
     # Symbol upload runs after the build has already been delivered, so failing
     # it fails a lane whose work is done and consumes a TestFlight build number
     # on every retry. Skipped when there is no token rather than attempted with
     # an empty one.
-    if (ENV["SENTRY_AUTH_TOKEN"] || "").strip.empty?
+    if testflight_distribution_configuration == "Release"
+      UI.message("Release links no Sentry; skipping the debug symbol upload.")
+    elsif (ENV["SENTRY_AUTH_TOKEN"] || "").strip.empty?
       UI.important("SENTRY_AUTH_TOKEN is not set; skipping the debug symbol upload.")
     else
       sentry_debug_files_upload(

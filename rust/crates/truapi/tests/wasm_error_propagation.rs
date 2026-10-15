@@ -8,12 +8,10 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
 fn generic_errors_reject_with_plain_reason_strings() {
-    let outcome: Result<(), JsValue> = (|| {
-        Err::<(), _>(GenericError {
-            reason: "storage unavailable".to_string(),
-        })?;
-        Ok(())
-    })();
+	let outcome: Result<(), JsValue> = (|| {
+		Err::<(), _>(GenericError { reason: "storage unavailable".to_string() })?;
+		Ok(())
+	})();
 
-    assert_eq!(outcome, Err(JsValue::from_str("storage unavailable")));
+	assert_eq!(outcome, Err(JsValue::from_str("storage unavailable")));
 }

@@ -7,8 +7,8 @@ import UIKitExt
 /// handler, injects the bootstrap + container scripts into the engine, and
 /// returns the page URL. The TrUAPI core serves product requests over its
 /// localhost ws-bridge; no ContainerBridge is installed in rust mode. Camera/mic
-/// media capture (getUserMedia) is answered by a `JSDeviceCapabilityHandler`
-/// registered on the engine.
+/// media capture (getUserMedia) and WebKit's motion request are answered by a
+/// `JSDeviceCapabilityHandler` registered on the engine.
 ///
 /// An actor so `start`/`dispose` never race on runtime state. Actors are
 /// reentrant, so `dispose()` can interleave while `start` is suspended:
@@ -66,6 +66,10 @@ extension SPARustRuntime: SPARuntimeProtocol {
                 try await prepareDotNsContent()
             case let .directURL(url):
                 url
+            #if DEBUG
+                case let .devServer(url, _):
+                    url
+            #endif
             }
 
         try checkNotDisposed()
@@ -73,7 +77,9 @@ extension SPARustRuntime: SPARuntimeProtocol {
         let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
 
         await engine.registerJSDeviceCapabilityHandler(
-            executionModel.osPermissionAsker.makeDeviceCapabilityHandler()
+            executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
+                execution: executionModel.execution
+            )
         )
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
@@ -120,9 +126,9 @@ private extension SPARustRuntime {
     func prepareDotNsContent() async throws -> URL {
         let domain = configuration.page.host.toDotDomain()
 
-        // Bytes come from the app executable's subname; the origin stays the base domain, which
+        // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
-        let contentId = try await productResolver.resolve(domain).appContentId
+        let contentId = try await productResolver.resolve(domain).contentId(for: configuration.executable)
         let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
 
         let schemeHandler = ProductScriptSchemeHandler(

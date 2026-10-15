@@ -12,6 +12,16 @@
         }
       }
     },
+    "%@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: %2$@"
+          }
+        }
+      }
+    },
     "≈ %@" : {
       "comment" : "A label displaying the fee amount."
     },
@@ -125,6 +135,39 @@
         }
       }
     },
+    "accountSearch.globalFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't search all users"
+          }
+        }
+      }
+    },
+    "action.get" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get"
+          }
+        }
+      }
+    },
+    "action.get.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add CASH via bank, crypto or credit card"
+          }
+        }
+      }
+    },
     "action.send.cash" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -136,13 +179,13 @@
         }
       }
     },
-    "action.withdraw" : {
+    "action.send.subtitle" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Withdraw"
+            "value" : "Move CASH to your bank, crypto wallet or contacts"
           }
         }
       }
@@ -433,6 +476,28 @@
         }
       }
     },
+    "chat.call.camera.access.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow camera access in Settings to turn on video during calls."
+          }
+        }
+      }
+    },
+    "chat.call.camera.access.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera Access Required"
+          }
+        }
+      }
+    },
     "chat.call.mic.access.message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -451,6 +516,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Microphone Access Required"
+          }
+        }
+      }
+    },
+    "chat.call.video.unavailable.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Video could not be started. The call continues with audio only."
+          }
+        }
+      }
+    },
+    "chat.call.video.unavailable.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera Unavailable"
           }
         }
       }
@@ -866,6 +953,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You left the chat"
+          }
+        }
+      }
+    },
+    "chatCallRemoteMicOff" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@'s microphone is off"
+          }
+        }
+      }
+    },
+    "chatCallSelfMicOff" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your microphone is off"
+          }
+        }
+      }
+    },
+    "chatCallStatusConnecting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting..."
           }
         }
       }
@@ -1288,61 +1408,6 @@
         }
       }
     },
-    "coinageHowToRead" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "How to read this"
-          }
-        }
-      }
-    },
-    "coinageKeyHops" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Coins show one circle per past payment. Dots represent other coins that moved with the payment."
-          }
-        }
-      }
-    },
-    "coinageKeySolid" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A single block means no past payments at all. The shorter it is, the more fungible the coin."
-          }
-        }
-      }
-    },
-    "coinageKeyUnknown" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A thin red and orange line means we have no record for that part of the coin's past."
-          }
-        }
-      }
-    },
-    "coinageKeyVoucher" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Coins that gain privacy. The solid block is how fungible they will be at best; the striped part is the current level."
-          }
-        }
-      }
-    },
     "coinageLoading" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1382,29 +1447,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Balance"
-          }
-        }
-      }
-    },
-    "contact.source.description.game" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You both played %1$(ordinalDay)@ %2$(month)@ Game"
-          }
-        }
-      }
-    },
-    "contact.source.description.game.generic" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You both played the same game"
+            "value" : "Total"
           }
         }
       }
@@ -2259,6 +2302,16 @@
         }
       }
     },
+    "polkadot://%@/-/pocket/add?card=%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "polkadot://%1$@/-/pocket/add?card=%2$@"
+          }
+        }
+      }
+    },
     "polkadot.host.message.too.big.error" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2710,13 +2763,24 @@
         }
       }
     },
-    "searchContact.loading.long" : {
+    "searchAccount.selfTransfer.subtitle" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Search is taking longer than usual"
+            "value" : "Bank account or crypto wallet"
+          }
+        }
+      }
+    },
+    "searchAccount.selfTransfer.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send to yourself"
           }
         }
       }
@@ -3475,7 +3539,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ready to send"
+            "value" : "Ready"
           }
         }
       }
@@ -3596,7 +3660,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Balance card"
+            "value" : "%@ Card"
           }
         }
       }

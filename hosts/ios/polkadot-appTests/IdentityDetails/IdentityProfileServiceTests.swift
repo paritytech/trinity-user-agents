@@ -11,14 +11,15 @@ import EventCenter
 struct IdentityProfileServiceTests {
     private let storage: MockUsernameStorage
     private let identityService: MockIdentityService
-    let personDataStore: MockObservableStore<DetermineStatePersonData>
     let wallet: WalletManaging
     let eventCenter: MockEventCenter
+
+    private let stored = Username(value: "alice.22")
+    private let onChain = Username(value: "alice")
 
     init() throws {
         storage = MockUsernameStorage()
         identityService = MockIdentityService()
-        personDataStore = MockObservableStore<DetermineStatePersonData>(logger: MockLogger())
         wallet = try MockWalletManager.mockedWallet()
         eventCenter = MockEventCenter()
     }
@@ -27,7 +28,6 @@ struct IdentityProfileServiceTests {
         IdentityProfileService(
             usernameStorage: storage,
             identityService: identityService,
-            personDataStore: personDataStore,
             wallet: wallet,
             eventCenter: eventCenter,
             logger: MockLogger()
@@ -36,114 +36,117 @@ struct IdentityProfileServiceTests {
 
     @Test("Init seeds profile from storage values")
     func initSeedsProfileFromStorage() async throws {
-        storage.username = Username(value: "alice")
+        storage.username = onChain
         storage.usernameClaimed = true
-        storage.isPerson = true
 
-        let sut = createSut()
-        let profile = try await sut.observe()
-            .first(where: { _ in true })
+        var profiles = createSut().observe().makeAsyncIterator()
+        let first = try #require(try await profiles.next())
 
-        let first = try #require(profile)
-
-        #expect(first.username == Username(value: "alice"))
+        #expect(first.username == onChain)
         #expect(first.isClaimed)
-        #expect(first.rank == .membership)
+        #expect(first.rank == .basic)
     }
 
     @Test("Init emits empty profile when storage is empty")
     func initSeedsEmptyProfileWhenStorageEmpty() async throws {
-        let sut = createSut()
-        let profile = try await sut.observe()
-            .first(where: { _ in true })
-
-        let first = try #require(profile)
+        var profiles = createSut().observe().makeAsyncIterator()
+        let first = try #require(try await profiles.next())
 
         #expect(first.username == nil)
         #expect(!first.isClaimed)
         #expect(first.rank == .basic)
     }
 
-    @Test("On-chain subscription claims username and emits update")
-    func onChainSubscriptionClaimsUsername() async throws {
-        storage.username = Username(value: "alice.22")
+    @Test("An unclaimed name is claimed when it appears on chain, and the watch then ends")
+    func unclaimedNameIsClaimedWhenItAppearsOnChain() async throws {
+        storage.username = stored
         storage.usernameClaimed = false
+
         let sut = createSut()
-        async let profiles = try withTimeout(.seconds(5)) {
-            try await sut.observe()
-                .prefix(2)
-                .reduce([]) { $0 + [$1] }
-        }
+        var profiles = sut.observe().makeAsyncIterator()
+        _ = try await profiles.next()
+        await identityService.awaitSubscribe()
 
-        try await Task.sleep(for: .seconds(1))
-        identityService.subject.send(Username(value: "aliceclaimed"))
+        identityService.subject.send(onChain)
 
-        let collected = try await profiles
-        let claimed = try #require(collected.last)
-
+        let claimed = try #require(try await profiles.next())
+        #expect(claimed.username == onChain)
         #expect(claimed.isClaimed)
-        #expect(claimed.username == Username(value: "aliceclaimed"))
-        #expect(storage.username == Username(value: "aliceclaimed"))
+        #expect(storage.username == onChain)
         #expect(storage.usernameClaimed)
     }
 
-    @Test("On-chain subscription skipped when already claimed")
-    func onChainSubscriptionSkippedWhenAlreadyClaimed() async throws {
-        storage.username = Username(value: "alice")
+    @Test("An already claimed name starts no subscription")
+    func claimedNameStartsNoSubscription() async throws {
+        storage.username = onChain
         storage.usernameClaimed = true
-        let sut = createSut()
-        async let profile = try sut.observe()
-            .first(where: { _ in true })
 
-        _ = try await profile
-        try await Task.sleep(for: .seconds(0.1))
-
-        #expect(identityService.subscribeCallCount == 0)
+        try await expectNoSubscription(replacing: Username(value: "bob"))
     }
 
-    @Test("On-chain subscription skipped when no username")
-    func onChainSubscriptionSkippedWhenNoUsername() async throws {
-        let sut = createSut()
-        async let profile = try sut.observe()
-            .first(where: { _ in true })
-
-        _ = try await profile
-
-        try await Task.sleep(for: .seconds(0.1))
-
-        #expect(identityService.subscribeCallCount == 0)
+    @Test("No username starts no subscription")
+    func noUsernameStartsNoSubscription() async throws {
+        try await expectNoSubscription(replacing: nil)
     }
 
     @Test("SelectedUsernameChanged event emits refreshed profile")
     func processSelectedUsernameChangedEmitsRefreshedProfile() async throws {
         let sut = createSut()
-        async let profiles = try withTimeout(.seconds(5)) {
-            try await sut.observe()
-                .prefix(2)
-                .reduce([]) { $0 + [$1] }
-        }
+        var profiles = sut.observe().makeAsyncIterator()
+        _ = try await profiles.next()
 
-        try await Task.sleep(for: .seconds(0.1))
         storage.username = Username(value: "bob")
         sut.processSelectedUsernameChanged(event: SelectedUsernameChanged(username: storage.username))
 
-        let collected = try await profiles
-        #expect(collected.last?.username == Username(value: "bob"))
+        #expect(try await profiles.next()?.username == Username(value: "bob"))
+    }
+}
+
+private extension IdentityProfileServiceTests {
+    /// Asserts no subscription is started, without waiting on a clock.
+    ///
+    /// The service decides whether to subscribe straight after emitting a profile, so a second
+    /// emission is proof that the decision for the first has already been made. Driving one and
+    /// awaiting it orders the assertion after that decision.
+    func expectNoSubscription(replacing username: Username?) async throws {
+        let sut = createSut()
+        var profiles = sut.observe().makeAsyncIterator()
+        _ = try await profiles.next()
+
+        storage.username = username
+        sut.processSelectedUsernameChanged(event: SelectedUsernameChanged(username: username))
+        _ = try await profiles.next()
+
+        #expect(identityService.subscribeCallCount == 0)
     }
 }
 
 private final class MockUsernameStorage: UsernameStoring, @unchecked Sendable {
     var username: Username?
     var usernameClaimed: Bool = false
-    var isPerson: Bool = false
 }
 
 private final class MockIdentityService: IdentityServiceProtocol, @unchecked Sendable {
     let subject = CurrentValueSubject<Username?, Error>(nil)
     private(set) var subscribeCallCount = 0
 
+    private let continuation: AsyncStream<Void>.Continuation
+    private var subscribes: AsyncStream<Void>.AsyncIterator
+
+    init() {
+        let (stream, continuation) = AsyncStream.makeStream(of: Void.self)
+        self.continuation = continuation
+        subscribes = stream.makeAsyncIterator()
+    }
+
+    /// Returns once the service has subscribed, so a test can send without racing the subscription.
+    func awaitSubscribe() async {
+        _ = await subscribes.next()
+    }
+
     func subscribe(to _: AccountId) -> AnyPublisher<Username?, Error> {
         subscribeCallCount += 1
+        continuation.yield()
         return subject.eraseToAnyPublisher()
     }
 

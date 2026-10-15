@@ -149,7 +149,7 @@ jobs:
           cp -R explorer/dist/. site/
           # GitHub Pages serves the site-root 404.html for every missing path.
           # Serving a copy of the SPA index lets React Router resolve explorer
-          # deep links (e.g. /host-rust-core/v/main/method/foo) on a fresh load.
+          # deep links (e.g. /trinity-user-agents/v/main/method/foo) on a fresh load.
           cp site/index.html site/404.html
           # Playground mounted at /playground/ (its Next.js basePath).
           mkdir -p site/playground

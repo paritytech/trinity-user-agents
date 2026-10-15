@@ -33,6 +33,8 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
@@ -69,6 +71,8 @@ fun PolkadotNavigationBar(
     itemCount: Int,
     modifier: Modifier = Modifier,
     shape: Shape = PolkadotTheme.shapes.full,
+    color: Color = PolkadotTheme.colors.bg.surface.container,
+    border: BorderStroke? = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.primary),
     fillWidth: Boolean = true,
     centerContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
@@ -85,11 +89,8 @@ fun PolkadotNavigationBar(
     PolkadotSurface(
         modifier = modifier,
         shape = shape,
-        color = PolkadotTheme.colors.bg.surface.container,
-        border = BorderStroke(
-            width = PolkadotTheme.borders.default,
-            color = PolkadotTheme.colors.stroke.primary
-        )
+        color = color,
+        border = border,
     ) {
         val indicatorColor = PolkadotTheme.colors.bg.surface.nested
         val indicatorShape = PolkadotTheme.shapes.full
@@ -260,7 +261,10 @@ fun PolkadotNavigationBarItem(
             NovaText(
                 text = label,
                 style = PolkadotTheme.typography.label.smallEmphasized,
-                color = contentColor
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
             )
         }
     }
