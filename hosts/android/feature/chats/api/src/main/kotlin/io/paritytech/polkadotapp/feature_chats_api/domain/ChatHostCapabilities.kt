@@ -11,8 +11,38 @@ object ChatHostCapabilities {
     /** Rooms whose product keeps the messages: S15 to S24 and S46. */
     const val PRODUCT_SOURCE_ROOMS = "product_source_rooms"
 
+    /** Who reacted, through `reactions_query`: S32. */
+    const val REACTION_DETAILS = "reaction_details"
+
+    /** The participant count, the pages and the authors by id, through `participants_query`: S30. */
+    const val PARTICIPANTS = "participants"
+
+    /** The message menus of the product, through `message_actions_query`: S25, S26 and S28. */
+    const val MESSAGE_MENUS = "message_menus"
+
+    /** The participant sheet of the product, through `participant_actions_query`: S31. */
+    const val PARTICIPANT_MENUS = "participant_menus"
+
+    /** The toolbar that `set_room_toolbar` declares: S29. */
+    const val TOOLBAR = "toolbar"
+
+    /** The quick replies that `set_room_suggestions` declares: S38. */
+    const val SUGGESTIONS = "suggestions"
+
+    /** The `/` catalogue that `set_room_commands` declares: S39. */
+    const val COMMANDS = "commands"
+
+    /** The activity line that `set_room_activity` declares: S40. */
+    const val ACTIVITY = "activity"
+
     /** `Custom` bodies that the product draws through its renderer: S7. */
     const val CUSTOM_BODIES = "custom_bodies"
+
+    /** The `Custom` footer that the product draws through its renderer: S35. */
+    const val CUSTOM_FOOTER = "custom_footer"
+
+    /** Photos, videos and files of the user sent inline, up to 1 MiB: S36. */
+    const val INLINE_ATTACHMENTS = "inline_attachments"
 
     /** The in-room search, and `search_query` for a room whose product keeps the messages: S61 to S63. */
     const val SEARCH = "search"
@@ -44,8 +74,20 @@ object ChatHostCapabilities {
     /** The names in the order of the feature table of the RFC. */
     val features: List<String> = listOf(
         PRODUCT_SOURCE_ROOMS,
+        REACTION_DETAILS,
+        PARTICIPANTS,
+        MESSAGE_MENUS,
+        PARTICIPANT_MENUS,
+        TOOLBAR,
+        SUGGESTIONS,
+        COMMANDS,
+        ACTIVITY,
         CUSTOM_BODIES,
+        CUSTOM_FOOTER,
+        INLINE_ATTACHMENTS,
+        SEARCH,
         BOT_PERSONAS,
+        MUTE_ARCHIVE,
         THREADS,
         BRANCHES,
         REASONING_ROWS,
