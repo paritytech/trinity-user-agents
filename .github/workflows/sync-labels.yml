@@ -1,0 +1,72 @@
+name: Sync labels
+
+# .github/labels.yml is the only place labels are defined. A pull request that
+# changes it gets a dry run in its summary, so a reviewer sees exactly which
+# labels it creates, renames, merges and deletes. The push to main applies it.
+#
+# Renames keep a label on everything that carries it, so a workflow that keys on
+# a label name and the label itself change together when the pull request that
+# renames both lands.
+
+on:
+  pull_request:
+    paths:
+      - ".github/labels.yml"
+      - "scripts/sync-labels.py"
+      - ".github/workflows/sync-labels.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/labels.yml"
+      - "scripts/sync-labels.py"
+      - ".github/workflows/sync-labels.yml"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Apply the changes rather than only listing them"
+        type: boolean
+        default: false
+
+concurrency:
+  group: sync-labels-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Read only, so a pull request's dry run can change nothing whatever the
+  # script on its branch says.
+  plan:
+    name: Plan label changes
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.apply)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: List what would change
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/sync-labels.py
+
+  apply:
+    name: Apply label changes
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.apply && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Labels live under the issues API, and merging one label into another
+      # relabels pull requests through it too.
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Apply labels.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/sync-labels.py --apply

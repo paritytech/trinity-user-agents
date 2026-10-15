@@ -1,13 +1,13 @@
 name: iOS CI
 
 # Adding any label starts a run, and one for a label other than
-# ios-simulator-build has nothing to do. It gets a group of its own, so it
+# `ci: ios simulator` has nothing to do. It gets a group of its own, so it
 # cannot cancel the run already in progress for the same branch. Its skipped
 # jobs share names with the real ones, so the checks list can show one of them
 # over an earlier result for the same commit; iOS CI is not a required check,
 # so this affects only what the list shows.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'ios-simulator-build' && format('-{0}', github.run_id) || '' }}
+  group: "${{ github.workflow }}-${{ github.head_ref || github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'ci: ios simulator' && format('-{0}', github.run_id) || '' }}"
   cancel-in-progress: true
 
 on:
@@ -22,7 +22,7 @@ on:
   # reasoning as the sdk_swift gate in ci.yml, which is the list to keep this in
   # step with.
   pull_request:
-    # `labeled` so adding ios-simulator-build starts the jobs without a push.
+    # `labeled` so adding `ci: ios simulator` starts the jobs without a push.
     types: [opened, synchronize, reopened, labeled]
     paths:
       - "hosts/ios/**"
@@ -109,8 +109,8 @@ env:
 
 jobs:
   # Whether this run builds the app. Every job below is macOS time, so on a
-  # pull request they run only when the ios-simulator-build label asks for
-  # them, the same way ios-device-build and android-device-build ask for their
+  # pull request they run only when the `ci: ios simulator` label asks for
+  # them, the same way `ci: ios device` and `ci: android device` ask for their
   # builds. CI's `iOS package (Swift + WebKit)` job still compiles the
   # TrUAPIHost package against the core on a pull request touching `ios/` or
   # the core crates. Nothing compiles the app itself on a pull request without
@@ -120,7 +120,7 @@ jobs:
   # The labels are read from the API rather than the event, so re-running a
   # push's run sees a label added since. A run started by another label stays
   # skipped on a re-run, because building there would duplicate the run the
-  # ios-simulator-build label starts on its own.
+  # `ci: ios simulator` label starts on its own.
   check-skip-label:
     timeout-minutes: 5
     runs-on: ubuntu-latest
@@ -139,7 +139,7 @@ jobs:
               core.setOutput('app', 'true');
               return;
             }
-            const label = 'ios-simulator-build';
+            const label = 'ci: ios simulator';
             // Started by some other label being added, which changes nothing
             // this run would build.
             if (context.payload.action === 'labeled' && context.payload.label.name !== label) {
@@ -485,7 +485,7 @@ jobs:
 
           An arm64 simulator slice, so it needs an Apple Silicon Mac and does not
           install on a device. Kept for 14 days, after which the link stops
-          resolving and a new push rebuilds it while \`ios-simulator-build\` is
+          resolving and a new push rebuilds it while \`ci: ios simulator\` is
           set.
           EOF
 
