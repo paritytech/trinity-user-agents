@@ -20,6 +20,9 @@ abstract class ChatRoomDao {
     @Query("SELECT * FROM chat_rooms WHERE id = :chatId")
     abstract suspend fun getRoom(chatId: ByteArray): ChatRoomLocal?
 
+    @Query("SELECT * FROM chat_rooms WHERE id = :chatId")
+    abstract fun subscribeRoom(chatId: ByteArray): Flow<ChatRoomLocal?>
+
     @Query("SELECT * FROM chat_rooms")
     abstract fun subscribeAllRooms(): Flow<List<ChatRoomLocal>>
 

@@ -13,6 +13,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocal
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
 interface ChatRoomRepository : ReadOnlyChatRoomRepository {
@@ -30,6 +32,9 @@ interface ChatRoomRepository : ReadOnlyChatRoomRepository {
     suspend fun renameRoom(chatId: ChatId, name: String)
 
     fun subscribeChatSummaries(): Flow<List<ChatRoomSummaryLocal>>
+
+    /** The name and icon of the room, and a new value each time they change. */
+    fun subscribeRoomMetadata(chatId: ChatId): Flow<RoomMetadata>
 }
 
 class RealChatRoomRepository @Inject constructor(
@@ -82,6 +87,13 @@ class RealChatRoomRepository @Inject constructor(
 
     override fun subscribeChatSummaries(): Flow<List<ChatRoomSummaryLocal>> {
         return chatRoomDao.subscribeChatSummaries()
+    }
+
+    override fun subscribeRoomMetadata(chatId: ChatId): Flow<RoomMetadata> {
+        return chatRoomDao.subscribeRoom(chatId.toLocal())
+            .map { room -> room?.name to room?.icon }
+            .distinctUntilChanged()
+            .map { (name, icon) -> RoomMetadata(name = name, icon = icon) }
     }
 
     override fun subscribeRoomsByExtension(extensionId: ChatExtensionId): Flow<List<ChatId>> {
