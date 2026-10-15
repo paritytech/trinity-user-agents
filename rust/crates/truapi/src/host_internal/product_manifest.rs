@@ -52,18 +52,28 @@ pub struct RootManifest {
     pub trusted_products: BTreeMap<String, Vec<Granted>>,
 }
 
+/// A manifest that cannot be decoded or uses an unsupported schema.
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+pub enum ManifestParseError {
+    /// The manifest is not valid JSON for the expected schema.
+    #[display("manifest is not valid JSON: {_0}")]
+    #[from]
+    Json(serde_json::Error),
+    /// The manifest names a schema this core cannot read.
+    #[display("manifest schema version {_0} is not supported")]
+    UnsupportedSchemaVersion(#[error(not(source))] u32),
+}
+
 impl RootManifest {
     /// Parses a manifest, rejecting a schema version this core cannot read.
     ///
     /// An unrecognised grant value is not a parse failure: it is dropped from
     /// the entry it appears in and the recognised values around it still apply.
-    pub fn parse(json: &str) -> Result<Self, String> {
-        let manifest: Self = serde_json::from_str(json)
-            .map_err(|err| format!("manifest is not valid JSON: {err}"))?;
+    pub fn parse(json: &str) -> Result<Self, ManifestParseError> {
+        let manifest: Self = serde_json::from_str(json)?;
         if manifest.schema_version != SUPPORTED_SCHEMA_VERSION {
-            return Err(format!(
-                "manifest schema version {} is not supported",
-                manifest.schema_version
+            return Err(ManifestParseError::UnsupportedSchemaVersion(
+                manifest.schema_version,
             ));
         }
         Ok(manifest)
@@ -202,12 +212,37 @@ mod tests {
 
     #[test]
     fn an_unknown_schema_version_is_refused() {
-        assert!(RootManifest::parse(r#"{"$v":2,"trustedProducts":{}}"#).is_err());
+        let error = RootManifest::parse(r#"{"$v":2,"trustedProducts":{}}"#).unwrap_err();
+        assert!(matches!(
+            error,
+            ManifestParseError::UnsupportedSchemaVersion(2)
+        ));
+        assert_eq!(
+            error.to_string(),
+            "manifest schema version 2 is not supported"
+        );
     }
 
     #[test]
     fn malformed_json_is_refused() {
-        assert!(RootManifest::parse("not json").is_err());
+        let error = RootManifest::parse("not json").unwrap_err();
+        let source = core::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<serde_json::Error>())
+            .expect("the JSON parser failure remains available");
+        assert_eq!(
+            (
+                error.to_string(),
+                source.classify(),
+                source.line(),
+                source.column()
+            ),
+            (
+                "manifest is not valid JSON: expected ident at line 1 column 2".to_string(),
+                serde_json::error::Category::Syntax,
+                1,
+                2,
+            )
+        );
     }
 
     #[test]

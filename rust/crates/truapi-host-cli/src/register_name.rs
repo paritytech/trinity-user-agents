@@ -28,6 +28,7 @@ use truapi::statement_allowance::{
     self as alloc, extension, extrinsic, proof, ring, rpc::RpcClient,
 };
 
+use crate::accounts::IdentityDerivationError;
 use crate::dotns_read::AssetHubReader;
 use crate::network::NetworkConfig;
 
@@ -65,7 +66,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
         bail!("--link-lite {lite:?} is not a dotted lite username (`name.NN`)");
     }
     let who = derive_identity_keypair(&config.entropy, config.network.network_suffix)
-        .context("uid identity derivation failed")?;
+        .map_err(IdentityDerivationError::from)?;
     let who_public = who.public.to_bytes();
 
     let mut reader = AssetHubReader::connect(config.network.asset_hub_ws).await?;

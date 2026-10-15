@@ -29,7 +29,7 @@ use tokio_tungstenite::tungstenite::http::{StatusCode, header};
 use tracing::{debug, warn};
 
 use crate::bootstrap;
-use truapi::platform::ProductExecutionKind;
+use truapi::platform::{ProductExecutionKind, RuntimeConfigValidationError};
 use truapi::{
     ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
     ProductRuntimeError, SigningHostRuntime,
@@ -65,11 +65,18 @@ pub struct ProductSelection {
     execution_kind: ProductExecutionKind,
 }
 
+/// The requested product does not identify a supported execution context.
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[display("invalid product id")]
+pub struct ProductSelectionError(RuntimeConfigValidationError);
+
 impl ProductSelection {
     /// Validate and normalize the initial product id.
-    pub fn new(product_id: String, execution_kind: ProductExecutionKind) -> Result<Arc<Self>> {
-        let product = ProductContext::new_with_execution(product_id, execution_kind)
-            .context("invalid product id")?;
+    pub fn new(
+        product_id: String,
+        execution_kind: ProductExecutionKind,
+    ) -> Result<Arc<Self>, ProductSelectionError> {
+        let product = ProductContext::new_with_execution(product_id, execution_kind)?;
         let (current, _) = watch::channel(product);
         Ok(Arc::new(Self {
             current,
@@ -83,9 +90,8 @@ impl ProductSelection {
     }
 
     /// Select a validated product, returning whether the selection changed.
-    pub fn select(&self, product_id: String) -> Result<bool> {
-        let product = ProductContext::new_with_execution(product_id, self.execution_kind)
-            .context("invalid product id")?;
+    pub fn select(&self, product_id: String) -> Result<bool, ProductSelectionError> {
+        let product = ProductContext::new_with_execution(product_id, self.execution_kind)?;
         Ok(self.current.send_if_modified(|current| {
             if current == &product {
                 false
@@ -1124,7 +1130,21 @@ mod tests {
         assert!(product.select("localhost:3000".to_string())?);
         assert_eq!(product.current(), "localhost:3000");
         assert!(!product.select("LOCALHOST:3000".to_string())?);
-        assert!(product.select("example.com".to_string()).is_err());
+        let error = anyhow::Error::new(product.select("example.com".to_string()).unwrap_err());
+        assert_eq!(
+            (
+                error.root_cause().downcast_ref::<RuntimeConfigValidationError>(),
+                format!("{error:#}"),
+                product.current(),
+            ),
+            (
+                Some(&RuntimeConfigValidationError::InvalidProductId {
+                    product_id: "example.com".to_string(),
+                }),
+                "invalid product id: product_id must be a dotNS or localhost product identifier, got \"example.com\"".to_string(),
+                "localhost:3000".to_string(),
+            )
+        );
         Ok(())
     }
 

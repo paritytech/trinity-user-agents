@@ -19,7 +19,7 @@ use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
 use thiserror::Error;
 use tracing::warn;
 
-use crate::dotns_views::{call_string, network_tld, tld_node};
+use crate::dotns_views::{call_string, network_tld, protocol_component, read_view, tld_node};
 
 /// Ring-VRF context for `register_name` proofs.
 ///
@@ -235,16 +235,6 @@ pub enum DotnsContractError {
     /// ABI return data was not valid UTF-8 where a string was expected.
     #[error("ABI string is not UTF-8")]
     AbiUtf8,
-}
-
-impl DotnsContractError {
-    /// Retains the contract operation whose return data could not be decoded.
-    pub fn with_context(self, operation: impl Into<String>) -> DotnsError {
-        DotnsError::Decode {
-            operation: operation.into(),
-            source: self,
-        }
-    }
 }
 
 /// SCALE arguments for the `ReviveApi_call` runtime API.
@@ -504,12 +494,17 @@ pub async fn is_pop_issued<T: DotnsTransport + ?Sized>(
     controller: &[u8; 20],
     label: &str,
 ) -> Result<bool, DotnsError> {
-    let output = transport
-        .view(controller, call_string("isPopIssued(string)", label))
-        .await
-        .map_err(|err| err.with_context(format!("DotnsPopController.isPopIssued({label})")))?;
-    decode_bool(&output)
-        .map_err(|err| err.with_context(format!("DotnsPopController.isPopIssued({label})")))
+    read_view(
+        transport,
+        controller,
+        call_string("isPopIssued(string)", label),
+        decode_bool,
+    )
+    .await
+    .map_err(|source| DotnsError::IsPopIssued {
+        label: label.to_string(),
+        source,
+    })
 }
 
 /// RFC 1035 label bound the contracts enforce (`StringUtils.MAX_DNS_LABEL_OCTETS`).
@@ -602,22 +597,63 @@ pub enum DotnsError {
     #[display("{_0}")]
     #[from]
     View(#[error(source)] DotnsViewError),
-    /// A named contract operation failed.
-    #[display("{operation}: {source}")]
-    ViewFailed {
-        /// Contract operation being executed.
-        operation: String,
-        /// Failure reported by the contract transport.
-        source: DotnsViewError,
+    /// The controller's protocol registry could not be read.
+    #[display("DotnsPopController.protocolRegistry(): {_0}")]
+    ProtocolRegistry(DotnsCallError),
+    /// Username resolution could not call the controller's registry view.
+    #[display("DotnsPopController.protocolRegistry: {_0}")]
+    ProtocolRegistryView(DotnsViewError),
+    /// The gateway dispatcher could not identify its controller.
+    #[display("RootGatewayDispatcher.TARGET(): {_0}")]
+    DispatcherTarget(DotnsCallError),
+    /// A protocol component address could not be read.
+    #[display("ProtocolRegistry.get({name}): {source}")]
+    ProtocolComponent {
+        /// Registry component being resolved.
+        name: String,
+        /// Failure reading the component address.
+        source: DotnsCallError,
     },
-    /// A named contract operation returned invalid data.
-    #[display("{operation}: {source}")]
-    Decode {
-        /// Contract operation whose output was decoded.
-        operation: String,
-        /// Invalid output reported by the decoder.
-        source: DotnsContractError,
+    /// A label's proof-of-personhood issuance could not be determined.
+    #[display("DotnsPopController.isPopIssued({label}): {source}")]
+    IsPopIssued {
+        /// Label whose issuance is being checked.
+        label: String,
+        /// Failure reading the issuance status.
+        source: DotnsCallError,
     },
+    /// The user's label store could not be located.
+    #[display("StoreFactory.getLabelStore: {_0}")]
+    LabelStore(DotnsCallError),
+    /// A label store could not serve a page of labels.
+    #[display("LabelStore.getLabels: {_0}")]
+    Labels(DotnsCallError),
+    /// A registrar could not determine whether a label already exists.
+    #[display("DotnsRegistrar.exists({label}): {source}")]
+    RegistrarExists {
+        /// Label whose availability is being checked.
+        label: String,
+        /// Failure reading the registration status.
+        source: DotnsCallError,
+    },
+    /// A pending-claim page could not be read.
+    #[display("DotnsPopController.pendingClaims: {_0}")]
+    PendingClaims(DotnsCallError),
+    /// The lifetime of a pending claim could not be read.
+    #[display("DotnsPopController.reservationDuration: {_0}")]
+    ReservationDuration(DotnsCallError),
+    /// The network's top-level domain could not be read.
+    #[display("ProtocolRegistry.tld(): {_0}")]
+    Tld(DotnsCallError),
+    /// The fallback top-level domain could not be checked.
+    #[display("DotnsRegistry.recordExists: {_0}")]
+    RecordExists(DotnsCallError),
+    /// A name's content resolver could not be located.
+    #[display("DotnsRegistry.resolver(): {_0}")]
+    Resolver(DotnsCallError),
+    /// A product's manifest record could not be read.
+    #[display("ContentResolver.text(): {_0}")]
+    ManifestText(DotnsCallError),
     /// The stored dispatcher address has the wrong width.
     #[display("DotnsGateway.DispatcherAddress is {actual} bytes")]
     DispatcherAddressLength {
@@ -647,6 +683,17 @@ pub enum DotnsError {
     MissingTld,
 }
 
+/// A contract read failed during execution or decoding of its return data.
+#[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error, derive_more::From)]
+pub enum DotnsCallError {
+    /// The view failed before returning data to decode.
+    #[display("{_0}")]
+    View(DotnsViewError),
+    /// The view returned data that did not match the expected ABI shape.
+    #[display("{_0}")]
+    Decode(DotnsContractError),
+}
+
 /// Why a contract view returned no data.
 ///
 /// A revert is an answer from the contract (the view refused, or the address
@@ -660,16 +707,6 @@ pub enum DotnsViewError {
     #[display("{_0}")]
     #[from]
     Failed(#[error(not(source))] String),
-}
-
-impl DotnsViewError {
-    /// Retains the contract operation whose view failed.
-    pub fn with_context(self, operation: impl Into<String>) -> DotnsError {
-        DotnsError::ViewFailed {
-            operation: operation.into(),
-            source: self,
-        }
-    }
 }
 
 /// Splits a `ReviveApi_call` output into return data, a revert, or a failure,
@@ -726,33 +763,27 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
             .map_err(|value: Vec<u8>| DotnsError::DispatcherAddressLength {
                 actual: value.len(),
             })?;
-    match transport
-        .view(&stored, call_no_args("protocolRegistry()"))
-        .await
+    match read_view(
+        transport,
+        &stored,
+        call_no_args("protocolRegistry()"),
+        decode_address,
+    )
+    .await
     {
-        Ok(output) => {
-            decode_address(&output)
-                .map_err(|err| err.with_context("DotnsPopController.protocolRegistry()"))?;
-            Ok(Some(stored))
-        }
+        Ok(_) => Ok(Some(stored)),
         // A chain still storing its dispatcher pays this second view; a repointed one
         // answers on the first. Both hops go once no chain stores a dispatcher.
-        Err(DotnsViewError::Reverted(_)) => {
-            match transport.view(&stored, call_no_args("TARGET()")).await {
-                Ok(output) => decode_address(&output)
-                    .map(Some)
-                    .map_err(|err| err.with_context("RootGatewayDispatcher.TARGET()")),
-                Err(DotnsViewError::Reverted(_)) => {
+        Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => {
+            match read_view(transport, &stored, call_no_args("TARGET()"), decode_address).await {
+                Ok(controller) => Ok(Some(controller)),
+                Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => {
                     Err(DotnsError::UnknownDispatcher { address: stored })
                 }
-                Err(error @ DotnsViewError::Failed(_)) => {
-                    Err(error.with_context("RootGatewayDispatcher.TARGET()"))
-                }
+                Err(error) => Err(DotnsError::DispatcherTarget(error)),
             }
         }
-        Err(err @ DotnsViewError::Failed(_)) => {
-            Err(err.with_context("DotnsPopController.protocolRegistry()"))
-        }
+        Err(error) => Err(DotnsError::ProtocolRegistry(error)),
     }
 }
 
@@ -784,26 +815,20 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
     let registry_output = transport
         .view(controller, call_no_args("protocolRegistry()"))
         .await
-        .map_err(|err| err.with_context("DotnsPopController.protocolRegistry"))?;
+        .map_err(DotnsError::ProtocolRegistryView)?;
     let registry = decode_address(&registry_output)
-        .map_err(|err| err.with_context("DotnsPopController.protocolRegistry()"))?;
+        .map_err(|error| DotnsError::ProtocolRegistry(error.into()))?;
 
-    let factory_output = transport
-        .view(
-            &registry,
-            call_bytes32("get(bytes32)", &registry_key("storeFactory")),
-        )
-        .await
-        .map_err(|err| err.with_context("ProtocolRegistry.get(storeFactory)"))?;
-    let factory = decode_address(&factory_output)
-        .map_err(|err| err.with_context("ProtocolRegistry.get(storeFactory)"))?;
+    let factory = protocol_component(transport, &registry, "storeFactory").await?;
 
-    let store_output = transport
-        .view(&factory, call_address("getLabelStore(address)", &user))
-        .await
-        .map_err(|err| err.with_context("StoreFactory.getLabelStore"))?;
-    let store = decode_address(&store_output)
-        .map_err(|err| err.with_context("StoreFactory.getLabelStore"))?;
+    let store = read_view(
+        transport,
+        &factory,
+        call_address("getLabelStore(address)", &user),
+        decode_address,
+    )
+    .await
+    .map_err(DotnsError::LabelStore)?;
     if store == [0u8; 20] {
         return Ok(labels);
     }
@@ -811,19 +836,18 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
     let tld = network_tld(transport, &registry).await?;
 
     for page in 0..LABEL_PAGE_MAX {
-        let labels_output = transport
-            .view(
-                &store,
-                call_u256_pair(
-                    "getLabels(uint256,uint256)",
-                    page * LABEL_PAGE_LIMIT,
-                    LABEL_PAGE_LIMIT,
-                ),
-            )
-            .await
-            .map_err(|err| err.with_context("LabelStore.getLabels"))?;
-        let stored = decode_string_array(&labels_output)
-            .map_err(|err| err.with_context("LabelStore.getLabels"))?;
+        let stored = read_view(
+            transport,
+            &store,
+            call_u256_pair(
+                "getLabels(uint256,uint256)",
+                page * LABEL_PAGE_LIMIT,
+                LABEL_PAGE_LIMIT,
+            ),
+            decode_string_array,
+        )
+        .await
+        .map_err(DotnsError::Labels)?;
         let short_page = (stored.len() as u64) < LABEL_PAGE_LIMIT;
         for label in stored {
             if let Some(bare) = bare_store_label(&label, &tld)
@@ -884,7 +908,7 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
         .view(controller, call_no_args("protocolRegistry()"))
         .await?;
     let registry = decode_address(&registry_output)
-        .map_err(|err| err.with_context("DotnsPopController.protocolRegistry()"))?;
+        .map_err(|error| DotnsError::ProtocolRegistry(error.into()))?;
 
     let tld = network_tld(transport, &registry).await?;
 
@@ -894,17 +918,25 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
             call_bytes32("get(bytes32)", &registry_key("registrar")),
         )
         .await?;
-    let registrar = decode_address(&registrar_output)
-        .map_err(|err| err.with_context("ProtocolRegistry.get(registrar)"))?;
+    let registrar =
+        decode_address(&registrar_output).map_err(|error| DotnsError::ProtocolComponent {
+            name: "registrar".to_string(),
+            source: error.into(),
+        })?;
 
     let node = namehash_under(&tld_node(&tld), label);
-    let output = transport
-        .view(&registrar, call_bytes32("exists(uint256)", &node))
-        .await
-        .map_err(|err| err.with_context(format!("DotnsRegistrar.exists({label})")))?;
-    decode_bool(&output)
-        .map(|exists| !exists)
-        .map_err(|err| err.with_context(format!("DotnsRegistrar.exists({label})")))
+    read_view(
+        transport,
+        &registrar,
+        call_bytes32("exists(uint256)", &node),
+        decode_bool,
+    )
+    .await
+    .map(|exists| !exists)
+    .map_err(|source| DotnsError::RegistrarExists {
+        label: label.to_string(),
+        source,
+    })
 }
 
 /// Gateway-minted labels of `user` still waiting for `claimLabelStore`, paged
@@ -918,20 +950,21 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 ) -> Result<Vec<String>, DotnsError> {
     let mut claims = Vec::new();
     for page in 0..CLAIM_PAGE_MAX {
-        let output = match transport
-            .view(
-                controller,
-                call_address_u256_pair(
-                    "pendingClaims(address,uint256,uint256)",
-                    user,
-                    page * CLAIM_PAGE_LIMIT,
-                    CLAIM_PAGE_LIMIT,
-                ),
-            )
-            .await
+        let page_claims = match read_view(
+            transport,
+            controller,
+            call_address_u256_pair(
+                "pendingClaims(address,uint256,uint256)",
+                user,
+                page * CLAIM_PAGE_LIMIT,
+                CLAIM_PAGE_LIMIT,
+            ),
+            decode_pending_claims_array,
+        )
+        .await
         {
-            Ok(output) => output,
-            Err(DotnsViewError::Reverted(reason)) => {
+            Ok(claims) => claims,
+            Err(DotnsCallError::View(DotnsViewError::Reverted(reason))) => {
                 warn!(
                     %reason,
                     retained = claims.len(),
@@ -939,12 +972,8 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
                 );
                 break;
             }
-            Err(error @ DotnsViewError::Failed(_)) => {
-                return Err(error.with_context("DotnsPopController.pendingClaims"));
-            }
+            Err(error) => return Err(DotnsError::PendingClaims(error)),
         };
-        let page_claims = decode_pending_claims_array(&output)
-            .map_err(|err| err.with_context("DotnsPopController.pendingClaims"))?;
         let short_page = (page_claims.len() as u64) < CLAIM_PAGE_LIMIT;
         claims.extend(page_claims);
         if short_page {
@@ -961,12 +990,14 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
     if claims.is_empty() {
         return Ok(Vec::new());
     }
-    let duration_output = transport
-        .view(controller, call_no_args("reservationDuration()"))
-        .await
-        .map_err(|err| err.with_context("DotnsPopController.reservationDuration"))?;
-    let duration = decode_u64(&duration_output)
-        .map_err(|err| err.with_context("DotnsPopController.reservationDuration"))?;
+    let duration = read_view(
+        transport,
+        controller,
+        call_no_args("reservationDuration()"),
+        decode_u64,
+    )
+    .await
+    .map_err(DotnsError::ReservationDuration)?;
     let now = chain_time_secs(transport).await?;
     Ok(claims
         .into_iter()
@@ -1687,8 +1718,13 @@ mod tests {
         let err = futures::executor::block_on(discover_pop_controller(&mut transport))
             .expect_err("failure");
         assert_eq!(
-            err.to_string(),
-            "RootGatewayDispatcher.TARGET(): node unreachable"
+            (err.to_string(), err),
+            (
+                "RootGatewayDispatcher.TARGET(): node unreachable".to_string(),
+                DotnsError::DispatcherTarget(DotnsCallError::View(DotnsViewError::Failed(
+                    "node unreachable".to_string(),
+                ))),
+            )
         );
     }
 
@@ -1702,8 +1738,33 @@ mod tests {
         let err = futures::executor::block_on(discover_pop_controller(&mut transport))
             .expect_err("failure");
         assert_eq!(
-            err.to_string(),
-            "DotnsPopController.protocolRegistry(): node unreachable"
+            (err.to_string(), err),
+            (
+                "DotnsPopController.protocolRegistry(): node unreachable".to_string(),
+                DotnsError::ProtocolRegistry(DotnsCallError::View(DotnsViewError::Failed(
+                    "node unreachable".to_string(),
+                ))),
+            )
+        );
+    }
+
+    #[test]
+    fn discovery_does_not_treat_malformed_output_as_a_missing_view() {
+        let mut transport = ScriptedDiscovery {
+            stored: [0xcc; 20],
+            target: || panic!("must not fall back on malformed output"),
+            protocol_registry: || Ok(Vec::new()),
+        };
+        let error = futures::executor::block_on(discover_pop_controller(&mut transport))
+            .expect_err("a malformed address is not a revert");
+        assert_eq!(
+            (error.to_string(), error),
+            (
+                "DotnsPopController.protocolRegistry(): ABI decode failed at word".to_string(),
+                DotnsError::ProtocolRegistry(DotnsCallError::Decode(DotnsContractError::Abi {
+                    context: "word",
+                })),
+            )
         );
     }
 
@@ -1777,7 +1838,7 @@ mod tests {
             },
             &registry,
         ));
-        assert!(unverified.is_err(), "{unverified:?}");
+        assert_eq!(unverified, Err(DotnsError::MissingTld));
 
         // A transport failure is not an answer: no guessing.
         let failed = futures::executor::block_on(network_tld(
@@ -1787,7 +1848,34 @@ mod tests {
             },
             &registry,
         ));
-        assert!(failed.is_err(), "{failed:?}");
+        let error = failed.expect_err("a transport failure is not a missing view");
+        assert_eq!(
+            (error.to_string(), error),
+            (
+                "ProtocolRegistry.tld(): timed out".to_string(),
+                DotnsError::Tld(DotnsCallError::View(DotnsViewError::Failed(
+                    "timed out".to_string(),
+                ))),
+            )
+        );
+
+        let malformed = futures::executor::block_on(network_tld(
+            &mut ScriptedTld {
+                tld: || Ok(Vec::new()),
+                dot_record_exists: true,
+            },
+            &registry,
+        ))
+        .expect_err("malformed output must not trigger the fallback");
+        assert_eq!(
+            (malformed.to_string(), malformed),
+            (
+                "ProtocolRegistry.tld(): ABI decode failed at word".to_string(),
+                DotnsError::Tld(DotnsCallError::Decode(DotnsContractError::Abi {
+                    context: "word",
+                })),
+            )
+        );
     }
 
     /// The full availability walk, scripted: tld → get(registrar) → exists.
@@ -1850,9 +1938,117 @@ mod tests {
                 detail: "(empty)".to_string(),
             }))
         });
-        assert!(reverted.is_err(), "{reverted:?}");
+        let error = reverted.expect_err("a revert cannot establish availability");
+        assert_eq!(
+            (error.to_string(), error),
+            (
+                "DotnsRegistrar.exists(george): contract reverted: (empty)".to_string(),
+                DotnsError::RegistrarExists {
+                    label: "george".to_string(),
+                    source: DotnsCallError::View(DotnsViewError::Reverted(
+                        DotnsContractError::Reverted {
+                            detail: "(empty)".to_string(),
+                        },
+                    )),
+                },
+            )
+        );
         let failed = run(|| Err(DotnsViewError::Failed("timed out".to_string())));
-        assert!(failed.is_err(), "{failed:?}");
+        assert_eq!(
+            failed,
+            Err(DotnsError::RegistrarExists {
+                label: "george".to_string(),
+                source: DotnsCallError::View(DotnsViewError::Failed("timed out".to_string())),
+            })
+        );
+        let malformed = run(|| Ok(Vec::new()));
+        assert_eq!(
+            malformed,
+            Err(DotnsError::RegistrarExists {
+                label: "george".to_string(),
+                source: DotnsCallError::Decode(DotnsContractError::Abi { context: "word" }),
+            })
+        );
+    }
+
+    #[test]
+    fn lookup_diagnostics_preserve_operation_labels_at_each_failure_boundary() {
+        struct FailingView {
+            signature: &'static str,
+            output: Option<Result<Vec<u8>, DotnsViewError>>,
+        }
+
+        #[crate::platform::async_trait]
+        impl DotnsTransport for FailingView {
+            async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+                panic!("no storage read precedes the scripted failure")
+            }
+
+            async fn view(
+                &mut self,
+                _dest: &[u8; 20],
+                input: Vec<u8>,
+            ) -> Result<Vec<u8>, DotnsViewError> {
+                let called = &input[..4];
+                if called == selector(self.signature) {
+                    self.output.take().expect("the failed view is called once")
+                } else if called == selector("pendingClaims(address,uint256,uint256)") {
+                    Ok(abi_pending_claims(&[]))
+                } else if called == selector("protocolRegistry()") {
+                    Ok(address_word(0x9e))
+                } else if called == selector("tld()") {
+                    Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat())
+                } else {
+                    panic!("unscripted view {}", hex::encode(called))
+                }
+            }
+        }
+
+        for (resolve, signature, output, expected) in [
+            (
+                true,
+                "protocolRegistry()",
+                Err(DotnsViewError::Failed("timed out".to_string())),
+                "DotnsPopController.protocolRegistry: timed out",
+            ),
+            (
+                true,
+                "protocolRegistry()",
+                Ok(Vec::new()),
+                "DotnsPopController.protocolRegistry(): ABI decode failed at word",
+            ),
+            (
+                false,
+                "protocolRegistry()",
+                Err(DotnsViewError::Failed("timed out".to_string())),
+                "timed out",
+            ),
+            (
+                false,
+                "get(bytes32)",
+                Err(DotnsViewError::Failed("timed out".to_string())),
+                "timed out",
+            ),
+            (
+                false,
+                "get(bytes32)",
+                Ok(Vec::new()),
+                "ProtocolRegistry.get(registrar): ABI decode failed at word",
+            ),
+        ] {
+            let mut transport = FailingView {
+                signature,
+                output: Some(output),
+            };
+            let error = if resolve {
+                futures::executor::block_on(resolve_labels(&mut transport, &[0xcc; 20], &[0; 32]))
+                    .expect_err("label resolution must report the failing view")
+            } else {
+                futures::executor::block_on(label_available(&mut transport, &[0xcc; 20], "george"))
+                    .expect_err("availability must report the failing view")
+            };
+            assert_eq!(error.to_string(), expected);
+        }
     }
 
     #[test]

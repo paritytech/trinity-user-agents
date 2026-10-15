@@ -26,10 +26,11 @@ use truapi::host_logic::dotns_gateway::{
     MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label,
 };
 use truapi::host_logic::product_account::{
-    SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_root_keypair_from_entropy,
-    identity_product_id, product_public_key_to_address,
+    ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
+    derive_root_keypair_from_entropy, identity_product_id, product_public_key_to_address,
 };
 
+use crate::accounts::IdentityDerivationError;
 use crate::dotns_read::AssetHubReader;
 use crate::network::NetworkConfig;
 
@@ -37,6 +38,14 @@ use crate::network::NetworkConfig;
 /// Set it to reuse a token minted elsewhere. Unset, the CLI runs the sr25519
 /// auth handshake itself ([`backend_token`]).
 pub const IDENTITY_BACKEND_TOKEN_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_TOKEN";
+
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[display("backend auth identity derivation failed")]
+struct BackendIdentityDerivationError(ProductAccountError);
+
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[display("invalid entropy")]
+struct RootKeyDerivationError(ProductAccountError);
 
 /// Access tokens for the username routes, keyed by backend and authenticated
 /// account. The backend requires a username registration's candidate account
@@ -77,7 +86,7 @@ async fn backend_token(
     network_suffix: &str,
 ) -> Result<BackendToken> {
     let auth_client_id = derive_identity_keypair(auth_entropy, network_suffix)
-        .context("backend auth identity derivation failed")?
+        .map_err(BackendIdentityDerivationError::from)?
         .public
         .to_bytes();
     if let Ok(token) = std::env::var(IDENTITY_BACKEND_TOKEN_ENV)
@@ -166,7 +175,7 @@ async fn mint_backend_token(
         .context("challenge is not valid base64")?;
 
     let keypair = derive_identity_keypair(auth_entropy, network_suffix)
-        .context("backend auth identity derivation failed")?;
+        .map_err(BackendIdentityDerivationError::from)?;
     let client_id = keypair.public.to_bytes();
 
     // The proof signs SHA256(challenge || clientId || SHA256(body)). It must
@@ -366,7 +375,7 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 /// whatever base the account record asked for.
 pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) -> Result<String> {
     let identity = derive_identity_keypair(entropy, network.network_suffix)
-        .context("uid identity derivation failed")?;
+        .map_err(IdentityDerivationError::from)?;
     let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
     reader
         .dotns_identity(&identity.public.to_bytes())
@@ -382,7 +391,7 @@ pub async fn lookup_registered_username(
     entropy: &[u8],
 ) -> Result<Option<String>> {
     let identity = derive_identity_keypair(entropy, network.network_suffix)
-        .context("uid identity derivation failed")?;
+        .map_err(IdentityDerivationError::from)?;
     let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
     let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
     Ok(identity.full_username.or(identity.lite_username))
@@ -527,9 +536,9 @@ fn normalize_searched_username(username: &str) -> String {
 /// `uid.<suffix>` identity account. Prints any recorded usernames. Used to
 /// confirm a pre-onboarded account.
 pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()> {
-    let root = derive_root_keypair_from_entropy(entropy).context("invalid entropy")?;
+    let root = derive_root_keypair_from_entropy(entropy).map_err(RootKeyDerivationError::from)?;
     let identity = derive_identity_keypair(entropy, network.network_suffix)
-        .context("uid identity derivation failed")?;
+        .map_err(IdentityDerivationError::from)?;
     let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
     let identity_path = format!(
         "//product//{}/index_bytes(0)",
@@ -886,8 +895,7 @@ mod tests {
         let backend_base = format!("http://{}/api/v1", listener.local_addr()?);
         let server = tokio::spawn(serve_auth_retry(listener));
         let entropy = [11u8; 16];
-        let auth_client_id = derive_identity_keypair(&entropy, "paseo")
-            .context("derive test auth identity")?
+        let auth_client_id = derive_identity_keypair(&entropy, "paseo")?
             .public
             .to_bytes();
 

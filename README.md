@@ -273,7 +273,7 @@ make wasm     # rebuild truapi WASM artifacts under js/packages/truapi-host/dist
 CI regenerates the shared bindings before building and testing both npm
 packages, so generated client and host callback changes are checked together.
 
-Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, while protocol boundaries preserve error variants and reason strings. CLI filesystem errors retain their operation and path context.
+Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, while protocol boundaries preserve error variants and reason strings. CLI filesystem and session errors retain concrete causes and their operation or path.
 
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)

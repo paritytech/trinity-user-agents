@@ -10,7 +10,7 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use truapi::host_logic::product_account::{
-    derive_full_person_ring_vrf_entropy, derive_identity_keypair,
+    ProductAccountError, derive_full_person_ring_vrf_entropy, derive_identity_keypair,
     derive_lite_person_ring_vrf_entropy, product_public_key_to_address,
 };
 
@@ -23,6 +23,11 @@ use zeroize::ZeroizeOnDrop;
 const ACCOUNT_STORE_FILE: &str = "accounts.json";
 const ACCOUNT_STORE_LOCK_FILE: &str = "accounts.json.lock";
 const DEFAULT_USERNAME_PREFIX: &str = "headless";
+
+/// The account's uid key could not be derived from its entropy.
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[display("uid identity derivation failed")]
+pub struct IdentityDerivationError(ProductAccountError);
 
 /// Whether an account store has been written under `base_path`.
 ///
@@ -771,8 +776,8 @@ struct SignerIdentity {
 
 fn identity_from_mnemonic(mnemonic: &str, network_suffix: &str) -> Result<SignerIdentity> {
     let entropy = mnemonic_entropy(mnemonic)?;
-    let candidate = derive_identity_keypair(&entropy, network_suffix)
-        .context("uid identity derivation failed")?;
+    let candidate =
+        derive_identity_keypair(&entropy, network_suffix).map_err(IdentityDerivationError::from)?;
     let public_key = candidate.public.to_bytes();
     Ok(SignerIdentity {
         entropy,

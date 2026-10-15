@@ -205,9 +205,9 @@ impl From<SixFieldSessionLayout> for SessionInfo {
 
 /// Decode `T` from `blob`. `Ok(None)` reports that `T` parsed a prefix and left
 /// bytes over, which is what distinguishes a corrupt blob from a shorter layout.
-fn decode_exact<T: Decode>(blob: &[u8]) -> Result<Option<T>, String> {
+fn decode_exact<T: Decode>(blob: &[u8]) -> Result<Option<T>, parity_scale_codec::Error> {
     let mut input = blob;
-    let decoded = T::decode(&mut input).map_err(|err| err.to_string())?;
+    let decoded = T::decode(&mut input)?;
     Ok(input.is_empty().then_some(decoded))
 }
 

@@ -54,6 +54,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use truapi::host_logic::dotns_gateway::{
     MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label,
 };
+use truapi::latest::GenericError;
 use truapi::platform::{
     ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind,
 };
@@ -688,12 +689,24 @@ async fn run_pgas_check(
         None => [0u8; 32],
     };
 
-    let people_rpc = alloc::rpc::RpcClient::connect(network.people_ws).await?;
-    let people_metadata = alloc::fetch_metadata(&people_rpc).await?;
-    let asset_hub_rpc = alloc::rpc::RpcClient::connect(network.asset_hub_ws).await?;
-    let asset_hub_metadata = alloc::fetch_metadata(&asset_hub_rpc).await?;
-    let asset_hub_state = alloc::fetch_chain_state(&asset_hub_rpc).await?;
-    let network_suffix = alloc::slot::read_network_suffix(&asset_hub_rpc).await?;
+    let people_rpc = alloc::rpc::RpcClient::connect(network.people_ws)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let people_metadata = alloc::fetch_metadata(&people_rpc)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let asset_hub_rpc = alloc::rpc::RpcClient::connect(network.asset_hub_ws)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let asset_hub_metadata = alloc::fetch_metadata(&asset_hub_rpc)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let asset_hub_state = alloc::fetch_chain_state(&asset_hub_rpc)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let network_suffix = alloc::slot::read_network_suffix(&asset_hub_rpc)
+        .await
+        .map_err(anyhow::Error::msg)?;
     println!(
         "asset hub: metadata V{} specVersion={} txVersion={} genesis=0x{}",
         asset_hub_metadata.metadata_version(),
@@ -710,7 +723,9 @@ async fn run_pgas_check(
         );
     }
     let memberships =
-        alloc::find_including_rings(&people_rpc, &people_metadata, &candidates, lookback).await?;
+        alloc::find_including_rings(&people_rpc, &people_metadata, &candidates, lookback)
+            .await
+            .map_err(anyhow::Error::msg)?;
     for membership in &memberships {
         println!(
             "member INCLUDED in {} ring_index={} exponent={} members={}",
@@ -733,7 +748,8 @@ async fn run_pgas_check(
         ring.ring_index,
         &ring.block_hash,
     )
-    .await?;
+    .await
+    .map_err(anyhow::Error::msg)?;
     println!("people ring revision={revision}");
     match pgas::await_ring_revision(
         &asset_hub_rpc,
@@ -748,9 +764,13 @@ async fn run_pgas_check(
         Err(err) => bail!("asset hub cannot authorize this ring: {err}"),
     }
 
-    let day =
-        alloc::slot::current_period(alloc::slot::read_chain_now_seconds(&asset_hub_rpc).await?);
-    let max = alloc::slot::max_pgas_claims(&asset_hub_metadata, ring.collection)?;
+    let day = alloc::slot::current_period(
+        alloc::slot::read_chain_now_seconds(&asset_hub_rpc)
+            .await
+            .map_err(anyhow::Error::msg)?,
+    );
+    let max = alloc::slot::max_pgas_claims(&asset_hub_metadata, ring.collection)
+        .map_err(anyhow::Error::msg)?;
     println!(
         "day={day} max_claims_per_day={max} target=0x{}",
         hex::encode(target)
@@ -833,10 +853,18 @@ async fn run_alloc_check(
         None => [0u8; 32],
     };
 
-    let rpc = alloc::rpc::RpcClient::connect(network.people_ws).await?;
-    let metadata = alloc::fetch_metadata(&rpc).await?;
-    let chain_state = alloc::fetch_chain_state(&rpc).await?;
-    let network_suffix = alloc::slot::read_network_suffix(&rpc).await?;
+    let rpc = alloc::rpc::RpcClient::connect(network.people_ws)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let metadata = alloc::fetch_metadata(&rpc)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let chain_state = alloc::fetch_chain_state(&rpc)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let network_suffix = alloc::slot::read_network_suffix(&rpc)
+        .await
+        .map_err(anyhow::Error::msg)?;
     println!(
         "chain: specVersion={} txVersion={} genesis=0x{}",
         chain_state.spec_version,
@@ -849,10 +877,14 @@ async fn run_alloc_check(
             "{} member=0x{} current_ring_index={}",
             candidate.collection,
             hex::encode(alloc::proof::member_key(candidate.entropy).await?),
-            alloc::ring::read_current_ring_index(&rpc, candidate.collection).await?,
+            alloc::ring::read_current_ring_index(&rpc, candidate.collection)
+                .await
+                .map_err(anyhow::Error::msg)?,
         );
     }
-    let memberships = alloc::find_including_rings(&rpc, &metadata, &candidates, lookback).await?;
+    let memberships = alloc::find_including_rings(&rpc, &metadata, &candidates, lookback)
+        .await
+        .map_err(anyhow::Error::msg)?;
     if memberships.is_empty() {
         println!("member NOT in the last {lookback} rings of any collection (onboarding pending)");
     }
@@ -904,7 +936,8 @@ async fn run_alloc_check(
             &target,
             true,
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::msg)?;
         match alloc::register_statement_account_pooled(
             &rpc,
             &metadata,
@@ -1495,6 +1528,25 @@ struct SigningHostSession {
     pocket: Option<Arc<pocket::CliPocketHost>>,
 }
 
+#[derive(Debug, derive_more::Display, derive_more::Error)]
+enum SessionOperationError {
+    #[display("failed to activate cached session")]
+    CachedActivation(GenericError),
+    #[display("failed to activate local session")]
+    LocalActivation(GenericError),
+    #[display("failed to activate imported session {session_name:?}")]
+    ImportedActivation {
+        session_name: String,
+        source: GenericError,
+    },
+    #[display("pairing failed")]
+    Pairing(GenericError),
+    #[display("failed to record pairing allowances")]
+    RecordPairingAllowances(GenericError),
+    #[display("allowance renewal failed")]
+    AllowanceRenewal(GenericError),
+}
+
 #[derive(Default)]
 struct ResponderManager {
     tasks: HashMap<[u8; 32], tokio::task::JoinHandle<()>>,
@@ -1668,7 +1720,7 @@ async fn start_signing_host(
                 cached_signer.lite_username.clone(),
             )
             .await
-            .context("failed to activate cached session")?;
+            .map_err(SessionOperationError::CachedActivation)?;
         if let (Some(profile), Some(user_id)) = (&profile, &cached_signer.lite_username) {
             if let Some(account_name) = &cached_signer.account_name {
                 catalog.store_signer_binding(profile, user_id, account_name)?;
@@ -2303,7 +2355,7 @@ async fn activate_current_signer(session: &mut SigningHostSession) -> Result<()>
         .runtime
         .activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
         .await
-        .context("failed to activate local session")?;
+        .map_err(SessionOperationError::LocalActivation)?;
     if let (Some(profile), Some(user_id)) = (&session.profile, &signer.lite_username) {
         if let Some(account_name) = &signer.account_name {
             session
@@ -2522,7 +2574,7 @@ async fn establish_paired_host(
             .runtime
             .establish_pairing(deeplink)
             .await
-            .context("pairing failed")?;
+            .map_err(SessionOperationError::Pairing)?;
         persist_paired_host(session, &candidate)
     }
     .await;
@@ -2605,7 +2657,7 @@ async fn renew_pairing_allowances(
         .runtime
         .track_statement_renewal_targets(targets)
         .await
-        .context("failed to record pairing allowances")?;
+        .map_err(SessionOperationError::RecordPairingAllowances)?;
     let report = match session.runtime.renew_statement_allowances().await {
         Ok(report) => report,
         Err(error) => {
@@ -2668,7 +2720,7 @@ async fn run_renew(session: &mut SigningHostSession) -> Result<()> {
         .runtime
         .renew_statement_allowances()
         .await
-        .context("allowance renewal failed")?;
+        .map_err(SessionOperationError::AllowanceRenewal)?;
 
     let (mut renewed, mut fresh, mut failed, mut skipped) = (0usize, 0usize, 0usize, 0usize);
     for outcome in &report.outcomes {
@@ -2757,7 +2809,7 @@ async fn respond_to_deeplink(session: &mut SigningHostSession, deeplink: String)
         .runtime
         .resume_pairing(paired_sso_peer(&host))
         .await
-        .context("pairing failed")?;
+        .map_err(SessionOperationError::Pairing)?;
     if exit == ResponderExit::PeerDisconnected && session.profile.is_some() {
         remove_paired_host_locally(session, &host.statement_account_id()).await?;
     }
@@ -3233,7 +3285,10 @@ async fn import_mnemonic_session(
     runtime
         .activate_local_session_with_identity(imported.entropy().to_vec(), username.clone())
         .await
-        .with_context(|| format!("failed to activate imported session {session_name:?}"))?;
+        .map_err(|source| SessionOperationError::ImportedActivation {
+            session_name: session_name.clone(),
+            source,
+        })?;
 
     let signer = accounts::persist_imported_signer(
         &profile.account_base_path,
@@ -3359,7 +3414,7 @@ async fn pairing_interactive_loop(
                         );
                     }
                     Ok(false) => ui.system(product.current()),
-                    Err(error) => ui.error(format!("{error:#}")),
+                    Err(error) => ui.error(format!("{:#}", anyhow::Error::new(error))),
                 }
             }
             ShellCommand::Quit => return Ok(()),
@@ -3564,7 +3619,7 @@ async fn signing_interactive_loop(
                         );
                     }
                     Ok(false) => ui.system(product.current()),
-                    Err(error) => ui.error(format!("{error:#}")),
+                    Err(error) => ui.error(format!("{:#}", anyhow::Error::new(error))),
                 }
             }
             ShellCommand::Session(SessionCommand::Current) => {
@@ -4122,6 +4177,30 @@ mod cli_tests {
     use super::*;
     use parity_scale_codec::Encode;
 
+    #[tokio::test]
+    async fn allowance_diagnostics_report_the_rpc_failure_once() {
+        let mut network = Network::PaseoNextV2.config();
+        network.people_ws = "invalid rpc endpoint";
+        let expected = alloc::rpc::RpcClient::connect(network.people_ws)
+            .await
+            .err()
+            .expect("invalid RPC URL")
+            .to_string();
+        let mnemonic = bip39::Mnemonic::from_entropy(&[0; 16]).unwrap().to_string();
+
+        let allowance = run_alloc_check(mnemonic.clone(), network, None, 0, false)
+            .await
+            .unwrap_err();
+        let pgas = run_pgas_check(mnemonic, network, None, 0, false)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            (format!("{allowance:#}"), format!("{pgas:#}")),
+            (expected.clone(), expected)
+        );
+    }
+
     #[test]
     fn pairing_deeplink_becomes_a_public_persistable_host_record() {
         use truapi::host_logic::sso::pairing::{
@@ -4307,17 +4386,32 @@ mod cli_tests {
 
     #[test]
     fn allowance_exhaustion_is_recognized_through_operation_context() {
-        let exhausted = anyhow::anyhow!("no free StatementStore slot in period 42 (max 3)")
-            .context("pairing allowance renewal failed");
-        let unavailable = anyhow::anyhow!("People chain is unavailable")
-            .context("pairing allowance renewal failed");
+        let exhausted = anyhow::Error::new(SessionOperationError::AllowanceRenewal(GenericError {
+            reason: "no free StatementStore slot in period 42 (max 3)".to_string(),
+        }));
+        let unavailable =
+            anyhow::Error::new(SessionOperationError::AllowanceRenewal(GenericError {
+                reason: "People chain is unavailable".to_string(),
+            }));
 
         assert_eq!(
             (
                 is_statement_slot_exhaustion(&exhausted),
                 is_statement_slot_exhaustion(&unavailable),
+                exhausted
+                    .chain()
+                    .find_map(|error| error.downcast_ref::<GenericError>()),
+                format!("{exhausted:#}"),
             ),
-            (true, false)
+            (
+                true,
+                false,
+                Some(&GenericError {
+                    reason: "no free StatementStore slot in period 42 (max 3)".to_string(),
+                }),
+                "allowance renewal failed: no free StatementStore slot in period 42 (max 3)"
+                    .to_string(),
+            )
         );
     }
 
