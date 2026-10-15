@@ -1052,7 +1052,7 @@ impl Features for MockPlatform {
 		}
 		let latest::HostFeatureSupportedRequest::Chain { genesis_hash } = request;
 		// A chain outside the set the host reports serving is unsupported, as on
-		// a host that does not serve it, matching the JS mock.
+		// a host that does not serve it.
 		let served = self
 			.config
 			.supported_chains
