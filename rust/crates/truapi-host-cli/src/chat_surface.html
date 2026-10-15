@@ -346,6 +346,8 @@ aside[hidden], section[hidden] { display: none; }
 // for the product's answer.
 const USER = "user";
 const PRODUCT = "product";
+// A product speaks as its persona `<id>` with the participant id `bot:<id>`.
+const PERSONA = "bot:";
 const PAGE_SIZE = 40;
 const PEOPLE_PAGE = 100;
 const REACTIONS = ["\u{1F44D}", "❤️", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F64F}"];
@@ -873,7 +875,7 @@ function resolveAuthors(roomId, ids) {
   const room = roomOf(roomId);
   if (!room || !room.config.participants) return;
   const people = peopleOf(roomId);
-  const wanted = ids.filter((id) => id !== USER && id !== PRODUCT && !people.byId.has(id) && !people.asked.has(id));
+  const wanted = ids.filter((id) => id !== USER && id !== PRODUCT && !persona(id) && !people.byId.has(id) && !people.asked.has(id));
   if (!wanted.length) return;
   wanted.forEach((id) => people.asked.add(id));
   ask("participants", { roomId, query: { type: "ByIds", participantIds: wanted.slice(0, 100) } }, (frame) => {
@@ -882,10 +884,20 @@ function resolveAuthors(roomId, ids) {
   });
 }
 
+// The persona a `bot:<id>` participant names, which the host draws with no
+// participants query. A persona the product lists in its participants too
+// still draws as the persona.
+function persona(id) {
+  if (!String(id).startsWith(PERSONA)) return null;
+  const botId = id.slice(PERSONA.length);
+  return state.bots.find((bot) => bot.botId === botId) || { botId, name: botId, icon: "" };
+}
+
 function participantName(roomId, id) {
   if (id === USER) return "You";
   const room = roomOf(roomId);
   if (id === PRODUCT) return room ? room.name : state.productId;
+  if (persona(id)) return persona(id).name;
   const entry = state.people.has(roomId) ? state.people.get(roomId).byId.get(id) : null;
   if (!entry) return id;
   const p = entry.participant;
@@ -919,7 +931,12 @@ function renderMessage(room, msg, temp) {
   if (temp) row.dataset.temp = "true";
   if (!mine) {
     if (msg.origin === PRODUCT) row.appendChild(roomAvatar(room, true));
-    else {
+    else if (persona(msg.origin)) {
+      const bot = persona(msg.origin);
+      const icon = avatar(bot.icon, bot.name, true);
+      icon.dataset.persona = bot.botId;
+      row.appendChild(icon);
+    } else {
       const entry = state.people.has(roomId) ? state.people.get(roomId).byId.get(msg.origin) : null;
       const custom = entry && entry.participant.kind === "Custom" ? entry.participant.avatar : null;
       row.appendChild(avatar(custom, participantName(roomId, msg.origin), true));
@@ -1187,7 +1204,9 @@ function renderFooter(room) {
   }
   const activity = $("activity");
   activity.hidden = !(room && room.activity);
-  activity.textContent = room && room.activity ? room.activity.text : "";
+  const speaker = room && room.activity && room.activity.participantId;
+  activity.textContent = room && room.activity ? `${speaker ? `${participantName(room.roomId, speaker)}: ` : ""}${room.activity.text}` : "";
+  if (speaker) activity.dataset.participant = speaker; else delete activity.dataset.participant;
   activity.className = "dots";
   const banner = $("banner");
   banner.textContent = "";
@@ -1598,6 +1617,7 @@ function handle(frame) {
     case "bot":
       state.bots = state.bots.filter((b) => b.botId !== frame.botId).concat([strip(frame)]);
       renderRooms();
+      renderRoom(false);
       break;
     case "message": {
       const room = state.rooms.get(frame.roomId);

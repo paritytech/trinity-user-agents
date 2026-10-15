@@ -75,7 +75,7 @@ const SENT_A_MESSAGE: &str = "Sent a message";
 /// room links, so `inline_attachments`, `custom_bodies`, `custom_footer` and
 /// `room_links` are not here. A P10 item adds its name when the page serves
 /// it.
-pub const CLI_CHAT_FEATURES: [&str; 9] = [
+pub const CLI_CHAT_FEATURES: [&str; 10] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -85,6 +85,7 @@ pub const CLI_CHAT_FEATURES: [&str; 9] = [
 	"suggestions",
 	"commands",
 	"activity",
+	"bot_personas",
 ];
 
 /// A room this host created, with everything the product declared about it.

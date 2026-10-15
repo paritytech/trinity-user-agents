@@ -290,13 +290,16 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
 - **Chat Extension v2 additions.** The rooms pane ends with a **Capabilities**
   line: the feature names this host lists in `capabilities`
   (`product_source_rooms`, `reaction_details`, `participants`, `message_menus`,
-  `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`) and
-  both attachment bounds. The host keeps what a product declares with
+  `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`,
+  `bot_personas`) and both attachment bounds. The host keeps what a product declares with
   `set_room_features` whole, and the room header lists each declared feature,
   marked "not served" where the host does not serve it. The host also keeps the
   meta of each message (`set_message_meta`), the call of each room
   (`set_room_call`), the personas of the product (`register_bot`, where a repeat
   replaces the name and icon) and the mute and archive state of each room.
+- **Bot personas.** A message or an activity line from `bot:<id>` draws with
+  the name and icon of the persona `<id>` the product registered, with no
+  `participants_query`; the **Bots** list of the rooms pane shows each persona.
 
 A room the host keeps stores what you send and tells the product with the
 events of `chat.actionSubscribe()` (`MessagePosted` with the host's id,
