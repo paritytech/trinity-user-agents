@@ -500,6 +500,13 @@ pub trait AccountHolder: Send + Sync + 'static {
 		policy: crate::host_internal::sso_messages::OnExistingAllowancePolicy,
 	) -> Result<AccountGrant, AuthorityError>;
 
+	/// Renew a sponsorship already retained by this host without issuing a new signing key.
+	async fn renew_statement_sponsorship(
+		&self,
+		invocation: AccountInvocation<'_>,
+		account_id: [u8; 32],
+	) -> Result<(), AuthorityError>;
+
 	/// Resolve the public hard subtree under the selected account holder.
 	async fn product_subtree_public_key<'a>(
 		&'a self,
@@ -774,9 +781,13 @@ pub trait ProductAuthority: Send + Sync {
 		product_id: String,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError>;
 
-	/// Forget the cached key only if it matches `public_key`, preserving any
-	/// replacement. Hosts without a local cache use the no-op default.
-	fn forget_statement_store_allowance_key(&self, _product_id: &str, _public_key: [u8; 32]) {}
+	/// Renew only statements signed by this product's retained sponsorship key.
+	async fn renew_statement_sponsorship(
+		&self,
+		cx: &CallContext,
+		product: &ProductContext,
+		signer: [u8; 32],
+	) -> Result<(), AuthorityError>;
 
 	/// Whether a preimage submission is kept in the core instead of being sent
 	/// to the Bulletin chain.

@@ -452,6 +452,15 @@ impl AccountHolder for RemoteAccountHolder {
 		.boxed())
 	}
 
+	/// The phone keeps renewing the statement allowances it issued, so a paired host sends nothing.
+	async fn renew_statement_sponsorship(
+		&self,
+		_invocation: AccountInvocation<'_>,
+		_account_id: [u8; 32],
+	) -> Result<(), AuthorityError> {
+		Ok(())
+	}
+
 	async fn ensure_allowance(
 		&self,
 		invocation: AccountInvocation<'_>,
