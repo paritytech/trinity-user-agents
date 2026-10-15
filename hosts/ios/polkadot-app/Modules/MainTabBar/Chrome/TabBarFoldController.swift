@@ -24,6 +24,8 @@ final class TabBarFoldController {
     private let grabZoneSink: (CGRect) -> Void
     /// A state other than `.shown` must dismiss any open panel.
     private let closePanel: () -> Void
+    /// Reports each committed state.
+    private let stateSink: (TabBarVisibilityState) -> Void
 
     private(set) var state: TabBarVisibilityState = .shown
     private(set) var isTabRoot = true
@@ -45,12 +47,14 @@ final class TabBarFoldController {
         foldSurface: UIView,
         chromeBounds: @escaping () -> CGRect,
         grabZoneSink: @escaping (CGRect) -> Void,
-        closePanel: @escaping () -> Void
+        closePanel: @escaping () -> Void,
+        stateSink: @escaping (TabBarVisibilityState) -> Void
     ) {
         self.foldSurface = foldSurface
         self.chromeBounds = chromeBounds
         self.grabZoneSink = grabZoneSink
         self.closePanel = closePanel
+        self.stateSink = stateSink
     }
 
     deinit {
@@ -166,6 +170,7 @@ private extension TabBarFoldController {
         isFoldInterpolating = false
 
         state = newState
+        stateSink(newState)
         if newState != .shown {
             closePanel()
         }

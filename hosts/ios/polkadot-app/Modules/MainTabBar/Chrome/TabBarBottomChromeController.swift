@@ -9,6 +9,7 @@ final class TabBarBottomChromeController: UIViewController {
     private static let keyboardButtonOverlap: CGFloat = 4
 
     private let chromeSurface = TabBarChromeSurfaceView()
+    private let centerButtonAnchorGuide = UILayoutGuide()
     private let barModel = TabBarBarViewModel()
     private lazy var barHost = UIHostingController(rootView: TabBarBarView(model: barModel))
 
@@ -37,12 +38,16 @@ final class TabBarBottomChromeController: UIViewController {
         closePanel: { [weak self] in
             self?.barModel.setCenterPanelOpen(false)
             self?.setPanel(nil)
+        },
+        stateSink: { [weak self] state in
+            self?.tipController.setBarShown(state == .shown)
         }
     )
 
     private lazy var tipController = TabBarTipController(
         host: self,
         sequence: TabBarTipOrderedSequence(steps: TabBarTips.steps),
+        centerButtonAnchor: centerButtonAnchorGuide,
         statusStripAnchor: { [weak self] in self?.statusStripAnchorProvider?() }
     )
 
@@ -55,6 +60,9 @@ final class TabBarBottomChromeController: UIViewController {
             self?.applyBarLiveHeight()
             self?.refreshKeyboardLift()
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.isOutsideTapEnabled = kind != nil
+            if kind != nil {
+                self?.tipController.dismissForPanel()
+            }
         }
     )
 
@@ -122,6 +130,18 @@ final class TabBarBottomChromeController: UIViewController {
         installKeyboardObserver()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+
+        tipController.start()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+
+        tipController.stop()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
 
@@ -132,6 +152,7 @@ final class TabBarBottomChromeController: UIViewController {
         foldController.reapplyForWidthChange()
         if view.window != nil, view.bounds.width > 0, view.bounds.height > 0 {
             hasPerformedInitialLayout = true
+            tipController.setBarLaidOut(true)
         }
     }
 
@@ -210,6 +231,7 @@ final class TabBarBottomChromeController: UIViewController {
     func apply(_ context: TabBarChromeContext) {
         foldController.update(context: context)
         foldController.refresh()
+        tipController.setBarShown(foldController.state == .shown)
     }
 
     /// Resolves the visibility state a context would settle on, without committing it — used to
@@ -284,6 +306,9 @@ private extension TabBarBottomChromeController {
 
     /// Only the centre control's own panel is driven here; another open panel is left alone.
     func centerPanelOpenChanged(_ isOpen: Bool) {
+        if isOpen {
+            tipController.retireForUserInteraction()
+        }
         if isOpen, panelController.open != .content(.scan) {
             setPanel(.content(.scan))
         } else if !isOpen, panelController.open == .content(.scan) {
@@ -321,6 +346,8 @@ private extension TabBarBottomChromeController {
     }
 
     func handleSlotTap(itemIndex: Int) {
+        tipController.retireForUserInteraction()
+
         guard !foldController.isFolded else {
             foldController.setUserOverride(.shown, velocityX: 0)
             return
@@ -450,6 +477,7 @@ private extension TabBarBottomChromeController {
         barHost.view.backgroundColor = .clear
         // The pinned bar geometry owns the home-indicator gap. The default safe area would apply it a second time.
         barHost.safeAreaRegions = []
+        installCenterButtonAnchor()
 
         barModel.onSlotTapped = { [weak self] itemIndex in
             self?.handleSlotTap(itemIndex: itemIndex)
@@ -488,6 +516,18 @@ private extension TabBarBottomChromeController {
 
         // The resting centre button stands above the row, so its top has to be live before any layout pass.
         applyBarLiveHeight()
+    }
+
+    /// The tip popover points at the resting centre button. Its frame follows from the bar geometry, because the
+    /// button is drawn in SwiftUI and has no view of its own.
+    func installCenterButtonAnchor() {
+        barHost.view.addLayoutGuide(centerButtonAnchorGuide)
+        let buttonSize = DSTabBarStyle.centerButtonRestingRise + DSTabBarStyle.centerButtonFootFromRowTop
+        centerButtonAnchorGuide.snp.makeConstraints { make in
+            make.centerX.equalTo(barHost.view)
+            make.bottom.equalTo(barHost.view).offset(DSTabBarStyle.centerButtonFootFromRowTop - DSTabBarStyle.height)
+            make.size.equalTo(buttonSize)
+        }
     }
 
     /// A fold drag starts on the bar row, outside the centre hole where the centre control sits.
