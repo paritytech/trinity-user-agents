@@ -51,8 +51,8 @@ interface ChatExtensionContext {
     suspend fun roomDeclarations(chatId: ChatId): ChatRoomDeclarations?
 
     /**
-     * Replaces the configuration of the room. The same configuration writes nothing. A change of
-     * [ChatRoomConfigModel.productSource] discards the stored messages of the room.
+     * Replaces the configuration of the room and starts a new configuration generation, also for the same
+     * configuration. A change of [ChatRoomConfigModel.productSource] discards the stored messages of the room.
      */
     suspend fun setRoomConfig(chatId: ChatId, config: ChatRoomConfigModel): Result<Unit>
 

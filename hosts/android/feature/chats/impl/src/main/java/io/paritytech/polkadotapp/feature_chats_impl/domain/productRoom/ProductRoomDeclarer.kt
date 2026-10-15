@@ -33,7 +33,8 @@ class ProductRoomDeclarer @Inject constructor(
 
     suspend fun setConfig(extensionId: ChatExtensionId, chatId: ChatId, config: ChatRoomConfigModel) = declare(extensionId, chatId) {
         val current = declarationsRepository.get(chatId)?.effectiveConfig ?: ChatRoomConfigModel.HOST_DEFAULT
-        if (current == config) return@declare
+        // The same configuration is written too, because each write starts a new generation. An open room then asks
+        // the product again for its participants and its menus, as on iOS (02-DESIGN §8).
         // The messages of one store mode mean nothing in the other one, so they go with the change.
         if (current.productSource != config.productSource) chatMessageRepository.deleteAllChatMessages(chatId)
         declarationsWriter.setConfig(chatId, config)
