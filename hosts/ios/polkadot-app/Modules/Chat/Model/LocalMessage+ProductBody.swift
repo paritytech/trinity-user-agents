@@ -13,6 +13,20 @@ extension Chat.LocalMessage.Content {
     struct ProductRichText: Equatable {
         let text: String?
         let media: [String]
+        /// The text alternative of each media item, in the order of `media`, for VoiceOver (P7.2). Empty when no
+        /// item has one, and for a message that a host stored before it kept them.
+        let alts: [String?]
+
+        init(text: String?, media: [String], alts: [String?] = []) {
+            self.text = text
+            self.media = media
+            self.alts = alts.contains { $0 != nil } ? alts : []
+        }
+
+        /// The text alternative of the media item at `index`.
+        func alt(at index: Int) -> String? {
+            alts.indices.contains(index) ? alts[index] : nil
+        }
     }
 
     struct ProductActions: Equatable {
@@ -91,14 +105,21 @@ extension Chat.LocalMessage.Content.ProductBody: ScaleCodable {
 }
 
 extension Chat.LocalMessage.Content.ProductRichText: ScaleCodable {
+    /// The text alternatives come last, after the fields of the first layout. The body is the last value of the
+    /// stored content, so a row that a host stored before has no bytes left for them.
     init(scaleDecoder: any ScaleDecoding) throws {
         text = try ScaleOption<String>(scaleDecoder: scaleDecoder).value
         media = try [String](scaleDecoder: scaleDecoder)
+        let alts = scaleDecoder.remained > 0
+            ? try [ScaleOption<String>](scaleDecoder: scaleDecoder).map(\.value)
+            : []
+        self.alts = alts.contains { $0 != nil } ? alts : []
     }
 
     func encode(scaleEncoder: any ScaleEncoding) throws {
         try ScaleOption(value: text).encode(scaleEncoder: scaleEncoder)
         try media.encode(scaleEncoder: scaleEncoder)
+        try alts.map { ScaleOption(value: $0) }.encode(scaleEncoder: scaleEncoder)
     }
 }
 

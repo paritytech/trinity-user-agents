@@ -24,22 +24,29 @@ public struct ChatMediaStackView: View, Hashable {
     }
 
     let sources: [String]
+    /// The text alternative of each source, for VoiceOver (P7.2).
+    public let alts: [String?]
     let text: ChatMarkdownText?
     let loader: ChatImageLoader
 
-    public init(sources: [String], text: ChatMarkdownText?, loader: ChatImageLoader) {
+    public init(sources: [String], alts: [String?] = [], text: ChatMarkdownText?, loader: ChatImageLoader) {
         self.sources = sources
+        self.alts = alts
         self.text = text
         self.loader = loader
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
-            ForEach(Array(sources.enumerated()), id: \.offset) { _, source in
+            ForEach(Array(sources.enumerated()), id: \.offset) { index, source in
                 ChatRemoteImage(source: source, loader: loader)
                     .frame(maxWidth: .infinity)
                     .frame(height: Layout.imageHeight)
                     .clipped()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityAddTraits(.isImage)
+                    .accessibilityLabel(Text(alt(at: index) ?? ""))
+                    .accessibilityHidden(alt(at: index) == nil)
             }
 
             if let text {
@@ -51,12 +58,22 @@ public struct ChatMediaStackView: View, Hashable {
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.sources == rhs.sources && lhs.text == rhs.text
+        lhs.sources == rhs.sources && lhs.alts == rhs.alts && lhs.text == rhs.text
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(sources)
+        hasher.combine(alts)
         hasher.combine(text)
+    }
+
+    /// The text alternative of the source at `index`, or nil when the product gave none.
+    public func alt(at index: Int) -> String? {
+        guard alts.indices.contains(index), let alt = alts[index],
+              !alt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return alt
     }
 }
 

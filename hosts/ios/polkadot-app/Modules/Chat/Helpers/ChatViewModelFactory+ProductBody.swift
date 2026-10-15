@@ -51,6 +51,7 @@ extension ChatViewModelFactory {
         let text = richText.text?.nilIfEmpty
         let view = ChatMediaStackView(
             sources: richText.media,
+            alts: richText.media.indices.map(richText.alt(at:)),
             text: text.map { ChatMarkdownText(markdown: $0, onOpenLink: context.actions?.openLink) },
             loader: productMediaLoader
         )

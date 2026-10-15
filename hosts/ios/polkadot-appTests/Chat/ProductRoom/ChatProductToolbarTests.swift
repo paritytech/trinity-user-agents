@@ -31,6 +31,16 @@ struct ChatProductToolbarTests {
         _ = presenter
     }
 
+    /// P7.2: VoiceOver reads the label of each toolbar button, and names the overflow button.
+    @Test func eachToolbarButtonHasALabelForVoiceOver() throws {
+        _ = try makePresenter(toolbar: (1 ... 4).map { button("tb-\($0)") })
+
+        let items = try #require(view.toolbars.last)
+        #expect(items[0].accessibilityLabel == String(localized: .ChatExtension.toolbarMore))
+        #expect(items[1].accessibilityLabel == "tb-2")
+        #expect(items[2].accessibilityLabel == "tb-1")
+    }
+
     @Test func twoButtonsNeedNoOverflowButton() throws {
         _ = try makePresenter(toolbar: [button("tb-1"), button("tb-2")])
 

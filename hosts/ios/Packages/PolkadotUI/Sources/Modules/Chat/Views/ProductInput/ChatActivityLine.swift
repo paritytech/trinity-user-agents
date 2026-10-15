@@ -12,6 +12,9 @@ final class ChatActivityLine: UIView {
         $0.lineBreakMode = .byTruncatingTail
     }
 
+    /// The dots move, which they do not when the user asks for reduced motion (P7.2).
+    private(set) var animatesDots = false
+
     var text: String? {
         didSet {
             label.text = text
@@ -26,7 +29,13 @@ final class ChatActivityLine: UIView {
         isAccessibilityElement = true
         dots.tintColor = .fgSecondary
         dots.contentMode = .scaleAspectFit
-        dots.addSymbolEffect(.variableColor.iterative.reversing)
+        updateDotsAnimation()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(reduceMotionChanged),
+            name: UIAccessibility.reduceMotionStatusDidChangeNotification,
+            object: nil
+        )
 
         addSubview(dots)
         addSubview(label)
@@ -46,5 +55,19 @@ final class ChatActivityLine: UIView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+}
+
+private extension ChatActivityLine {
+    func updateDotsAnimation() {
+        dots.removeAllSymbolEffects()
+        animatesDots = !UIAccessibility.isReduceMotionEnabled
+        if animatesDots {
+            dots.addSymbolEffect(.variableColor.iterative.reversing)
+        }
+    }
+
+    @objc func reduceMotionChanged() {
+        updateDotsAnimation()
     }
 }
