@@ -64,6 +64,7 @@ fun PolkadotTopBar(
         titleSize = titleSize,
         actions = actions,
         leadingContent = leadingContent,
+        extraActions = extraActions,
         content = content,
     )
 }
@@ -78,6 +79,8 @@ fun PolkadotTopBar(
     titleSize: TopBarTitleSize = TopBarTitleSize.Standard,
     actions: ImmutableList<TopBarAction> = persistentListOf(),
     leadingContent: (@Composable () -> Unit)? = null,
+    // Buttons that draw before [actions], such as product buttons whose icons are images, not vectors.
+    extraActions: (@Composable () -> Unit)? = null,
     content: (@Composable () -> Unit)? = null,
 ) {
     TopBar(
@@ -89,6 +92,7 @@ fun PolkadotTopBar(
         titleSize = titleSize,
         actions = actions,
         leadingContent = leadingContent,
+        extraActions = extraActions,
         content = content,
     )
 }
@@ -103,6 +107,7 @@ private fun TopBar(
     titleSize: TopBarTitleSize,
     actions: ImmutableList<TopBarAction>,
     leadingContent: (@Composable () -> Unit)?,
+    extraActions: (@Composable () -> Unit)?,
     content: (@Composable () -> Unit)?,
 ) {
     require(actions.size <= MAX_TOP_BAR_ACTIONS) { "Top bar supports at most $MAX_TOP_BAR_ACTIONS actions" }
