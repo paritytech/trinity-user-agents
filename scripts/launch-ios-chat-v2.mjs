@@ -116,6 +116,12 @@ const scenarios =
 /** The values that a step filled in, for the expectations after it. */
 const memory = {};
 
+/**
+ * True while the launcher answers a stray permission prompt. The scenarios
+ * run in the top-level await below, so this is set before they start.
+ */
+let answeringPrompt = false;
+
 /** How long the app has to start the product and create its room. */
 const START_TIMEOUT_MS = 120_000;
 /** How long one command has to reach the product and take effect. */
@@ -386,17 +392,28 @@ async function runScenario(scenario) {
   }
   if (!scenario.drive) return skipRow(scenario);
   await answerStrayPrompt();
-  const result = await driveScenario(scenario);
+  // A row that answers prompts itself (P10.3) gets no answer from the launcher.
+  const answersPrompts = JSON.stringify(scenario.drive).includes(
+    '"host":"permission"',
+  );
+  const watcher = answersPrompts
+    ? undefined
+    : setInterval(() => answerStrayPrompt().catch(() => {}), 1_000);
+  const result = await driveScenario(scenario).finally(() =>
+    clearInterval(watcher),
+  );
   return scenario.capabilities ? capabilityVerdict(result, rows) : result;
 }
 
 /**
  * A permission prompt that no scenario asked for, such as the one of the
- * product's own preimage when its worker starts again while a room screen
- * shows, would hold the permission lock of the core. The launcher allows it
- * once, so the next scenario starts with no prompt on the screen.
+ * product's own preimage (`/post rich`, or a worker that starts again while
+ * a room screen shows), would hold the permission lock of the core and the
+ * post that waits for it. The launcher allows it once, before each scenario
+ * and every second while a scenario that answers no prompt runs.
  */
 async function answerStrayPrompt() {
+  if (answeringPrompt) return;
   const prompts = parseUiMarkers(consoleText).filter(
     (marker) =>
       (marker.key === "prompt" || marker.key === "prompt-answer") &&
@@ -404,7 +421,12 @@ async function answerStrayPrompt() {
   );
   if (prompts.at(-1)?.key !== "prompt") return;
   console.log(`answering a stray prompt: ${prompts.at(-1).value}`);
-  await sendHostAction({ room, host: "permission", argument: "once" });
+  answeringPrompt = true;
+  try {
+    await sendHostAction({ room, host: "permission", argument: "once" });
+  } finally {
+    answeringPrompt = false;
+  }
 }
 
 /**
