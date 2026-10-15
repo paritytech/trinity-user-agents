@@ -4711,6 +4711,60 @@ mod tests {
 		assert!(sent_frames(&sink).is_empty());
 	}
 
+	// S62: a scripted product answers the host's search; the core holds the
+	// answer to the page size the host asked for, and to the product's own
+	// personas, before the host sees it.
+	#[test]
+	fn a_search_answer_is_screened_before_the_host_sees_it() {
+		let answer = |hits: Vec<truapi::latest::ChatMessage>, page_size: u32| {
+			let (runtime, sink) = chat_query_runtime_with(ConfiguredChat {
+				config: product_source(),
+				features: truapi::latest::ChatRoomFeatures { search: true, ..Default::default() },
+				..Default::default()
+			});
+			let mut query = runtime
+				.control()
+				.chat_search_query(search_request(page_size))
+				.expect("may be asked");
+			let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+			assert!(query.poll_next_unpin(&mut cx).is_pending());
+			let start = sent_frames(&sink).remove(0);
+			deliver_chat_frame(
+				&runtime,
+				&start,
+				truapi::versioned::chat::ProductChatSearchQueryItem::V1(
+					truapi::latest::ProductChatSearchQueryItem { hits, next: None },
+				)
+				.encode(),
+			);
+			futures::executor::block_on(query.next())
+		};
+		let persona = truapi::latest::ChatMessage {
+			origin: truapi::latest::ChatMessageOrigin { participant_id: "bot:ghost".to_string() },
+			..text_message("m3")
+		};
+
+		assert_eq!(
+			answer(vec![text_message("m2"), text_message("m1")], 2),
+			Some(Ok(truapi::latest::ProductChatSearchQueryItem {
+				hits: vec![text_message("m2"), text_message("m1")],
+				next: None,
+			}))
+		);
+		assert!(matches!(
+			answer(vec![text_message("m2"), text_message("m1")], 1),
+			Some(Err(truapi::CallError::Domain(
+				truapi::latest::ProductChatQueryError::Unknown { .. }
+			)))
+		));
+		assert_eq!(
+			answer(vec![persona], 2),
+			Some(Err(truapi::CallError::Domain(truapi::latest::ProductChatQueryError::Unknown {
+				reason: "unknown bot ghost".to_string()
+			})))
+		);
+	}
+
 	// D30: a page cannot name a persona the product did not register.
 	#[test]
 	fn a_page_from_an_unknown_persona_is_refused() {
