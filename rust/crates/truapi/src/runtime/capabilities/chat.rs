@@ -248,6 +248,7 @@ impl Chat for ProductRuntimeHost {
 					limits.preview.forget(&self.product.product_id, &room_id);
 					limits.call.forget(&self.product.product_id, &room_id);
 					self.forget_chat_staging(&room_id);
+					self.services.hold_chat_call(&self.product.product_id, &room_id, None);
 					request.room_id = room_id;
 					platform.delete_chat_room(&self.product, request).await.map_err(room_host_error)
 				},
@@ -451,11 +452,14 @@ impl Chat for ProductRuntimeHost {
 					return Err(room_failure(format!("this host does not serve {feature}")));
 				}
 			}
-			request.room_id = room_id;
+			request.room_id = room_id.clone();
+			let call = request.call.clone();
 			platform
 				.set_chat_room_call(&self.product, request)
 				.await
-				.map_err(room_host_error)
+				.map_err(room_host_error)?;
+			self.services.hold_chat_call(&self.product.product_id, &room_id, call.as_ref());
+			Ok(())
 		};
 		answer_room_change(result.await, version, HostChatSetRoomCallResponse::from_latest)
 	}
@@ -1918,6 +1922,35 @@ mod tests {
 			set_call(&runtime, "main", Some(ringing())),
 			Err(CallError::Domain(HostChatRoomError::V1(latest::HostChatRoomError::RateLimited)))
 		);
+	}
+
+	// D31: a call the core accepted holds the worker; a cleared call and a
+	// deleted room release it, and a refused call holds nothing.
+	#[test]
+	fn the_call_of_a_room_holds_the_worker() {
+		let chat = RecordingHost::with_rooms(&[hosted("main"), hosted("other")]);
+		let runtime = chat_runtime(chat.clone());
+		let references = || runtime.services.worker_ledger.count("chat.dot");
+
+		assert!(set_call(&runtime, "main", Some(ringing())).is_err());
+		assert_eq!(references(), 0);
+		*chat.capabilities.lock().unwrap() = vec!["call_buttons".to_string()];
+		set_call(&runtime, "main", Some(ringing())).expect("served");
+		assert_eq!(references(), 1);
+		set_call(&runtime, "other", Some(ringing())).expect("served");
+		assert_eq!(references(), 2);
+		std::thread::sleep(core::time::Duration::from_millis(1_000));
+		set_call(&runtime, "main", None).expect("cleared");
+		assert_eq!(references(), 1);
+		block_on(Chat::delete_room(
+			&runtime,
+			&CallContext::default(),
+			HostChatDeleteRoomRequest::V1(latest::HostChatDeleteRoomRequest {
+				room_id: "other".to_string(),
+			}),
+		))
+		.expect("deleted");
+		assert_eq!(references(), 0);
 	}
 
 	fn room_events(

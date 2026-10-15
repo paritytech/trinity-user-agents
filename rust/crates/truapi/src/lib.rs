@@ -892,8 +892,8 @@ pub use runtime::{
 };
 #[cfg(feature = "runtime")]
 pub use runtime::{
-	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_WAKE_HOLD_MS, ChatStageRejection, ChatWakeOutcome,
-	ChatWakeReason,
+	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_RINGING_HOLD_MS, CHAT_WAKE_HOLD_MS, ChatStageRejection,
+	ChatWakeOutcome, ChatWakeReason,
 };
 
 #[cfg(feature = "runtime")]

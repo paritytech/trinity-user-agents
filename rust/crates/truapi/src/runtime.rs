@@ -15,6 +15,7 @@ pub mod auth_state;
 mod authority;
 /// In-core Bulletin preimage submission over the shared Subxt client.
 pub mod bulletin_rpc;
+mod call_holds;
 mod capabilities;
 mod chat;
 mod chat_staging;
@@ -59,6 +60,7 @@ use std::{
 pub use actions::ActionChannel;
 use authority::{AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
+pub use call_holds::{CHAT_RINGING_HOLD_MS, ChatCallHolds};
 pub use chat::{ChatEventChannel, ChatHandler, ChatRoomEventHub, chat_platform_for};
 pub use chat_staging::{ChatStageRejection, ChatStagingDeclarations};
 pub use contacts::ContactResolutionError;

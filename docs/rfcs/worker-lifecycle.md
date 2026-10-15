@@ -58,7 +58,8 @@ Reference holders, by modality:
   authenticated notification routed to a room (`/-/chat/<room_id>`), at most 12 per product per rolling hour. A product
   has at most one wake hold, and a new wake moves its deadline. The product extends a wake only through
   `Worker::begin_operation`.
-- **Call.** A room with a `Ringing` or `Active` call holds the worker until the product clears the call.
+- **Call.** A room with a `Ringing` or `Active` call holds the worker until the product clears the call or deletes
+  the room. A `Ringing` call holds it for at most 60 s, the time a host rings before it clears the banner.
 
 ### Stopping
 
