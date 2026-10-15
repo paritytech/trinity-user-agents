@@ -47,6 +47,12 @@ export const CLI_CHAT_SCENARIOS = Object.freeze([
       "room features survive a worker restart; an unserved feature is stored and ignored",
     mode: "host",
   },
+  {
+    id: "S53",
+    title:
+      "register_bot answers New, then Exists and replaces the persona; a bot message draws its name and icon; an unknown persona is refused",
+    mode: "host",
+  },
 ]);
 
 function cell(value) {

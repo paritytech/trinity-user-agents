@@ -205,6 +205,22 @@ class ChatPage {
     );
   }
 
+  /** Wait for the newest product message to match `text`, and give it. */
+  async lastProductText(text, timeoutMs = 10_000) {
+    const matches = (value) =>
+      typeof text === "string" ? value === text : text.test(value);
+    return this.until(
+      async () => {
+        const last = (await this.messages())
+          .filter((message) => message.origin === "product")
+          .at(-1);
+        return last && matches(last.text.split("\n")[0].trim()) ? last : null;
+      },
+      `a product message ${text}`,
+      timeoutMs,
+    );
+  }
+
   /** The messages the thread draws, oldest first. */
   messages() {
     return this.page.$$eval("#thread [data-message-id]", (nodes) =>
@@ -621,6 +637,58 @@ async function drive(chat) {
       "no declared feature",
     );
     return `${await chat.shot("s51-host.png")}; ${declared} kept across the restart`;
+  });
+
+  // S53: a persona draws with its name and icon and no participants query.
+  await scenario(rows, byId.S53, async () => {
+    await chat.command("host", "/bot add helper Helper");
+    await chat.lastProductText(/^bot helper (New|Exists)$/);
+    await chat.command("host", "/bot post helper Hello from the persona");
+    const spoken = await chat.until(async () => {
+      const messages = await chat.messages();
+      return messages
+        .filter((message) => message.origin === "bot:helper")
+        .find((message) => message.text.includes("Hello from the persona"));
+    }, "the persona message");
+    const drawn = async () =>
+      page.$eval(
+        `[data-message-id="${spoken.id}"]`,
+        (node) => ({
+          who: node.querySelector(".who")?.innerText ?? "",
+          icon: !!node.querySelector('[data-persona="helper"] img'),
+        }),
+      );
+    await chat.until(
+      async () => {
+        const { who, icon } = await drawn();
+        return who === "Helper" && icon;
+      },
+      "the persona name and icon",
+    );
+    const asked = chat.log.filter(
+      (line) => line.via === "participants_query" && line.room === "host",
+    );
+    if (asked.length > 0)
+      throw new Error(`the page asked participants_query ${asked.length} time(s)`);
+    await chat.command("host", "/bot add helper Helper Two");
+    await chat.lastProductText("bot helper Exists");
+    await chat.until(
+      async () => (await drawn()).who === "Helper Two",
+      "the replaced persona name",
+    );
+    await chat.command("host", "/bot typing helper");
+    await chat.until(
+      async () =>
+        (await page.$eval("#activity", (node) => node.innerText)).startsWith(
+          "Helper Two: ",
+        ),
+      "the activity line of the persona",
+    );
+    const shot = await chat.shot("s53-host.png");
+    await chat.command("host", "/activity off");
+    await chat.command("host", "/bot post ghost Boo");
+    await chat.lastProductText(/unknown bot ghost/);
+    return `${shot}; ${spoken.id} drawn as Helper with its icon, renamed to Helper Two, ghost refused`;
   });
 
   return rows;
