@@ -767,11 +767,21 @@ impl ChainRuntime {
 	/// Genesis-pinned Subxt client for the chain identified by `genesis_hash`.
 	/// The cached unit is the underlying Subxt connection bundle, not just
 	/// the cheap client handle.
+	///
+	/// Core scope only. The Subxt backend spawns a driver task holding a
+	/// `HostRpcClient` handle that nothing aborts, so a connection carrying one
+	/// never reaches a zero handle count and `release_scope` cannot close its
+	/// socket. The product-facing capability uses `remote_chain_*` instead,
+	/// which goes through `connection.methods` and spawns no such task.
 	#[instrument(skip_all, fields(runtime.method = "chain_runtime.online_client"))]
 	pub async fn online_client(
 		&self,
 		genesis_hash: &[u8],
 	) -> Result<OnlineClient<SubstrateConfig>, RuntimeFailure> {
+		debug_assert!(
+			matches!(self.scope, ConnectionScope::Core),
+			"the Subxt backend's driver task defeats release_scope on a product scope",
+		);
 		Ok(self.subxt_connection(genesis_hash).await?.client)
 	}
 
@@ -786,6 +796,8 @@ impl ChainRuntime {
 
 	/// Legacy-RPC Subxt client for the chain identified by `genesis_hash`,
 	/// for reads at blocks a chainHead follow no longer pins.
+	///
+	/// Core scope only, for the same reason as [`Self::online_client`].
 	#[instrument(skip_all, fields(runtime.method = "chain_runtime.legacy_connection"))]
 	pub async fn legacy_connection(
 		&self,
