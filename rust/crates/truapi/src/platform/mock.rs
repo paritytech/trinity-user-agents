@@ -1154,10 +1154,8 @@ impl PreimageHost for MockPlatform {
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, latest::GenericError>> {
 		let key = key.to_vec();
 		let (sender, receiver) = mpsc::unbounded();
-		// Emit the current value or miss, then each later insert for the key: a
-		// live subscription that never ends, matching the trait doc and the JS
-		// mock. The subscribers lock is held across the read and the
-		// registration, so an insert cannot land between them unseen.
+		// The subscribers lock is held across the read and the registration, so
+		// an insert cannot land between them unseen.
 		let mut subscribers =
 			self.preimage_subscribers.lock().expect("preimage subscribers poisoned");
 		sender

@@ -30,8 +30,8 @@ describe("createTestHostServer host configuration", () => {
   });
 
   it("serves the chains `networks` names, expanded as the fixture expands them", async () => {
-    // Dropping `networks` here left a suite with no chain proxied and every
-    // read failing, with nothing saying why.
+    // A suite that starts the server itself gets its chains from here, so
+    // they have to reach the page as the fixture would send them.
     const genesisHash = `0x${"aa".repeat(32)}`;
     const server = await createTestHostServer({
       unref: true,
@@ -67,9 +67,12 @@ describe("createTestHostServer host configuration", () => {
       ],
       mock: { chainProxies: [] },
     });
-    const mock = JSON.parse(new URL(server.url).searchParams.get("mock")!);
-    expect(mock.chainProxies).toEqual([]);
-    expect(mock.supportedChains.network).toBe("paseo");
+    expect(
+      JSON.parse(new URL(server.url).searchParams.get("mock")!),
+    ).toMatchObject({
+      chainProxies: [],
+      supportedChains: { network: "paseo" },
+    });
     await server.close();
   });
 
