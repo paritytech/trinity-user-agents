@@ -132,6 +132,21 @@ extension ChatProductRoomPresenter {
         onChange?()
     }
 
+    // MARK: - Long texts
+
+    /// True when the user expanded the long text of the message with "Show more" (02-DESIGN §6.1).
+    func isTextExpanded(_ messageId: Chat.MessageId) -> Bool {
+        additions.expandedTexts.contains(productMessageId(messageId))
+    }
+
+    /// Shows the whole text of the message. The text stays expanded while the room screen is open.
+    func expandText(of messageId: Chat.MessageId) {
+        let productId = productMessageId(messageId)
+        guard additions.expandedTexts.insert(productId).inserted else { return }
+        mark("text-" + productId, "expanded")
+        onChange?()
+    }
+
     // MARK: - Read aloud
 
     /// The room offers "Read aloud" on its messages: the product declared `read_aloud` (D33).

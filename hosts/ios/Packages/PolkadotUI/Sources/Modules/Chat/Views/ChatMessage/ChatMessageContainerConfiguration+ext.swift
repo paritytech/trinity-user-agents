@@ -30,12 +30,27 @@ private extension ChatMessageContainerConfiguration {
 }
 
 public extension ChatMessageContainerConfiguration {
-    /// Draws the text with the Markdown subset of ``ChatMarkdownText`` and opens links through the host.
-    struct MarkdownBody {
-        let openLink: ((URL) -> Void)?
+    /// How the text of a product body draws (02-DESIGN §6.1). A person chat draws its text with no such value.
+    struct ProductText {
+        enum Format {
+            /// A `Text` body: plain text, with no Markdown and no links.
+            case plain
+            /// A `RichText` body: the Markdown subset of ``ChatMarkdownText``. A tapped link opens through the host.
+            case markdown(openLink: ((URL) -> Void)?)
+        }
 
-        public init(openLink: ((URL) -> Void)?) {
-            self.openLink = openLink
+        let format: Format
+        /// The "Show more" button of a long text. Nil shows the text in full.
+        let collapse: ChatTextCollapse?
+
+        /// A `Text` body of a product.
+        public static func plain(collapse: ChatTextCollapse? = nil) -> Self {
+            Self(format: .plain, collapse: collapse)
+        }
+
+        /// A `RichText` body of a product. The host confirms a tapped link before it opens it.
+        public static func markdown(openLink: ((URL) -> Void)?, collapse: ChatTextCollapse? = nil) -> Self {
+            Self(format: .markdown(openLink: openLink), collapse: collapse)
         }
     }
 
@@ -48,11 +63,13 @@ public extension ChatMessageContainerConfiguration {
         canReply: Bool = true,
         addReaction: AddReactionViewModel? = nil,
         messageReaction: MessageReactionViewModel? = nil,
-        layoutType: LayoutType = .plain
+        layoutType: LayoutType = .plain,
+        productText: ProductText? = nil
     ) -> Self {
         makeRichText(
             style: .outbox,
             text: text,
+            productText: productText,
             statusConfiguration: statusConfiguration,
             attachments: attachments,
             productLinkPreview: productLinkPreview,
@@ -74,12 +91,12 @@ public extension ChatMessageContainerConfiguration {
         addReaction: AddReactionViewModel? = nil,
         messageReaction: MessageReactionViewModel? = nil,
         layoutType: LayoutType = .plain,
-        markdown: MarkdownBody? = nil
+        productText: ProductText? = nil
     ) -> Self {
         makeRichText(
             style: .inbox,
             text: text,
-            markdown: markdown,
+            productText: productText,
             statusConfiguration: statusConfiguration,
             attachments: attachments,
             productLinkPreview: productLinkPreview,
@@ -104,12 +121,14 @@ public extension ChatMessageContainerConfiguration {
         canReply: Bool = true,
         addReaction: AddReactionViewModel? = nil,
         messageReaction: MessageReactionViewModel? = nil,
-        layoutType: LayoutType = .plain
+        layoutType: LayoutType = .plain,
+        productText: ProductText? = nil
     ) -> Self {
         let style = RichTextStyle(side: .leading, bubbleColor: bubbleColor, textColor: textColor)
         return makeRichText(
             style: style,
             text: text,
+            productText: productText,
             bubbleStrokeColor: bubbleStrokeColor,
             bubbleStrokeWidth: bubbleStrokeWidth,
             statusConfiguration: statusConfiguration,
@@ -366,10 +385,38 @@ private extension ChatMessageContainerConfiguration {
         )
     }
 
+    /// The text of a bubble: the text of a person chat, or a product body by its format (02-DESIGN §6.1).
+    private static func textViewModel(
+        text: String,
+        productText: ProductText?,
+        textColor: UIColor,
+        placeholderImage: UIImage?
+    ) -> ChatMessageTextView.ViewModel {
+        switch productText?.format {
+        case let .markdown(openLink):
+            .init(
+                markdown: text,
+                textColor: textColor,
+                statusPlaceholderImage: placeholderImage,
+                openLink: openLink,
+                collapse: productText?.collapse
+            )
+        case .plain:
+            .init(
+                plainText: text,
+                textColor: textColor,
+                statusPlaceholderImage: placeholderImage,
+                collapse: productText?.collapse
+            )
+        case nil:
+            .init(text: text, textColor: textColor, statusPlaceholderImage: placeholderImage)
+        }
+    }
+
     static func makeRichText(
         style: RichTextStyle,
         text: String?,
-        markdown: MarkdownBody? = nil,
+        productText: ProductText? = nil,
         bubbleStrokeColor: UIColor? = nil,
         bubbleStrokeWidth: CGFloat = 0,
         statusConfiguration: ChatMessageStatusViewConfiguration?,
@@ -407,20 +454,12 @@ private extension ChatMessageContainerConfiguration {
         let innerContent = ChatRichTextMessageConfiguration(
             attachmentItems: attachments ?? [],
             textViewModel: trimmedText.map { text in
-                if let markdown {
-                    .init(
-                        markdown: text,
-                        textColor: style.textColor,
-                        statusPlaceholderImage: statusConfiguration?.placeholderImage,
-                        openLink: markdown.openLink
-                    )
-                } else {
-                    .init(
-                        text: text,
-                        textColor: style.textColor,
-                        statusPlaceholderImage: statusConfiguration?.placeholderImage
-                    )
-                }
+                textViewModel(
+                    text: text,
+                    productText: productText,
+                    textColor: style.textColor,
+                    placeholderImage: statusConfiguration?.placeholderImage
+                )
             },
             productLinkPreview: productLinkPreview
         )

@@ -58,6 +58,8 @@ final class ChatRoomAdditionsState {
     var preparing: Set<String> = []
     /// The ids under which the product knows the reasoning rows that the user expanded.
     var expandedReasoning: Set<String> = []
+    /// The ids under which the product knows the long texts that the user expanded with "Show more".
+    var expandedTexts: Set<String> = []
     /// The arrows that wait for the product, by the id under which the product knows the message.
     var pendingBranches: [String: PendingBranch] = [:]
     /// The parent and the root of a thread room. Nil for a room that is not a thread, or until it loads.

@@ -43,6 +43,40 @@ extension Chat.LocalMessage.Content.ProductBody {
     }
 }
 
+// MARK: - Product text (02-DESIGN §6.1, O18)
+
+extension ChatViewModelFactory {
+    /// The format of a `Text` body: plain text in a product room, with no Markdown and no links. Nil in a person
+    /// chat, which keeps inline Markdown and the links that the system finds.
+    func plainProductText(
+        of messageId: String,
+        text: String
+    ) -> ChatMessageContainerConfiguration.ProductText? {
+        guard productRoom != nil else { return nil }
+        return .plain(collapse: productTextCollapse(of: messageId, text: text))
+    }
+
+    /// The "Show more" button of a long product text, or nil when the user expanded the text or the text is short.
+    func productTextCollapse(of messageId: String, text: String) -> ChatTextCollapse? {
+        MainActor.assumeIsolated {
+            guard let productRoom, text.count > ChatTextCollapse.collapsedLength else {
+                return nil
+            }
+
+            let productId = productRoom.productMessageId(messageId)
+            guard !productRoom.isTextExpanded(messageId) else {
+                productRoom.mark("text-" + productId, "expanded")
+                return nil
+            }
+
+            productRoom.mark("text-" + productId, "collapsed")
+            return ChatTextCollapse(title: String(localized: .ChatExtension.messageShowMore)) { [weak productRoom] in
+                MainActor.assumeIsolated { productRoom?.expandText(of: messageId) }
+            }
+        }
+    }
+}
+
 extension ChatViewModelFactory {
     func productMediaConfiguration(
         _ richText: Chat.LocalMessage.Content.ProductRichText,

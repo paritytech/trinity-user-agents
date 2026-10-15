@@ -321,6 +321,7 @@ private extension ChatViewModelFactory {
                     reactions: reactions,
                     actions: actions,
                     inboxBubbleStyle: inboxBubbleStyle,
+                    productText: plainProductText(of: message.messageId, text: latestEdit?.newText ?? text),
                     reactionChoice: reactionChoice
                 )
             ]
@@ -438,6 +439,7 @@ private extension ChatViewModelFactory {
                     reactions: reactions,
                     actions: actions,
                     inboxBubbleStyle: inboxBubbleStyle,
+                    productText: plainProductText(of: message.messageId, text: replyDisplayText),
                     reactionChoice: reactionChoice
                 )
             ]
@@ -585,7 +587,10 @@ private extension ChatViewModelFactory {
                 layoutContext: context.layoutContext,
                 reactions: reactions,
                 actions: context.actions,
-                markdown: .init(openLink: context.actions?.openLink),
+                productText: .markdown(
+                    openLink: context.actions?.openLink,
+                    collapse: productTextCollapse(of: context.messageId, text: body.text ?? "")
+                ),
                 reactionChoice: context.reactionChoice
             )
         }
@@ -678,7 +683,7 @@ private extension ChatViewModelFactory {
         reactions: [ReactionViewModel] = [],
         actions: ChatViewModelActions? = nil,
         inboxBubbleStyle: InboxBubbleStyle? = nil,
-        markdown: ChatMessageContainerConfiguration.MarkdownBody? = nil,
+        productText: ChatMessageContainerConfiguration.ProductText? = nil,
         reactionChoice: ChatReactionChoice? = .all
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
         let (textAfterStrip, productLinkPreview) = resolveProductLinkPreview(
@@ -734,7 +739,7 @@ private extension ChatViewModelFactory {
             isEdited: isEdited,
             canReply: messageActions.contains(.reply),
             inboxBubbleStyle: inboxBubbleStyle,
-            markdown: markdown
+            productText: productText
         )
 
         var configuration = makeTextMessageContainerConfiguration(context: context)
