@@ -118,6 +118,10 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         apply(update)
     }
 
+    func productStopped() async {
+        markUnavailable()
+    }
+
     // MARK: - ChatMessageSourcing
 
     func snapshots() async throws -> AnyAsyncSequence<MessageListSnapshot> {

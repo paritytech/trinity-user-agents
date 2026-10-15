@@ -449,6 +449,27 @@ struct ProductMessageSourceTests {
 private let productId = "product.dot"
 private let roomId = "lobby"
 
+extension ProductMessageSourceTests {
+    /// P7.3: the worker ends while a send waits for its answer (06-OPEN-ITEMS O26). The send fails, the room is
+    /// unavailable, and the window keeps the messages that it has.
+    @Test func aSendWhoseWorkerEndsFailsAndTheRoomKeepsItsMessages() async throws {
+        let querying = ScriptedProductChatQuerying(
+            page: { _ in .init(messages: [productMessage(10, id: "p1")], next: nil) },
+            action: { _ in throw ChatQueryError.noAnswer }
+        )
+        let source = makeSource(querying)
+        await open(source)
+
+        #expect(try await source.perform(.send(.text("hi"))) == .failed)
+        await source.productStopped()
+
+        let snapshot = await source.snapshot
+        #expect(snapshot.readiness == .unavailable)
+        #expect(snapshot.messages.first?.messageId == "p1")
+        #expect(snapshot.messages.last?.status == .outgoing(.failed))
+    }
+}
+
 private func makeSource(
     _ querying: ScriptedProductChatQuerying,
     cache: ProductMessageCache = ProductMessageCache(),

@@ -15,6 +15,22 @@ extension ChatProductRoomPresenter {
         #endif
     }
 
+    /// Counts the window updates, and writes the time from the open (or the retry) of the room to its first ready
+    /// window, for the performance rows of the harness (P7.1, B2).
+    func markPerformance(readiness: ChatRoomReadiness, messages count: Int) {
+        #if targetEnvironment(simulator)
+            guard TrUAPIE2EMarkers.isEnabled else { return }
+            e2eUpdates += 1
+            guard readiness == .ready, let start = e2eReadyWaitStart else { return }
+            e2eReadyWaitStart = nil
+            let elapsed = ContinuousClock.now - start
+            let milliseconds = Double(elapsed.components.seconds) * 1_000
+                + Double(elapsed.components.attoseconds) / 1e15
+            e2eMarks["perf-ready"] = nil
+            mark("perf-ready", String(format: "ms=%.0f count=%d", milliseconds, count))
+        #endif
+    }
+
     /// The newest messages of the window, for the harness: `id:status:kind`.
     func markWindow() {
         mark("window", {
@@ -100,11 +116,28 @@ extension ChatProductRoomPresenter {
             case "older": interactor?.loadOlderMessages()
             case "jump": action.target.map { interactor?.jump(to: $0) }
             case "retry": action.target.flatMap(e2eMessageId).map { interactor?.retrySend(messageId: $0) }
-            case "retry-room": interactor?.retryRoom()
+            case "retry-room":
+                e2eReadyWaitStart = .now
+                interactor?.retryRoom()
+            case "frames": measureFrames(seconds: action.argument.flatMap(Double.init) ?? 3)
             case "bottom":
                 messages.values.max { ($0.order, $0.timestamp) < ($1.order, $1.timestamp) }
                     .map { view?.scrollToMessage($0.messageId) }
             default: logger.warning("[e2e:ui] unknown action \(action.action)")
+            }
+        }
+
+        /// Measures the frames of the room screen for some seconds, for example while the product streams edits
+        /// (B3). The marker also gives how many window updates the room screen drew in that time.
+        private func measureFrames(seconds: Double) {
+            let meter = TrUAPIE2EFrameMeter()
+            let updatesBefore = e2eUpdates
+            e2eMeter = meter
+            meter.measure(for: .milliseconds(Int(seconds * 1_000))) { [weak self] meter in
+                guard let self else { return }
+                e2eMeter = nil
+                e2eMarks["frames"] = nil
+                mark("frames", "\(meter.summary) updates=\(e2eUpdates - updatesBefore)")
             }
         }
 

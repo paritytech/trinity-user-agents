@@ -5,8 +5,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { V01HostChatCreateRoomRequest } from "@parity/truapi";
 import { CHAT_CREATE_ROOM } from "@parity/truapi/wire-table";
-import { hostStoreConfig, productSourceConfig, ROOM_NAMES, sourcePreview } from "../../worker/fixtures";
-import { startOnTestHost, testHostIsBuilt, until, waitForText, type Running } from "../support/test-host";
+import {
+  hostStoreConfig,
+  productSourceConfig,
+  ROOM_NAMES,
+  sourcePreview,
+  THROWAWAY_NAME,
+  THROWAWAY_ROOM,
+} from "../../worker/fixtures";
+import { startOnTestHost, testHostIsBuilt, texts, until, waitForText, type Running } from "../support/test-host";
 
 const suite = testHostIsBuilt() ? describe : describe.skip;
 
@@ -98,9 +105,42 @@ suite("rooms on the test host", () => {
     expect(boot.boot).toBe(2);
   });
 
+  test("S5: /room create makes the throwaway room and /room delete removes it", async () => {
+    const { host, log } = await start();
+    await host.chatUser.send("host", "/room delete");
+    await waitForText(host, "host", "error /room delete: no room throwaway");
+
+    await host.chatUser.send("host", "/room create");
+    await waitForText(host, "host", "ok /room create");
+    expect(host.room(THROWAWAY_ROOM)).toMatchObject({ metadata: { name: THROWAWAY_NAME }, config: hostStoreConfig() });
+    expect(host.rooms().map(({ roomId }) => roomId)).toEqual(["host", "source", THROWAWAY_ROOM]);
+
+    // A repeat is idempotent: the host answers `Exists`.
+    await host.chatUser.send("host", "/room create");
+    await until(() => texts(host, "host").filter((text) => text === "ok /room create").length === 2, "the second create");
+    await host.chatUser.open(THROWAWAY_ROOM);
+
+    await host.chatUser.send("host", "/room delete");
+    await waitForText(host, "host", "ok /room delete");
+    expect(host.room(THROWAWAY_ROOM)).toBeUndefined();
+    expect(host.rooms().map(({ roomId }) => roomId)).toEqual(["host", "source"]);
+    expect(host.chatUser.isOpen(THROWAWAY_ROOM)).toBe(false);
+
+    await host.chatUser.send("host", "/room delete");
+    await until(
+      () => texts(host, "host").filter((text) => text === "error /room delete: no room throwaway").length === 2,
+      "the second refusal",
+    );
+    expect(log().filter((line) => line.via === "room").map(({ room, kind }) => [room, kind])).toEqual([
+      [THROWAWAY_ROOM, "New"],
+      [THROWAWAY_ROOM, "Exists"],
+      [THROWAWAY_ROOM, "Deleted"],
+    ]);
+  });
+
   test("S5: delete_room removes the room, its messages and declarations, and closes the screen", async () => {
-    // The sample product has no command that deletes a room, so the suite
-    // calls `deleteRoom` on the product's own connection.
+    // `/room delete` deletes only the throwaway room, so the suite deletes
+    // `host` with `deleteRoom` on the product's own connection.
     const { client, host } = await start();
     await host.chatUser.send("host", "/post text");
     await waitForText(host, "host", /^Plain text message 0001/);

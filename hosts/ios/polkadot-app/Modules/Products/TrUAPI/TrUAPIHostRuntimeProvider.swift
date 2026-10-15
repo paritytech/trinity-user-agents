@@ -30,6 +30,11 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// Attach what runs product workers when the core's reference ledger asks
     /// for them. Called once at startup, before the runtime is first built.
     func attach(workerManager: any TrUAPIWorkerManaging)
+
+    /// Builds the runtime on a background task, so that no caller on the main
+    /// thread builds it (06-OPEN-ITEMS O24). Called once at startup, after
+    /// ``attach(workerManager:)``.
+    func prepareInBackground()
 }
 
 /// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
@@ -83,12 +88,21 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.workerManager = workerManager
     }
 
+    func prepareInBackground() {
+        TrUAPIRuntimeWarmUp(build: { [weak self] in _ = try self?.sharedRuntime() }, logger: logger).start()
+    }
+
     func sharedRuntime() throws -> TrUAPIHostRuntime {
         lock.lock()
         defer { lock.unlock() }
 
         if let cachedRuntime {
             return cachedRuntime
+        }
+
+        if Thread.isMainThread {
+            // The core opens its database with a blocking wait (06-OPEN-ITEMS O24).
+            logger.warning("[truapi] the core runtime is built on the main thread")
         }
 
         let secret = try entropyManager.fetchRootEntropy()

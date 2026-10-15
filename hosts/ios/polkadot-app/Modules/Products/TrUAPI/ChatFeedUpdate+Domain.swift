@@ -80,12 +80,26 @@ extension ChatMessageBody {
             return message.toChatMessageContent()
         }
 
-        let sources = media.filter(\.isVisual).map(\.productResource.source)
-        return ProductBotMessage.richText(text: text, media: sources).toChatMessageContent()
+        let visual = media.filter(\.isVisual)
+        return .productBody(.richText(.init(
+            text: text,
+            media: visual.map(\.productResource.source),
+            alts: visual.map(\.alt)
+        )))
     }
 }
 
 extension ChatMediaItem {
+    /// The text alternative of the item, for VoiceOver.
+    var alt: String? {
+        switch self {
+        case let .image(_, meta),
+             let .video(_, meta),
+             let .file(_, meta, _):
+            meta.alt
+        }
+    }
+
     var productResource: Chat.ProductResource {
         switch self {
         case let .image(.inline(mimeType, bytes), _),

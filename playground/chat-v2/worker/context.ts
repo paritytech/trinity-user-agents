@@ -3,6 +3,7 @@ import type { HexString } from "@parity/truapi/scale";
 import type { Clock, RoomId } from "./clock";
 import type { Feed } from "./feed";
 import type { Assets } from "./fixtures";
+import type { LogEntry } from "./log";
 import type { ProductState, RoomSettings } from "./state";
 import type { SourceStore } from "./store";
 
@@ -22,6 +23,11 @@ export interface ProductContext {
   store: SourceStore;
   feed: Feed;
   settings(room: RoomId): RoomSettings;
-  /** The key `/post rich` uses for its preimage image. */
+  /**
+   * The key `/post rich` uses for its preimage image. When the last submit
+   * failed, a call submits again. The promise never rejects.
+   */
   preimageKey(): Promise<HexString>;
+  /** Write one line to the event log and give its `seq`. */
+  record(entry: LogEntry): number;
 }

@@ -11,12 +11,21 @@ public struct ChatMessageTextView: View, Hashable {
     }
 
     public var body: some View {
-        (Text(viewModel.attributedText) + statusPlaceholder)
-            .typography(.paragraphLarge)
+        styledText
             .foregroundStyle(Color(viewModel.textColor))
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .environment(\.openURL, OpenURLAction(handler: openLinkAction(viewModel.openLink)))
+    }
+
+    /// The text of a product follows the text size that the user picks (P7.2). The other texts keep the size
+    /// of the design system.
+    @ViewBuilder private var styledText: some View {
+        if viewModel.scalesWithTextSize {
+            (Text(viewModel.attributedText) + statusPlaceholder).scaledTypography(.paragraphLarge)
+        } else {
+            (Text(viewModel.attributedText) + statusPlaceholder).typography(.paragraphLarge)
+        }
     }
 
     private var statusPlaceholder: Text {
@@ -38,6 +47,8 @@ public extension ChatMessageTextView {
         let statusPlaceholderImage: UIImage?
         /// Opens a tapped link. Without it, the system opens the link.
         let openLink: ((URL) -> Void)?
+        /// The text follows the text size that the user picks. Only the texts of products do.
+        let scalesWithTextSize: Bool
 
         public init(
             text: String,
@@ -49,6 +60,7 @@ public extension ChatMessageTextView {
             attributedText = .from(markdown: text, textColor: textColor)
             self.statusPlaceholderImage = statusPlaceholderImage
             openLink = nil
+            scalesWithTextSize = false
         }
 
         /// Product rich text: the Markdown subset of ``ChatMarkdownText``.
@@ -63,6 +75,7 @@ public extension ChatMessageTextView {
             attributedText = ChatMarkdownText.attributedString(from: markdown)
             self.statusPlaceholderImage = statusPlaceholderImage
             self.openLink = openLink
+            scalesWithTextSize = true
         }
 
         /// Initializer for pre-built attributed text (e.g., diff highlighting)
@@ -76,13 +89,15 @@ public extension ChatMessageTextView {
             self.textColor = textColor
             self.statusPlaceholderImage = statusPlaceholderImage
             openLink = nil
+            scalesWithTextSize = false
         }
 
         public static func == (lhs: ViewModel, rhs: ViewModel) -> Bool {
             lhs.attributedText == rhs.attributedText &&
                 lhs.rawText == rhs.rawText &&
                 lhs.textColor == rhs.textColor &&
-                lhs.statusPlaceholderImage == rhs.statusPlaceholderImage
+                lhs.statusPlaceholderImage == rhs.statusPlaceholderImage &&
+                lhs.scalesWithTextSize == rhs.scalesWithTextSize
         }
 
         public func hash(into hasher: inout Hasher) {
@@ -90,6 +105,7 @@ public extension ChatMessageTextView {
             hasher.combine(rawText)
             hasher.combine(textColor)
             hasher.combine(statusPlaceholderImage)
+            hasher.combine(scalesWithTextSize)
         }
     }
 }

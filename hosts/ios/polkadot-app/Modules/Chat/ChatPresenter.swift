@@ -17,6 +17,8 @@ final class ChatPresenter {
     private var metadata: MessageListMetadata?
     private var footer: (any HashableContentConfiguration)?
     private var paymentAssetViewModel: PaymentAssetViewModelProtocol?
+    /// See ``scheduleListUpdate()``.
+    var listUpdatePending = false, lastListUpdate: CFTimeInterval = 0
     /// The parts of a product room that its product declares (P6). Nil for a person chat.
     var productRoom: ChatProductRoomPresenter?
 
@@ -133,7 +135,12 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
 
     func didReceive(listModel: MessageListModel) {
         self.listModel = listModel
+        scheduleListUpdate()
+    }
 
+    /// Draws the newest list model. ``scheduleListUpdate()`` calls it at most once in each frame.
+    func applyListModel() {
+        guard let listModel else { return }
         markInvisibleMessagesAsRead(in: listModel)
         provideViewModel()
     }
@@ -161,6 +168,7 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
     }
 
     func didRemoveChat() {
+        productRoom?.mark("screen", "removed")
         wireframe.dismissChat(from: view)
     }
 }

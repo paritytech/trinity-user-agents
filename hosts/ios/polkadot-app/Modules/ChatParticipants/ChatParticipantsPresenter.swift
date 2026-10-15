@@ -10,6 +10,9 @@ final class ChatParticipantsPresenter {
     private let appearanceFactory: ChatParticipantAppearanceFactory
     private let iconViewModelFactory: ProductIconViewModelMaking
     private var participants: [ChatRoomParticipant] = []
+    /// The rows of the participants that came, one for each participant. A page adds the rows of its own
+    /// participants only, so the work of a page does not grow with the length of the list (P7.1, B1).
+    private var rows: [ChatParticipantRowViewModel] = []
     private var isLoading = false
     private var failed = false
 
@@ -47,6 +50,7 @@ extension ChatParticipantsPresenter: ChatParticipantsPresenterProtocol {
 extension ChatParticipantsPresenter: ChatParticipantsInteractorOutputProtocol {
     func didReceive(page: [ChatRoomParticipant], isLast _: Bool) {
         participants += page
+        rows += page.map(row(for:))
         isLoading = false
         provideViewModel()
     }
@@ -59,27 +63,27 @@ extension ChatParticipantsPresenter: ChatParticipantsInteractorOutputProtocol {
 }
 
 private extension ChatParticipantsPresenter {
+    func row(for participant: ChatRoomParticipant) -> ChatParticipantRowViewModel {
+        let appearance = appearanceFactory.appearance(of: participant)
+        let icon: (any ImageViewModelProtocol)? =
+            if let image = appearance.image {
+                iconViewModelFactory.createViewModel(forChatResource: image)
+            } else if let domain = appearance.productDomain {
+                iconViewModelFactory.createViewModel(for: domain)
+            } else {
+                nil
+            }
+
+        return ChatParticipantRowViewModel(
+            participantId: participant.participantId,
+            name: appearance.name,
+            detail: appearance.detail,
+            avatar: .colored(text: appearance.initials, colorSeed: participant.participantId),
+            icon: icon
+        )
+    }
+
     func provideViewModel() {
-        let rows = participants.map { participant in
-            let appearance = appearanceFactory.appearance(of: participant)
-            let icon: (any ImageViewModelProtocol)? =
-                if let image = appearance.image {
-                    iconViewModelFactory.createViewModel(forChatResource: image)
-                } else if let domain = appearance.productDomain {
-                    iconViewModelFactory.createViewModel(for: domain)
-                } else {
-                    nil
-                }
-
-            return ChatParticipantRowViewModel(
-                participantId: participant.participantId,
-                name: appearance.name,
-                detail: appearance.detail,
-                avatar: .colored(text: appearance.initials, colorSeed: participant.participantId),
-                icon: icon
-            )
-        }
-
         #if targetEnvironment(simulator)
             if TrUAPIE2EMarkers.isEnabled {
                 Logger.shared

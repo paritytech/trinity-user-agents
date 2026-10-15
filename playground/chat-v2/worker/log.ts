@@ -20,10 +20,17 @@ export type LogVia =
   | "render"
   | "renderer_action"
   | "answer"
-  /** The preimage key `/post rich` uses, once at each start. */
+  /**
+   * The preimage key `/post rich` uses: one line at each start, and one line
+   * for each submit that `/post rich` tries again.
+   */
   | "preimage"
   /** One item of `room_events_subscribe`. */
-  | "room_events";
+  | "room_events"
+  /** A `create_room` or `delete_room` call of `/room`. */
+  | "room"
+  /** The result of `/flood`. */
+  | "flood";
 
 export interface LogEntry {
   via: LogVia;

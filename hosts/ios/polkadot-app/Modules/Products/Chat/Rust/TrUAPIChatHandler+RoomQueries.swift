@@ -26,6 +26,25 @@ extension TrUAPIChatHandler: ProductRoomInteracting {
         try await withWorker { try await $0.chatReactionsQuery(request, timeout: ChatQueryTimeout.lookup) }
     }
 
+    /// Runs `body` with the execution of the worker, and holds the worker while it runs (02-DESIGN D10). A worker
+    /// that does not run starts first.
+    func withWorker<Answer: Sendable>(
+        _ body: @Sendable (TrUAPIProductExecutionProtocol) async throws -> Answer
+    ) async throws -> Answer {
+        guard !disposed else { throw CancellationError() }
+
+        let execution: TrUAPIProductExecutionProtocol
+        do {
+            execution = try await workers.ensureWorker(for: productId)
+        } catch {
+            workers.releaseWorker(for: productId)
+            throw error
+        }
+        defer { workers.releaseWorker(for: productId) }
+
+        return try await body(execution)
+    }
+
     func publish(_ event: ChatEvent, roomId: String) async throws {
         try await withWorker { execution in
             try execution.publishChatEvent(roomId: roomId, peer: Self.hostUserPeer, event: event)

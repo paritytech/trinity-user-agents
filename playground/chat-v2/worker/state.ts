@@ -48,7 +48,17 @@ export interface ProductState {
   source: StoreSnapshot;
   /** `true` once `host-empty` exists. */
   hostEmptyCreated: boolean;
-  /** The key of `assets/sample.png`, once the first start submitted it. */
+  /**
+   * `true` after `/room create` and until `/room delete`. A state that an
+   * older Worker saved has no value, which reads as `false`.
+   */
+  throwawayCreated?: boolean;
+  /**
+   * The key of `assets/sample.png`, once a submit succeeded. A failed submit
+   * keeps no key, so the next `/post rich` submits again. A state that an
+   * older Worker saved can hold the missing-preimage key, and the product
+   * submits again for it too.
+   */
   preimageKey?: HexString;
   slowMs: number;
   fail: FailFlags;
@@ -84,6 +94,7 @@ export function initialState(): ProductState {
     rooms: { host: roomSettings("host"), source: roomSettings("source"), "host-empty": roomSettings("host-empty") },
     source: emptyStoreSnapshot(),
     hostEmptyCreated: false,
+    throwawayCreated: false,
     slowMs: 0,
     fail: { reject: false, timeout: false, crash: false, unavailable: false },
   };

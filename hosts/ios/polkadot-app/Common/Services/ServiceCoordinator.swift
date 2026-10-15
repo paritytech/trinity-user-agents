@@ -341,6 +341,9 @@ extension ServiceCoordinator {
             }
         #endif
 
+        // After the worker manager is attached, because the runtime reads it when it is built.
+        truapiRuntimeProvider.prepareInBackground()
+
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
                 factory: chatCoordinatorFactory,

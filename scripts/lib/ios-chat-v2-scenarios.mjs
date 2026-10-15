@@ -22,7 +22,9 @@
  *
  * An expectation is one of:
  * - `{ stored }`: a text message the room stores (host-store rooms);
+ * - `{ storedMatch }`: a stored text message that matches the pattern;
  * - `{ metadata }`: columns of the room's `CDChatRoomMetadata` row;
+ * - `{ gone: true }`: the app stores no chat for the room;
  * - `{ contentType, added }`: at least `added` more messages of this content
  *   kind in the room than when the scenario started;
  * - `{ reactions }`: the change of the reaction rows of the room in the phase;
@@ -32,6 +34,9 @@
  * - `{ event }`: an event log entry of the product written in the phase,
  *   with `via`, `kind`, and an optional `data` substring;
  * - `{ console }`: an app console line written in the phase.
+ *
+ * `scope: "previous"` makes a `console` or `event` expectation read from the
+ * start of the previous phase instead of the start of its own phase.
  *
  * `{lastUser}` in a step or an expectation is the newest message of the
  * user in the room's window, as the app's `window` marker names it.
@@ -133,14 +138,73 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     title: "delete_room removes the room",
     mode: "host",
     phase: "P3",
-    skip: "the sample product has no command that calls delete_room; ChatRoomDeletionTests cover it",
+    drive: {
+      phases: [
+        {
+          steps: ["/room create"],
+          expect: [
+            {
+              metadata: { ZNAME: "Sample: throwaway" },
+              room: "throwaway",
+            },
+          ],
+        },
+        {
+          // The screen of the room is open while the product deletes it.
+          steps: [
+            { host: "open", room: "throwaway" },
+            { text: "/room delete", room: "host" },
+          ],
+          expect: [
+            { event: { via: "room", kind: "Deleted", room: "throwaway" } },
+            { gone: true, room: "throwaway" },
+            { ui: "screen", room: "throwaway", match: "^removed$" },
+          ],
+        },
+      ],
+      after: [{ host: "list" }, { host: "open" }],
+    },
   },
   {
     id: "S6",
     title: "the chat list renders product rooms with the worker stopped",
     mode: "host",
     phase: "P3",
-    skip: "the harness holds the worker for its command feed, so it never stops in a run; ContactsListPreviewTests cover the stored rows",
+    drive: {
+      phases: [
+        {
+          // The list screen holds no worker, and the harness gives back its
+          // own hold, so the core stops the worker.
+          steps: [{ host: "list" }, { host: "release-worker" }],
+          expect: [
+            {
+              console:
+                "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
+              timeoutMs: 30_000,
+            },
+          ],
+        },
+        {
+          // The list draws again from what the app stores, with no worker.
+          steps: [{ host: "list-render" }, { wait: 1_000 }],
+          expect: [
+            {
+              console: "[e2e:ui] chat-list list rooms=",
+            },
+            { ui: "chat-list", room: "list", match: "Sample: product source" },
+            {
+              uiNot: "chat-list",
+              room: "list",
+              match: "^rooms=$",
+              settleMs: 500,
+            },
+          ],
+          shot: "stopped",
+        },
+      ],
+      // The harness holds the worker again for the next scenarios.
+      after: [{ host: "hold-worker" }, { wait: 4_000 }, { host: "open" }],
+    },
   },
   {
     id: "S7",
@@ -663,7 +727,28 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     title: "update_feed rate limit on screen",
     mode: "host",
     phase: "P4",
-    skip: "no command of the sample product sends more than 20 updates in a second; the core tests the bound",
+    drive: {
+      phases: [
+        {
+          // `/flood` sends 25 edits of one message at once. The core refuses
+          // the edits past the budget of 20, and the room screen draws at
+          // most one list update in each frame.
+          steps: [
+            { host: "list" },
+            { host: "open" },
+            { wait: 1_000 },
+            { host: "frames", argument: "5" },
+            "/flood",
+          ],
+          expect: [
+            { event: { via: "flood", kind: "Done" } },
+            { storedMatch: "^ok /flood accepted=\\d+ refused=[1-9]" },
+            { stored: "Flood of 25 edits" },
+            { console: "[e2e:ui] frames host frames=", timeoutMs: 15_000 },
+          ],
+        },
+      ],
+    },
   },
   {
     id: "S24",
@@ -864,7 +949,16 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     drive: {
       phases: [
         {
-          steps: ["/participants 6", { wait: 1_000 }],
+          // The room asks the count when it opens and when its
+          // configuration changes. `/participants` keeps the configuration
+          // when the room declares participants already, so the room opens
+          // again.
+          steps: [
+            "/participants 6",
+            { host: "list" },
+            { host: "open" },
+            { wait: 1_000 },
+          ],
           expect: [
             { ui: "header", match: "^10 participants$" },
             { ui: "author-p1", match: "Person #1" },
@@ -1003,14 +1097,196 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     title: "a killed worker keeps the cached pages",
     mode: SOURCE,
     phase: "P5",
-    skip: "an uncaught error of an iOS worker is logged and the worker keeps running, so `/fail crash` does not stop it; the send times out to Failed as in S21",
+    drive: {
+      phases: [
+        {
+          steps: [{ host: "list" }, { host: "open" }],
+          expect: [{ ui: "readiness", match: "^ready " }],
+        },
+        {
+          // The send makes the product throw outside any promise. The
+          // uncaught error ends the worker under the open room.
+          steps: [
+            "/post text",
+            "/fail crash",
+            { host: "send", argument: "crash the worker" },
+          ],
+          expect: [
+            { console: "worker ended on an uncaught error" },
+            { ui: "readiness", match: "^unavailable ", timeoutMs: 45_000 },
+            { ui: "window", match: "count=[1-9]" },
+          ],
+          shot: "unavailable",
+        },
+        {
+          // Retry asks for the newest page. The first request after the
+          // fault starts the worker again: the retry, or a `Seen` report of
+          // the screen that came first, so the checks read from the crash on.
+          steps: [{ host: "retry-room" }],
+          expect: [
+            {
+              console: "worker starts again after its fault",
+              scope: "previous",
+            },
+            {
+              event: { via: "action_subscribe", kind: "RoomOpened" },
+              scope: "previous",
+            },
+            { ui: "readiness", match: "^ready ", timeoutMs: 45_000 },
+          ],
+        },
+      ],
+    },
   },
   {
     id: "S47",
     title: "configuration generation reload",
     mode: "host",
     phase: "P7",
-    skip: "needs P7",
+    drive: {
+      // The first phase opens the room screen, and then no step opens it
+      // again. Each `set_room_config` writes a new generation, and the open
+      // screen draws the new policy.
+      phases: [
+        {
+          steps: [{ host: "list" }, { host: "open" }, "/allowed 👍"],
+          expect: [
+            { console: "[e2e:ui] policy host generation=" },
+            { ui: "allowed", match: "^👍$" },
+          ],
+        },
+        {
+          steps: ["/allowed"],
+          expect: [
+            { console: "[e2e:ui] policy host generation=" },
+            { ui: "allowed", match: "^all$" },
+          ],
+        },
+      ],
+      after: ["/allowed"],
+    },
+  },
+]);
+
+/**
+ * The performance rows of 04-TESTING section 5 (P7.1). The launcher drives
+ * them after the scenarios when `TRUAPI_IOS_E2E_PERF=1`. Each row writes its
+ * numbers in its evidence: the `perf-participants`, `perf-ready` and
+ * `frames` markers of the app's simulator-only frame meter
+ * (`TrUAPIE2EFrameMeter`), where a dropped frame is a frame time of 1.5
+ * frames or more.
+ */
+export const IOS_CHAT_V2_PERF = Object.freeze([
+  {
+    id: "B1",
+    title: "10,000 participants paged at 100, scrolled to the end",
+    mode: SOURCE,
+    phase: "P7",
+    perf: true,
+    drive: {
+      phases: [
+        {
+          steps: [
+            "/participants 10000",
+            { host: "list" },
+            { host: "open" },
+            { wait: 1_500 },
+            { host: "participants" },
+            { wait: 2_000 },
+            {
+              host: "participants-scroll",
+              argument: "10004",
+              target: "300",
+            },
+          ],
+          expect: [
+            {
+              ui: "perf-participants",
+              match: "rows=10004 ",
+              timeoutMs: 150_000,
+            },
+          ],
+        },
+      ],
+      after: ["/participants 6", { host: "list" }, { host: "open" }],
+    },
+  },
+  {
+    id: "B2",
+    title: "50,000-message product-source room, newest page",
+    mode: SOURCE,
+    phase: "P7",
+    perf: true,
+    drive: {
+      phases: [
+        {
+          // Warm: the harness holds the worker, so the open asks a running
+          // product for its newest page.
+          steps: [
+            "/history 50000",
+            { host: "list" },
+            { wait: 1_000 },
+            { host: "open" },
+          ],
+          expect: [
+            { ui: "perf-ready", match: "^ms=\\d+ ", timeoutMs: 30_000 },
+            { ui: "window", match: "source-h-50000:" },
+          ],
+          shot: "warm",
+        },
+        {
+          // Cold: an uncaught error ends the worker, and the retry starts a
+          // new worker that answers the newest page.
+          steps: [
+            "/fail crash",
+            { host: "send", argument: "end the worker" },
+            { wait: 3_000 },
+            { host: "retry-room" },
+          ],
+          expect: [
+            { console: "worker starts again after its fault" },
+            { console: "[e2e:ui] perf-ready source ms=", timeoutMs: 45_000 },
+          ],
+        },
+      ],
+      after: ["/history 120", { host: "list" }, { host: "open" }],
+    },
+  },
+  {
+    id: "B3",
+    title: "/stream at 20 edits a second, and /flood",
+    mode: "host",
+    phase: "P7",
+    perf: true,
+    drive: {
+      phases: [
+        {
+          // The baseline: the open room with nothing to draw.
+          steps: [
+            { host: "list" },
+            { host: "open" },
+            { wait: 1_000 },
+            { host: "frames", argument: "4" },
+          ],
+          expect: [
+            { console: "[e2e:ui] frames host frames=", timeoutMs: 15_000 },
+          ],
+        },
+        {
+          steps: [{ host: "frames", argument: "4" }, "/stream"],
+          expect: [
+            { console: "[e2e:ui] frames host frames=", timeoutMs: 15_000 },
+          ],
+        },
+        {
+          steps: [{ host: "frames", argument: "5" }, "/flood"],
+          expect: [
+            { event: { via: "flood", kind: "Done" } },
+            { console: "[e2e:ui] frames host frames=", timeoutMs: 15_000 },
+          ],
+        },
+      ],
+    },
   },
 ]);
 

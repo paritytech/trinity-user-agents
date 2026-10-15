@@ -193,6 +193,34 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(workers.references.acquired.isEmpty)
         await productBot.dispose()
     }
+
+    /// S47: a `set_room_config` while the room screen is open reaches the screen with a new configuration
+    /// generation, so the screen reloads its policy without a reopen. The screen reads its policy from the chat
+    /// stream that `ChatEngine.chatMetadataStream()` follows.
+    @Test func s47AConfigurationChangeReachesAnOpenScreen() async throws {
+        let bridge = await fixture.bridge()
+        try await create(bridge, metadata: metadata, config: config, preview: nil)
+
+        let provider = ChatContactDataProviderFactory(
+            repositoryFactory: ChatContactRepositoryFactory(storageFacade: fixture.storageFacade)
+        )
+        var chats = provider.subscribeChat(by: fixture.chatId("lobby")).makeAsyncIterator()
+        let opened = try #require(try await chats.next() ?? nil)
+        let generation = try #require(opened.roomPolicy?.configGeneration)
+        #expect(opened.roomPolicy?.messageMenu.allowedReactions == ["👍"])
+
+        var changed = config
+        changed.allowedReactions = ["❤️", "🎉"]
+        try await bridge.setRoomConfig(roomId: "lobby", config: changed)
+
+        var reloaded = opened
+        while reloaded.roomPolicy?.configGeneration == generation {
+            reloaded = try #require(try await chats.next() ?? nil)
+        }
+
+        #expect(reloaded.roomPolicy?.configGeneration == generation + 1)
+        #expect(reloaded.roomPolicy?.messageMenu.allowedReactions == ["❤️", "🎉"])
+    }
 }
 
 private let png = Data([0x89, 0x50, 0x4E, 0x47])

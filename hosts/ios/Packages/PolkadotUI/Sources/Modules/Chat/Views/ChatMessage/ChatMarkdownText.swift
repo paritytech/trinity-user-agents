@@ -16,8 +16,9 @@ public struct ChatMarkdownText: View, Hashable {
     }
 
     public var body: some View {
+        // The text follows the text size that the user picks (P7.2).
         Text(attributedText)
-            .typography(.paragraphLarge)
+            .scaledTypography(.paragraphLarge)
             .foregroundStyle(.fgPrimary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .environment(\.openURL, OpenURLAction(handler: openLinkAction(onOpenLink)))
@@ -32,6 +33,12 @@ public struct ChatMarkdownText: View, Hashable {
     }
 
     public static func attributedString(from markdown: String) -> AttributedString {
+        ChatAttributedTextCache.shared.attributedString(for: markdown, style: "markdown") {
+            parse(markdown)
+        }
+    }
+
+    private static func parse(_ markdown: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: false,
             interpretedSyntax: .full,

@@ -1,9 +1,18 @@
 import SwiftUI
 import UIKit
 
+/// One detector for the chat. A detector is immutable and safe on any thread, and it is slow to make, and the chat
+/// screen draws each text message again at each list update.
+private let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
 extension AttributedString {
     static func from(markdown text: String, textColor: UIColor?) -> Self {
-        from(markdown: text, textColor: textColor.map { Color($0) })
+        ChatAttributedTextCache.shared.attributedString(
+            for: text,
+            style: "inline:\(textColor.map { String(describing: $0) } ?? "none")"
+        ) {
+            from(markdown: text, textColor: textColor.map { Color($0) })
+        }
     }
 
     static func from(markdown text: String, textColor: Color? = nil) -> Self {
@@ -19,7 +28,7 @@ extension AttributedString {
         }
 
         // 3. Detect Raw Links
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+        guard let detector = linkDetector else {
             return attributed
         }
         let plainText = String(attributed.characters[...])

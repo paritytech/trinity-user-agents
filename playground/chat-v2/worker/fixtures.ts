@@ -69,6 +69,21 @@ export function roomMetadata(room: RoomId, assets: Assets): ChatRoomMetadata {
   return { name: ROOM_NAMES[room], avatar: png(assets.avatar), description: descriptions[room] };
 }
 
+/**
+ * The host-store room that `/room create` creates and `/room delete` deletes.
+ * It is not a room of the product: the product only creates and deletes it.
+ */
+export const THROWAWAY_ROOM = "throwaway";
+export const THROWAWAY_NAME = "Sample: throwaway";
+
+export function throwawayMetadata(assets: Assets): ChatRoomMetadata {
+  return {
+    name: THROWAWAY_NAME,
+    avatar: png(assets.avatar),
+    description: "A host-store room that /room delete removes.",
+  };
+}
+
 /** The configuration of a host-store room: every field at its default. */
 export function hostStoreConfig(): ChatRoomConfig {
   return {
@@ -310,6 +325,13 @@ export function customBody(counter: number): ChatMessageBody {
 }
 
 export const LEGACY_TEXT = "Legacy message from post_message";
+/** The message `/flood` posts, then edits. */
+export const FLOOD_TARGET_TEXT = "Flood target";
+
+/** The body of each `/flood` edit. Every edit has the same body. */
+export function floodBody(count: number): ChatMessageBody {
+  return textBody(`Flood of ${count} edits`);
+}
 export const DEEPLINK_TEXT = "Long-press this message to open the App";
 
 // ---------------------------------------------------------------- history

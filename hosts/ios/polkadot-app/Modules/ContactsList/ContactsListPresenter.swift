@@ -13,6 +13,9 @@ final class ContactsListPresenter {
 
     private var chatsByIdentifier: [String: ChatWithPeerMetadata] = [:]
     private var openChatTask: Task<Void, Never>?
+    /// The last model, which the E2E harness draws again (S6).
+    var lastModel: ChatListModel?
+    var e2eObserver: NSObjectProtocol?
 
     init(
         interactor: ContactsListInteractorInputProtocol,
@@ -35,6 +38,9 @@ extension ContactsListPresenter: ContactsListPresenterProtocol {
     func setup() {
         didReceive(networkStatus: .connected)
         interactor.setup()
+        #if targetEnvironment(simulator)
+            e2eObserver = observeE2EListRender()
+        #endif
     }
 
     func viewWillAppear() {
@@ -110,10 +116,14 @@ extension ContactsListPresenter {
     }
 
     func provideViewModel(_ model: ChatListModel) {
+        lastModel = model
         let viewModel = viewModelFactory.createViewModel(
             assetDisplayInfo: assetDisplayInfo,
             model: model
         )
         view?.didReceive(viewModel: viewModel)
+        #if targetEnvironment(simulator)
+            markProductRooms(model)
+        #endif
     }
 }

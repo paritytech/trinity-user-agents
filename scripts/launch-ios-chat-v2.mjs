@@ -27,6 +27,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -38,6 +39,7 @@ import {
 } from "./lib/cli-chat-scenarios.mjs";
 import { decodeTextMessage } from "./lib/chat-diagnosis-report.mjs";
 import {
+  IOS_CHAT_V2_PERF,
   IOS_CHAT_V2_SCENARIOS,
   appStartFailure,
   blockedRows,
@@ -97,6 +99,15 @@ let commandCounter = 0;
 const only = (process.env.TRUAPI_IOS_E2E_ONLY || undefined)
   ?.split(",")
   .map((id) => id.trim());
+
+/**
+ * `TRUAPI_IOS_E2E_PERF=1` also drives the performance rows B1 to B3 after the
+ * scenarios (P7.1).
+ */
+const scenarios =
+  process.env.TRUAPI_IOS_E2E_PERF === "1"
+    ? [...IOS_CHAT_V2_SCENARIOS, ...IOS_CHAT_V2_PERF]
+    : IOS_CHAT_V2_SCENARIOS;
 
 /** The values that a step filled in, for the expectations after it. */
 const memory = {};
@@ -231,19 +242,19 @@ try {
         stdio: "ignore",
       },
     );
-    rows.push(...blockedRows(`${started} (\`start.png\`)`));
+    rows.push(...blockedRows(`${started} (\`start.png\`)`, scenarios));
     failure = started;
   } else {
     // The room screen of the `host` room is where the scenarios start.
     await sendHostAction({ room, host: "open" });
     await delay(2_000);
-    for (const scenario of IOS_CHAT_V2_SCENARIOS) {
+    for (const scenario of scenarios) {
       rows.push(await runScenario(scenario));
     }
   }
 } catch (error) {
   failure = error instanceof Error ? error.message : String(error);
-  for (const scenario of IOS_CHAT_V2_SCENARIOS) {
+  for (const scenario of scenarios) {
     if (!rows.some((existing) => existing.id === scenario.id)) {
       rows.push(
         scenario.drive
@@ -277,7 +288,7 @@ writeFileSync(reportPath, `${report}${notes.join("\n")}\n`);
 
 const failures = scenarioFailures(
   rows,
-  IOS_CHAT_V2_SCENARIOS.filter((scenario) => scenario.drive),
+  scenarios.filter((scenario) => scenario.drive),
 );
 console.log(
   JSON.stringify({
@@ -368,6 +379,9 @@ async function driveScenario(scenario) {
   const baseline = { contentTypes: contentTypeCounts(room) };
   const evidence = [];
   const shots = [];
+  // What an expectation with `scope: "previous"` reads from: the console and
+  // the event log since the previous phase started, not since its own phase.
+  let previous;
   try {
     for (const [index, phase] of scenario.drive.phases.entries()) {
       const mark = {
@@ -379,11 +393,18 @@ async function driveScenario(scenario) {
         await runStep(step, room);
       }
       for (const expectation of phase.expect) {
-        evidence.push(await check(expectation, { room, mark, baseline }));
+        evidence.push(
+          await check(expectation, {
+            room,
+            mark: expectation.scope === "previous" ? (previous ?? mark) : mark,
+            baseline,
+          }),
+        );
       }
       if (phase.shot || index === scenario.drive.phases.length - 1) {
         shots.push(await takeScreenshot(scenario, phase.shot));
       }
+      previous = mark;
     }
     return row(
       scenario,
@@ -492,6 +513,21 @@ async function check(expectation, { room, mark, baseline }) {
     );
     return `stored "${wanted}"`;
   }
+  if (expectation.storedMatch !== undefined) {
+    const pattern = new RegExp(fill(expectation.storedMatch, target));
+    let found;
+    await waitFor(
+      () => {
+        found = messageTexts(target).find((text) => pattern.test(text));
+        return found;
+      },
+      {
+        timeoutMs,
+        message: `no message matching /${pattern.source}/ stored in ${target}`,
+      },
+    );
+    return `stored "${found}"`;
+  }
   if (expectation.metadata) {
     const columns = Object.keys(expectation.metadata);
     let found;
@@ -509,6 +545,13 @@ async function check(expectation, { room, mark, baseline }) {
       },
     );
     return `metadata ${JSON.stringify(expectation.metadata)}`;
+  }
+  if (expectation.gone) {
+    await waitFor(() => !chatExists(target), {
+      timeoutMs,
+      message: `the room ${target} is still stored`,
+    });
+    return `room ${target} gone`;
   }
   if (expectation.contentType !== undefined) {
     const before = baseline.contentTypes[expectation.contentType] ?? 0;
@@ -619,8 +662,9 @@ async function queueCommand(payload, label) {
   const name = String(commandCounter).padStart(4, "0");
   const pending = resolve(commandDir, `${name}.tmp`);
   writeFileSync(pending, JSON.stringify(payload));
-  cpSync(pending, resolve(commandDir, `${name}.json`));
-  rmSync(pending);
+  // A rename is atomic: the app never reads a half-written file, and a copy
+  // could fail when the app takes the file before the copy sets its mode.
+  renameSync(pending, resolve(commandDir, `${name}.json`));
   const outcome = await waitFor(
     () => {
       if (existsSync(resolve(commandDir, `${name}.done`))) return "done";
@@ -722,6 +766,15 @@ function metadataRow(roomId, columns) {
   return Object.fromEntries(
     columns.map((column, index) => [column, parts[index]]),
   );
+}
+
+/** True when the app stores the chat of a room. */
+function chatExists(roomId) {
+  const count = sql(`
+    SELECT count(*) FROM ZCDCHAT AS chat
+    WHERE chat.ZIDENTIFIER = ${sqlString(chatIdentifierOf(roomId))};
+  `);
+  return Number(count ?? 0) > 0;
 }
 
 /** The number of messages of each content type in a room. */

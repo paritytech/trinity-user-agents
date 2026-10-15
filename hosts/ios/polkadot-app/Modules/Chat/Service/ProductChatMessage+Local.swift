@@ -88,7 +88,11 @@ extension ChatMessageBody {
                 .text(text)
             }
         case let .richText(text, media):
-            .productBody(.richText(.init(text: text, media: media.compactMap(\.inlineDataURL))))
+            .productBody(.richText(.init(
+                text: text,
+                media: media.compactMap(\.inlineDataURL),
+                alts: media.filter { $0.inlineDataURL != nil }.map(\.alt)
+            )))
         case let .actions(actions):
             .productBody(.actions(.init(
                 text: actions.text,

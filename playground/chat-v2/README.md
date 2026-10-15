@@ -122,7 +122,7 @@ The product parses a text whose first word starts with `/` as a command, and tre
 Every value the product sends is a function of the commands it received, so two hosts that receive the same commands
 see the same messages.
 
-- Room ids are `host`, `source` and `host-empty`.
+- Room ids are `host`, `source` and `host-empty`, and `throwaway` for the room of `/room`.
 - The product's own messages have the id `<room>-p-<n>`, with `<n>` a four-digit counter per room starting at `0001`.
   The messages the user sends in `source` have the id `source-u-<n>`. Generated history has the id `source-h-<n>`, with
   a five-digit counter.
@@ -142,8 +142,10 @@ see the same messages.
   in `host`, are the only values that differ between hosts, and the diagnosis compares them by kind, not by value.
 
 The one exception is the preimage image of `/post rich`. At first start the Worker submits `assets/sample.png` through
-`Preimage::submit` and keeps the key. A host that refuses the submit leaves the key `0x00` repeated 32 times, which no
-preimage has, so the message tests the missing-preimage placeholder instead. The event log records which key was used.
+`Preimage::submit` and keeps the key. When the host refuses the submit, or the call fails, `/post rich` uses the key
+`0x00` repeated 32 times, which no preimage has, so the message tests the missing-preimage placeholder instead. The
+Worker does not keep that key: the next `/post rich` submits again, and uses the real key once a submit succeeds. The
+event log records the key of each submit, with a `via: "preimage"` line of kind `Submitted` or `Missing`.
 
 ## Commands
 
@@ -160,6 +162,7 @@ runs in either room.
 | `/preview badge <n>`, `image`, `none`              | Both   | `set_room_preview` with `badge: Some(UnreadCount { count: n })`, `Some(Image { badge.png })` or `Some(Hidden)`                                                                                                                         | The badge shows the number, the image, or nothing; `badge 0` shows nothing                                                  | S4            |
 | `/preview typing on`, `off`                        | Both   | `set_room_preview` with `text: Some({ text: "Sample is typing", ongoing: true })`, or `text: None`                                                                                                                                   | The list row shows the animated line, then the newest message again                                                         | S4            |
 | `/preview text <t>`                                | Both   | `set_room_preview` with `text: Some({ text: <t>, ongoing: false })`                                                                                                                                                                  | The list row shows `<t>`                                                                                                     | S4            |
+| `/room create`, `delete`                           | Both   | `create_room` (V2) for the host-store room `throwaway`: name "Sample: throwaway", avatar `avatar.png`, default configuration; a repeat answers `Exists` and `ok` too. `delete` sends `delete_room { room_id: "throwaway" }` after a `/room create` only; with no room it answers `error /room delete: no room throwaway` and makes no call. The command names no room, so it never deletes `host`, `source` or `host-empty`. Each call logs one `via: "room"` line | The room appears in the chat list; after `delete` it leaves the list and its open screen closes                             | S5            |
 | `/post text`                                       | Both   | `update_feed` `New` with `Text`                                                                                                                                                                                                      | A plain bubble from the product, links tappable                                                                             | S7            |
 | `/post rich`                                       | Both   | `update_feed` `New` with `RichText`: Markdown of every supported element plus a heading and a table, media `[Image Inline sample.png, Image Preimage <key>]`, each with width, height, BlurHash and `alt`                                 | Markdown drawn per the RFC subset, the table as text; the inline image at once, the preimage image after its BlurHash        | S7            |
 | `/post video`                                      | Both   | `update_feed` `New` with `RichText`, media `[Video Inline sample.mp4]` with a BlurHash poster                                                                                                                                        | A poster that plays in the host player                                                                                       | S7            |
@@ -169,6 +172,7 @@ runs in either room.
 | `/post legacy`                                     | `host` | `post_message` V2 with `Text`                                                                                                                                                                                                        | A product bubble with a host id; in `source` the host refuses the call and the product answers `error`                      | S1            |
 | `/post all`                                        | Both   | Each `/post` kind above, in order                                                                                                                                                                                                    | Every body kind in one screen                                                                                                | S7            |
 | `/stream`                                          | Both   | `New` with `Text` and `status: Preparing`, forty `Edited` at 20 per second each adding one word, then `StatusChanged { Sent }`                                                                                                        | One bubble grows in place without a dropped frame, then shows its sent mark                                                 | S8            |
+| `/flood [n]`                                       | Both   | Posts `Text "Flood target"` and waits 1.1 s, so the room has its full budget of 20 `update_feed` calls. Then it sends `n` `update_feed` `Edited { body: Text "Flood of <n> edits" }` of that message (default 25, at most 200) at once, with no wait between them, and counts the ones the host accepts and the ones it refuses (`RateLimited` or any other error). In `source` the store keeps each accepted edit. It logs one `via: "flood"`, `kind: "Done"` line with `{ sent, accepted, refused }`, waits 1.1 s more, and answers `ok /flood [n] accepted=<a> refused=<r>` | The core refuses the edits past the budget and the host stays responsive; `/flood` gives `accepted=20 refused=5` when the burst ends within 50 ms | S44           |
 | `/edit <id> <text>`                                | Both   | `update_feed` `Edited { body: Text <text>, edited_at: <tick> }`                                                                                                                                                                       | The bubble changes in place and shows "edited"                                                                              | S8            |
 | `/delete <id>`                                     | Both   | `update_feed` `Deleted`                                                                                                                                                                                                              | The bubble goes; the list preview recomputes                                                                                 | S9            |
 | `/react <id> <emoji>`, `/unreact <id> <emoji>`     | Both   | `update_feed` `ReactionPlaced` or `ReactionRemoved` with `participant_id: "p1"`                                                                                                                                                       | A chip appears or its count drops; the user's own reaction on the same emoji aggregates with it                             | S10           |
@@ -261,14 +265,23 @@ and one more line for every query it answers. A collector keeps the lines whose 
 | `t`    | Always `"chat-v2"`                                                                                                                        |
 | `boot` | How many times the Worker started, kept in product storage; a worker restart shows as a new `boot`                                      |
 | `seq`  | Line counter of this boot, from 1                                                                                                         |
-| `via`  | `action_subscribe`, `room_events`, one of the six query names, `render`, `renderer_action`, `answer`, or `preimage`                      |
+| `via`  | `action_subscribe`, `room_events`, one of the six query names, `render`, `renderer_action`, or `answer`; `preimage`, `room` and `flood` for the lines of the product's own calls |
 | `re`   | For `answer`: the `seq` of the query it answers                                                                                           |
 | `room` | The room id, or `null` for a render request without one                                                                                   |
 | `kind` | The event, action, query or answer variant: `MessagePosted`, `NewMessage`, `Before`, `Count`, `MessageCreated`, `NotAvailable`, `Timeout` |
 | `data` | The payload as the TypeScript client decodes it, with a `bigint` as a decimal string and bytes as `0x` hex                                |
 
-An answer the product never sends, under `/fail timeout`, logs `kind: "Timeout"` when the host stops the stream. The
-log carries no wall-clock time, so two runs of one command list produce the same lines except for host-assigned ids.
+An answer the product never sends, under `/fail timeout`, logs `kind: "Timeout"` when the host stops the stream.
+
+The product also logs some of its own calls:
+
+| `via`      | `room`      | `kind`                         | `data`                          | When                                                       |
+| ---------- | ----------- | ------------------------------ | ------------------------------- | ---------------------------------------------------------- |
+| `preimage` | `null`      | `Submitted` or `Missing`       | `{ key }`                       | At each start, and at each `/post rich` that submits again |
+| `room`     | `throwaway` | `New`, `Exists` or `Deleted`   | `{ roomId: "throwaway" }`       | After each `create_room` or `delete_room` of `/room`       |
+| `flood`    | the room    | `Done`                         | `{ sent, accepted, refused }`   | After the edits of `/flood`, before its answer             |
+
+The log carries no wall-clock time, so two runs of one command list produce the same lines except for host-assigned ids.
 
 ## Running it
 
