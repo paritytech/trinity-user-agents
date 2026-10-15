@@ -13,7 +13,7 @@ Feature proposals live as markdown files in `docs/features/`. To propose a new f
 2. Include YAML frontmatter (`title`, `type: feature`, `status: draft`, `author`, `pr`)
 3. Describe the feature: summary, use cases, and proposed solution
 4. Update `docs/features/_index.md` with a link to your file
-5. Open a PR using the **feature** template (`?template=feature.md`) and add the `feature-request` and `proposal` labels
+5. Open a PR using the **feature** template (`?template=feature.md`)
 
 ## RFCs
 
@@ -21,7 +21,7 @@ For larger changes that need cross-team discussion, use the RFC process:
 
 1. Create a branch and add a new file to `docs/rfcs/<slug>.md` (e.g., `docs/rfcs/my-proposal.md`) — do **not** assign a number
 2. Use `docs/rfcs/0001-template.md` as a reference for the expected structure and frontmatter
-3. Open a PR using the **rfc** template (`?template=rfc.md`) and add the `rfc` label
+3. Open a PR using the **rfc** template (`?template=rfc.md`); it is labelled `area: rfc` automatically
 4. The PR will be auto-added to the project board for tracking and review
 5. When the PR is approved and merged, CI automatically assigns the next sequential number, renames the file, and appends it to `docs/rfcs/_index.md`
 
@@ -42,7 +42,11 @@ Canonical design documentation lives in `docs/design/`. To propose updates or ad
 
 1. Edit or add a file in `docs/design/`
 2. Include YAML frontmatter (`title`, `type: design`, `status`, `author`, `created`, `pr`)
-3. Open a PR using the **design** template (`?template=design.md`) and add the `design-doc` label
+3. Open a PR using the **design** template (`?template=design.md`)
+
+## Labels
+
+Areas and sizes are labelled for you. Set a `status:` when a pull request stops waiting on review, and a `ci:` label to ask for an app build. [docs/labels.md](docs/labels.md) has the whole system.
 
 ## Development
 

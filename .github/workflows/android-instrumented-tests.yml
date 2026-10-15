@@ -32,9 +32,9 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch'
       || (github.event.action == 'labeled'
-          && github.event.label.name == 'android-instrumented-tests')
+          && github.event.label.name == 'ci: android emulator tests')
       || (github.event.action != 'labeled'
-          && contains(github.event.pull_request.labels.*.name, 'android-instrumented-tests'))
+          && contains(github.event.pull_request.labels.*.name, 'ci: android emulator tests'))
     runs-on: macos-15
     timeout-minutes: 90
     steps:

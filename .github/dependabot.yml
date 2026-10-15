@@ -5,6 +5,11 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    # Set explicitly, because the defaults Dependabot reaches for are not the
+    # names in .github/labels.yml.
+    labels:
+      - "type: dependencies"
+      - "area: ci"
     schedule:
       interval: weekly
     cooldown:

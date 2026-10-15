@@ -51,9 +51,9 @@ jobs:
     # already building.
     if: >-
       (github.event.action == 'labeled'
-       && github.event.label.name == 'ios-device-build')
+       && github.event.label.name == 'ci: ios device')
       || (github.event.action == 'synchronize'
-          && contains(github.event.pull_request.labels.*.name, 'ios-device-build'))
+          && contains(github.event.pull_request.labels.*.name, 'ci: ios device'))
     runs-on: parity-macos
     timeout-minutes: 45
     steps:

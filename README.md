@@ -15,6 +15,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
+- [Labels](docs/labels.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -481,13 +482,13 @@ the device slice, which is enough for Simulator but not for an archive.
 Because the app builds against the core in this tree, a core change that breaks
 it fails here rather than at the next version bump. Every push to main runs the
 jobs below, and so does a pull request touching the app, or the crates its
-bindings come from, once it is labelled `ios-simulator-build`. They are macOS
+bindings come from, once it is labelled `ci: ios simulator`. They are macOS
 jobs, so a pull request without the label runs none of them. CI's
 `iOS package (Swift + WebKit)` job still compiles the TrUAPIHost package against
 the core on a pull request touching `ios/` or the core crates, but the app itself
 is compiled before merge only with the label. The first time a pull request
 touches the iOS or Android app, `build-label-hint.yml` comments with the labels
-that build it: `ios-simulator-build`, `ios-device-build` and `android-device-build`.
+that build it: `ci: ios simulator`, `ci: ios device` and `ci: android device`.
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
@@ -516,7 +517,7 @@ on the simulator, the emulator or a phone, without a deploy. See
 
 ### A build that installs on a phone
 
-Label a pull request `ios-device-build` and `ios-device-preview.yml` produces a
+Label a pull request `ci: ios device` and `ios-device-preview.yml` produces a
 signed ad-hoc archive attached to the run, named for the commit it was built
 from. It uploads nowhere: not to Apple, not to any distribution service.
 
@@ -532,7 +533,7 @@ preview itself is tracked on #681.
 
 ### An Android build that installs on a phone
 
-Label a pull request `android-device-build` and `android-device-preview.yml`
+Label a pull request `ci: android device` and `android-device-preview.yml`
 attaches an installable APK to the run. Android needs no provisioning, so it
 installs on any phone rather than only on registered devices, and it is signed
 with the shared develop key so a new build replaces the last one rather than
@@ -607,7 +608,7 @@ Remote Config, keyed on an `environment` signal the build sets.
 ### Instrumented tests
 
 `android-instrumented-tests.yml` boots an emulator and runs the app module's
-connected tests. It starts from the `android-instrumented-tests` label rather
+connected tests. It starts from the `ci: android emulator tests` label rather
 than from every commit, because the runner is macOS and a cold emulator costs
 minutes before the first assertion. `workflow_dispatch` runs it without a pull
 request to carry the label.

@@ -1,0 +1,38 @@
+name: Label gate
+
+# Fails while a pull request carries a status that says it must not merge yet,
+# so the label is a gate rather than a request. Removing the label re-runs this
+# and clears it.
+#
+# It holds a merge only once "Label gate" is a required check on main. Until
+# then it marks the pull request red without stopping it.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+  # A required check has to report in the merge queue too. Labels cannot change
+  # once a pull request is queued, and it was checked on the way in.
+  merge_group:
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Label gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check for a status that holds the merge
+        if: github.event_name == 'pull_request'
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          held="$(jq -r '.[] | select(. == "status: needs spec" or . == "status: needs decision" or . == "status: blocked")' <<<"$LABELS")"
+          if [ -n "$held" ]; then
+            while IFS= read -r label; do
+              echo "::error::\`${label}\` holds this pull request. Remove it once that is resolved."
+            done <<<"$held"
+            exit 1
+          fi
+          echo "No status holds this pull request."

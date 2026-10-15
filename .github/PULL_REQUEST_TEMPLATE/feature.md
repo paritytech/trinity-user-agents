@@ -8,7 +8,6 @@
 
 - [ ] Added `docs/features/short-descriptive-name.md` with completed frontmatter
 - [ ] Updated `docs/features/_index.md` with a link to the new proposal
-- [ ] Added labels: `feature-request`, `proposal`
 
 ### Use Cases
 
