@@ -222,7 +222,7 @@ export type CoreStorageKey =
   | { tag: "ProductManifest"; value: { productId: string } }
   /**
    * Funding sessions: every live one plus a bounded tail of settled ones,
-   * as one SCALE blob.
+   * as one versioned SCALE blob.
    */
   | { tag: "FundingSessions"; value?: undefined }
   /**
@@ -239,7 +239,12 @@ export type CoreStorageKey =
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
-  | { tag: "FundingSupport"; value?: undefined };
+  | { tag: "FundingSupport"; value?: undefined }
+  /**
+   * The last funding sessions blob the core could not read, kept as it was
+   * so a stored session is never overwritten unread.
+   */
+  | { tag: "FundingSessionsUnreadable"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -911,6 +916,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       }>,
       PublishedProducts: S._void,
       FundingSupport: S._void,
+      FundingSessionsUnreadable: S._void,
     }),
 );
 

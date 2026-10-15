@@ -357,8 +357,8 @@ pub struct HostFundingPresentFrameResponse {
 pub enum HostFundingPresentFrameError {
 	/// No open session with this id is assigned to the caller.
 	NotFound,
-	/// A page or return URL that is not an https URL with a host, or that
-	/// carries credentials.
+	/// An App route that leaves the provider's App, or a page or return URL
+	/// that is not an https URL with a host, or that carries credentials.
 	InvalidUrl,
 	/// Catch-all.
 	Unknown {

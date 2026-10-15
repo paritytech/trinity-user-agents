@@ -142,8 +142,9 @@ struct FundingQuote {
 
 An ask unanswered after 10 seconds shows as timed out. An answer is reused for 30 seconds. What answers show about a
 provider, served or refused for a country the ask named, is kept for 12 hours and folded into its manifest's routes
-while that manifest serves Funding. A provider whose manifest is withdrawn or stops serving Funding is no longer a
-candidate.
+while that manifest serves Funding. Quotes are asked of, and a session can be handed to, exactly the providers whose
+manifest serves Funding, whatever routes it declares: one still waiting for its manifest, or whose manifest is withdrawn
+or stops serving Funding, is neither asked nor chosen.
 
 The user picks a provider by one of its quotes for the session. When the session has an amount, the quote must price
 it: `receive_amount` inbound, `send_amount` outbound, both in balance units. A session opened without an amount takes
@@ -242,7 +243,8 @@ comes back in `Assigned.saved` and is dropped when the session ends.
 ## Trade-offs
 
 - **Every provider is asked for every quote.** Manifests lag behind what a provider serves, so routes only narrow the
-  list; the cost is one ask per provider per quote.
+  list the host draws before quotes arrive, never which provider can be chosen; the cost is one ask per provider per
+  quote.
 - **The worker holds the provider's flow.** Ephemeral accounts, conversion and payout live in the worker
   (`deriveEntropy` under the provider's product), so the core needs no XCM, swap or provider-specific code, and signs
   no funding transaction.

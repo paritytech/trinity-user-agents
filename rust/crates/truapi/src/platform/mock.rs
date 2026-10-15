@@ -742,6 +742,7 @@ fn core_key(key: &CoreStorageKey) -> String {
 		},
 		CoreStorageKey::PublishedProducts => "core:published-products".to_string(),
 		CoreStorageKey::FundingSupport => "core:funding-support".to_string(),
+		CoreStorageKey::FundingSessionsUnreadable => "core:funding-sessions-unreadable".to_string(),
 		CoreStorageKey::AllowanceKeys { session_id } => {
 			format!("core:allowance-keys:{session_id}")
 		},
@@ -942,6 +943,7 @@ fn device_permission_key(request: &latest::HostDevicePermissionRequest) -> &'sta
 		Request::Clipboard => "Clipboard",
 		Request::OpenUrl => "OpenUrl",
 		Request::Biometrics => "Biometrics",
+		Request::Motion => "Motion",
 	}
 }
 
