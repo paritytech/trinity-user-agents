@@ -26,7 +26,9 @@ export interface TranscriptLine {
   direction?: string;
   amount?: string | null;
   outcome?: string;
+  answer?: string;
   tag?: string;
+  progress?: string | null;
   route?: string;
   providers?: string[];
   rows?: { provider: string; state: string }[];

@@ -853,11 +853,14 @@ impl SigningHostRuntime {
 		Ok(self.services.acknowledge_funding_session(intent).await?)
 	}
 
-	/// Cancel funding session `intent` at the user's request: it ends if no
-	/// provider serves it, otherwise its provider is asked to stop. Returns
-	/// whether the cancel was taken.
+	/// Cancel funding session `intent` at the user's request, and say what
+	/// that did: it ended, its provider was asked, a cancel is already with
+	/// the provider, or it is too late because the balance was credited.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
-	pub async fn cancel_funding(&self, intent: &str) -> Result<bool, v01::GenericError> {
+	pub async fn cancel_funding(
+		&self,
+		intent: &str,
+	) -> Result<crate::host_logic::funding::CancelOutcome, v01::GenericError> {
 		Ok(self.services.cancel_funding(intent).await?)
 	}
 
@@ -979,6 +982,18 @@ impl SigningHostRuntime {
 	/// Stop asking again for funding session `intent`'s quotes.
 	pub fn stop_funding_quotes(&self, intent: &str) {
 		self.services.funding_quotes().stop_watching(intent);
+	}
+
+	/// Answer the provider's cancel offer on funding session `intent`:
+	/// accept it, so the provider refunds the user and ends the session, or
+	/// decline it, so the session carries on.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.confirm_funding_cancel"))]
+	pub async fn confirm_funding_cancel(
+		&self,
+		intent: &str,
+		accept: bool,
+	) -> Result<crate::host_logic::funding::CancelConfirmation, v01::GenericError> {
+		Ok(self.services.confirm_funding_cancel(intent, accept).await?)
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose,
