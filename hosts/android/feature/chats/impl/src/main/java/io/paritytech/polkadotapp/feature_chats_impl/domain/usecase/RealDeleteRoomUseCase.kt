@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.usecase
 
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.DeleteRoomUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomActivityWriter
@@ -7,6 +8,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomDe
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 /** Removes a room with its messages, their reactions and revisions, its draft, its declarations and its activity line. */
@@ -24,5 +26,9 @@ class RealDeleteRoomUseCase @Inject constructor(
         chatDraftRepository.deleteDraft(chatId)
         declarationsWriter.delete(chatId)
         activityWriter.set(chatId, null)
+    }
+
+    override suspend fun deleteAllRoomsOf(extensionId: ChatExtensionId) {
+        chatRoomRepository.subscribeRoomsByExtension(extensionId).first().forEach { invoke(it) }
     }
 }

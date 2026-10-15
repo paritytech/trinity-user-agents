@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.usecase
 
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -9,6 +10,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomDe
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
@@ -38,5 +40,17 @@ class RealDeleteRoomUseCaseTest {
         coVerify { chatDraftRepository.deleteDraft(room) }
         coVerify { declarationsWriter.delete(room) }
         verify { activityWriter.set(room, null) }
+    }
+
+    @Test
+    fun `uninstalling a product removes each of its rooms`() = runBlocking<Unit> {
+        val other = ChatId.forExtensionRoom("ProductBot_game.dot", "scores")
+        every { chatRoomRepository.subscribeRoomsByExtension("ProductBot_game.dot") } returns flowOf(listOf(room, other))
+
+        useCase.deleteAllRoomsOf("ProductBot_game.dot")
+
+        coVerify { chatRoomRepository.deleteRoom(room) }
+        coVerify { chatRoomRepository.deleteRoom(other) }
+        coVerify { declarationsWriter.delete(other) }
     }
 }

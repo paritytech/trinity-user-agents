@@ -12,6 +12,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
@@ -64,9 +67,11 @@ fun ParticipantSheetContent(
         }
 
         if (state.loading) {
+            val loading = stringResource(RCommon.string.chat_product_menu_loading)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .semantics { contentDescription = loading }
                     .padding(PolkadotTheme.spacings.mediumIncreased),
                 contentAlignment = Alignment.Center,
             ) {
@@ -86,7 +91,7 @@ private fun SheetEntry(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = PolkadotTheme.spacings.large, vertical = PolkadotTheme.spacings.medium),
         verticalAlignment = Alignment.CenterVertically,
     ) {

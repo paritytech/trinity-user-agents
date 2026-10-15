@@ -15,6 +15,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
@@ -25,6 +31,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatCommandModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.OngoingActivityIndicator
 import kotlinx.collections.immutable.ImmutableList
+import io.paritytech.polkadotapp.common.R as RCommon
 
 private val CommandCatalogueMaxHeight = 240.dp
 
@@ -35,7 +42,10 @@ internal fun ChatActivityLine(
     text: String,
 ) {
     Row(
-        modifier = modifier.padding(horizontal = PolkadotTheme.spacings.mediumIncreased, vertical = PolkadotTheme.spacings.tiny),
+        modifier = modifier
+            // TalkBack tells the user when the activity changes, for example when the product starts to type.
+            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
+            .padding(horizontal = PolkadotTheme.spacings.mediumIncreased, vertical = PolkadotTheme.spacings.tiny),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         OngoingActivityIndicator()
@@ -66,11 +76,16 @@ internal fun ChatSuggestionsStrip(
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
     ) {
         suggestions.forEach { suggestion ->
+            val shape = PolkadotTheme.shapes.full
+            // A quick reply that sends its text says so, so the user knows that a tap sends a message.
+            val actionLabel = stringResource(if (suggestion.sendsText) RCommon.string.common_send else RCommon.string.chat_suggestion_select)
             PolkadotSurface(
-                shape = PolkadotTheme.shapes.full,
+                modifier = Modifier
+                    .clip(shape)
+                    .clickable(role = Role.Button, onClickLabel = actionLabel) { onSelect(suggestion.suggestionId) },
+                shape = shape,
                 color = PolkadotTheme.colors.bg.surface.container,
                 border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.secondary),
-                onClick = { onSelect(suggestion.suggestionId) },
             ) {
                 NovaText(
                     modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.mediumIncreased, vertical = PolkadotTheme.spacings.small),
@@ -102,7 +117,7 @@ internal fun ChatCommandCatalogue(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onSelect(command) }
+                        .clickable(role = Role.Button, onClickLabel = stringResource(RCommon.string.chat_command_insert)) { onSelect(command) }
                         .padding(horizontal = PolkadotTheme.spacings.mediumIncreased, vertical = PolkadotTheme.spacings.small),
                 ) {
                     val hint = command.argumentHint?.let { " $it" }.orEmpty()

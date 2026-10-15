@@ -220,11 +220,15 @@ class ProductMessageSource(
         emit()
 
         val result = ask(ChatPageAnchorModel.Before(null))
-        if (result is PageResult.Page) {
-            window.replaceWith(result.item)
-            readiness = ChatRoomReadiness.READY
-        } else {
-            readiness = ChatRoomReadiness.UNAVAILABLE
+        readiness = when (result) {
+            is PageResult.Page -> {
+                window.replaceWith(result.item)
+                ChatRoomReadiness.READY
+            }
+
+            // 02-DESIGN §3.6: a page without an answer in time shows "could not load" and keeps the cached pages.
+            PageResult.Failed -> ChatRoomReadiness.FAILED
+            PageResult.NotAvailable, PageResult.Unavailable -> ChatRoomReadiness.UNAVAILABLE
         }
 
         emit()

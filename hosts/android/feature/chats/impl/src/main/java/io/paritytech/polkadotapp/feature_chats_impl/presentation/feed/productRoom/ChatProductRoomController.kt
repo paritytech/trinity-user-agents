@@ -34,7 +34,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -75,6 +77,9 @@ class ChatProductRoomController(
         fun showFailure(error: Throwable)
 
         fun showOutcome(outcome: ChatSourceActionOutcome)
+
+        /** Closes the room screen. */
+        fun leave()
     }
 
     private val toolbarActions = roomPolicy
@@ -141,6 +146,18 @@ class ChatProductRoomController(
     @Volatile
     private var reactionDetailsNotAvailable = false
 
+    init {
+        // A new configuration of the room can serve who reacted again (S47).
+        scope.launch {
+            roomPolicy.map { it?.configGeneration }.distinctUntilChanged().collect { reactionDetailsNotAvailable = false }
+        }
+        // A room that its product deletes, or a room of a product that the user uninstalls, closes its screen (02-DESIGN §5.5).
+        scope.launch {
+            val removed = interactor.observeRoomExists(chatId).dropWhile { exists -> !exists }.firstOrNull { exists -> !exists }
+            if (removed != null) screen.leave()
+        }
+    }
+
     private val _messageMenu = MutableStateFlow<ProductMessageMenuState?>(null)
     val messageMenu: StateFlow<ProductMessageMenuState?> = _messageMenu.asStateFlow()
     private var messageMenuJob: Job? = null
@@ -203,6 +220,7 @@ class ChatProductRoomController(
     fun handle(action: ProductRoomAction) {
         when (action) {
             is ProductRoomAction.OpenLink -> openLink(action.url)
+            is ProductRoomAction.ConfirmLink -> confirmMessageLink(action.url)
             is ProductRoomAction.Toolbar -> pressToolbar(action.actionId)
             ProductRoomAction.ShowParticipants -> showParticipants()
             ProductRoomAction.LoadMoreParticipants -> participants.loadMore()
@@ -275,6 +293,16 @@ class ChatProductRoomController(
         perform(action.handler, ChatRoomUserEvent.ToolbarActionTriggered(actionId))
     }
 
+    /** As on iOS, a link of a message opens only with an `http` or `https` address, and only after the user confirms it. */
+    private fun confirmMessageLink(url: String) {
+        val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
+        if (scheme !in MESSAGE_LINK_SCHEMES) {
+            Timber.w("A message link with the scheme '%s' does not open", scheme)
+            return
+        }
+        screen.showMenu(ChatMenuType.ProductLinkConfirmation(url))
+    }
+
     private fun openLink(url: String) {
         screen.closeMenu()
         scope.launch {
@@ -306,6 +334,10 @@ class ChatProductRoomController(
             icon ?: return@mapNotNull null
             resourceResolver.resolve(icon).getOrNull()?.let { actionId to it.model }
         }.toMap()
+
+    private companion object {
+        val MESSAGE_LINK_SCHEMES = setOf("http", "https")
+    }
 
     class Factory @Inject constructor(
         private val interactor: ChatFeedInteractor,

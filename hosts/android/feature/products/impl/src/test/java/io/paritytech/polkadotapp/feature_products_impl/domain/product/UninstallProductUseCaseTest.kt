@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.product
 
+import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.DeleteRoomUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
@@ -18,7 +19,8 @@ class UninstallProductUseCaseTest {
     private val productRepository: ProductRepository = mock()
     private val scheduler: ProductNotificationScheduler = mock()
     private val productGameReminder: ProductGameReminder = mock()
-    private val useCase = UninstallProductUseCase(productRepository, scheduler, productGameReminder)
+    private val deleteRoomUseCase: DeleteRoomUseCase = mock()
+    private val useCase = UninstallProductUseCase(productRepository, scheduler, productGameReminder, deleteRoomUseCase)
 
     private val productId = ProductId.fromStoredValue("acme.dot")
 
@@ -40,6 +42,17 @@ class UninstallProductUseCaseTest {
 
         val order = inOrder(productGameReminder, productRepository)
         order.verify(productGameReminder).cancel(productId)
+        order.verify(productRepository).deleteProduct(productId)
+    }
+
+    @Test
+    fun `removes all the chat rooms of the product before deleting product`() = runBlocking<Unit> {
+        givenSchedulerCancelsSuccessfully()
+
+        uninstallProduct()
+
+        val order = inOrder(deleteRoomUseCase, productRepository)
+        order.verify(deleteRoomUseCase).deleteAllRoomsOf("ProductBot_acme.dot")
         order.verify(productRepository).deleteProduct(productId)
     }
 

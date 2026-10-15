@@ -17,6 +17,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.Ch
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.LocalChatFeedTimestampAnchor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.LocalChatMessageTimeFormatter
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.LocalProductMediaController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ProductMediaController
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import javax.inject.Inject
@@ -41,6 +43,9 @@ class ChatFeedFragment : BaseComposeFragment<ChatFeedViewModel>() {
     @Inject
     lateinit var multimediaMessageController: MultimediaMessageController
 
+    @Inject
+    lateinit var productMediaController: ProductMediaController
+
     @Composable
     override fun Screen() {
         val anchorTimestamp by rememberCurrentTimeMillisWithDelay(1.minutes)
@@ -51,7 +56,8 @@ class ChatFeedFragment : BaseComposeFragment<ChatFeedViewModel>() {
             LocalTokenAmountFormatter provides tokenAmountFormatter,
             LocalInformationSizeFormatter provides informationSizeFormatter,
             LocalChatFeedTimestampAnchor provides anchorTimestamp,
-            LocalMultimediaMessageController provides multimediaMessageController
+            LocalMultimediaMessageController provides multimediaMessageController,
+            LocalProductMediaController provides productMediaController,
         ) {
             ChatFeedScreen(viewModel)
         }

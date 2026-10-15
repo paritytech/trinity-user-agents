@@ -28,12 +28,16 @@ enum class ChatRoomReadinessUiState {
 
     /** The product does not answer. The feed keeps the cached messages and offers a retry. */
     UNAVAILABLE,
+
+    /** The newest messages did not load. The feed keeps the cached messages and offers a retry. */
+    FAILED,
 }
 
 fun ChatRoomReadiness.toUi(): ChatRoomReadinessUiState = when (this) {
     ChatRoomReadiness.LOADING -> ChatRoomReadinessUiState.LOADING
     ChatRoomReadiness.READY -> ChatRoomReadinessUiState.READY
     ChatRoomReadiness.UNAVAILABLE -> ChatRoomReadinessUiState.UNAVAILABLE
+    ChatRoomReadiness.FAILED -> ChatRoomReadinessUiState.FAILED
 }
 
 /** One end of the loaded messages of a room. A room that the host keeps is complete, so both ends are [END]. */

@@ -58,7 +58,7 @@ class ChatFeedViewModelTest {
     fun `the room shows the description and the placeholder of the product`() = runBlocking<Unit> {
         val roomState = withTimeout(5_000) { viewModel().roomState.first { it != ChatRoomUiState.PersonChat } }
 
-        assertEquals(ChatRoomUiState(subtitle = "Forecasts", emptyPlaceholder = EmptyRoomPlaceholder.ProductText("Ask me")), roomState)
+        assertEquals(ChatRoomUiState(subtitle = "Forecasts", emptyPlaceholder = EmptyRoomPlaceholder.ProductText("Ask me"), confirmsLinks = true), roomState)
     }
 
     @Test

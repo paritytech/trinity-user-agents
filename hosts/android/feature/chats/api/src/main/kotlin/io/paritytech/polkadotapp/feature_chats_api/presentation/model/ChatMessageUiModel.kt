@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomC
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableSet
@@ -74,18 +75,23 @@ sealed interface ChatMessageUiModel {
             /** The text for accessibility. */
             val alt: String?
 
-            /** [model] is what the image loader draws. Null while the host cannot resolve the image. */
+            /** The bytes of the item. The room screen loads them when the item shows, or when the user opens a file. */
+            val resource: ChatResourceModel
+
+            val mimeType: String
+
             data class Image(
-                val model: Any?,
+                override val resource: ChatResourceModel,
+                override val mimeType: String,
                 val width: Int?,
                 val height: Int?,
                 val blurHash: String?,
                 override val alt: String?,
             ) : MediaItem
 
-            /** [url] is null for inline bytes, which the player cannot stream, so the item shows its poster only. */
             data class Video(
-                val url: String?,
+                override val resource: ChatResourceModel,
+                override val mimeType: String,
                 val width: Int?,
                 val height: Int?,
                 val blurHash: String?,
@@ -93,9 +99,10 @@ sealed interface ChatMessageUiModel {
             ) : MediaItem
 
             data class File(
+                override val resource: ChatResourceModel,
+                override val mimeType: String,
                 val fileName: String,
                 val size: InformationSize?,
-                val mimeType: String,
                 override val alt: String?,
             ) : MediaItem
         }

@@ -6,6 +6,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotButtonSize
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
@@ -15,14 +18,19 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** The pinned line of a product-source room whose product does not answer (02-DESIGN §3.6, §21 item 5). */
+/**
+ * The pinned line of a product-source room whose product does not answer, or whose newest messages did not load
+ * (02-DESIGN §3.6, §21 item 5).
+ */
 @Composable
 internal fun ChatRoomUnavailableLine(
     modifier: Modifier = Modifier,
+    isLoadFailure: Boolean,
     onRetry: () -> Unit,
 ) {
     PolkadotSurface(
-        modifier = modifier,
+        // TalkBack tells the user when the room stops to answer.
+        modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
         color = PolkadotTheme.colors.bg.surface.nested,
     ) {
         Row(
@@ -31,7 +39,7 @@ internal fun ChatRoomUnavailableLine(
         ) {
             NovaText(
                 modifier = Modifier.weight(1f),
-                text = stringResource(RCommon.string.chat_product_room_unavailable),
+                text = stringResource(if (isLoadFailure) RCommon.string.chat_feed_page_failed else RCommon.string.chat_product_room_unavailable),
                 style = PolkadotTheme.typography.body.small,
                 color = PolkadotTheme.colors.fg.secondary,
             )

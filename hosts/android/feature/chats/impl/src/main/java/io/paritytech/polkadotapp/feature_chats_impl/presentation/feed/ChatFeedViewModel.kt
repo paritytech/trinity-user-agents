@@ -48,6 +48,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoo
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.takesText
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAnotherChatPresentationError
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.toPresentationError
@@ -161,6 +162,8 @@ class ChatFeedViewModel @Inject constructor(
             override fun showFailure(error: Throwable) = showPresentationError(UnexpectedPresentationError(error))
 
             override fun showOutcome(outcome: ChatSourceActionOutcome) = showActionOutcome(outcome)
+
+            override fun leave() = router.back()
         },
     )
 
@@ -410,6 +413,7 @@ class ChatFeedViewModel @Inject constructor(
     override fun onSendMessageClick() {
         val sendableMessageState = chatInputUiState.value.sendableMessageState() ?: return
         val text = sendableMessageState.sendableMessageText() ?: return
+        if (!chatId.takesText(text)) return showMessage(RCommon.string.chat_message_too_long)
 
         launch {
             val inputType = chatInputStateType.first()
@@ -728,7 +732,7 @@ class ChatFeedViewModel @Inject constructor(
         if (outcome !is ChatSourceActionOutcome.Refused) return
 
         val reason = outcome.reason
-        if (reason.isNullOrBlank()) showMessage(RCommon.string.chat_message_action_failed) else showMessage(reason)
+        if (reason.isNullOrBlank()) showMessage(RCommon.string.chat_message_action_failed) else showError(reason)
     }
 
     private fun jumpToTargetMessageIfNeeded() {

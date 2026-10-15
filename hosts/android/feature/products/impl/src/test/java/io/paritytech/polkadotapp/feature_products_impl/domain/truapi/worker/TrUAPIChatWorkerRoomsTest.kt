@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
+import io.mockk.justRun
 import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.ChatQueryException
@@ -47,6 +48,7 @@ class TrUAPIChatWorkerRoomsTest {
 
     private fun TestScope.worker(scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler))): TrUAPIChatWorker {
         val workers: TrUAPIWorkerSupervisor = mockk()
+        justRun { workers.restartIfFailed(productId) }
         every { workers.executionState(productId) } returns flowOf(WorkerExecutionState.Running(execution))
         every { workers.currentExecution(productId) } returns execution
         return TrUAPIChatWorker(productId, runtime, workers, FakeChatMessaging(), scope)
@@ -64,6 +66,17 @@ class TrUAPIChatWorkerRoomsTest {
         verify { execution.publishChatEvent("lobby", "native", ChatEvent.RoomOpened) }
         verify { execution.publishChatEvent("lobby", "native", ChatEvent.RoomClosed) }
         verify(exactly = 1) { runtime.releaseWorker(productId.value) }
+    }
+
+    @Test
+    fun `opening a room asks the supervisor to start a worker whose start failed`() = runTest {
+        val workers: TrUAPIWorkerSupervisor = mockk(relaxed = true)
+        every { workers.executionState(productId) } returns flowOf(WorkerExecutionState.Running(execution))
+        val worker = TrUAPIChatWorker(productId, runtime, workers, FakeChatMessaging(), CoroutineScope(StandardTestDispatcher(testScheduler)))
+
+        worker.openRoom(room)
+
+        verify { workers.restartIfFailed(productId) }
     }
 
     @Test

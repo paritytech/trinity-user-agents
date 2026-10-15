@@ -11,6 +11,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.tooling.preview.Preview
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -18,6 +24,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
+import io.paritytech.polkadotapp.common.R as RCommon
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -54,10 +61,24 @@ private fun ReactionChip(
     onLongClick: () -> Unit,
 ) {
     val shape = PolkadotTheme.shapes.full
+    val description = pluralStringResource(RCommon.plurals.chat_reaction_count, count, emoji, count)
+    val yours = stringResource(RCommon.string.chat_reaction_yours)
+
     PolkadotSurface(
         modifier = Modifier
             .clip(shape)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .combinedClickable(
+                onClickLabel = stringResource(RCommon.string.chat_reaction_toggle),
+                onLongClickLabel = stringResource(RCommon.string.chat_reaction_show_who),
+                role = Role.Button,
+                onClick = onClick,
+                onLongClick = onLongClick,
+            )
+            // TalkBack reads one sentence for the chip, and keeps the press actions of the chip with their labels.
+            .clearAndSetSemantics {
+                contentDescription = description
+                if (isReactedByTheUser) stateDescription = yours
+            },
         shape = shape,
         color = if (isReactedByTheUser) PolkadotTheme.colors.bg.surface.container else PolkadotTheme.colors.bg.action.tertiary,
         border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.cutout),
