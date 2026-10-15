@@ -1479,7 +1479,7 @@ function renderRoom(forceBottom) {
   const room = roomOf(state.selected);
   if (!room) {
     thread.appendChild(emptyState("Waiting for the worker to register a room",
-      state.worker.configured ? null : "pass --worker-bundle to truapi-host dev"));
+      state.worker.configured ? null : "pass --worker-bundle or --worker-wasm to truapi-host dev"));
     renderFooter(null);
     return;
   }
