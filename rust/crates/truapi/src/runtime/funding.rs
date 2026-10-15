@@ -129,7 +129,9 @@ impl FundingRegistry {
 		.await
 	}
 
-	/// Cancel open session `intent`. Returns whether it was still open.
+	/// Cancel open session `intent`. Returns whether it was still open. A
+	/// session whose overlay is still up is not the host's to cancel yet: the
+	/// overlay ends it by closing.
 	pub async fn cancel(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -138,7 +140,8 @@ impl FundingRegistry {
 	) -> Result<bool, FundingSessionError> {
 		let intent = intent.to_string();
 		self.commit(storage, now_ms, move |sessions| {
-			let cancelled = sessions.get_mut(&intent).is_some_and(|session| session.cancel(now_ms));
+			let cancelled = !self.lock_presenting().contains(&intent) &&
+				sessions.get_mut(&intent).is_some_and(|session| session.cancel(now_ms));
 			(cancelled, Vec::from_iter(cancelled.then_some(intent)))
 		})
 		.await
@@ -192,7 +195,8 @@ impl FundingRegistry {
 
 	/// The user started presented session `intent`: store it and announce
 	/// it. A session that cannot be stored is discarded, as the caller is
-	/// told it failed.
+	/// told it failed; until then it stays presented, so no other commit
+	/// stores it.
 	async fn start(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -223,7 +227,9 @@ impl FundingRegistry {
 	}
 
 	/// Apply `edit` to a copy of the sessions, persist the result, then make it
-	/// current and notify every session `edit` names.
+	/// current and notify every session `edit` names. An edit may move
+	/// sessions in or out of the overlay; when the write fails, that move is
+	/// undone along with the rest.
 	///
 	/// Persisted sessions are loaded first on the first call, and every
 	/// commit expires the sessions past their deadline, so a long suspend
@@ -236,6 +242,7 @@ impl FundingRegistry {
 	) -> Result<R, FundingSessionError> {
 		let mut loaded = self.writes.lock().await;
 		let before = self.lock_sessions().clone();
+		let presenting_before = self.lock_presenting().clone();
 		let mut working = before.clone();
 		let mut changed = Vec::new();
 		if !*loaded {
@@ -262,7 +269,10 @@ impl FundingRegistry {
 					.cloned()
 					.collect()
 			};
-			store_sessions(storage, &started).await?;
+			if let Err(error) = store_sessions(storage, &started).await {
+				*self.lock_presenting() = presenting_before;
+				return Err(error);
+			}
 			*self.lock_sessions() =
 				kept.into_iter().map(|session| (session.intent.clone(), session)).collect();
 		}
@@ -362,7 +372,8 @@ impl FundingRegistry {
 				subscribers.remove(&session.intent);
 			}
 		}
-		if self.platform.get().is_some() {
+		// The host hears of a session once the user starts it.
+		if self.platform.get().is_some() && !self.lock_presenting().contains(&session.intent) {
 			self.lock_announcements().pending.push_back((session.intent.clone(), item));
 		}
 	}
@@ -418,6 +429,9 @@ pub enum OpenFundingError {
 	/// The user closed the overlay before starting.
 	#[display("funding dismissed")]
 	Dismissed,
+	/// The amount sought is zero.
+	#[display("funding amount must be positive")]
+	InvalidAmount,
 	/// The session could not be stored.
 	#[display("{_0}")]
 	Session(FundingSessionError),
@@ -432,6 +446,31 @@ const RESUME_RETRY_FIRST: Duration = Duration::from_secs(1);
 const RESUME_RETRY_LONGEST: Duration = Duration::from_secs(60);
 
 impl RuntimeServices {
+	/// Install the host's funding surface and resume the sessions stored
+	/// before a restart. Set-once; returns whether this call installed it.
+	pub fn install_funding_platform(self: &Arc<Self>, platform: Arc<dyn FundingPlatform>) -> bool {
+		let installed = self.funding().install_platform(platform);
+		if installed {
+			self.resume_funding();
+		}
+		installed
+	}
+
+	/// Open a session on the host's own behalf and show the overlay. Returns
+	/// the session id, or `None` when the user closed the overlay without
+	/// starting.
+	pub async fn open_host_funding(
+		self: &Arc<Self>,
+		direction: FundingDirection,
+		amount: Option<u128>,
+	) -> Result<Option<String>, GenericError> {
+		match self.open_funding(None, direction, amount).await {
+			Ok(session) => Ok(Some(session.intent)),
+			Err(OpenFundingError::Dismissed) => Ok(None),
+			Err(error) => Err(GenericError { reason: error.to_string() }),
+		}
+	}
+
 	/// Load persisted sessions and arm expiry for them, so sessions from
 	/// before a restart end on time and the host hears of them.
 	pub fn resume_funding(self: &Arc<Self>) {
@@ -520,6 +559,9 @@ impl RuntimeServices {
 	) -> Result<FundingSession, OpenFundingError> {
 		let registry = self.funding();
 		let platform = registry.platform().ok_or(OpenFundingError::Unsupported)?;
+		if amount == Some(0) {
+			return Err(OpenFundingError::InvalidAmount);
+		}
 		let now_ms = current_unix_millis();
 		let session = FundingSession::new(
 			format!("fs_{}", nanoid::nanoid!(10)),
@@ -771,5 +813,36 @@ mod tests {
 
 		assert!(failed.is_err());
 		assert_eq!(registry.get("fs_1"), Some(session("fs_1", NOW)));
+	}
+
+	#[test]
+	fn a_session_whose_start_failed_is_not_stored_by_a_later_commit() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		block_on(registry.present(storage.as_ref(), NOW, session("fs_1", NOW))).expect("presented");
+		let failing = crate::test_support::StubPlatform {
+			local_storage_error: Some("disk full"),
+			..Default::default()
+		};
+
+		let started = block_on(registry.commit(&failing, NOW, |_| {
+			registry.lock_presenting().remove("fs_1");
+			((), vec!["fs_1".to_string()])
+		}));
+		// Another commit stores before the failed start is discarded.
+		insert(&registry, storage.as_ref(), session("fs_2", NOW));
+
+		assert!(started.is_err());
+		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(vec![session("fs_2", NOW)]));
+	}
+
+	#[test]
+	fn a_session_whose_overlay_is_up_cannot_be_cancelled() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		block_on(registry.present(storage.as_ref(), NOW, session("fs_1", NOW))).expect("presented");
+
+		assert_eq!(block_on(registry.cancel(storage.as_ref(), NOW, "fs_1")), Ok(false));
+		assert_eq!(registry.get("fs_1").map(|session| session.is_terminal()), Some(false));
 	}
 }

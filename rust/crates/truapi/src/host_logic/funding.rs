@@ -8,7 +8,7 @@
 //! opened expires on the core's own clock, whether or not anyone watches it.
 
 use parity_scale_codec::{Decode, Encode};
-use tracing::warn;
+use tracing::error;
 use truapi::latest::{
 	FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem,
 };
@@ -21,6 +21,10 @@ const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
 /// newest first, so a host that never records them cannot grow the store
 /// without bound.
 const UNACKNOWLEDGED_LIMIT: usize = 200;
+/// Version of the stored sessions blob, which leads it as a `u16`. A change
+/// to how [`FundingSession`] encodes bumps it, and [`decode_sessions`] keeps
+/// reading every earlier version, so an upgrade keeps the sessions in flight.
+const SESSIONS_FORMAT: u16 = 1;
 
 /// What the core knows about one session, independent of any host surface.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -192,25 +196,42 @@ pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<Fundi
 
 /// Read every persisted session.
 ///
-/// A blob that does not decode is discarded with a warning rather than
-/// returned as an error, so one bad write cannot disable funding for good.
+/// A blob that does not decode is moved to
+/// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as no sessions, so
+/// one bad write cannot disable funding for good and the next store cannot
+/// overwrite sessions it never read. If it cannot be moved, loading fails and
+/// the blob stays where it is.
 pub async fn load_sessions(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<FundingSession>, FundingSessionError> {
+	let storage_error = |err: GenericError| FundingSessionError::Storage { reason: err.reason };
 	let Some(blob) = storage
 		.read_core_storage(CoreStorageKey::FundingSessions)
 		.await
-		.map_err(|err| FundingSessionError::Storage { reason: err.reason })?
+		.map_err(storage_error)?
 	else {
 		return Ok(Vec::new());
 	};
-	match Vec::<FundingSession>::decode(&mut blob.as_slice()) {
-		Ok(sessions) if sessions.encoded_size() == blob.len() => Ok(sessions),
-		_ => {
-			warn!("discarding undecodable funding sessions");
-			Ok(Vec::new())
-		},
+	if let Some(sessions) = decode_sessions(&blob) {
+		return Ok(sessions);
 	}
+	error!(bytes = blob.len(), "funding sessions do not decode; keeping them aside");
+	storage
+		.write_core_storage(CoreStorageKey::FundingSessionsUnreadable, blob)
+		.await
+		.map_err(storage_error)?;
+	Ok(Vec::new())
+}
+
+/// Decode a stored sessions blob of any version this core reads, or `None`
+/// when it is not one.
+fn decode_sessions(blob: &[u8]) -> Option<Vec<FundingSession>> {
+	let input = &mut &blob[..];
+	let sessions = match u16::decode(input).ok()? {
+		SESSIONS_FORMAT => Vec::<FundingSession>::decode(input).ok()?,
+		_ => return None,
+	};
+	input.is_empty().then_some(sessions)
 }
 
 /// Replace the persisted set with `sessions`, clearing the slot when empty.
@@ -222,7 +243,10 @@ pub async fn store_sessions(
 		storage.clear_core_storage(CoreStorageKey::FundingSessions).await
 	} else {
 		storage
-			.write_core_storage(CoreStorageKey::FundingSessions, sessions.encode())
+			.write_core_storage(
+				CoreStorageKey::FundingSessions,
+				(SESSIONS_FORMAT, sessions).encode(),
+			)
 			.await
 	};
 	written.map_err(|err| FundingSessionError::Storage { reason: err.reason })
@@ -347,14 +371,32 @@ mod tests {
 	}
 
 	#[test]
-	fn an_undecodable_blob_reads_as_no_sessions() {
+	fn an_undecodable_blob_is_kept_aside_and_reads_as_no_sessions() {
 		let storage = stub_platform();
-		let mut blob = vec![session(FundingDirection::In)].encode();
+		let mut blob = (SESSIONS_FORMAT, vec![session(FundingDirection::In)]).encode();
 		blob.push(0xff);
-		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob))
+		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
 			.expect("written");
 
 		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
+		assert_eq!(
+			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
+			Ok(Some(blob))
+		);
+	}
+
+	#[test]
+	fn a_blob_of_an_unknown_version_is_kept_aside() {
+		let storage = stub_platform();
+		let blob = (SESSIONS_FORMAT + 1, vec![session(FundingDirection::In)]).encode();
+		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
+			.expect("written");
+
+		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
+		assert_eq!(
+			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
+			Ok(Some(blob))
+		);
 	}
 
 	#[test]

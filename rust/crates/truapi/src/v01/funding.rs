@@ -74,6 +74,8 @@ pub enum HostFundingError {
 	NotConnected,
 	/// The user dismissed the funding screen without starting a session.
 	Rejected,
+	/// The amount sought is zero.
+	InvalidAmount,
 	/// Catch-all.
 	Unknown {
 		/// Human-readable failure reason.

@@ -20,7 +20,6 @@ mod chat;
 pub mod contacts;
 mod dotns_lookup;
 mod funding;
-pub use funding::OpenFundingError;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
@@ -95,7 +94,7 @@ use truapi::{
 	api::{Chat, Contacts, Funding, Pocket, Renderer},
 	latest, v01,
 	versioned::{
-		IntoLatest,
+		FromLatest, IntoLatest, Versioned,
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
 			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
@@ -1482,23 +1481,27 @@ impl Funding for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostFundingRequest,
 	) -> Result<HostFundingResponse, CallError<HostFundingError>> {
-		let HostFundingRequest::V1(request) = request;
-		let domain = |error| CallError::Domain(HostFundingError::V1(error));
+		let version = request.version();
+		let latest::HostFundingRequest { direction, amount } = request.into_latest();
+		let domain = |error| CallError::Domain(HostFundingError::from_latest(error, version));
 		// A capability the host does not serve is a framework answer; a
 		// missing session is one the product handles.
 		if self.services.funding().platform().is_none() {
 			return Err(CallError::Unsupported);
 		}
 		if self.authority.current_session().is_none() {
-			return Err(domain(v01::HostFundingError::NotConnected));
+			return Err(domain(latest::HostFundingError::NotConnected));
 		}
 		let session = self
 			.services
-			.open_funding(Some(&self.product), request.direction, request.amount)
+			.open_funding(Some(&self.product), direction, amount)
 			.await
 			.map_err(|error| match error {
 				funding::OpenFundingError::Unsupported => CallError::Unsupported,
-				funding::OpenFundingError::Dismissed => domain(v01::HostFundingError::Rejected),
+				funding::OpenFundingError::Dismissed => domain(latest::HostFundingError::Rejected),
+				funding::OpenFundingError::InvalidAmount => {
+					domain(latest::HostFundingError::InvalidAmount)
+				},
 				funding::OpenFundingError::Present(error) => {
 					CallError::HostFailure { reason: error.reason }
 				},
@@ -1506,7 +1509,10 @@ impl Funding for ProductRuntimeHost {
 					CallError::HostFailure { reason: error.to_string() }
 				},
 			})?;
-		Ok(HostFundingResponse::V1(v01::HostFundingResponse { intent: session.intent }))
+		Ok(HostFundingResponse::from_latest(
+			latest::HostFundingResponse { intent: session.intent },
+			version,
+		))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "funding.status_subscribe"))]
@@ -1515,7 +1521,8 @@ impl Funding for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostFundingStatusSubscribeRequest,
 	) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>> {
-		let HostFundingStatusSubscribeRequest::V1(request) = request;
+		let version = request.version();
+		let latest::HostFundingStatusSubscribeRequest { intent } = request.into_latest();
 		let registry = self.services.funding();
 		if registry.platform().is_none() {
 			return Subscription::interrupted(CallError::Unsupported);
@@ -1524,15 +1531,20 @@ impl Funding for ProductRuntimeHost {
 			return Subscription::interrupted(CallError::HostFailure { reason: error.to_string() });
 		}
 		// Another product's session reads as absent, so ids reveal nothing.
-		let owned = registry.get(&request.intent).is_some_and(|session| {
+		let owned = registry.get(&intent).is_some_and(|session| {
 			session.owner_product_id.as_deref() == Some(self.product.product_id.as_str())
 		});
-		match owned.then(|| registry.subscribe(&request.intent)).flatten() {
-			Some(stream) => Subscription::new(Box::pin(
-				stream.map(|item| Ok(HostFundingStatusSubscribeItem::V1(item))),
-			)),
+		match owned.then(|| registry.subscribe(&intent)).flatten() {
+			Some(stream) => {
+				Subscription::new(Box::pin(stream.map(move |item| {
+					Ok(HostFundingStatusSubscribeItem::from_latest(item, version))
+				})))
+			},
 			None => Subscription::interrupted(CallError::Domain(
-				HostFundingStatusSubscribeError::V1(v01::HostFundingStatusSubscribeError::NotFound),
+				HostFundingStatusSubscribeError::from_latest(
+					latest::HostFundingStatusSubscribeError::NotFound,
+					version,
+				),
 			)),
 		}
 	}
