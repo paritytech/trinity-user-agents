@@ -145,7 +145,7 @@ fn a_blessed_product_signs_with_another_products_account_only_when_granted() {
 /// A `dim2next.paseo` execution that `dim2.paseo` granted its accounts, on a
 /// local signing session. One runtime is one execution, so what the user
 /// approved carries from one call to the next.
-fn dim2next_runtime(platform: Arc<StubPlatform>) -> ProductRuntimeHost {
+fn dim2next_runtime(platform: Arc<StubPlatform>) -> ProductRuntimeHost<WalletAccountHolder> {
 	cache_grant(&platform, "dim2.paseo", r#"{"dim2next":["context"]}"#);
 	let (services, activation) = signing_runtime_with_platform(platform);
 	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
@@ -173,21 +173,30 @@ fn transaction_request(account: v01::ProductAccountId) -> HostCreateTransactionR
 	HostCreateTransactionRequest::V1(payload)
 }
 
-fn sign_payload_with(runtime: &ProductRuntimeHost, account: v01::ProductAccountId) {
+fn sign_payload_with(
+	runtime: &ProductRuntimeHost<WalletAccountHolder>,
+	account: v01::ProductAccountId,
+) {
 	futures::executor::block_on(
 		runtime.sign_payload(&CallContext::default(), payload_request(account)),
 	)
 	.expect("the grant admits the account and the user approves");
 }
 
-fn sign_raw_with(runtime: &ProductRuntimeHost, account: v01::ProductAccountId) {
+fn sign_raw_with(
+	runtime: &ProductRuntimeHost<WalletAccountHolder>,
+	account: v01::ProductAccountId,
+) {
 	futures::executor::block_on(runtime.sign_raw(&CallContext::default(), raw_request(account)))
 		.expect("the grant admits the account and the user approves");
 }
 
 /// Starts a transaction and leaves it once it has been confirmed and handed to
 /// the authority, which would then wait on a chain these tests do not run.
-fn create_transaction_with(runtime: &ProductRuntimeHost, account: v01::ProductAccountId) {
+fn create_transaction_with(
+	runtime: &ProductRuntimeHost<WalletAccountHolder>,
+	account: v01::ProductAccountId,
+) {
 	let cx = CallContext::default();
 	let call = runtime.create_transaction(&cx, transaction_request(account));
 	assert!(call.now_or_never().is_none(), "the grant admits the account and the user approves",);

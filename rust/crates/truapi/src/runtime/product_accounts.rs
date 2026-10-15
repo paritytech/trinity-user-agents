@@ -1,52 +1,53 @@
 //! The account operations one product connection may call, bound to its product.
 
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
-use truapi::{
-	CallContext,
-	latest::{
-		HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasRequest,
-		HostAccountGetAliasResponse, HostAccountListRingVrfKeysRequest,
-		HostAccountListRingVrfKeysResponse, HostAccountRegisterRingVrfKeyRequest,
-		HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignRequest,
-		HostAccountRingVrfSignResponse, HostAccountSignVrfRequest, HostCreateTransactionResponse,
-		HostRequestResourceAllocationRequest, HostRequestResourceAllocationResponse,
-		HostSignPayloadResponse, ProductAccountId, VrfSignature,
-	},
-};
+use truapi::{CallContext, CallError, latest as api};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 #[cfg(test)]
 use crate::host_logic::session::SessionInfo;
 use crate::{
-	host_internal::sso_messages::{ProductRequest, RingVrfError},
+	host_internal::{permissions::TemporaryPermissions, sso_messages::RingVrfError},
 	platform::ProductContext,
 };
 
 use super::{
+	HostAccounts,
 	authority::{
-		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
-		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-		SignRawAuthorityRequest, StatementStoreAllowanceKey,
+		AccountHolder, AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
+		SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 	},
-	product_consent::ProductConsent,
+	bulletin_rpc::BulletinSubmitError,
+	contacts::ContactHandles,
+	statement_store::StatementProofFailure,
 };
 
-/// The host's account authority as one product connection sees it: every call
-/// acts for that product, and host-level operations stay out of reach.
-pub struct ProductAccounts {
-	authority: Arc<dyn ProductAuthority>,
+/// The host's accounts as one product connection sees them: every call acts for
+/// that product, and host-level operations stay out of reach.
+pub struct ProductAccounts<H: AccountHolder> {
+	accounts: Arc<HostAccounts<H>>,
 	product: ProductContext,
 }
 
-impl ProductAccounts {
-	/// Bind the host's account authority to the product of one connection.
-	pub fn new(authority: Arc<dyn ProductAuthority>, product: ProductContext) -> Self {
-		Self { authority, product }
+impl<H: AccountHolder> ProductAccounts<H> {
+	/// Bind the host's accounts to the product of one connection.
+	pub fn new(accounts: Arc<HostAccounts<H>>, product: ProductContext) -> Self {
+		Self { accounts, product }
+	}
+
+	/// The shared accounts behind this view, for tests that rebuild a connection.
+	#[cfg(test)]
+	pub fn host_accounts_for_tests(&self) -> &Arc<HostAccounts<H>> {
+		&self.accounts
 	}
 
 	/// Current account-authority session, if connected.
 	pub fn current_session(&self) -> Option<AuthoritySession> {
-		self.authority.current_session()
+		self.accounts.current_session()
 	}
 
 	/// Seed a product subtree for authority tests.
@@ -57,43 +58,39 @@ impl ProductAccounts {
 		product_id: &str,
 		public_key: [u8; 32],
 	) {
-		self.authority.cache_product_subtree_for_test(session, product_id, public_key);
+		self.accounts.cache_product_subtree_for_test(session, product_id, public_key);
 	}
 
-	/// Resolve the public key of `product_id`'s hard subtree.
-	pub async fn product_subtree_public_key(
+	/// The owner this product may act for when it names `dot_ns_identifier`,
+	/// or `None` when it may not.
+	pub async fn authorized_product_account(
 		&self,
-		session: &AuthoritySession,
+		dot_ns_identifier: &str,
 		cx: &CallContext,
-		product_id: String,
-	) -> Result<[u8; 32], AuthorityError> {
-		self.authority.product_subtree_public_key(cx, session, product_id).await
-	}
-
-	/// The host's account-access decisions and review prompts.
-	pub fn consent(&self) -> &ProductConsent {
-		self.authority.consent()
-	}
-
-	/// Whether resolving `product_id`'s subtree needs SSO and host consent.
-	pub async fn subtree_resolution_reaches_account_holder(
-		&self,
-		session: &AuthoritySession,
-		product_id: &str,
-	) -> bool {
-		self.authority
-			.subtree_resolution_reaches_account_holder(session, product_id)
+	) -> Option<String> {
+		self.accounts
+			.authorized_product_account(&self.product, dot_ns_identifier, cx)
 			.await
 	}
 
-	/// Whether this product's account can sign without confirmation.
-	pub async fn auto_signing_status(
+	/// Public key of `account`, after any account-access check it needs.
+	pub async fn get_account(
 		&self,
+		cx: &CallContext,
+		account: api::ProductAccountId,
+	) -> Result<[u8; 32], CallError<api::HostAccountGetError>> {
+		self.accounts.get_account(cx, &self.product, account).await
+	}
+
+	/// Public key of a product account this product may already use.
+	pub async fn product_account_public_key(
+		&self,
+		cx: &CallContext,
 		session: &AuthoritySession,
-		account: &ProductAccountId,
-	) -> Result<AutoSigningGrant, AuthorityError> {
-		self.authority
-			.auto_signing_status(session, &self.product.product_id, account)
+		account: &api::ProductAccountId,
+	) -> Result<[u8; 32], AuthorityError> {
+		self.accounts
+			.product_account_public_key(cx, session, &self.product, account)
 			.await
 	}
 
@@ -102,11 +99,9 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountSignVrfRequest,
-	) -> Result<VrfSignature, AuthorityError> {
-		self.authority
-			.sign_vrf(cx, session, self.product.product_id.clone(), request)
-			.await
+		request: api::HostAccountSignVrfRequest,
+	) -> Result<api::VrfSignature, AuthorityError> {
+		self.accounts.sign_vrf(session, cx, &self.product, request).await
 	}
 
 	/// Sign a SCALE transaction payload for a product account.
@@ -114,11 +109,10 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
+		approvals: &TemporaryPermissions,
 		request: SignPayloadAuthorityRequest,
-	) -> Result<HostSignPayloadResponse, AuthorityError> {
-		self.authority
-			.sign_payload(cx, session, Some(&self.product.product_id), request)
-			.await
+	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
+		self.accounts.sign_payload(session, cx, &self.product, approvals, request).await
 	}
 
 	/// Sign arbitrary bytes for a product account.
@@ -126,11 +120,12 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
+		approvals: &TemporaryPermissions,
 		request: SignRawAuthorityRequest,
 		watermarked: bool,
-	) -> Result<HostSignPayloadResponse, AuthorityError> {
-		self.authority
-			.sign_raw(cx, session, Some(&self.product.product_id), request, watermarked)
+	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
+		self.accounts
+			.sign_raw(session, cx, &self.product, approvals, request, watermarked)
 			.await
 	}
 
@@ -139,10 +134,11 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
+		approvals: &TemporaryPermissions,
 		request: CreateTransactionAuthorityRequest,
-	) -> Result<HostCreateTransactionResponse, AuthorityError> {
-		self.authority
-			.create_transaction(cx, session, Some(&self.product.product_id), request)
+	) -> Result<api::HostCreateTransactionResponse, AuthorityError> {
+		self.accounts
+			.create_transaction(session, cx, &self.product, approvals, request)
 			.await
 	}
 
@@ -151,9 +147,9 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountGetAliasRequest,
-	) -> Result<HostAccountGetAliasResponse, RingVrfError> {
-		self.authority.account_alias(cx, session, self.request(request)).await
+		request: api::HostAccountGetAliasRequest,
+	) -> Result<api::ContextualAlias, RingVrfError> {
+		self.accounts.account_alias(session, cx, &self.product, request).await
 	}
 
 	/// Create a ring-VRF proof bound to a context and message.
@@ -161,9 +157,9 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountCreateProofRequest,
-	) -> Result<HostAccountCreateProofResponse, RingVrfError> {
-		self.authority.create_proof(cx, session, self.request(request)).await
+		request: api::HostAccountCreateProofRequest,
+	) -> Result<api::HostAccountCreateProofResponse, RingVrfError> {
+		self.accounts.create_proof(session, cx, &self.product, request).await
 	}
 
 	/// Register a ring-VRF key owned by this product.
@@ -171,9 +167,9 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountRegisterRingVrfKeyRequest,
-	) -> Result<HostAccountRegisterRingVrfKeyResponse, RingVrfError> {
-		self.authority.register_ring_vrf_key(cx, session, self.request(request)).await
+		request: api::HostAccountRegisterRingVrfKeyRequest,
+	) -> Result<[u8; 32], RingVrfError> {
+		self.accounts.register_ring_vrf_key(session, cx, &self.product, request).await
 	}
 
 	/// List registered ring-VRF keys.
@@ -181,9 +177,9 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountListRingVrfKeysRequest,
-	) -> Result<HostAccountListRingVrfKeysResponse, RingVrfError> {
-		self.authority.list_ring_vrf_keys(cx, session, self.request(request)).await
+		request: api::HostAccountListRingVrfKeysRequest,
+	) -> Result<Vec<api::RegisteredRingVrfKey>, RingVrfError> {
+		self.accounts.list_ring_vrf_keys(session, cx, &self.product, request).await
 	}
 
 	/// Sign bytes directly with a registered ring-VRF key.
@@ -191,46 +187,19 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: HostAccountRingVrfSignRequest,
-	) -> Result<HostAccountRingVrfSignResponse, RingVrfError> {
-		self.authority.ring_vrf_sign(cx, session, self.request(request)).await
+		request: api::HostAccountRingVrfSignRequest,
+	) -> Result<Vec<u8>, RingVrfError> {
+		self.accounts.ring_vrf_sign(session, cx, &self.product, request).await
 	}
 
-	/// Revision of the kept grants, read before a review whose result must not
-	/// outlive a reset.
-	pub fn grant_revision(&self) -> u64 {
-		self.authority.grant_revision()
-	}
-
-	/// Allocate resources for this product, kept only while the grants are still
-	/// at `grant_revision`.
+	/// Allocate resources for this product.
 	pub async fn allocate_resources(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		grant_revision: u64,
-		request: HostRequestResourceAllocationRequest,
-	) -> Result<HostRequestResourceAllocationResponse, AuthorityError> {
-		self.authority
-			.allocate_resources(
-				cx,
-				session,
-				grant_revision,
-				self.product.product_id.clone(),
-				request,
-			)
-			.await
-	}
-
-	/// Statement-store allowance key material for this product.
-	pub async fn statement_store_allowance_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-		self.authority
-			.statement_store_allowance_key(cx, session, self.product.product_id.clone())
-			.await
+		request: api::HostRequestResourceAllocationRequest,
+	) -> Result<api::HostRequestResourceAllocationResponse, AuthorityError> {
+		self.accounts.allocate_resources(cx, session, &self.product, request).await
 	}
 
 	/// Renew this product's retained statement sponsorship for `signer`.
@@ -239,34 +208,25 @@ impl ProductAccounts {
 		cx: &CallContext,
 		signer: [u8; 32],
 	) -> Result<(), AuthorityError> {
-		self.authority.renew_statement_sponsorship(cx, &self.product, signer).await
+		self.accounts.renew_statement_sponsorship(cx, &self.product, signer).await
 	}
 
 	/// Whether preimage submissions stay in the core instead of reaching Bulletin.
 	#[cfg(feature = "test-host")]
 	pub fn submits_preimages_locally(&self) -> bool {
-		self.authority.submits_preimages_locally()
+		self.accounts.submits_preimages_locally()
 	}
 
-	/// Bulletin allowance key material for this product.
-	pub async fn bulletin_allowance_key(
+	/// Store `value` on Bulletin under this product's allowance before `deadline`.
+	pub async fn submit_preimage(
 		&self,
 		cx: &CallContext,
+		deadline: Instant,
 		session: &AuthoritySession,
-	) -> Result<BulletinAllowanceKey, AuthorityError> {
-		self.authority
-			.bulletin_allowance_key(cx, session, self.product.product_id.clone())
-			.await
-	}
-
-	/// Replace this product's Bulletin key after a submission was refused.
-	pub async fn refresh_bulletin_allowance_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-	) -> Result<BulletinAllowanceKey, AuthorityError> {
-		self.authority
-			.refresh_bulletin_allowance_key(cx, session, self.product.product_id.clone())
+		value: &[u8],
+	) -> Result<Vec<u8>, BulletinSubmitError> {
+		self.accounts
+			.submit_preimage(cx, deadline, session, self.product.product_id.clone(), value)
 			.await
 	}
 
@@ -275,16 +235,35 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		account: ProductAccountId,
+		approvals: &TemporaryPermissions,
+		account: api::ProductAccountId,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError> {
-		self.authority
+		self.accounts
 			.sign_statement_store_product_payload(
-				cx,
 				session,
-				Some(&self.product.product_id),
+				cx,
+				&self.product,
+				approvals,
 				account,
 				payload,
+			)
+			.await
+	}
+
+	/// Prove `statement` with this product's Statement Store allowance.
+	pub async fn create_authorized_statement_proof(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		statement: api::Statement,
+	) -> Result<api::StatementProof, StatementProofFailure> {
+		self.accounts
+			.create_authorized_statement_proof(
+				cx,
+				session,
+				self.product.product_id.clone(),
+				statement,
 			)
 			.await
 	}
@@ -295,18 +274,14 @@ impl ProductAccounts {
 		session: &AuthoritySession,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError> {
-		self.authority.derive_entropy(session, &self.product.product_id, context)
+		self.accounts.derive_entropy(session, &self.product.product_id, context)
 	}
 
-	/// Root-derived key for contact handles that stay stable across products.
-	pub fn contacts_handle_key(
+	/// Contact handles that stay stable across products.
+	pub fn contact_handles(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<[u8; 32], AuthorityError> {
-		self.authority.contacts_handle_key(session)
-	}
-
-	fn request<P>(&self, payload: P) -> ProductRequest<P> {
-		ProductRequest { calling_product_id: self.product.product_id.clone(), payload }
+	) -> Result<ContactHandles, AuthorityError> {
+		self.accounts.contact_handles(session)
 	}
 }

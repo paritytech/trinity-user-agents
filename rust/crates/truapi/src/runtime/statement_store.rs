@@ -9,9 +9,9 @@ use core::{
 use futures::StreamExt as _;
 
 use super::{
-	PERMISSION_DENIED_REASON, ProductRuntimeHost,
-	authority::{AuthorityError, StatementStoreAllowanceKey},
-	remote_authority_call, remote_authority_context,
+	PERMISSION_DENIED_REASON, ProductConnection, ProductRuntimeHost,
+	authority::{AuthorityError, AuthoritySession, StatementStoreAllowanceKey},
+	remote_authority_context,
 	statement_store_rpc::{self, StatementStoreRpc},
 };
 use crate::host_logic::statement_store::{
@@ -20,9 +20,6 @@ use crate::host_logic::statement_store::{
 	statement_fields_from_v01, statement_proof_to_v01, unsigned_statement_signing_payload,
 };
 
-use crate::platform::{
-	CrossProductSignatureKind, StatementStoreProductSignReview, UserConfirmationReview,
-};
 use serde_json::Value;
 use subxt_rpcs::client::RpcSubscription;
 use tracing::instrument;
@@ -42,7 +39,7 @@ use truapi::{
 };
 
 #[truapi::async_trait]
-impl StatementStore for ProductRuntimeHost {
+impl<H: super::AccountHolder> StatementStore for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "statement_store.subscribe"))]
 	async fn subscribe(
 		&self,
@@ -52,7 +49,7 @@ impl StatementStore for ProductRuntimeHost {
 		RemoteStatementStoreSubscribeItem,
 		CallError<RemoteStatementStoreSubscribeError>,
 	> {
-		match self.open_statement_subscription(request).await {
+		match self.connection.open_statement_subscription(request).await {
 			Ok(subscription) => subscription,
 			Err(error) => Subscription::interrupted(error),
 		}
@@ -74,7 +71,9 @@ impl StatementStore for ProductRuntimeHost {
 					latest::RemoteStatementStoreCreateProofError::UnknownAccount,
 				))
 			})?;
+		let authority_session = self.accounts.current_session();
 		let Some(owner) = self
+			.accounts
 			.authorized_product_account(&inner.product_account_id.dot_ns_identifier, cx)
 			.await
 		else {
@@ -83,8 +82,16 @@ impl StatementStore for ProductRuntimeHost {
 			)));
 		};
 		inner.product_account_id.dot_ns_identifier = owner;
+		let authority_session = authority_session
+			.ok_or(StatementProofFailure::NoSession)
+			.map_err(statement_proof_error)?;
 		let proof = self
-			.create_product_statement_proof(cx, inner.product_account_id, inner.statement)
+			.create_product_statement_proof(
+				cx,
+				&authority_session,
+				inner.product_account_id,
+				inner.statement,
+			)
 			.await
 			.map_err(statement_proof_error)?;
 		Ok(RemoteStatementStoreCreateProofResponse::V1(
@@ -135,8 +142,8 @@ impl StatementStore for ProductRuntimeHost {
 			CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError { reason }))
 		})?;
 		if let latest::StatementProof::Sr25519 { signer, .. } = &statement.proof {
-			let renewal = remote_authority_context(cx);
-			remote_authority_call(
+			let renewal = super::remote_authority_context(cx);
+			super::remote_authority_call(
 				&renewal,
 				self.accounts.renew_statement_sponsorship(&renewal, *signer),
 			)
@@ -147,7 +154,8 @@ impl StatementStore for ProductRuntimeHost {
 				}))
 			})?;
 		}
-		self.statement_store_rpc()
+		self.connection
+			.statement_store_rpc()
 			.submit_sso(encoded, "statement-store")
 			.await
 			.map_err(|reason| {
@@ -247,7 +255,7 @@ impl futures::Stream for StatementStoreSubscriptionStream {
 	}
 }
 
-impl ProductRuntimeHost {
+impl ProductConnection {
 	/// Open the remote statement-store subscription, reporting a failure
 	/// before its first item as the interrupt the subscription ends with.
 	async fn open_statement_subscription(
@@ -291,14 +299,14 @@ impl ProductRuntimeHost {
 		};
 		let remote_stream =
 			statement_store_subscription_stream(subscription, remote_subscription_id);
-		let cached = self.connection.services.cached_statements(kind, &topics);
+		let cached = self.services.cached_statements(kind, &topics);
 		let cached_page = (!cached.is_empty()).then(|| {
 			RemoteStatementStoreSubscribeItem::V1(latest::RemoteStatementStoreSubscribeItem {
 				statements: cached.clone(),
 				is_complete: false,
 			})
 		});
-		let services = self.connection.services.clone();
+		let services = self.services.clone();
 		let mut pending_local = cached;
 		let remote_stream = remote_stream.filter_map(move |item| {
 			let RemoteStatementStoreSubscribeItem::V1(mut page) = item;
@@ -324,53 +332,38 @@ impl ProductRuntimeHost {
 
 	/// `StatementStoreRpc` bound to this runtime's people chain.
 	pub fn statement_store_rpc(&self) -> StatementStoreRpc {
-		self.connection.services.statement_store.clone()
+		self.services.statement_store.clone()
 	}
+}
 
+impl<H: super::AccountHolder> ProductRuntimeHost<H> {
 	async fn create_product_statement_proof(
 		&self,
 		cx: &CallContext,
+		authority_session: &AuthoritySession,
 		product_account_id: latest::ProductAccountId,
 		statement: latest::Statement,
 	) -> Result<latest::StatementProof, StatementProofFailure> {
-		let session = self.accounts.current_session().ok_or(StatementProofFailure::NoSession)?;
 		let signer = self
-			.product_account_public_key(cx, &session, &product_account_id)
+			.accounts
+			.product_account_public_key(cx, authority_session, &product_account_id)
 			.await
 			.map_err(|err| StatementProofFailure::UnableToSign(err.to_string()))?;
 		let fields = statement_fields_from_v01(statement)
 			.map_err(StatementProofFailure::InvalidStatement)?;
 		let payload = unsigned_statement_signing_payload(fields)
 			.map_err(StatementProofFailure::UnableToSign)?;
-		if product_account_id.dot_ns_identifier != self.connection.product_id() {
-			let review = UserConfirmationReview::StatementStoreProductSign(
-				StatementStoreProductSignReview {
-					calling_product_id: Some(self.connection.product_id()),
-					account: product_account_id.clone(),
-					payload: payload.clone(),
-				},
-			);
-			self.confirm_signature(
+		let signature = self
+			.accounts
+			.sign_statement_store_product_payload(
+				authority_session,
 				cx,
-				CrossProductSignatureKind::StatementProof,
-				&product_account_id,
-				review,
+				&self.connection.temporary_permissions,
+				product_account_id,
+				payload,
 			)
 			.await
 			.map_err(statement_authority_failure)?;
-		}
-		let cx = remote_authority_context(cx);
-		let signature = remote_authority_call(
-			&cx,
-			self.accounts.sign_statement_store_product_payload(
-				&session,
-				&cx,
-				product_account_id,
-				payload,
-			),
-		)
-		.await
-		.map_err(statement_authority_failure)?;
 		Ok(latest::StatementProof::Sr25519 { signature, signer })
 	}
 
@@ -379,17 +372,20 @@ impl ProductRuntimeHost {
 		cx: &CallContext,
 		statement: latest::Statement,
 	) -> Result<latest::StatementProof, StatementProofFailure> {
-		let session = self.accounts.current_session().ok_or(StatementProofFailure::NoSession)?;
+		let authority_session =
+			self.accounts.current_session().ok_or(StatementProofFailure::NoSession)?;
 		let cx = remote_authority_context(cx);
-		let allowance =
-			remote_authority_call(&cx, self.accounts.statement_store_allowance_key(&cx, &session))
-				.await
-				.map_err(statement_authority_failure)?;
-		create_statement_proof_with_key(statement, &allowance)
+		super::remote_authority_call(
+			&cx,
+			self.accounts
+				.create_authorized_statement_proof(&cx, &authority_session, statement),
+		)
+		.await
 	}
 }
 
-fn create_statement_proof_with_key(
+/// Encode the proof produced by an already-authorized retained key.
+pub fn create_statement_proof_with_key(
 	statement: latest::Statement,
 	key: &StatementStoreAllowanceKey,
 ) -> Result<latest::StatementProof, StatementProofFailure> {
@@ -408,7 +404,8 @@ fn create_statement_proof_with_key(
 		.ok_or_else(|| StatementProofFailure::UnableToSign("missing proof".to_string()))
 }
 
-enum StatementProofFailure {
+/// Failure while authorizing or constructing a statement proof.
+pub enum StatementProofFailure {
 	NoSession,
 	/// The user refused a signature made with another product's account.
 	Refused,
@@ -416,7 +413,14 @@ enum StatementProofFailure {
 	UnableToSign(String),
 }
 
-fn statement_authority_failure(err: AuthorityError) -> StatementProofFailure {
+impl From<AuthorityError> for StatementProofFailure {
+	fn from(error: AuthorityError) -> Self {
+		statement_authority_failure(error)
+	}
+}
+
+/// Preserve consent and session failures at the statement boundary.
+pub fn statement_authority_failure(err: AuthorityError) -> StatementProofFailure {
 	match err {
 		AuthorityError::Disconnected => StatementProofFailure::NoSession,
 		AuthorityError::Rejected => StatementProofFailure::Refused,
@@ -462,7 +466,9 @@ fn statement_proof_authorized_error(
 #[cfg(test)]
 mod tests {
 	use super::{
-		super::{LocalActivation, RuntimeServices, SigningHostRole},
+		super::{
+			LocalActivation, RuntimeServices, SigningHostRole, signing_host::WalletAccountHolder,
+		},
 		*,
 	};
 	use crate::{
@@ -515,14 +521,16 @@ mod tests {
 		.expect("stub core storage accepts the entry");
 	}
 
-	fn signing_host_runtime(product_id: &str) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+	fn signing_host_runtime(
+		product_id: &str,
+	) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHostRole>) {
 		signing_host_runtime_on(product_id, Arc::new(StubPlatform::default()))
 	}
 
 	fn signing_host_runtime_on(
 		product_id: &str,
 		platform: Arc<StubPlatform>,
-	) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+	) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHostRole>) {
 		let platform: Arc<dyn crate::platform::Platform> = platform;
 		let services = RuntimeServices::new(
 			platform.clone(),
@@ -543,7 +551,7 @@ mod tests {
 		let host = ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
-			signing_host.clone(),
+			signing_host.accounts().clone(),
 			signing_host.clone(),
 			ProductContext::new(product_id.to_string()).expect("valid product id"),
 		);
@@ -677,7 +685,7 @@ mod tests {
 	}
 
 	fn create_proof_as(
-		host: &ProductRuntimeHost,
+		host: &ProductRuntimeHost<WalletAccountHolder>,
 		account: latest::ProductAccountId,
 	) -> Result<
 		RemoteStatementStoreCreateProofResponse,

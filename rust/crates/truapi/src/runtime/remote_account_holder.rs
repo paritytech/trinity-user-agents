@@ -228,7 +228,10 @@ impl AccountHolder for RemoteAccountHolder {
 	) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
 		let request = match request {
 			SignRawAuthorityRequest::Product(request) => request,
-			SignRawAuthorityRequest::LegacyAccount { account, request } => {
+			SignRawAuthorityRequest::LegacyAccount { product_account, request } => {
+				latest::HostSignRawRequest { account: product_account, payload: request.payload }
+			},
+			SignRawAuthorityRequest::IdentityAccount { account, request } => {
 				let request = SignRawWithLegacyAccountRequest { account, data: request.payload };
 				if !watermarked {
 					return self
