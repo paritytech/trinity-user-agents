@@ -7,7 +7,9 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
+import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.PaymentStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageBalance
@@ -24,6 +26,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUp
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpStatus
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -33,6 +38,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.DerivationIndex
@@ -53,12 +59,19 @@ class TrUAPIPaymentPlatformsTest {
     private val topUpService: TopUpService = mockk()
     private val requestPaymentUseCase: RequestPaymentUseCase = mockk()
     private val totalBalanceUseCase: TotalBalanceUseCase = mockk()
+    private val appState = MutableStateFlow(AppLifecycleState.FOREGROUND)
+    private val appLifecycleObserver = object : AppLifecycleObserver {
+        override fun subscribe() = appState
+
+        override fun getCurrentState() = appState.value
+    }
 
     private val platforms = TrUAPIPaymentPlatforms(
         topUpService = topUpService,
         requestPaymentUseCase = requestPaymentUseCase,
         totalBalanceUseCase = totalBalanceUseCase,
-        dispatchers = TestCoroutineDispatchers(Dispatchers.Unconfined),
+        appLifecycleObserver = appLifecycleObserver,
+        dispatchers = TestCoroutineDispatchers(Dispatchers.IO),
     )
 
     private val pushedTopUps = MutableStateFlow<List<HostPaymentTopUpStatusSubscribeItem>>(emptyList())
@@ -141,6 +154,58 @@ class TrUAPIPaymentPlatformsTest {
         assertNull(platforms.topUpStatus(product.value, rawId))
     }
 
+    /** The ask runs on the core's thread, so an engine that has not answered yet must not hold it. */
+    @Test
+    fun `a top-up the engine has not answered for yet reads as detecting, and its status follows`() = runBlocking<Unit> {
+        val engine = MutableSharedFlow<TopUpStatus>()
+        every { topUpService.status(product, topUpId) } returns engine
+
+        val started = System.nanoTime()
+        val current = platforms.topUpStatus(product.value, rawId)
+        val waitedMs = (System.nanoTime() - started) / 1_000_000
+
+        assertEquals(HostPaymentTopUpStatusSubscribeItem.Detecting, current)
+        assertTrue("waited ${waitedMs}ms", waitedMs < 3_000)
+
+        engine.emit(TopUpStatus.Claiming)
+        assertEquals(listOf(HostPaymentTopUpStatusSubscribeItem.Claiming), pushedTopUps.awaitSize(1))
+    }
+
+    @Test
+    fun `an engine failure reaches the core as the failure it was`() {
+        val failure = IllegalStateException("engine down")
+        every { topUpService.status(product, topUpId) } returns flow { throw failure }
+
+        val error = runCatching { platforms.topUpStatus(product.value, rawId) }.exceptionOrNull()
+
+        assertSame(failure, error)
+    }
+
+    @Test
+    fun `asking about a settled top-up again answers without reading the engine`() = runBlocking<Unit> {
+        every { topUpService.status(product, topUpId) } returns flowOf(TopUpStatus.Claimed(finalized = true))
+
+        val first = platforms.topUpStatus(product.value, rawId)
+        pushedTopUps.awaitSize(1)
+        val again = platforms.topUpStatus(product.value, rawId)
+
+        assertEquals(HostPaymentTopUpStatusSubscribeItem.Claimed(finalized = true), first)
+        assertEquals(first, again)
+        verify(exactly = 1) { topUpService.status(product, topUpId) }
+    }
+
+    /** Two asks at once share one run, so the engine is read once and each status pushed once. */
+    @Test
+    fun `asks at the same time share one run`() = runBlocking<Unit> {
+        val engine = MutableStateFlow<TopUpStatus>(TopUpStatus.Claiming)
+        every { topUpService.status(product, topUpId) } returns engine
+
+        val answers = (1..4).map { async(Dispatchers.IO) { platforms.topUpStatus(product.value, rawId) } }.awaitAll()
+
+        assertEquals(List(4) { HostPaymentTopUpStatusSubscribeItem.Claiming }, answers)
+        verify(exactly = 1) { topUpService.status(product, topUpId) }
+    }
+
     @Test
     fun `a source another top-up holds is reported as busy`() = runBlocking<Unit> {
         val key = ByteArray(64) { 1 }
@@ -165,6 +230,14 @@ class TrUAPIPaymentPlatformsTest {
         val error = runCatching { platforms.requestPayment(product.value, paymentRequest()) }.exceptionOrNull()
 
         assertTrue(error is HostPaymentException.InsufficientBalance)
+    }
+
+    @Test
+    fun `a payment the host never registered has no status`() {
+        every { requestPaymentUseCase.subscribeStatus(product, paymentId) } returns
+            flow { throw PaymentRequestError.NotFound(paymentId) }
+
+        assertNull(platforms.paymentStatus(product.value, rawId))
     }
 
     @Test
@@ -199,6 +272,23 @@ class TrUAPIPaymentPlatformsTest {
 
         assertEquals("15", available)
         assertEquals(listOf(planks(15), planks(17)), pushedBalances.awaitSize(2))
+    }
+
+    /** Nothing tells the host a product stopped following, so the balance follows the app being on screen. */
+    @Test
+    fun `the balance is pushed in the foreground and pushed again on coming back`() = runBlocking<Unit> {
+        val balances = MutableStateFlow(Result.success(balance(availablePrivate = 10, gainingPrivacy = 5)))
+        coEvery { totalBalanceUseCase.getBalance() } returns Result.success(balance(availablePrivate = 10, gainingPrivacy = 5))
+        every { totalBalanceUseCase.subscribeTotalBalance() } returns balances
+
+        platforms.balance(product.value, purse = null)
+        pushedBalances.awaitSize(1)
+
+        appState.value = AppLifecycleState.BACKGROUND
+        balances.value = Result.success(balance(availablePrivate = 11, gainingPrivacy = 5))
+        appState.value = AppLifecycleState.FOREGROUND
+
+        assertEquals(listOf(planks(15), planks(16)), pushedBalances.awaitSize(2))
     }
 
     @Test

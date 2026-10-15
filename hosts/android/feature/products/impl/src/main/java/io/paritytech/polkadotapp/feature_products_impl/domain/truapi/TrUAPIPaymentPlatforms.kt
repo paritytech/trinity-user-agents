@@ -9,6 +9,8 @@ import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
+import io.paritytech.polkadotapp.common.presentation.subscribeIsForeground
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.PaymentStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
@@ -30,6 +32,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.transformWhile
@@ -67,12 +70,17 @@ internal interface TrUAPIPaymentSink {
  * The core asks for an operation's current status once and expects every later
  * one pushed, so a start, or the first ask after a restart, forwards that
  * operation's engine status until it is terminal.
+ *
+ * The core never says when a product stops following the balance, so the
+ * balance is pushed while the app is in the foreground, and pushed again on
+ * returning to it.
  */
 @Singleton
 class TrUAPIPaymentPlatforms @Inject constructor(
     private val topUpService: TopUpService,
     private val requestPaymentUseCase: RequestPaymentUseCase,
     private val totalBalanceUseCase: TotalBalanceUseCase,
+    private val appLifecycleObserver: AppLifecycleObserver,
     dispatchers: CoroutineDispatchers,
 ) : TopUpHostBridge, PaymentHostBridge, BalanceHostBridge {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
@@ -84,6 +92,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         scope = scope,
         isTerminal = { it.isTerminal },
         isNotFound = { it is TopUpError.NotFound },
+        unknownYet = TopUpStatus.Detecting,
         notify = { productId, id, status -> sink?.topUpStatus(productId, id, status.toNative()) },
     )
 
@@ -91,6 +100,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         scope = scope,
         isTerminal = { it !is PaymentStatus.Processing },
         isNotFound = { it is PaymentRequestError.NotFound },
+        unknownYet = PaymentStatus.Processing,
         notify = { productId, id, status -> sink?.paymentStatus(productId, id, status.toNative()) },
     )
 
@@ -190,9 +200,12 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         if (!balanceForwarding.compareAndSet(false, true)) return
 
         scope.launch {
-            totalBalanceUseCase.subscribeSpendableByProducts()
-                .distinctUntilChanged()
-                .collect { sink?.balance(it) }
+            appLifecycleObserver.subscribeIsForeground().collectLatest { foreground ->
+                if (!foreground) return@collectLatest
+                totalBalanceUseCase.subscribeSpendableByProducts()
+                    .distinctUntilChanged()
+                    .collect { sink?.balance(it) }
+            }
         }
     }
 
@@ -203,13 +216,19 @@ class TrUAPIPaymentPlatforms @Inject constructor(
 
 /**
  * One run per (product, id) forwarding an engine's statuses until terminal, and
- * answering the core's synchronous ask from that run. A run that ends is
- * forgotten, so the next ask reads the engine again.
+ * answering the core's synchronous ask from that run. A final status is kept,
+ * so asking again about a settled operation answers at once; a run that ends
+ * otherwise is forgotten, so the next ask reads the engine again.
+ *
+ * The ask runs on the core's thread, so it waits on the engine only briefly.
+ * An operation the engine has not answered for by then reads as [unknownYet],
+ * and its real status is pushed once the engine has it.
  */
 internal class StatusForwarder<S : Any>(
     private val scope: CoroutineScope,
     private val isTerminal: (S) -> Boolean,
     private val isNotFound: (Throwable) -> Boolean,
+    private val unknownYet: S,
     private val notify: (productId: String, id: ByteArray, status: S) -> Unit,
 ) {
     private sealed interface Latest<out T> {
@@ -226,29 +245,36 @@ internal class StatusForwarder<S : Any>(
 
     private val runs = ConcurrentHashMap<Key, MutableStateFlow<Latest<S>>>()
 
+    private val settled = object : LinkedHashMap<Key, S>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, S>) = size > SETTLED_KEPT
+    }
+
     fun forward(productId: String, id: ByteArray, statuses: () -> Flow<S>) {
         follow(productId, id, statuses)
     }
 
-    /** `null` when the engine knows no such operation. Blocks the core's thread until the engine answers. */
+    /** `null` when the engine knows no such operation. */
     fun current(productId: String, id: ByteArray, statuses: () -> Flow<S>): S? {
-        val latest = runBlocking {
-            withTimeoutOrNull(CURRENT_STATUS_TIMEOUT_MS) {
-                follow(productId, id, statuses).first { it !is Latest.Pending }
-            }
-        } ?: throw IllegalStateException("status unavailable after ${CURRENT_STATUS_TIMEOUT_MS}ms")
+        synchronized(settled) { settled[keyOf(productId, id)] }?.let { return it }
+
+        val run = follow(productId, id, statuses)
+        val latest = run.value.takeIf { it !is Latest.Pending } ?: runBlocking {
+            withTimeoutOrNull(FIRST_STATUS_WAIT_MS) { run.first { it !is Latest.Pending } }
+        } ?: Latest.Pending
 
         @Suppress("UNCHECKED_CAST")
         return when (latest) {
             is Latest.Known<*> -> latest.status as S
             Latest.NotFound -> null
             is Latest.Failed -> throw latest.error
-            Latest.Pending -> error("unreachable")
+            Latest.Pending -> unknownYet
         }
     }
 
+    private fun keyOf(productId: String, id: ByteArray) = Key(productId, id.copyOf().toDataByteArray())
+
     private fun follow(productId: String, id: ByteArray, statuses: () -> Flow<S>): MutableStateFlow<Latest<S>> {
-        val key = Key(productId, id.copyOf().toDataByteArray())
+        val key = keyOf(productId, id)
         val fresh = MutableStateFlow<Latest<S>>(Latest.Pending)
         runs.putIfAbsent(key, fresh)?.let { return it }
 
@@ -260,6 +286,7 @@ internal class StatusForwarder<S : Any>(
                         !isTerminal(status)
                     }
                     .collect { status ->
+                        if (isTerminal(status)) synchronized(settled) { settled[key] = status }
                         fresh.value = Latest.Known(status)
                         notify(productId, id, status)
                     }
@@ -280,7 +307,9 @@ internal class StatusForwarder<S : Any>(
     private companion object {
         const val LOG_TAG = "truapi.payments"
 
-        const val CURRENT_STATUS_TIMEOUT_MS = 10_000L
+        const val FIRST_STATUS_WAIT_MS = 1_000L
+
+        const val SETTLED_KEPT = 256
     }
 }
 
