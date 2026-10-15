@@ -9,10 +9,12 @@
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{FundingDirection, FundingFailure, FundingUpdate};
 
-use super::{FundingSession, FundingStage, FundingUpdateRecord, StartedFunds};
+use super::{
+	FundingCancel, FundingChoice, FundingSession, FundingStage, FundingUpdateRecord, StartedFunds,
+};
 
 /// Format of the stored sessions blob this core writes.
-pub(super) const SESSIONS_FORMAT: u16 = 3;
+pub(super) const SESSIONS_FORMAT: u16 = 4;
 
 /// Decode a stored sessions blob of any format this core reads, or `None`
 /// when it is not one.
@@ -21,6 +23,7 @@ pub(super) fn decode_sessions(blob: &[u8]) -> Option<Vec<FundingSession>> {
 	let sessions = match u16::decode(input).ok()? {
 		1 => upgrade(Vec::<SessionV1>::decode(input).ok()?),
 		2 => upgrade(Vec::<SessionV2>::decode(input).ok()?),
+		3 => upgrade(Vec::<SessionV3>::decode(input).ok()?),
 		SESSIONS_FORMAT => Vec::<FundingSession>::decode(input).ok()?,
 		_ => return None,
 	};
@@ -117,7 +120,7 @@ impl From<SessionV2> for FundingSession {
 			acknowledged: session.acknowledged,
 			provider_id: session.provider_id,
 			assigned_at_ms: session.assigned_at_ms,
-			cancel_requested: session.cancel_requested,
+			cancel: session.cancel_requested.then_some(FundingCancel::Requested),
 			updates: session.updates.into_iter().map(Into::into).collect(),
 			started: session.started,
 			choice: None,
@@ -144,6 +147,49 @@ impl From<UpdateV2> for FundingUpdate {
 			UpdateV2::Delivered => Self::Delivered,
 			UpdateV2::Collecting { payment_id, amount } => Self::Collecting { payment_id, amount },
 			UpdateV2::Failed { reason } => Self::Failed { reason },
+		}
+	}
+}
+
+/// A session as stored in format 3, before a cancel could be answered with
+/// an offer.
+#[derive(Encode, Decode)]
+pub(super) struct SessionV3 {
+	pub(super) intent: String,
+	pub(super) owner_product_id: Option<String>,
+	pub(super) direction: FundingDirection,
+	pub(super) amount: Option<u128>,
+	pub(super) stage: FundingStage,
+	pub(super) opened_at_ms: u64,
+	pub(super) deadline_ms: u64,
+	pub(super) acknowledged: bool,
+	pub(super) provider_id: Option<String>,
+	pub(super) assigned_at_ms: Option<u64>,
+	pub(super) cancel_requested: bool,
+	pub(super) updates: Vec<FundingUpdateRecord>,
+	pub(super) started: Vec<StartedFunds>,
+	pub(super) choice: Option<FundingChoice>,
+	pub(super) saved: Option<Vec<u8>>,
+}
+
+impl From<SessionV3> for FundingSession {
+	fn from(session: SessionV3) -> Self {
+		Self {
+			intent: session.intent,
+			owner_product_id: session.owner_product_id,
+			direction: session.direction,
+			amount: session.amount,
+			stage: session.stage,
+			opened_at_ms: session.opened_at_ms,
+			deadline_ms: session.deadline_ms,
+			acknowledged: session.acknowledged,
+			provider_id: session.provider_id,
+			assigned_at_ms: session.assigned_at_ms,
+			cancel: session.cancel_requested.then_some(FundingCancel::Requested),
+			updates: session.updates,
+			started: session.started,
+			choice: session.choice,
+			saved: session.saved,
 		}
 	}
 }

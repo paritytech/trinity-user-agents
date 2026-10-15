@@ -5,9 +5,12 @@ use std::sync::{
 	atomic::{AtomicBool, Ordering},
 };
 
-use crate::platform::{
-	AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
-	PermissionAuthorizationRequest, ProductExecutionKind,
+use crate::{
+	host_logic::funding::{CancelConfirmation, CancelOutcome, FundingCancel},
+	platform::{
+		AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
+		PermissionAuthorizationRequest, ProductExecutionKind,
+	},
 };
 use parity_scale_codec::Encode;
 use truapi::{
@@ -2875,7 +2878,10 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 		futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, None))
 			.expect("opened")
 			.intent;
-	assert!(futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"));
+	assert_eq!(
+		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"),
+		CancelOutcome::Ended
+	);
 	// The expiry sweep the open armed would wait out the session's deadline.
 	drop(tasks.take());
 	let announced_on_resume = || {
@@ -9196,14 +9202,117 @@ fn a_second_cancel_ends_the_session_and_releases_the_worker() {
 		),
 		(
 			1,
-			true,
+			CancelOutcome::Requested,
 			1,
-			true,
+			CancelOutcome::Ended,
 			0,
 			Some(v01::HostFundingStatusSubscribeItem::Failed {
 				reason: v01::FundingFailure::Cancelled,
 				moved: 0,
 			}),
+		)
+	);
+}
+
+/// The provider's serve stream, kept open across several items.
+fn serve_stream(
+	host: &ProductRuntimeHost,
+) -> futures::stream::BoxStream<'static, v01::HostFundingServeSubscribeItem> {
+	futures::executor::block_on(truapi::api::FundingProvider::serve_subscribe(
+		host,
+		&CallContext::default(),
+		truapi::versioned::funding_provider::HostFundingServeSubscribeRequest::V1,
+	))
+	.filter_map(|item| {
+		futures::future::ready(item.ok().map(
+			|truapi::versioned::funding_provider::HostFundingServeSubscribeItem::V1(item)| item,
+		))
+	})
+	.boxed()
+}
+
+// Once money moved, the user's cancel travels to the provider and back: the
+// provider offers terms, the user accepts them in the host, the provider
+// hears so on its stream, settles and ends the session, and its worker is
+// let go. A second offer that lapses at once is declined on the core's
+// clock, and the provider hears that too.
+#[test]
+fn a_cancel_after_money_moved_is_negotiated_with_the_provider() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let accepted = served_session(&services, 500);
+	let lapsing = served_session(&services, 300);
+	let worker = provider_worker(&services, "ramp.dot");
+	let mut served = serve_stream(&worker);
+	let mut next = || futures::executor::block_on(served.next());
+	let assigned = (next(), next());
+	let cancel = |intent: &str| {
+		futures::executor::block_on(services.cancel_funding(intent)).expect("cancel")
+	};
+	let confirm = |intent: &str, accept| {
+		futures::executor::block_on(services.confirm_funding_cancel(intent, accept))
+			.expect("confirm")
+	};
+	let received = v01::FundingUpdate::PaymentReceived { finalized: true, mismatch: None };
+	report_funding(&worker, &accepted, received.clone()).expect("received");
+	report_funding(&worker, &lapsing, received).expect("received");
+
+	let asked = cancel(&accepted);
+	let cancel_item = next();
+	report_funding(
+		&worker,
+		&accepted,
+		v01::FundingUpdate::CancelOffer { fee: 10, refund: 490, expires_at: None },
+	)
+	.expect("offered");
+	let answer = confirm(&accepted, true);
+	let accepted_item = next();
+	report_funding(
+		&worker,
+		&accepted,
+		v01::FundingUpdate::Failed { reason: v01::FundingFailure::Cancelled },
+	)
+	.expect("settled");
+
+	cancel(&lapsing);
+	next();
+	report_funding(
+		&worker,
+		&lapsing,
+		v01::FundingUpdate::CancelOffer { fee: 0, refund: 300, expires_at: Some(1) },
+	)
+	.expect("offered");
+	let lapsed_item = next();
+
+	assert_eq!(
+		(
+			matches!(assigned, (Some(_), Some(_))),
+			asked,
+			cancel_item,
+			answer,
+			accepted_item,
+			services.funding().get(&accepted).map(|session| session.wire_item()),
+			lapsed_item,
+			services.funding().get(&lapsing).and_then(|session| session.cancel),
+			confirm(&lapsing, true),
+			services.worker_ledger.count("ramp.dot"),
+		),
+		(
+			true,
+			CancelOutcome::Requested,
+			Some(v01::HostFundingServeSubscribeItem::Cancel { intent: accepted.clone() }),
+			CancelConfirmation::Accepted,
+			Some(v01::HostFundingServeSubscribeItem::CancelAccepted { intent: accepted.clone() }),
+			Some(v01::HostFundingStatusSubscribeItem::Failed {
+				reason: v01::FundingFailure::Cancelled,
+				moved: 0,
+			}),
+			Some(v01::HostFundingServeSubscribeItem::CancelDeclined { intent: lapsing.clone() }),
+			Some(FundingCancel::Declined),
+			CancelConfirmation::NoOffer,
+			1,
 		)
 	);
 }
@@ -9275,9 +9384,9 @@ fn closing_the_overlay_after_choosing_a_provider_keeps_the_session_and_asks_it_t
 	assert_eq!(
 		(
 			*platform.stored_while_up.lock().expect("stored mutex poisoned"),
-			kept.as_ref().map(|session| (session.is_terminal(), session.cancel_requested)),
+			kept.as_ref().map(|session| (session.is_terminal(), session.cancel.clone())),
 		),
-		(Some(true), Some((false, true)))
+		(Some(true), Some((false, Some(FundingCancel::Requested))))
 	);
 }
 
