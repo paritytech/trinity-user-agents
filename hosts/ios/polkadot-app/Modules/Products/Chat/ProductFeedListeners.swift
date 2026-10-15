@@ -7,6 +7,14 @@ import TrUAPIHost
 /// (02-DESIGN §5.3 step 3, §8.4).
 protocol ProductFeedListening: AnyObject, Sendable {
     func apply(roomId: String, update: ChatFeedUpdate) async
+
+    /// The worker of the product stopped while the room screen shows the room, for example on an uncaught error
+    /// of the worker (06-OPEN-ITEMS O26). The screen shows "unavailable" and keeps its messages.
+    func productStopped() async
+}
+
+extension ProductFeedListening {
+    func productStopped() async {}
 }
 
 /// The room screens that show a product-source room now, by chat.
@@ -70,5 +78,16 @@ final class ProductFeedListeners: @unchecked Sendable {
         }
 
         return !listeners.isEmpty
+    }
+
+    /// Tells each screen of the room that the worker of its product stopped.
+    func productStopped(for chatId: Chat.Id) async {
+        let listeners = entries.withLockUnchecked { entries in
+            (entries[chatId.rawRepresentation] ?? [:]).values.compactMap(\.listener)
+        }
+
+        for listener in listeners {
+            await listener.productStopped()
+        }
     }
 }

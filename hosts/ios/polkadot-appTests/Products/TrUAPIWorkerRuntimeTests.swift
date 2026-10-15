@@ -35,12 +35,14 @@ struct TrUAPIWorkerRuntimeTests {
         #expect(execution.startWsBridgeCallCount == 1)
         #expect(execution.permissionRequests.isEmpty)
 
-        #expect(engine.initializedScripts.count == 2)
+        #expect(engine.initializedScripts.count == 3)
         #expect(engine.initializedScripts[0]
             .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
         #expect(engine.initializedScripts[0].insertionPoint == .atDocStart)
         #expect(engine.initializedScripts[1].content.contains("freezeAndDelete"))
         #expect(engine.initializedScripts[1].insertionPoint == .atDocStart)
+        #expect(engine.initializedScripts[2].content == TrUAPIWorkerRuntime.faultScript)
+        #expect(engine.initializedScripts[2].insertionPoint == .atDocStart)
         #expect(!engine.evaluatedScripts.contains { $0.contains("__truapi_localhost") })
         #expect(!engine.evaluatedScripts.contains { $0.contains("freezeAndDelete") })
 
@@ -64,6 +66,23 @@ struct TrUAPIWorkerRuntimeTests {
         #expect(engine.evaluatedScripts.isEmpty)
         #expect(execution.closeCallCount == 1)
         #expect(execution.stopWsBridgeCallCount == 1)
+    }
+
+    /// An uncaught error of the page reaches the manager through `faults` (06-OPEN-ITEMS O26). The handler is
+    /// in place before the product's module runs.
+    @Test
+    func reportsAnUncaughtErrorOfThePage() async throws {
+        let engine = MockJSEngine()
+        let runtime = makeRuntime(engine: engine)
+
+        try await runtime.start()
+        try await engine.invokeNative(TrUAPIWorkerRuntime.faultHandlerName, args: "boom at worker.js:3")
+
+        var faults = runtime.faults.makeAsyncIterator()
+        #expect(await faults.next() == "boom at worker.js:3")
+
+        await runtime.dispose()
+        #expect(await faults.next() == nil)
     }
 
     /// The worker owns the execution, so stopping it is what closes the

@@ -32,15 +32,16 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         case untypedBody
     }
 
-    private let productId: ProductId
-    private let workers: any TrUAPIWorkerManaging
+    let productId: ProductId
+    let workers: any TrUAPIWorkerManaging
     /// The product's own chat surface and routers, which outlive any one worker.
     private let context: ProductWorkerContext
     private let renderStartupWindow: Duration
-    private let activityStore: ChatRoomActivityStoring
+    let activityStore: ChatRoomActivityStoring
     private let firstRoomHold: ProductFirstRoomHold.Limits?
     private let roomsOfProduct: ProductFirstRoomHold.RoomsOfProduct
-    private let logger: LoggerProtocol
+    let feedListeners: ProductFeedListeners
+    let logger: LoggerProtocol
 
     /// How often a cell asks again while the product is still coming up. The
     /// worker's own refusals are waited out by ``renderWhenConnected``; this
@@ -52,11 +53,14 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     private var request = WorkerRequest.none
     /// The worker requests of the open room screens, by room. Each open that does not throw adds one, and each
     /// close gives one back.
-    private var openRooms: [String: Int] = [:]
+    private(set) var openRooms: [String: Int] = [:]
     private var roomsForwardingTask: Task<Void, Never>?
     private var firstRoomHoldTask: Task<Void, Never>?
+    var workerFollowingTask: Task<Void, Never>?
+    /// The worker stopped while rooms were open. The rooms tell the next worker that they are open.
+    var roomsLostWorker = false
     private var started = false
-    private var disposed = false
+    private(set) var disposed = false
 
     init(
         productId: ProductId,
@@ -65,6 +69,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         activityStore: ChatRoomActivityStoring = ChatRoomActivityStore.shared,
         firstRoomHold: ProductFirstRoomHold.Limits? = ProductFirstRoomHold.Limits(),
         roomsOfProduct: @escaping ProductFirstRoomHold.RoomsOfProduct = { try await $0.chat.subscribeRooms() },
+        feedListeners: ProductFeedListeners = .shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productId = productId
@@ -73,6 +78,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         self.activityStore = activityStore
         self.firstRoomHold = firstRoomHold
         self.roomsOfProduct = roomsOfProduct
+        self.feedListeners = feedListeners
         self.logger = logger
         context = workers.context(of: productId)
     }
@@ -95,6 +101,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
 
         context.chat.bind(messagingSupport, owner: self)
         startRoomsForwarding()
+        startFollowingWorker()
         startFirstRoomHold()
 
         logger.debug("Rust chat runtime started for: \(productId)")
@@ -162,25 +169,6 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         try await withWorker { execution in
             try await execution.chatUserAction(request, timeout: ChatQueryTimeout.timeout(for: request.action))
         }
-    }
-
-    /// Runs `body` with the execution of the worker, and holds the worker while it runs (02-DESIGN D10). A worker
-    /// that does not run starts first.
-    func withWorker<Answer: Sendable>(
-        _ body: @Sendable (TrUAPIProductExecutionProtocol) async throws -> Answer
-    ) async throws -> Answer {
-        try checkNotDisposed()
-
-        let execution: TrUAPIProductExecutionProtocol
-        do {
-            execution = try await workers.ensureWorker(for: productId)
-        } catch {
-            workers.releaseWorker(for: productId)
-            throw error
-        }
-        defer { workers.releaseWorker(for: productId) }
-
-        return try await body(execution)
     }
 
     func onUserMessage(text: String, roomId: String?) async throws {
@@ -330,6 +318,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
 
         roomsForwardingTask?.cancel()
         roomsForwardingTask = nil
+        workerFollowingTask?.cancel()
+        workerFollowingTask = nil
 
         // The hold gives back its own request when it ends.
         firstRoomHoldTask?.cancel()
@@ -373,15 +363,6 @@ private extension TrUAPIChatHandler {
 
     func checkNotDisposed() throws {
         guard !disposed else { throw CancellationError() }
-    }
-
-    /// The room screen does not wait for the product to take the event, and a lost event is logged.
-    func publishRoomEvent(_ event: ChatEvent, roomId: String) {
-        do {
-            try requireExecution().publishChatEvent(roomId: roomId, peer: Self.hostUserPeer, event: event)
-        } catch {
-            logger.error("Rust chat runtime failed to send a room event to \(roomId): \(error)")
-        }
     }
 
     /// The id under which the product knows a stored message. A message that the product pushed with

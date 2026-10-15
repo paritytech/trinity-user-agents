@@ -166,6 +166,86 @@ struct TrUAPIChatHandlerRoomTests {
     }
 }
 
+extension TrUAPIChatHandlerRoomTests {
+    /// The open room holds the worker, so the worker stops under it only when it fails (06-OPEN-ITEMS O26). The
+    /// room then shows "unavailable", and the next worker hears `RoomOpened` again (S23).
+    @Test func aWorkerThatStopsUnderAnOpenRoomMakesItUnavailableAndTheNextWorkerHearsRoomOpened() async throws {
+        let workers = runningWorkers()
+        let listeners = ProductFeedListeners()
+        let listener = StopRecordingListener()
+        let registration = listeners.register(listener, for: .chatExtension(product, roomId: "source"))
+        let handler = TrUAPIChatHandler(
+            productId: product,
+            workers: workers,
+            activityStore: activity,
+            firstRoomHold: nil,
+            feedListeners: listeners
+        )
+
+        try await handler.start(messagingSupport: .init(bot: nil, context: nil))
+        try await Task.sleep(for: .milliseconds(50))
+        try await handler.open(roomId: "source")
+
+        workers.publish([:])
+        try await poll { await listener.stops == 1 }
+
+        let next = MockProductExecution()
+        workers.publish([product: next])
+        try await poll { !next.publishedChatEvents.isEmpty }
+
+        #expect(next.publishedChatEvents == [.init(roomId: "source", peer: "native", event: .roomOpened)])
+
+        await handler.dispose()
+        registration.cancel()
+    }
+
+    @Test func aWorkerThatStopsWithNoOpenRoomTellsNoRoom() async throws {
+        let workers = runningWorkers()
+        let listeners = ProductFeedListeners()
+        let listener = StopRecordingListener()
+        let registration = listeners.register(listener, for: .chatExtension(product, roomId: "source"))
+        let handler = TrUAPIChatHandler(
+            productId: product,
+            workers: workers,
+            activityStore: activity,
+            firstRoomHold: nil,
+            feedListeners: listeners
+        )
+
+        try await handler.start(messagingSupport: .init(bot: nil, context: nil))
+        try await Task.sleep(for: .milliseconds(50))
+        workers.publish([:])
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(await listener.stops == 0)
+
+        await handler.dispose()
+        registration.cancel()
+    }
+}
+
+private actor StopRecordingListener: ProductFeedListening {
+    private(set) var stops = 0
+
+    func apply(roomId _: String, update _: ChatFeedUpdate) async {}
+
+    func productStopped() async {
+        stops += 1
+    }
+}
+
+/// Waits until `condition` is true, for at most two seconds.
+private func poll(_ condition: @escaping @Sendable () async -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(2)
+    while await !condition() {
+        guard ContinuousClock.now < deadline else {
+            Issue.record("the condition did not become true in time")
+            return
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+}
+
 private extension TrUAPIChatHandlerRoomTests {
     func runningWorkers() -> StubWorkerManager {
         let workers = StubWorkerManager()

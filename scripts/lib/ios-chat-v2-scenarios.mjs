@@ -1003,7 +1003,36 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     title: "a killed worker keeps the cached pages",
     mode: SOURCE,
     phase: "P5",
-    skip: "an uncaught error of an iOS worker is logged and the worker keeps running, so `/fail crash` does not stop it; the send times out to Failed as in S21",
+    drive: {
+      phases: [
+        {
+          // The send makes the product throw outside any promise. The
+          // uncaught error ends the worker under the open room.
+          steps: [
+            { host: "list" },
+            { host: "open" },
+            "/post text",
+            "/fail crash",
+            { host: "send", argument: "crash the worker" },
+          ],
+          expect: [
+            { console: "worker ended on an uncaught error" },
+            { ui: "readiness", match: "^unavailable ", timeoutMs: 45_000 },
+            { ui: "window", match: "count=[1-9]" },
+          ],
+          shot: "unavailable",
+        },
+        {
+          // Retry asks for the newest page, which starts the worker again.
+          steps: [{ host: "retry-room" }],
+          expect: [
+            { console: "worker starts again after its fault" },
+            { event: { via: "action_subscribe", kind: "RoomOpened" } },
+            { ui: "readiness", match: "^ready ", timeoutMs: 45_000 },
+          ],
+        },
+      ],
+    },
   },
   {
     id: "S47",

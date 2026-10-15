@@ -95,6 +95,9 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private let logger: LoggerProtocol
 
     private var held: [ProductId: Held] = [:]
+    /// The products whose worker ended on an uncaught error while the core still counted references to it
+    /// (06-OPEN-ITEMS O26). The core sends no new start for these, so the next request starts the worker.
+    private var faulted: Set<ProductId> = []
     private var draining: Task<Void, Never>?
     private var isShutDown = false
 
@@ -126,6 +129,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
 
     nonisolated func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol {
         try references().acquireWorker(productId: productId)
+        await restartIfFaulted(productId)
 
         return try await withTimeout(startupWindow) { [self] in
             for try await execution in executions(of: productId) {
@@ -201,6 +205,9 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     }
 
     private func apply(_ transition: WorkerTransition, to productId: ProductId) async {
+        // The core starts or stops the worker itself now, so the fault no longer applies.
+        faulted.remove(productId)
+
         switch transition {
         case .start: start(productId)
         case .stop: await stop(productId)
@@ -247,6 +254,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             bridge.start { [weak self] cards in
                 self?.publishCards(cards, of: productId)
             }
+            followFaults(of: runtime, productId: productId, boot: boot)
         } catch {
             // Only a failure of the boot still holding the product: a stop may
             // already have cleared this one and a restart taken its place, and
@@ -272,6 +280,34 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         executionSubject.send(executions)
 
         await worker.runtime.dispose()
+    }
+
+    /// Stops the worker at its first uncaught error. The stream ends when the runtime goes, so the task ends too.
+    private func followFaults(of runtime: TrUAPIWorkerRuntime, productId: ProductId, boot: Boot) {
+        Task { [weak self] in
+            for await message in runtime.faults {
+                await self?.workerFaulted(productId, boot: boot, message: message)
+                return
+            }
+        }
+    }
+
+    private func workerFaulted(_ productId: ProductId, boot: Boot, message: String) async {
+        guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
+
+        logger.error("[truapi] \(productId)'s worker ended on an uncaught error: \(message)")
+        faulted.insert(productId)
+        await stop(productId)
+    }
+
+    /// Starts again a worker that ended on an uncaught error, because the core still counts it as running and
+    /// sends no start.
+    private func restartIfFaulted(_ productId: ProductId) {
+        guard faulted.contains(productId), held[productId] == nil, !isShutDown else { return }
+
+        faulted.remove(productId)
+        logger.debug("[truapi] \(productId)'s worker starts again after its fault")
+        start(productId)
     }
 
     private nonisolated func publishCards(_ cards: [PocketCard], of productId: ProductId) {
