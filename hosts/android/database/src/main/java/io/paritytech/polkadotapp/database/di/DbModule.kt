@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.database.dao.ChatMessageDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestSyncStateDao
 import io.paritytech.polkadotapp.database.dao.ChatRoomDao
+import io.paritytech.polkadotapp.database.dao.ChatRoomDeclarationsDao
 import io.paritytech.polkadotapp.database.dao.ChatSearchRecentDao
 import io.paritytech.polkadotapp.database.dao.CoinDao
 import io.paritytech.polkadotapp.database.dao.ContactDao
@@ -175,6 +176,10 @@ class DbModule {
     @Provides
     @Singleton
     fun provideChatRoomDao(appDatabase: AppDatabase): ChatRoomDao = appDatabase.chatRoomDao()
+
+    @Provides
+    @Singleton
+    fun provideChatRoomDeclarationsDao(appDatabase: AppDatabase): ChatRoomDeclarationsDao = appDatabase.chatRoomDeclarationsDao()
 
     @Provides
     @Singleton

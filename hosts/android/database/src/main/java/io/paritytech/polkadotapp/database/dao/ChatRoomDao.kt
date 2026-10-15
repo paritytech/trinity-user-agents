@@ -43,7 +43,8 @@ abstract class ChatRoomDao {
                m.status AS msg_status, COALESCE(rev.type, m.type) AS msg_type,
                m.searchableContent AS msg_searchableContent,
                COALESCE(rev.content, m.content) AS msg_content,
-               m.replyToMessageId AS msg_replyToMessageId, m.isInternal AS msg_isInternal
+               m.replyToMessageId AS msg_replyToMessageId, m.isInternal AS msg_isInternal,
+               m.originParticipantId AS msg_originParticipantId
         FROM chat_rooms r
         LEFT JOIN (
             SELECT chatId,
