@@ -2,8 +2,9 @@
 
 use parity_scale_codec::{Decode, Encode};
 
-use super::{CoreStorageKey, RuntimeConfigValidationError, has_dotns_tld, require_non_empty};
-use crate::host_logic::dotns_gateway::is_dns_label;
+use super::{
+	CoreStorageKey, RuntimeConfigValidationError, has_dotns_tld, is_dns_label, require_non_empty,
+};
 
 /// Largest accepted product identifier, in bytes.
 ///
@@ -247,7 +248,10 @@ fn has_well_formed_labels(normalized: &str) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::{platform::DOTNS_TLDS, test_support::test_product_id};
+	use crate::{
+		platform::{DOTNS_TLDS, MAX_DNS_LABEL_LEN},
+		test_support::test_product_id,
+	};
 
 	#[test]
 	fn trusted_remote_permission_labels_match_the_bare_product_label() {
@@ -391,7 +395,7 @@ mod tests {
 
 	#[test]
 	fn only_a_name_dotns_can_register_is_an_identifier() {
-		let longest_label = "a".repeat(63);
+		let longest_label = "a".repeat(MAX_DNS_LABEL_LEN);
 		for id in ["Dim2.DOT", "dim2-two.dot", "0x.dot", &format!("{longest_label}.dot")] {
 			assert!(ProductId::parse(id).is_ok(), "{id:?} is a name dotNS can register");
 		}
@@ -414,7 +418,7 @@ mod tests {
 	fn an_overlong_product_id_is_not_an_identifier() {
 		// Every label is well formed, so without the cap any length would be
 		// a valid, distinct cache key taken from the wire.
-		let full_label = "a".repeat(63);
+		let full_label = "a".repeat(MAX_DNS_LABEL_LEN);
 		let at_cap = format!("{full_label}.{full_label}.{full_label}.{}.dot", "a".repeat(60));
 		assert_eq!(at_cap.len(), PRODUCT_ID_MAX_BYTES);
 		assert!(ProductId::parse(&at_cap).is_ok(), "an id exactly at the cap is still valid");

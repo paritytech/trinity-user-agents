@@ -293,6 +293,20 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 	normalized.rsplit_once('.').is_some_and(|(_, tld)| DOTNS_TLDS.contains(&tld))
 }
 
+/// RFC 1035 label bound the contracts enforce (`StringUtils.MAX_DNS_LABEL_OCTETS`).
+pub const MAX_DNS_LABEL_LEN: usize = 63;
+
+/// A canonical DNS label: lowercase ASCII letters, digits and hyphens, neither
+/// starting nor ending with a hyphen, at most 63 octets
+/// (`StringUtils._isDnsLabel`).
+pub fn is_dns_label(value: &str) -> bool {
+	!value.is_empty() &&
+		value.len() <= MAX_DNS_LABEL_LEN &&
+		!value.starts_with('-') &&
+		!value.ends_with('-') &&
+		value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
 
@@ -311,8 +325,7 @@ const ALLOWED_ICON_DATA_TYPES: [&str; 5] =
 
 /// Normalize a product-supplied chat room or bot identifier.
 ///
-/// Screened harder than a display name, mirroring
-/// [`ProductId::parse`]: an identifier is matched, not read, so it
+/// Screened harder than a display name: an identifier is matched, not read, so it
 /// also rejects the invisible characters a name legitimately needs — joiners,
 /// variation selectors, soft hyphens and non-ASCII spaces — which would
 /// otherwise let two distinct ids render identically.

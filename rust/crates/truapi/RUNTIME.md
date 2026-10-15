@@ -375,9 +375,8 @@ parsing, so a context off the wire carries a normalized product id.
 `ProductId::parse` is the single chokepoint that turns a host- or wire-supplied
 product id into the canonical form derivation, product storage and permission
 scopes are keyed by. Nothing else builds a `ProductId`, so holding one means the
-id is normalized. Its methods answer what the runtime asks of an id: its bare
-label, whether two ids are one product on one network, whether it is trusted,
-and where its manifest is cached.
+id is normalized. Code that reads an id uses its methods, such as `bare_label`,
+`has_trusted_remote_permissions` and `manifest_cache_key`.
 
 `DOTNS_TLDS` (`dot`, `paseo`, `testnet`) backs it: the TLDs dotNS deployments
 register product names under, one entry per network a host can be pointed at. A

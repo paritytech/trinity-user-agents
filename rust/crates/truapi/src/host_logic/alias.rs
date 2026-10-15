@@ -59,8 +59,10 @@ mod tests {
 	#[test]
 	fn alias_is_deterministic_with_expected_context() {
 		let entropy = [0xABu8; 16];
-		let first = derive_product_alias(&entropy, &test_product_id("truapi-playground.dot"), 0).unwrap();
-		let again = derive_product_alias(&entropy, &test_product_id("truapi-playground.dot"), 0).unwrap();
+		let first =
+			derive_product_alias(&entropy, &test_product_id("truapi-playground.dot"), 0).unwrap();
+		let again =
+			derive_product_alias(&entropy, &test_product_id("truapi-playground.dot"), 0).unwrap();
 
 		assert_eq!(first.context, again.context);
 		assert_eq!(first.alias, again.alias);
