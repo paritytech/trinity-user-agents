@@ -7,6 +7,7 @@ protocol ModuleNavigating: AnyObject {
     func presentModally(_ viewController: UIViewController)
     func presentFullScreen(_ viewController: UIViewController)
     func openProduct(page: ProductPage)
+    func presentProduct(page: ProductPage)
     func openPocket()
     func openScanPanel()
 }
@@ -72,11 +73,11 @@ extension ModuleNavigator: ModuleNavigating {
     }
 
     func openProduct(page: ProductPage) {
-        guard let tabBar = UIWindow.keyWindow?.rootViewController as? MainTabBarViewController else {
-            return
-        }
+        UIApplication.shared.mainTabBarController?.openProduct(page: page)
+    }
 
-        tabBar.openProduct(page: page)
+    func presentProduct(page: ProductPage) {
+        UIApplication.shared.mainTabBarController?.presentProduct(page: page)
     }
 
     func openPocket() {

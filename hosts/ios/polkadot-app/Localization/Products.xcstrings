@@ -1015,9 +1015,21 @@
       "extractionState": "manual",
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open apps, %lld"
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Open app, %lld"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Open apps, %lld"
+                }
+              }
+            }
           }
         }
       }
@@ -1029,6 +1041,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "QR scanner"
+          }
+        }
+      }
+    },
+    "product.tabs.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No open apps"
           }
         }
       }

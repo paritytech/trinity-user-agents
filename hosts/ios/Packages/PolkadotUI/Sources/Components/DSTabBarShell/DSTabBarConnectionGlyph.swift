@@ -5,6 +5,8 @@ public enum DSTabBarConnectionGlyph {
 }
 
 private extension DSTabBarConnectionGlyph {
+    static let side: CGFloat = 28
+
     static let discs: [(diameter: CGFloat, opacity: CGFloat)] = [
         (0.8571, 0.3),
         (0.5714, 0.6),
@@ -12,7 +14,6 @@ private extension DSTabBarConnectionGlyph {
     ]
 
     static func render() -> UIImage {
-        let side = DSTabBarMetrics.iconSize
         let center = CGPoint(x: side / 2, y: side / 2)
 
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side))

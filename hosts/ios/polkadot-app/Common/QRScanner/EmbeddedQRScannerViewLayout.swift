@@ -60,7 +60,8 @@ final class EmbeddedQRScannerViewLayout: QRScannerViewLayout {
 
 private extension EmbeddedQRScannerViewLayout {
     /// A resized `AVCaptureVideoPreviewLayer` lays its video out at the final size immediately, pinned to
-    /// the top-left, so the preview keeps the widest size it has had and is scaled around its center.
+    /// the top-left, so the preview keeps the widest size it has had. The frame clips it as it narrows,
+    /// cropping the video around its center.
     func layoutPreview() {
         let side = qrFrameView.bounds.width
 
@@ -71,8 +72,5 @@ private extension EmbeddedQRScannerViewLayout {
         previewSide = max(previewSide, side)
         previewView.bounds = CGRect(x: 0, y: 0, width: previewSide, height: previewSide)
         previewView.center = CGPoint(x: qrFrameView.bounds.midX, y: qrFrameView.bounds.midY)
-
-        let scale = side / previewSide
-        previewView.transform = CGAffineTransform(scaleX: scale, y: scale)
     }
 }

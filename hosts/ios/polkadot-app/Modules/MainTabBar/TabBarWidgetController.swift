@@ -2,9 +2,10 @@ import PolkadotUI
 import SnapKit
 import UIKit
 
-/// Owns the floating widget stack under the bar: the container, its bottom constraint and the
-/// attached widget controllers. The chrome runs its own layout pass; this reports the height
-/// that pass needs and calls back when the content changes.
+/// Owns the floating widget stack under the bar: the container, its bottom constraint, the
+/// attached widget controllers and the bottom safe-area inset those widgets take from the screen
+/// under them. The host runs its own layout pass; this reports the height that pass needs and
+/// calls back when the content changes.
 @MainActor
 final class TabBarWidgetController {
     private let containerView = MainTabBarFloatingWidgetStackView()
@@ -13,6 +14,9 @@ final class TabBarWidgetController {
     private var controllers: [AppWidgetID: AppWidgetContentViewController] = [:]
     private var bottomConstraint: Constraint?
     private var isInstalled = false
+    private weak var appliedTabController: UIViewController?
+    private weak var appliedContentController: UIViewController?
+    private weak var contentSafeAreaAdjustedViewController: UIViewController?
 
     init(onContentChanged: @escaping () -> Void) {
         self.onContentChanged = onContentChanged
@@ -22,8 +26,8 @@ final class TabBarWidgetController {
         !controllers.isEmpty
     }
 
-    /// The container goes below the chrome surface so the bar's glass draws over the widgets.
-    /// Widgets attached before the host loaded its view are installed here, not on attach.
+    /// The container goes below `sibling` so the bar's glass draws over the widgets. Widgets
+    /// attached before the host loaded its view are installed here, not on attach.
     func install(in view: UIView, below sibling: UIView) {
         containerView.translatesAutoresizingMaskIntoConstraints = false
         view.insertSubview(containerView, belowSubview: sibling)
@@ -64,6 +68,36 @@ final class TabBarWidgetController {
         bottomConstraint?.update(offset: offset)
     }
 
+    func setAppliedControllers(tab: UIViewController?, content: UIViewController?) {
+        appliedTabController = tab
+        appliedContentController = content
+    }
+
+    /// The bar clearance belongs to the tab, the widget height to the screen the widgets float
+    /// over. They land on the same controller only when the tab shows no navigation stack.
+    func updateContentSafeAreaInset(barClearance: CGFloat, fittingWidth: CGFloat) {
+        let tabController = appliedTabController
+
+        guard let contentController = appliedContentController else {
+            releaseWidgetInset(keeping: nil)
+            tabController?.additionalSafeAreaInsets.bottom = barClearance
+            return
+        }
+
+        releaseWidgetInset(keeping: contentController)
+
+        let widgetInset = contentHeight(fittingWidth: fittingWidth)
+
+        if contentController === tabController {
+            contentController.additionalSafeAreaInsets.bottom = barClearance + widgetInset
+        } else {
+            tabController?.additionalSafeAreaInsets.bottom = barClearance
+            contentController.additionalSafeAreaInsets.bottom = widgetInset
+        }
+
+        contentSafeAreaAdjustedViewController = widgetInset > 0 ? contentController : nil
+    }
+
     func contentHeight(fittingWidth: CGFloat) -> CGFloat {
         guard hasWidgets else {
             return 0
@@ -94,5 +128,16 @@ private extension TabBarWidgetController {
         containerView.addArrangedSubview(controller.view)
 
         onContentChanged()
+    }
+
+    /// A screen that was inset for the widgets keeps that inset only while it is still the one
+    /// showing; once another screen takes over, the old one is handed its full height back.
+    func releaseWidgetInset(keeping contentController: UIViewController?) {
+        guard contentSafeAreaAdjustedViewController !== contentController else {
+            return
+        }
+
+        contentSafeAreaAdjustedViewController?.additionalSafeAreaInsets.bottom = 0
+        contentSafeAreaAdjustedViewController = nil
     }
 }
