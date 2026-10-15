@@ -14,7 +14,7 @@ use std::sync::Arc;
 use super::{
 	super::{
 		AccountHolder, HostSession, ProductAuthority, ProductRuntimeHost, RuntimeServices,
-		SigningHostRole,
+		SigningHostRole, SsoAccountHolderService,
 		authority::{
 			AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
 			SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
@@ -29,9 +29,12 @@ use crate::{
 		sso_messages::{ProductRequest, RingVrfError},
 		transaction::{extrinsic_payload_extensions, extrinsic_payload_preimage},
 	},
-	host_logic::product_account::{
-		SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_product_keypair,
-		derive_ring_vrf_entropy, derive_root_keypair_from_entropy, index_bytes,
+	host_logic::{
+		product_account::{
+			SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_product_keypair,
+			derive_ring_vrf_entropy, derive_root_keypair_from_entropy, index_bytes,
+		},
+		sso::pairing::derive_x25519_keypair_from_entropy,
 	},
 	platform::{
 		CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
@@ -209,6 +212,16 @@ fn product_runtime_for(
 		authority,
 		ProductContext::new(ProductId::for_test(product_id)),
 	)
+}
+
+/// The service a paired host reaches, bound to `authority`'s wallet from `ENTROPY`.
+fn sso_service(authority: &SigningHostRole) -> SsoAccountHolderService {
+	let statement = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+	let (_, encryption) = derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
+	authority
+		.sso_responder()
+		.open_service(statement.public.to_bytes(), encryption)
+		.unwrap()
 }
 
 /// Whether this host keeps an AutoSigning key for `product_id` in this activation.

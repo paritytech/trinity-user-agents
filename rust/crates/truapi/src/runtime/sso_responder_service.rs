@@ -13,6 +13,10 @@
 
 mod replay;
 
+use crate::runtime::{
+	AccountHolder, SsoAccountHolderService, authority::AuthoritySession,
+	product_consent::ProductConsent, signing_host::WalletAccountHolder,
+};
 use std::{
 	collections::{HashSet, VecDeque},
 	sync::Arc,
@@ -48,11 +52,10 @@ use crate::{
 		x25519_seal::X25519PrivateKey,
 	},
 	runtime::{
-		authority::{AccountHolder, AuthoritySession},
+		authority::AuthorityError,
 		services::RuntimeServices,
-		signing_host::{SigningHost, SigningHostSsoService, WalletAccountHolder},
 		sso_remote::{fresh_statement_expiry, sso_message_id},
-		sso_service::{Dispatch, SsoWithdrawals},
+		sso_service::Dispatch,
 		statement_store_rpc,
 	},
 	unix_time::current_unix_secs as statement_current_unix_secs,
@@ -161,6 +164,7 @@ pub trait DevicePairingObserver: Send + Sync {
 }
 
 struct EstablishedPairing {
+	wallet_session: AuthoritySession,
 	session: SsoSessionInfo,
 	replay_scope: SsoReplayScope,
 }
@@ -225,24 +229,33 @@ fn sanitize_pairing_metadata(value: String) -> Option<String> {
 }
 
 /// Incoming SSO for one signing host: pairing answers, served sessions and
-/// duplicate detection.
+/// duplicate detection, each peer answered by its own [`SsoAccountHolderService`].
 pub struct SsoResponderService {
 	services: Arc<RuntimeServices>,
 	wallet: Arc<WalletAccountHolder>,
-	signing_host: Arc<SigningHost>,
+	consent: Arc<ProductConsent>,
 	/// Serializes replay-ledger updates within each wallet and peer scope.
 	replay_locks: SsoReplayLocks,
 }
 
 impl SsoResponderService {
-	/// Answer peers of `signing_host` over the runtime's statement store.
-	pub fn new(services: Arc<RuntimeServices>, signing_host: Arc<SigningHost>) -> Arc<Self> {
-		Arc::new(Self {
-			services,
-			wallet: signing_host.wallet().clone(),
-			signing_host,
-			replay_locks: SsoReplayLocks::default(),
-		})
+	/// Answer peers of `wallet` over the runtime's statement store, confirming their
+	/// requests through `consent`.
+	pub fn new(
+		services: Arc<RuntimeServices>,
+		wallet: Arc<WalletAccountHolder>,
+		consent: Arc<ProductConsent>,
+	) -> Arc<Self> {
+		Arc::new(Self { services, wallet, consent, replay_locks: SsoReplayLocks::default() })
+	}
+
+	fn account_holder_service(&self, session: AuthoritySession) -> SsoAccountHolderService {
+		SsoAccountHolderService::new(
+			self.wallet.clone(),
+			self.consent.clone(),
+			self.services.platform.clone(),
+			session,
+		)
 	}
 
 	/// The wallet activation a pairing operation answers under.
@@ -256,7 +269,13 @@ impl SsoResponderService {
 	#[instrument(skip_all, fields(runtime.method = "sso_responder.respond_to_pairing"))]
 	pub async fn respond_to_pairing(&self, deeplink: &str) -> Result<ResponderExit, String> {
 		let established = self.establish_pairing_session(deeplink).await?;
-		serve_session(self, established.session, established.replay_scope).await
+		serve_session(
+			self,
+			established.session,
+			established.replay_scope,
+			established.wallet_session,
+		)
+		.await
 	}
 
 	/// Answer a pairing host's handshake without entering its long-lived serve loop.
@@ -292,6 +311,7 @@ impl SsoResponderService {
 		}
 
 		Ok(EstablishedPairing {
+			wallet_session: wallet_session.clone(),
 			session,
 			replay_scope: SsoReplayScope {
 				root_public_key: wallet_session.public_key,
@@ -316,6 +336,7 @@ impl SsoResponderService {
 				peer_statement_account_id: peer.statement_account_id,
 				peer_encryption_public_key: peer.encryption_public_key,
 			},
+			wallet_session,
 		)
 		.await
 	}
@@ -391,6 +412,21 @@ impl SsoResponderService {
 		debug!("told pairing host that pairing failed");
 		Ok(())
 	}
+
+	/// Bind an external SSO transport to the wallet matching both of its keys.
+	pub fn open_service(
+		&self,
+		own_statement_account_id: [u8; 32],
+		own_encryption_public_key: [u8; 32],
+	) -> Result<SsoAccountHolderService, AuthorityError> {
+		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.wallet.require_sso_identity(
+			&session,
+			own_statement_account_id,
+			own_encryption_public_key,
+		)?;
+		Ok(self.account_holder_service(session))
+	}
 }
 
 /// Transport and peer of an in-progress pairing notice.
@@ -419,8 +455,10 @@ async fn serve_session(
 	responder: &SsoResponderService,
 	session: SsoSessionInfo,
 	replay_scope: SsoReplayScope,
+	wallet_session: AuthoritySession,
 ) -> Result<ResponderExit, String> {
-	let service = SigningHostSsoService::new(responder.signing_host.clone());
+	let service = responder.account_holder_service(wallet_session);
+	service.require_current_session().map_err(|error| error.to_string())?;
 	let services = &responder.services;
 	let rpc_client = services
 		.statement_store
@@ -448,9 +486,13 @@ async fn serve_session(
 	);
 	// Boxed as a trait object so the hosts that await a session need not
 	// lay out this future or prove it `Send`.
-	serve_pages(pages, responder.signing_host.sso_withdrawals(), |incoming| {
-		serve_statement(responder, &service, session, replay_scope, incoming)
-	})
+	serve_pages(
+		pages,
+		|message| {
+			service.handle_control(message);
+		},
+		|incoming| serve_statement(responder, &service, session, replay_scope, incoming),
+	)
 	.boxed()
 	.await
 }
@@ -463,7 +505,7 @@ const MAX_QUEUED_REQUESTS: usize = 64;
 /// so a `Cancel` reaches the request it withdraws.
 async fn serve_pages<Fut>(
 	pages: impl Stream<Item = Result<Vec<IncomingSsoRequest>, String>>,
-	withdrawals: &SsoWithdrawals,
+	handle_control: impl Fn(&RemoteMessage),
 	mut serve: impl FnMut(IncomingSsoRequest) -> Fut,
 ) -> Result<ResponderExit, String>
 where
@@ -503,9 +545,9 @@ where
 					None => break,
 				};
 				for incoming in page {
-					if let Some(targets) = withdrawn_targets(&incoming) {
-						for target in targets {
-							withdrawals.withdraw(target);
+					if incoming.messages.iter().all(|message| message.withdrawn_request_id().is_some()) {
+						for message in &incoming.messages {
+							handle_control(message);
 						}
 						continue;
 					}
@@ -602,24 +644,10 @@ fn log_request_received(incoming: &IncomingSsoRequest) {
 	}
 }
 
-/// The requests a statement withdraws, when it carries nothing but `Cancel`s.
-fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
-	incoming
-		.messages
-		.iter()
-		.map(|message| match &message.data {
-			RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
-				Some(withdrawal.message_id.as_str())
-			},
-			_ => None,
-		})
-		.collect()
-}
-
 /// Serve one inbound request statement exactly once across redeliveries.
 async fn serve_statement(
 	responder: &SsoResponderService,
-	service: &SigningHostSsoService,
+	service: &SsoAccountHolderService,
 	session: &SsoSessionInfo,
 	replay_scope: SsoReplayScope,
 	incoming: IncomingSsoRequest,
@@ -650,7 +678,7 @@ async fn serve_statement(
 /// Ack one inbound request statement and answer its batched messages.
 async fn serve_request(
 	services: &RuntimeServices,
-	service: &SigningHostSsoService,
+	service: &SsoAccountHolderService,
 	session: &SsoSessionInfo,
 	incoming: IncomingSsoRequest,
 ) -> Result<Option<ResponderExit>, String> {
@@ -660,22 +688,23 @@ async fn serve_request(
 		let request_name = message.name();
 		let responding_to = message.message_id.clone();
 		let started = Instant::now();
-		let (response, outcome) = match service.answer(message).await {
-			Dispatch::Response(answer) => (answer.message, answer.outcome),
-			Dispatch::Disconnected => {
-				debug!("pairing host disconnected the SSO session");
-				return Ok(Some(ResponderExit::PeerDisconnected));
-			},
-			Dispatch::NotARequest(name) => {
-				warn!(name, "peer sent a response variant as a request");
-				continue;
-			},
-			Dispatch::Withdraw(_) => continue,
-			Dispatch::Withdrawn => {
-				debug!(%responding_to, "pairing host withdrew the SSO request");
-				continue;
-			},
-		};
+		let (response, outcome) =
+			match service.answer(message).await.map_err(|error| error.to_string())? {
+				Dispatch::Response(answer) => (answer.message, answer.outcome),
+				Dispatch::Disconnected => {
+					debug!("pairing host disconnected the SSO session");
+					return Ok(Some(ResponderExit::PeerDisconnected));
+				},
+				Dispatch::NotARequest(name) => {
+					warn!(name, "peer sent a response variant as a request");
+					continue;
+				},
+				Dispatch::Withdraw(_) => continue,
+				Dispatch::Withdrawn => {
+					debug!(%responding_to, "pairing host withdrew the SSO request");
+					continue;
+				},
+			};
 		let response_message_id = response.message_id.clone();
 		let statement_request_id = format!("resp:{response_message_id}");
 		let statement = build_outgoing_request_statement(

@@ -372,6 +372,71 @@ pub enum CreateTransactionAuthorityRequest {
 	IdentityAccount(LegacyAccountTxPayload),
 }
 
+impl SignPayloadAuthorityRequest {
+	/// Canonical review for this selected signing request.
+	pub fn review(&self, caller: &AccountCaller<'_>) -> crate::platform::UserConfirmationReview {
+		use crate::platform::{SignPayloadReview, UserConfirmationReview};
+		UserConfirmationReview::SignPayload(match self {
+			Self::Product(request) => SignPayloadReview::Product {
+				calling_product_id: caller.product_id().cloned(),
+				request: request.clone(),
+			},
+			Self::LegacyAccount { product_account, request } => SignPayloadReview::LegacyAccount {
+				account: product_account.clone(),
+				request: request.clone(),
+			},
+		})
+	}
+}
+
+impl SignRawAuthorityRequest {
+	/// Canonical review, including the original legacy request and watermark.
+	pub fn review(
+		&self,
+		caller: &AccountCaller<'_>,
+		watermarked: bool,
+	) -> crate::platform::UserConfirmationReview {
+		use crate::platform::{LegacySigningAccount, SignRawReview, UserConfirmationReview};
+		UserConfirmationReview::SignRaw(match self {
+			Self::Product(request) => SignRawReview::Product {
+				calling_product_id: caller.product_id().cloned(),
+				request: request.clone(),
+				watermarked,
+			},
+			Self::LegacyAccount { request, .. } => SignRawReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				request: request.clone(),
+				watermarked,
+			},
+		})
+	}
+}
+
+impl CreateTransactionAuthorityRequest {
+	/// Canonical review for a transaction, including resolved contact data.
+	pub fn review(&self, caller: &AccountCaller<'_>) -> crate::platform::UserConfirmationReview {
+		use crate::platform::{
+			CreateTransactionReview, LegacySigningAccount, UserConfirmationReview,
+		};
+		UserConfirmationReview::CreateTransaction(match self {
+			Self::Product(payload) => CreateTransactionReview::Product {
+				calling_product_id: caller.product_id().cloned(),
+				payload: payload.clone(),
+			},
+			Self::LegacyAccount { product_account, request } => {
+				CreateTransactionReview::LegacyAccount {
+					account: LegacySigningAccount::Product(product_account.clone()),
+					payload: request.clone(),
+				}
+			},
+			Self::IdentityAccount(payload) => CreateTransactionReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				payload: payload.clone(),
+			},
+		})
+	}
+}
+
 /// Whether blessed `calling_product_id` is using its own account, `owner`.
 pub fn is_blessed_owner(calling_product_id: &ProductId, owner: &ProductId) -> bool {
 	calling_product_id.has_trusted_remote_permissions() && owner == calling_product_id

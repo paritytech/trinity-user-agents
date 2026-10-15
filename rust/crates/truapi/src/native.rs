@@ -25,11 +25,11 @@ mod platform;
 mod pocket;
 mod renderer;
 mod runtime;
+mod sso;
 mod subscribers;
 mod ws_bridge;
 
 pub use crate::{
-	host_internal::sso_messages::SsoRequestOutcome,
 	host_logic::{
 		dev_server::{DevServerError, DevServerProduct},
 		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
@@ -51,6 +51,7 @@ pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
+pub use sso::SsoRequestOutcome;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use serde::Deserialize;
