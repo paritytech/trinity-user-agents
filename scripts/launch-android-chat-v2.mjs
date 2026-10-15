@@ -1424,8 +1424,16 @@ async function showChatList() {
   return waitScreen((screen) => findTag(screen, "chats_title") && screen, "the chat list");
 }
 
-/** Close the sheets that the app shows over the room with a tap: the preimage prompt and the reset notice. */
+/**
+ * Close the sheets that the app shows over the room with a tap: the preimage prompt and the reset notice. The
+ * notifications prompt of `/notify` gets "Allow always": a "Don't allow" there is a stored refusal of the product.
+ */
 function dismissPrompts(screen) {
+  const allow = findText(screen, "Allow always");
+  if (allow && screen.some((node) => / would like to send notifications$/.test(node.text))) {
+    inputTap(serial, allow.center.x, allow.center.y);
+    return true;
+  }
   for (const label of ["Don't allow", "Dismiss"]) {
     const node = findText(screen, label);
     if (node) {
@@ -1650,7 +1658,7 @@ async function hookPost(room, text) {
 
 /**
  * Type a `/notify` command into the host room and wait for its `ok` reply. The first one asks the user to allow
- * notifications for the product: the launcher taps "Allow always", before `waitScreen` can answer "Don't allow".
+ * notifications for the product: the launcher taps "Allow always" here and in `dismissPrompts`.
  */
 async function notifyFromRoom(text, { mutedRoom = false } = {}) {
   await openRoom("host");
@@ -1666,7 +1674,7 @@ async function notifyFromRoom(text, { mutedRoom = false } = {}) {
       const reply = messages("host").slice(before).find((message) => message.text === `ok ${text}` || message.text.startsWith(`error ${text}`));
       if (reply && /Permission denied/.test(reply.text)) {
         throw new Error(
-          `the product answered "${reply.text}"${mutedRoom ? " into the muted room" : ""}: the notifications permission of the product is refused before the mute rule runs (logcat truapi.native.callback.device_permission), so this host cannot show the suppression`,
+          `the product answered "${reply.text}"${mutedRoom ? " into the muted room" : ""}: the notifications permission of the product is refused before the mute rule runs (logcat truapi.native.callback.device_permission; the core keeps a "Don't allow"), so this host cannot show the suppression`,
         );
       }
       if (reply) expect(reply.text === `ok ${text}`, `the product answered "${reply.text}"`);
