@@ -3,18 +3,12 @@
 use crate::platform::{CoreStorage, CoreStorageKey, normalize_product_identifier};
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
-use tracing::warn;
-#[cfg(not(target_arch = "wasm32"))]
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
-use super::WalletAccountHolder;
-#[cfg(not(target_arch = "wasm32"))]
-use super::WalletKeys;
-use crate::runtime::authority::{AccountHolder, AuthoritySession};
-#[cfg(not(target_arch = "wasm32"))]
+use super::{WalletAccountHolder, WalletKeys};
 use crate::runtime::{
 	allowances::current_unix_secs,
-	authority::AuthorityError,
+	authority::{AccountHolder, AuthorityError, AuthoritySession},
 	statement_allowance::{
 		self, fetch_chain_state, fetch_metadata, find_including_rings,
 		renewal::{
@@ -80,7 +74,6 @@ impl TrackedStatementRenewalTarget {
 		Self { target, owner }
 	}
 
-	#[cfg(not(target_arch = "wasm32"))]
 	/// Whether this entry belongs to the identity rooted at `owner`.
 	fn is_owned_by(&self, owner: [u8; 32]) -> bool {
 		self.owner.is_none_or(|recorded| recorded == owner)
@@ -96,7 +89,6 @@ pub struct RenewalState {
 	/// Serializes read-modify-write cycles on the ledger so a concurrent
 	/// allocation cannot drop another's entry.
 	ledger_lock: Mutex<()>,
-	#[cfg(not(target_arch = "wasm32"))]
 	/// Retain loop results until the host reads them.
 	last_report: std::sync::Mutex<Option<StatementRenewalReport>>,
 }
@@ -111,7 +103,6 @@ impl RenewalState {
 		&self.ledger_lock
 	}
 
-	#[cfg(not(target_arch = "wasm32"))]
 	/// Record the pass a host has not seen the return value of.
 	fn record_report(&self, report: &StatementRenewalReport) {
 		if let Ok(mut last) = self.last_report.lock() {
@@ -119,7 +110,6 @@ impl RenewalState {
 		}
 	}
 
-	#[cfg(not(target_arch = "wasm32"))]
 	/// The most recent pass the loop ran. `None` until one has run, which a host
 	/// should read as "not yet" rather than as healthy.
 	fn last_report(&self) -> Option<StatementRenewalReport> {
@@ -147,7 +137,6 @@ async fn read_entries(
 	}
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Read a settled ledger while competing writes hold the same lock.
 async fn list_entries(
 	storage: &(impl CoreStorage + ?Sized),
@@ -177,7 +166,6 @@ fn decode_entries(blob: &[u8]) -> Result<Vec<TrackedStatementRenewalTarget>, Str
 	Ok(entries)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Stable labels identify pruned entries even without an active wallet.
 fn target_label(target: &StatementRenewalTarget) -> String {
 	match target {
@@ -189,7 +177,6 @@ fn target_label(target: &StatementRenewalTarget) -> String {
 	}
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn resolve_target(
 	keys: &WalletKeys,
 	target: &StatementRenewalTarget,
@@ -211,7 +198,6 @@ fn resolve_target(
 }
 
 impl WalletAccountHolder {
-	#[cfg(not(target_arch = "wasm32"))]
 	/// Record `targets` in the ledger under the active identity.
 	pub async fn track_statement_renewal_targets(
 		&self,
@@ -251,7 +237,6 @@ impl WalletAccountHolder {
 		Ok(())
 	}
 
-	#[cfg(not(target_arch = "wasm32"))]
 	/// List tracked entries without requiring wallet unlock.
 	pub async fn statement_renewal_targets(
 		&self,
@@ -259,7 +244,6 @@ impl WalletAccountHolder {
 		list_entries(self.services.platform.as_ref(), self.renewal.ledger_lock()).await
 	}
 
-	#[cfg(not(target_arch = "wasm32"))]
 	/// Identify which fixed ledger entries belong to the active wallet.
 	pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], String> {
 		self.current_session()
@@ -267,7 +251,6 @@ impl WalletAccountHolder {
 			.ok_or_else(|| AuthorityError::Disconnected.to_string())
 	}
 
-	#[cfg(not(target_arch = "wasm32"))]
 	/// Stop renewing one fixed statement account for the active identity.
 	pub async fn untrack_statement_renewal_account(
 		&self,
@@ -298,7 +281,6 @@ impl WalletAccountHolder {
 		Ok(true)
 	}
 
-	#[cfg(not(target_arch = "wasm32"))]
 	/// One renewal pass: resolve the ledger against the active session and renew
 	/// every target for the current period.
 	pub async fn renew_statement_allowances(&self) -> Result<StatementRenewalReport, String> {
@@ -367,7 +349,6 @@ impl WalletAccountHolder {
 		Ok(report)
 	}
 
-	#[cfg(not(target_arch = "wasm32"))]
 	/// Renew the active wallet and record the periodic pass result.
 	pub async fn renewal_tick(&self) {
 		if self.current_session().is_none() {
@@ -377,14 +358,12 @@ impl WalletAccountHolder {
 		absorb_tick(&self.renewal, self.renew_statement_allowances().await);
 	}
 
-	#[cfg(not(target_arch = "wasm32"))]
 	/// Most recent result from the host's periodic renewal loop.
 	pub fn last_statement_renewal_report(&self) -> Option<StatementRenewalReport> {
 		self.renewal.last_report()
 	}
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl WalletAccountHolder {
 	// A stale owner must not prune entries tracked by a newer wallet.
 	async fn owned_targets(
@@ -406,7 +385,6 @@ impl WalletAccountHolder {
 	}
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Skip unusable entries so they cannot prevent renewal of other targets.
 fn resolve_targets(
 	keys: &WalletKeys,
@@ -424,7 +402,6 @@ fn resolve_targets(
 		.collect()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Preserve the last completed pass when a later tick fails.
 fn absorb_tick(state: &RenewalState, result: Result<StatementRenewalReport, String>) {
 	match result {

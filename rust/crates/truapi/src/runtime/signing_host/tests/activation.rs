@@ -61,7 +61,7 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
 fn pending_vrf_approval_tracks_wallet_activation() {
 	use crate::{
 		host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
-		runtime::{signing_host::SigningHostSsoService, sso_service::Dispatch},
+		runtime::sso_service::Dispatch,
 	};
 	use futures::FutureExt;
 	use truapi::versioned::account::{HostAccountSignVrfError, HostAccountSignVrfRequest};
@@ -79,7 +79,7 @@ fn pending_vrf_approval_tracks_wallet_activation() {
 				.unwrap();
 			let session = authority.wallet_for_tests().current_session().unwrap();
 			let runtime = product_runtime(services, authority.clone());
-			let service = SigningHostSsoService::new(authority.clone());
+			let service = authority.sso_responder().service_for_tests();
 			let answer = async {
 				if remote {
 					let Dispatch::Response(answer) = service
@@ -91,6 +91,7 @@ fn pending_vrf_approval_tracks_wallet_activation() {
 							},
 						))
 						.await
+						.map_err(v01::HostAccountSignVrfError::from)?
 					else {
 						panic!("expected a VRF response")
 					};

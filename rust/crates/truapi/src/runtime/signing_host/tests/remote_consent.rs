@@ -5,7 +5,7 @@ use crate::{
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
 	platform::{PermissionAuthorizationStatus, PermissionDecision},
-	runtime::{signing_host::SigningHostSsoService, sso_service::Dispatch},
+	runtime::sso_service::Dispatch,
 };
 use truapi::latest::{HostAccountListRingVrfKeysRequest, RingVrfKeyDisclosure};
 
@@ -52,7 +52,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 				))
 				.unwrap();
 			}
-			let service = SigningHostSsoService::new(authority.clone());
+			let service = authority.sso_responder().service_for_tests();
 			let mut outcomes = Vec::new();
 			for request_id in ["first", "second"] {
 				let request = if operation == "alias" {
@@ -82,7 +82,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 						},
 					)
 				};
-				let Dispatch::Response(answer) =
+				let Ok(Dispatch::Response(answer)) =
 					futures::executor::block_on(service.answer(request))
 				else {
 					panic!("expected an account response")
