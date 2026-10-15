@@ -76,8 +76,14 @@ private extension DSTabBarCenterControl {
     /// Movement below which a drag counts as a tap.
     var tapSlop: CGFloat { 4 }
 
-    /// Side of the square canvas both centre glyph SVGs are drawn on.
+    /// Side of the square canvas the centre glyph SVG is drawn on.
     var glyphSize: CGFloat { 30 }
+
+    /// Scale of the glyph once the panel is fully open.
+    var openGlyphScale: CGFloat { 0.8 }
+
+    /// Distance in points the glyph moves down once the panel is fully open.
+    var openGlyphDrop: CGFloat { 4 }
 
     /// Distance the finger travels to open the panel fully.
     var travel: CGFloat { max(1, expandedHeight - DSTabBarStyle.centerButtonSize) }
@@ -154,33 +160,28 @@ private extension DSTabBarCenterControl {
 // MARK: - Grips
 
 private extension DSTabBarCenterControl {
-    /// Sits in the lobe in both states, since the lobe is the button. Collapsed, scan corners frame
-    /// the plus; opening fades the corners and turns the plus 45 degrees into the close control.
+    /// Sits in the lobe in both states, since the lobe is the button. The scan frame shrinks
+    /// slightly and drops a little as the panel opens.
     var glyph: some View {
-        ZStack {
-            Image(.iconCenterFrame)
-                .resizable()
-                .frame(width: glyphSize, height: glyphSize)
-                .opacity(1 - progress)
-            Image(.iconCenterScan)
-                .resizable()
-                .frame(width: glyphSize, height: glyphSize)
-                .rotationEffect(.degrees(45 * progress))
-        }
-        .foregroundStyle(Color.fgSecondary)
-        .frame(width: lobeRadius * 2, height: lobeRadius * 2)
-        .contentShape(Circle())
-        .gesture(drag)
-        .accessibilityElement()
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { settle(to: progress > 0.5 ? 0 : 1) }
-        .accessibilityAction(.escape) {
-            guard progress > 0.5 else {
-                return
+        Image(.iconCenterFrame)
+            .resizable()
+            .frame(width: glyphSize, height: glyphSize)
+            .scaleEffect(lerp(1, openGlyphScale))
+            .offset(y: lerp(0, openGlyphDrop))
+            .foregroundStyle(Color.fgSecondary)
+            .frame(width: lobeRadius * 2, height: lobeRadius * 2)
+            .contentShape(Circle())
+            .gesture(drag)
+            .accessibilityElement()
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { settle(to: progress > 0.5 ? 0 : 1) }
+            .accessibilityAction(.escape) {
+                guard progress > 0.5 else {
+                    return
+                }
+                settle(to: 0)
             }
-            settle(to: 0)
-        }
     }
 
     /// Marks the top of the open panel as draggable. Fades in with the content and takes no touches,
