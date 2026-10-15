@@ -457,6 +457,11 @@ const DRIVERS = {
     await openRoom("source");
     await command("source", "/history 560");
     const opened = await reopenRoom("source");
+    // The new history is newer than the message that the user saw last, so the room opens at the "New messages"
+    // marker, not at the newest message. The launcher scrolls to the newest message first.
+    for (let attempt = 0; attempt < 10 && !findText(parseUiNodes(uiDump(serial)), "History message 00560"); attempt += 1) {
+      await scrollToNewest();
+    }
     await waitScreen((screen) => findText(screen, "History message 00560"), "History message 00560");
     let pages = [];
     for (let attempt = 0; attempt < 60; attempt += 1) {
