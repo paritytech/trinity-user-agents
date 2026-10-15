@@ -73,7 +73,7 @@ use zeroize::Zeroizing;
 use super::{
 	ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing},
 	signing_host::ring_vrf::{
-		ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
+		ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof,
 	},
 };
 
@@ -2155,7 +2155,7 @@ impl PairingHost {
 			self.ring_resolver.validate(&request.payload.ring_location).await?;
 			let vrf = vrf::load().await?;
 			self.current_private_session(session)?;
-			let context = development_context_bytes(&request.payload.context);
+			let context = context_bytes(&request.payload.context);
 			let alias = vrf.alias(&entropy, &context)?;
 			return Ok(latest::ContextualAlias { context, alias: alias.to_vec() });
 		}
@@ -2171,8 +2171,14 @@ impl PairingHost {
 		let (key_handle, access) = self
 			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
 			.await?;
-		// A publisher's grant cannot expose its alias in an unrelated product's context.
-		crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
+		// A grant cannot expose the owner's alias in a third product's context unless
+		// that product's manifest grants the caller `context`.
+		crate::runtime::product_manifest::require_context_access(
+			&self.services,
+			&access,
+			&request.payload.context,
+		)
+		.await?;
 		let private_session = self.current_private_session(session)?;
 		if let Some(entropy) = self
 			.local_ring_vrf_entropy_for_ring(
@@ -2189,7 +2195,7 @@ impl PairingHost {
 				.resolve(&request.payload.ring_location, &[MemberCandidate { member }])
 				.await?;
 			self.current_private_session(session)?;
-			let context = development_context_bytes(&request.payload.context);
+			let context = context_bytes(&request.payload.context);
 			let (proof, alias) =
 				create_proof(&vrf, &entropy, &resolved, &context, &request.payload.message)?;
 			return Ok(latest::HostAccountCreateProofResponse {

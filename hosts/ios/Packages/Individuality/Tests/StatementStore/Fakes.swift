@@ -205,6 +205,18 @@ final class FakeOriginFactory: AsResourcesOriginCreating {
     ) async throws -> ExtrinsicOriginDefining {
         StubExtrinsicOrigin()
     }
+
+    private(set) var notificationOriginCalls: [(personOrigin: PersonOrigin, period: UInt32, seq: UInt8)] = []
+
+    func createNotificationOrigin(
+        personOrigin: PersonOrigin,
+        period: UInt32,
+        seq: UInt8,
+        chain _: ChainId
+    ) async throws -> ExtrinsicOriginDefining {
+        notificationOriginCalls.append((personOrigin: personOrigin, period: period, seq: seq))
+        return StubExtrinsicOrigin()
+    }
 }
 
 // MARK: - FakeLogger

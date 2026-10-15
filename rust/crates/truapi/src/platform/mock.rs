@@ -83,8 +83,6 @@ pub enum ConfirmKind {
 	CreateProof,
 	/// [`UserConfirmationReview::ResourceAllocation`].
 	ResourceAllocation,
-	/// [`UserConfirmationReview::PreimageSubmit`].
-	PreimageSubmit,
 	/// [`UserConfirmationReview::IdentityDisclosure`].
 	IdentityDisclosure,
 	/// [`UserConfirmationReview::AccountAccess`].
@@ -106,7 +104,6 @@ impl ConfirmKind {
 			UserConfirmationReview::AccountAlias(_) => ConfirmKind::AccountAlias,
 			UserConfirmationReview::CreateProof(_) => ConfirmKind::CreateProof,
 			UserConfirmationReview::ResourceAllocation(_) => ConfirmKind::ResourceAllocation,
-			UserConfirmationReview::PreimageSubmit(_) => ConfirmKind::PreimageSubmit,
 			UserConfirmationReview::IdentityDisclosure(_) => ConfirmKind::IdentityDisclosure,
 			UserConfirmationReview::AccountAccess(_) => ConfirmKind::AccountAccess,
 			UserConfirmationReview::StatementStoreProductSign(_) => {
@@ -939,6 +936,7 @@ fn device_permission_key(request: &latest::HostDevicePermissionRequest) -> &'sta
 		Request::Clipboard => "Clipboard",
 		Request::OpenUrl => "OpenUrl",
 		Request::Biometrics => "Biometrics",
+		Request::Motion => "Motion",
 	}
 }
 
@@ -955,6 +953,7 @@ fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str 
 		Permission::ChainSubmit => "ChainSubmit",
 		Permission::PreimageSubmit => "PreimageSubmit",
 		Permission::StatementSubmit => "StatementSubmit",
+		Permission::BalanceAccess => "BalanceAccess",
 	}
 }
 

@@ -57,6 +57,14 @@ interface ContactsRepository {
 
     suspend fun getContactsWithChatRequests(metaId: Long): List<ContactWithChatRequest>
 
+    fun subscribeContactsWithUndeliveredOutgoingRequests(): Flow<List<ContactWithChatRequest>>
+
+    /** Runs [action] in one database transaction, which also covers writes through other repositories. */
+    suspend fun withTransaction(action: suspend () -> Unit)
+
+    /** Newest request first. */
+    suspend fun getContactsWithAnonymouslyDeliveredPendingRequests(): List<ContactWithChatRequest>
+
     fun subscribePendingFanOutContacts(): Flow<List<Contact>>
 
     suspend fun markDevicesFannedOut(accountId: AccountId)
@@ -206,6 +214,20 @@ class RealContactsRepository @Inject constructor(
 
     override suspend fun getContactsWithChatRequests(metaId: Long): List<ContactWithChatRequest> {
         return dao.getContactsWithChatRequestsForAccount(metaId)
+            .map { it.toDomain() }
+    }
+
+    override suspend fun withTransaction(action: suspend () -> Unit) {
+        dao.withTransaction(action)
+    }
+
+    override fun subscribeContactsWithUndeliveredOutgoingRequests(): Flow<List<ContactWithChatRequest>> {
+        return dao.subscribeContactsWithUndeliveredOutgoingRequests()
+            .mapList { it.toDomain() }
+    }
+
+    override suspend fun getContactsWithAnonymouslyDeliveredPendingRequests(): List<ContactWithChatRequest> {
+        return dao.getContactsWithAnonymouslyDeliveredPendingRequests()
             .map { it.toDomain() }
     }
 
