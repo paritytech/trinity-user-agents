@@ -3,8 +3,10 @@
 // One stream carries everything the host asks: a price for an ask, a session
 // to run, a request to cancel one. Sessions still in flight are handed over
 // again whenever the stream opens, so a restarted worker resumes them. A
-// session stopped at its kill point drops what it held in memory and the
-// stream is opened again, which hands it back the way a restart would.
+// session stopped at its kill point, or by an error it could not settle,
+// drops what it held in memory and the stream is opened again, which hands it
+// back the way a restart would: at once after a kill, after a growing wait
+// after an error.
 
 import type { HostFundingServeSubscribeItem } from "@parity/truapi";
 import { answerAsk } from "./quotes";
@@ -13,8 +15,12 @@ import { Session } from "./session";
 
 /** Wait before the stream is opened again after it failed or ended. */
 const RESUBSCRIBE_MS = 5_000;
+/** Longest wait before a session an error stopped is handed out again. */
+const MAX_RESTART_MS = 10 * 60_000;
 
 const sessions = new Map<string, Session>();
+/** Times in a row each session was stopped by an error. */
+const restarts = new Map<string, number>();
 
 /** Closes the open stream, so `serve` opens it again. */
 let reopenStream: (() => void) | undefined;
@@ -49,7 +55,9 @@ function handle(item: HostFundingServeSubscribeItem): void {
         .run()
         .then(
           (outcome) => {
+            if (outcome === "ended") restarts.delete(session.intent);
             if (outcome === "killed") reopenStream?.();
+            if (outcome === "retry") restartLater(session.intent);
           },
           (error: unknown) =>
             console.error(
@@ -63,6 +71,15 @@ function handle(item: HostFundingServeSubscribeItem): void {
       sessions.get(item.value.intent)?.cancel();
       return;
   }
+}
+
+/** Has a session an error stopped handed out again, after a wait that
+ *  doubles each time it stops in a row. */
+function restartLater(intent: string): void {
+  const count = (restarts.get(intent) ?? 0) + 1;
+  restarts.set(intent, count);
+  const wait = Math.min(RESUBSCRIBE_MS * 2 ** (count - 1), MAX_RESTART_MS);
+  setTimeout(() => reopenStream?.(), wait);
 }
 
 /** Serves the stream for as long as the worker lives, reopening it when it

@@ -5,7 +5,8 @@ import { ONE_CASH } from "./config";
 /** What a session is made to do instead of the happy path.
  *
  * - `refund`: an inbound payment is refunded before anything is credited, and
- *   an outbound payout fails after the release.
+ *   an outbound payout fails after the release and is refunded from the
+ *   reserve account.
  * - `retry`: the credit is split over two top-ups.
  * - `slow`: the payment arrives only after the quoted ETA has passed.
  * - `decline`: a card or bank payment is declined before any money moves.

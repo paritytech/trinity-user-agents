@@ -124,12 +124,33 @@ export function firstOf<T, R, E>(
   });
 }
 
-/** Lowercase hex of `bytes`, 0x-prefixed. */
-export const toHex = (bytes: Uint8Array): `0x${string}` =>
-  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+/** Error tags a host answers when a call can never succeed as made: a
+ *  refusal of the request itself, not a failure along the way. */
+const REFUSALS = new Set([
+  "AlreadyExists",
+  "Denied",
+  "InsufficientBalance",
+  "InvalidAmount",
+  "InvalidSource",
+  "InvalidUrl",
+  "MalformedFrame",
+  "NotFound",
+  "NotStarted",
+  "OutOfOrder",
+  "Rejected",
+  "TooLarge",
+  "Unsupported",
+]);
 
-/** The bytes of a 0x-prefixed hex string. */
-export const fromHex = (hex: string): Uint8Array =>
-  Uint8Array.from(hex.slice(2).match(/.{2}/g) ?? [], (pair) =>
-    Number.parseInt(pair, 16),
+/** Whether `error` may clear by itself, so the call that raised it is worth
+ *  making again: a host failure or a chain or network error, but not a host
+ *  refusal or a programming error. */
+export function isTransient(error: unknown): boolean {
+  if (error instanceof HostCallError) return !REFUSALS.has(error.tag ?? "");
+  return !(
+    error instanceof TypeError ||
+    error instanceof RangeError ||
+    error instanceof ReferenceError ||
+    error instanceof SyntaxError
   );
+}

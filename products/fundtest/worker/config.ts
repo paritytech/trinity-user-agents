@@ -18,10 +18,6 @@ export const PROVIDER_FEE_BPS = 100n;
 /** How long a quote holds, in milliseconds. */
 export const QUOTE_TTL_MS = 60_000;
 
-/** Expected seconds until the funds arrive, by rail: the upper end of card's
- *  one to five minutes, bank's one to two days, crypto's few minutes. */
-export const ETA_SECS = { Card: 300n, Bank: 172_800n, Crypto: 600n } as const;
-
 /** A fiat currency the card and bank routes take. */
 export const FIAT = { symbol: "EUR", decimals: 2 } as const;
 
@@ -97,6 +93,15 @@ const number = (value: string | undefined, fallback: number) => {
     : fallback;
 };
 
+/** Expected seconds until the funds arrive, by rail: the upper end of card's
+ *  one to five minutes, bank's one to two days (`FUNDTEST_BANK_ETA_SECS`, so
+ *  a dev build can see a slow bank payment through), crypto's few minutes. */
+export const ETA_SECS = {
+  Card: 300n,
+  Bank: BigInt(number(env.FUNDTEST_BANK_ETA_SECS, 172_800)),
+  Crypto: 600n,
+} as const;
+
 /** Build-time configuration, read from `FUNDTEST_*` variables. */
 export const CONFIG = {
   /** Whether a crypto deposit is made from a faucet drip after a short wait,
@@ -111,4 +116,7 @@ export const CONFIG = {
   cryptoArrivalMs: number(env.FUNDTEST_CRYPTO_ARRIVAL_MS, 20_000),
   /** Wait between the user's payment completing and the payout arriving. */
   payoutMs: number(env.FUNDTEST_PAYOUT_MS, 15_000),
+  /** First wait before a report the host failed to take is made again; each
+   *  later wait doubles, up to 30 seconds. */
+  reportRetryMs: number(env.FUNDTEST_REPORT_RETRY_MS, 1_000),
 } as const;

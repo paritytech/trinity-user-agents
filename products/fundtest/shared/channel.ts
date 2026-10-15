@@ -3,6 +3,8 @@
 // session's view before it presents a screen, the screen writes what the user
 // did, and `localStorage.subscribe` carries each write to the other side.
 
+import { fromHex, toHex } from "./hex";
+
 /** Route of each provider screen the worker presents. */
 export type ScreenRoute = "/card" | "/bank" | "/payout";
 
@@ -60,18 +62,14 @@ const decoder = new TextDecoder();
 
 /** JSON as the hex the storage API takes. */
 export function toStored(value: unknown): `0x${string}` {
-  const bytes = encoder.encode(JSON.stringify(value));
-  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  return toHex(encoder.encode(JSON.stringify(value)));
 }
 
 /** The JSON a stored hex value holds, or `undefined` for none or bad data. */
 export function fromStored<T>(hex: string | undefined): T | undefined {
   if (!hex || hex.length < 4) return undefined;
-  const bytes = Uint8Array.from(hex.slice(2).match(/.{2}/g) ?? [], (pair) =>
-    Number.parseInt(pair, 16),
-  );
   try {
-    return JSON.parse(decoder.decode(bytes)) as T;
+    return JSON.parse(decoder.decode(fromHex(hex))) as T;
   } catch {
     return undefined;
   }

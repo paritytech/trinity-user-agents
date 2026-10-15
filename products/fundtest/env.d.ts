@@ -6,4 +6,6 @@ interface ImportMetaEnv {
   readonly FUNDTEST_BANK_ARRIVAL_MS?: string;
   readonly FUNDTEST_CRYPTO_ARRIVAL_MS?: string;
   readonly FUNDTEST_PAYOUT_MS?: string;
+  readonly FUNDTEST_BANK_ETA_SECS?: string;
+  readonly FUNDTEST_REPORT_RETRY_MS?: string;
 }

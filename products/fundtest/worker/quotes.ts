@@ -181,23 +181,29 @@ export function answerAsk(
       },
     };
   }
-  // The user pays balance units; the fees are in them too.
-  const providerFee = feeOn(ask.amount);
-  const networkFee = toBalance(rate, rate.networkFee);
-  const paidOut = ask.amount - providerFee - networkFee;
-  if (paidOut <= 0n)
+  const payout = payoutAt(rate, ask.amount);
+  if (!payout)
     return refused({ tag: "BelowMinimum", value: { min: MIN_AMOUNT } });
   return {
     tag: "Quoted",
     value: {
-      quote: {
-        ...common,
-        sendAmount: ask.amount,
-        receiveAmount: toAsset(rate, paidOut, "down"),
-        providerFee,
-        networkFee,
-      },
+      quote: { ...common, sendAmount: ask.amount, ...payout },
     },
+  };
+}
+
+/** An outbound payout of `amount` balance units at `rate`: the user pays
+ *  balance units and the fees are in them too, so the payout is what is left,
+ *  in the asset. `undefined` when the fees take it all. */
+function payoutAt(rate: Rate, amount: bigint) {
+  const providerFee = feeOn(amount);
+  const networkFee = toBalance(rate, rate.networkFee);
+  const paidOut = amount - providerFee - networkFee;
+  if (paidOut <= 0n) return undefined;
+  return {
+    receiveAmount: toAsset(rate, paidOut, "down"),
+    providerFee,
+    networkFee,
   };
 }
 
@@ -208,4 +214,11 @@ export function priceOf(terms: QuoteTerms): bigint | undefined {
   if (!rate) return undefined;
   const base = toAsset(rate, terms.amount, "up");
   return base + feeOn(base) + rate.networkFee;
+}
+
+/** What the user receives for an outbound `terms`, in the asset's smallest
+ *  unit, as `answerAsk` prices it. */
+export function payoutOf(terms: QuoteTerms): bigint | undefined {
+  const rate = rateFor(terms.rail, terms.asset);
+  return rate && payoutAt(rate, terms.amount)?.receiveAmount;
 }

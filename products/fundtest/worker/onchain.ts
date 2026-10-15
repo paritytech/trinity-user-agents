@@ -45,7 +45,7 @@ import {
 } from "@polkadot-api/descriptors";
 import type { PolkadotClient } from "polkadot-api";
 import { bounded, signOptionsFor, type Chains } from "./chain";
-import { toHex } from "./host";
+import { toHex } from "../shared/hex";
 import type { SavedPlan, SavedRoute, SavedTick } from "./saved";
 
 /** Claims are multiples of 0.01 CASH, the coinage instance's asset unit. */

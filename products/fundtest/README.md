@@ -39,14 +39,16 @@ from the chain so the conversion lands the full amount.
 
 The cents of the amount choose what goes wrong:
 
-| Cents | Inbound                                                         | Outbound                                                                          |
-| ----- | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `.13` | The payment is seen, then refunded: `Failed`, code `refunded`   | The payout fails after the release                                                |
-| `.23` | The credit is split over two top-ups, so the host shows a retry | No change                                                                         |
-| `.33` | The payment arrives only after the quoted ETA has passed        | The payout arrives after the ETA                                                  |
-| `.63` | No change                                                       | The payout is retried twice, each reported as `PayoutRetrying`, then goes through |
+| Cents | Inbound                                                         | Outbound                                                                                                    |
+| ----- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `.13` | The payment is seen, then refunded: `Failed { Refunded }`       | The payout fails after the release; the reserve account refunds the user and the worker reports `Refunding` |
+| `.23` | The credit is split over two top-ups, so the host shows a retry | No change                                                                                                   |
+| `.33` | The payment arrives only after the quoted ETA has passed        | The payout arrives after the ETA                                                                            |
+| `.43` | A card or bank payment is declined: `Failed { Declined }`       | No change                                                                                                   |
+| `.63` | No change                                                       | The payout is retried twice, each reported as `PayoutRetrying`, then goes through                           |
 
-A crypto deposit made from a wallet ignores `.13`: the refund case only runs in demo mode, before any drip.
+A crypto deposit made from a wallet ignores `.13`: the refund case only runs in demo mode, before any drip. A bank
+payment quotes a two-day ETA, so `.33` on bank is seen through only with a short `FUNDTEST_BANK_ETA_SECS`.
 
 ### Stopping a session as if the worker crashed
 
@@ -92,8 +94,10 @@ a wallet is taken either way. After 30 minutes with nothing received the session
 
 **Out, any rail.** `Details`, then `/payout` for where to send the money. The worker calls `payment.request` for the
 user's CASH to the reserve account and reports `Collecting { paymentId, amount }`. Once the host reports the payment
-complete, the session is released and the worker simulates the payout. A user who declines the payment ends the session
-as `Cancelled`, and one without the balance as `InsufficientBalance`.
+complete, the session is released and the worker simulates the payout. A failed payout is refunded: the reserve account
+tops the user up by the amount collected, under an id fixed by the session's intent, and the worker reports
+`Refunding { topUpId, amount }`. A user who declines the payment ends the session as `Cancelled`, and one without the
+balance as `InsufficientBalance`.
 
 **Cancel.** A cancel is honoured while the user has not paid, and the session ends as `Failed { Cancelled }`. Once a
 payment is seen the host refuses the cancel itself.
@@ -108,9 +112,17 @@ Every action a resumed step can repeat is safe to repeat:
   answers a repeated `payment.topUp` or `payment.request` with `AlreadyExists` instead of moving funds twice.
 - The faucet drips an address once, so a repeated drip whose first answer was lost is refused on quota, and the session
   waits for the first.
-- A report the host already took is refused as `OutOfOrder`, which the worker ignores.
+- A report the host already took is refused as `OutOfOrder`, which the worker ignores. An update after the release is
+  tried again for a few seconds first, since the host answers the same way before it has marked the session released.
+- A waited-for arrival, such as a bank transfer or the payout, has its due time saved, so a restart does not start the
+  wait again.
 
 An action the user took on a screen is in product storage and is taken without showing the screen again.
+
+A report the host fails to take is tried again with a growing wait, up to 30 seconds apart, and a chain or network
+failure is retried a tick apart. A host refusal and a programming error are not retried. When a failure outlasts its
+retries, the worker logs it, drops the session from memory and has it handed out again: after 5 seconds the first time,
+doubling each time it stops in a row, up to 10 minutes. The resumed session continues from its checkpoint.
 
 ### The faucet
 
@@ -185,13 +197,15 @@ overridden to this repository's build, so the worker holds one TrUAPI client and
 Configuration is read at build time from `FUNDTEST_*` variables, from the environment or a `.env.local` file in this
 directory (ignored by git):
 
-| Variable                     | Default | Meaning                                                                       |
-| ---------------------------- | ------- | ----------------------------------------------------------------------------- |
-| `FUNDTEST_DEMO_CRYPTO`       | `1`     | `0` stops demo crypto deposits from the faucet; only a wallet transfer counts |
-| `FUNDTEST_CARD_ARRIVAL_MS`   | `5000`  | Wait between Pay and the card payment arriving                                |
-| `FUNDTEST_BANK_ARRIVAL_MS`   | `30000` | Wait between "I've sent funds" and the transfer arriving                      |
-| `FUNDTEST_CRYPTO_ARRIVAL_MS` | `20000` | Wait before a demo crypto deposit is asked for                                |
-| `FUNDTEST_PAYOUT_MS`         | `15000` | Wait between the release and the simulated payout                             |
+| Variable                     | Default  | Meaning                                                                       |
+| ---------------------------- | -------- | ----------------------------------------------------------------------------- |
+| `FUNDTEST_DEMO_CRYPTO`       | `1`      | `0` stops demo crypto deposits from the faucet; only a wallet transfer counts |
+| `FUNDTEST_CARD_ARRIVAL_MS`   | `5000`   | Wait between Pay and the card payment arriving                                |
+| `FUNDTEST_BANK_ARRIVAL_MS`   | `30000`  | Wait between "I've sent funds" and the transfer arriving                      |
+| `FUNDTEST_CRYPTO_ARRIVAL_MS` | `20000`  | Wait before a demo crypto deposit is asked for                                |
+| `FUNDTEST_PAYOUT_MS`         | `15000`  | Wait between the release and the simulated payout                             |
+| `FUNDTEST_BANK_ETA_SECS`     | `172800` | The ETA a bank quote gives, and so how late `.33` on bank arrives             |
+| `FUNDTEST_REPORT_RETRY_MS`   | `1000`   | First wait before a report the host failed to take is made again              |
 
 The bundle carries no secret. The worker asks the faucet only when the build targets the Paseo Next v2 testnet
 (getcash's `network.json` says `testnet` and the Asset Hub genesis is Paseo Next v2's); otherwise card and bank fail

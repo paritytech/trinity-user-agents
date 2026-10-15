@@ -34,6 +34,8 @@ export type OutboundPhase =
   | "collecting"
   /** The payment completed; the simulated payout is under way. */
   | "paying-out"
+  /** The payout failed; the user is being refunded from the reserve account. */
+  | "refunding"
   | "done";
 
 /** A conversion route as getcash records it (`recordedRoute`). */
@@ -92,6 +94,9 @@ export interface Saved {
     plan?: SavedPlan;
     /** When a crypto deposit address stops taking payment, Unix ms. */
     depositExpiresAt?: number;
+    /** When the simulated card or bank payment arrives, Unix ms. Kept so a
+     *  restart does not start the wait again. */
+    arrivesAt?: number;
     /** The faucet drip the session asked for, once asked. */
     drip?: SavedDrip;
     tick?: SavedTick;
@@ -102,6 +107,11 @@ export interface Saved {
     paymentId?: `0x${string}`;
     /** Where the user asked to be paid, as typed on the payout screen. */
     destination?: string;
+    /** When the simulated payout arrives, Unix ms. Kept so a restart does
+     *  not start the wait again. */
+    payoutAt?: number;
+    /** The top-up refunding a failed payout, fixed before it is made. */
+    refund?: { id: `0x${string}`; amount: string };
   };
 }
 

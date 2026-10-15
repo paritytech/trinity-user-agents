@@ -15,6 +15,7 @@
 // behind the product's `Remote` permission (shared/faucet.ts).
 
 import { FAUCET_URL } from "../shared/faucet";
+import { toHex } from "../shared/hex";
 
 /** What one drip sends, in PAS's smallest unit (10 decimals). The teleport
  *  to Asset Hub Next takes a small fee out of it on arrival. */
@@ -48,9 +49,6 @@ export class FaucetRefused extends Error {
 export const dripMessage = (address: string, now: number) =>
   `faucet:${address}:${now}`;
 
-const hex = (bytes: Uint8Array) =>
-  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-
 /** The JSON body of a signed drip to `parachainId`. */
 export async function dripBody(
   recipient: DripRecipient,
@@ -58,7 +56,7 @@ export async function dripBody(
   now: number,
 ): Promise<string> {
   const message = dripMessage(recipient.address, now);
-  const signature = hex(
+  const signature = toHex(
     await recipient.signBytes(new TextEncoder().encode(message)),
   );
   return JSON.stringify({

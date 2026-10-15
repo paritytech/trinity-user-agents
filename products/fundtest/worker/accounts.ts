@@ -8,7 +8,8 @@ import {
   type EphemeralKeypairWithSecret,
 } from "@getsome/ephemeral";
 import { blake2b } from "@noble/hashes/blake2.js";
-import { fromHex, toHex, truapi, unwrap } from "./host";
+import { fromHex, toHex } from "../shared/hex";
+import { truapi, unwrap } from "./host";
 
 /** The entropy label of a session's account, in getcash's `onramp:eph:`
  *  form. The host derives the same seed for the same user, product and label,
@@ -56,6 +57,15 @@ export function topUpIdFor(
 export const paymentIdFor = (intent: string): `0x${string}` =>
   toHex(
     blake2b(new TextEncoder().encode(`fundtest:payment:${intent}`), {
+      dkLen: 32,
+    }),
+  );
+
+/** The id of the top-up refunding an outbound session whose payout failed,
+ *  fixed by its intent for the same reason as `paymentIdFor`. */
+export const refundIdFor = (intent: string): `0x${string}` =>
+  toHex(
+    blake2b(new TextEncoder().encode(`fundtest:refund:${intent}`), {
       dkLen: 32,
     }),
   );

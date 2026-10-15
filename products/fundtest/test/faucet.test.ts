@@ -3,6 +3,7 @@ import { getPublicKey, secretFromSeed, sign, verify } from "@scure/sr25519";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { AccountId } from "polkadot-api";
 import { FAUCET_URL } from "../shared/faucet";
+import { fromHex } from "../shared/hex";
 import {
   FaucetRefused,
   dripMessage,
@@ -19,9 +20,6 @@ const signer = getPolkadotSigner(publicKey, "Sr25519", (data) =>
   sign(secret, data),
 );
 const recipient = { address, signBytes: signer.signBytes };
-
-const fromHex = (hex: string) =>
-  Uint8Array.from(Buffer.from(hex.slice(2), "hex"));
 
 describe("requestDrip", () => {
   // The faucet takes the signed form without a captcha only when the message

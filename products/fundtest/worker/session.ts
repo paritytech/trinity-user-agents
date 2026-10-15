@@ -6,7 +6,9 @@
 // at that checkpoint. Every action a resumed phase can repeat is safe to
 // repeat: top-up and payment ids are fixed by the session, so the host answers
 // a repeat with `AlreadyExists`; the faucet drips an address once; and a
-// report the host already took is refused as `OutOfOrder`.
+// report the host already took is refused as `OutOfOrder`. A session stopped
+// by an error it cannot settle is handed out again later and resumes the same
+// way.
 
 import type {
   FundingAssignment,
@@ -22,8 +24,10 @@ import { TOKENS } from "@getsome/core";
 import type { EphemeralKeypairWithSecret } from "@getsome/ephemeral";
 import type { ScreenAction, SessionView } from "../shared/channel";
 import { FAUCET_PERMISSION } from "../shared/faucet";
+import { toHex } from "../shared/hex";
 import {
   paymentIdFor,
+  refundIdFor,
   reserveAccount,
   sessionAccount,
   topUpIdFor,
@@ -46,8 +50,8 @@ import {
   HostCallError,
   describe,
   firstOf,
+  isTransient,
   sleep,
-  toHex,
   truapi,
   unwrap,
 } from "./host";
@@ -63,7 +67,7 @@ import {
   CLAIM_UNIT,
   type CryptoSymbol,
 } from "./onchain";
-import { priceOf, termsOfQuoteId, type QuoteTerms } from "./quotes";
+import { payoutOf, priceOf, termsOfQuoteId, type QuoteTerms } from "./quotes";
 import { readSaved, writeSaved, type Saved } from "./saved";
 import {
   forgetSession,
@@ -87,6 +91,20 @@ const MAX_TOP_UPS = 3;
 const PAST_ETA_MS = 60_000;
 /** How long a faucet drip may take to land on Asset Hub Next. */
 const DRIP_ARRIVAL_MS = 5 * 60_000;
+/** Times a failure that may clear by itself is retried, a tick apart, before
+ *  the session stops and is handed out again later. */
+const RETRY_ATTEMPTS = 50;
+/** Times a report the host failed to take is made again before the session
+ *  stops and is handed out again later. */
+const REPORT_ATTEMPTS = 8;
+/** Longest wait between two tries of a report. */
+const MAX_REPORT_RETRY_MS = 30_000;
+/** Times an update after the release is made again while the host may not
+ *  have marked the session released yet. */
+const RELEASED_REPORT_ATTEMPTS = 10;
+/** Failed payout attempts the `payout-retry` trigger makes before one goes
+ *  through. */
+const PAYOUT_RETRIES = 2;
 
 /** A failure the session ends on rather than retries. */
 class SessionFailure extends Error {
@@ -138,9 +156,6 @@ export class Session {
   private readonly saved: Saved;
   private readonly abort = new AbortController();
   private cancelRequested = false;
-  /** Set once `run` has returned, including after an error it could not
-   *  report, when nothing is left to act on a cancel. */
-  private stopped = false;
   /** Whether part of a crypto deposit has reached the session account. */
   private fundsSeen = false;
   private account: Promise<EphemeralKeypairWithSecret> | undefined;
@@ -183,20 +198,26 @@ export class Session {
   /** The user asked to cancel. Honoured while nothing has moved. */
   cancel(): void {
     this.cancelRequested = true;
-    if (this.cancellable && this.stopped) void this.end({ tag: "Cancelled" });
-    else if (this.cancellable) this.abort.abort();
+    if (this.cancellable) this.abort.abort();
     else
       console.info(
         `[fundtest] ${this.intent}: cancel ignored, funds are moving`,
       );
   }
 
-  /** Runs the session to its end, reporting as it goes. Answers `killed`
-   *  when it stopped at its kill point, so the worker can be restarted. */
-  async run(): Promise<"ended" | "killed"> {
+  /** Runs the session until it ends, reporting as it goes. Answers `killed`
+   *  when it stopped at its kill point, and `retry` when an error it cannot
+   *  settle stopped it: either way the worker hands it out again and it
+   *  resumes from its last checkpoint. */
+  async run(): Promise<"ended" | "killed" | "retry"> {
     try {
-      if (this.terms.direction === "In") await this.inbound();
-      else await this.outbound();
+      try {
+        if (this.terms.direction === "In") await this.inbound();
+        else await this.outbound();
+      } catch (error) {
+        await this.settle(error);
+      }
+      return "ended";
     } catch (error) {
       if (error instanceof Killed) {
         console.info(`[fundtest] ${this.intent}: ${error.message}`);
@@ -204,54 +225,87 @@ export class Session {
       }
       if (error instanceof SessionOver) {
         console.info(`[fundtest] ${this.intent}: ${error.message}`);
-      } else if (error instanceof Aborted && this.cancelRequested) {
-        await this.end({ tag: "Cancelled" });
-      } else if (error instanceof SessionFailure) {
-        await this.end(error.reason);
-      } else if (
-        error instanceof FundingShortfallError ||
-        error instanceof FundingHeldError
-      ) {
-        await this.end(
-          other(
-            error instanceof FundingHeldError ? "held" : "shortfall",
-            error.message,
-          ),
-        );
-      } else {
-        console.error(`[fundtest] ${this.intent} stopped: ${describe(error)}`);
+        return "ended";
       }
-    } finally {
-      this.stopped = true;
+      console.error(
+        `[fundtest] ${this.intent} stopped and resumes later: ${describe(error)}`,
+      );
+      return "retry";
     }
-    return "ended";
+  }
+
+  /** Ends the session on an error that decides its outcome, and rethrows any
+   *  other. */
+  private async settle(error: unknown): Promise<void> {
+    if (error instanceof Aborted && this.cancelRequested)
+      return this.end({ tag: "Cancelled" });
+    if (error instanceof SessionFailure) return this.end(error.reason);
+    if (
+      error instanceof FundingShortfallError ||
+      error instanceof FundingHeldError
+    ) {
+      return this.end(
+        other(
+          error instanceof FundingHeldError ? "held" : "shortfall",
+          error.message,
+        ),
+      );
+    }
+    throw error;
   }
 
   private async end(reason: FundingFailure): Promise<void> {
-    await this.report({ tag: "Failed", value: { reason } }).catch(
-      (error: unknown) =>
-        console.error(
-          `[fundtest] ${this.intent}: could not report the failure: ${describe(error)}`,
-        ),
-    );
+    await this.report({ tag: "Failed", value: { reason } });
     await forgetSession(this.intent);
   }
 
-  private async report(update: FundingUpdate): Promise<void> {
+  /**
+   * Reports `update`, trying again with a growing wait while the host fails to
+   * take it. A session the host no longer has ends quietly. `OutOfOrder`
+   * means the host took the update before a restart, or, for a failure, that
+   * funds already move and the host decides the outcome.
+   *
+   * An update after the release (`afterRelease`) may reach the host before it
+   * has marked the session released, which it answers with `OutOfOrder` too,
+   * so that refusal is retried for a while before it counts as taken.
+   */
+  private async report(
+    update: FundingUpdate,
+    afterRelease = false,
+  ): Promise<void> {
     const client = await truapi();
-    try {
-      await unwrap(
-        client.fundingProvider.report({ intent: this.intent, update }),
-        `report ${update.tag}`,
-      );
-    } catch (error) {
-      if (error instanceof HostCallError && error.tag === "OutOfOrder") {
-        console.info(
-          `[fundtest] ${this.intent}: ${update.tag} already reported`,
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await unwrap(
+          client.fundingProvider.report({ intent: this.intent, update }),
+          `report ${update.tag}`,
         );
         return;
+      } catch (error) {
+        const tag = error instanceof HostCallError ? error.tag : undefined;
+        if (tag === "OutOfOrder") {
+          if (afterRelease && attempt < RELEASED_REPORT_ATTEMPTS) {
+            await sleep(CONFIG.reportRetryMs);
+            continue;
+          }
+          console.info(
+            update.tag === "Failed"
+              ? `[fundtest] ${this.intent}: the host keeps the session, funds are moving`
+              : `[fundtest] ${this.intent}: ${update.tag} already reported`,
+          );
+          return;
+        }
+        if (tag === "NotFound") throw new SessionOver();
+        if (!isTransient(error) || attempt + 1 >= REPORT_ATTEMPTS) throw error;
+        const wait = Math.min(
+          CONFIG.reportRetryMs * 2 ** attempt,
+          MAX_REPORT_RETRY_MS,
+        );
+        console.warn(
+          `[fundtest] ${this.intent}: ${update.tag} not reported, trying again in ${wait} ms: ${describe(error)}`,
+        );
+        await sleep(wait);
       }
-      throw error;
     }
   }
 
@@ -297,10 +351,13 @@ export class Session {
     return this.account;
   }
 
-  /** Runs `work` until it succeeds, waiting a tick after each failure. A
-   *  session failure and the pipeline's terminal errors are not retried. */
+  /** Runs `work` until it succeeds, waiting a tick after each failure that
+   *  may clear by itself. A host refusal, a programming error, a session
+   *  failure and the pipeline's terminal errors are not retried, and neither
+   *  is a failure that outlasts `RETRY_ATTEMPTS`: the session then stops and
+   *  is handed out again later. */
   private async retrying<T>(what: string, work: () => Promise<T>): Promise<T> {
-    for (;;) {
+    for (let attempt = 1; ; attempt++) {
       try {
         return await work();
       } catch (error) {
@@ -311,7 +368,9 @@ export class Session {
           error instanceof SessionFailure ||
           error instanceof FaucetRefused ||
           error instanceof FundingShortfallError ||
-          error instanceof FundingHeldError
+          error instanceof FundingHeldError ||
+          !isTransient(error) ||
+          attempt >= RETRY_ATTEMPTS
         ) {
           throw error;
         }
@@ -340,6 +399,24 @@ export class Session {
     return this.trigger === "slow"
       ? Number(ETA_SECS[this.terms.rail]) * 1_000 + PAST_ETA_MS
       : normalMs;
+  }
+
+  /** How long the simulated card or bank payment takes to arrive. */
+  private fiatArrivalMs(): number {
+    return this.arrivalMs(
+      this.terms.rail === "Card" ? CONFIG.cardArrivalMs : CONFIG.bankArrivalMs,
+    );
+  }
+
+  /** How long the simulated payout takes, its failed attempts included. */
+  private payoutWaitMs(): number {
+    const attempts = this.trigger === "payout-retry" ? PAYOUT_RETRIES + 1 : 1;
+    return attempts * this.arrivalMs(CONFIG.payoutMs);
+  }
+
+  /** Waits until `at`, Unix ms. */
+  private waitUntil(at: number): Promise<void> {
+    return sleep(Math.max(0, at - Date.now()), this.signal);
   }
 
   private get reference(): string {
@@ -411,11 +488,9 @@ export class Session {
       else await this.awaitFiatPayment();
     }
     if (state.phase === "fiat-sent") {
-      const normal =
-        this.terms.rail === "Card"
-          ? CONFIG.cardArrivalMs
-          : CONFIG.bankArrivalMs;
-      await sleep(this.arrivalMs(normal), this.signal);
+      await this.waitUntil(
+        state.arrivesAt ?? Date.now() + this.fiatArrivalMs(),
+      );
       await this.report({
         tag: "PaymentReceived",
         value: { finalized: false },
@@ -508,6 +583,7 @@ export class Session {
       throw new SessionFailure({ tag: "Declined" });
     }
     if (isBank && !hadAmount) await reportBankDeposit();
+    state.arrivesAt = Date.now() + this.fiatArrivalMs();
     state.phase = "fiat-sent";
     await this.save();
   }
@@ -805,30 +881,16 @@ export class Session {
       }
       const { id } = claim;
       const amount = BigInt(claim.amount);
-      await this.retrying("top-up", async () => {
-        try {
-          await unwrap(
-            client.payment.topUp({
-              amount,
-              source: {
-                tag: "PrivateKey",
-                value: { sr25519SecretKey: topUpSecret(account) },
-              },
-              id,
-            }),
-            "payment.topUp",
+      try {
+        await this.topUp(id, amount, topUpSecret(account));
+      } catch (error) {
+        if (error instanceof HostCallError && error.tag === "InvalidSource") {
+          throw new SessionFailure(
+            other("invalid_source", "The host refused the session account"),
           );
-        } catch (error) {
-          if (error instanceof HostCallError && error.tag === "AlreadyExists")
-            return;
-          if (error instanceof HostCallError && error.tag === "InvalidSource") {
-            throw new SessionFailure(
-              other("invalid_source", "The host refused the session account"),
-            );
-          }
-          throw error;
         }
-      });
+        throw error;
+      }
       await this.killAt(3);
       await this.report({ tag: "Crediting", value: { topUpId: id, amount } });
       const outcome = await this.retrying("top-up status", () =>
@@ -857,6 +919,32 @@ export class Session {
     }
   }
 
+  /** Tops the user up by `amount` from the account `secret` signs for, under
+   *  `id`. A repeat after a restart is answered as already made. */
+  private async topUp(
+    id: `0x${string}`,
+    amount: bigint,
+    secret: `0x${string}`,
+  ): Promise<void> {
+    const client = await truapi();
+    await this.retrying("top-up", async () => {
+      try {
+        await unwrap(
+          client.payment.topUp({
+            amount,
+            source: { tag: "PrivateKey", value: { sr25519SecretKey: secret } },
+            id,
+          }),
+          "payment.topUp",
+        );
+      } catch (error) {
+        if (error instanceof HostCallError && error.tag === "AlreadyExists")
+          return;
+        throw error;
+      }
+    });
+  }
+
   // Outbound -----------------------------------------------------------------
 
   private async outbound(): Promise<void> {
@@ -872,9 +960,9 @@ export class Session {
     }
     if (state.phase === "awaiting-user") {
       const amount = this.requireAmount();
-      const quote = priceOf({ ...this.terms, amount });
+      const payout = payoutOf({ ...this.terms, amount });
       await writeView(
-        this.view(quote === undefined ? {} : { price: quote.toString() }),
+        this.view(payout === undefined ? {} : { price: payout.toString() }),
       );
       const action = await presentScreen(
         this.intent,
@@ -905,10 +993,16 @@ export class Session {
         if (tag !== "AlreadyExists") throw error;
       }
       await this.killAt(1);
-      await this.report({
-        tag: "Collecting",
-        value: { paymentId: id, amount },
-      });
+      try {
+        await this.report({
+          tag: "Collecting",
+          value: { paymentId: id, amount },
+        });
+      } catch (error) {
+        // A resumed session may find the payment already completed, which
+        // released the session: its status decides what comes next.
+        if (!(error instanceof SessionOver)) throw error;
+      }
       state.phase = "collecting";
       await this.save();
       await this.killAt(2);
@@ -928,21 +1022,40 @@ export class Session {
         ),
       );
       // The host ends the session from the payment's outcome. A released
-      // withdrawal keeps its saved state until the payout is reported, so a
-      // restart resumes the payout rather than looking for the payment again.
-      state.phase = paid ? "paying-out" : "done";
-      if (paid) await this.save();
+      // withdrawal keeps its saved state until the payout and any refund are
+      // reported, so a restart resumes the payout rather than looking for the
+      // payment again.
+      if (paid) {
+        state.payoutAt = Date.now() + this.payoutWaitMs();
+        state.phase = "paying-out";
+        await this.save();
+      } else {
+        state.phase = "done";
+      }
     }
     if (state.phase === "paying-out") {
-      await this.payOut();
+      if (await this.payOut(state.payoutAt)) {
+        state.refund = {
+          id: refundIdFor(this.intent),
+          amount: this.requireAmount().toString(),
+        };
+        state.phase = "refunding";
+        await this.save();
+      } else {
+        state.phase = "done";
+      }
+    }
+    if (state.phase === "refunding") {
+      await this.refund(state.refund!);
       state.phase = "done";
     }
     await forgetSession(this.intent);
   }
 
-  /** The simulated payout to the destination the user typed. The CASH stays
-   *  with the collection account. */
-  private async payOut(): Promise<void> {
+  /** The simulated payout to the destination the user typed, due at
+   *  `payoutAt`. The CASH stays with the reserve account. Answers whether the
+   *  payout failed. */
+  private async payOut(payoutAt: number | undefined): Promise<boolean> {
     const client = await truapi();
     const operation = await client.worker
       .beginOperation({ label: `fundtest payout ${this.intent}` })
@@ -951,24 +1064,31 @@ export class Session {
         () => undefined,
       );
     try {
-      await reportAfterRelease(this.intent, { tag: "Converting" });
+      await this.report({ tag: "Converting" }, true);
       await this.killAt(3);
       if (this.trigger === "payout-retry") {
         for (let attempt = 0; attempt < PAYOUT_RETRIES; attempt++) {
           await sleep(this.arrivalMs(CONFIG.payoutMs), this.signal);
-          await reportAfterRelease(this.intent, { tag: "PayoutRetrying" });
+          await this.report({ tag: "PayoutRetrying" }, true);
         }
       }
-      await sleep(this.arrivalMs(CONFIG.payoutMs), this.signal);
-      await reportPayout(
-        this.intent,
-        this.trigger === "refund"
-          ? {
-              outcome: "failed",
-              reason: "The receiving bank returned the payout",
-            }
-          : { outcome: "paid-out" },
+      await this.waitUntil(payoutAt ?? Date.now() + this.payoutWaitMs());
+      const failed = this.trigger === "refund";
+      await this.report(
+        {
+          tag: "Payout",
+          value: {
+            outcome: failed
+              ? {
+                  tag: "Failed",
+                  value: { reason: "The receiving bank returned the payout" },
+                }
+              : { tag: "PaidOut" },
+          },
+        },
+        true,
       );
+      return failed;
     } finally {
       if (operation !== undefined)
         await client.worker.endOperation({ id: operation }).match(
@@ -977,60 +1097,20 @@ export class Session {
         );
     }
   }
-}
 
-/** How a payout went. */
-type PayoutOutcome =
-  | { outcome: "paid-out" }
-  | { outcome: "failed"; reason: string };
-
-/**
- * Reports a released outbound session's payout. The host marks the session
- * released only once the user's payment completes, so a `NotFound` or an
- * out-of-order refusal right after it is retried briefly.
- */
-async function reportPayout(
-  intent: string,
-  payout: PayoutOutcome,
-): Promise<void> {
-  const outcome =
-    payout.outcome === "paid-out"
-      ? ({ tag: "PaidOut" } as const)
-      : ({ tag: "Failed", value: { reason: payout.reason } } as const);
-  await reportAfterRelease(intent, { tag: "Payout", value: { outcome } });
-}
-
-/**
- * Reports an update on a released outbound session: `Converting` while the
- * payout is prepared, `PayoutRetrying` at each failed attempt, then `Payout`. The host marks the session released only
- * once the user's payment completes, so a `NotFound` right after it is
- * retried briefly; `OutOfOrder` means it was already reported before a
- * restart.
- */
-async function reportAfterRelease(
-  intent: string,
-  update: FundingUpdate,
-): Promise<void> {
-  const client = await truapi();
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await unwrap(
-        client.fundingProvider.report({ intent, update }),
-        `report ${update.tag}`,
-      );
-      return;
-    } catch (error) {
-      if (!(error instanceof HostCallError)) throw error;
-      if (error.tag === "OutOfOrder") return;
-      if (error.tag !== "NotFound" || attempt >= RELEASED_REPORT_ATTEMPTS)
-        throw error;
-      await sleep(RELEASED_REPORT_RETRY_MS);
-    }
+  /** Refunds a failed payout from the reserve account, which holds the CASH
+   *  the session collected, then names the top-up for the host. The top-up's
+   *  id was fixed before it is made, so a repeat after a restart is answered
+   *  as already made. */
+  private async refund(refund: {
+    id: `0x${string}`;
+    amount: string;
+  }): Promise<void> {
+    const amount = BigInt(refund.amount);
+    await this.topUp(refund.id, amount, topUpSecret(await reserveAccount()));
+    await this.report(
+      { tag: "Refunding", value: { topUpId: refund.id, amount } },
+      true,
+    );
   }
 }
-
-const RELEASED_REPORT_ATTEMPTS = 10;
-/** Failed payout attempts the `payout-retry` trigger makes before one goes
- *  through. */
-const PAYOUT_RETRIES = 2;
-const RELEASED_REPORT_RETRY_MS = 1_000;

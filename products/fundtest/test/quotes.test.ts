@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { FundingQuoteAsk } from "@parity/truapi";
 import {
   answerAsk,
+  payoutOf,
   priceOf,
   quoteIdOf,
   termsOfQuoteId,
@@ -143,5 +144,30 @@ describe("quote ids", () => {
         amount: 25n * CASH,
       }),
     ).toBe(2_510n);
+  });
+
+  // The payout screen shows what the user receives, so it must match the
+  // outbound quote the user chose, fees taken out rather than added.
+  test("pay out what the outbound quote receives", () => {
+    const answer = answerAsk(
+      ask({ direction: "Out", rail: "Bank", amount: 100n * CASH }),
+      NOW,
+    );
+    expect(
+      payoutOf({
+        direction: "Out",
+        rail: "Bank",
+        asset: "EUR",
+        amount: 100n * CASH,
+      }),
+    ).toBe(answer.tag === "Quoted" ? answer.value.quote.receiveAmount : -1n);
+    expect(
+      payoutOf({
+        direction: "Out",
+        rail: "Bank",
+        asset: "EUR",
+        amount: 100n * CASH,
+      }),
+    ).toBe(9_790n);
   });
 });
