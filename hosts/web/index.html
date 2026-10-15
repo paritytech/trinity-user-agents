@@ -289,6 +289,12 @@
         <div id="product-frame" class="product-frame">
           <div id="product-slot" class="product-slot">
             <section
+              id="chat-screen"
+              class="chat-screen"
+              aria-label="Chat"
+              hidden
+            ></section>
+            <section
               id="pocket-screen"
               class="pocket-screen"
               aria-label="Pocket"
@@ -297,6 +303,7 @@
           </div>
           <nav id="dock" class="dock" aria-label="Host navigation">
             <button type="button" data-destination="chat">
+              <span class="dock-badge" data-badge hidden></span>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   d="M4 5.5h16v10H10.5L6 19v-3.5H4z"

@@ -13,12 +13,15 @@
     "test:browser": "bun test browser --timeout 180000"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.4.0",
+    "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.2.0",
     "@parity/truapi": "file:../../js/packages/truapi",
     "@parity/truapi-debugger": "file:../../js/packages/truapi-debugger",
     "@parity/truapi-host": "file:../../js/packages/truapi-host",
     "@parity/truapi-provider": "file:../../js/packages/truapi-provider",
     "@scure/bip39": "^2.0.0",
+    "@scure/sr25519": "^2.4.0",
     "neverthrow": "^8.2.0"
   },
   "devDependencies": {

@@ -199,14 +199,13 @@ lacks them: open the host in the system browser.
 
 ### The dock
 
-A dock inside the product rectangle opens **Chat**, **Browse** and **Pocket**, as a phone host's tab bar does. Chat and
-Browse are ordinary products opened the way the address bar opens it. Pocket is a screen the host draws itself. This is
-a first step towards a full host shell: Chat and Browse are product SPAs today, and neither is a host-owned surface.
+A dock inside the product rectangle opens **Chat**, **Browse** and **Pocket**, as a phone host's tab bar does. Browse is
+an ordinary product opened the way the address bar opens it. Chat and Pocket are screens the host draws itself.
 
-- **What each opens.** On Paseo Next v2, Chat opens `chat-spa-verbosity.paseo` and Browse opens `browse.paseo`. An
-  address opened while Chat or Browse is selected becomes that destination's product, kept per network in this browser
-  (`truapi-web-signing-host:dock:v1`, addresses only, none that carry a secret). An address typed over Pocket opens as a
-  product of its own and leaves the Pocket screen.
+- **What each opens.** On Paseo Next v2, Browse opens `browse.paseo`. An address opened while Browse is selected becomes
+  its product, kept per network in this browser (`truapi-web-signing-host:dock:v1`, addresses only, none that carry a
+  secret). An address typed over Chat or Pocket opens as a product of its own and leaves the screen. The Chat SPA is
+  still a product: open `chat-spa-verbosity.paseo` in the address bar.
 - **Products keep running behind.** Choosing another destination hides the product in front and keeps its frame, its
   channel to the core and its page state. The dock marks a destination with a green dot while its product runs. A hidden
   product can still raise a permission prompt, which names the product that asks. A reload, and any change of session
@@ -229,6 +228,48 @@ a first step towards a full host shell: Chat and Browse are product SPAs today, 
   - The artwork and texture are the native drawables, and the fonts are bundled, so nothing is fetched.
   - `payment.balanceSubscribe` still answers `Unsupported`, so a product sees no balance either. See
     [Not supported](#not-supported).
+- **The Chat screen.** See [Chat](#chat).
+
+### Chat
+
+Chat is an experimental, host-drawn screen. It is not a product and adds nothing to TrUAPI. It is written from reading
+the Polkadot app's one-to-one protocol. It has received requests and control messages from the iOS app, but it is not
+yet known to interoperate with the app in every respect.
+
+- **Runs with the session.** Signing in starts chat for that wallet, network and identity, whichever screen is in front,
+  and signing out, switching wallet or network, or reloading stops it. There is one engine and one connection per
+  session; it reconnects with a growing delay when the connection drops. Messages arrive only while the tab is open.
+  Accepting, declining, sending and retrying publish when the user does them, and received messages are acknowledged as
+  they arrive. Chat does not run for the public development phrase, because anyone can hold that identity.
+- **Keys.** At sign-in, the page derives the identity account (sr25519, `//product//uid.<suffix>/index(0)`) and the
+  X25519 chat key from the wallet's entropy in `src/chat/keys.ts`, and stays off if either differs from what the core
+  reports for the session. The keys and every key agreement live in the page, not in the core. The page is not isolated
+  from a product opened by name on this origin (see [Trust model](#trust-model)), and the phrase they come from is
+  stored unencrypted.
+- **What it does.** It reads requests addressed to the identity, opens and verifies them (version 1, and version 2 with
+  its identity proof), accepts or declines them, sends a version 1 request to a lite username or a `0x` account id, and
+  exchanges text on the pairwise session with acknowledgements, one request outstanding per direction. A push token
+  (kind 1) and device changes (kinds 17 and 18) are read and acknowledged but not shown or kept, as the apps do not show
+  them. Other message kinds show as a placeholder with their kind number.
+- **Where keys come from.** A peer's chat key and username are read from Asset Hub `DotnsGateway.AccountNames` and from
+  the People chain `Resources.Consumers` (its `identifier_key`), and a username's account from `LiteLabelOwner` and
+  `Resources.UsernameOwnerOf`. App builds that register through the People chain leave no Asset Hub record, so either is
+  used. When both name a key or an account and they differ, neither is used. A stored request whose sender had no key is
+  looked up again each time the store delivers it. The identity's own allowance is the People chain
+  `:statement_allowance:` entry.
+- **One device.** The host announces no device key, so a peer would talk to it pairwise. It accepts with the older
+  `ChatAccepted` message (kind 14), not the app's current `DeviceChatAccepted` (kind 20). Whether current app builds
+  treat it as acceptance is not verified. It does not open multi-device envelopes, pair with a phone, sync history or
+  share an identity with another device.
+- **Storage.** Conversations are kept in this browser's `localStorage` per network and wallet
+  (`truapi-web-signing-host:network:<id>:chat:<wallet>:v1`).
+- **Writes.** Published statements are signed by the identity and need a statement allowance. Requests are signed and
+  published by the identity itself, not by the anonymous per-request account the app uses when it holds a notification
+  slot.
+- **What is tested.** Checked against an outside source: the chat key against the core's pinned Rust value, the identity
+  account and chat key against the running core, and the Asset Hub keys and value layout against live storage. Tested
+  only against this code: the request, message, session and statement codecs and the engine, by round trips between two
+  copies of it. No captured app traffic and no exchange with a Polkadot app.
 
 ### Differences from the native hosts
 
@@ -411,8 +452,9 @@ catch a broken host, not a hostile product.
 `npm run test:browser` is a headless-Chrome smoke test of the host page. It needs the linked packages and both WASM
 bundles built (see [Run it](#run-it)) and a Chromium: install one with `npx playwright-core install chromium`, or set
 `CHROMIUM_PATH`. It starts the host with Vite on loopback, a counting target server and product fixtures, stands in for
-Asset Hub and the Bulletin gateway inside the browser context, and signs in with a public test phrase. It touches no
-live chain and no real wallet. It checks that:
+Asset Hub and the Bulletin gateway inside the browser context, and signs in with a public test phrase. It uses no real
+wallet and writes to no chain. The Chat check signs in with a synthetic phrase and closes every WebSocket the page
+opens, so the light client reaches no chain. It checks that:
 
 - a name opens from an archive under the host's own path, in a frame whose storage does not hold the host's wallets, and
   a root-relative script link in the product is answered from the archive;
@@ -420,8 +462,11 @@ live chain and no real wallet. It checks that:
 - a URL product opens on its own origin, and the host refuses its own origin;
 - opening the menu or inspector, or resizing the product, does not reload it;
 - an entered product id is shown as entered;
-- the dock keeps a destination's product running while another is in front, resumes it with its page state, and ends
-  every held product when the wallet changes;
+- the dock keeps Browse's product running while a host screen is in front, resumes it with its page state, and ends the
+  held product when the wallet changes;
+- Chat does not run or store anything for the public development phrase;
+- Chat starts at sign-in while another screen is in front, with no chain connection, derives the same identity account
+  and chat key as the core, has no on or off controls, and stops at sign-out;
 - Pocket is drawn by the host as the native two cards, and gives the digital dollar no amount.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
@@ -440,6 +485,9 @@ and layout on narrow screens.
 - `src/dotns.ts`, `src/address.ts`: name lookup and the address bar's grammar.
 - `src/shell.ts`: the dock's destinations and saved addresses, and what a product's `navigateTo` turns into.
   `src/pocket.ts`, `src/pocket-screen.ts`: the Pocket cards and how the screen draws them.
+- `src/chat/`: the chat engine. `gate.ts` refuses the public development phrase, `keys.ts` derives the keys,
+  `protocol.ts` and `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC, `directory.ts` the chain
+  reads, `store.ts` the saved conversations and `engine.ts` ties them together. `src/chat-screen.ts` draws the Chat screen.
 - `src/archive/`: CAR, UnixFS and CID verification and unpacking.
 - `src/sandbox/`, `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The plugin
   bundles them as static files, which the build emits and the dev server also answers.
@@ -452,10 +500,11 @@ and layout on narrow screens.
 - Gating of a product's own network, device or media requests. They follow the browser.
 - Byte-range requests and non-UTF-8 HTML from a name's archive.
 - Versioned hosted releases of this host, which would let a product be tested against a chosen TrUAPI version.
-- Host-owned Chat and Contacts, and a Coinage engine. The dock opens Chat and Browse as products, and the Pocket screen
-  has no digital dollar balance and opens no card. The host passes no `chat`, `contacts`, `pocket` or payment callbacks,
-  so the core answers those calls `Unsupported`. A contact picker needs `ContactsPlatform` (`contacts` and
-  `pickContact`) and a list of contacts the host owns. Live OS permission status is not provided either.
+- Contacts, a Coinage engine, and Chat beyond one device and text. The Pocket screen has no digital dollar balance and
+  opens no card. The host's Chat is not offered to products: the host passes no `chat`, `contacts`, `pocket` or payment
+  callbacks, so the core answers those calls `Unsupported`. Chat has no phone pairing, history sync, multi-device
+  envelopes, attachments, reactions or calls. A contact picker needs `ContactsPlatform` (`contacts` and `pickContact`)
+  and a list of contacts the host owns. Live OS permission status is not provided either.
 - Several products in front at once. One product is in front, and the others run hidden behind it.
 - Keeping held products across a reload or a session change.
 - Worker products. Products run as `App`.

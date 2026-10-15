@@ -72,6 +72,7 @@ import {
   type ProductDestination,
 } from "./shell.js";
 import { drawPocket } from "./pocket-screen.js";
+import { ChatScreen } from "./chat-screen.js";
 import { openProduct, type OpenProduct } from "./product.js";
 import {
   notOpenableText,
@@ -157,6 +158,18 @@ const productDetails = element("product-details");
 const productFrame = element("product-frame");
 const productSlot = element("product-slot");
 const pocketScreen = element("pocket-screen");
+const chatBadge = document.querySelector<HTMLElement>(
+  '#dock [data-destination="chat"] [data-badge]',
+);
+const chatScreen = new ChatScreen(
+  element("chat-screen"),
+  localStorage,
+  (pendingRequests) => {
+    if (chatBadge === null) return;
+    chatBadge.hidden = pendingRequests === 0;
+    chatBadge.textContent = String(pendingRequests);
+  },
+);
 const dockButtons = DESTINATIONS.map((destination) => ({
   destination,
   button: document.querySelector<HTMLButtonElement>(
@@ -504,7 +517,7 @@ function renderProduct(): void {
     : "";
   productDetails.textContent = details;
   productMore.hidden = details === "";
-  renderPocket();
+  renderHostScreens();
   renderControls();
   void refreshProductAllowance();
 }
@@ -517,7 +530,10 @@ function renderDock(): void {
     button.disabled = !ready;
     if (!isProductDestination(id)) {
       button.dataset.live = "false";
-      button.title = "Pocket: this wallet's identity and balance";
+      button.title =
+        id === "chat"
+          ? "Chat: this wallet's conversations, kept by the host"
+          : "Pocket: this wallet's identity and balance";
       continue;
     }
     button.dataset.live = String(
@@ -544,13 +560,43 @@ function renderDock(): void {
       : "Enter a name or URL above. The host remembers it for this tab.";
 }
 
-/** Show or hide the Pocket screen. It is drawn once, the first time it is shown. */
-function renderPocket(): void {
-  const visible = destination === "pocket";
-  document.body.dataset.surface = visible ? "pocket" : "product";
-  pocketScreen.hidden = !visible;
-  if (visible && pocketScreen.childElementCount === 0)
+/**
+ * Show or hide the screens the host draws itself. Pocket is drawn once, the
+ * first time it is shown; Chat draws itself from its engine.
+ */
+function renderHostScreens(): void {
+  const surface =
+    destination === "pocket" || destination === "chat"
+      ? destination
+      : "product";
+  document.body.dataset.surface = surface;
+  pocketScreen.hidden = surface !== "pocket";
+  if (surface === "pocket" && pocketScreen.childElementCount === 0)
     pocketScreen.replaceChildren(...drawPocket());
+  chatScreen.show(surface === "chat");
+}
+
+/** Give the Chat screen the signed-in wallet's session, or none. */
+function syncChatSession(): void {
+  const access = chainAccess;
+  const wallet = activeWallet;
+  if (lastAuthState.tag !== "Connected" || access === null || wallet === null) {
+    chatScreen.setSession(null);
+    return;
+  }
+  const { identityAccountId, chatPublicKey, fullUsername, liteUsername } =
+    lastAuthState.value;
+  chatScreen.setSession({
+    walletId: wallet.id,
+    entropy: wallet.entropy,
+    network: activeNetwork.id,
+    networkSuffix: access.networkSuffix,
+    identityAccountId: identityAccountId ?? undefined,
+    chatPublicKey: chatPublicKey ?? undefined,
+    username: fullUsername ?? liteUsername ?? undefined,
+    chain: access.chain,
+    genesis: access.genesis,
+  });
 }
 
 const accountStatusList = element("account-status-rows");
@@ -893,6 +939,7 @@ function renderSession(state: AuthState): void {
     renderWallets();
   }
   trackChainAccount(state);
+  syncChatSession();
   renderAccountStatus();
   sessionLine.title = "";
   switch (state.tag) {
@@ -1056,11 +1103,15 @@ function rememberFront(): void {
  */
 function selectDestination(next: Destination): Promise<void> {
   return serial(async (runtime) => {
-    if (destination === next && (product !== null || next === "pocket")) return;
+    if (
+      destination === next &&
+      (product !== null || !isProductDestination(next))
+    )
+      return;
     if (destination !== next) leaveFront();
     destination = next;
     if (!isProductDestination(next)) {
-      // The address bar names a product, and Pocket is not one.
+      // The address bar names a product, and a host screen is not one.
       addressInput.value = "";
       renderAddress();
       renderProduct();
@@ -1367,8 +1418,8 @@ function openAddress(): void {
   if (entered && overrideOrigin !== null && overrideOrigin !== scopeOf(address))
     log(`product id ${productId} now applies to ${scopeOf(address)}`);
   void serial((runtime) => {
-    // An address typed over the Pocket screen opens as a product of its own.
-    if (destination === "pocket") destination = null;
+    // An address typed over a host screen opens as a product of its own.
+    if (!isProductDestination(destination)) destination = null;
     return openResolved(runtime, address, productId, entered);
   });
   chrome.dismissCovering();

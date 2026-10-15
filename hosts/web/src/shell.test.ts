@@ -22,16 +22,13 @@ function memory(): Pick<Storage, "getItem" | "setItem"> & {
 }
 
 describe("dock addresses", () => {
-  // Pocket is a screen the host draws, so it has no product address to keep.
-  test("start with the published products and keep none for Pocket", () => {
-    expect(defaultAddresses("paseo")).toEqual({
-      chat: "chat-spa-verbosity.paseo",
-      browse: "browse.paseo",
-    });
+  // Chat and Pocket are screens the host draws, so they have no product address to keep.
+  test("start with the published products and keep none for Chat or Pocket", () => {
+    expect(defaultAddresses("paseo")).toEqual({ browse: "browse.paseo" });
   });
 
   test("start empty on a network with no known names", () => {
-    expect(defaultAddresses("previewnet")).toEqual({ chat: "", browse: "" });
+    expect(defaultAddresses("previewnet")).toEqual({ browse: "" });
   });
 
   test("keep what a destination was last pointed at, per network", () => {
@@ -47,8 +44,8 @@ describe("dock addresses", () => {
   // existed shares nothing with it by accident and nothing is renamed later.
   test("use the shared key prefix of the host's other storage", () => {
     const storage = memory();
-    saveAddress(storage, "paseo", "chat", "other.paseo");
-    saveAddress(storage, "previewnet", "chat", "other.testnet");
+    saveAddress(storage, "paseo", "browse", "other.paseo");
+    saveAddress(storage, "previewnet", "browse", "other.testnet");
     expect([...storage.values.keys()].sort()).toEqual([
       "truapi-web-signing-host:dock:v1",
       "truapi-web-signing-host:network:previewnet:dock:v1",
@@ -62,31 +59,22 @@ describe("dock addresses", () => {
     expect(loadAddresses(storage, "paseo").browse).toBe("browse.paseo");
   });
 
-  // A dock saved before Pocket became a host screen still carries a pocket entry.
+  // A dock saved before Chat and Pocket became host screens still carries their entries.
   test("ignore a saved address for a destination the host draws itself", () => {
     const storage = memory();
     storage.setItem(
       "truapi-web-signing-host:dock:v1",
       '{"chat":"a.paseo","pocket":"http://localhost:5192/"}',
     );
-    expect(loadAddresses(storage, "paseo")).toEqual({
-      chat: "a.paseo",
-      browse: "browse.paseo",
-    });
+    expect(loadAddresses(storage, "paseo")).toEqual({ browse: "browse.paseo" });
   });
 
   test("fall back to the defaults when the saved value is unreadable", () => {
     const storage = memory();
     storage.setItem("truapi-web-signing-host:dock:v1", "{oops");
     expect(loadAddresses(storage, "paseo")).toEqual(defaultAddresses("paseo"));
-    storage.setItem(
-      "truapi-web-signing-host:dock:v1",
-      '{"chat":7,"browse":"b.paseo"}',
-    );
-    expect(loadAddresses(storage, "paseo")).toEqual({
-      ...defaultAddresses("paseo"),
-      browse: "b.paseo",
-    });
+    storage.setItem("truapi-web-signing-host:dock:v1", '{"browse":7}');
+    expect(loadAddresses(storage, "paseo")).toEqual(defaultAddresses("paseo"));
   });
 });
 
@@ -156,10 +144,7 @@ describe("resolveNavigation", () => {
 });
 
 describe("destinationOf", () => {
-  const addresses = {
-    chat: "chat-spa-verbosity.paseo",
-    browse: "browse.paseo",
-  };
+  const addresses = { browse: "browse.paseo" };
 
   test("finds the destination that already holds a product", () => {
     expect(destinationOf("browse.paseo", addresses, PASEO)).toBe("browse");

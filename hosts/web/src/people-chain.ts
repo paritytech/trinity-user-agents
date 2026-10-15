@@ -20,7 +20,7 @@ import { Reader } from "./scale-reader.js";
  */
 
 /** `twox128("Resources") ++ twox128("Consumers")`. */
-const CONSUMERS_PREFIX =
+export const CONSUMERS_PREFIX =
   "2111e0df19de9563b58301e5f7e0074311ab70ef474cf12409dfe509d5efe3b2";
 /** `twox128("PeopleLite") ++ twox128("LitePeople")`. */
 const LITE_PEOPLE_PREFIX =
