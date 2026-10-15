@@ -150,6 +150,8 @@ class ChatFeedViewModel @Inject constructor(
         feedSnapshot = feedSnapshot,
         origins = originDisplayResolver,
         screen = object : ChatProductRoomController.Screen {
+            override fun showPopup(selection: MessagePopUpSelection) = messagePopupSection.update { selection }
+
             override fun showMenu(type: ChatMenuType) = menuState.update { it.copy(isVisible = true, type = type) }
 
             override fun closeMenu() = onCloseMenu()
@@ -255,13 +257,15 @@ class ChatFeedViewModel @Inject constructor(
     }.stateInBackground(initialValue = persistentListOf())
 
     override val popupState = combine(
-        combineToPair(messagePopupSection, productRoom.messageMenu),
+        combine(messagePopupSection, productRoom.messageMenu, productRoom.reactionDetails, ::Triple),
         reactions,
         originDisplayResolver,
         messages,
         combineToPair(chatInputStateType, roomPolicy),
-    ) { (popupSelection, productMenu), reactions, originDisplayResolver, messagesList, (chatInputStateType, policy) ->
+    ) { (popupSelection, productMenu, productReactions), reactions, originDisplayResolver, messagesList, (chatInputStateType, policy) ->
         if (popupSelection == null) return@combine null
+        val answered = productReactions?.takeIf { popupSelection.type == MessagePopUpSelection.Type.REACTION_DETAILS }
+        if (answered?.messageId == popupSelection.messageId) return@combine answered
 
         messageUiMapper.constructPopUpState(
             selection = popupSelection,
@@ -571,9 +575,7 @@ class ChatFeedViewModel @Inject constructor(
                 messagePopupSection.update { null }
             }
 
-            is MessageAction.ShowReactionDetails -> {
-                messagePopupSection.update { MessagePopUpSelection.reactionDetails(action.message.id) }
-            }
+            is MessageAction.ShowReactionDetails -> productRoom.showReactionDetails(action.message.id)
 
             is MessageAction.ReplyPreviewTap -> launchUnit { jumpToMessage(action.messageId) }
             is MessageAction.ViewEditHistory -> {

@@ -13,12 +13,15 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessag
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
+import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessagePopUpUiState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.MessagePopUpSelection
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -35,6 +38,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 
 /**
@@ -60,6 +64,8 @@ class ChatProductRoomController(
 ) {
     /** What the controller asks of the room screen. */
     interface Screen {
+        fun showPopup(selection: MessagePopUpSelection)
+
         fun showMenu(type: ChatMenuType)
 
         fun closeMenu()
@@ -97,6 +103,14 @@ class ChatProductRoomController(
         ProductRoomUiState(toolbar = toolbar, participants = participants, participantSheet = sheet)
     }.stateIn(scope, SharingStarted.Eagerly, ProductRoomUiState.None)
 
+    private val _reactionDetails = MutableStateFlow<MessagePopUpUiState.ReactionsDetails?>(null)
+
+    /** Who reacted to a message, as the product answered it. */
+    val reactionDetails: StateFlow<MessagePopUpUiState.ReactionsDetails?> = _reactionDetails.asStateFlow()
+
+    @Volatile
+    private var reactionDetailsNotAvailable = false
+
     private val _messageMenu = MutableStateFlow<ProductMessageMenuState?>(null)
     val messageMenu: StateFlow<ProductMessageMenuState?> = _messageMenu.asStateFlow()
     private var messageMenuJob: Job? = null
@@ -119,6 +133,33 @@ class ChatProductRoomController(
             }
             _messageMenu.value = ProductMessageMenuState.Answered(message.id, menu, menu?.actions().orEmpty().resolveIcons())
         }
+    }
+
+    /** Who reacted to a message: the rows that the host keeps, or the answer of `reactions_query` (P6.5). */
+    fun showReactionDetails(messageId: ChatMessageId) {
+        scope.launch {
+            when (roomPolicy.first().reactionDetailsRoute(reactionDetailsNotAvailable)) {
+                ReactionDetailsRoute.LOCAL_ROWS -> screen.showPopup(MessagePopUpSelection.reactionDetails(messageId))
+                ReactionDetailsRoute.PRODUCT -> askReactionDetails(messageId)
+                ReactionDetailsRoute.NONE -> Unit
+            }
+        }
+    }
+
+    private suspend fun askReactionDetails(messageId: ChatMessageId) {
+        val querying = interactor.roomQuerying(chatId) ?: return
+        querying.reactions(chatId, messageId)
+            .onSuccess { reactions ->
+                val timestamp = feedSnapshot.first().messages.find { it.id == messageId }?.timestamp ?: 0L
+                val participantsById = participants.appearancesOf(reactions.map { it.participantId })
+                _reactionDetails.value = reactions.toReactionDetails(messageId, timestamp, participantsById)
+                screen.showPopup(MessagePopUpSelection.reactionDetails(messageId))
+            }
+            .onFailure { error ->
+                // `NotAvailable` is no failure: the room hides who reacted for the rest of the screen.
+                if (error is ProductChatQueryException.NotAvailable) reactionDetailsNotAvailable = true
+                Timber.d(error, "The room does not list who reacted")
+            }
     }
 
     /** Runs a product entry of the menu of a message. */

@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessag
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatReactionDetailModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
@@ -97,6 +98,9 @@ class DeferredProductWorker : ProductWorker {
 
     override suspend fun participantsByIds(roomId: ProductChatIdParameter, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> =
         withWorker { it.participantsByIds(roomId, participantIds) }
+
+    override suspend fun reactions(roomId: ProductChatIdParameter, messageId: String): Result<List<ChatReactionDetailModel>> =
+        withWorker { it.reactions(roomId, messageId) }
 
     override suspend fun participantMenu(roomId: ProductChatIdParameter, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =
         withWorker { it.participantMenu(roomId, entry) }

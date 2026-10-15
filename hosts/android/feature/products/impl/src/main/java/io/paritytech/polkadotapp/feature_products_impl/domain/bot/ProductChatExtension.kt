@@ -29,6 +29,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessag
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatReactionDetailModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
@@ -246,6 +247,11 @@ class ProductChatExtension(
             override suspend fun participantsByIds(chatId: ChatId, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> {
                 val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
                 return runningWorker.participantsByIds(room, participantIds)
+            }
+
+            override suspend fun reactions(chatId: ChatId, messageId: String): Result<List<ChatReactionDetailModel>> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.reactions(room, ProductMessageIds.product(messageId, chatId))
             }
 
             override suspend fun participantMenu(chatId: ChatId, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> {

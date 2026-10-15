@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessag
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatReactionDetailModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
@@ -69,6 +70,7 @@ import uniffi.truapi.ProductChatMessageActionsQueryRequest
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatParticipantActionsQueryRequest
 import uniffi.truapi.ProductChatParticipantsQueryRequest
+import uniffi.truapi.ProductChatReactionsQueryRequest
 import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
@@ -178,6 +180,13 @@ class TrUAPIChatWorker(
         query { execution ->
             val byIds = ChatParticipantsQuery.ByIds(participantIds)
             execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, byIds)).toResolved()
+        }
+
+    override suspend fun reactions(roomId: ProductChatIdParameter, messageId: String): Result<List<ChatReactionDetailModel>> =
+        query { execution ->
+            execution.chatReactionsQuery(ProductChatReactionsQueryRequest(roomId.value, messageId))
+                .reactions
+                .map { ChatReactionDetailModel(it.participantId, it.emoji) }
         }
 
     override suspend fun participantMenu(roomId: ProductChatIdParameter, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =

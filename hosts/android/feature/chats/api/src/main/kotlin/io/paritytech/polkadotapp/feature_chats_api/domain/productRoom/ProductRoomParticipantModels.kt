@@ -24,5 +24,8 @@ sealed interface ChatParticipantModel {
 /** A participant with the id that the product gives it in the room (`ChatParticipantEntry`). */
 data class ChatParticipantEntryModel(val participantId: String, val participant: ChatParticipantModel)
 
+/** One reaction of one participant to a message (`ChatReactionDetail`). */
+data class ChatReactionDetailModel(val participantId: String, val emoji: String)
+
 /** One page of participants, in the order of the product. A null [next] is the last page. */
 data class ProductParticipantsPage(val participants: List<ChatParticipantEntryModel>, val next: String?)

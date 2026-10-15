@@ -26,6 +26,10 @@ interface ProductChatQuerying {
     suspend fun participantsByIds(chatId: ChatId, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> =
         Result.failure(ProductChatQueryException.NotAvailable())
 
+    /** Who reacted to the message with id [messageId] of the room screen, in the order of the product. */
+    suspend fun reactions(chatId: ChatId, messageId: String): Result<List<ChatReactionDetailModel>> =
+        Result.failure(ProductChatQueryException.NotAvailable())
+
     /** The menu of one participant of the room. */
     suspend fun participantMenu(chatId: ChatId, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =
         Result.failure(ProductChatQueryException.NotAvailable())

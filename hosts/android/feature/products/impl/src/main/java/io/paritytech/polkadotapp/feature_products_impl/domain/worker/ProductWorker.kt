@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessag
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatReactionDetailModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
@@ -64,6 +65,10 @@ interface ProductWorker : JsEventDispatcher {
         Result.failure(ProductChatQueryException.Unavailable(cause = null))
 
     suspend fun participantsByIds(roomId: ProductChatIdParameter, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> =
+        Result.failure(ProductChatQueryException.Unavailable(cause = null))
+
+    /** Who reacted to the message with the product id [messageId] (`reactions_query`). */
+    suspend fun reactions(roomId: ProductChatIdParameter, messageId: String): Result<List<ChatReactionDetailModel>> =
         Result.failure(ProductChatQueryException.Unavailable(cause = null))
 
     suspend fun participantMenu(roomId: ProductChatIdParameter, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =

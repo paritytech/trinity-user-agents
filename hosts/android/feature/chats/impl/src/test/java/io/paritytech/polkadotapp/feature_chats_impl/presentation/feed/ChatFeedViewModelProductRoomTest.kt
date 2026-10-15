@@ -20,17 +20,21 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPartic
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantMenuModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatProductActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatReactionDetailModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageAction
+import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessagePopUpUiState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPagingState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatAvatar
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageOriginDisplay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
@@ -104,6 +108,7 @@ class ChatFeedViewModelProductRoomTest {
         every { subscribeMessages(roomId) } returns feed
         coEvery { getMessageOriginDisplayResolver(any()) } returns origins
         coEvery { roomQuerying(roomId) } returns querying
+        every { subscribeUserInputState(any()) } returns flowOf(ChatUserInputState.Nothing)
         coEvery { getLastRevealedTimestamp(any()) } returns null
         coEvery { productMessageMenu(any(), any(), any()) } returns Result.success(menu)
         coEvery { sendUserEvent(any(), any()) } returns Result.success(Unit)
@@ -264,6 +269,32 @@ class ChatFeedViewModelProductRoomTest {
 
         verify { clipboardService.setPrimaryClip(copy.address) }
         coVerify(exactly = 0) { querying.participantMenu(any(), any()) }
+    }
+
+    @Test
+    fun `who reacted comes from the product, and NotAvailable hides it for the rest of the screen`() = runBlocking<Unit> {
+        policy.value = ChatRoomPolicy.Defaults.copy(
+            offersReactionDetails = true,
+            productQueries = setOf(ChatRoomPolicy.ProductQuery.PARTICIPANTS),
+        )
+        coEvery { querying.reactions(any(), "message-1") } returnsMany listOf(
+            Result.success(listOf(ChatReactionDetailModel("alice", "👍"))),
+            Result.failure(ProductChatQueryException.NotAvailable()),
+        )
+        val model = viewModel()
+
+        model.onMessageAction(MessageAction.ShowReactionDetails(uiMessage()))
+
+        val details = withTimeout(5_000) { model.popupState.first { it is MessagePopUpUiState.ReactionsDetails } }
+            as MessagePopUpUiState.ReactionsDetails
+        assertEquals("Alice", details.reactionsByEmoji.single().reactions.single().authorName)
+
+        model.onMessageAction(MessageAction.DismissActionMenu)
+        model.onMessageAction(MessageAction.ShowReactionDetails(uiMessage()))
+        model.onMessageAction(MessageAction.ShowReactionDetails(uiMessage()))
+
+        coVerify(timeout = 5_000, exactly = 2) { querying.reactions(any(), "message-1") }
+        assertEquals(null, model.popupState.value)
     }
 
     private fun participant(id: String) =

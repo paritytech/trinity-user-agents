@@ -154,6 +154,13 @@ class ProductRoomParticipants(
 
     fun entryOf(participantId: String): ChatParticipantEntryModel? = directory.resolved.value[participantId]
 
+    /** The appearances of these participants, after the product resolved them when the room declares its participants. */
+    suspend fun appearancesOf(participantIds: Collection<String>): Map<String, ChatParticipantUiModel> {
+        if (declaration.value.declared) directory.resolveNow(participantIds)
+        val origins = origins.first()
+        return participantIds.toSet().associateWith { appearance(it, directory.resolved.value[it], origins) }
+    }
+
     private suspend fun appearance(participantId: String, entry: ChatParticipantEntryModel?, origins: MessageOriginDisplayResolver) =
         appearances.appearance(participantId, entry, origins, productOrigin)
 
