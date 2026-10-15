@@ -1813,7 +1813,7 @@ const DRIVERS = {
     let notice = await pickFile(stagingFile("s60-photo.png", () => noisePng(1024, 500, RUN_SEED + 60)), { notice: true });
     expect(findText(notice, /^Files over 1 MB sent in .* are stored on the public Bulletin chain/), "the notice names no product");
     note(`\`${await screenshot(scenarioById("S60"), "notice")}\``);
-    tapText(notice, "Cancel");
+    await tapNoticeButton(notice, "Cancel");
     await delay(3_000);
     expect(outboxEntries().length === 0, `Cancel kept ${outboxEntries().length} outbox entries`);
     expect(!stageLines(mark).length, "Cancel staged the attachment");
@@ -1822,7 +1822,7 @@ const DRIVERS = {
     mark = logMark();
     notice = await pickFile(stagingFile("s60-photo.png", () => noisePng(1024, 500, RUN_SEED + 60)), { notice: true });
     note("the notice shows again after Cancel");
-    tapText(notice, "Send");
+    await tapNoticeButton(notice, "Send");
     const staged = await waitStage(mark, "the staging after Send");
     note(`Send: ${staged.message}`);
     await deleteOutboxBubbles();
@@ -3246,6 +3246,26 @@ function resetPreimagePermission() {
     .then((line) => expect(line.message === "preimage permission reset", line.message));
 }
 
+/**
+ * Tap a button of the public-storage notice until the notice closes. The sheet can take a tap while it still slides
+ * in and ignore it, so the launcher taps again, at most three times, and notes each repeat.
+ */
+async function tapNoticeButton(screen, label) {
+  let current = screen;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    tapText(current, label);
+    const closed = await waitFor(() => !findText(parseUiNodes(uiDump(serial)), "Files over 1 MB are public"), {
+      timeoutMs: 6_000,
+      intervalMs: 500,
+      message: "the notice stays",
+    }).then(() => true, () => false);
+    if (closed) return;
+    observations.push(`${new Date().toISOString().slice(11, 19)} the notice stayed after a tap on ${label}; the launcher tapped it again`);
+    current = parseUiNodes(uiDump(serial));
+  }
+  throw new Error(`the notice stayed after three taps on ${label}`);
+}
+
 /** Write a file of the run and copy it into the Download folder of the device. */
 function stagingFile(name, make) {
   mkdirSync(stagingDir, { recursive: true });
@@ -3313,7 +3333,14 @@ async function pickFileOnce(name, { notice }) {
       const nodes = parseUiNodes(uiDump(serial));
       const found = nodes.find(pickerFile);
       if (found) return found;
-      const item = nodes.find(chooserItem);
+      // The first start of Google Photos asks for an account, which the emulator has not; Back leaves it.
+      if (findText(nodes, /^Choose your account/)) {
+        inputKeyEvent(serial, KEY.back);
+        tapped = 0;
+        return undefined;
+      }
+      // The document picker of Files lists the Download folder; Google Photos can ask for an account first.
+      const item = nodes.find((node) => chooserItem(node) && node.text === "Files") ?? nodes.find(chooserItem);
       if (item && Date.now() - tapped > 3_000) {
         inputTap(serial, item.center.x, item.center.y);
         tapped = Date.now();
