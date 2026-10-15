@@ -7,6 +7,9 @@ import io.paritytech.polkadotapp.database.model.ChatRequestSyncStateLocal
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRequest
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocal
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocalPeriod
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocalStatus
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocalVia
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -19,6 +22,8 @@ interface ChatRequestRepository {
     fun subscribeById(id: String): Flow<ChatRequest?>
 
     suspend fun updateStatus(id: String, status: ChatRequest.Status)
+
+    suspend fun updateDelivery(id: String, delivery: ChatRequest.Delivery)
 
     suspend fun delete(id: String)
 
@@ -51,6 +56,15 @@ class RealChatRequestRepository @Inject constructor(
 
     override suspend fun updateStatus(id: String, status: ChatRequest.Status) {
         chatRequestDao.updateStatus(id, status.toLocalStatus())
+    }
+
+    override suspend fun updateDelivery(id: String, delivery: ChatRequest.Delivery) {
+        chatRequestDao.updateDelivery(
+            id = id,
+            deliveryStatus = delivery.toLocalStatus(),
+            deliveredVia = delivery.toLocalVia(),
+            lastDeliveredPeriod = delivery.toLocalPeriod(),
+        )
     }
 
     override suspend fun delete(id: String) {

@@ -12,12 +12,29 @@ enum class CoinageArrangement {
 
     data class Result(
         val targets: List<Pair<CoinageScene.Coin, CoinageCoinField.Target>>,
-        /** What the view needs to be tall enough for. */
+        /** What the view needs to be tall enough for, the band below the coins included. */
         val height: Float,
         /** Where each partition's header sits, for the labels over the grid. */
         val blocks: List<CoinageGridLayout.Block>,
         /** How far each partition's run reaches across the strip, for the rule under it. */
-        val runs: List<CoinageStripLayout.Span>
+        val runs: List<CoinageStripLayout.Span>,
+        /** Where the band's top sits while a coin is picked, for the detail beside the coin. */
+        val focusTop: Float?,
+        /** How tall the coins alone are, before any band below them. */
+        val coinsHeight: Float
+    )
+
+    /**
+     * One coin picked out of the grid by a tap: drawn large at the left of a band, its detail beside it, and
+     * every other coin faded back where it is.
+     */
+    data class Focus(
+        val id: String,
+        /** How tall the band is: never less than the coin, taller if the detail needs it. */
+        val band: Float,
+        /** The part of the field on screen and clear of the bars, in field coordinates. */
+        val visibleTop: Float,
+        val visibleBottom: Float
     )
 
     companion object {
@@ -33,6 +50,16 @@ enum class CoinageArrangement {
          */
         const val GRID_LIFT = 40f
 
+        /** A face the figure can be read on, well past the sixty points the strip allows. */
+        const val FOCUS_DIAMETER = 112f
+        const val FOCUS_INSET = 8f
+
+        /** Clear of the grid, which it flies up out of and back into. */
+        const val FOCUS_LIFT = GRID_LIFT + 60f
+
+        /** The least a band can be: the picked coin with an inset above and below. */
+        const val FOCUS_BAND_MINIMUM = FOCUS_DIAMETER + FOCUS_INSET * 2
+
         /** The thickness `designs.json` carries for a coin whose row is missing. */
         private const val FALLBACK_THICKNESS = 0.075f
 
@@ -42,10 +69,67 @@ enum class CoinageArrangement {
             areaWidth: Float,
             areaHeight: Float,
             designs: List<CoinageAssetStore.Design>,
-            stripHeight: Float
-        ): Result = when (arrangement) {
-            STRIP -> strip(coins, areaWidth, designs, stripHeight)
-            GRID -> grid(coins, areaWidth, areaHeight)
+            stripHeight: Float,
+            focus: Focus?
+        ): Result {
+            val laid = when (arrangement) {
+                STRIP -> strip(coins, areaWidth, designs, stripHeight)
+                GRID -> grid(coins, areaWidth, areaHeight)
+            }
+
+            if (focus == null || coins.none { it.id == focus.id }) return laid
+
+            return picked(focus, laid)
+        }
+
+        /**
+         * Where the band's top goes for what is on screen now: below the coins when there is room for it
+         * there, so a short grid is never covered; otherwise floating at the bottom of the visible area, so
+         * the picked coin and its detail are in reach however far down a tall grid the page is. Asked again
+         * on every scroll.
+         */
+        fun bandTop(focus: Focus, coinsHeight: Float): Float {
+            val band = maxOf(focus.band, FOCUS_BAND_MINIMUM)
+            val bottom = focus.visibleBottom - FOCUS_INSET
+
+            return if (coinsHeight + band <= bottom) coinsHeight else maxOf(bottom - band, focus.visibleTop)
+        }
+
+        fun pickedCentreX(): Float = FOCUS_INSET + FOCUS_DIAMETER / 2
+
+        fun pickedCentreY(bandTop: Float): Float = bandTop + FOCUS_BAND_MINIMUM / 2
+
+        /** A band below the coins grows the field; one floating over them does not. */
+        fun fieldHeight(focus: Focus, coinsHeight: Float, bandTop: Float): Float =
+            maxOf(coinsHeight, bandTop + maxOf(focus.band, FOCUS_BAND_MINIMUM))
+
+        private fun picked(focus: Focus, laid: Result): Result {
+            val top = bandTop(focus, laid.height)
+            val targets = laid.targets.map { (coin, target) ->
+                coin to if (coin.id == focus.id) {
+                    target.copy(
+                        centreX = pickedCentreX(),
+                        centreY = pickedCentreY(top),
+                        height = FOCUS_DIAMETER,
+                        turn = 0f,
+                        tilt = 0f,
+                        thickness = 1f,
+                        luster = 1f,
+                        calm = 0f,
+                        lift = FOCUS_LIFT,
+                        recede = 0f
+                    )
+                } else {
+                    target.copy(recede = 1f)
+                }
+            }
+
+            return laid.copy(
+                targets = targets,
+                height = fieldHeight(focus, laid.height, top),
+                focusTop = top,
+                coinsHeight = laid.height
+            )
         }
 
         private fun design(coin: CoinageScene.Coin, designs: List<CoinageAssetStore.Design>) =
@@ -83,11 +167,21 @@ enum class CoinageArrangement {
                     wear = coin.wear,
                     // The strip skips the six-tap luster path; the grid does not.
                     luster = 0f,
-                    calm = CoinageStripLayout.edgeCalm(placement.turn)
+                    // Not calmed as the reference calms its edge-on coins: calming swaps the normal for a plain
+                    // radial one and fades the reeding, so a turned coin read as a flat band. The outlines and
+                    // the milling are the point of the rim, and wear has to read on it.
+                    calm = 0f
                 )
             }
 
-            return Result(targets = targets, height = height, blocks = emptyList(), runs = layout.partitions)
+            return Result(
+                targets = targets,
+                height = height,
+                blocks = emptyList(),
+                runs = layout.partitions,
+                focusTop = null,
+                coinsHeight = height
+            )
         }
 
         private fun grid(coins: List<CoinageScene.Coin>, areaWidth: Float, areaHeight: Float): Result {
@@ -119,7 +213,9 @@ enum class CoinageArrangement {
                 height = layout.height,
                 blocks = layout.blocks,
                 // The grid labels its blocks with headers of its own.
-                runs = emptyList()
+                runs = emptyList(),
+                focusTop = null,
+                coinsHeight = layout.height
             )
         }
     }

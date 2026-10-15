@@ -74,7 +74,7 @@ class TrUAPISessionStarter @Inject constructor(
 
         val kind = if (card != null) ProductExecutionKind.WIDGET else ProductExecutionKind.APP
         return bridge
-            .attach(runtime, productId, chainDirectory.resolve(), navigation, kind, card) { bootstrap ->
+            .attach(runtime, productId, chainDirectory.resolve(), navigation, kind, card = card) { bootstrap ->
                 provider.addWebViewSetup(installBootstrap(bootstrap))
             }
             .mapCatching { execution ->
