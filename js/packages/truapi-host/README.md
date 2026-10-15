@@ -361,6 +361,10 @@ disclose the product subtree, and `signRaw` asks for the `ChainSubmit`
 permission and a signing review. A CLI asks at its prompt. A host with a UI
 passes the full callback set instead, exactly as on the web.
 
+Call `runtime.dispose()` when done: the core's thread keeps the process alive
+until then. Install the package rather than bundling `./node` into a single
+file, since the worker thread and the WASM are loaded from files beside it.
+
 ## Session lifecycle
 
 The core owns the session; the host owns persistence. At boot the core restores
