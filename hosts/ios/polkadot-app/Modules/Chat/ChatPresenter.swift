@@ -283,7 +283,7 @@ private extension ChatPresenter {
                  .videoCall: false
             default: true
             }
-        }
+        } + (MainActor.assumeIsolated { productRoom?.headerMenuActions() } ?? [])
         let menu = menuActions.isEmpty ? nil : MainActor.assumeIsolated {
             wireframe.makeContactActionsMenu(
                 from: view,

@@ -14,6 +14,7 @@ final class LiquidGlassChatNavigationBarController: ChatNavigationBarControlling
     private var callActions: [ChatCallType] = []
     private var contactMenu: UIMenu?
     private var productToolbar: [UIBarButtonItem] = []
+    private var searchItem: UIBarButtonItem?
 
     init(
         navigationItem: UINavigationItem,
@@ -49,6 +50,11 @@ final class LiquidGlassChatNavigationBarController: ChatNavigationBarControlling
 
     func apply(productToolbar: [UIBarButtonItem]) {
         self.productToolbar = productToolbar
+        refreshRightBarButtonItems()
+    }
+
+    func apply(searchItem: UIBarButtonItem?) {
+        self.searchItem = searchItem
         refreshRightBarButtonItems()
     }
 
@@ -88,7 +94,8 @@ private extension LiquidGlassChatNavigationBarController {
     }
 
     func refreshRightBarButtonItems() {
-        let items = productToolbar + ChatCallBarButtons.make(for: callActions, onStartCall: onStartCall)
+        let items = productToolbar + [searchItem].compactMap { $0 }
+            + ChatCallBarButtons.make(for: callActions, onStartCall: onStartCall)
         navigationItem?.rightBarButtonItems = items.isEmpty ? nil : items
     }
 }

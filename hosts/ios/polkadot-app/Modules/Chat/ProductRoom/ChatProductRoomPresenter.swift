@@ -24,6 +24,10 @@ final class ChatProductRoomPresenter {
     let footerImageResolver: WidgetImageResolver
     let wireframe: ChatProductRoomWireframing
     let resolver: ChatResourceResolving
+    /// Changes the mute and the archive state of the room (P10.10). Nil shows no entries for them.
+    let userStates: ChatRoomUserStateServicing?
+    /// Searches the messages that the host stores (P10.5).
+    let searchService: ChatSearchServicing
     let logger: LoggerProtocol
 
     private(set) var policy: ChatRoomPolicy?
@@ -65,6 +69,8 @@ final class ChatProductRoomPresenter {
         wireframe: ChatProductRoomWireframing,
         resolver: ChatResourceResolving = ChatResourceResolver.shared,
         activityStore: ChatRoomActivityStoring = ChatRoomActivityStore.shared,
+        userStates: ChatRoomUserStateServicing? = RootDependencyLocator.getDependency(),
+        searchService: ChatSearchServicing = ChatSearchService(),
         logger: LoggerProtocol = Logger.shared
     ) {
         guard case let .chatExtension(productId, roomId?) = chatId else {
@@ -78,6 +84,8 @@ final class ChatProductRoomPresenter {
         self.footerImageResolver = footerImageResolver
         self.wireframe = wireframe
         self.resolver = resolver
+        self.userStates = userStates
+        self.searchService = searchService
         self.logger = logger
 
         participants = ChatParticipantDirectory(roomId: roomId, room: room, logger: logger)
@@ -125,6 +133,9 @@ final class ChatProductRoomPresenter {
 
         if previous?.toolbarActions != policy?.toolbarActions || previous == nil || participantsChanged {
             provideToolbar()
+        }
+        if previous == nil || previous?.offersSearch != policy?.offersSearch {
+            provideSearchAction()
         }
 
         loadParticipantsIfDeclared()

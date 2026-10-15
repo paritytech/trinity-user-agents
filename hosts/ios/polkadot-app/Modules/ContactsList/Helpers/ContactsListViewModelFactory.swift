@@ -10,6 +10,12 @@ protocol ContactsListViewModelMaking {
         assetDisplayInfo: AssetBalanceDisplayInfo,
         model: ChatListModel
     ) -> ContactsListViewLayout.ViewModel
+
+    /// The rooms and the messages that the search of the list found (P10.5).
+    func createSearchViewModel(
+        assetDisplayInfo: AssetBalanceDisplayInfo,
+        results: ChatListSearchResults
+    ) -> ContactsListViewLayout.ViewModel
 }
 
 final class ContactsListViewModelFactory {
@@ -43,53 +49,87 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
         assetDisplayInfo: AssetBalanceDisplayInfo,
         model: ChatListModel
     ) -> ContactsListViewLayout.ViewModel {
-        var identifiedContacts: [
-            IdentifiableContentConfiguration<String, DSChatListItemConfiguration>
-        ] = []
-
         // A thread room opens from the message that it answers, not from the list (07-LATER §9.2).
         let chats = model.establishedChats.filter { $0.chat.roomDeclarations?.features.threadOf == nil }
 
-        chats.forEach { chatWithPeerMetadata in
-            let chat = chatWithPeerMetadata.chat
-            let peerMetadata = chatWithPeerMetadata.peerMetadata
-            let preview = rowPreview(for: chatWithPeerMetadata, assetDisplayInfo: assetDisplayInfo)
-            let badge = rowBadge(for: chat)
+        return ContactsListViewLayout.ViewModel(
+            contactsById: chats.map { row(for: $0, assetDisplayInfo: assetDisplayInfo) },
+            pendingIncomingRequestCount: model.pendingIncomingRequestCount,
+            newIncomingRequestCount: model.newIncomingRequestCount,
+            archivedRow: model.archivedChatCount > 0
+                ? ChatListArchivedRowConfiguration(
+                    title: String(localized: .ChatExtension.listArchived),
+                    count: model.archivedChatCount
+                )
+                : nil
+        )
+    }
 
-            let avatarViewModel: AvatarViewModel = {
-                if let image = peerMetadata.icon.image {
-                    return .image(image)
-                }
-
-                let prefix = String(peerMetadata.name.prefix(1))
-                return .colored(text: prefix, colorSeed: chat.chatId.colorSeed)
-            }()
+    func createSearchViewModel(
+        assetDisplayInfo: AssetBalanceDisplayInfo,
+        results: ChatListSearchResults
+    ) -> ContactsListViewLayout.ViewModel {
+        let hits = results.hits.map { hit in
+            let excerpt = ChatSearchExcerpt(text: hit.hit.text, query: results.query)
             let configuration = DSChatListItemConfiguration(
                 dateFormatter: messageTimestampFormatter,
-                avatarViewModel: avatarViewModel,
-                icon: peerMetadata.icon.imageViewModel(using: productIconViewModelFactory),
-                sender: peerMetadata.name,
-                message: preview.text,
-                messageKind: preview.kind,
-                date: rowDate(for: chat),
-                hasReaction: badge.hasReaction,
-                unreadCount: badge.unreadCount,
-                badge: badge.productBadge,
-                isOngoing: preview.isOngoing,
-                accessibilityId: nil
+                avatarViewModel: avatarViewModel(for: hit.chat),
+                icon: hit.chat.peerMetadata.icon.imageViewModel(using: productIconViewModelFactory),
+                sender: hit.chat.peerMetadata.name,
+                message: excerpt.line,
+                date: Date.fromChatTimestamp(hit.hit.timestamp)
             )
-            let identifiable = IdentifiableContentConfiguration(
-                id: chat.identifier,
-                configuration: configuration
-            )
-            identifiedContacts.append(identifiable)
+            return IdentifiableContentConfiguration(id: hit.identifier, configuration: configuration)
         }
 
         return ContactsListViewLayout.ViewModel(
-            contactsById: identifiedContacts,
-            pendingIncomingRequestCount: model.pendingIncomingRequestCount,
-            newIncomingRequestCount: model.newIncomingRequestCount
+            contactsById: results.chats.map { row(for: $0, assetDisplayInfo: assetDisplayInfo) },
+            pendingIncomingRequestCount: 0,
+            newIncomingRequestCount: 0,
+            messageHits: ContactsListViewLayout.MessageHits(
+                title: String(localized: .ChatExtension.listSearchMessages),
+                hits: hits
+            )
         )
+    }
+}
+
+private extension ContactsListViewModelFactory {
+    func row(
+        for chatWithPeerMetadata: ChatWithPeerMetadata,
+        assetDisplayInfo: AssetBalanceDisplayInfo
+    ) -> IdentifiableContentConfiguration<String, DSChatListItemConfiguration> {
+        let chat = chatWithPeerMetadata.chat
+        let peerMetadata = chatWithPeerMetadata.peerMetadata
+        let preview = rowPreview(for: chatWithPeerMetadata, assetDisplayInfo: assetDisplayInfo)
+        let badge = rowBadge(for: chat)
+
+        let configuration = DSChatListItemConfiguration(
+            dateFormatter: messageTimestampFormatter,
+            avatarViewModel: avatarViewModel(for: chatWithPeerMetadata),
+            icon: peerMetadata.icon.imageViewModel(using: productIconViewModelFactory),
+            sender: peerMetadata.name,
+            message: preview.text,
+            messageKind: preview.kind,
+            date: rowDate(for: chat),
+            isMuted: chat.roomPolicy?.userState.isMuted(at: Date()) ?? false,
+            hasReaction: badge.hasReaction,
+            unreadCount: badge.unreadCount,
+            badge: badge.productBadge,
+            isOngoing: preview.isOngoing,
+            accessibilityId: nil
+        )
+        return IdentifiableContentConfiguration(id: chat.identifier, configuration: configuration)
+    }
+
+    func avatarViewModel(for chatWithPeerMetadata: ChatWithPeerMetadata) -> AvatarViewModel {
+        let peerMetadata = chatWithPeerMetadata.peerMetadata
+        if let image = peerMetadata.icon.image {
+            return .image(image)
+        }
+
+        let prefix = String(peerMetadata.name.prefix(1))
+        return .colored(text: prefix, colorSeed: chatWithPeerMetadata.chat.chatId.colorSeed)
     }
 }
 

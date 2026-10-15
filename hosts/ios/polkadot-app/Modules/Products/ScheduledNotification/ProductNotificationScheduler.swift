@@ -22,16 +22,22 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
     private let storageFacade: StorageFacadeProtocol
     private let notificationCenter: UNUserNotificationCenter
     private let mapper: AnyCoreDataMapper<ScheduledNotificationEntry, CDScheduledNotification>
+    private let userStates: ChatRoomUserStateReading
+    private let notificationAdding: (UNNotificationRequest) async throws -> Void
     private let logger: LoggerProtocol
 
     init(
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
         notificationCenter: UNUserNotificationCenter = .current(),
+        userStates: ChatRoomUserStateReading? = nil,
+        notificationAdding: ((UNNotificationRequest) async throws -> Void)? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.storageFacade = storageFacade
         self.notificationCenter = notificationCenter
         mapper = AnyCoreDataMapper(ScheduledNotificationMapper())
+        self.userStates = userStates ?? ChatRoomUserStateReader(storageFacade: storageFacade)
+        self.notificationAdding = notificationAdding ?? Self.systemAdding(notificationCenter, logger: logger)
         self.logger = logger
     }
 
@@ -39,6 +45,11 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
         productId: ProductId,
         request: ScheduledNotificationRequest
     ) async throws -> UInt32 {
+        if await opensMutedRoom(productId: productId, request: request) {
+            logger.debug("Notification of \(productId) into a muted room shows nothing")
+            return Self.hashId(productId: productId)
+        }
+
         try await reconcileStaleEntries()
 
         let allRepository = createRepository()
@@ -76,7 +87,7 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
             trigger: trigger
         )
 
-        try await notificationCenter.add(notificationRequest)
+        try await notificationAdding(notificationRequest)
         try await allRepository.saveOperation({ [entry] }, { [] }).asyncExecute()
 
         logger.debug("Scheduled push notification for \(productId)")
@@ -118,6 +129,39 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
 // MARK: - Private
 
 private extension ProductNotificationScheduler {
+    /// Gives a notification to the OS. Under the truapi E2E harness that grants notifications, the app has no OS
+    /// permission and the OS never answers, so the harness gets a log line in place of the notification.
+    static func systemAdding(
+        _ notificationCenter: UNUserNotificationCenter,
+        logger: LoggerProtocol
+    ) -> (UNNotificationRequest) async throws -> Void {
+        guard !TrUAPIE2ENotificationGrant.isOn else {
+            return { logger.debug("[e2e] notification \($0.identifier) given to the OS") }
+        }
+        return { try await notificationCenter.add($0) }
+    }
+
+    /// True when the deeplink of the notification opens a room of the product that the user muted until after the
+    /// notification shows (D34). The OS shows a scheduled notification, so a mute that starts after the schedule
+    /// does not stop it.
+    func opensMutedRoom(productId: ProductId, request: ScheduledNotificationRequest) async -> Bool {
+        guard
+            let deeplink = request.deeplink,
+            let link = ChatRoomLink(deeplink),
+            link.productId == productId
+        else {
+            return false
+        }
+
+        let showsAt = request.scheduledAtMs.map { Date.fromChatTimestamp($0) } ?? Date()
+        do {
+            return try await userStates.state(of: link.chatId).isMuted(at: max(showsAt, Date()))
+        } catch {
+            logger.warning("Notification of \(productId) shows: the room state is not readable: \(error)")
+            return false
+        }
+    }
+
     func createRepository() -> AnyDataProviderRepository<ScheduledNotificationEntry> {
         AnyDataProviderRepository(
             storageFacade.createRepository(

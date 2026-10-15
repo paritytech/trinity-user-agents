@@ -32,6 +32,16 @@ extension ContactsListWireframe: ContactsListWireframeProtocol {
         performChatShow(from: view, for: model)
     }
 
+    func showChat(from view: ContactsListViewProtocol?, for model: ChatOpenModel, showing messageId: Chat.MessageId) {
+        guard let chat = ChatViewFactory.createChatView(with: model, flowState: flowState) else {
+            return
+        }
+
+        view?.controller.navigationController?.pushViewController(chat.controller, animated: true)
+        // The room screen scrolls to the message when the message arrives in its window.
+        (chat as? ChatProductRoomViewProtocol)?.scrollToMessage(messageId)
+    }
+
     func open(url: URL) {
         UIApplication.shared.open(url)
     }
@@ -47,5 +57,17 @@ extension ContactsListWireframe: ContactsListWireframeProtocol {
             chatRequestList.controller,
             animated: true
         )
+    }
+
+    func showArchivedChats(from view: ContactsListViewProtocol?) {
+        guard let archived = ChatArchiveViewFactory.createView(flowState: flowState) else {
+            return
+        }
+
+        view?.controller.navigationController?.pushViewController(archived.controller, animated: true)
+    }
+
+    func showMuteOptions(from view: ContactsListViewProtocol?, onSelect: @escaping (Chat.MuteDuration) -> Void) {
+        view?.controller.present(ChatMuteOptions.sheet(onSelect: onSelect), animated: true)
     }
 }

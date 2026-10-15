@@ -48,6 +48,7 @@ extension ChatMessageDeletionMapper: CoreDataMapperProtocol {
         entity.contentType = Int16(tombstone.contentType.rawValue)
         entity.contentKey = nil
         entity.content?.data = try tombstone.scaleEncoded()
+        entity.searchableText = ChatSearchText.stored(for: tombstone)
         entity.markModified()
 
         for reaction in (entity.reactions as? Set<CDChatMessageReaction>) ?? [] {

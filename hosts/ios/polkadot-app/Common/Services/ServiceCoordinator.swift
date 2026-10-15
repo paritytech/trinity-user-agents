@@ -309,12 +309,17 @@ extension ServiceCoordinator {
         // The seam of the room events: the mute and archive actions record through it (P10.10).
         let roomEventPublisher = TrUAPIChatRoomEventPublisher(runtimeProvider: truapiRuntimeProvider)
         RootDependencyLocator.setDependency(roomEventPublisher as ChatRoomEventPublishing)
+        let userStateRecorder = ChatRoomUserStateRecorder(
+            storageFacade: UserDataStorageFacade.shared,
+            publisher: roomEventPublisher,
+            logger: logger
+        )
+        RootDependencyLocator.setDependency(userStateRecorder as ChatRoomUserStateRecording)
         RootDependencyLocator.setDependency(
-            ChatRoomUserStateRecorder(
-                storageFacade: UserDataStorageFacade.shared,
-                publisher: roomEventPublisher,
-                logger: logger
-            ) as ChatRoomUserStateRecording
+            ChatRoomUserStateService(
+                reader: ChatRoomUserStateReader(storageFacade: UserDataStorageFacade.shared),
+                recorder: userStateRecorder
+            ) as ChatRoomUserStateServicing
         )
         CoreDurableRecoveryTask.shared.attach(
             truapiRuntimeProvider,

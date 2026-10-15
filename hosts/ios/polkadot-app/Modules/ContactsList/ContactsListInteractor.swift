@@ -1,6 +1,7 @@
 import Foundation
 import AsyncExtensions
 import ChainRegistry
+import os
 
 final class ContactsListInteractor {
     weak var presenter: ContactsListInteractorOutputProtocol?
@@ -8,7 +9,14 @@ final class ContactsListInteractor {
     let chatContactDataProviderFactory: ChatContactDataProviderMaking
     let chatExtensionsRegistry: ChatExtensionsRegistering
     let networkStatusObserver: NetworkStatusObserving
+    let scope: ChatListScope
+    let userStates: ChatRoomUserStateServicing?
+    let searchService: ChatSearchServicing
     let logger: LoggerProtocol
+
+    /// The chats that the search of the list goes through: every chat that a list shows, archived rooms included.
+    private let searchableChats = OSAllocatedUnfairLock<[ChatWithPeerMetadata]>(initialState: [])
+    private var searchTask: Task<Void, Never>?
 
     private weak var foregroundVisibilityReporter: PushForegroundVisibilityReporting?
     private var task: Task<Void, Never>?
@@ -18,17 +26,24 @@ final class ContactsListInteractor {
         chatExtensionsRegistry: ChatExtensionsRegistering,
         networkStatusObserver: NetworkStatusObserving,
         foregroundVisibilityReporter: PushForegroundVisibilityReporting?,
+        scope: ChatListScope = .main,
+        userStates: ChatRoomUserStateServicing? = nil,
+        searchService: ChatSearchServicing = ChatSearchService(),
         logger: LoggerProtocol
     ) {
         self.chatContactDataProviderFactory = chatContactDataProviderFactory
         self.chatExtensionsRegistry = chatExtensionsRegistry
         self.networkStatusObserver = networkStatusObserver
         self.foregroundVisibilityReporter = foregroundVisibilityReporter
+        self.scope = scope
+        self.userStates = userStates
+        self.searchService = searchService
         self.logger = logger
     }
 
     deinit {
         task?.cancel()
+        searchTask?.cancel()
     }
 }
 
@@ -48,6 +63,39 @@ extension ContactsListInteractor: ContactsListInteractorInputProtocol {
 
     func entryRoute(for model: ChatOpenModel) async -> ChatExtensionEntryRoute {
         await chatExtensionsRegistry.entryRoute(for: model)
+    }
+
+    func search(text: String) {
+        searchTask?.cancel()
+
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            searchTask = nil
+            Task { @MainActor [weak self] in self?.presenter?.didReceive(searchResults: nil) }
+            return
+        }
+
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.searchTypingPause)
+            guard !Task.isCancelled, let self else { return }
+
+            let results = await searchResults(for: query)
+            guard !Task.isCancelled else { return }
+            await presenter?.didReceive(searchResults: results)
+        }
+    }
+
+    func apply(_ change: ChatRoomUserStateChange, to chatId: Chat.Id) {
+        guard let userStates else { return }
+
+        Task { [weak self, logger] in
+            do {
+                try await userStates.apply(change, to: chatId)
+            } catch {
+                logger.error("The user state of \(chatId.rawRepresentation) did not change: \(error)")
+                await self?.presenter?.didReceive(error: error)
+            }
+        }
     }
 }
 
@@ -99,8 +147,21 @@ private extension ContactsListInteractor {
         var pendingIncomingRequestCount = 0
 
         var nonIncomingRequestChats: [ChatWithPeerMetadata] = []
+        var archivedChatCount = 0
+        var searchable: [ChatWithPeerMetadata] = []
 
         ChatsComparator.chatListOrder(chats).forEach { chat in
+            if let listed = listedChat(chat) {
+                searchable.append(listed)
+            }
+
+            guard scope.shows(chat) else {
+                if chatExtensionsRegistry.hasChatExtension(for: chat.chatId.extensionId ?? "") {
+                    archivedChatCount += 1
+                }
+                return
+            }
+
             switch chat.peer {
             case let .person(contact) where contact.hasIncomingChatRequest:
                 pendingIncomingRequestCount += 1
@@ -120,12 +181,68 @@ private extension ContactsListInteractor {
             }
         }
 
+        searchableChats.withLock { $0 = searchable }
+
         let model = ChatListModel(
             establishedChats: nonIncomingRequestChats,
             pendingIncomingRequestCount: pendingIncomingRequestCount,
-            newIncomingRequestCount: newIncomingRequestCount
+            newIncomingRequestCount: newIncomingRequestCount,
+            archivedChatCount: scope == .main ? archivedChatCount : 0
         )
 
         await presenter?.didReceive(model: model)
+    }
+}
+
+private extension ContactsListInteractor {
+    static let searchTypingPause = Duration.milliseconds(200)
+    /// How many messages the search of the list shows.
+    static let searchHitLimit = 50
+
+    /// The chat as a list shows it, or nil for a chat that no list shows: a chat request, a room whose product the
+    /// app does not run, a thread room.
+    func listedChat(_ chat: Chat.LocalModel) -> ChatWithPeerMetadata? {
+        switch chat.peer {
+        case let .person(contact) where contact.hasIncomingChatRequest:
+            return nil
+        case .person:
+            return chat.chatWithPeerMetadata(using: chatExtensionsRegistry)
+        case let .chatExtension(extensionId, _):
+            guard
+                chatExtensionsRegistry.hasChatExtension(for: extensionId),
+                chat.roomDeclarations?.features.threadOf == nil
+            else {
+                return nil
+            }
+            return chat.chatWithPeerMetadata(using: chatExtensionsRegistry)
+        }
+    }
+
+    func searchResults(for query: String) async -> ChatListSearchResults {
+        let chats = searchableChats.withLock { $0 }
+        let normalizedQuery = ChatSearchText.normalized(query)
+        let named = chats.filter { ChatSearchText.normalized($0.peerMetadata.name).contains(normalizedQuery) }
+
+        // A product-source room keeps its messages in the product: the list matches it by its name only.
+        let stored = chats.filter { $0.chat.roomPolicy?.messageStore != .product }
+        let byChatId = Dictionary(stored.map { ($0.chat.chatId, $0) }, uniquingKeysWith: { first, _ in first })
+
+        let hits: [ChatSearchHit]
+        do {
+            hits = try await searchService.searchMessages(
+                matching: query,
+                in: Set(byChatId.keys),
+                limit: Self.searchHitLimit
+            )
+        } catch {
+            logger.error("The search of the chat list failed: \(error)")
+            hits = []
+        }
+
+        return ChatListSearchResults(
+            query: query,
+            chats: named,
+            hits: hits.compactMap { hit in byChatId[hit.chatId].map { ChatListMessageHit(hit: hit, chat: $0) } }
+        )
     }
 }
