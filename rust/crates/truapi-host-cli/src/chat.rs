@@ -71,11 +71,10 @@ pub const PRODUCT: &str = "product";
 const SENT_A_MESSAGE: &str = "Sent a message";
 
 /// The Chat features this host serves from end to end, from
-/// `CHAT_FEATURE_NAMES`. The page has no attachment input, no renderer and no
-/// room links, so `inline_attachments`, `custom_bodies`, `custom_footer` and
-/// `room_links` are not here. A P10 item adds its name when the page serves
-/// it.
-pub const CLI_CHAT_FEATURES: [&str; 11] = [
+/// `CHAT_FEATURE_NAMES`. The page has no renderer and no room links, so
+/// `custom_bodies`, `custom_footer` and `room_links` are not here. A P10 item
+/// adds its name when the page serves it.
+pub const CLI_CHAT_FEATURES: [&str; 13] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -85,6 +84,8 @@ pub const CLI_CHAT_FEATURES: [&str; 11] = [
 	"suggestions",
 	"commands",
 	"activity",
+	"inline_attachments",
+	"preimage_attachments",
 	"bot_personas",
 	"mute_archive",
 ];
@@ -2693,6 +2694,13 @@ mod tests {
 			.expect("the host lists its features");
 
 		assert_eq!(listed.names, CLI_CHAT_FEATURES.map(str::to_string));
+		// In the order of the RFC, as the core gives them to the product, so
+		// the page's line and the product's read compare as they are.
+		let order: Vec<_> = truapi::platform::CHAT_FEATURE_NAMES
+			.iter()
+			.filter(|name| CLI_CHAT_FEATURES.contains(name))
+			.collect();
+		assert_eq!(order, CLI_CHAT_FEATURES.iter().collect::<Vec<_>>());
 		assert!(
 			CLI_CHAT_FEATURES
 				.iter()

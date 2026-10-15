@@ -282,7 +282,7 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   participant (`participant_actions_query`), and the toolbar: two actions
   inline, the rest behind an overflow button. A deeplink asks before it opens.
 - **Footer.** `Input` with its hint and the photo, video, file and payment
-  buttons it declares (the page sends no attachments), `Empty`, or `Custom` as a
+  buttons it declares, `Empty`, or `Custom` as a
   placeholder box; above it the activity line, the quick replies (hidden while
   you type), and the `/` catalogue of the room's commands. Only a declared
   command name becomes a `Command`; any other text is a message. An empty room
@@ -291,12 +291,20 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   line: the feature names this host lists in `capabilities`
   (`product_source_rooms`, `reaction_details`, `participants`, `message_menus`,
   `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`,
-  `bot_personas`, `mute_archive`) and both attachment bounds. The host keeps what a product declares with
+  `inline_attachments`, `preimage_attachments`, `bot_personas`,
+  `mute_archive`) and both attachment bounds. The host keeps what a product declares with
   `set_room_features` whole, and the room header lists each declared feature,
   marked "not served" where the host does not serve it. The host also keeps the
   meta of each message (`set_message_meta`), the call of each room
   (`set_room_call`), the personas of the product (`register_bot`, where a repeat
   replaces the name and icon) and the mute and archive state of each room.
+- **Attachments.** The photo, video and file buttons pick a file. Up to 1 MiB
+  it travels inline. Above it, in a room whose features declare
+  `preimage_attachments`, the core stages it as one Bulletin preimage that the
+  product's own allowance pays for, and the message carries the key; the core
+  refuses an undeclared room, and the page refuses a file above 8 MiB before
+  it reads it. The live Bulletin chain stores at most 2 MiB in one
+  transaction, which the core reads and enforces.
 - **Bot personas.** A message or an activity line from `bot:<id>` draws with
   the name and icon of the persona `<id>` the product registered, with no
   `participants_query`; the **Bots** list of the rooms pane shows each persona.
@@ -338,7 +346,8 @@ then a `room`, `roomDeleted`, `bot`, `message` or `notification` event as each l
 `workers` whenever a worker connects or disconnects. The page sends one
 operation per thing a person does: `post`, `edit`, `delete`, `react`, `seen`,
 `retry`, `trigger`, `command`, `messageAction`, `participantAction`, `toolbar`,
-`suggestion`, `open`, `close` and `userState` (which mutes or archives a room
+`suggestion`, `open`, `close`, `attach` (a photo, video or file in base64,
+inline or staged) and `userState` (which mutes or archives a room
 and sends `UserStateChanged` to `chat.roomEventsSubscribe()`; `mutedForever`
 mutes with no end), and the queries
 `messages`, `reactions`, `participants`, `messageActions` and

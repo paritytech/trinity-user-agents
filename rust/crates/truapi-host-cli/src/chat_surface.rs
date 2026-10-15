@@ -22,6 +22,7 @@ use std::{
 };
 
 use anyhow::Result;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::future::BoxFuture;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -33,18 +34,19 @@ use tokio::{
 };
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use truapi::{
-	CallError, ProductRuntime, ProductRuntimeError, Subscription,
+	CallError, ChatStageRejection, ProductRuntime, ProductRuntimeError, Subscription,
 	latest::{
-		ActionTrigger, ChatBuiltInMessageAction, ChatCommand, ChatEvent, ChatMessageBody,
-		ChatMessageMenu, ChatPageAnchor, ChatParticipant, ChatParticipantEntry,
-		ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction, ChatRoomEvent,
-		ChatUserAction, HostChatActionSubscribeItem, HostChatRoomEventsSubscribeItem,
-		ProductChatMessageActionsQueryItem, ProductChatMessageActionsQueryRequest,
-		ProductChatMessagesQueryItem, ProductChatMessagesQueryRequest,
-		ProductChatParticipantActionsQueryItem, ProductChatParticipantActionsQueryRequest,
-		ProductChatParticipantsQueryItem, ProductChatParticipantsQueryRequest,
-		ProductChatQueryError, ProductChatReactionsQueryItem, ProductChatReactionsQueryRequest,
-		ProductChatUserActionError, ProductChatUserActionItem, ProductChatUserActionRequest,
+		ActionTrigger, ChatBuiltInMessageAction, ChatCommand, ChatEvent, ChatMediaItem,
+		ChatMediaMeta, ChatMessageBody, ChatMessageMenu, ChatPageAnchor, ChatParticipant,
+		ChatParticipantEntry, ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction,
+		ChatResource, ChatRoomEvent, ChatUserAction, HostChatActionSubscribeItem,
+		HostChatRoomEventsSubscribeItem, ProductChatMessageActionsQueryItem,
+		ProductChatMessageActionsQueryRequest, ProductChatMessagesQueryItem,
+		ProductChatMessagesQueryRequest, ProductChatParticipantActionsQueryItem,
+		ProductChatParticipantActionsQueryRequest, ProductChatParticipantsQueryItem,
+		ProductChatParticipantsQueryRequest, ProductChatQueryError, ProductChatReactionsQueryItem,
+		ProductChatReactionsQueryRequest, ProductChatUserActionError, ProductChatUserActionItem,
+		ProductChatUserActionRequest,
 	},
 };
 
@@ -141,6 +143,15 @@ pub trait ChatWorker: Send + Sync {
 		&self,
 		item: HostChatRoomEventsSubscribeItem,
 	) -> Result<(), ProductRuntimeError>;
+
+	/// Stage a user attachment of `room_id` as a preimage that the product's
+	/// Bulletin allowance pays for, through the core, and give its key.
+	fn stage_chat_attachment(
+		&self,
+		room_id: String,
+		mime_type: String,
+		bytes: Vec<u8>,
+	) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>>;
 }
 
 impl ChatWorker for ProductRuntime {
@@ -199,6 +210,16 @@ impl ChatWorker for ProductRuntime {
 		item: HostChatRoomEventsSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
 		self.control().publish_chat_room_event(item)
+	}
+
+	fn stage_chat_attachment(
+		&self,
+		room_id: String,
+		mime_type: String,
+		bytes: Vec<u8>,
+	) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
+		let control = self.control();
+		Box::pin(async move { control.stage_chat_attachment(&room_id, &mime_type, bytes).await })
 	}
 }
 
@@ -387,6 +408,22 @@ enum PageOp {
 		room_id: String,
 		participant_id: String,
 	},
+	/// The user sends a photo, a video or a file. One above the inline bound
+	/// is staged as a preimage through the core first.
+	Attach {
+		req_id: u64,
+		room_id: String,
+		kind: AttachmentKind,
+		mime_type: String,
+		#[serde(default)]
+		file_name: Option<String>,
+		/// The bytes, in base64.
+		data: String,
+		#[serde(default)]
+		width: Option<u32>,
+		#[serde(default)]
+		height: Option<u32>,
+	},
 	/// The user muted, unmuted, archived or unarchived the room.
 	/// `muted_forever` mutes the room with no end, a time a page cannot write
 	/// as a JSON number.
@@ -399,6 +436,14 @@ enum PageOp {
 		#[serde(default)]
 		archived: bool,
 	},
+}
+
+/// What kind of media item an attachment is.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+enum AttachmentKind {
+	Image,
+	Video,
+	File,
 }
 
 /// The reply to one page operation: at once, or once the product answered.
@@ -591,7 +636,7 @@ impl ChatSurface {
 			"capabilities": {
 				"features": crate::chat::CLI_CHAT_FEATURES,
 				"inlineAttachmentMaxBytes": truapi::platform::CHAT_INLINE_MEDIA_MAX_BYTES,
-				"preimageAttachmentMaxBytes": 0,
+				"preimageAttachmentMaxBytes": truapi::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES,
 			},
 			"rooms": snapshot.rooms,
 			"bots": snapshot.bots,
@@ -623,34 +668,53 @@ impl ChatSurface {
 		let source = config.product_source;
 		let event = |event: ChatEvent| Applied::Now(self.deliver(op_name(op), &room_id, event));
 		match op {
-			PageOp::Post { req_id, text, reply_to, .. } => {
-				let body = ChatMessageBody::Text { text: text.clone() };
-				if source {
-					let action = ChatUserAction::NewMessage { body, reply_to: reply_to.clone() };
-					return self.later_action("post", *req_id, room_id, action);
-				}
-				// Stored first, so the user's message precedes any reply the
-				// worker posts to it.
-				match self.chat.post_user_message(&room_id, body.clone(), reply_to.clone()) {
-					Ok(message) => {
-						let posted = ChatEvent::MessagePosted {
-							message_id: message.message_id.clone(),
-							body,
-							reply_to: reply_to.clone(),
-						};
-						let delivered = self.deliver("post", &room_id, posted);
-						Applied::Now(answer_ok(
-							"post",
-							*req_id,
-							json!({
-								"type": "Posted",
-								"message": message_json(&message),
-								"workers": delivered["workers"],
-							}),
-						))
+			PageOp::Post { req_id, text, reply_to, .. } => self.post_body(
+				"post",
+				*req_id,
+				room_id,
+				ChatMessageBody::Text { text: text.clone() },
+				reply_to.clone(),
+				source,
+			),
+			PageOp::Attach { req_id, kind, mime_type, file_name, data, width, height, .. } => {
+				let bytes = match BASE64.decode(data) {
+					Ok(bytes) => bytes,
+					Err(error) => {
+						return Applied::Now(error_reply(format!("attachment data: {error}")));
 					},
-					Err(reason) => Applied::Now(error_reply(reason)),
-				}
+				};
+				let surface = Arc::clone(self);
+				let (req_id, kind, mime_type) = (*req_id, *kind, mime_type.clone());
+				let (file_name, width, height) = (file_name.clone(), *width, *height);
+				Applied::Later(Box::pin(async move {
+					let meta = ChatMediaMeta {
+						mime_type: mime_type.clone(),
+						size_bytes: Some(bytes.len() as u64),
+						width,
+						height,
+						placeholder: None,
+						alt: None,
+					};
+					let resource =
+						match surface.attachment_resource(&room_id, &mime_type, bytes).await {
+							Ok(resource) => resource,
+							Err(reason) => return answer_refused("attach", req_id, reason),
+						};
+					let item = match kind {
+						AttachmentKind::Image => ChatMediaItem::Image { resource, meta },
+						AttachmentKind::Video => ChatMediaItem::Video { resource, meta },
+						AttachmentKind::File => ChatMediaItem::File {
+							resource,
+							meta,
+							file_name: file_name.unwrap_or_else(|| "file".to_string()),
+						},
+					};
+					let body = ChatMessageBody::RichText { text: None, media: vec![item] };
+					match surface.post_body("attach", req_id, room_id, body, None, source) {
+						Applied::Now(reply) => reply,
+						Applied::Later(answer) => answer.await,
+					}
+				}))
 			},
 			PageOp::Trigger { message_id, action_id, .. } => {
 				event(ChatEvent::ActionTriggered(ActionTrigger {
@@ -958,6 +1022,68 @@ impl ChatSurface {
 		}
 	}
 
+	/// Send a message of the user: a user action of a room the product keeps,
+	/// or a stored message and `MessagePosted` in a room the host keeps.
+	fn post_body(
+		self: &Arc<Self>,
+		name: &'static str,
+		req_id: u64,
+		room_id: String,
+		body: ChatMessageBody,
+		reply_to: Option<String>,
+		source: bool,
+	) -> Applied {
+		if source {
+			let action = ChatUserAction::NewMessage { body, reply_to };
+			return self.later_action(name, req_id, room_id, action);
+		}
+		// Stored first, so the user's message precedes any reply the worker
+		// posts to it.
+		match self.chat.post_user_message(&room_id, body.clone(), reply_to.clone()) {
+			Ok(message) => {
+				let posted = ChatEvent::MessagePosted {
+					message_id: message.message_id.clone(),
+					body,
+					reply_to,
+				};
+				let delivered = self.deliver(name, &room_id, posted);
+				Applied::Now(answer_ok(
+					name,
+					req_id,
+					json!({
+						"type": "Posted",
+						"message": message_json(&message),
+						"workers": delivered["workers"],
+					}),
+				))
+			},
+			Err(reason) => Applied::Now(error_reply(reason)),
+		}
+	}
+
+	/// The resource of an attachment: inline up to the inline bound, else a
+	/// preimage the core stages through the newest worker connection. A
+	/// refusal names why, and then nothing was uploaded.
+	async fn attachment_resource(
+		&self,
+		room_id: &str,
+		mime_type: &str,
+		bytes: Vec<u8>,
+	) -> Result<ChatResource, String> {
+		if bytes.len() <= truapi::platform::CHAT_INLINE_MEDIA_MAX_BYTES {
+			return Ok(ChatResource::Inline { mime_type: mime_type.to_string(), bytes });
+		}
+		let worker = self
+			.worker_by(Instant::now() + self.timeouts.send)
+			.await
+			.ok_or_else(|| "no worker is connected to stage the attachment".to_string())?;
+		worker
+			.stage_chat_attachment(room_id.to_string(), mime_type.to_string(), bytes)
+			.await
+			.map(|key| ChatResource::Preimage { key })
+			.map_err(|rejection| format!("not staged: {rejection}"))
+	}
+
 	/// Send one user action of a room the product keeps, and apply the answer
 	/// to the screen.
 	fn later_action(
@@ -1079,6 +1205,7 @@ fn op_room(op: &PageOp) -> &str {
 		PageOp::Participants { room_id, .. } |
 		PageOp::MessageActions { room_id, .. } |
 		PageOp::ParticipantActions { room_id, .. } |
+		PageOp::Attach { room_id, .. } |
 		PageOp::UserState { room_id, .. } => room_id,
 	}
 }
@@ -1095,7 +1222,8 @@ fn op_req_id(op: &PageOp) -> Option<u64> {
 		PageOp::Reactions { req_id, .. } |
 		PageOp::Participants { req_id, .. } |
 		PageOp::MessageActions { req_id, .. } |
-		PageOp::ParticipantActions { req_id, .. } => Some(*req_id),
+		PageOp::ParticipantActions { req_id, .. } |
+		PageOp::Attach { req_id, .. } => Some(*req_id),
 		_ => None,
 	}
 }
@@ -1121,6 +1249,7 @@ fn op_name(op: &PageOp) -> &'static str {
 		PageOp::Participants { .. } => "participants",
 		PageOp::MessageActions { .. } => "messageActions",
 		PageOp::ParticipantActions { .. } => "participantActions",
+		PageOp::Attach { .. } => "attach",
 		PageOp::UserState { .. } => "userState",
 	}
 }
@@ -1139,6 +1268,11 @@ fn unknown_room(room_id: &str) -> Value {
 
 fn answer_ok(op: &str, req_id: u64, ok: Value) -> Value {
 	json!({ "kind": "answer", "op": op, "reqId": req_id, "ok": ok })
+}
+
+/// The `answer` reply of an operation the host refused, with why.
+fn answer_refused(op: &str, req_id: u64, reason: String) -> Value {
+	json!({ "kind": "answer", "op": op, "reqId": req_id, "error": { "tag": "Refused", "reason": reason } })
 }
 
 /// The `answer` reply of one query.
@@ -1330,6 +1464,10 @@ mod tests {
 		message_menus: Scripted<ProductChatMessageActionsQueryItem>,
 		participant_menus: Scripted<ProductChatParticipantActionsQueryItem>,
 		room_events: Mutex<Vec<HostChatRoomEventsSubscribeItem>>,
+		/// What the worker staged, as `(room, size)`, and the refusal it
+		/// answers instead of a key.
+		staged: Mutex<Vec<(String, usize)>>,
+		stage_refusal: Mutex<Option<ChatStageRejection>>,
 	}
 
 	fn scripted<Item: Send + 'static, Error: Send + 'static>(
@@ -1431,6 +1569,19 @@ mod tests {
 			self.room_events.lock().expect("not poisoned").push(item);
 			Ok(())
 		}
+
+		fn stage_chat_attachment(
+			&self,
+			room_id: String,
+			_mime_type: String,
+			bytes: Vec<u8>,
+		) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
+			let refusal = self.stage_refusal.lock().expect("not poisoned").clone();
+			if refusal.is_none() {
+				self.staged.lock().expect("not poisoned").push((room_id, bytes.len()));
+			}
+			Box::pin(async move { refusal.map_or(Ok(vec![7; 32]), Err) })
+		}
 	}
 
 	/// A worker connection the core refuses Chat to.
@@ -1492,6 +1643,15 @@ mod tests {
 			_item: HostChatRoomEventsSubscribeItem,
 		) -> Result<(), ProductRuntimeError> {
 			Err(ProductRuntimeError::Denied)
+		}
+
+		fn stage_chat_attachment(
+			&self,
+			_room_id: String,
+			_mime_type: String,
+			_bytes: Vec<u8>,
+		) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
+			Box::pin(async { Err(ChatStageRejection::NotDeclared) })
 		}
 	}
 
@@ -2282,9 +2442,68 @@ mod tests {
 			json!({
 				"features": crate::chat::CLI_CHAT_FEATURES,
 				"inlineAttachmentMaxBytes": 1024 * 1024,
-				"preimageAttachmentMaxBytes": 0,
+				"preimageAttachmentMaxBytes": 8 * 1024 * 1024,
 			})
 		);
+	}
+
+	// S57: an attachment up to the inline bound travels inline; one above it
+	// is staged through the worker's core and travels as its preimage key.
+	#[tokio::test]
+	async fn an_attachment_above_the_inline_bound_is_staged() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+		let attach_op = |size: usize| {
+			json!({
+				"op": "attach", "reqId": 4, "roomId": "daily", "kind": "File",
+				"mimeType": "application/pdf", "fileName": "big.pdf",
+				"data": BASE64.encode(vec![1u8; size]),
+			})
+		};
+
+		let small = run(&surface, attach_op(1024)).await;
+		let large = run(&surface, attach_op(3 * 1024 * 1024)).await;
+
+		assert_eq!(small["ok"]["message"]["body"]["media"][0]["resource"]["type"], "Inline");
+		assert_eq!(
+			large["ok"]["message"]["body"]["media"][0]["resource"],
+			json!({ "type": "Preimage", "key": format!("0x{}", "07".repeat(32)) })
+		);
+		assert_eq!(
+			large["ok"]["message"]["body"]["media"][0]["meta"]["sizeBytes"],
+			3 * 1024 * 1024
+		);
+		assert_eq!(
+			*worker.staged.lock().expect("not poisoned"),
+			[("daily".to_string(), 3 * 1024 * 1024)]
+		);
+		let posted: Vec<_> = worker
+			.events()
+			.into_iter()
+			.filter(|event| matches!(event, ChatEvent::MessagePosted { .. }))
+			.collect();
+		assert_eq!(posted.len(), 2, "both attachments reach the product");
+	}
+
+	// S58: a staging refusal posts nothing and tells the page why.
+	#[tokio::test]
+	async fn a_refused_staging_posts_nothing() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+		*worker.stage_refusal.lock().expect("not poisoned") = Some(ChatStageRejection::NotDeclared);
+		let op = json!({
+			"op": "attach", "reqId": 5, "roomId": "daily", "kind": "Image",
+			"mimeType": "image/png", "data": BASE64.encode(vec![1u8; 2 * 1024 * 1024]),
+		});
+
+		let reply = run(&surface, op).await;
+
+		assert_eq!(
+			reply["error"],
+			json!({ "tag": "Refused", "reason": "not staged: the room does not declare preimage attachments" })
+		);
+		assert!(worker.events().is_empty());
+		assert!(surface.chat().observe().0.messages.is_empty());
 	}
 
 	#[test]

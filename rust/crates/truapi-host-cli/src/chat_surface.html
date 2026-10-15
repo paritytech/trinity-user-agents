@@ -326,6 +326,9 @@ aside[hidden], section[hidden] { display: none; }
         <div id="customfooter" class="customfooter" hidden>Custom footer: the product draws it through Renderer::render, which this page does not run.</div>
         <form class="compose" id="compose">
           <span class="attach" id="attach"></span>
+          <input type="file" id="attach-photo" accept="image/*" hidden data-kind="Image">
+          <input type="file" id="attach-video" accept="video/*" hidden data-kind="Video">
+          <input type="file" id="attach-file" hidden data-kind="File">
           <textarea id="input" rows="1" placeholder="Message" disabled></textarea>
           <button id="send" type="submit" disabled>Send</button>
         </form>
@@ -1286,8 +1289,8 @@ function renderFooter(room) {
       const b = el("button", null, glyph);
       b.type = "button";
       b.dataset.attach = key;
-      b.title = `${label}: the dev page sends no attachments`;
-      b.onclick = () => setStatus(`${label} attachments are sent from a phone, not from the dev page`, "warn");
+      b.title = `${label}: inline up to ${humanSize(state.capabilities.inlineAttachmentMaxBytes)}, staged as a preimage above it where the room declares it`;
+      b.onclick = () => { const input = $(`attach-${key}`); input.value = ""; input.click(); };
       attach.appendChild(b);
     }
     if (footer.payment) {
@@ -1360,6 +1363,32 @@ function renderCatalogue(room) {
 }
 
 // ------------------------------------------------------------------ send
+
+// A photo, video or file of the user. Up to the inline bound it travels in
+// the message; above it the host stages it as a preimage, which the product
+// pays for, where the room declares `preimageAttachments`. The core refuses
+// the rest, and then nothing is uploaded.
+function sendAttachment(room, kind, file) {
+  const caps = state.capabilities;
+  const staged = file.size > caps.inlineAttachmentMaxBytes;
+  const bound = caps.features.includes("preimage_attachments") ? caps.preimageAttachmentMaxBytes : caps.inlineAttachmentMaxBytes;
+  if (file.size > bound) {
+    setStatus(`not sent: ${file.name} is ${humanSize(file.size)}, above ${humanSize(bound)}`, "err");
+    return;
+  }
+  setStatus(`${staged ? "staging" : "sending"} ${file.name} (${humanSize(file.size)})…`, "ok");
+  file.arrayBuffer().then((buffer) => {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    ask("attach", { roomId: room.roomId, kind, mimeType: file.type || "application/octet-stream", fileName: file.name, data: btoa(binary) }, (frame) => {
+      if (frame.error) { setStatus(`not sent: ${describeError(frame.error)}`, "err"); return; }
+      if (frame.ok && frame.ok.message) upsertMessage(room.roomId, frame.ok.message);
+      setStatus(`${file.name} sent ${staged ? "as a preimage" : "inline"}`, "ok");
+      if (room.roomId === state.selected) renderRoom(true);
+    });
+  });
+}
 
 function postText(room, text, replyTo) {
   if (isSource(room)) {
@@ -1761,6 +1790,10 @@ function handle(frame) {
 }
 
 $("compose").onsubmit = (event) => { event.preventDefault(); submit(); };
+for (const key of ["photo", "video", "file"]) {
+  const input = $(`attach-${key}`);
+  input.onchange = () => { const room = roomOf(state.selected); if (room && input.files.length) sendAttachment(room, input.dataset.kind, input.files[0]); };
+}
 $("input").onkeydown = (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); submit(); }
   if (event.key === "Escape") { state.editing = null; state.replyTo = null; renderFooter(roomOf(state.selected)); }

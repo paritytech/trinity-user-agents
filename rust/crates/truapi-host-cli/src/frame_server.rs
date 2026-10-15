@@ -1625,7 +1625,7 @@ mod tests {
 				"capabilities": {
 					"features": crate::chat::CLI_CHAT_FEATURES,
 					"inlineAttachmentMaxBytes": 1024 * 1024,
-					"preimageAttachmentMaxBytes": 0,
+					"preimageAttachmentMaxBytes": 8 * 1024 * 1024,
 				},
 				"rooms": [],
 				"bots": [],
