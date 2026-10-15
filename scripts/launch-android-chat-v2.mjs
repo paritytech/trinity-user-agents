@@ -41,6 +41,7 @@ import {
   installApk,
   isDeviceOnline,
   killEmulator,
+  onAdbServerRestart,
   pushFile,
   removeForward,
   removeReversePort,
@@ -1596,12 +1597,21 @@ async function openRoom(room) {
  */
 async function waitProductStarted() {
   if (reuseApp) return;
+  let last = [];
   await waitFor(
     () => {
-      dismissPrompts(parseUiNodes(uiDump(serial)));
+      last = parseUiNodes(uiDump(serial));
+      dismissPrompts(last);
       return events().some((entry) => entry.via === "preimage");
     },
-    { timeoutMs: START_TIMEOUT_MS, intervalMs: 1_000, message: "the product did not finish its start (no preimage line)" },
+    {
+      timeoutMs: START_TIMEOUT_MS,
+      intervalMs: 1_000,
+      message: () => {
+        screencap(serial, resolve(outDir, "start-fail.png"));
+        return `the product did not finish its start (no preimage line); \`start-fail.png\` shows ${screenSummary(last)}`;
+      },
+    },
   );
 }
 
@@ -2149,6 +2159,8 @@ async function main() {
     step(`serve ${relative(repoRoot, productRoot)}/out at ${productUrl}`);
     await startServer();
     reversePort(serial, productPort);
+    // A restart of the adb server drops the port; the logcat stream connects again by itself.
+    onAdbServerRestart(() => reversePort(serial, productPort));
 
     // The launcher pastes text from the clipboard, so it needs no on-screen
     // keyboard. A keyboard covers the feed in the screenshots.
