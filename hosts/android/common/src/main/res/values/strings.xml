@@ -920,6 +920,7 @@
     <string name="pocket_error_auto_fund_failed">Couldn\'t add test funds to this account. Try again.</string>
     <string name="pocket_error_share_coinage_logs_failed">Couldn\'t share the coinage logs. Try again.</string>
     <string name="pocket_pinned_card_humanity">Humanity</string>
+    <string name="host_placed_chat_jollity">Jollity</string>
     <string name="pocket_add_card_title">Add to Pocket</string>
     <string name="pocket_add_card_subtitle">%1$s wants to add a card to your Pocket. This is how it will look.</string>
     <string name="pocket_add_card_action">Add</string>
