@@ -1362,6 +1362,25 @@ pub trait Features: Send + Sync {
 	async fn supported_chains(&self) -> Result<HostChainSet, GenericError>;
 }
 
+/// Chain resource an allowance key grants access to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode)]
+pub enum AllowanceResource {
+	/// Bulletin-chain transaction storage.
+	Bulletin,
+	/// People-chain statement store.
+	StatementStore,
+}
+
+/// Required protection for a core-owned storage value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum CoreStorageProtection {
+	/// Value contains signing or encryption authority.
+	Secret,
+	/// Value contains no private signing or encryption material.
+	Public,
+}
+
 /// Core-owned host-private storage slots. Products never address these slots;
 /// the host chooses the backing store for each slot.
 ///
@@ -1452,6 +1471,16 @@ pub enum CoreStorageKey {
 		/// Product whose manifest was cached, normalized.
 		product_id: String,
 	},
+	/// One wallet's retained allowance for a product and chain resource.
+	#[codec(index = 13)]
+	NativeAllowanceKey {
+		/// Wallet that received the grant.
+		root_public_key: [u8; 32],
+		/// Product authorized to use the grant.
+		product_id: String,
+		/// Chain resource sponsored by the key.
+		resource: AllowanceResource,
+	},
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1460,11 +1489,21 @@ pub enum CoreStorageKey {
 /// `product_id` is present only for keys whose storage slot is directly
 /// product-indexed.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct CoreStorageKeyDescription {
 	/// Stable storage-key variant name.
-	pub kind: &'static str,
+	pub kind: String,
 	/// Product that owns this exact slot, when the key is product-indexed.
 	pub product_id: Option<String>,
+	/// Minimum protection required by the value.
+	pub protection: CoreStorageProtection,
+}
+
+/// Stored key inventory, independent of value decoding or decryption.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct CoreStorageKeys {
+	/// Opaque keys, including keys unknown to this core version.
+	pub encoded_keys: Vec<Vec<u8>>,
 }
 
 /// Failure to decode exactly one [`CoreStorageKey`].
@@ -1489,7 +1528,26 @@ pub fn describe_core_storage_key(
 	if !input.is_empty() {
 		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
 	}
+	let protection = match &key {
+		CoreStorageKey::AuthSession |
+		CoreStorageKey::PairingDeviceIdentity |
+		CoreStorageKey::AllowanceKeys { .. } |
+		CoreStorageKey::AutoSigningKey { .. } |
+		CoreStorageKey::AutoSigningKeys |
+		CoreStorageKey::DeviceEncryptionKey |
+		CoreStorageKey::NativeAllowanceKey { .. } => CoreStorageProtection::Secret,
+		CoreStorageKey::PermissionAuthorization { .. } |
+		CoreStorageKey::LastProcessedPairingStatement |
+		CoreStorageKey::RingVrfRegistry { .. } |
+		CoreStorageKey::StatementRenewalTargets |
+		CoreStorageKey::ProductSubtree { .. } |
+		CoreStorageKey::SsoResponderRequestLedger { .. } |
+		CoreStorageKey::ProductManifest { .. } => CoreStorageProtection::Public,
+	};
 	let (kind, product_id) = match key {
+		CoreStorageKey::NativeAllowanceKey { product_id, .. } => {
+			("NativeAllowanceKey", Some(product_id))
+		},
 		CoreStorageKey::AuthSession => ("AuthSession", None),
 		CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
 		CoreStorageKey::PermissionAuthorization { product_id, .. } => {
@@ -1506,7 +1564,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
 		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
 	};
-	Ok(CoreStorageKeyDescription { kind, product_id })
+	Ok(CoreStorageKeyDescription { kind: kind.to_string(), product_id, protection })
 }
 
 impl CoreStorageKey {
@@ -2430,11 +2488,21 @@ mod tests {
 		assert_eq!(
 			describe_core_storage_key(&permission),
 			Ok(CoreStorageKeyDescription {
-				kind: "PermissionAuthorization",
+				kind: "PermissionAuthorization".to_string(),
+				protection: CoreStorageProtection::Public,
 				product_id: Some("product.dot".to_string()),
 			})
 		);
 		for (key, kind, product_id) in [
+			(
+				CoreStorageKey::NativeAllowanceKey {
+					root_public_key: [1; 32],
+					product_id: "product.dot".to_string(),
+					resource: AllowanceResource::Bulletin,
+				},
+				"NativeAllowanceKey",
+				Some("product.dot"),
+			),
 			(CoreStorageKey::AuthSession, "AuthSession", None),
 			(CoreStorageKey::PairingDeviceIdentity, "PairingDeviceIdentity", None),
 			(
@@ -2713,6 +2781,10 @@ mod tests {
 
 /// Host-private persistence for core-owned state.
 ///
+/// Secret slots require protected storage. Only absence returns `None`; failures
+/// must propagate. Successful secret writes and clears are durable and ordered
+/// after earlier writes, including writes whose awaiting task was cancelled.
+///
 /// Clearing product-indexed slots is the host's job. The core drops the ones
 /// it is holding when a session ends, but a product it never opened this run
 /// has no entry to drop, so those slots outlive the disconnect. A host that
@@ -2727,6 +2799,11 @@ mod tests {
 // TODO: introduce SecretStorage to make protection a separate contract.
 #[async_trait]
 pub trait CoreStorage: Send + Sync {
+	/// Enumerate encoded keys without reading values, including undecodable records.
+	async fn core_storage_keys(&self) -> Result<CoreStorageKeys, GenericError> {
+		Err(GenericError { reason: "core storage enumeration is unavailable".to_string() })
+	}
+
 	/// Read a core-owned value by typed slot.
 	async fn read_core_storage(&self, key: CoreStorageKey)
 	-> Result<Option<Vec<u8>>, GenericError>;

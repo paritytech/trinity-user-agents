@@ -40,6 +40,7 @@ export function makeHostCallbacks(
       endOperation: async () => {},
     },
     coreStorage: {
+      coreStorageKeys: async () => ({ encodedKeys: [] }),
       readCoreStorage: async () => undefined,
       writeCoreStorage: async () => {},
       clearCoreStorage: async () => {},

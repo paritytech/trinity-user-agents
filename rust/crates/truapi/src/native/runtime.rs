@@ -604,6 +604,16 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.last_statement_renewal_report()
 	}
 
+	/// Remove retained grants when a product is uninstalled.
+	pub async fn clear_product_state(&self, product_id: String) -> Result<(), HostRejection> {
+		self.runtime.clear_product_state(&product_id).await.map_err(Into::into)
+	}
+
+	/// Remove a deleted wallet's retained grants, including while locked.
+	pub async fn clear_wallet_state(&self, owner: Bytes32) -> Result<(), HostRejection> {
+		self.runtime.clear_wallet_state(owner).await.map_err(Into::into)
+	}
+
 	/// Activate or replace the process-wide local signing session.
 	pub fn activate_local_session(
 		&self,

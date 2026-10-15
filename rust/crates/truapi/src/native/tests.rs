@@ -317,6 +317,9 @@ impl HostCallbacks for EventCallbacks {
 	fn auth_state_changed(&self, state: AuthState) {
 		self.auth_states.lock().expect("auth state mutex poisoned").push(state);
 	}
+	async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+		Ok(self.core_storage.lock().unwrap().keys().cloned().collect())
+	}
 	async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
 		Ok(self.core_storage.lock().unwrap().get(&key).cloned())
 	}
@@ -1838,6 +1841,9 @@ fn start_ws_bridge_twice_returns_already_running() {
 			Ok(PermissionDecision::Deny)
 		}
 		fn auth_state_changed(&self, _state: AuthState) {}
+		async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+			Ok(Vec::new())
+		}
 		async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
 			Ok(None)
 		}
@@ -1999,6 +2005,9 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			Ok(PermissionDecision::Deny)
 		}
 		fn auth_state_changed(&self, _state: AuthState) {}
+		async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+			Ok(Vec::new())
+		}
 		async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
 			Ok(None)
 		}
