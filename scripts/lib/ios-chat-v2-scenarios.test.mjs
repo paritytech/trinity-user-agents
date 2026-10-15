@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
+  IOS_CHAT_FEATURE_ROWS,
   IOS_CHAT_V2_SCENARIOS,
   appStartFailure,
   blockedRows,
+  capabilityVerdict,
+  capsLine,
   eventMatches,
   lastUserMessage,
   parseEventLog,
@@ -25,7 +29,7 @@ test("every iOS scenario of the test plan has one entry", () => {
     assert.ok(!ids.includes(id), `${id} has no iOS layer`);
   }
   for (const scenario of IOS_CHAT_V2_SCENARIOS) {
-    assert.match(scenario.phase, /^P\d$/);
+    assert.match(scenario.phase, /^P\d+(\.\d+)?$/);
     assert.ok(
       Boolean(scenario.drive) !== Boolean(scenario.skip),
       `${scenario.id} is driven or names why it is not`,
@@ -140,5 +144,86 @@ test("a skip row carries its reason and what the launcher observed", () => {
   assert.equal(
     skipRow(scenario, "observed").evidence,
     "skip: needs P7; observed",
+  );
+});
+
+test("the feature list of the launcher is the capability list of the app", () => {
+  const swift = readFileSync(
+    new URL(
+      "../../hosts/ios/polkadot-app/Modules/Products/Chat/ChatHostCapabilities.swift",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const served = swift.match(/static let served: \[String\] = \[([^\]]*)\]/);
+  assert.ok(served, "ChatHostCapabilities.served");
+  const names = [...served[1].matchAll(/"([a-z_]+)"/g)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(Object.keys(IOS_CHAT_FEATURE_ROWS), names);
+});
+
+test("each listed feature names driven rows that run before S49", () => {
+  const ids = IOS_CHAT_V2_SCENARIOS.map((scenario) => scenario.id);
+  const s49 = ids.indexOf("S49");
+  for (const [name, rows] of Object.entries(IOS_CHAT_FEATURE_ROWS)) {
+    for (const id of rows) {
+      const index = ids.indexOf(id);
+      assert.ok(index >= 0 && index < s49, `${name}: ${id} runs before S49`);
+      assert.ok(IOS_CHAT_V2_SCENARIOS[index].drive, `${name}: ${id} is driven`);
+    }
+  }
+  assert.equal(
+    capsLine(["toolbar", "activity"]),
+    "caps: toolbar, activity; inline 1048576 B; preimage 0 B",
+  );
+  assert.equal(capsLine([]), "caps: none; inline 1048576 B; preimage 0 B");
+});
+
+test("S49 fails when a listed feature has a failed row", () => {
+  const caps = { id: "S49", result: "pass", evidence: "stored" };
+  const rows = [
+    { id: "S29", result: "pass" },
+    { id: "S32", result: "fail" },
+  ];
+  const features = { toolbar: ["S29"], reaction_details: ["S32"] };
+
+  const verdict = capabilityVerdict(caps, rows, features);
+
+  assert.equal(verdict.result, "fail");
+  assert.match(verdict.evidence, /reaction_details \(S32 fail\)/);
+});
+
+test("S49 passes and names the rows that the run did not drive", () => {
+  const caps = { id: "S49", result: "pass", evidence: "stored" };
+  const features = { toolbar: ["S29"], activity: ["S40"] };
+
+  const all = capabilityVerdict(
+    caps,
+    [
+      { id: "S29", result: "pass" },
+      { id: "S40", result: "pass" },
+    ],
+    features,
+  );
+  const partial = capabilityVerdict(
+    caps,
+    [
+      { id: "S29", result: "pass" },
+      { id: "S40", result: "skip" },
+    ],
+    features,
+  );
+
+  assert.equal(all.result, "pass");
+  assert.match(all.evidence, /the rows of each listed feature passed/);
+  assert.equal(partial.result, "pass");
+  assert.match(
+    partial.evidence,
+    /not checked in this run: activity \(S40 skip\)/,
+  );
+  assert.equal(
+    capabilityVerdict({ ...caps, result: "fail" }, [], features).result,
+    "fail",
   );
 });

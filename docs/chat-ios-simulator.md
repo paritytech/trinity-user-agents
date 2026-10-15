@@ -66,7 +66,13 @@ the checks of each row are in `scripts/lib/ios-chat-v2-scenarios.mjs`.
 
 | Kind       | Scenarios                                                                                                                                                                | Row                                          |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
-| Driven     | S1 to S4, S7 to S22, S24 to S41, S46                                                                                                                                     | `pass` or `fail` with the first failed check |
+| Driven     | S1 to S4, S7 to S22, S24 to S41, S46, S51, S49                                                                                                                           | `pass` or `fail` with the first failed check |
 | Not driven | S5 (no command calls `delete_room`), S6 (the harness holds the worker), S23 (an uncaught error does not stop an iOS worker), S44 (no command exceeds the rate), S47 (P7) | `skip` with the reason                       |
 
 The launcher fails when a driven row fails or has no row.
+
+S51 and S49 are the rows of the Chat Extension v2 additions (P10) and run last. S51 declares two features that the app
+does not serve and reads the stored bytes in `CDChatRoomMetadata.ZFEATURES`; the run does not restart the app. S49 posts
+`/caps` and expects exactly the names of `ChatHostCapabilities.served` (`IOS_CHAT_FEATURE_ROWS` in the scenario
+library), then checks that every row of each listed feature passed in the same run. With `TRUAPI_IOS_E2E_ONLY` the row
+names the feature rows that the run did not drive.
