@@ -6,13 +6,14 @@
 import type {
   ChatMessageMeta,
   ChatMessageStatus,
+  ChatRoomCall,
   ChatRoomCalls,
   ChatRoomConfig,
   ChatRoomFeatures,
   ChatRoomPreview,
   HostChatSetRoomFooterRequest,
 } from "@parity/truapi";
-import { isThreadRoom, threadRoomId, type RoomId, type ThreadRoomId } from "./clock";
+import { isThreadRoom, pad, threadRoomId, type RoomId, type ThreadRoomId } from "./clock";
 import { commandSpecs, findCommand, helpMarkdown, parseCommand, type ParsedCommand } from "./commands";
 import type { ProductContext } from "./context";
 import { call, CommandError, describeCallError, reasonOf } from "./errors";
@@ -187,6 +188,7 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
   },
   branches: runBranches,
   reason: runReason,
+  call: runCall,
   wake: async (_ctx, _room, command) => {
     if (command.args.length !== 1 || command.args[0] !== "watch") throw usage(command, "watch");
     // A watch routed to `/-/chat/<room>` needs the receiving API of the
@@ -620,6 +622,49 @@ async function runReason(ctx: ProductContext, room: RoomId): Promise<void> {
   }
   await ctx.feed.status(room, id, "Sent");
   await setMeta(ctx, room, id, { reasoning: { durationMs: REASON_DURATION_MS } });
+}
+
+// ------------------------------------------------------------------ calls
+
+/** Set the call of the room, or clear it with `undefined`, and keep it. */
+export async function setCall(ctx: ProductContext, room: RoomId, roomCall: ChatRoomCall | undefined): Promise<void> {
+  await call("set_room_call", ctx.chat.setRoomCall(roomCall ? { roomId: room, call: roomCall } : { roomId: room }));
+  ctx.settings(room).call = roomCall;
+}
+
+/**
+ * A call without a media session, which the host shows as a call bar. The
+ * start is the clock's time, so the host's timer counts from now.
+ */
+export function activeCall(callId: string, video: boolean): ChatRoomCall {
+  return { tag: "Active", value: { callId, video, startedAt: BigInt(Date.now()) } };
+}
+
+/** The id of the next call the product starts: `call-<n>`. */
+export function nextCallId(ctx: ProductContext): string {
+  ctx.state.calls += 1;
+  return `call-${pad(ctx.state.calls, 4)}`;
+}
+
+/**
+ * `/call ring [video]` rings from `p1`, `/call active [video]` shows a call
+ * bar, `/call end` clears the call.
+ */
+async function runCall(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const hint = "ring [video]|active [video]|end";
+  const [state, kind] = command.args;
+  const video = kind === "video";
+  if (command.args.length > 2 || (kind !== undefined && (kind !== "video" || state === "end"))) throw usage(command, hint);
+  switch (state) {
+    case "ring":
+      return setCall(ctx, room, { tag: "Ringing", value: { callId: nextCallId(ctx), video, caller: "p1" } });
+    case "active":
+      return setCall(ctx, room, activeCall(nextCallId(ctx), video));
+    case "end":
+      return setCall(ctx, room, undefined);
+    default:
+      throw usage(command, hint);
+  }
 }
 
 // ---------------------------------------------------------------- messages

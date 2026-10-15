@@ -121,6 +121,7 @@ export function createFakeClient(options: FakeClientOptions = {}) {
       ),
       setRoomFeatures: unary("setRoomFeatures"),
       setMessageMeta: unary("setMessageMeta"),
+      setRoomCall: unary("setRoomCall"),
       registerBot: unary("registerBot", (request: { botId: string }) => {
         const status = bots.has(request.botId) ? "Exists" : "New";
         bots.add(request.botId);

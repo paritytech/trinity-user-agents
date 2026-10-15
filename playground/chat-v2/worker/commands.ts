@@ -65,6 +65,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
   { name: "branches", args: "<id> <n>", description: "Give a message n alternatives", rooms: "both", posts: false, scenarios: "S65", catalogue: "additions" },
   { name: "reason", args: "", description: "Stream a reasoning row", rooms: "both", posts: true, scenarios: "S66", catalogue: "additions" },
   { name: "wake", args: "watch", description: "Route a notification watch to the room", rooms: "both", posts: false, scenarios: "S70", catalogue: "additions" },
+  { name: "call", args: "ring [video]|active [video]|end", description: "Ring, show or end a call in the room", rooms: "both", posts: false, scenarios: "S72 to S74", catalogue: "additions" },
   { name: "history", args: "<n>", description: "Replace the messages with n generated ones", rooms: "source", posts: true, scenarios: "S15 to S17, S22, B2", catalogue: "v2" },
   { name: "slow", args: "<ms>", description: "Delay every later answer", rooms: "both", posts: false, scenarios: "S21, S46", catalogue: "v2" },
   { name: "fail", args: "reject|timeout|crash|unavailable", description: "Make the next answer fail", rooms: "both", posts: false, scenarios: "S20, S21, S23, S32, S46", catalogue: "v2" },

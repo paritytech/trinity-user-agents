@@ -477,3 +477,34 @@ describe("wakes", () => {
     expect(posted(running.fake)).toEqual(["error /wake watch: this host has no receiving API for a watch"]);
   });
 });
+
+describe("/call", () => {
+  test("rings, shows the bar, ends, and answers the call events (S72 to S74)", async () => {
+    const running = start();
+    await command(running, "/call ring video");
+    running.fake.emitRoomEvent({ roomId: "host", event: { tag: "CallAnswered", value: { callId: "call-0001", accept: true } } });
+    await running.product.idle();
+    running.fake.emitRoomEvent({ roomId: "host", event: { tag: "CallEnded", value: { callId: "call-0001" } } });
+    await running.product.idle();
+    running.fake.emitRoomEvent({ roomId: "host", event: { tag: "CallRequested", value: { video: false } } });
+    await running.product.idle();
+    await command(running, "/call end");
+
+    expect(running.fake.callsOf("setRoomCall")).toEqual([
+      { roomId: "host", call: { tag: "Ringing", value: { callId: "call-0001", video: true, caller: "p1" } } },
+      { roomId: "host", call: { tag: "Active", value: { callId: "call-0001", video: true, startedAt: expect.any(BigInt) } } },
+      { roomId: "host" },
+      { roomId: "host", call: { tag: "Active", value: { callId: "call-0002", video: false, startedAt: expect.any(BigInt) } } },
+      { roomId: "host" },
+    ]);
+    expect(posted(running.fake)).toEqual(["ok /call ring video", "call requested video=false", "ok /call end"]);
+  });
+
+  test("a declined call is cleared", async () => {
+    const running = start();
+    await command(running, "/call ring");
+    running.fake.emitRoomEvent({ roomId: "host", event: { tag: "CallAnswered", value: { callId: "call-0001", accept: false } } });
+    await running.product.idle();
+    expect(running.fake.callsOf("setRoomCall").at(-1)).toEqual({ roomId: "host" });
+  });
+});

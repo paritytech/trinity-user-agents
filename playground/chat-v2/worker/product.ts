@@ -27,7 +27,18 @@ import { Clock, type RoomId } from "./clock";
 import { parseCommand, parseCommandEvent, type ParsedCommand } from "./commands";
 import type { ProductContext, SampleClient } from "./context";
 import { call, describeCallError, reasonOf } from "./errors";
-import { answerWoken, createThread, helpCommand, runCommand, selectBranch, setActivity, setPreview } from "./execute";
+import {
+  activeCall,
+  answerWoken,
+  createThread,
+  helpCommand,
+  nextCallId,
+  runCommand,
+  selectBranch,
+  setActivity,
+  setCall,
+  setPreview,
+} from "./execute";
 import { Feed } from "./feed";
 import {
   ACTION_THREAD,
@@ -751,6 +762,21 @@ export class SampleProduct {
           console.error("chat-v2: the answer to Woken failed", error);
         }
         return;
+      case "CallRequested":
+        return this.#answerCall(room, async (ctx) => {
+          await setCall(ctx, room, activeCall(nextCallId(ctx), event.value.video));
+          await this.#feed.reply(room, `call requested video=${event.value.video}`);
+        });
+      case "CallAnswered":
+        return this.#answerCall(room, async (ctx) => {
+          const ringing = ctx.settings(room).call;
+          if (ringing?.tag !== "Ringing" || ringing.value.callId !== event.value.callId) return;
+          await setCall(ctx, room, event.value.accept ? activeCall(ringing.value.callId, ringing.value.video) : undefined);
+        });
+      case "CallEnded":
+        return this.#answerCall(room, async (ctx) => {
+          if (ctx.settings(room).call?.value.callId === event.value.callId) await setCall(ctx, room, undefined);
+        });
       case "BranchSelected":
         // `/slow` holds this answer too, so a host can show its time-out.
         if (this.#state.slowMs > 0) await delay(this.#state.slowMs);
@@ -760,6 +786,15 @@ export class SampleProduct {
           await this.#feed.reply(room, `error BranchSelected: ${reasonOf(error)}`);
         }
         return;
+    }
+  }
+
+  /** Answer a call event; a failure posts `error <event>`. */
+  async #answerCall(room: RoomId, answer: (ctx: ProductContext) => Promise<void>): Promise<void> {
+    try {
+      await answer(this.#context());
+    } catch (error) {
+      await this.#feed.reply(room, `error call: ${reasonOf(error)}`);
     }
   }
 

@@ -140,7 +140,7 @@ see the same messages.
   message button `card-like`.
 - `<id>` in a command is a message id or `last`, the newest message of the product in the room.
 - The product never reads the clock or a random source for anything it sends, except the `scheduled_at` of
-  `/notify <seconds>`. Ids the host assigns, the user's messages
+  `/notify <seconds>` and the `started_at` of an active call, from which a host counts the call's time. Ids the host assigns, the user's messages
   in `host`, are the only values that differ between hosts, and the diagnosis compares them by kind, not by value.
 
 The one exception is the preimage image of `/post rich`. At first start the Worker submits `assets/sample.png` through
@@ -240,8 +240,8 @@ on (S52).
 | `/reason`                                  | P10.9 | `New` with `status: Preparing` and the first word, `set_message_meta` `reasoning: {}`, twenty `Edited` at 60 ms each adding one word, `StatusChanged { Sent }`, then `set_message_meta` `reasoning: { duration_ms: 4000 }` | S66              | Implemented |
 | `/features readaloud on`                   | P10.9 | As above; the host offers "Read aloud" on `Text`, `RichText` (as plain text) and `Custom` with a preview | S67              | Implemented |
 | `/wake watch`                              | P10.4 | Would register a receiving watch routed to `/-/chat/<room>`; no host serves the receiving API yet (O28), so it answers `error /wake watch: this host has no receiving API for a watch`. On `Woken { watch_id }` in any room the product sets the preview text "Woken by <watch_id>", posts `New` "woken" in a host-store room, and sends a notification "Sample woken in <room> by <watch_id>" into the room, which the host does not show while the room is muted | S69 to S71, B9 | Implemented |
-| `/call ring [video]`                       | P10.7 | `set_room_call` `Ringing` from `p1`; `CallAnswered` accept sets `Active` without a session, decline clears the call                                                  | S73              | Planned     |
-| `/call active [video]`, `/call end`        | P10.7 | `set_room_call` `Active` without a session, or `None`; `CallRequested` answers `Active` without a session and posts "call requested video=<bool>"                    | S72, S74         | Planned     |
+| `/call ring [video]`                       | P10.7 | `set_room_call` `Ringing { call_id: "call-<n>", video, caller: "p1" }`; `CallAnswered` accept sets `Active` of that call without a session, decline clears the call | S73              | Implemented |
+| `/call active [video]`, `/call end`        | P10.7 | `set_room_call` `Active { call_id: "call-<n>", video, started_at: <now> }` without a session, or `None`; `CallRequested` answers a new `Active` and posts "call requested video=<bool>"; `CallEnded` of the current call clears it; `CallOpened` is logged | S72, S74         | Implemented |
 | `/call media <peer account>`               | P10.7 | Creates a Media session and binds it with `Active { media_session }`; waits on the Media service                                                                      | S75              | Planned     |
 
 A catalogue `/commands` declares holds at most 32 commands, the bound of the RFC, and the two tables together hold more.

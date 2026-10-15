@@ -376,3 +376,47 @@ suite("wakes on the test host", () => {
     expect(running.log().filter((line) => line.via === "room_events" && line.kind === "Woken")).toHaveLength(12);
   });
 });
+
+suite("calls on the test host", () => {
+  test("S72: a call button sends CallRequested and the product shows the call; a host without call_buttons refuses calls", async () => {
+    const running = await start();
+    const { host } = running;
+    await host.chatUser.send("host", "/features calls both");
+    await waitForText(host, "host", "ok /features calls both");
+    await host.chatUser.pressCall("host", true);
+    await waitForText(host, "host", "call requested video=true");
+    expect(host.room("host")?.call).toMatchObject({ tag: "Active", value: { video: true } });
+
+    const without = await start({ host: createMockHost({ chatFeatures: MOCK_CHAT_FEATURE_NAMES.filter((name) => name !== "call_buttons") }) });
+    await without.host.chatUser.send("host", "/call ring");
+    await waitForText(without.host, "host", "error /call ring: set_room_call Unknown (this host does not serve call_buttons)");
+  });
+
+  test("S73: Ringing rings; Accept makes it active and Decline clears it", { timeout: 15_000 }, async () => {
+    const running = await start();
+    const { host } = running;
+    await host.chatUser.send("host", "/call ring video");
+    await waitForText(host, "host", "ok /call ring video");
+    expect(host.room("host")?.call).toMatchObject({ tag: "Ringing", value: { video: true, caller: "p1" } });
+    await host.chatUser.answerCall("host", true);
+    await until(() => host.room("host")?.call?.tag === "Active", "the accepted call");
+
+    // The core takes two call changes a second in a room.
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await host.chatUser.send("host", "/call ring");
+    await waitForText(host, "host", "ok /call ring");
+    await host.chatUser.answerCall("host", false);
+    await until(() => host.room("host")?.call === undefined, "the declined call cleared");
+  });
+
+  test("S74: an active call without a session sends CallOpened and CallEnded, and End clears it", async () => {
+    const running = await start();
+    const { host } = running;
+    await host.chatUser.send("host", "/call active");
+    await waitForText(host, "host", "ok /call active");
+    await host.chatUser.openCall("host");
+    await until(() => running.log().find((line) => line.via === "room_events" && line.kind === "CallOpened"), "CallOpened");
+    await host.chatUser.endCall("host");
+    await until(() => host.room("host")?.call === undefined, "the ended call cleared");
+  });
+});

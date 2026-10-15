@@ -4,6 +4,7 @@
  */
 import type {
   ChatMessageMeta,
+  ChatRoomCall,
   ChatReactionDetail,
   ChatRoomConfig,
   ChatRoomFeatures,
@@ -42,6 +43,8 @@ export interface RoomSettings {
   search: SearchMode;
   /** The meta the product set last for each message, by message id. */
   meta: Record<string, ChatMessageMeta>;
+  /** The call the product set last, or `undefined` for none. */
+  call?: ChatRoomCall;
 }
 
 /** The one-shot failures of `/fail`. */
@@ -66,6 +69,8 @@ export interface ProductState {
   fail: FailFlags;
   /** The personas `/bot add` registered. */
   bots: string[];
+  /** How many calls `/call` started, for their ids. */
+  calls: number;
 }
 
 export function roomSettings(room: RoomId): RoomSettings {
@@ -103,6 +108,7 @@ export function initialState(): ProductState {
     slowMs: 0,
     fail: { reject: false, timeout: false, crash: false, unavailable: false },
     bots: [],
+    calls: 0,
   };
 }
 
@@ -137,6 +143,7 @@ export function decodeState(text: string): ProductState {
     settings.meta ??= {};
   }
   state.bots ??= [];
+  state.calls ??= 0;
   return state;
 }
 
