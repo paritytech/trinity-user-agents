@@ -7,6 +7,12 @@ final class ChatParticipantsViewController: UIViewController {
     let presenter: ChatParticipantsPresenterProtocol
 
     private let tableView = UITableView(frame: .zero, style: .plain)
+    #if targetEnvironment(simulator)
+        /// The table, for the performance row of the E2E harness.
+        var e2eTableView: UITableView { tableView }
+        var e2eMeter: TrUAPIE2EFrameMeter?
+        private var e2eObserver: NSObjectProtocol?
+    #endif
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let failureLabel = UILabel()
     private var viewModel = ChatParticipantsViewModel(rows: [], isLoading: false, failed: false)
@@ -28,13 +34,27 @@ final class ChatParticipantsViewController: UIViewController {
         view.backgroundColor = .bgSurfaceMain
         setupTable()
         presenter.setup()
+        #if targetEnvironment(simulator)
+            e2eObserver = observeE2EActions()
+        #endif
     }
 }
 
 extension ChatParticipantsViewController: ChatParticipantsViewProtocol {
     func didReceive(_ viewModel: ChatParticipantsViewModel) {
+        let shown = self.viewModel.rows.count
         self.viewModel = viewModel
-        tableView.reloadData()
+
+        // The presenter only adds rows at the end, so a page inserts its own rows and a change of the loading
+        // state leaves the table alone (P7.1, B1).
+        if viewModel.rows.count > shown, shown > 0 {
+            let added = (shown ..< viewModel.rows.count).map { IndexPath(row: $0, section: 0) }
+            UIView.performWithoutAnimation {
+                tableView.insertRows(at: added, with: .none)
+            }
+        } else if viewModel.rows.count != shown {
+            tableView.reloadData()
+        }
 
         if viewModel.isLoading {
             spinner.startAnimating()

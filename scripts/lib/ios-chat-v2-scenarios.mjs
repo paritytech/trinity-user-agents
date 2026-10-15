@@ -1090,6 +1090,128 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
   },
 ]);
 
+/**
+ * The performance rows of 04-TESTING section 5 (P7.1). The launcher drives
+ * them after the scenarios when `TRUAPI_IOS_E2E_PERF=1`. Each row writes its
+ * numbers in its evidence: the `perf-participants`, `perf-ready` and
+ * `frames` markers of the app's simulator-only frame meter
+ * (`TrUAPIE2EFrameMeter`), where a dropped frame is a frame time of 1.5
+ * frames or more.
+ */
+export const IOS_CHAT_V2_PERF = Object.freeze([
+  {
+    id: "B1",
+    title: "10,000 participants paged at 100, scrolled to the end",
+    mode: SOURCE,
+    phase: "P7",
+    perf: true,
+    drive: {
+      phases: [
+        {
+          steps: [
+            "/participants 10000",
+            { host: "list" },
+            { host: "open" },
+            { wait: 1_500 },
+            { host: "participants" },
+            { wait: 2_000 },
+            {
+              host: "participants-scroll",
+              argument: "10004",
+              target: "300",
+            },
+          ],
+          expect: [
+            {
+              ui: "perf-participants",
+              match: "rows=10004 ",
+              timeoutMs: 150_000,
+            },
+          ],
+        },
+      ],
+      after: ["/participants 6", { host: "list" }, { host: "open" }],
+    },
+  },
+  {
+    id: "B2",
+    title: "50,000-message product-source room, newest page",
+    mode: SOURCE,
+    phase: "P7",
+    perf: true,
+    drive: {
+      phases: [
+        {
+          // Warm: the harness holds the worker, so the open asks a running
+          // product for its newest page.
+          steps: [
+            "/history 50000",
+            { host: "list" },
+            { wait: 1_000 },
+            { host: "open" },
+          ],
+          expect: [
+            { ui: "perf-ready", match: "^ms=\\d+ ", timeoutMs: 30_000 },
+            { ui: "window", match: "source-h-50000:" },
+          ],
+          shot: "warm",
+        },
+        {
+          // Cold: an uncaught error ends the worker, and the retry starts a
+          // new worker that answers the newest page.
+          steps: [
+            "/fail crash",
+            { host: "send", argument: "end the worker" },
+            { wait: 3_000 },
+            { host: "retry-room" },
+          ],
+          expect: [
+            { console: "worker starts again after its fault" },
+            { console: "[e2e:ui] perf-ready source ms=", timeoutMs: 45_000 },
+          ],
+        },
+      ],
+      after: ["/history 120", { host: "list" }, { host: "open" }],
+    },
+  },
+  {
+    id: "B3",
+    title: "/stream at 20 edits a second, and /flood",
+    mode: "host",
+    phase: "P7",
+    perf: true,
+    drive: {
+      phases: [
+        {
+          // The baseline: the open room with nothing to draw.
+          steps: [
+            { host: "list" },
+            { host: "open" },
+            { wait: 1_000 },
+            { host: "frames", argument: "4" },
+          ],
+          expect: [
+            { console: "[e2e:ui] frames host frames=", timeoutMs: 15_000 },
+          ],
+        },
+        {
+          steps: [{ host: "frames", argument: "4" }, "/stream"],
+          expect: [
+            { console: "[e2e:ui] frames host frames=", timeoutMs: 15_000 },
+          ],
+        },
+        {
+          steps: [{ host: "frames", argument: "5" }, "/flood"],
+          expect: [
+            { event: { via: "flood", kind: "Done" } },
+            { console: "[e2e:ui] frames host frames=", timeoutMs: 15_000 },
+          ],
+        },
+      ],
+    },
+  },
+]);
+
 /** The prefix the app's logger puts before each console line of a product. */
 const JS_LINE = /JS: (\{"t":"chat-v2".*\})\s*$/;
 

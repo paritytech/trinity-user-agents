@@ -38,6 +38,7 @@ import {
 } from "./lib/cli-chat-scenarios.mjs";
 import { decodeTextMessage } from "./lib/chat-diagnosis-report.mjs";
 import {
+  IOS_CHAT_V2_PERF,
   IOS_CHAT_V2_SCENARIOS,
   appStartFailure,
   blockedRows,
@@ -97,6 +98,15 @@ let commandCounter = 0;
 const only = (process.env.TRUAPI_IOS_E2E_ONLY || undefined)
   ?.split(",")
   .map((id) => id.trim());
+
+/**
+ * `TRUAPI_IOS_E2E_PERF=1` also drives the performance rows B1 to B3 after the
+ * scenarios (P7.1).
+ */
+const scenarios =
+  process.env.TRUAPI_IOS_E2E_PERF === "1"
+    ? [...IOS_CHAT_V2_SCENARIOS, ...IOS_CHAT_V2_PERF]
+    : IOS_CHAT_V2_SCENARIOS;
 
 /** The values that a step filled in, for the expectations after it. */
 const memory = {};
@@ -231,19 +241,19 @@ try {
         stdio: "ignore",
       },
     );
-    rows.push(...blockedRows(`${started} (\`start.png\`)`));
+    rows.push(...blockedRows(`${started} (\`start.png\`)`, scenarios));
     failure = started;
   } else {
     // The room screen of the `host` room is where the scenarios start.
     await sendHostAction({ room, host: "open" });
     await delay(2_000);
-    for (const scenario of IOS_CHAT_V2_SCENARIOS) {
+    for (const scenario of scenarios) {
       rows.push(await runScenario(scenario));
     }
   }
 } catch (error) {
   failure = error instanceof Error ? error.message : String(error);
-  for (const scenario of IOS_CHAT_V2_SCENARIOS) {
+  for (const scenario of scenarios) {
     if (!rows.some((existing) => existing.id === scenario.id)) {
       rows.push(
         scenario.drive
@@ -277,7 +287,7 @@ writeFileSync(reportPath, `${report}${notes.join("\n")}\n`);
 
 const failures = scenarioFailures(
   rows,
-  IOS_CHAT_V2_SCENARIOS.filter((scenario) => scenario.drive),
+  scenarios.filter((scenario) => scenario.drive),
 );
 console.log(
   JSON.stringify({

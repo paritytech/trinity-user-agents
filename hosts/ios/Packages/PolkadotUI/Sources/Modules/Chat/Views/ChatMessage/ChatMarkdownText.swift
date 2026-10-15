@@ -32,6 +32,12 @@ public struct ChatMarkdownText: View, Hashable {
     }
 
     public static func attributedString(from markdown: String) -> AttributedString {
+        ChatAttributedTextCache.shared.attributedString(for: markdown, style: "markdown") {
+            parse(markdown)
+        }
+    }
+
+    private static func parse(_ markdown: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: false,
             interpretedSyntax: .full,

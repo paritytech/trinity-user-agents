@@ -36,6 +36,11 @@ final class ChatProductRoomPresenter {
     private var activityTask: Task<Void, Never>?
     /// The last console marker of each key, for the E2E harness.
     var e2eMarks: [String: String] = [:]
+    /// For the performance rows of the E2E harness: the count of window updates, the start of the wait for a
+    /// ready window, and the frame meter that runs.
+    var e2eUpdates = 0
+    var e2eReadyWaitStart: ContinuousClock.Instant? = ContinuousClock.now
+    var e2eMeter: AnyObject?
     private var e2eObserver: NSObjectProtocol?
     /// The product answered `NotAvailable` to `reactions_query`, so the room hides who reacted.
     var reactionDetailsUnavailable = false
@@ -96,6 +101,7 @@ final class ChatProductRoomPresenter {
     /// The view model factory gives the room that it draws. The call never asks to draw again.
     func update(listModel: MessageListModel, metadata: MessageListMetadata) {
         mark("readiness", "\(listModel.readiness) older=\(listModel.paging.older) newer=\(listModel.paging.newer)")
+        markPerformance(readiness: listModel.readiness, messages: listModel.allMessages.count)
         appearanceFactory = ChatParticipantAppearanceFactory(
             myUsername: metadata.myUsername,
             productName: metadata.peerName,

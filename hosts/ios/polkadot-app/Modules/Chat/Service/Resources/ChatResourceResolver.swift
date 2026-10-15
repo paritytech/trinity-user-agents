@@ -1,6 +1,7 @@
 import BulletinChain
 import CryptoKit
 import Foundation
+import ImageIO
 import UIKit
 
 protocol ChatResourceResolving: Sendable {
@@ -38,6 +39,7 @@ final class ChatResourceResolver: ChatResourceResolving, @unchecked Sendable {
         self.cache = cache
         self.fetch = fetch
         images.countLimit = imageCountLimit
+        images.totalCostLimit = Self.decodedBytesLimit
     }
 
     func data(for resource: ChatResource) async -> Data? {
@@ -58,11 +60,11 @@ final class ChatResourceResolver: ChatResourceResolving, @unchecked Sendable {
             return image
         }
 
-        guard let data = await data(for: resource), let image = UIImage(data: data) else {
+        guard let data = await data(for: resource), let image = Self.decodedImage(from: data) else {
             return nil
         }
 
-        images.setObject(image, forKey: key)
+        images.setObject(image, forKey: key, cost: Self.decodedBytes(of: image))
         return image
     }
 }
@@ -87,6 +89,52 @@ extension ChatResourceResolver {
             maxBytes: 64 * 1_024 * 1_024
         )
     )
+
+    /// The memory that the decoded pictures of the cache can take: 64 MiB.
+    static let decodedBytesLimit = 64 * 1_024 * 1_024
+
+    static func decodedBytes(of image: UIImage) -> Int {
+        guard let bitmap = image.cgImage else { return 0 }
+        return bitmap.bytesPerRow * bitmap.height
+    }
+
+    /// The longest side of a decoded picture, in pixels. A larger picture is scaled down while it decodes.
+    static let maxDecodedPixelSize = 2_048
+
+    /// Decodes the picture into a bitmap here, away from the main thread (P7.1, B4). `UIImage(data:)` decodes
+    /// only when the screen first draws the picture, and the screen draws on the main thread. A picture of 1 MiB
+    /// then stops the main thread for longer than one frame.
+    ///
+    /// A picture within `maxPixelSize` decodes at its size. A larger picture is scaled down while it decodes, so
+    /// that the cache of bitmaps holds no picture larger than the screen needs.
+    static func decodedImage(from data: Data, maxPixelSize: Int = maxDecodedPixelSize) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(
+            data as CFData,
+            [kCGImageSourceShouldCache: false] as CFDictionary
+        )
+        else {
+            return nil
+        }
+
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
+        let height = properties?[kCGImagePropertyPixelHeight] as? Int ?? 0
+        if max(width, height) <= maxPixelSize, let image = UIImage(data: data) {
+            return image.preparingForDisplay() ?? image
+        }
+
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ] as CFDictionary
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
+            return nil
+        }
+
+        return UIImage(cgImage: image)
+    }
 
     static let fetchOverNetwork: Fetch = { url in
         let (data, response) = try await URLSession.shared.data(from: url)
