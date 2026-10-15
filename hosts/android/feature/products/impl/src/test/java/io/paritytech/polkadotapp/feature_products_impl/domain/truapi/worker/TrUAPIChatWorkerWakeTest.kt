@@ -5,6 +5,8 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
@@ -75,6 +77,27 @@ class TrUAPIChatWorkerWakeTest {
 
         // The first wake, two renewals at 20 s and 40 s, and the wake after the message: none after that.
         verify(exactly = 4) { runtime.wakeProduct(productId.value, messageWake) }
+    }
+
+    @Test
+    fun `a user action wakes the worker before it goes and once more after the answer`() = runTest {
+        val worker = worker()
+
+        worker.userAction(room, ChatUserActionModel.Retry(messageId = "m1"))
+        runCurrent()
+
+        verify(exactly = 2) { runtime.wakeProduct(productId.value, messageWake) }
+    }
+
+    @Test
+    fun `a press in a message or in the footer wakes the worker after the action goes`() = runTest {
+        val worker = worker()
+
+        worker.dispatchFooterEvent(room, "send", JsUiEvent.Type.ButtonClick)
+        verify(exactly = 1) { runtime.wakeProduct(productId.value, messageWake) }
+
+        worker.dispatchEvent(JsUiEvent(roomId = room, messageId = "m1", messageType = "card", actionId = "ok", eventType = JsUiEvent.Type.ButtonClick))
+        verify(exactly = 2) { runtime.wakeProduct(productId.value, messageWake) }
     }
 
     @Test

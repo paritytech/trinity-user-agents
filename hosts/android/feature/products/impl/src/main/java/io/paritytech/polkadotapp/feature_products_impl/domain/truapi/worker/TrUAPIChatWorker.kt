@@ -164,8 +164,11 @@ class TrUAPIChatWorker(
     override suspend fun userAction(roomId: ProductChatIdParameter, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
         val coreAction = action.toCore()
             ?: return Result.failure(ProductChatQueryException.Failed("the message has no body that the product can take"))
-        return query { execution ->
-            execution.chatUserAction(ProductChatUserActionRequest(roomId.value, coreAction)).toModel(rendererId)
+        // W1: a user action is a message in flight too, so the product can answer after the room closes.
+        return withBriefHold(roomId) {
+            query { execution ->
+                execution.chatUserAction(ProductChatUserActionRequest(roomId.value, coreAction)).toModel(rendererId)
+            }
         }
     }
 
@@ -331,8 +334,13 @@ class TrUAPIChatWorker(
             execution.publishRendererAction(
                 HostRendererActionSubscribeItem(RenderContext.ChatFooter(roomId.value), actionId, eventType.toActionPayload()),
             )
-        }.logFailure("truapi.renderer.footer action '$actionId' for ${productId.value}")
+        }.onSuccess { wakeAfterAction(roomId) }
+            .logFailure("truapi.renderer.footer action '$actionId' for ${productId.value}")
     }
+
+    // W1: the product answers a press after the action goes, maybe after the room closes. One wake of the core holds
+    // the worker for 30 s.
+    private fun wakeAfterAction(roomId: ProductChatIdParameter) = wake(ChatWakeReason.MessageInFlight(roomId.value))
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun render(context: RenderContext, payload: ByteArray): Flow<Result<JsWidget>> {
@@ -370,7 +378,8 @@ class TrUAPIChatWorker(
             execution.publishRendererAction(
                 HostRendererActionSubscribeItem(context, event.actionId, event.eventType.toActionPayload()),
             )
-        }.logFailure("truapi.renderer.action '${event.actionId}' for ${productId.value}")
+        }.onSuccess { wakeAfterAction(roomId) }
+            .logFailure("truapi.renderer.action '${event.actionId}' for ${productId.value}")
     }
 
     // A message that the product pushed has a store id that starts with its room; the product knows it without.
