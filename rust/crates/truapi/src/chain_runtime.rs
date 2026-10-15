@@ -358,10 +358,12 @@ impl ChainRuntime {
 	/// in flight does not insert its result afterwards.
 	pub fn release_scope(&self) {
 		let prefix = format!("{}:", self.scope.key_prefix());
-		self.released_scopes.lock().unwrap().insert(prefix.clone());
 
 		let dropped: Vec<Arc<ChainConnection>> = {
+			// Latched while `connections` is held, so a setup that has already
+			// read the latch cannot insert between the read and the sweep.
 			let mut connections = self.connections.lock().unwrap();
+			self.released_scopes.lock().unwrap().insert(prefix.clone());
 			let keys: Vec<String> =
 				connections.keys().filter(|key| key.starts_with(&prefix)).cloned().collect();
 			keys.iter().filter_map(|key| connections.remove(key)).collect()
@@ -370,15 +372,23 @@ impl ChainRuntime {
 			.lock()
 			.unwrap()
 			.retain(|key, _| !key.starts_with(&prefix));
-		self.follow_intents.lock().unwrap().retain(|key, _| !key.starts_with(&prefix));
-		// `follow_starts` is keyed by follow id, and a product's ids carry its
-		// own `c{instance}:` namespace.
-		if let ConnectionScope::Product(instance) = self.scope {
-			let follow_prefix = format!("c{instance}:");
-			self.follow_starts
-				.lock()
-				.retain(|(_, follow_id), _| !follow_id.starts_with(&follow_prefix));
-		}
+
+		// `follow_intents` already holds exactly this scope's follow ids, so
+		// sweeping `follow_starts` against them needs no assumption about how
+		// an id is shaped and covers host-internal follows too.
+		let released_follow_ids: HashSet<String> = {
+			let mut intents = self.follow_intents.lock().unwrap();
+			let ids = intents
+				.iter()
+				.filter(|(key, _)| key.starts_with(&prefix))
+				.flat_map(|(_, follow_ids)| follow_ids.iter().cloned())
+				.collect();
+			intents.retain(|key, _| !key.starts_with(&prefix));
+			ids
+		};
+		self.follow_starts
+			.lock()
+			.retain(|(_, follow_id), _| !released_follow_ids.contains(follow_id));
 
 		for connection in dropped {
 			connection.abort_all_follows();
@@ -828,18 +838,19 @@ impl ChainRuntime {
 				let released = self.released_scopes.clone();
 				let released_prefix = format!("{}:", self.scope.key_prefix());
 				let setup: ConnectionSetup = async move {
-					let result = provider.connect(genesis_hash.clone()).await.map(|rpc| {
+					let result = provider.connect(genesis_hash.clone()).await.and_then(|rpc| {
 						let connection = ChainConnection::new(rpc, spawner, genesis_hash);
+						let mut connections = connections.lock().unwrap();
 						// The scope can end while this connect is in flight. Caching
 						// the result then would reinstate an entry nothing asks for
 						// again, which is the growth `release_scope` exists to stop.
-						if !released.lock().unwrap().contains(&released_prefix) {
-							connections
-								.lock()
-								.unwrap()
-								.insert(setup_key.clone(), connection.clone());
+						// Failing rather than returning it also stops a follow
+						// attaching a pump to a connection nothing can reach.
+						if released.lock().unwrap().contains(&released_prefix) {
+							return Err(RuntimeFailure::unavailable("remote_chain_connect"));
 						}
-						connection
+						connections.insert(setup_key.clone(), connection.clone());
+						Ok(connection)
 					});
 					setups_map.lock().unwrap().remove(&setup_key);
 					result
@@ -2749,24 +2760,81 @@ mod tests {
 		assert!(closed, "the host socket stayed open after the scope was released");
 	}
 
-	/// A connect still in flight when its scope ends must not reinstate it.
-	/// `core_instance` never repeats, so a resurrected entry is asked for
-	/// never again and evicted never.
+	/// A connect genuinely in flight when its scope ends must not reinstate it.
+	/// `core_instance` never repeats, so a reinstated entry is never asked for
+	/// again and never evicted. The connect is parked inside the provider until
+	/// after `release_scope` has run, which is the ordering that matters.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_connect_in_flight_cannot_resurrect_a_released_scope() {
-		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
-		let genesis = vec![0xab; 32];
-		let product = core.for_product(1);
+		/// Holds every `connect` until the test lets it through.
+		struct ParkedProvider {
+			gate: Arc<(ParkingMutex<bool>, Condvar)>,
+		}
+		#[async_trait]
+		impl RuntimeChainProvider for ParkedProvider {
+			async fn connect(
+				&self,
+				_genesis_hash: Vec<u8>,
+			) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+				{
+					// Scoped, so no guard is held across the await below.
+					let (lock, cv) = &*self.gate;
+					let mut open = lock.lock();
+					while !*open {
+						cv.wait(&mut open);
+					}
+				}
+				ScriptedProvider::new(|_| None).connect(Vec::new()).await
+			}
+		}
 
-		// Latch the scope as released before the connect is allowed to land.
+		let gate = Arc::new((ParkingMutex::new(false), Condvar::new()));
+		let provider = Arc::new(ParkedProvider { gate: gate.clone() });
+		let core = ChainRuntime::new(provider, spawner_for_tests());
+		let product = core.for_product(1);
+		let genesis = vec![0xab; 32];
+
+		// Start the connect on another thread and let it reach the provider.
+		let connecting = product.clone();
+		let connecting_genesis = genesis.clone();
+		let handle = std::thread::spawn(move || {
+			futures::executor::block_on(
+				connecting.connection_for("resurrect_test", &connecting_genesis),
+			)
+			.is_ok()
+		});
+		for _ in 0..200 {
+			if core.connection_setups.lock().unwrap().len() == 1 {
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(10));
+		}
+		assert_eq!(
+			core.connection_setups.lock().unwrap().len(),
+			1,
+			"the connect never reached the provider",
+		);
+
+		// The scope ends while that connect is still parked.
 		product.release_scope();
-		let _ = futures::executor::block_on(product.connection_for("resurrect_test", &genesis));
+
+		// Now let it finish.
+		{
+			let (lock, cv) = &*gate;
+			*lock.lock() = true;
+			cv.notify_all();
+		}
+		let succeeded = handle.join().expect("connect thread");
 
 		let remaining: Vec<String> = core.connections.lock().unwrap().keys().cloned().collect();
 		assert!(
 			remaining.is_empty(),
-			"a connect after release reinstated the scope: {remaining:?}",
+			"a connect in flight reinstated the released scope: {remaining:?}",
+		);
+		assert!(
+			!succeeded,
+			"a connect for a released scope should fail, not hand back a connection"
 		);
 	}
 

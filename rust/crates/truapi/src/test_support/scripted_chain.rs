@@ -38,9 +38,6 @@ pub struct ScriptedProvider {
 	/// responses. Later connections each get their own.
 	pub sender: SenderSlot,
 	receiver: Arc<Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>>,
-	/// Every connection's sender slot, in connect order. Slot 0 is `sender`
-	/// itself, so taking that still ends the first connection's stream.
-	senders: Arc<Mutex<Vec<SenderSlot>>>,
 	/// How many times the core asked for a connection.
 	pub connect_calls: Arc<AtomicUsize>,
 }
@@ -66,9 +63,8 @@ impl ScriptedProvider {
 		Self {
 			respond: Arc::new(respond),
 			sent: Arc::new(Mutex::new(Vec::new())),
-			sender: first.clone(),
+			sender: first,
 			receiver: Arc::new(Mutex::new(Some(rx))),
-			senders: Arc::new(Mutex::new(vec![first])),
 			connect_calls: Arc::new(AtomicUsize::new(0)),
 		}
 	}
@@ -126,7 +122,6 @@ impl RuntimeChainProvider for ScriptedProvider {
 			None => {
 				let (tx, rx) = fut_mpsc::unbounded();
 				let slot: SenderSlot = Arc::new(Mutex::new(Some(tx)));
-				self.senders.lock().unwrap().push(slot.clone());
 				Ok(Arc::new(ScriptedConnection {
 					respond: self.respond.clone(),
 					sent: self.sent.clone(),
