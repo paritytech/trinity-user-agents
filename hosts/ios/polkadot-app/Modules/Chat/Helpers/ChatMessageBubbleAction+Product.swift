@@ -11,7 +11,8 @@ extension ChatMessageBubbleAction {
         case .retry: .retry
         case .delete: .delete
         case .edited,
-             .product: nil
+             .product,
+             .readAloud: nil
         }
     }
 

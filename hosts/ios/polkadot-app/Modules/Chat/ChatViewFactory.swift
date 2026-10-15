@@ -117,7 +117,8 @@ enum ChatViewFactory {
                 room: room,
                 footerRenderer: room,
                 footerImageResolver: room.widgetImageResolver,
-                wireframe: wireframe
+                wireframe: wireframe,
+                additions: .live()
             )
             productRoom?.view = view
             productRoom?.interactor = interactor

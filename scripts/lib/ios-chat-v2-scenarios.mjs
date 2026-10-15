@@ -19,7 +19,7 @@
  *   `reactions`, `suggestion`, `type`, `attach`, `button`, `footer-action`,
  *   `older`, `jump`, `retry`, `retry-room`, `back`, `release-worker`,
  *   `hold-worker`, `wake`, `call-button`, `call-answer`, `call-open`,
- *   `call-end`, `call-timer`), on the chat list
+ *   `call-end`, `call-timer`, `chip`, `branch`, `reasoning`), on the chat list
  *   (`list-mute`, `list-unmute`, `list-archive`, `list-unarchive`,
  *   `archived`, `list-search`), on the room header (`room-mute`,
  *   `room-unmute`, `room-archive`, `room-unarchive`, `search-open`) or on
@@ -44,13 +44,18 @@
  *   with `via`, `kind`, and an optional `data` substring;
  * - `{ console }`: an app console line written in the phase;
  * - `{ consoleNot }`: no app console line holds this text, `settleMs` after
- *   the steps.
+ *   the steps;
+ * - `{ previewNot }`: the chat-list preview of the room does not hold this
+ *   UTF-8 text.
  *
  * `timed: true` on a `metadata` expectation also writes the time from the
  * start of the phase to the match, for a benchmark row (B9).
  *
  * `scope: "previous"` makes a `console` or `event` expectation read from the
  * start of the previous phase instead of the start of its own phase.
+ *
+ * The templates below also fill the room of a step or an expectation, the
+ * key of a `ui` or `uiNot` marker, and a `console` line.
  *
  * `{lastUser}` in a step or an expectation is the newest message of the
  * user in the room's window, as the app's `window` marker names it.
@@ -94,9 +99,17 @@ export const IOS_CHAT_FEATURE_ROWS = Object.freeze({
   inline_attachments: ["S36"],
   room_links: ["S27", "S24"],
   search: ["S61", "S62", "S63"],
+  bot_personas: ["S53"],
   mute_archive: ["S54", "S55", "S56"],
+  threads: ["S64"],
+  branches: ["S65", "S68"],
+  reasoning_rows: ["S66"],
+  read_aloud: ["S67"],
   call_buttons: ["S72", "S73", "S74"],
 });
+
+/** The thread room that `/thread` makes for message `id` of `room`. */
+const threadRoom = (room, id) => `thread-${room}-${id}`;
 
 export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
   {
@@ -1807,6 +1820,327 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     },
   },
   {
+    id: "S53",
+    title:
+      "register_bot answers New, then Exists and replaces the persona; a bot message draws its name and icon; an unknown persona is refused",
+    mode: "host",
+    phase: "P10.6",
+    drive: {
+      phases: [
+        {
+          steps: ["/bot add helper Helper"],
+          expect: [{ storedMatch: "^bot helper (New|Exists)$" }],
+        },
+        {
+          // The host room declares no participants, so the author comes
+          // from the persona store and not from participants_query.
+          steps: ["/bot add helper Helper", "/bot post helper Hello from the persona"],
+          expect: [
+            { stored: "bot helper Exists" },
+            { stored: "Hello from the persona" },
+            { ui: "author-bot:helper", match: "^Helper icon$" },
+          ],
+          shot: "persona",
+        },
+        {
+          steps: ["/bot add helper Helper Two"],
+          expect: [
+            { ui: "personas", match: "helper=Helper Two" },
+            { ui: "author-bot:helper", match: "^Helper Two icon$" },
+          ],
+        },
+        {
+          steps: ["/bot typing helper"],
+          expect: [
+            { ui: "activity", match: "^Helper Two: Sample is typing icon$" },
+          ],
+          shot: "activity",
+        },
+        {
+          steps: ["/activity off", "/bot post ghost Boo"],
+          expect: [{ storedMatch: "unknown bot ghost" }],
+        },
+      ],
+      after: ["/activity off", "/bot add helper Helper"],
+    },
+  },
+  {
+    id: "S64",
+    title:
+      "a root shows 3 replies and opens the thread room, which is not in the list",
+    mode: "host",
+    phase: "P10.9",
+    drive: {
+      phases: [
+        {
+          steps: ["/bot add helper Helper", "/post text"],
+          expect: [{ storedMatch: "^Plain text message" }],
+        },
+        {
+          steps: ["/thread {lastProduct}"],
+          expect: [
+            {
+              ui: "chip-{memory:lastProduct}",
+              match: `^replies=3 room=${threadRoom("host", "{memory:lastProduct}")} participants=p1,p2,bot:helper$`,
+            },
+            {
+              metadata: { ZNAME: "Thread" },
+              room: threadRoom("host", "{memory:lastProduct}"),
+            },
+          ],
+          shot: "root",
+        },
+        {
+          steps: [{ host: "list" }, { host: "list-render" }, { wait: 1_000 }],
+          expect: [
+            { ui: "chat-list", room: "list", match: "Sample: host store" },
+            {
+              uiNot: "chat-list",
+              room: "list",
+              match: "(=|\\|)Thread(\\||$)",
+              settleMs: 500,
+            },
+          ],
+        },
+        {
+          steps: [
+            { host: "open" },
+            { wait: 1_000 },
+            { host: "chip", target: "{memory:lastProduct}" },
+          ],
+          expect: [
+            {
+              ui: "thread",
+              room: threadRoom("host", "{memory:lastProduct}"),
+              match: "^Thread · Sample: host store$",
+            },
+            {
+              ui: "root",
+              room: threadRoom("host", "{memory:lastProduct}"),
+              match: "^Plain text message",
+            },
+            {
+              ui: "author-bot:helper",
+              room: threadRoom("host", "{memory:lastProduct}"),
+              match: "^Helper",
+            },
+          ],
+          shot: "thread",
+        },
+        {
+          steps: [
+            { host: "back", room: threadRoom("host", "{memory:lastProduct}") },
+          ],
+          expect: [{ ui: "returned", match: "^{memory:lastProduct}$" }],
+        },
+      ],
+      // The sample takes commands only in its host, source and thread
+      // rooms, so it cannot open a thread under a room that it deletes. The
+      // unit test `deletingARoomDeletesItsThreadRooms` proves the cascade.
+      after: [{ host: "open" }],
+    },
+  },
+  {
+    id: "S65",
+    title:
+      "branch arrows send BranchSelected; the product's answer moves the position; without an answer the control reverts after 5 s",
+    mode: "host",
+    phase: "P10.9",
+    drive: {
+      phases: [
+        {
+          steps: ["/post text"],
+          expect: [{ storedMatch: "^Plain text message" }],
+        },
+        {
+          steps: ["/branches {lastProduct} 3"],
+          expect: [{ ui: "branch-{memory:lastProduct}", match: "^1/3$" }],
+        },
+        {
+          steps: [
+            { host: "branch", target: "{memory:lastProduct}", argument: "2" },
+          ],
+          expect: [
+            {
+              event: {
+                via: "room_events",
+                kind: "BranchSelected",
+                data: '"index":2',
+              },
+            },
+            { ui: "branch-{memory:lastProduct}", match: "^2/3$" },
+            { stored: "Branch 2 of 3" },
+          ],
+          shot: "answered",
+        },
+        {
+          // The product answers after 6 s: the control goes back after 5 s,
+          // and the late answer moves it.
+          steps: [
+            "/slow 6000",
+            { host: "branch", target: "{memory:lastProduct}", argument: "3" },
+          ],
+          expect: [
+            { console: "[e2e:ui] branch-{memory:lastProduct} host 2/3 pending=3" },
+            {
+              console: "[e2e:ui] branch-{memory:lastProduct} host 2/3 reverted",
+              timeoutMs: 15_000,
+            },
+            {
+              ui: "branch-{memory:lastProduct}",
+              match: "^3/3$",
+              timeoutMs: 15_000,
+            },
+          ],
+        },
+      ],
+      after: ["/slow 0"],
+    },
+  },
+  {
+    id: "S66",
+    title:
+      "a reasoning row streams with Thinking, collapses to Thought for 4 s, expands on a tap, and is never the list preview",
+    mode: "host",
+    phase: "P10.9",
+    drive: {
+      phases: [
+        {
+          steps: ["/reason"],
+          expect: [
+            {
+              console: "[e2e:ui] reasoning-{lastProduct} host thinking Thinking…",
+            },
+            {
+              ui: "reasoning-{memory:lastProduct}",
+              match: "^collapsed Thought for 4 s$",
+              timeoutMs: 15_000,
+            },
+            {
+              ui: "a11y-reasoning-{memory:lastProduct}",
+              match: "^Reasoning, collapsed$",
+            },
+            { previewNot: "The user asked" },
+          ],
+          shot: "collapsed",
+        },
+        {
+          steps: [{ host: "reasoning", target: "{memory:lastProduct}" }],
+          expect: [
+            { ui: "reasoning-{memory:lastProduct}", match: "^expanded " },
+            {
+              ui: "a11y-reasoning-{memory:lastProduct}",
+              match: "^Reasoning, expanded$",
+            },
+          ],
+          shot: "expanded",
+        },
+      ],
+    },
+  },
+  {
+    id: "S67",
+    title:
+      "Read aloud appears only with read_aloud, speaks RichText as plain text, and stops on leaving the room",
+    mode: "host",
+    phase: "P10.9",
+    drive: {
+      phases: [
+        {
+          steps: [
+            "/features readaloud off",
+            "/post rich",
+            { wait: 1_000 },
+            { host: "menu", target: "{lastProduct}" },
+          ],
+          expect: [
+            {
+              ui: "menu",
+              match: "^{memory:lastProduct} entries=(?!.*readAloud)",
+            },
+          ],
+        },
+        {
+          steps: [
+            "/features readaloud on",
+            { wait: 1_000 },
+            { host: "menu", target: "{memory:lastProduct}" },
+          ],
+          expect: [
+            { ui: "menu", match: "^{memory:lastProduct} entries=.*readAloud" },
+          ],
+        },
+        {
+          steps: [
+            {
+              host: "menu",
+              target: "{memory:lastProduct}",
+              argument: "readAloud",
+            },
+          ],
+          expect: [
+            {
+              ui: "readaloud",
+              match:
+                "^speaking Rich text sample\\s+A paragraph with bold, italic, inline code",
+            },
+            { ui: "readaloud-audio", match: "^started$" },
+          ],
+          shot: "speaking",
+        },
+        {
+          steps: [{ host: "list" }],
+          expect: [{ ui: "readaloud", match: "^stopped$" }],
+        },
+      ],
+      after: [{ host: "open" }, "/features readaloud off"],
+    },
+  },
+  {
+    id: "S68",
+    title:
+      "the meta of a product-source message survives scrolling it out of the window and back",
+    mode: SOURCE,
+    phase: "P10.9",
+    drive: {
+      phases: [
+        {
+          steps: [
+            "/history 700",
+            { host: "list" },
+            { host: "open" },
+            { wait: 1_500 },
+            "/branches source-h-00700 3",
+          ],
+          expect: [{ ui: "meta-drawn", match: "source-h-00700:b1/3" }],
+        },
+        {
+          // The window holds at most 500 messages, so the newest message
+          // leaves it.
+          steps: [{ host: "jump", target: "source-h-00005" }],
+          expect: [
+            { ui: "readiness", match: "older=end", timeoutMs: 60_000 },
+            { uiNot: "meta-drawn", match: "source-h-00700", settleMs: 1_000 },
+          ],
+        },
+        {
+          steps: [{ host: "jump", target: "source-h-00700" }],
+          // The window draws the message with its meta again. The room then
+          // pages older messages, so the check reads the console of the phase
+          // and not the newest marker.
+          expect: [
+            {
+              console: "[e2e:ui] meta-drawn source source-h-00700:b1/3",
+              timeoutMs: 60_000,
+            },
+          ],
+          shot: "back",
+        },
+      ],
+      after: ["/history 120", { host: "list" }, { host: "open" }],
+    },
+  },
+  {
     id: "S49",
     title: "capabilities lists exactly the features whose rows pass",
     mode: "host",
@@ -2117,9 +2451,10 @@ export function lastUserMessage(markers, room) {
     .filter((marker) => marker.key === "window" && marker.room === room)
     .at(-1);
   if (!window) return undefined;
-  const ids = [...window.value.matchAll(/([^,=\s]+):out-[a-z]+:/g)].map(
-    (match) => match[1],
-  );
+  // An edit row (`<id>#edit`) is not a message of its own.
+  const ids = [...window.value.matchAll(/([^,=\s]+):out-[a-z]+:/g)]
+    .map((match) => match[1])
+    .filter((id) => !id.includes("#"));
   return ids.at(-1);
 }
 
@@ -2132,9 +2467,10 @@ export function lastProductMessage(markers, room) {
     .filter((marker) => marker.key === "window" && marker.room === room)
     .at(-1);
   if (!window) return undefined;
-  const ids = [...window.value.matchAll(/([^,=\s]+):in-[a-z]+:/g)].map(
-    (match) => match[1],
-  );
+  // An edit row (`<id>#edit`) is not a message of its own.
+  const ids = [...window.value.matchAll(/([^,=\s]+):in-[a-z]+:/g)]
+    .map((match) => match[1])
+    .filter((id) => !id.includes("#"));
   return ids.at(-1);
 }
 

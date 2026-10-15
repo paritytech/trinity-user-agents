@@ -21,6 +21,26 @@ export const REGISTER_BOT_GAP = [
   { method: "Chat/register_bot", details: /no bot registry|not supported/ },
 ];
 
+/**
+ * The result of one method row of a report: `pass` (✅), `fail` (❌) or
+ * `skip`, with its details, or undefined when the report has no such row.
+ */
+export function diagnosisRow(report, method) {
+  for (const line of report.split("\n")) {
+    const match = line.match(
+      /^\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|\s*(.*?)\s*\|\s*$/,
+    );
+    if (!match || match[1] !== method) continue;
+    const result = match[2].includes("\u2705")
+      ? "pass"
+      : match[2].includes("\u274c")
+        ? "fail"
+        : "skip";
+    return { method, result, details: match[3] };
+  }
+  return undefined;
+}
+
 /** The `method` and `details` of every ❌ row in a report. */
 export function diagnosisFailures(report) {
   const failures = [];

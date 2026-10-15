@@ -67,6 +67,8 @@ final class ChatProductRoomPresenter {
     var backgroundObserver: ChatRoomBackgroundObserver?
     /// The interactor of the room screen, for the actions that the E2E harness asks for.
     weak var interactor: ChatInteractorInputProtocol?
+    /// The personas, the message meta and the threads of the room (Chat Extension v2 additions).
+    let additions: ChatRoomAdditionsState
 
     init?(
         chatId: Chat.Id,
@@ -80,6 +82,7 @@ final class ChatProductRoomPresenter {
         searchService: ChatSearchServicing = ChatSearchService(),
         calls: ChatRoomCallStoring = ChatRoomCallStore.shared,
         roomEvents: ChatRoomEventPublishing? = RootDependencyLocator.getDependency(),
+        additions: ChatRoomAdditionsDependencies = .inert,
         logger: LoggerProtocol = Logger.shared
     ) {
         guard case let .chatExtension(productId, roomId?) = chatId else {
@@ -98,6 +101,7 @@ final class ChatProductRoomPresenter {
         self.roomEvents = roomEvents
         self.logger = logger
 
+        self.additions = ChatRoomAdditionsState(dependencies: additions)
         participants = ChatParticipantDirectory(roomId: roomId, room: room, logger: logger)
         appearanceFactory = ChatParticipantAppearanceFactory(
             myUsername: "",
@@ -109,6 +113,7 @@ final class ChatProductRoomPresenter {
         activityTask = followActivity(activityStore)
         callTask = followCall(calls)
         bindCallBar()
+        followAdditions()
         #if targetEnvironment(simulator)
             e2eObserver = observeE2EActions()
         #endif
@@ -155,8 +160,11 @@ final class ChatProductRoomPresenter {
         loadParticipantsIfDeclared()
         provideCall()
         mark("call-buttons", policy?.callButtonsE2EDescription ?? "none")
+        loadThreadRootIfNeeded()
+        returnToRootIfShown()
         updateAccessory()
         markWindow()
+        markDrawnMeta()
         mark("allowed", policy?.messageMenu.allowedReactions?.joined() ?? "all")
         mark("policy", "generation=\(policy?.configGeneration ?? 0)")
     }

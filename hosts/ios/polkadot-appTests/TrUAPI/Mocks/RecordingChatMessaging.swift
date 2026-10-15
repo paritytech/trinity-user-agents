@@ -117,6 +117,13 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     private(set) var calls: [(roomId: String, call: Chat.RoomCall?)] = []
     var userStates: [Chat.RoomUserStateEntry] = []
     var personas: [String] = []
+    struct PersonaCall: Equatable {
+        let botId: String
+        let name: String
+        let icon: String?
+    }
+
+    private(set) var registeredPersonas: [PersonaCall] = []
 
     func roomFeatures(roomId: String) async throws -> Chat.RoomFeatures {
         try requireRoom(roomId)
@@ -145,6 +152,13 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
 
     func personaIds() async throws -> [String] {
         personas
+    }
+
+    func registerPersona(botId: String, name: String, icon: String?) async throws -> Chat.PersonaRegistration {
+        registeredPersonas.append(.init(botId: botId, name: name, icon: icon))
+        guard !personas.contains(botId) else { return .exists }
+        personas.append(botId)
+        return .new
     }
 
     private func requireRoom(_ roomId: String) throws {

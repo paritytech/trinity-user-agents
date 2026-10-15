@@ -10,8 +10,7 @@ import Foundation
 ///
 /// Not listed, and why:
 /// - `payment_button`: the input draws no payment button (P10.2).
-/// - `preimage_attachments` (P10.3), `bot_personas` (P10.6), `threads`, `branches`, `reasoning_rows`, `read_aloud`
-///   (P10.9): the host keeps what the product declares for them, but it does not draw them yet.
+/// - `preimage_attachments` (P10.3): the host keeps what the product declares for it, but it does not draw it yet.
 /// - `wake` (P10.4): no push route wakes a product yet.
 /// - `room_calls` (P10.7): the runtime has no Media service.
 enum ChatHostCapabilities {
@@ -30,7 +29,12 @@ enum ChatHostCapabilities {
         "inline_attachments",
         "room_links",
         "search",
+        "bot_personas",
         "mute_archive",
+        "threads",
+        "branches",
+        "reasoning_rows",
+        "read_aloud",
         "call_buttons"
     ]
 

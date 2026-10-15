@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// The live parts of the footer of a product room: the activity line, the quick replies and the slash commands
 /// (Chat Extension v2, 02-DESIGN §6.6).
@@ -34,6 +35,19 @@ public final class ChatRoomAccessoryModel {
     public var activityText: String? {
         didSet { if activityText != oldValue { notify() } }
     }
+
+    /// The icon of the participant that the activity line is about, for example a persona of the product.
+    public var activityIcon: UIImage? {
+        didSet { if activityIcon !== oldValue { notify() } }
+    }
+
+    /// The title of the button that stops "Read aloud". Nil hides the button: the room speaks nothing.
+    public var readAloudStopTitle: String? {
+        didSet { if readAloudStopTitle != oldValue { notify() } }
+    }
+
+    /// The user pressed the button that stops "Read aloud".
+    public var onStopReadAloud: (() -> Void)?
 
     public var suggestions: [Suggestion] = [] {
         didSet { if suggestions != oldValue { notify() } }

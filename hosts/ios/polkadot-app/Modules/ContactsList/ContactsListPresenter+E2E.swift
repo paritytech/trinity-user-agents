@@ -19,11 +19,13 @@ import Foundation
 
         /// Writes `[e2e:ui] chat-list list rooms=<name>|<name>` (`chat-archive` for the archived list) with the names
         /// of the product rooms that the list draws, `[e2e:ui] archived-row list count=<count>` for the main list,
-        /// and `[e2e:ui] row <room> <scope> muted=<bool> archived=<bool>` for each product room of the list.
+        /// and `[e2e:ui] row <room> <scope> muted=<bool> archived=<bool>` for each product room of the list. The list
+        /// does not draw a thread room.
         func markProductRooms(_ model: ChatListModel) {
             guard TrUAPIE2EMarkers.isEnabled else { return }
 
-            let rooms = model.establishedChats.filter { $0.chat.roomMetadata != nil }
+            let rooms = model.establishedChats
+                .filter { $0.chat.roomMetadata != nil && $0.chat.roomDeclarations?.features.threadOf == nil }
             let names = rooms.map(\.peerMetadata.name)
             let key = scope == .main ? "chat-list" : "chat-archive"
             logger.debug("[e2e:ui] \(key) list rooms=\(names.joined(separator: "|"))")

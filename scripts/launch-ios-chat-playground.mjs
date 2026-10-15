@@ -15,6 +15,7 @@ import { dirname, resolve } from "node:path";
 import {
   CHAT_DIAGNOSIS_HEADING,
   decodeTextMessage,
+  diagnosisRow,
   labelChatDiagnosisReport,
 } from "./lib/chat-diagnosis-report.mjs";
 import {
@@ -170,6 +171,8 @@ const appGroup = capture("xcrun", [
 ]).trim();
 const chatIdentifier = `1:${productHost}:${roomId}`;
 const initialDatabase = userDataDatabase(appGroup);
+/** The `Chat/register_bot` row of the diagnosis report. */
+let registerBot;
 let messageWatermark = existsSync(initialDatabase)
   ? latestMessageId(initialDatabase, chatIdentifier)
   : 0;
@@ -240,7 +243,15 @@ try {
       messageWatermark,
       CHAT_DIAGNOSIS_HEADING,
     );
+    // The app keeps the bot as a persona of the product (P10.6), so
+    // `register_bot` is a pass on iOS and not an accepted host gap.
     const hostReport = labelChatDiagnosisReport(report, "iOS");
+    registerBot = diagnosisRow(report, "Chat/register_bot");
+    if (registerBot?.result !== "pass") {
+      throw new Error(
+        `Chat/register_bot is not a pass: ${JSON.stringify(registerBot)}`,
+      );
+    }
     mkdirSync(dirname(reportPath), { recursive: true });
     writeFileSync(reportPath, `${hostReport}\n`);
   } else {
@@ -280,6 +291,7 @@ console.log(
     roomId,
     message,
     diagnosisVerified: expectDiagnosis,
+    registerBot: registerBot?.result,
     customRendererVerified: expectCustomRenderer,
     productUrl,
     verifiedExecutions: ["Worker"],

@@ -115,6 +115,17 @@ final class RecordingProductRoomWireframe: ChatProductRoomWireframing {
     func openProduct(_ productId: String) {
         openedProducts.append(productId)
     }
+
+    private(set) var shownThreads: [Chat.Id] = []
+    private(set) var placedParents: [(chatId: Chat.Id, rootMessageId: String)] = []
+
+    func showThread(_ threadChatId: Chat.Id, from _: ControllerBackedProtocol?) {
+        shownThreads.append(threadChatId)
+    }
+
+    func placeParentRoom(_ parentChatId: Chat.Id, returnTo rootMessageId: String, below _: ControllerBackedProtocol?) {
+        placedParents.append((parentChatId, rootMessageId))
+    }
 }
 
 /// A resolver that has no image.

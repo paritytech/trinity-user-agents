@@ -550,6 +550,161 @@
           }
         }
       }
+    },
+    "thread.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thread"
+          }
+        }
+      }
+    },
+    "thread.replies": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld reply"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld replies"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "thread.chip.accessibility": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thread, %@"
+          }
+        }
+      }
+    },
+    "branch.previous": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previous alternative"
+          }
+        }
+      }
+    },
+    "branch.next": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Next alternative"
+          }
+        }
+      }
+    },
+    "branch.position": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alternative %lld of %lld"
+          }
+        }
+      }
+    },
+    "reasoning.thinking": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thinking…"
+          }
+        }
+      }
+    },
+    "reasoning.thought": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thought"
+          }
+        }
+      }
+    },
+    "reasoning.thought.duration": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thought for %lld s"
+          }
+        }
+      }
+    },
+    "reasoning.collapsed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reasoning, collapsed"
+          }
+        }
+      }
+    },
+    "reasoning.expanded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reasoning, expanded"
+          }
+        }
+      }
+    },
+    "read.aloud": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read aloud"
+          }
+        }
+      }
+    },
+    "read.aloud.stop": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop reading"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

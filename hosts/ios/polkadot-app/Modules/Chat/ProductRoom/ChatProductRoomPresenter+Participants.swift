@@ -25,8 +25,19 @@ extension ChatProductRoomPresenter {
 
     /// The author of a message from another participant than the user and the product, with the name that the
     /// product resolved. The first draw asks the product, and the room draws again when the answer arrives.
+    ///
+    /// A persona of the product (`bot:<bot_id>`) has the name and the icon that the product registered, also in a
+    /// room that does not declare participants (07-LATER §5).
     func author(of message: Chat.LocalMessage) -> ChatMessageAuthor? {
-        guard asksParticipants, !message.status.isOutgoing, let participantId = message.authorParticipantId else {
+        guard !message.status.isOutgoing, let participantId = message.authorParticipantId else {
+            return nil
+        }
+
+        if let author = personaAuthor(of: participantId) {
+            return author
+        }
+
+        guard asksParticipants else {
             return nil
         }
 

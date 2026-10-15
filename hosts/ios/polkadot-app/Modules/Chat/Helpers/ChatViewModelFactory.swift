@@ -83,7 +83,7 @@ extension ChatViewModelFactory: ChatViewModelMaking {
     ) -> ChatViewLayout.ViewModel {
         let headerMetadata = MainActor.assumeIsolated {
             productRoom?.update(listModel: model, metadata: metadata)
-            return productRoomHeaderMetadata(metadata.chatMetadata)
+            return threadHeaderMetadata(productRoomHeaderMetadata(metadata.chatMetadata))
         }
 
         let headerConfiguration = headerMetadata.chatContactInfo(
@@ -101,7 +101,10 @@ extension ChatViewModelFactory: ChatViewModelMaking {
             targetMessageId: model.oldestNewReactionTargetMessageId
         )
 
-        let sections = makeSections(model: model, metadata: metadata, actions: actions)
+        let sections = addingThreadRoot(
+            to: makeSections(model: model, metadata: metadata, actions: actions),
+            paging: model.paging
+        )
 
         let initiallyVisibleMessageIdentifier = model.initiallyUnreadMessage ??
             sections.last?.messages.last?.id
@@ -247,16 +250,15 @@ private extension ChatViewModelFactory {
             let reactions = model.reactionsByMessageId[message.messageId].map { convertToReactionViewModels($0) } ?? []
             let layoutContext = layoutContexts[message.messageId] ?? .standard
 
-            result.append(
-                contentsOf: addingAuthor(of: message, to: convert(
-                    message,
-                    listModel: model,
-                    metadata: metadata,
-                    actions: actions,
-                    reactions: reactions,
-                    layoutContext: layoutContext
-                ))
-            )
+            let items = addingAuthor(of: message, to: convert(
+                message,
+                listModel: model,
+                metadata: metadata,
+                actions: actions,
+                reactions: reactions,
+                layoutContext: layoutContext
+            ))
+            result.append(contentsOf: addingMeta(of: message, listModel: model, to: items))
         }
 
         return result
@@ -766,7 +768,7 @@ private extension ChatViewModelFactory {
     ) -> () -> [UIMenuElement] {
         makeMessageMenu(
             messageId: messageId,
-            hostActions: messageActions,
+            hostActions: withReadAloud(messageActions),
             content: ChatMessageMenuContent(text: text, actions: actions)
         )
     }

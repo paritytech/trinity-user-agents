@@ -57,6 +57,9 @@ extension ChatViewModelFactory {
             case .retry: UIAction.chatRetry { actions.retry(messageId) }
             case .delete: UIAction.chatDelete { actions.delete(messageId) }
             case .product: nil
+            case .readAloud: UIAction.chatReadAloud { [weak productRoom] in
+                    productRoom?.readAloud(content.text, messageId: messageId)
+                }
             }
         }
 
@@ -75,6 +78,16 @@ extension ChatViewModelFactory {
 }
 
 extension UIAction {
+    /// The built-in "Read aloud" of a room that declares `read_aloud`.
+    static func chatReadAloud(_ handler: @escaping () -> Void) -> UIAction {
+        UIAction(
+            title: String(localized: .ChatExtension.readAloud),
+            image: UIImage(systemName: "speaker.wave.2")?.withTintColor(.fgPrimary, renderingMode: .alwaysOriginal)
+        ) { _ in
+            handler()
+        }
+    }
+
     /// A product entry of a menu. A destructive entry draws in red.
     static func chatProduct(
         _ action: Chat.ProductMenuAction,

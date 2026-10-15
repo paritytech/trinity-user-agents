@@ -36,9 +36,17 @@ extension ChatProductRoomPresenter {
         Task { [weak self, chatId] in
             for await activity in store.activityUpdates(for: chatId) {
                 guard let self else { return }
-                accessory.activityText = activity?.text
-                mark("activity", activity?.text ?? "none")
+                additions.activity = activity
+                showActivity()
             }
         }
+    }
+
+    /// Draws the activity line again, for example when the persona that it is about loads.
+    func showActivity() {
+        let line = activityLine(additions.activity)
+        accessory.activityText = line.text
+        accessory.activityIcon = line.icon
+        mark("activity", (line.text ?? "none") + (line.icon == nil ? "" : " icon"))
     }
 }
