@@ -5,6 +5,10 @@ public protocol ChatProductFileProviding: ProductFileProviding {
     /// when there is none. A wasm module wins over a script. Published workers declare their
     /// entrypoint in the manifest instead.
     func manualScriptEntryPath(productId: ProductId) -> String?
+
+    /// When a worker installed by hand runs, from the `keepAlive` field of `ChatExtension/manifest.json`.
+    /// `onDemand` when the file is absent, is not JSON, or has no value that this host knows.
+    func manualWorkerKeepAlive(productId: ProductId) -> ProductWorkerKeepAlive
 }
 
 public final class CompositeProductFileProvider: ChatProductFileProviding {
@@ -41,6 +45,17 @@ public final class CompositeProductFileProvider: ChatProductFileProviding {
         guard chatScriptStorage.scriptExists(productId: productId) else { return nil }
 
         return chatScriptStorage.chatEntrypointRelativePath()
+    }
+
+    public func manualWorkerKeepAlive(productId: ProductId) -> ProductWorkerKeepAlive {
+        let path = chatScriptStorage.workerManifestRelativePath()
+        guard
+            let data = chatScriptStorage.loadData(productId: productId, relativePath: path),
+            let manifest = try? JSONDecoder().decode(ManualWorkerManifestDTO.self, from: data) else {
+            return .onDemand
+        }
+
+        return ProductWorkerKeepAlive(manifestValue: manifest.keepAlive?.value) ?? .onDemand
     }
 
     // MARK: - Private

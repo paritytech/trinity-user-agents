@@ -67,6 +67,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     /// first use, which is long after, so the manager is in place by then.
     private var workerManager: (any TrUAPIWorkerManaging)?
 
+    /// Tells the runtime whether the app is in the foreground, for the foreground workers (I5). Nil without a
+    /// monitor.
+    private var foregroundReporter: TrUAPIForegroundReporter?
+
     init(
         chainRegistry: ChainRegistryProtocol,
         entropyManager: RootEntropyManaging,
@@ -74,6 +78,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        foreground: AppForegroundMonitor? = nil,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
@@ -83,6 +88,23 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
         self.logger = logger
+
+        foregroundReporter = foreground.map { monitor in
+            TrUAPIForegroundReporter(
+                monitor: monitor,
+                runtime: { [weak self] in self?.builtRuntime },
+                workers: { [weak self] in self?.attachedWorkerManager },
+                logger: logger
+            )
+        }
+    }
+
+    /// The runtime when it is built. It does not build the runtime.
+    private var builtRuntime: TrUAPIHostRuntime? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        return cachedRuntime
     }
 
     @MainActor
@@ -170,6 +192,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
 
         cachedRuntime = runtime
+        // The core starts in the background. The report runs on its own queue after this lock.
+        foregroundReporter?.report()
         return runtime
     }
 }

@@ -34,9 +34,15 @@ import Foundation
         }
 
         /// True when the harness drives this product, so the product must run while no room screen is open.
+        /// `TRUAPI_IOS_E2E_HOLD_WORKER=0` turns the hold off: then the worker runs as for a user, for example as a
+        /// foreground worker that its manifest declares (VERBOSITY-WASM-PRODUCT I5).
         static func holdsWorker(for productId: String) -> Bool {
-            let environment = ProcessInfo.processInfo.environment
-            return environment["TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST"] == productId
+            holdsWorker(for: productId, environment: ProcessInfo.processInfo.environment)
+        }
+
+        static func holdsWorker(for productId: String, environment: [String: String]) -> Bool {
+            environment["TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST"] == productId
+                && environment["TRUAPI_IOS_E2E_HOLD_WORKER"] != "0"
                 && (environment["TRUAPI_IOS_E2E_CHAT_COMMANDS"] == "1"
                     || environment["TRUAPI_IOS_E2E_CHAT_MESSAGE"] != nil)
         }

@@ -33,12 +33,41 @@ struct ProductWorkerSourceTests {
         #expect(ProductWorkerSource.installedByHand(for: resolved, entryPath: { _ in nil }) == nil)
     }
 
-    private func worker(modalities: [ProductExecutable.Worker.Modality]) -> ProductExecutable.Worker {
+    /// A published worker declares its keep alive in its manifest. A file installed by hand cannot change it.
+    @Test func takesTheKeepAliveOfAPublishedWorkerFromItsManifest() {
+        let resolved = product(worker: worker(modalities: [.chat], keepAlive: .foreground))
+
+        #expect(ProductWorkerKeepAlive.of(resolved, installedByHand: { _ in .onDemand }) == .foreground)
+        #expect(
+            ProductWorkerKeepAlive.of(
+                product(worker: worker(modalities: [.chat])),
+                installedByHand: { _ in .foreground }
+            ) == .onDemand
+        )
+    }
+
+    /// A product with no published worker takes the keep alive of the worker installed by hand.
+    @Test func takesTheKeepAliveOfAWorkerInstalledByHand() {
+        var asked: [ProductId] = []
+        let keepAlive = ProductWorkerKeepAlive.of(product(worker: nil)) {
+            asked.append($0)
+            return .foreground
+        }
+
+        #expect(keepAlive == .foreground)
+        #expect(asked == ["game.dot"])
+    }
+
+    private func worker(
+        modalities: [ProductExecutable.Worker.Modality],
+        keepAlive: ProductWorkerKeepAlive = .onDemand
+    ) -> ProductExecutable.Worker {
         ProductExecutable.Worker(
             identifier: "worker.game.dot",
             appVersion: SemVer(major: 1, minor: 0, patch: 0, build: nil),
             entrypoint: "index.js",
-            modalities: modalities
+            modalities: modalities,
+            keepAlive: keepAlive
         )
     }
 

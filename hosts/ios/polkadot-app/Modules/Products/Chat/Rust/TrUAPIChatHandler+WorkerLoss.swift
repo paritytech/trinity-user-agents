@@ -4,6 +4,14 @@ import TrUAPIHost
 /// The worker of the product stops under an open room only when it fails, because the open room holds it
 /// (06-OPEN-ITEMS O26, scenario S23).
 extension TrUAPIChatHandler {
+    /// The execution of the worker that runs now. Throws `ChatSeamError.notStarted` when no worker runs.
+    func requireExecution() throws -> TrUAPIProductExecutionProtocol {
+        guard let execution = workers.currentExecution(of: productId) else {
+            throw ChatSeamError.notStarted
+        }
+        return execution
+    }
+
     /// Follows the worker of the product. The rooms on screen hold the worker, so the worker stops while a room
     /// is open only when it fails (06-OPEN-ITEMS O26). The open rooms then show "unavailable", and they send
     /// `RoomOpened` to the next worker.

@@ -58,6 +58,19 @@ public extension ProductWorkerSource {
     }
 }
 
+public extension ProductWorkerKeepAlive {
+    /// When the worker of `resolved` runs: from its published Worker executable manifest, or, for a worker installed
+    /// by hand, from `ChatExtension/manifest.json` beside its entry.
+    static func of(
+        _ resolved: ResolvedProduct,
+        installedByHand: (ProductId) -> ProductWorkerKeepAlive
+    ) -> ProductWorkerKeepAlive {
+        if let worker = resolved.executables.worker { return worker.keepAlive }
+
+        return installedByHand(resolved.id)
+    }
+}
+
 public extension ProductExecutable.Worker {
     /// Whether this worker declares `modality`.
     func serves(_ modality: ProductWorkerModality) -> Bool {

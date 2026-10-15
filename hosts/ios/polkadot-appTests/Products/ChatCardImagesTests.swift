@@ -62,6 +62,7 @@ private struct Unavailable: Error {}
 private struct NoScripts: ChatProductFileProviding {
     func load(for _: ProductId, relativePath _: String) -> Data? { nil }
     func manualScriptEntryPath(productId _: ProductId) -> String? { nil }
+    func manualWorkerKeepAlive(productId _: ProductId) -> ProductWorkerKeepAlive { .onDemand }
 }
 
 private final class NoRuntime: TrUAPIHostRuntimeProviding {
