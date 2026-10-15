@@ -12,6 +12,9 @@ enum ChatMessageBubbleAction: Equatable {
     case delete
     /// An entry that the product of the room defines (`ChatProductAction`).
     case product(Chat.ProductMenuAction)
+    /// Speaks the text of the message, in a room that declares `read_aloud` (07-LATER §9.5). The product cannot
+    /// hide it, and a `Custom` menu of the product does not have it.
+    case readAloud
 }
 
 extension ChatMessageBubbleAction {

@@ -22,12 +22,12 @@ import Foundation
         }
 
         /// Writes `[e2e:ui] chat-list list rooms=<name>|<name>` with the names of the product rooms that the list
-        /// draws.
+        /// draws. The list does not draw a thread room.
         func markProductRooms(_ model: ChatListModel) {
             guard TrUAPIE2EMarkers.isEnabled else { return }
 
             let names = model.establishedChats
-                .filter { $0.chat.roomMetadata != nil }
+                .filter { $0.chat.roomMetadata != nil && $0.chat.roomDeclarations?.features.threadOf == nil }
                 .map(\.peerMetadata.name)
             logger.debug("[e2e:ui] chat-list list rooms=\(names.joined(separator: "|"))")
         }

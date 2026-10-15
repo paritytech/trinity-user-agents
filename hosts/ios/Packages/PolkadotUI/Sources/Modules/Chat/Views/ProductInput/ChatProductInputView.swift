@@ -19,6 +19,17 @@ final class ChatProductInputView: UIView {
 
     private let catalogue = ChatCommandCatalogueView()
     private let activityLine = ChatActivityLine()
+    private let readAloudButton: UIButton = {
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(systemName: "stop.circle")
+        configuration.imagePadding = 6
+        configuration.baseForegroundColor = .fgPrimary
+        let button = UIButton(configuration: configuration)
+        button.contentHorizontalAlignment = .leading
+        button.isHidden = true
+        return button
+    }()
+
     private let suggestionsStrip = ChatSuggestionsStrip()
     private var input: DSChatInputView?
     private var observation: ChatRoomAccessoryObservation?
@@ -84,7 +95,12 @@ private extension ChatProductInputView {
         )) }
 
         stack.addArrangedSubview(catalogueContainer)
+        stack.addArrangedSubview(readAloudButton)
         stack.addArrangedSubview(activityLine)
+
+        readAloudButton.addAction(UIAction { [weak self] _ in
+            self?.configuration.accessory.onStopReadAloud?()
+        }, for: .touchUpInside)
         stack.addArrangedSubview(suggestionsStrip)
 
         suggestionsStrip.onSelect = { [weak self] suggestion in
@@ -133,6 +149,9 @@ private extension ChatProductInputView {
         let text = typedText
 
         activityLine.text = model.activityText
+        activityLine.icon = model.activityIcon
+        readAloudButton.configuration?.title = model.readAloudStopTitle
+        readAloudButton.isHidden = model.readAloudStopTitle == nil
         suggestionsStrip.bind(model.suggestions)
         suggestionsStrip.isHidden = model.suggestions.isEmpty || !text.isEmpty
         catalogue.bind(model.matchingCommands(for: text))

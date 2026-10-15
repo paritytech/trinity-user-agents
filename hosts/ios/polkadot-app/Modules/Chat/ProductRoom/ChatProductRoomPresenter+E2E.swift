@@ -123,7 +123,33 @@ extension ChatProductRoomPresenter {
             case "bottom":
                 messages.values.max { ($0.order, $0.timestamp) < ($1.order, $1.timestamp) }
                     .map { view?.scrollToMessage($0.messageId) }
+            case "chip",
+                 "branch",
+                 "reasoning": runAddition(action)
             default: logger.warning("[e2e:ui] unknown action \(action.action)")
+            }
+        }
+
+        /// The gestures of the Chat Extension v2 additions: a tap on a thread chip, on a branch arrow (the
+        /// argument is the index of the alternative), or on a reasoning row.
+        private func runAddition(_ action: TrUAPIE2EHostAction) {
+            guard let messageId = action.target.flatMap(e2eMessageId) else {
+                mark(action.action, "\(action.target ?? "") missing")
+                return
+            }
+
+            switch action.action {
+            case "chip":
+                guard let thread = meta(of: messageId)?.thread else {
+                    mark("chip", "\(productMessageId(messageId)) none")
+                    return
+                }
+                openThread(thread, rootMessageId: messageId)
+            case "branch":
+                guard let index = action.argument.flatMap(UInt16.init) else { return }
+                selectBranch(of: messageId, index: index)
+            default:
+                toggleReasoning(of: messageId)
             }
         }
 
@@ -162,6 +188,8 @@ extension ChatProductRoomPresenter {
 
                 if let action = entries.productActions.first(where: { $0.actionId == actionId }) {
                     select(action, messageId: messageId)
+                } else if actionId == "readAloud", entries.contains(.readAloud), let message = messages[messageId] {
+                    readAloud(message.content.threadRootText, messageId: messageId)
                 }
             }
         }
@@ -176,7 +204,7 @@ extension ChatProductRoomPresenter {
                 isEdited: false,
                 offersRetry: policy?.offersRetry ?? false,
                 offersDelete: policy?.offersDelete ?? false
-            )
+            ) + (offersReadAloud ? [.readAloud] : [])
         }
 
         private func confirmPendingLink() {
@@ -234,6 +262,7 @@ extension ChatProductRoomPresenter {
             case .retry: "retry"
             case .delete: "delete"
             case let .product(action): "product:" + action.actionId + (action.destructive ? "!" : "")
+            case .readAloud: "readAloud"
             }
         }
     }

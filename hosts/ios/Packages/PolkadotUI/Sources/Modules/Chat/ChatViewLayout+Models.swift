@@ -68,8 +68,8 @@ public extension ChatViewLayout.ViewModel {
 
 public extension ChatViewLayout {
     struct Section {
-        let identifier: String
-        let dateText: String
+        public let identifier: String
+        public let dateText: String
         public let messages: [IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType>]
 
         public init(

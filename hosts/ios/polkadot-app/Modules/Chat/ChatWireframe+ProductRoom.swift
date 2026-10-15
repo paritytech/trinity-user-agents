@@ -38,9 +38,54 @@ protocol ChatProductRoomWireframing: AnyObject {
         from view: ControllerBackedProtocol?,
         completion: @escaping (PickedAttachment) -> Void
     )
+
+    /// Opens the screen of a thread room above the screen of its parent room (07-LATER §9.2).
+    func showThread(_ threadChatId: Chat.Id, from view: ControllerBackedProtocol?)
+
+    /// Puts the screen of the parent room below the screen of a thread room, when it is not there, so the back
+    /// button returns to the parent at the root.
+    func placeParentRoom(_ parentChatId: Chat.Id, returnTo rootMessageId: String, below view: ControllerBackedProtocol?)
 }
 
 extension ChatWireframe: ChatProductRoomWireframing {
+    func showThread(_ threadChatId: Chat.Id, from view: ControllerBackedProtocol?) {
+        guard let threadView = ChatViewFactory.createChatView(with: .existingChat(threadChatId), flowState: flowState)
+        else {
+            return
+        }
+        view?.controller.navigationController?.pushViewController(threadView.controller, animated: true)
+    }
+
+    func placeParentRoom(
+        _ parentChatId: Chat.Id,
+        returnTo rootMessageId: String,
+        below view: ControllerBackedProtocol?
+    ) {
+        guard
+            let controller = view?.controller,
+            let navigation = controller.navigationController,
+            let index = navigation.viewControllers.firstIndex(of: controller),
+            index > 0
+        else {
+            return
+        }
+
+        let below = navigation.viewControllers[index - 1] as? ChatViewController
+        guard below?.presenter.chatId != parentChatId else { return }
+
+        guard
+            let parentView = ChatViewFactory.createChatView(with: .existingChat(parentChatId), flowState: flowState),
+            let parentRoom = (parentView.controller as? ChatViewController)?.presenter as? ChatPresenter
+        else {
+            return
+        }
+
+        parentRoom.productRoom?.additions.returnToMessageId = rootMessageId
+        var stack = navigation.viewControllers
+        stack.insert(parentView.controller, at: index)
+        navigation.setViewControllers(stack, animated: false)
+    }
+
     func confirmProductLink(_ url: URL, from view: ControllerBackedProtocol?, onOpen: @escaping () -> Void) {
         #if targetEnvironment(simulator)
             TrUAPIE2EPendingConfirmation.onOpen = onOpen

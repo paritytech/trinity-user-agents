@@ -5,6 +5,13 @@ internal import SnapKit
 /// One line above the input that tells what happens now, for example "Bot is typing", with a typing animation.
 final class ChatActivityLine: UIView {
     private let dots = UIImageView(image: UIImage(systemName: "ellipsis"))
+    private let iconView: UIImageView = create {
+        $0.contentMode = .scaleAspectFill
+        $0.clipsToBounds = true
+        $0.layer.cornerRadius = 8
+        $0.isHidden = true
+    }
+
     private let label: Label = create {
         $0.typography = .captionMedium
         $0.textColor = .fgSecondary
@@ -23,6 +30,14 @@ final class ChatActivityLine: UIView {
         }
     }
 
+    /// The icon of the participant that the line is about. Nil shows no icon.
+    var icon: UIImage? {
+        didSet {
+            iconView.image = icon
+            iconView.isHidden = icon == nil
+        }
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
 
@@ -37,15 +52,21 @@ final class ChatActivityLine: UIView {
             object: nil
         )
 
-        addSubview(dots)
+        let leading = UIStackView(arrangedSubviews: [dots, iconView])
+        leading.axis = .horizontal
+        leading.spacing = DSSpacings.extraSmall
+        leading.alignment = .center
+
+        addSubview(leading)
         addSubview(label)
-        dots.snp.makeConstraints {
+        leading.snp.makeConstraints {
             $0.leading.equalToSuperview().inset(DSSpacings.medium)
             $0.centerY.equalTo(label)
-            $0.width.equalTo(20)
         }
+        dots.snp.makeConstraints { $0.width.equalTo(20) }
+        iconView.snp.makeConstraints { $0.size.equalTo(16) }
         label.snp.makeConstraints {
-            $0.leading.equalTo(dots.snp.trailing).offset(DSSpacings.extraSmall)
+            $0.leading.equalTo(leading.snp.trailing).offset(DSSpacings.extraSmall)
             $0.trailing.equalToSuperview().inset(DSSpacings.medium)
             $0.top.bottom.equalToSuperview().inset(DSSpacings.extraTiny)
         }

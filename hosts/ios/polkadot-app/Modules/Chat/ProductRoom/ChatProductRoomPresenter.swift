@@ -56,6 +56,8 @@ final class ChatProductRoomPresenter {
     var backgroundObserver: ChatRoomBackgroundObserver?
     /// The interactor of the room screen, for the actions that the E2E harness asks for.
     weak var interactor: ChatInteractorInputProtocol?
+    /// The personas, the message meta and the threads of the room (Chat Extension v2 additions).
+    let additions: ChatRoomAdditionsState
 
     init?(
         chatId: Chat.Id,
@@ -65,6 +67,7 @@ final class ChatProductRoomPresenter {
         wireframe: ChatProductRoomWireframing,
         resolver: ChatResourceResolving = ChatResourceResolver.shared,
         activityStore: ChatRoomActivityStoring = ChatRoomActivityStore.shared,
+        additions: ChatRoomAdditionsDependencies = .inert,
         logger: LoggerProtocol = Logger.shared
     ) {
         guard case let .chatExtension(productId, roomId?) = chatId else {
@@ -80,6 +83,7 @@ final class ChatProductRoomPresenter {
         self.resolver = resolver
         self.logger = logger
 
+        self.additions = ChatRoomAdditionsState(dependencies: additions)
         participants = ChatParticipantDirectory(roomId: roomId, room: room, logger: logger)
         appearanceFactory = ChatParticipantAppearanceFactory(
             myUsername: "",
@@ -89,6 +93,7 @@ final class ChatProductRoomPresenter {
         participants.onChange = { [weak self] in self?.onChange?() }
         accessory.onSuggestion = { [weak self] suggestion in self?.selectSuggestion(suggestion.suggestionId) }
         activityTask = followActivity(activityStore)
+        followAdditions()
         #if targetEnvironment(simulator)
             e2eObserver = observeE2EActions()
         #endif
@@ -128,8 +133,11 @@ final class ChatProductRoomPresenter {
         }
 
         loadParticipantsIfDeclared()
+        loadThreadRootIfNeeded()
+        returnToRootIfShown()
         updateAccessory()
         markWindow()
+        markDrawnMeta()
         mark("allowed", policy?.messageMenu.allowedReactions?.joined() ?? "all")
         mark("policy", "generation=\(policy?.configGeneration ?? 0)")
     }
