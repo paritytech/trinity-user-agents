@@ -855,7 +855,9 @@ pub mod durable;
 #[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 #[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
-pub use wasm_worker::{WasmEnv, WasmWorker, WasmWorkerError};
+pub use wasm_worker::{
+	DEFAULT_FUEL_PER_ENTRY, DEFAULT_MEMORY_LIMIT, WasmEnv, WasmWorker, WasmWorkerError,
+};
 
 #[cfg(feature = "runtime")]
 pub use host_core::{
