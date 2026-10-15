@@ -118,9 +118,10 @@ fun ProductPocketCardDetails(
     // Counted from the card opening, as the product is asked for only once the card settles.
     val slowToOpen by produceState(initialValue = false, leaving) {
         value = false
-        if (leaving) return@produceState
-        delay(PRODUCT_PROGRESS_DELAY)
-        value = true
+        if (!leaving) {
+            delay(PRODUCT_PROGRESS_DELAY)
+            value = true
+        }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
