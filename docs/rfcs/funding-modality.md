@@ -155,8 +155,8 @@ answers show about a provider, served or refused for a country the ask named, is
 its manifest's routes while that manifest serves Funding. A minimum or maximum a refusal showed is kept by provider,
 rail, asset, network and country, for 12 hours from that refusal: a later quote does not renew it, and a quote at an
 amount the limit rules out clears it. The core combines them into the range a session can take across every
-provider, the smallest minimum and the largest maximum, with no bound while any provider has not shown one; the
-host's own floor applies on top. Quotes are asked of, and a session can be handed to, exactly the providers whose
+provider, the smallest minimum and the largest maximum, with no bound while any provider has not shown one, and
+never below $10 CASH. Quotes are asked of, and a session can be handed to, exactly the providers whose
 manifest serves Funding, whatever routes it declares: one still waiting for its manifest, or whose manifest is withdrawn
 or stops serving Funding, is neither asked nor chosen.
 
