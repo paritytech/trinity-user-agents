@@ -84,20 +84,17 @@ class ExpandedProductPageTest {
     }
 
     // A card opened again rides up with its product already under it: the product exists, so showing
-    // it costs the card's move nothing. It stays paused until the card settles, since only then are
-    // its requests to the card heard.
+    // it costs the card's move nothing.
     @Test
-    fun `a card opened again shows its held product at the tap and resumes it once settled`() = runTest {
+    fun `a card opened again shows its held product at the tap`() = runTest {
         val page = page(screenScope())
         page.open("https://game.dot?card=loyalty")
         page.close()
 
         page.showIfHeld("https://game.dot?card=loyalty")
-        assertEquals(sessions.single(), page.session.value)
-        assertEquals(0, sessions.single().resumed)
 
-        page.open("https://game.dot?card=loyalty")
         assertEquals(1, opened.size)
+        assertEquals(sessions.single(), page.session.value)
         assertEquals(1, sessions.single().resumed)
     }
 

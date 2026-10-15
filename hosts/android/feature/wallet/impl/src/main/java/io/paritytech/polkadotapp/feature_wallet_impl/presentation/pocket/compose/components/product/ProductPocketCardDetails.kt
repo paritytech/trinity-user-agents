@@ -22,6 +22,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -48,6 +49,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
@@ -96,10 +98,13 @@ fun ProductPocketCardDetails(
     // card's fold alone. A held product is on screen while its card still travels, and its requests
     // wait for the card to settle so the fold never starts mid-flight.
     val leaving = arrival?.targetState == EnterExitState.PostExit
-    LaunchedEffect(session, fold, leaving, settled) {
-        if (leaving || !settled) return@LaunchedEffect
+    LaunchedEffect(session, fold, leaving) {
+        if (leaving) return@LaunchedEffect
         session?.faceShownRequests?.collect { request ->
-            val handling = launch { request.reply.complete(fold.showFace(request.shown)) }
+            val handling = launch {
+                snapshotFlow { settled }.first { it }
+                request.reply.complete(fold.showFace(request.shown))
+            }
             // A withdrawn request was answered NotPresented, so its face must not move after all.
             request.reply.invokeOnCompletion { cause -> if (cause != null) handling.cancel() }
         }
@@ -194,7 +199,9 @@ private fun ExpandedProductContent(
     val webView by (session?.webView ?: noWebViewYet).collectAsStateWithLifecycle()
 
     // Once the product has painted once it owns the space; its own navigations must not blank it.
-    var productShowing by remember(session) { mutableStateOf(false) }
+    var productShowing by remember(session) {
+        mutableStateOf(session?.loadProgress?.value == DotNsLoadProgress.Completed)
+    }
     LaunchedEffect(loadProgress) {
         if (loadProgress == DotNsLoadProgress.Completed) productShowing = true
     }

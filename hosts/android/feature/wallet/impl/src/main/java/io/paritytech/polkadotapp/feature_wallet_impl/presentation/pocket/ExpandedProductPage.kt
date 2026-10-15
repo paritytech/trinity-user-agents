@@ -30,8 +30,7 @@ class ExpandedProductPage(
     fun open(url: String) {
         val heldProduct = held
         if (heldProduct?.url == url) {
-            if (heldProduct.paused) heldProduct.session.resumeConnections()
-            heldProduct.paused = false
+            if (shownSession.value == null) heldProduct.session.resumeConnections()
             shownSession.value = heldProduct.session
             return
         }
@@ -45,16 +44,13 @@ class ExpandedProductPage(
     }
 
     fun showIfHeld(url: String) {
-        held?.takeIf { it.url == url }?.let { shownSession.value = it.session }
+        if (held?.url == url) open(url)
     }
 
     /** The product stays alive for the card being opened again, paused so it does nothing unseen. */
     fun close() {
         shownSession.value = null
-        held?.run {
-            session.pauseConnections()
-            paused = true
-        }
+        held?.session?.pauseConnections()
     }
 
     /**
@@ -76,7 +72,5 @@ class ExpandedProductPage(
         shownSession.value = null
     }
 
-    private class HeldProduct(val url: String, val scope: CoroutineScope, val session: SpaHostSession) {
-        var paused = false
-    }
+    private class HeldProduct(val url: String, val scope: CoroutineScope, val session: SpaHostSession)
 }

@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
@@ -24,9 +25,12 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketT
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalNavAnimatedVisibilityScope
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -37,7 +41,7 @@ class ProductPocketCardDetailsLoadingTest {
     val compose = createComposeRule()
 
     private class FakeSession(progress: DotNsLoadProgress) : SpaHostSession {
-        val faceRequests = MutableSharedFlow<FaceShownRequest>()
+        val faceRequests = MutableSharedFlow<FaceShownRequest>(extraBufferCapacity = 1)
 
         override val webView = MutableStateFlow<WebView?>(null)
         override val currentUrl = MutableStateFlow("")
@@ -110,11 +114,11 @@ class ProductPocketCardDetailsLoadingTest {
         compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertDoesNotExist()
     }
 
-    // A product opened again is on screen while its card is still moving. Asking for its face to
-    // fold away then would move the card mid-flight, so its requests are heard only once the card
-    // has settled.
+    // A product opened again is on screen while its card is still moving. Its requests to fold the
+    // face wait for the card to settle: applied at once they would move the card mid-flight, and
+    // turned away they would be lost, since the product does not ask again.
     @Test
-    fun aProductIsHeardOnlyOnceItsCardHasSettled() {
+    fun aRequestFromAProductWhoseCardIsMovingIsHeldUntilTheCardSettles() {
         val session = FakeSession(DotNsLoadProgress.Completed)
         val arrival = MutableTransitionState(false).apply { targetState = true }
         compose.mainClock.autoAdvance = false
@@ -123,13 +127,18 @@ class ProductPocketCardDetailsLoadingTest {
                 CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) { Details(session) }
             }
         }
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeByFrame()
+        assertEquals("nobody listening, so the request is turned away", 1, session.faceRequests.subscriptionCount.value)
 
+        val reply = CompletableDeferred<FaceShownAnswer>()
+        assertTrue(session.faceRequests.tryEmit(FaceShownRequest(shown = false, reply = reply)))
         compose.mainClock.advanceTimeByFrame()
         compose.mainClock.advanceTimeByFrame()
-        assertEquals("heard while the card was moving", 0, session.faceRequests.subscriptionCount.value)
+        assertFalse("applied while the card was moving", reply.isCompleted)
 
         compose.mainClock.advanceTimeBy(2_000)
         compose.waitForIdle()
-        assertEquals(1, session.faceRequests.subscriptionCount.value)
+        assertEquals(FaceShownAnswer.APPLIED, reply.getCompleted())
     }
 }
