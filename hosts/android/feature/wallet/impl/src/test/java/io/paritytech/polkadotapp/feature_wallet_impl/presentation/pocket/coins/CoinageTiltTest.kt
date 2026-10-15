@@ -6,45 +6,55 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.sqrt
 
-/**
- * The parts of the studio's turn that are arithmetic rather than sensor plumbing.
- *
- * The symmetry test is the one that matters: a light that answered one direction of tilt and not the other
- * is the bug the roll-about-the-view-axis choice exists to fix.
- */
+/** The parts of the studio's turn that are arithmetic rather than sensor plumbing. */
 class CoinageTiltTest {
     @Test
-    fun `a roll turns the studio about the view axis, symmetrically`() {
-        val left = CoinageTilt.composed(pitch = 0.0, roll = CoinageTilt.scaled(-EIGHTH_TURN))
-        val right = CoinageTilt.composed(pitch = 0.0, roll = CoinageTilt.scaled(EIGHTH_TURN))
+    fun `screen tilted to face upward makes a face-on coin mirror the ceiling`() {
+        val neutral = pose(roll = 0.0, lean = 0.0)
+        val turn = neutral.turnTo(pose(roll = 0.0, lean = 0.4))
+        val mirror = turned(0.0, 0.0, 1.0, turn)
 
-        assertEquals("roll is about z alone", 0.0, abs(left.x) + abs(left.y), TOLERANCE)
-        assertEquals("roll is about z alone", 0.0, abs(right.x) + abs(right.y), TOLERANCE)
-        assertEquals("equal and opposite", left.z, -right.z, TOLERANCE)
-        assertTrue("a roll turns the studio at all", abs(left.z) > 0.1)
+        assertTrue("the coin should look up into the room", mirror[1] > 0.1)
+        assertEquals("a lean is pure pitch", 0.0, abs(turn.y) + abs(turn.z), TOLERANCE)
     }
 
     @Test
-    fun `a lean pitches the studio about x`() {
-        val turn = CoinageTilt.composed(pitch = CoinageTilt.scaled(EIGHTH_TURN), roll = 0.0)
+    fun `dipping the right edge makes a face-on coin mirror the right wall`() {
+        val turn = CoinageTilt.studioTurn(lean = 0.0, sideways = CoinageTilt.scaled(0.4))
+        val mirror = turned(0.0, 0.0, 1.0, turn)
 
-        assertEquals("pitch is about x alone", 0.0, abs(turn.y) + abs(turn.z), TOLERANCE)
-        assertTrue("a lean turns the studio at all", abs(turn.x) > 0.1)
+        assertTrue("the coin should look toward the right wall", mirror[0] > 0.1)
+        assertEquals("a sideways tilt is pure yaw, never a roll", 0.0, abs(turn.x) + abs(turn.z), TOLERANCE)
+    }
+
+    @Test
+    fun `a sideways tilt turns the studio symmetrically`() {
+        val left = CoinageTilt.studioTurn(lean = 0.0, sideways = CoinageTilt.scaled(-EIGHTH_TURN))
+        val right = CoinageTilt.studioTurn(lean = 0.0, sideways = CoinageTilt.scaled(EIGHTH_TURN))
+
+        assertEquals("equal and opposite", left.y, -right.y, TOLERANCE)
+    }
+
+    @Test
+    fun `the studio turns as far as the phone`() {
+        assertEquals(CoinageTilt.RANGE, CoinageTilt.TRAVEL, TOLERANCE)
     }
 
     @Test
     fun `the two turns compose as rotations rather than adding`() {
         val pitch = CoinageTilt.scaled(EIGHTH_TURN)
-        val roll = CoinageTilt.scaled(EIGHTH_TURN)
-        val turn = CoinageTilt.composed(pitch, roll)
+        val yaw = CoinageTilt.scaled(EIGHTH_TURN)
+        val turn = CoinageTilt.leaned(pitch, yaw)
 
-        // Added, the y component would be zero and the length would be exactly the hypotenuse of the two.
-        assertTrue("the cross term is real", abs(turn.y) > TOLERANCE)
+        // Added, the z component would be zero and the length would be exactly the hypotenuse of the two.
+        assertTrue("the cross term is real", abs(turn.z) > TOLERANCE)
         assertTrue(
             "composed is not the sum",
-            abs(sqrt(turn.x * turn.x + turn.y * turn.y + turn.z * turn.z) - hypot(pitch, roll)) > TOLERANCE
+            abs(sqrt(turn.x * turn.x + turn.y * turn.y + turn.z * turn.z) - hypot(pitch, yaw)) > TOLERANCE
         )
     }
 
@@ -111,6 +121,26 @@ class CoinageTiltTest {
     }
 
     private fun hypot(a: Double, b: Double) = sqrt(a * a + b * b)
+
+    /** Rodrigues' rotation, as the shader's `tiltDir` applies the turn to a mirror direction. */
+    private fun turned(x: Double, y: Double, z: Double, turn: CoinageTilt.Turn): DoubleArray {
+        val angle = sqrt(turn.x * turn.x + turn.y * turn.y + turn.z * turn.z)
+
+        if (angle < 1e-12) return doubleArrayOf(x, y, z)
+
+        val ax = turn.x / angle
+        val ay = turn.y / angle
+        val az = turn.z / angle
+        val c = cos(angle)
+        val s = sin(angle)
+        val dot = ax * x + ay * y + az * z
+
+        return doubleArrayOf(
+            x * c + (ay * z - az * y) * s + ax * dot * (1 - c),
+            y * c + (az * x - ax * z) * s + ay * dot * (1 - c),
+            z * c + (ax * y - ay * x) * s + az * dot * (1 - c)
+        )
+    }
 
     private companion object {
         /** Well above a gravity sensor's noise floor, well below anything anyone means to do. */
