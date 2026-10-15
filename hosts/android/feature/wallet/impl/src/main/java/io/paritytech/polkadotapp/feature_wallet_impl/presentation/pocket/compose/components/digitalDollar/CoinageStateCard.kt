@@ -9,27 +9,20 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.common.presentation.compose.TickerWordmark
 import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
-import io.paritytech.polkadotapp.design.components.icon.NovaIcon
-import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDownward
-import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpwards
-import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
@@ -45,6 +38,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableList
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -52,8 +46,12 @@ import io.paritytech.polkadotapp.common.R as RCommon
  * The total, and every holding that makes it up drawn as a coin.
  *
  * Collapsed, the coins are a strip of fixed height whatever the count, with a rule under each run saying
- * which bucket it is and what it comes to. Tapping spreads the same coins into a honeycomb, one block per
- * bucket under its own header, and the rules go away with the runs they ruled.
+ * which bucket it is and what it comes to. A tap or a flick down on them spreads the same coins into a
+ * honeycomb, one block per bucket under its own header, and the rules go away with the runs they ruled. There
+ * is no label saying so, by request: the coins are their own control.
+ *
+ * Spread out, a tap on a coin picks it out, large, with what it is beside it, and a tap on it or on empty
+ * ground puts it back. The grid closes from the card's own heading, never from a tap among the coins.
  *
  * There is no bar, no legend and no list. The coins are the depiction: they are already grouped into the two
  * buckets, so a bar above them said the same thing twice, and a row per holding said it a third time.
@@ -67,30 +65,42 @@ internal fun CoinageStateCard(
     modifier: Modifier = Modifier,
     state: CoinageUiState.TokensState,
     detailsVisible: Boolean,
-    onDetailsToggled: () -> Unit
+    focusedCoin: String?,
+    onCoinTapped: (String?) -> Unit,
+    onCoinsFlickedDown: () -> Unit,
+    onHeadingClicked: () -> Unit
 ) {
     var metrics by remember { mutableStateOf(CoinageCoinsMetrics()) }
+    // A coin that has since left the holdings, or has nothing to say, is no longer picked.
+    val picked = focusedCoin?.takeIf { id -> id in state.traces && state.coins.any { it.id == id } }
+    val headingClick = if (detailsVisible) onHeadingClicked else null
 
     CoinageWidgetCard(
         modifier = modifier,
-        title = stringResource(RCommon.string.pocket_coinage_balance_title)
+        title = stringResource(RCommon.string.pocket_coinage_balance_title),
+        onHeaderClick = headingClick
     ) {
-        Headline(total = state.totalBalance)
+        Headline(
+            modifier = Modifier.headingClick(headingClick),
+            total = state.totalBalance
+        )
 
         // Nothing held draws nothing: no coins, no band of reserved height where they would be, no rules, and
         // no toggle into an empty grid. The heading and the total are the whole card. There is no partial
         // version of this to handle — the figures and the holdings come off one snapshot, so the card can
         // never have a balance whose coins are missing or coins whose balance is.
         if (state.coins.isNotEmpty()) {
-            // Above the coins rather than below them, so it stays on the same side whether they are stacked
-            // into the strip or spread out one by one.
-            DetailsToggle(expanded = detailsVisible, onClick = onDetailsToggled)
-
             Box(modifier = Modifier.fillMaxWidth()) {
                 CoinageCoins(
                     coins = state.coins,
                     isExpanded = detailsVisible,
-                    onMetrics = { metrics = it }
+                    focusedCoin = picked,
+                    onMetrics = { metrics = it },
+                    onCoinTapped = onCoinTapped,
+                    onFlickedDown = onCoinsFlickedDown,
+                    detail = { id ->
+                        state.traces[id]?.let { trace -> CoinageTraceDetail(trace = trace) }
+                    }
                 )
 
                 BlockHeaders(metrics = metrics)
@@ -106,10 +116,13 @@ internal fun CoinageStateCard(
 }
 
 @Composable
-private fun Headline(total: TokenAmountModel) {
+private fun Headline(
+    modifier: Modifier = Modifier,
+    total: TokenAmountModel
+) {
     val formatter = LocalTokenAmountFormatter.current
 
-    Row(horizontalArrangement = Arrangement.spacedBy(HoldingGeometry.headlineSpacing)) {
+    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(HoldingGeometry.headlineSpacing)) {
         NovaText(
             modifier = Modifier.alignByBaseline(),
             text = formatter.formatFiatSigned(total),
@@ -119,7 +132,8 @@ private fun Headline(total: TokenAmountModel) {
         )
         NovaText(
             modifier = Modifier.alignByBaseline(),
-            text = LocalPaymentAssetBrand.current.symbol.withCurrencyTickerStyle(PolkadotTheme.typography.headline.large),
+            text = LocalPaymentAssetBrand.current.symbol
+                .withCurrencyTickerStyle(PolkadotTheme.typography.headline.large, TickerWordmark.SmallCaps),
             style = PolkadotTheme.typography.headline.large,
             color = PolkadotTheme.colors.fg.secondary
         )
@@ -162,39 +176,18 @@ private fun CoinageUiState.TokensState.runs(metrics: CoinageCoinsMetrics) =
         )
     }.toImmutableList()
 
-private val CoinageStripLayout.Partition.label: Int
+internal val CoinageStripLayout.Partition.label: Int
     get() = when (this) {
         CoinageStripLayout.Partition.READY -> RCommon.string.pocket_coinage_ready
         CoinageStripLayout.Partition.CLEARING -> RCommon.string.pocket_coinage_clearing
     }
 
-@Composable
-private fun DetailsToggle(expanded: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = PolkadotTheme.spacings.small),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
-    ) {
-        NovaIcon(
-            modifier = Modifier.size(ToggleIconSize),
-            imageVector = if (expanded) NovaIcons.ArrowUpwards else NovaIcons.ArrowDownward,
-            tint = PolkadotTheme.colors.fg.secondary
-        )
-
-        HorizontalSpacer { extraSmall }
-
-        NovaText(
-            text = stringResource(RCommon.string.pocket_coinage_show_details),
-            style = PolkadotTheme.typography.title.small,
-            color = PolkadotTheme.colors.fg.primary
-        )
-    }
+/** No ripple: the heading is not a button, it only answers a tap while the coins are spread out. */
+internal fun Modifier.headingClick(onClick: (() -> Unit)?): Modifier = if (onClick == null) {
+    this
+} else {
+    clickable(interactionSource = null, indication = null, onClick = onClick)
 }
-
-private val ToggleIconSize = 12.dp
 
 @Preview
 @Composable
@@ -211,6 +204,7 @@ private fun CoinageStateCardPreview() {
                     readyBalance = TokenAmountModel.mock,
                     clearingBalance = TokenAmountModel.mock,
                     coins = persistentListOf(),
+                    traces = persistentMapOf(),
                     breakdown = CoinageBalanceBreakdownUiModel(
                         availablePrivate = TokenAmountModel.mock,
                         gainingPrivacy = TokenAmountModel.mock,
@@ -219,7 +213,10 @@ private fun CoinageStateCardPreview() {
                     )
                 ),
                 detailsVisible = false,
-                onDetailsToggled = {}
+                focusedCoin = null,
+                onCoinTapped = {},
+                onCoinsFlickedDown = {},
+                onHeadingClicked = {}
             )
         }
     }

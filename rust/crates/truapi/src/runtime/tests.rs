@@ -8682,10 +8682,12 @@ fn only_the_assigned_provider_worker_reports() {
 	));
 }
 
-// A session goes only to a provider the host offers, and only one serving
-// the session's direction; anything else the user could not have picked.
+// A session goes only to a funding provider the core knows of. Its routes
+// do not narrow the choice: every provider is asked for quotes, so one whose
+// manifest declares only inbound card can still be picked for a withdrawal
+// it quoted.
 #[test]
-fn a_session_is_handed_only_to_an_offered_provider_serving_its_direction() {
+fn a_session_is_handed_only_to_a_known_funding_provider() {
 	let services = funding_services();
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
@@ -8710,7 +8712,7 @@ fn a_session_is_handed_only_to_an_offered_provider_serving_its_direction() {
 			select(&outbound, "ramp.dot"),
 			select(&inbound, "ramp.dot"),
 		),
-		(false, false, true)
+		(false, true, true)
 	);
 }
 
@@ -9189,6 +9191,58 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 		),
 		(1, 1, (true, true), (true, true))
 	);
+}
+
+// What a provider's answer shows is written alongside what earlier runs
+// stored, never over records the core has not read yet.
+#[test]
+fn learning_before_the_stored_records_load_keeps_them() {
+	use crate::host_logic::funding_providers::LearnedSupport;
+	let storage = stub_platform();
+	let support = |provider_id: &str| LearnedSupport {
+		provider_id: provider_id.to_string(),
+		direction: v01::FundingDirection::In,
+		rail: v01::FundingRail::Card,
+		asset: "EUR".to_string(),
+		network: None,
+		country: None,
+		supported: true,
+		min: None,
+		max: None,
+		learned_at_ms: crate::unix_time::current_unix_millis(),
+	};
+	futures::executor::block_on(storage.write_core_storage(
+		CoreStorageKey::FundingSupport,
+		parity_scale_codec::Encode::encode(&vec![support("earlier.dot")]),
+	))
+	.expect("stored");
+	let services = funding_services_over(storage.clone());
+
+	services.learn_funding_support(support("now.dot"));
+
+	let mut stored = Vec::new();
+	for _ in 0..200 {
+		stored =
+			futures::executor::block_on(storage.read_core_storage(CoreStorageKey::FundingSupport))
+				.ok()
+				.flatten()
+				.and_then(|bytes| {
+					<Vec<LearnedSupport> as parity_scale_codec::Decode>::decode(
+						&mut bytes.as_slice(),
+					)
+					.ok()
+				})
+				.unwrap_or_default()
+				.into_iter()
+				.map(|record| record.provider_id)
+				.collect::<Vec<_>>();
+		if stored.len() == 2 {
+			break;
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	stored.sort();
+	assert_eq!(stored, ["earlier.dot".to_string(), "now.dot".to_string()]);
 }
 
 /// Open an inbound session for `amount` and hand it to `ramp.dot`.

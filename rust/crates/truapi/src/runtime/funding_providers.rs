@@ -66,10 +66,10 @@ pub struct FundingProviders {
 	/// What providers' quote answers showed about what they serve, newest
 	/// per ask, persisted under [`CoreStorageKey::FundingSupport`].
 	learned: Mutex<Vec<LearnedSupport>>,
-	/// Whether the persisted records were loaded.
-	learned_loaded: AtomicBool,
-	/// Held while the records are written, so writes land in order.
-	learned_writes: AsyncMutex<()>,
+	/// Held across every load and write of the records, so writes land in
+	/// order and none lands before the stored records are in; the flag
+	/// records whether they are.
+	learned_store: AsyncMutex<bool>,
 }
 
 impl FundingProviders {
@@ -93,20 +93,18 @@ impl FundingProviders {
 			.collect()
 	}
 
-	/// Every provider a quote is asked of, whatever its manifest says it
-	/// serves, since a provider can serve more or less than it last
-	/// published: the host's, and those published to browse whose manifest
-	/// serves Funding.
+	/// Every provider a quote is asked of and a session can be handed to:
+	/// each whose manifest serves Funding, the host's first, whatever routes
+	/// it declares, since a provider can serve more or less than it last
+	/// published. One with no manifest yet, or whose manifest was withdrawn,
+	/// is neither asked nor chosen.
 	pub fn quote_targets(&self) -> Vec<String> {
-		let entries = lock(&self.entries).len();
 		self.providers()
 			.into_iter()
-			.enumerate()
-			.filter(|(index, (_, manifest))| {
-				*index < entries ||
-					manifest.as_ref().is_some_and(|manifest| manifest.funding.is_some())
+			.filter(|(_, manifest)| {
+				manifest.as_ref().is_some_and(|manifest| manifest.funding.is_some())
 			})
-			.map(|(_, (provider_id, _))| provider_id)
+			.map(|(provider_id, _)| provider_id)
 			.collect()
 	}
 
@@ -171,11 +169,9 @@ impl FundingProviders {
 		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
 	}
 
-	/// Whether `provider_id` serves `direction`.
-	pub fn is_candidate(&self, provider_id: &str, direction: FundingDirection) -> bool {
-		self.candidates(direction)
-			.iter()
-			.any(|candidate| candidate.provider_id == provider_id)
+	/// Whether a session can be handed to `provider_id`: it is a quote target.
+	pub fn is_quote_target(&self, provider_id: &str) -> bool {
+		self.quote_targets().iter().any(|target| target == provider_id)
 	}
 
 	/// The manifest the core goes by for `entry`: the host's for a bundled
@@ -226,12 +222,11 @@ impl RuntimeServices {
 	/// fails keeps what the core had, since it says nothing about the
 	/// provider.
 	pub fn refresh_funding_providers(self: &Arc<Self>) {
-		if !self.funding_providers().learned_loaded.swap(true, Ordering::AcqRel) {
-			let services = self.clone();
-			(self.spawner)(Box::pin(async move {
-				services.load_learned_support().await;
-			}));
-		}
+		let services = self.clone();
+		(self.spawner)(Box::pin(async move {
+			let mut loaded = services.funding_providers().learned_store.lock().await;
+			services.load_learned_support(&mut loaded).await;
+		}));
 		let entries = lock(&self.funding_providers().entries).clone();
 		for entry in entries
 			.into_iter()
@@ -276,14 +271,18 @@ impl RuntimeServices {
 	}
 
 	/// Record what a provider's answer showed about what it serves, and
-	/// persist the records.
+	/// persist the records once the stored ones are loaded, so a write never
+	/// replaces records it has not read.
 	pub fn learn_funding_support(self: &Arc<Self>, support: LearnedSupport) {
 		self.funding_providers().learn(support);
 		let services = self.clone();
 		(self.spawner)(Box::pin(async move {
 			// Each write takes the records as they are once it holds the
 			// lock, so the last one to land is the newest.
-			let _write = services.funding_providers().learned_writes.lock().await;
+			let mut loaded = services.funding_providers().learned_store.lock().await;
+			if !services.load_learned_support(&mut loaded).await {
+				return;
+			}
 			let records = lock(&services.funding_providers().learned).clone();
 			if let Err(error) = services
 				.platform
@@ -295,17 +294,25 @@ impl RuntimeServices {
 		}));
 	}
 
-	/// Load what earlier answers showed, keeping what is still trusted and
-	/// anything learned since the load began.
-	async fn load_learned_support(&self) {
+	/// Load what earlier answers showed unless `loaded` says it is in,
+	/// keeping what is still trusted and anything learned since. Returns
+	/// whether the records are loaded; a read that fails is tried again on
+	/// the next call.
+	async fn load_learned_support(&self, loaded: &mut bool) -> bool {
+		if *loaded {
+			return true;
+		}
 		let stored = match self.platform.read_core_storage(CoreStorageKey::FundingSupport).await {
 			Ok(Some(bytes)) => {
-				Vec::<LearnedSupport>::decode(&mut bytes.as_slice()).unwrap_or_default()
+				Vec::<LearnedSupport>::decode(&mut bytes.as_slice()).unwrap_or_else(|error| {
+					tracing::warn!(%error, "dropping undecodable funding provider records");
+					Vec::new()
+				})
 			},
 			Ok(None) => Vec::new(),
 			Err(error) => {
 				tracing::warn!(reason = %error.reason, "reading what funding providers serve failed");
-				return;
+				return false;
 			},
 		};
 		let now_ms = current_unix_millis();
@@ -315,6 +322,8 @@ impl RuntimeServices {
 				learned.push(support);
 			}
 		}
+		*loaded = true;
+		true
 	}
 
 	/// Read `product_id`'s Worker manifest into what the core goes by.
@@ -561,6 +570,28 @@ mod tests {
 				.map(|known| (known.min, known.learned_at_ms))
 				.collect::<Vec<_>>(),
 			vec![(Some(10), 2_000)]
+		);
+	}
+
+	// Quotes and selection cover the same providers: each whose manifest
+	// serves Funding, whatever its routes say, and none still waiting for its
+	// manifest or whose manifest was withdrawn.
+	#[test]
+	fn quotes_go_to_the_providers_a_session_can_be_handed_to() {
+		let providers = providers(&[
+			("card.dot", Some(manifest(CARD_IN))),
+			("unshipped.dot", None),
+			("withdrawn.dot", Some(manifest(CARD_IN))),
+		]);
+		lock(&providers.live).insert("withdrawn.dot".to_string(), None);
+
+		assert_eq!(
+			(
+				providers.quote_targets(),
+				["card.dot", "unshipped.dot", "withdrawn.dot"]
+					.map(|provider_id| providers.is_quote_target(provider_id)),
+			),
+			(vec!["card.dot".to_string()], [true, false, false])
 		);
 	}
 }
