@@ -10,14 +10,19 @@ import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * The country the user is likely in, as ISO 3166-1 alpha-2, for the core's funding quotes: the device's last
  * known location when a location permission is already granted, then its SIM or network country, then its
- * locale's region. It never asks for a permission.
+ * locale's region. It never asks for a permission, and gives up on a slow location lookup rather than hold up the
+ * funding sheet that waits on it.
  */
 class DeviceCountryDetector @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -29,7 +34,7 @@ class DeviceCountryDetector @Inject constructor(
 
     // The permission is checked just above the read, which lint cannot follow.
     @SuppressLint("MissingPermission")
-    private fun locationCountry(): String? {
+    private suspend fun locationCountry(): String? {
         val granted = LOCATION_PERMISSIONS.any {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
@@ -40,13 +45,17 @@ class DeviceCountryDetector @Inject constructor(
             manager.getProviders(true).mapNotNull(manager::getLastKnownLocation).maxByOrNull { it.time }
         }.getOrNull() ?: return null
 
-        return runCatching {
-            // The listener form needs API 33; this runs off the main thread, where the blocking form is fine.
-            @Suppress("DEPRECATION")
-            Geocoder(context, Locale.ROOT).getFromLocation(location.latitude, location.longitude, 1)
-                ?.firstOrNull()
-                ?.countryCode
-        }.getOrNull()?.asAlpha2()
+        // The blocking lookup ignores cancellation, so it runs on its own and only its answer is waited for.
+        val lookup = CoroutineScope(dispatchers.io).async {
+            runCatching {
+                // The listener form needs API 33; this runs off the main thread, where the blocking form is fine.
+                @Suppress("DEPRECATION")
+                Geocoder(context, Locale.ROOT).getFromLocation(location.latitude, location.longitude, 1)
+                    ?.firstOrNull()
+                    ?.countryCode
+            }.getOrNull()
+        }
+        return withTimeoutOrNull(GEOCODE_TIMEOUT) { lookup.await() }.asAlpha2()
     }
 
     private fun telephonyCountry(): String? {
@@ -58,6 +67,7 @@ class DeviceCountryDetector @Inject constructor(
         this?.uppercase(Locale.ROOT)?.takeIf { code -> code.length == 2 && code.all { it in 'A'..'Z' } }
 
     private companion object {
+        val GEOCODE_TIMEOUT = 1_500.milliseconds
         val LOCATION_PERMISSIONS = listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
     }
 }

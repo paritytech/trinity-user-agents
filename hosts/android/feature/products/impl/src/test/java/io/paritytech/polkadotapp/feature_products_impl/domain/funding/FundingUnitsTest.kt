@@ -16,6 +16,12 @@ class FundingUnitsTest {
     }
 
     @Test
+    fun `a sub-cent balance rounds down, never up to what cannot be spent`() {
+        assertEquals("$9.99", cash.figure(BigDecimal("9.995")))
+        assertEquals("$1,000.25 CASH", cash.label(BigDecimal("1000.259")))
+    }
+
+    @Test
     fun `cash figures show cents only when there are any`() {
         assertEquals("+$50 CASH", cash.signed(BigDecimal("50"), FundingDirection.IN))
         assertEquals("-$1,226.78 CASH", cash.signed(BigDecimal("1226.78"), FundingDirection.OUT))

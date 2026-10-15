@@ -51,4 +51,9 @@ class FundingOverlayContexts @Inject constructor() {
     fun remove(intent: String) {
         contexts.remove(intent)
     }
+
+    /** Removes [context] only while it is still the one on screen for its session. */
+    fun remove(context: FundingOverlayContext) {
+        contexts.remove(context.request.intent, context)
+    }
 }

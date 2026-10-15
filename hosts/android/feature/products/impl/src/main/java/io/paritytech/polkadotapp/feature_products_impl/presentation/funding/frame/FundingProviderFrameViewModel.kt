@@ -1,15 +1,21 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame
 
 import android.net.Uri
+import android.webkit.WebChromeClient.FileChooserParams
 import android.webkit.WebView
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.paritytech.polkadotapp.common.data.storage.file.FileProvider
+import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.launchUnit
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameContext
+import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebFileChooserExecutor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -42,6 +48,8 @@ data class FundingExternalPage(
 class FundingProviderFrameViewModel @Inject constructor(
     private val context: FundingFrameContext,
     private val router: ProductsRouter,
+    private val contextManager: ContextManager,
+    private val fileProvider: FileProvider,
     spaHost: SpaHost,
 ) : BaseViewModel() {
     /** The external page, drawn in a WebView of the screen's own; `null` for the provider's App. */
@@ -84,6 +92,16 @@ class FundingProviderFrameViewModel @Inject constructor(
     fun onPageFailed(cause: Throwable) {
         pageProgress.value = DotNsLoadProgress.Failed(cause)
     }
+
+    /**
+     * The files the user picked for the page's `<input type="file">`, as a KYC check asks for an ID; `null` when
+     * the picker was dismissed or failed, which releases the input so it can open again.
+     */
+    suspend fun pickFiles(params: FileChooserParams): Array<Uri>? =
+        runCatching { WebFileChooserExecutor(contextManager.requireActivity(), params, fileProvider).execute() }
+            .flatMap { it }
+            .logFailure("Funding page file chooser failed")
+            .getOrNull()
 
     /** The page reached its return URL; [url] carries the result in its query. */
     fun onPageReturned(url: String) = finish(ProviderFrameOutcome.Returned(url))

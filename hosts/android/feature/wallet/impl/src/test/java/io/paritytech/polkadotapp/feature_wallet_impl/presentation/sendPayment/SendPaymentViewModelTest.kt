@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.search.RemoteSearchPhase
@@ -24,9 +27,6 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.do
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
 import io.paritytech.polkadotapp.test_shared.whenever
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi

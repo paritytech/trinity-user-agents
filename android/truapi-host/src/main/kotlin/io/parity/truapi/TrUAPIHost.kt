@@ -821,8 +821,15 @@ private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : Na
         target: FundingFrameTarget,
     ): FundingFrameOutcome = withHostRejection { bridge.presentProviderFrame(providerId, intent, target) }
 
-    // Infallible across the FFI: a host that cannot tell answers no country.
-    override suspend fun detectedCountry(): String? = runCatching { bridge.detectedCountry() }.getOrNull()
+    // Infallible across the FFI: a host that cannot tell answers no country. A cancelled call stays cancelled.
+    override suspend fun detectedCountry(): String? =
+        try {
+            bridge.detectedCountry()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            null
+        }
 
     // Infallible across the FFI, as `onCoreLog` is.
     override fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {

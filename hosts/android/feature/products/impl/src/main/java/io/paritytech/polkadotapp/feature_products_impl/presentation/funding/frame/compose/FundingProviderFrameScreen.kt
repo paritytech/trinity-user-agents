@@ -62,6 +62,7 @@ fun FundingProviderFrameScreen(viewModel: FundingProviderFrameViewModel) {
                     onLoaded = viewModel::onPageLoaded,
                     onFailed = viewModel::onPageFailed,
                     onReturned = viewModel::onPageReturned,
+                    onPickFiles = viewModel::pickFiles,
                 )
             } else {
                 ProductWebViewHost(modifier = modifier, webView = webView)

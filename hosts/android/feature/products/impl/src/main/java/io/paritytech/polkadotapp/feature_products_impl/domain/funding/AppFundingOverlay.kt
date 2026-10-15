@@ -9,12 +9,14 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStep
@@ -29,6 +31,9 @@ import javax.inject.Inject
  * card can show it again. It answers `Closed` when the user says they sent a bank transfer, or once the host
  * sees the provider's part done: the payment seen or the session over. An external page answers `Returned`
  * once it reaches its return URL.
+ *
+ * The core drops a call when its product or worker goes away. The sheet or frame it showed then closes, rather than
+ * staying up with nothing to answer.
  */
 class AppFundingOverlay @Inject constructor(
     private val contexts: FundingOverlayContexts,
@@ -39,8 +44,17 @@ class AppFundingOverlay @Inject constructor(
     override suspend fun present(request: FundingOverlayRequest): FundingOverlayOutcome {
         val context = FundingOverlayContext(request, FundingOverlayMode.New)
         contexts.put(context)
-        router.openFundingOverlay(request.intent)
-        return context.awaitOutcome()
+        var answered = false
+        try {
+            router.openFundingOverlay(request.intent)
+            return context.awaitOutcome().also { answered = true }
+        } finally {
+            // An answered sheet closes itself; one the core stopped waiting on is closed here.
+            if (!answered) {
+                contexts.remove(context)
+                withContext(NonCancellable) { router.closeFundingOverlay(request.intent) }
+            }
+        }
     }
 
     override suspend fun presentProviderFrame(
@@ -58,24 +72,25 @@ class AppFundingOverlay @Inject constructor(
             showsSentFunds = rail == FundingRail.BANK && session?.direction == FundingDirection.IN,
         )
         frames.put(frame)
-        router.openFundingProviderFrame(intent)
+        try {
+            router.openFundingProviderFrame(intent)
 
-        val outcome = coroutineScope {
-            // The frame may be hidden when the payment moves, so the overlay, not the screen, watches for it.
-            val watcher = launch {
-                runtime.sessionChanges()
-                    .filter { it == intent }
-                    .map { }
-                    .onStart { emit(Unit) }
-                    .first { runtime.paymentMoved(intent) }
-                frame.answer(ProviderFrameOutcome.Closed)
+            return coroutineScope {
+                // The frame may be hidden when the payment moves, so the overlay, not the screen, watches for it.
+                val watcher = launch {
+                    runtime.sessionChanges()
+                        .filter { it == intent }
+                        .map { }
+                        .onStart { emit(Unit) }
+                        .first { runtime.paymentMoved(intent) }
+                    frame.answer(ProviderFrameOutcome.Closed)
+                }
+                frame.awaitOutcome().also { watcher.cancel() }
             }
-            frame.awaitOutcome().also { watcher.cancel() }
+        } finally {
+            frames.remove(frame)
+            withContext(NonCancellable) { router.closeFundingProviderFrame(intent) }
         }
-
-        frames.remove(intent)
-        router.closeFundingProviderFrame(intent)
-        return outcome
     }
 
     /**
