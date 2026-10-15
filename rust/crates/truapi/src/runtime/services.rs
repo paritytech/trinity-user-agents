@@ -338,6 +338,18 @@ impl RuntimeServices {
 		self.auth_token_platform.get().cloned()
 	}
 
+	/// Drop the auth tokens the host keeps for `product_id`, or every
+	/// product's when it is `None`. Nothing to drop without a keeper.
+	pub async fn clear_auth_tokens(
+		&self,
+		product_id: Option<&str>,
+	) -> Result<(), latest::GenericError> {
+		match self.auth_token_platform() {
+			Some(platform) => platform.clear_auth_tokens(product_id).await,
+			None => Ok(()),
+		}
+	}
+
 	/// Install the host's contacts adapter. Answers whether this call was the
 	/// one that installed it.
 	pub fn install_contacts_platform(&self, platform: Arc<dyn ContactsPlatform>) -> bool {

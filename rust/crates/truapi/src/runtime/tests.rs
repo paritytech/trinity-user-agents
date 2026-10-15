@@ -9992,11 +9992,11 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 	);
 }
 
-/// A token keeper holding each product's tokens apart, as a host's secure
-/// storage does, and counting every call it gets.
+/// A token keeper holding tokens by the key the core hands it, as a host's
+/// secure storage does, and counting every call it gets.
 #[derive(Default)]
 struct MemoryAuthTokens {
-	tokens: Mutex<std::collections::HashMap<(String, String), v01::AuthToken>>,
+	tokens: Mutex<std::collections::HashMap<String, (String, v01::AuthToken)>>,
 	calls: Mutex<usize>,
 }
 
@@ -10008,48 +10008,58 @@ impl MemoryAuthTokens {
 	fn record_call(&self) {
 		*self.calls.lock().expect("calls mutex poisoned") += 1;
 	}
+
+	fn tokens(
+		&self,
+	) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, (String, v01::AuthToken)>> {
+		self.tokens.lock().expect("tokens mutex poisoned")
+	}
 }
 
 #[truapi::async_trait]
 impl crate::platform::AuthTokenPlatform for MemoryAuthTokens {
 	async fn store_auth_token(
 		&self,
-		product: &ProductContext,
-		service: String,
+		product_id: &str,
+		key: &str,
 		token: v01::AuthToken,
 	) -> Result<(), v01::GenericError> {
 		self.record_call();
-		self.tokens
-			.lock()
-			.expect("tokens mutex poisoned")
-			.insert((product.product_id.clone(), service), token);
+		self.tokens().insert(key.to_string(), (product_id.to_string(), token));
 		Ok(())
 	}
 
 	async fn auth_token(
 		&self,
-		product: &ProductContext,
-		service: String,
+		_product_id: &str,
+		key: &str,
 	) -> Result<Option<v01::AuthToken>, v01::GenericError> {
 		self.record_call();
-		Ok(self
-			.tokens
-			.lock()
-			.expect("tokens mutex poisoned")
-			.get(&(product.product_id.clone(), service))
-			.cloned())
+		Ok(self.tokens().get(key).map(|(_, token)| token.clone()))
 	}
 
 	async fn remove_auth_token(
 		&self,
-		product: &ProductContext,
-		service: String,
+		_product_id: &str,
+		key: &str,
 	) -> Result<(), v01::GenericError> {
 		self.record_call();
-		self.tokens
-			.lock()
-			.expect("tokens mutex poisoned")
-			.remove(&(product.product_id.clone(), service));
+		self.tokens().remove(key);
+		Ok(())
+	}
+
+	async fn auth_token_count(&self, product_id: &str) -> Result<u32, v01::GenericError> {
+		self.record_call();
+		let count = self.tokens().values().filter(|(owner, _)| owner == product_id).count();
+		Ok(count as u32)
+	}
+
+	async fn clear_auth_tokens(&self, product_id: Option<&str>) -> Result<(), v01::GenericError> {
+		self.record_call();
+		match product_id {
+			Some(product_id) => self.tokens().retain(|_, (owner, _)| owner != product_id),
+			None => self.tokens().clear(),
+		}
 		Ok(())
 	}
 }
@@ -10127,6 +10137,58 @@ fn a_kept_token_is_returned_only_to_the_product_that_stored_it() {
 			Ok(truapi::versioned::auth_tokens::HostAuthTokensStoreResponse::V1),
 			Ok(Some(onramp_token())),
 			Ok(None),
+		)
+	);
+}
+
+// Tokens belong to the account that signed in, so a different account using
+// the same product on the same device never reads them.
+#[test]
+fn a_kept_token_is_returned_only_to_the_account_that_stored_it() {
+	let services = payment_services();
+	assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
+	let alice = payment_host(&services, "wallet.dot", true);
+	let (host_config, product) = runtime_config("wallet.dot");
+	let bob = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		PairingHost::new(services.clone(), host_config),
+		product,
+	);
+	install_pairing_session(&bob, SessionInfo { public_key: [0xb0; 32], ..session_info() });
+
+	store_auth_token(&alice, "onramp", onramp_token()).expect("token stored");
+
+	assert_eq!(
+		(get_auth_token(&alice, "onramp"), get_auth_token(&bob, "onramp")),
+		(Ok(Some(onramp_token())), Ok(None))
+	);
+}
+
+// Secure storage is meant for a handful of credentials, so a product keeps
+// tokens for a bounded number of services. Replacing one it already keeps
+// stays allowed at the limit.
+#[test]
+fn a_product_keeps_tokens_for_a_bounded_number_of_services() {
+	let services = payment_services();
+	assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let max = crate::host_logic::auth_tokens::MAX_SERVICES_PER_PRODUCT;
+	for index in 0..max {
+		store_auth_token(&wallet, &format!("service-{index}"), onramp_token())
+			.expect("a token within the limit is kept");
+	}
+
+	assert_eq!(
+		(
+			store_auth_token(&wallet, "one-too-many", onramp_token()),
+			store_auth_token(&wallet, "service-0", onramp_token()),
+		),
+		(
+			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensStoreError::V1(
+				v01::HostAuthTokensStoreError::TooManyServices { max }
+			))),
+			Ok(truapi::versioned::auth_tokens::HostAuthTokensStoreResponse::V1),
 		)
 	);
 }

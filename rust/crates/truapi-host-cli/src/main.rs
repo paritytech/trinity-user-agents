@@ -1207,8 +1207,7 @@ async fn run_pairing_host(
 		pairing_runtime.set_pocket_platform(pocket);
 	}
 	pairing_runtime.set_game_platform(Arc::new(game::CliGameHost));
-	let auth_tokens = Arc::new(auth_tokens::CliAuthTokens::default());
-	pairing_runtime.set_auth_token_platform(auth_tokens.clone());
+	pairing_runtime.set_auth_token_platform(Arc::new(auth_tokens::CliAuthTokens::default()));
 	pairing_runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	pairing_runtime
 		.set_contacts_platform(contacts::CliContactsHost::from_env(storage_platform.clone()));
@@ -1247,7 +1246,7 @@ async fn run_pairing_host(
 		pairing_interactive_loop(
 			frame_url,
 			product,
-			PairingHost { runtime: pairing_runtime, auth_tokens },
+			pairing_runtime,
 			storage_platform,
 			script_projects,
 			terminal_ui,
@@ -3143,22 +3142,15 @@ async fn import_mnemonic_session(
 	Ok(())
 }
 
-/// The pairing host's runtime with the token keeper `/logout` empties.
-struct PairingHost {
-	runtime: Arc<PairingHostRuntime>,
-	auth_tokens: Arc<auth_tokens::CliAuthTokens>,
-}
-
 async fn pairing_interactive_loop(
 	frame_url: String,
 	product: Arc<frame_server::ProductSelection>,
-	host: PairingHost,
+	runtime: Arc<PairingHostRuntime>,
 	storage: Arc<CliPlatform>,
 	script_projects: PathBuf,
 	mut ui: ActiveTerminalUi,
 	log_controller: LogController,
 ) -> Result<()> {
-	let PairingHost { runtime, auth_tokens } = host;
 	let mut pairing_state_path =
 		storage.state_dir().context("pairing host storage is not configured")?;
 	let mut last_script = sessions::session_last_script(&pairing_state_path)?;
@@ -3186,16 +3178,13 @@ async fn pairing_interactive_loop(
 				run_pairing_login(&runtime, &product_id, input, &mut ui).await?;
 			},
 			ShellCommand::Logout => match runtime.logout().await {
-				Ok(()) => {
-					auth_tokens.clear();
-					ui.success(
+				Ok(()) => ui.success(
 					"Logged out",
 					Some(
 						"The next product login will generate new pairing keys and a fresh link."
 							.to_string(),
 					),
-					)
-				},
+				),
 				Err(error) => ui.error(format!("logout failed: {}", error.reason)),
 			},
 			ShellCommand::Log(level) => {

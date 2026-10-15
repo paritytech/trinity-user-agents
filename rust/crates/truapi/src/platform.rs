@@ -3422,36 +3422,42 @@ pub trait GamePlatform: Send + Sync {
 /// answered `Unsupported`.
 ///
 /// The host keeps each token in the platform's secure storage (Keychain on
-/// iOS, Keystore-backed storage on Android), scoped to `product`: one product
-/// never reads, replaces or drops another's tokens. It keeps them across app
-/// restarts and drops every product's tokens when the user signs out. The host
-/// neither authenticates nor refreshes anything: it stores what it is given.
-/// The core requires a session and checks the service id and size limits in
+/// iOS, Keystore-backed storage on Android) under the `key` the core hands it,
+/// tagged with the `product_id` it belongs to. The core derives `key` from the
+/// signed-in account, the product and the product's service name, so one
+/// product never reaches another's tokens and one user never reaches
+/// another's. The key is 64 lowercase hex characters and needs no escaping.
+/// The host keeps tokens across app restarts. The core clears them when the
+/// user signs out and when a product's state is cleared. The host neither
+/// authenticates nor refreshes anything: it stores what it is given. The core
+/// requires a session and checks the service id, size and count limits in
 /// [`crate::host_logic::auth_tokens`] before calling here.
 #[async_trait]
 pub trait AuthTokenPlatform: Send + Sync {
-	/// Keep `token` for the product's `service`, replacing any kept for it.
+	/// Keep `token` under `key` for `product_id`, replacing any kept under it.
 	async fn store_auth_token(
 		&self,
-		product: &ProductContext,
-		service: String,
+		product_id: &str,
+		key: &str,
 		token: AuthToken,
 	) -> Result<(), GenericError>;
 
-	/// The token kept for the product's `service`, or `None`.
+	/// The token kept under `key`, or `None`.
 	async fn auth_token(
 		&self,
-		product: &ProductContext,
-		service: String,
+		product_id: &str,
+		key: &str,
 	) -> Result<Option<AuthToken>, GenericError>;
 
-	/// Drop the token kept for the product's `service`. Idempotent: dropping
-	/// none succeeds.
-	async fn remove_auth_token(
-		&self,
-		product: &ProductContext,
-		service: String,
-	) -> Result<(), GenericError>;
+	/// Drop the token kept under `key`. Idempotent: dropping none succeeds.
+	async fn remove_auth_token(&self, product_id: &str, key: &str) -> Result<(), GenericError>;
+
+	/// How many tokens are kept for `product_id`, across every key.
+	async fn auth_token_count(&self, product_id: &str) -> Result<u32, GenericError>;
+
+	/// Drop every token kept for `product_id`, or every token at all when
+	/// `product_id` is `None`.
+	async fn clear_auth_tokens(&self, product_id: Option<&str>) -> Result<(), GenericError>;
 }
 
 /// What the operating system currently says about a device capability.

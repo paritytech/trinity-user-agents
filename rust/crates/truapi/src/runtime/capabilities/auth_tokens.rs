@@ -8,7 +8,7 @@ use truapi::{
 	api::AuthTokens,
 	latest,
 	versioned::{
-		IntoLatest,
+		FromLatest, IntoLatest, Versioned,
 		auth_tokens::{
 			HostAuthTokensGetError, HostAuthTokensGetRequest, HostAuthTokensGetResponse,
 			HostAuthTokensRemoveError, HostAuthTokensRemoveRequest, HostAuthTokensRemoveResponse,
@@ -17,50 +17,70 @@ use truapi::{
 	},
 };
 
+use super::from_latest_error;
 use crate::{
-	host_logic::auth_tokens::{check_store, is_valid_service},
+	host_logic::auth_tokens::{
+		MAX_SERVICES_PER_PRODUCT, check_store, is_valid_service, storage_key,
+	},
 	platform::AuthTokenPlatform,
 	runtime::ProductRuntimeHost,
 };
 
 impl ProductRuntimeHost {
-	/// The host's token keeper, for a product with a session. Tokens belong to
-	/// the signed-in user, who loses them on sign-out, so without a session
-	/// there is nothing to keep them for.
-	fn auth_token_platform<E>(&self) -> Result<Arc<dyn AuthTokenPlatform>, CallError<E>> {
+	/// The host's token keeper and the key `service` is kept under, for a
+	/// product with a session. Tokens belong to the signed-in account, so
+	/// without a session there is nobody to keep them for.
+	fn auth_token_slot<E>(
+		&self,
+		service: &str,
+	) -> Result<(Arc<dyn AuthTokenPlatform>, String), CallError<E>> {
 		let platform = self.services.auth_token_platform().ok_or(CallError::Unsupported)?;
-		if self.authority.current_session().is_none() {
-			return Err(CallError::Denied);
-		}
-		Ok(platform)
+		let session = self.authority.current_session().ok_or(CallError::Denied)?;
+		Ok((platform, storage_key(&session.public_key, &self.product.product_id, service)))
 	}
 }
 
 /// The host's reason for a failure, as the product's catch-all for a get or
 /// remove.
-fn lookup_failure(error: latest::GenericError) -> latest::HostAuthTokensLookupError {
-	latest::HostAuthTokensLookupError::Unknown { reason: error.reason }
+fn lookup_failure(error: latest::GenericError) -> CallError<latest::HostAuthTokensLookupError> {
+	CallError::Domain(latest::HostAuthTokensLookupError::Unknown { reason: error.reason })
+}
+
+fn store_failure(error: latest::GenericError) -> CallError<latest::HostAuthTokensStoreError> {
+	CallError::Domain(latest::HostAuthTokensStoreError::Unknown { reason: error.reason })
 }
 
 #[truapi::async_trait]
 impl AuthTokens for ProductRuntimeHost {
+	/// A service the product has no token for yet only gets one while the
+	/// product keeps fewer than [`MAX_SERVICES_PER_PRODUCT`].
 	#[instrument(skip_all, fields(runtime.method = "auth_tokens.store"))]
 	async fn store(
 		&self,
 		_cx: &CallContext,
 		request: HostAuthTokensStoreRequest,
 	) -> Result<HostAuthTokensStoreResponse, CallError<HostAuthTokensStoreError>> {
-		let platform = self.auth_token_platform()?;
+		let version = request.version();
 		let latest::HostAuthTokensStoreRequest { service, token } = request.into_latest();
-		let domain = |error| CallError::Domain(HostAuthTokensStoreError::V1(error));
-		check_store(&service, &token).map_err(domain)?;
-		platform
-			.store_auth_token(&self.product, service, token)
-			.await
-			.map(|()| HostAuthTokensStoreResponse::V1)
-			.map_err(|error| {
-				domain(latest::HostAuthTokensStoreError::Unknown { reason: error.reason })
-			})
+		let result = async {
+			let (platform, key) = self.auth_token_slot(&service)?;
+			check_store(&service, &token).map_err(CallError::Domain)?;
+			let product_id = self.product.product_id.as_str();
+			let replacing = platform.auth_token(product_id, &key).await.map_err(store_failure)?;
+			if replacing.is_none() &&
+				platform.auth_token_count(product_id).await.map_err(store_failure)? >=
+					MAX_SERVICES_PER_PRODUCT
+			{
+				return Err(CallError::Domain(latest::HostAuthTokensStoreError::TooManyServices {
+					max: MAX_SERVICES_PER_PRODUCT,
+				}));
+			}
+			platform.store_auth_token(product_id, &key, token).await.map_err(store_failure)
+		}
+		.await;
+		result
+			.map(|()| HostAuthTokensStoreResponse::from_latest((), version))
+			.map_err(|error| from_latest_error(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "auth_tokens.get"))]
@@ -69,17 +89,23 @@ impl AuthTokens for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostAuthTokensGetRequest,
 	) -> Result<HostAuthTokensGetResponse, CallError<HostAuthTokensGetError>> {
-		let platform = self.auth_token_platform()?;
+		let version = request.version();
 		let latest::HostAuthTokensGetRequest { service } = request.into_latest();
-		let domain = |error| CallError::Domain(HostAuthTokensGetError::V1(error));
-		if !is_valid_service(&service) {
-			return Err(domain(latest::HostAuthTokensLookupError::InvalidService));
+		let result = async {
+			let (platform, key) = self.auth_token_slot(&service)?;
+			if !is_valid_service(&service) {
+				return Err(CallError::Domain(latest::HostAuthTokensLookupError::InvalidService));
+			}
+			platform
+				.auth_token(&self.product.product_id, &key)
+				.await
+				.map(|token| latest::HostAuthTokensGetResponse { token })
+				.map_err(lookup_failure)
 		}
-		platform
-			.auth_token(&self.product, service)
-			.await
-			.map(|token| HostAuthTokensGetResponse::V1(latest::HostAuthTokensGetResponse { token }))
-			.map_err(|error| domain(lookup_failure(error)))
+		.await;
+		result
+			.map(|response| HostAuthTokensGetResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "auth_tokens.remove"))]
@@ -88,16 +114,21 @@ impl AuthTokens for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostAuthTokensRemoveRequest,
 	) -> Result<HostAuthTokensRemoveResponse, CallError<HostAuthTokensRemoveError>> {
-		let platform = self.auth_token_platform()?;
+		let version = request.version();
 		let latest::HostAuthTokensRemoveRequest { service } = request.into_latest();
-		let domain = |error| CallError::Domain(HostAuthTokensRemoveError::V1(error));
-		if !is_valid_service(&service) {
-			return Err(domain(latest::HostAuthTokensLookupError::InvalidService));
+		let result = async {
+			let (platform, key) = self.auth_token_slot(&service)?;
+			if !is_valid_service(&service) {
+				return Err(CallError::Domain(latest::HostAuthTokensLookupError::InvalidService));
+			}
+			platform
+				.remove_auth_token(&self.product.product_id, &key)
+				.await
+				.map_err(lookup_failure)
 		}
-		platform
-			.remove_auth_token(&self.product, service)
-			.await
-			.map(|()| HostAuthTokensRemoveResponse::V1)
-			.map_err(|error| domain(lookup_failure(error)))
+		.await;
+		result
+			.map(|()| HostAuthTokensRemoveResponse::from_latest((), version))
+			.map_err(|error| from_latest_error(error, version))
 	}
 }

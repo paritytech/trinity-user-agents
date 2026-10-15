@@ -598,14 +598,18 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   keeps the reminder across app kill and reboot. A schedule the host cannot
   hold fails as a host failure carrying its reason.
 - `AuthTokenPlatform`: keep the tokens a product obtained by signing in to
-  its own services, in platform secure storage (Keychain, Keystore), scoped to
-  the product and dropped for every product on sign-out. Installed with
+  its own services, in platform secure storage (Keychain, Keystore), under an
+  opaque 64-hex-character key the core derives from the signed-in account, the
+  product and the service, tagged with the product id. Installed with
   `set_auth_token_platform`; native hosts use `set_auth_token_callbacks`. The
   host only stores tokens: products sign in and refresh themselves. The core
-  requires a session, checks the service id (1 to 64 of `[a-z0-9._-]`) and the
-  8192-byte limit on `token` plus `refresh_token` before calling the host, and
-  caches nothing. Without it, as on the browser host, every `authTokens` call
-  answers `Unsupported`. See [the RFC](../../../docs/rfcs/auth-tokens.md).
+  requires a session, checks the service id (1 to 64 of `[a-z0-9._-]`), the
+  8192-byte limit on `token` plus `refresh_token` and the 16-service cap per
+  product before the host stores anything, and caches nothing. It clears every
+  token on logout, disconnect and session reset, and a product's tokens when
+  that product's state is cleared. Without it, as on the browser host, every
+  `authTokens` call answers `Unsupported`. See
+  [the RFC](../../../docs/rfcs/auth-tokens.md).
 - `ScannerPlatform`: open the host's QR and barcode viewfinder. Before calling
   it the core refuses an invalid request, a Worker the user has not tapped in
   the last 5 seconds, and a second open scan. After, it refuses a code the

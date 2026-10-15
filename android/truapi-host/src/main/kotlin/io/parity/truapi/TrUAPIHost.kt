@@ -92,12 +92,12 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
-import uniffi.truapi.AuthToken
-import uniffi.truapi.NativeAuthTokenCallbacks
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
 import uniffi.truapi.NativeScannerCallbacks
 import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.AuthToken
+import uniffi.truapi.NativeAuthTokenCallbacks
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -746,33 +746,52 @@ private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : Na
 
 /**
  * Native auth token keeper: holds the tokens products obtain from their own
- * services, following the rules on the core's `AuthTokenPlatform`. Install
- * with [TrUAPIHostRuntime.setAuthTokens]; a runtime without one answers every
- * `authTokens` call with `Unsupported`.
+ * services, following the rules on the core's `AuthTokenPlatform`.
+ *
+ * Each token is kept under the opaque `key` the core hands over, 64 lowercase
+ * hex characters that already separate accounts, products and services,
+ * tagged with `productId` so one product's tokens can be counted and cleared.
+ * [AuthToken] is a generated data class whose `toString()` prints both
+ * secrets, so never log one. Install with [TrUAPIHostRuntime.setAuthTokens];
+ * a runtime without one answers every `authTokens` call with `Unsupported`.
  */
 interface AuthTokenHostBridge {
-    /** Keep [token] for [productId]'s [service], replacing any kept for it. */
+    /** Keep [token] under [key] for [productId], replacing any kept under it. */
     @Throws(HostRejection::class)
-    suspend fun storeAuthToken(productId: String, service: String, token: AuthToken)
+    suspend fun storeAuthToken(productId: String, key: String, token: AuthToken)
 
-    /** The token kept for [productId]'s [service], or `null`. */
+    /** The token kept under [key], or `null`. */
     @Throws(HostRejection::class)
-    suspend fun authToken(productId: String, service: String): AuthToken?
+    suspend fun authToken(productId: String, key: String): AuthToken?
 
-    /** Drop the token kept for [productId]'s [service]. Dropping none succeeds. */
+    /** Drop the token kept under [key]. Dropping none succeeds. */
     @Throws(HostRejection::class)
-    suspend fun removeAuthToken(productId: String, service: String)
+    suspend fun removeAuthToken(productId: String, key: String)
+
+    /** How many tokens are kept for [productId]. */
+    @Throws(HostRejection::class)
+    suspend fun authTokenCount(productId: String): UInt
+
+    /** Drop every token kept for [productId], or every token when it is `null`. */
+    @Throws(HostRejection::class)
+    suspend fun clearAuthTokens(productId: String?)
 }
 
 private class AuthTokenCallbackAdapter(private val bridge: AuthTokenHostBridge) : NativeAuthTokenCallbacks {
-    override suspend fun storeAuthToken(productId: String, service: String, token: AuthToken) =
-        withHostRejection { bridge.storeAuthToken(productId, service, token) }
+    override suspend fun storeAuthToken(productId: String, key: String, token: AuthToken) =
+        withHostRejection { bridge.storeAuthToken(productId, key, token) }
 
-    override suspend fun authToken(productId: String, service: String): AuthToken? =
-        withHostRejection { bridge.authToken(productId, service) }
+    override suspend fun authToken(productId: String, key: String): AuthToken? =
+        withHostRejection { bridge.authToken(productId, key) }
 
-    override suspend fun removeAuthToken(productId: String, service: String) =
-        withHostRejection { bridge.removeAuthToken(productId, service) }
+    override suspend fun removeAuthToken(productId: String, key: String) =
+        withHostRejection { bridge.removeAuthToken(productId, key) }
+
+    override suspend fun authTokenCount(productId: String): UInt =
+        withHostRejection { bridge.authTokenCount(productId) }
+
+    override suspend fun clearAuthTokens(productId: String?) =
+        withHostRejection { bridge.clearAuthTokens(productId) }
 }
 
 private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {

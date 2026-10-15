@@ -26,11 +26,11 @@ an authentication client for third parties.
 
 Trait `AuthTokens`, wire id 26. Any execution of the product may call it.
 
-| Id | Method   | Request                         | Response                       | Errors                                                                   |
-| -- | -------- | ------------------------------- | ------------------------------ | ------------------------------------------------------------------------ |
-| 0  | `store`  | `{ service, token: AuthToken }` | empty                          | `InvalidService`, `EmptyToken`, `TooLarge { max }`, `Unknown { reason }` |
-| 1  | `get`    | `{ service }`                   | `{ token: Option<AuthToken> }` | `InvalidService`, `Unknown { reason }`                                   |
-| 2  | `remove` | `{ service }`                   | empty                          | `InvalidService`, `Unknown { reason }`                                   |
+| Id | Method   | Request                         | Response                       | Errors                                                                                               |
+| -- | -------- | ------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| 0  | `store`  | `{ service, token: AuthToken }` | empty                          | `InvalidService`, `EmptyToken`, `TooLarge { max }`, `TooManyServices { max }`, `Unknown { reason }` |
+| 1  | `get`    | `{ service }`                   | `{ token: Option<AuthToken> }` | `InvalidService`, `Unknown { reason }`                                                               |
+| 2  | `remove` | `{ service }`                   | empty                          | `InvalidService`, `Unknown { reason }`                                                               |
 
 `get` and `remove` share one error type, `HostAuthTokensLookupError`.
 
@@ -47,15 +47,22 @@ without a session gets `Denied`; a host that cannot keep tokens answers `Unsuppo
 
 ### Rules
 
-- **Scoping.** Tokens are keyed by product and service. One product never reads, replaces or drops another's token,
-  whatever service name it uses. The core passes the calling product to the host, which owns the keying.
-- **Limits.** `service` is 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, so a host can build a storage key from
-  it without escaping. `token` is non-empty, and `token` plus `refresh_token` take at most 8192 bytes. The core
-  refuses a request that breaks a limit before the host sees it.
-- **Storage.** The host keeps tokens in Keychain on iOS and Keystore-backed storage on Android, across app restarts.
-  The core never caches them.
-- **Sign-out.** The host drops every product's tokens when the user signs out. Tokens belong to the signed-in user, which
-  is also why a product without a session is refused.
+- **Scoping.** Tokens belong to the signed-in account and the product. The core hands the host an opaque key,
+  `hex(blake2_256(("truapi/auth-token", root_public_key, product_id, service).encode()))`, where `root_public_key` is
+  the session's root account key. One product never reaches another's token whatever service name it uses, and one
+  account never reaches another's on the same device. The key is 64 lowercase hex characters, so a host uses it as a
+  storage key as is, with nothing to join or escape. The host also gets the product id with each call, to count and
+  clear one product's tokens.
+- **Limits.** `service` is 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`. `token` is non-empty, and `token`
+  plus `refresh_token` take at most 8192 bytes. A product keeps tokens for at most 16 services; storing a 17th
+  answers `TooManyServices`, while replacing one it already keeps does not. The core refuses a request that breaks a
+  limit before the host stores anything.
+- **Storage.** The host keeps tokens in Keychain on iOS (this device only, readable after the first unlock) and
+  Keystore-backed storage on Android, across app restarts. The core never caches them.
+- **Clearing.** The core drops every token when the session ends: on logout, disconnect and session reset. It drops a
+  product's tokens when that product's state is cleared. The host does not have to track sign-out itself, though it
+  also drops them when it wipes the user's data. Tokens belong to the signed-in account, which is also why a product
+  without a session is refused.
 - **No host-side auth.** The host neither signs in to a product's service nor refreshes a token. `expires_at` is
   informational; the worker decides when to refresh and stores the new token itself.
 - **Not for device tokens.** The device-uniqueness backend's tokens stay inside the host and never pass through this
@@ -63,10 +70,11 @@ without a session gets `Denied`; a host that cannot keep tokens answers `Unsuppo
 
 ### Host surface
 
-`AuthTokenPlatform` (`store_auth_token`, `auth_token`, `remove_auth_token`), optional and installed once with
-`set_auth_token_platform`. Native hosts implement `NativeAuthTokenCallbacks` and install it with
-`set_auth_token_callbacks`. The browser host does not serve it and answers `Unsupported`. The CLI test host keeps tokens
-in memory for the life of the process.
+`AuthTokenPlatform` (`store_auth_token`, `auth_token`, `remove_auth_token` by key, `auth_token_count` and
+`clear_auth_tokens` by product), optional and installed once with `set_auth_token_platform`. Native hosts implement `NativeAuthTokenCallbacks` and install it with
+`set_auth_token_callbacks`. The iOS app keeps them in the Keychain and the Android app in
+its Keystore-encrypted preferences. The browser host does not serve it and answers `Unsupported`. The CLI test host
+keeps tokens in memory for the life of the process.
 
 ## Trade-offs
 

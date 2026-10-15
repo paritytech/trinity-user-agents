@@ -1,6 +1,8 @@
 //! Limits on the auth tokens a product keeps with the host, checked before
-//! the host's secure storage sees a request.
+//! the host's secure storage sees a request, and the storage key the host
+//! keeps each token under.
 
+use parity_scale_codec::Encode;
 use truapi::latest::{AuthToken, HostAuthTokensStoreError};
 
 /// Most characters a service id may have.
@@ -10,9 +12,21 @@ pub const MAX_SERVICE_CHARS: usize = 64;
 /// Keystore entries are meant for credentials, not documents.
 pub const MAX_TOKEN_BYTES: u32 = 8192;
 
+/// Most services one product may keep a token for.
+pub const MAX_SERVICES_PER_PRODUCT: u32 = 16;
+
+/// The key the host keeps `product_id`'s token for `service` under, for the
+/// account `owner` signed in with. It is 64 lowercase hex characters, so a
+/// host can use it as a storage key as is, and hashing in the account and the
+/// product means no user or product can name another's token.
+pub fn storage_key(owner: &[u8; 32], product_id: &str, service: &str) -> String {
+	hex::encode(sp_crypto_hashing::blake2_256(
+		&(b"truapi/auth-token", owner, product_id, service).encode(),
+	))
+}
+
 /// Whether `service` is 1 to [`MAX_SERVICE_CHARS`] characters of `a-z`,
-/// `0-9`, `.`, `_` and `-`. Hosts may build storage keys from it, so it never
-/// carries a separator or anything a key format would need to escape.
+/// `0-9`, `.`, `_` and `-`.
 pub fn is_valid_service(service: &str) -> bool {
 	(1..=MAX_SERVICE_CHARS).contains(&service.len()) &&
 		service
@@ -92,6 +106,29 @@ mod tests {
 			cases.iter().map(|(token, _)| check_store("onramp", token)).collect();
 		let expected: Vec<_> = cases.into_iter().map(|(_, verdict)| verdict).collect();
 		assert_eq!(verdicts, expected);
+	}
+
+	// A host keys storage by this alone, so it has to separate every account,
+	// product and service, including pairs that would collide if the parts
+	// were joined with a character a product id or service may contain.
+	#[test]
+	fn storage_keys_separate_accounts_products_and_services() {
+		let alice = [1; 32];
+		let bob = [2; 32];
+		let keys = [
+			storage_key(&alice, "wallet.dot", "onramp"),
+			storage_key(&bob, "wallet.dot", "onramp"),
+			storage_key(&alice, "other.dot", "onramp"),
+			storage_key(&alice, "wallet.dot", "offramp"),
+			storage_key(&alice, "a.dot", "x"),
+			storage_key(&alice, "a", "dot.x"),
+		];
+
+		let distinct: std::collections::HashSet<_> = keys.iter().collect();
+		assert_eq!(distinct.len(), keys.len());
+		assert!(keys.iter().all(|key| {
+			key.len() == 64 && key.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+		}));
 	}
 
 	#[test]

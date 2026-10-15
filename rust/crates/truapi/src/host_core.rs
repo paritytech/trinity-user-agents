@@ -421,32 +421,37 @@ impl PairingHostRuntime {
 		)
 	}
 
-	/// Disconnect the active account-authority session.
+	/// Disconnect the active account-authority session and drop the auth
+	/// tokens products kept for it.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
 		self.pairing_host.disconnect().await;
+		clear_signed_out_auth_tokens(&self.services).await;
 	}
 
-	/// Log out and discard the old pairing keypair.
+	/// Log out, drop the auth tokens products kept, and discard the old
+	/// pairing keypair.
 	///
 	/// The next product login request generates a fresh pairing identity and
 	/// presents a new deeplink suitable for another signing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
 	pub async fn logout(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.logout_and_reset_pairing()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		let reset = self.pairing_host.logout_and_reset_pairing().await;
+		let cleared = self.services.clear_auth_tokens(None).await;
+		reset.map_err(|reason| v01::GenericError { reason })?;
+		cleared.map_err(|error| v01::GenericError {
+			reason: format!("logged out, but auth tokens were not dropped: {}", error.reason),
+		})
 	}
 
-	/// Clear one product's capability state while preserving the active
-	/// session and unrelated products.
+	/// Clear one product's capability state, including the auth tokens it
+	/// kept, while preserving the active session and unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.clear_product_state(product_id)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		let cleared = self.pairing_host.clear_product_state(product_id).await;
+		let tokens = clear_product_auth_tokens(&self.services, product_id).await;
+		cleared.map_err(|reason| v01::GenericError { reason })?;
+		tokens
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -521,11 +526,12 @@ impl PairingHostRuntime {
 		product_subtree_public_key(self.pairing_host.as_ref(), product_id, timeout_ms).await
 	}
 
-	/// Clear the canonical paired session and all capability caches/storage
-	/// without sending a peer-disconnect notice.
+	/// Clear the canonical paired session, all capability caches/storage and
+	/// the auth tokens products kept, without sending a peer-disconnect notice.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
 	pub async fn reset_session_state(&self) {
 		self.pairing_host.reset_session_state().await;
+		clear_signed_out_auth_tokens(&self.services).await;
 	}
 
 	/// Start or join the pairing-host login flow for one product.
@@ -1207,19 +1213,22 @@ impl SigningHostRuntime {
 		self.signing_host.session_state().current().is_some()
 	}
 
-	/// Disconnect the active account-authority session.
+	/// Disconnect the active account-authority session and drop the auth
+	/// tokens products kept for it.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
 		self.signing_host.disconnect().await;
+		clear_signed_out_auth_tokens(&self.services).await;
 	}
 
-	/// Revoke one product's grants from the current local activation while
-	/// preserving unrelated products.
+	/// Revoke one product's grants from the current local activation, and drop
+	/// the auth tokens it kept, while preserving unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-		self.signing_host
-			.clear_product_state(product_id)
-			.map_err(|error| v01::GenericError { reason: error.to_string() })
+		let cleared = self.signing_host.clear_product_state(product_id);
+		let tokens = clear_product_auth_tokens(&self.services, product_id).await;
+		cleared.map_err(|error| v01::GenericError { reason: error.to_string() })?;
+		tokens
 	}
 
 	/// Read a stored permission authorization status for a product without prompting.
@@ -1419,6 +1428,30 @@ impl SigningHostRuntime {
 			},
 		}
 	}
+}
+
+/// Drop every product's auth tokens once the user has signed out. The session
+/// is already gone, so a failure is only logged: the tokens are keyed to the
+/// account, and the next user cannot read them either way.
+async fn clear_signed_out_auth_tokens(services: &RuntimeServices) {
+	if let Err(error) = services.clear_auth_tokens(None).await {
+		warn!(reason = %error.reason, "auth tokens were not dropped on sign-out");
+	}
+}
+
+/// Drop the auth tokens `product_id` kept, for a product whose state is being
+/// cleared.
+async fn clear_product_auth_tokens(
+	services: &RuntimeServices,
+	product_id: &str,
+) -> Result<(), v01::GenericError> {
+	let product = product_context(product_id)?;
+	services
+		.clear_auth_tokens(Some(&product.product_id))
+		.await
+		.map_err(|error| v01::GenericError {
+			reason: format!("auth tokens were not dropped: {}", error.reason),
+		})
 }
 
 /// The durable transaction engine over `db`, reading and submitting through
@@ -2613,6 +2646,79 @@ mod tests {
 				)
 			);
 		});
+	}
+
+	/// A token keeper that only records which clears the core asked for.
+	#[derive(Default)]
+	struct ClearRecorder {
+		clears: Mutex<Vec<Option<String>>>,
+	}
+
+	#[async_trait::async_trait]
+	impl AuthTokenPlatform for ClearRecorder {
+		async fn store_auth_token(
+			&self,
+			_product_id: &str,
+			_key: &str,
+			_token: truapi::latest::AuthToken,
+		) -> Result<(), v01::GenericError> {
+			Ok(())
+		}
+
+		async fn auth_token(
+			&self,
+			_product_id: &str,
+			_key: &str,
+		) -> Result<Option<truapi::latest::AuthToken>, v01::GenericError> {
+			Ok(None)
+		}
+
+		async fn remove_auth_token(
+			&self,
+			_product_id: &str,
+			_key: &str,
+		) -> Result<(), v01::GenericError> {
+			Ok(())
+		}
+
+		async fn auth_token_count(&self, _product_id: &str) -> Result<u32, v01::GenericError> {
+			Ok(0)
+		}
+
+		async fn clear_auth_tokens(
+			&self,
+			product_id: Option<&str>,
+		) -> Result<(), v01::GenericError> {
+			self.clears
+				.lock()
+				.expect("clears mutex poisoned")
+				.push(product_id.map(str::to_string));
+			Ok(())
+		}
+	}
+
+	// Tokens are credentials of the signed-in user, so every way a session
+	// ends drops all of them, and clearing one product's state drops that
+	// product's alone. The host does not have to remember to wipe them.
+	#[test]
+	fn the_core_drops_auth_tokens_when_a_session_or_product_is_cleared() {
+		let platform = Arc::new(StubPlatform::default());
+		let (host_config, _) = runtime_config("myapp.dot");
+		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
+		let keeper = Arc::new(ClearRecorder::default());
+		assert!(runtime.set_auth_token_platform(keeper.clone()));
+
+		futures::executor::block_on(async {
+			runtime.clear_product_state("myapp.dot").await.expect("product state cleared");
+			runtime.disconnect_session().await;
+			runtime.reset_session_state().await;
+			runtime.logout().await.expect("logged out");
+		});
+
+		assert_eq!(
+			*keeper.clears.lock().expect("clears mutex poisoned"),
+			vec![Some("myapp.dot".to_string()), None, None, None]
+		);
 	}
 
 	#[test]

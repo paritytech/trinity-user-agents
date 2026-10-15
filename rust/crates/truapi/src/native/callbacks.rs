@@ -333,33 +333,38 @@ pub trait NativeGameCallbacks: Send + Sync {
 /// implementation to [`NativeTrUApiHostRuntime::set_auth_token_callbacks`]; one
 /// without leaves every AuthTokens call answering `Unsupported`.
 ///
-/// Every call names the product, and the host keeps each product's tokens
-/// apart, in Keychain or Keystore, dropping them all on sign-out. See
-/// [`crate::platform::AuthTokenPlatform`] for the full contract.
+/// The host keeps each token in Keychain or Keystore under the opaque `key`
+/// the core hands it, tagged with `product_id` so it can count and clear one
+/// product's tokens. See [`crate::platform::AuthTokenPlatform`] for the full
+/// contract.
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeAuthTokenCallbacks: Send + Sync {
-	/// Keep `token` for `product_id`'s `service`, replacing any kept for it.
+	/// Keep `token` under `key` for `product_id`, replacing any kept under it.
 	async fn store_auth_token(
 		&self,
 		product_id: String,
-		service: String,
+		key: String,
 		token: v01::AuthToken,
 	) -> Result<(), HostRejection>;
 
-	/// The token kept for `product_id`'s `service`, or `None`.
+	/// The token kept under `key`, or `None`.
 	async fn auth_token(
 		&self,
 		product_id: String,
-		service: String,
+		key: String,
 	) -> Result<Option<v01::AuthToken>, HostRejection>;
 
-	/// Drop the token kept for `product_id`'s `service`. Idempotent.
-	async fn remove_auth_token(
-		&self,
-		product_id: String,
-		service: String,
-	) -> Result<(), HostRejection>;
+	/// Drop the token kept under `key`. Idempotent.
+	async fn remove_auth_token(&self, product_id: String, key: String)
+	-> Result<(), HostRejection>;
+
+	/// How many tokens are kept for `product_id`.
+	async fn auth_token_count(&self, product_id: String) -> Result<u32, HostRejection>;
+
+	/// Drop every token kept for `product_id`, or every token when it is
+	/// `None`.
+	async fn clear_auth_tokens(&self, product_id: Option<String>) -> Result<(), HostRejection>;
 }
 
 /// Native contacts adapter. A host with a contact list and a picker passes an
