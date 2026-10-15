@@ -26,7 +26,6 @@ const TITLES: Record<UserConfirmationReview["tag"], string> = {
   CreateProof: "Create a ring proof",
   IdentityDisclosure: "Share your identity",
   ResourceAllocation: "Allocate resources",
-  PreimageSubmit: "Submit a preimage",
   AccountAccess: "Give access to another product's account",
   SignVrf: "Sign a VRF transcript",
   ProductSubtree: "Share the product account",
@@ -80,8 +79,6 @@ function requestingProduct(review: UserConfirmationReview): string | undefined {
       return review.value.productId;
     case "AccountAccess":
       return review.value.requestingProductId;
-    case "PreimageSubmit":
-      return undefined;
   }
 }
 
