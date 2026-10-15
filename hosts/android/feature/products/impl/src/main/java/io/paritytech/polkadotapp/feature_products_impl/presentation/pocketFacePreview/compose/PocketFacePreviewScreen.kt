@@ -112,7 +112,9 @@ private fun PocketFacePreviewScreenInternal(
                         shape = PolkadotTheme.shapes.large,
                         color = PolkadotTheme.colors.bg.surface.container,
                     ) {
-                        CompositionLocalProvider(LocalJsImageResolver provides rememberUncachedArchive(imageResolver)) {
+                        val images = rememberFreshArchive(imageResolver, state.draws)
+
+                        CompositionLocalProvider(LocalJsImageResolver provides images) {
                             key(state.draws) {
                                 FaceOrExplanation(face = state.face)
                             }
@@ -150,13 +152,13 @@ private fun FaceOrExplanation(face: LoadingState<JsWidget>?) {
     }
 }
 
-// Drawing again is how an edited archive image is picked up, so no cache may answer for the dev server.
-// A Bulletin CID names content that never changes, so it keeps the cache.
+// Each Draw must fetch an edited archive image from the dev server, so its memory entry is keyed by the draw
+// and it skips the disk cache. A Bulletin CID names content that never changes, so it keeps the cache.
 @Composable
-private fun rememberUncachedArchive(resolver: JsImageResolver): JsImageResolver {
+private fun rememberFreshArchive(resolver: JsImageResolver, draws: Int): JsImageResolver {
     val context = LocalContext.current
 
-    return remember(resolver, context) {
+    return remember(resolver, context, draws) {
         JsImageResolver { source ->
             val address = resolver.resolve(source)
 
@@ -165,7 +167,7 @@ private fun rememberUncachedArchive(resolver: JsImageResolver): JsImageResolver 
             } else {
                 ImageRequest.Builder(context)
                     .data(address)
-                    .memoryCachePolicy(CachePolicy.DISABLED)
+                    .memoryCacheKey("$address#$draws")
                     .diskCachePolicy(CachePolicy.DISABLED)
                     .build()
             }
