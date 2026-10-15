@@ -1,7 +1,6 @@
 //! Normalized product identifiers.
 
 use parity_scale_codec::{Decode, Encode};
-use unicode_normalization::UnicodeNormalization;
 
 use super::{CoreStorageKey, RuntimeConfigValidationError, has_dotns_tld, require_non_empty};
 
@@ -28,8 +27,11 @@ const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
 /// The start of a development product identifier that names a port.
 const LOCALHOST_PORT_PREFIX: &str = "localhost:";
 
-/// A product identifier in normalized form: trimmed, NFC, lowercase, and
-/// either a dotNS name or a localhost development identifier.
+/// Longest label dotNS registers, the DNS limit.
+const DOTNS_LABEL_MAX_BYTES: usize = 63;
+
+/// A product identifier in normalized form: trimmed, lowercased, and either a
+/// name dotNS can register or a localhost development identifier.
 ///
 /// Only [`ProductId::parse`] builds one, so holding a `ProductId` means the
 /// normalization already happened, and two values compare equal exactly when
@@ -45,9 +47,9 @@ impl ProductId {
 	pub fn parse(product_id: &str) -> Result<Self, RuntimeConfigValidationError> {
 		let trimmed = product_id.trim();
 		require_non_empty("product_id", trimmed)?;
-		let normalized = trimmed.nfc().collect::<String>().to_lowercase();
-		// After normalizing, since NFC can change the length. Reported by length
-		// rather than by value: an id that trips this can be arbitrarily large.
+		let normalized = trimmed.to_ascii_lowercase();
+		// Reported by length rather than by value: an id that trips this can be
+		// arbitrarily large.
 		if normalized.len() > PRODUCT_ID_MAX_BYTES {
 			return Err(RuntimeConfigValidationError::ProductIdTooLong {
 				limit: PRODUCT_ID_MAX_BYTES,
@@ -219,50 +221,31 @@ fn is_localhost_form(normalized: &str) -> bool {
 		.is_some_and(|port| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// Whether every dot-separated label of a normalized id is well formed.
+/// Whether every dot-separated label of a normalized id is one dotNS can
+/// register, or the id is the development localhost form.
 ///
-/// A cross-product call takes this string from the wire, where it is
-/// self-asserted, so every label is checked, not only the TLD. It rejects:
-///
-/// - An empty label. `dim2..dot` and `.dot` would both reduce to `""`, so distinct ids would
-///   collapse onto one grant key and one manifest cache entry.
-/// - Control and format characters. A NUL or a right-to-left override would reach
-///   [`AccountAccessReview`], which renders the id verbatim in the only consent prompt this design
-///   has, and every log line carrying it.
-/// - Whitespace and path separators, which would let one product's id render like another's
-///   anywhere the comparison is not byte-exact.
-///
-/// Deliberately not an ASCII allowlist: dotNS names are internationalized, so
-/// `tést.dot` is a real id. What is rejected is the class of characters that
-/// carries no name and only confuses a reader or a key.
-///
-/// [`AccountAccessReview`]: super::AccountAccessReview
+/// dotNS accepts only lowercase ASCII letters, digits and hyphens in a label,
+/// not starting or ending with a hyphen, and 1 to 63 bytes long (`isSingleLabel`
+/// in the dotNS contracts' `StringUtils`). An id outside that can never resolve,
+/// and the characters it excludes are the ones a lookalike id needs: other
+/// scripts, invisible and control characters, whitespace and path separators.
 fn has_well_formed_labels(normalized: &str) -> bool {
-	/// Zero-width and bidirectional formatting characters. Invisible in every
-	/// rendering, so they make two different ids look identical to a user.
-	fn is_invisible_format(c: char) -> bool {
-		matches!(c,
-            '\u{200b}'..='\u{200f}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{feff}')
-	}
-	let label_ok = |label: &str| {
-		!label.is_empty() &&
-			!label.chars().any(|c| {
-				c.is_control() ||
-					c.is_whitespace() ||
-					is_invisible_format(c) ||
-					matches!(c, '/' | '\\')
-			})
-	};
 	// An id starting with `localhost:` must be exactly the development form,
 	// so `localhost:3000.dot` cannot pass as a dotNS name.
 	if normalized == LOCALHOST_PRODUCT_LABEL || normalized.starts_with(LOCALHOST_PORT_PREFIX) {
 		return is_localhost_form(normalized);
 	}
-	normalized.split('.').all(label_ok)
+	normalized.split('.').all(is_dotns_label)
+}
+
+/// A label dotNS can register, as [`has_well_formed_labels`] describes.
+fn is_dotns_label(label: &str) -> bool {
+	(1..=DOTNS_LABEL_MAX_BYTES).contains(&label.len()) &&
+		!label.starts_with('-') &&
+		!label.ends_with('-') &&
+		label
+			.bytes()
+			.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 #[cfg(test)]
@@ -411,11 +394,23 @@ mod tests {
 	}
 
 	#[test]
-	fn an_internationalized_identifier_is_still_an_identifier() {
-		// The rejection above is a hazard list, not an ASCII allowlist: dotNS
-		// names are internationalized and these are real ids.
-		for id in ["Tést.DOT", "münchen.dot", "dim2-two.dot", "localhost:3000"] {
-			assert!(ProductId::parse(id).is_ok(), "{id:?} is a legitimate product id");
+	fn only_a_name_dotns_can_register_is_an_identifier() {
+		let longest_label = "a".repeat(DOTNS_LABEL_MAX_BYTES);
+		for id in ["Dim2.DOT", "dim2-two.dot", "0x.dot", &format!("{longest_label}.dot")] {
+			assert!(ProductId::parse(id).is_ok(), "{id:?} is a name dotNS can register");
+		}
+		// dotNS refuses each of these at registration, so none can ever resolve.
+		for id in [
+			"tést.dot",
+			"münchen.dot",
+			"my_app.dot",
+			"-dim2.dot",
+			"dim2-.dot",
+			"\u{ff44}\u{ff49}\u{ff4d}2.dot",
+			"dim2\u{ad}.dot",
+			&format!("{longest_label}a.dot"),
+		] {
+			assert!(ProductId::parse(id).is_err(), "{id:?} is not a name dotNS can register");
 		}
 	}
 
@@ -423,18 +418,16 @@ mod tests {
 	fn an_overlong_product_id_is_not_an_identifier() {
 		// Every label is well formed, so without the cap any length would be
 		// a valid, distinct cache key taken from the wire.
-		let label = "a".repeat(PRODUCT_ID_MAX_BYTES);
-		let overlong = format!("{label}.dot");
-		assert!(overlong.len() > PRODUCT_ID_MAX_BYTES);
+		let full_label = "a".repeat(DOTNS_LABEL_MAX_BYTES);
+		let at_cap = format!("{full_label}.{full_label}.{full_label}.{}.dot", "a".repeat(60));
+		assert_eq!(at_cap.len(), PRODUCT_ID_MAX_BYTES);
+		assert!(ProductId::parse(&at_cap).is_ok(), "an id exactly at the cap is still valid");
+
+		let overlong = format!("{full_label}.{full_label}.{full_label}.{}.dot", "a".repeat(61));
 		assert!(
 			ProductId::parse(&overlong).is_err(),
 			"a product id past the cap must be rejected, not stored"
 		);
-
-		// A huge id alone would pass with the cap off by any amount.
-		let at_cap = format!("{}.dot", "a".repeat(PRODUCT_ID_MAX_BYTES - 4));
-		assert_eq!(at_cap.len(), PRODUCT_ID_MAX_BYTES);
-		assert!(ProductId::parse(&at_cap).is_ok(), "an id exactly at the cap is still valid");
 	}
 
 	#[test]
