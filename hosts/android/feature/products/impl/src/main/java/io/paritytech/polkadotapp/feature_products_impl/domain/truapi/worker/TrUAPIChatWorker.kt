@@ -76,6 +76,7 @@ import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
 import uniffi.truapi.RenderContext
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class TrUAPIChatWorker(
@@ -198,13 +199,21 @@ class TrUAPIChatWorker(
         }
 
     // The core holds the worker for each open query. A worker that is not running yet starts first, and an
-    // unavailable worker is asked once more after a second (02-DESIGN §3.6, §5.1).
+    // unavailable worker is asked once more after a second (02-DESIGN §3.6, §5.1). The supervisor reports a
+    // restarted worker as running before its client connects to the core, so a query waits for that connection
+    // for a limited time.
     private suspend fun <T> query(ask: suspend (TrUAPIProductExecution) -> T): Result<T> {
         var attempt = 1
+        var connectWaits = 0
         while (true) {
             val outcome = runCatching { ask(awaitRunningExecution()) }
             val failure = outcome.exceptionOrNull() ?: return outcome
             if (failure is CancellationException) throw failure
+            if (failure is ProductRuntimeException.NotConnected && connectWaits < CONNECT_WAITS) {
+                connectWaits++
+                delay(CONNECT_WAIT_STEP)
+                continue
+            }
             if (attempt >= QUERY_ATTEMPTS || !failure.isUnavailable()) {
                 Timber.w(failure, "TrUAPI chat query for %s has no answer", productId.value)
                 return Result.failure(failure.toQueryException())
@@ -409,6 +418,8 @@ class TrUAPIChatWorker(
         const val NATIVE_PEER = "native"
         const val QUERY_ATTEMPTS = 2
         val QUERY_RETRY_DELAY = 1.seconds
+        const val CONNECT_WAITS = 40
+        val CONNECT_WAIT_STEP = 250.milliseconds
         val BRIEF_HOLD = 30.seconds
     }
 }
