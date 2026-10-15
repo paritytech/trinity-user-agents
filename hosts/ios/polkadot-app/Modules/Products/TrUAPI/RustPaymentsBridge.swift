@@ -81,8 +81,8 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
         guard request.into == nil else {
             throw TrUAPIHostPaymentTopUpError.Unknown(reason: Self.onlyMainPurse)
         }
-        guard let amount = BigUInt(request.amount) else {
-            throw TrUAPIHostPaymentTopUpError.Unknown(reason: Self.invalidAmount)
+        guard let amount = BigUInt(request.amount), amount > 0 else {
+            throw TrUAPIHostPaymentTopUpError.InvalidAmount
         }
         guard let source = try? request.source.toAppSource() else {
             throw TrUAPIHostPaymentTopUpError.InvalidSource
@@ -108,8 +108,8 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
         guard request.from == nil else {
             throw HostPaymentError.Unknown(reason: Self.onlyMainPurse)
         }
-        guard let amount = BigUInt(request.amount) else {
-            throw HostPaymentError.Unknown(reason: Self.invalidAmount)
+        guard let amount = BigUInt(request.amount), amount > 0 else {
+            throw HostPaymentError.InvalidAmount
         }
 
         do {
@@ -197,7 +197,7 @@ private extension RustPaymentsBridge {
     static let paymentFailed = "payment could not be started"
     static let balanceUnavailable = "balance is unavailable"
     static let onlyMainPurse = "only the main purse is supported"
-    static let invalidAmount = "amount is not a decimal number"
+    static let paymentDidNotComplete = "payment did not complete"
     static let balanceResubscribeDelay: Duration = .seconds(5)
 }
 
@@ -426,7 +426,8 @@ private extension ExternalPaymentStatus {
         case .processing: .processing
         case .completed: .completed
         case let .partiallyCompleted(settled): .claimedPartially(actualClaimed: String(settled))
-        case let .failed(reason): .failed(reason: reason)
+        // The engine's reason can name a shortfall the core masks; products get a fixed one.
+        case .failed: .failed(reason: RustPaymentsBridge.paymentDidNotComplete)
         }
     }
 }
