@@ -67,6 +67,7 @@ class DeviceCapabilityPermissionHandler @Inject constructor(
         DeviceCapabilityType.NFC -> Manifest.permission.NFC
         DeviceCapabilityType.Clipboard,
         DeviceCapabilityType.Biometrics,
-        DeviceCapabilityType.OpenUrl -> null
+        DeviceCapabilityType.OpenUrl,
+        DeviceCapabilityType.Motion -> null
     }
 }

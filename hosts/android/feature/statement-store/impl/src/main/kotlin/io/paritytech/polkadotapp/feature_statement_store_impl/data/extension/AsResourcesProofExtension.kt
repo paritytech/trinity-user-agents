@@ -9,9 +9,16 @@ import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.getChainIdByGenesisHashOrThrow
 import io.paritytech.polkadotapp.chains.util.findGenesisHashOrThrow
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
+import io.paritytech.polkadotapp.feature_people_api.domain.PeopleMembershipProof
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleMembershipProver
 
-class RegisterStatementStoreAllowance(
+enum class AsResourcesProofKind {
+    STATEMENT_STORE_ALLOWANCE,
+    NOTIFICATION_FOR_COLLECTION,
+}
+
+class AsResourcesProofExtension(
+    private val kind: AsResourcesProofKind,
     private val context: BandersnatchContext,
     private val collection: PeopleCollection,
     private val peopleMembershipProver: PeopleMembershipProver,
@@ -35,13 +42,26 @@ class RegisterStatementStoreAllowance(
             peopleCollection = collection,
         ).getOrThrow()
 
-        return AsResourcesInfoScale.RegisterStatementStoreAllowance(
-            proof = proofResult.proof,
-            ringIndex = proofResult.ringIndex,
-            revision = proofResult.revision,
-            collection = collection.toScale(),
-        ).toEncodableInstance()
+        return kind.toScale(proofResult, collection.toScale()).toEncodableInstance()
     }
+}
+
+private fun AsResourcesProofKind.toScale(
+    proof: PeopleMembershipProof,
+    collection: MembershipCollectionScale,
+): AsResourcesInfoScale = when (this) {
+    AsResourcesProofKind.STATEMENT_STORE_ALLOWANCE -> AsResourcesInfoScale.RegisterStatementStoreAllowance(
+        proof = proof.proof,
+        ringIndex = proof.ringIndex,
+        revision = proof.revision,
+        collection = collection,
+    )
+    AsResourcesProofKind.NOTIFICATION_FOR_COLLECTION -> AsResourcesInfoScale.RegisterNotificationForCollection(
+        proof = proof.proof,
+        ringIndex = proof.ringIndex,
+        revision = proof.revision,
+        collection = collection,
+    )
 }
 
 private fun PeopleCollection.toScale(): MembershipCollectionScale = when (this) {
