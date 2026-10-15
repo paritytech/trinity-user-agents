@@ -12,6 +12,8 @@ protocol ChatProductRoomViewProtocol: ControllerBackedProtocol {
     func showActionFailure(_ message: String)
     /// Scrolls to the message now, or when it arrives in the window.
     func scrollToMessage(_ messageId: String)
+    /// Shows the ringing banner and the call bar of the room. The model tells what they show.
+    func didReceive(callBar: ChatRoomCallBarModel)
 }
 
 extension ChatViewController: ChatProductRoomViewProtocol {

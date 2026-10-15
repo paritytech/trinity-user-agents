@@ -18,7 +18,8 @@
  *   `send`, `menu`, `toolbar`, `confirm`, `participants`, `participant`,
  *   `reactions`, `suggestion`, `type`, `attach`, `button`, `footer-action`,
  *   `older`, `jump`, `retry`, `retry-room`, `back`, `release-worker`,
- *   `hold-worker`, `wake`);
+ *   `hold-worker`, `wake`, `call-button`, `call-answer`, `call-open`,
+ *   `call-end`, `call-timer`);
  * - `{ wait }`: a pause in milliseconds.
  *
  * An expectation is one of:
@@ -83,6 +84,7 @@ export const IOS_CHAT_FEATURE_ROWS = Object.freeze({
   custom_footer: ["S35"],
   inline_attachments: ["S36"],
   room_links: ["S27", "S24"],
+  call_buttons: ["S72", "S73", "S74"],
 });
 
 export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
@@ -1276,6 +1278,152 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
         },
       ],
       after: ["/echo", { host: "hold-worker" }, { wait: 4_000 }, { host: "open" }],
+    },
+  },
+  {
+    id: "S72",
+    title:
+      "calls shows the header buttons on a host with call_buttons and a press sends CallRequested; no buttons without the declaration",
+    mode: "host",
+    phase: "P10.7",
+    drive: {
+      phases: [
+        {
+          steps: [{ host: "open" }, "/features calls both"],
+          expect: [{ ui: "call-buttons", match: "^audio,video$" }],
+          shot: "buttons",
+        },
+        {
+          // The product answers CallRequested with an Active call.
+          steps: [{ host: "call-button", argument: "video" }],
+          expect: [
+            { ui: "call-button", match: "^pressed video=true$" },
+            {
+              event: {
+                via: "room_events",
+                kind: "CallRequested",
+                data: '"video":true',
+              },
+            },
+            { stored: "call requested video=true" },
+            { ui: "call", match: "^active call-\\d+ video=true media=false$" },
+          ],
+        },
+        {
+          steps: ["/call end", "/features calls audio"],
+          expect: [
+            { ui: "call", match: "^none$" },
+            { ui: "call-buttons", match: "^audio$" },
+          ],
+        },
+        {
+          steps: ["/features calls off", { host: "call-button", argument: "audio" }],
+          expect: [
+            { ui: "call-buttons", match: "^none$" },
+            { ui: "call-button", match: "^missing video=false$" },
+          ],
+        },
+      ],
+      after: ["/call end", "/features calls off"],
+    },
+  },
+  {
+    id: "S73",
+    title:
+      "Ringing rings in the room and the list; Accept and Decline send CallAnswered; the banner clears after 60 s",
+    mode: "host",
+    phase: "P10.7",
+    drive: {
+      phases: [
+        {
+          steps: [{ host: "open" }, "/call ring"],
+          expect: [
+            { ui: "call", match: "^ringing call-\\d+ video=false caller=p1$" },
+            { ui: "call-alert", match: "^room call-" },
+          ],
+          shot: "ringing",
+        },
+        {
+          // On the chat list the row rings, and an in-app banner rings.
+          steps: [{ host: "list" }, "/call ring video"],
+          expect: [
+            { ui: "list-call", match: "^Incoming video call$" },
+            { ui: "call-alert", match: "^banner call-" },
+          ],
+          shot: "list",
+        },
+        {
+          steps: [{ host: "open" }, { host: "call-answer", argument: "accept" }],
+          expect: [
+            {
+              event: {
+                via: "room_events",
+                kind: "CallAnswered",
+                data: '"accept":true',
+              },
+            },
+            { ui: "call", match: "^active call-" },
+            { ui: "list-call", match: "^none$" },
+          ],
+        },
+        {
+          steps: ["/call ring", { host: "call-answer", argument: "decline" }],
+          expect: [
+            {
+              event: {
+                via: "room_events",
+                kind: "CallAnswered",
+                data: '"accept":false',
+              },
+            },
+            { ui: "call", match: "^none$" },
+          ],
+        },
+        {
+          // Nobody answers: the banner clears after 60 s.
+          steps: ["/call ring"],
+          expect: [
+            { ui: "call", match: "^ringing " },
+            { ui: "call", match: "^none$", timeoutMs: 75_000 },
+            { ui: "list-call", match: "^none$" },
+          ],
+        },
+      ],
+      after: ["/call end"],
+    },
+  },
+  {
+    id: "S74",
+    title:
+      "Active without a session shows the call bar with its timer; Open and End send CallOpened and CallEnded",
+    mode: "host",
+    phase: "P10.7",
+    drive: {
+      phases: [
+        {
+          steps: [{ host: "open" }, "/call active"],
+          expect: [
+            { ui: "call", match: "^active call-\\d+ video=false media=false$" },
+          ],
+        },
+        {
+          steps: [{ wait: 2_500 }, { host: "call-timer" }],
+          expect: [{ ui: "call-timer", match: "^0:0[2-9]$" }],
+          shot: "bar",
+        },
+        {
+          steps: [{ host: "call-open" }],
+          expect: [{ event: { via: "room_events", kind: "CallOpened" } }],
+        },
+        {
+          steps: [{ host: "call-end" }],
+          expect: [
+            { event: { via: "room_events", kind: "CallEnded" } },
+            { ui: "call", match: "^none$" },
+          ],
+        },
+      ],
+      after: ["/call end"],
     },
   },
   {

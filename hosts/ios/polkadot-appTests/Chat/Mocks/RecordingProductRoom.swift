@@ -215,8 +215,13 @@ final class RecordingProductRoomView: ChatProductRoomViewProtocol {
     private(set) var toolbars: [[UIBarButtonItem]] = []
     private(set) var reactionDetails: [ReactionDetailsViewModel] = []
     private(set) var failures: [String] = []
+    private(set) var callBars: [ChatRoomCallBarModel] = []
 
     var isSetup: Bool { true }
+
+    func didReceive(callBar: ChatRoomCallBarModel) {
+        callBars.append(callBar)
+    }
 
     func didReceive(productToolbar: [UIBarButtonItem]) {
         toolbars.append(productToolbar)

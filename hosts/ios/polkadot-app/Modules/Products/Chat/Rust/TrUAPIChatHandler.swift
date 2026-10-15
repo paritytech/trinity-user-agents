@@ -40,6 +40,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     /// How long a user message waits for a worker that does not run yet (W1, 07-LATER §10.2).
     let messageStartupWindow: Duration
     let activityStore: ChatRoomActivityStoring
+    let calls: ChatRoomCallStoring
     private let wakesAtStart: Bool
     private let roomsOfProduct: ProductFirstRoomHold.RoomsOfProduct
     let feedListeners: ProductFeedListeners
@@ -70,6 +71,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         renderStartupWindow: Duration = .seconds(5),
         messageStartupWindow: Duration = .seconds(30),
         activityStore: ChatRoomActivityStoring = ChatRoomActivityStore.shared,
+        calls: ChatRoomCallStoring = ChatRoomCallStore.shared,
         wakesAtStart: Bool = true,
         roomsOfProduct: @escaping ProductFirstRoomHold.RoomsOfProduct = { try await $0.chat.subscribeRooms() },
         feedListeners: ProductFeedListeners = .shared,
@@ -80,6 +82,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         self.renderStartupWindow = renderStartupWindow
         self.messageStartupWindow = messageStartupWindow
         self.activityStore = activityStore
+        self.calls = calls
         self.wakesAtStart = wakesAtStart
         self.roomsOfProduct = roomsOfProduct
         self.feedListeners = feedListeners

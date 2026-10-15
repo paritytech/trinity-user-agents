@@ -34,6 +34,13 @@ final class ChatProductRoomPresenter {
     private(set) var messages: [Chat.MessageId: Chat.LocalMessage] = [:]
     private var icons: [ChatResource: UIImage] = [:]
     private var activityTask: Task<Void, Never>?
+    private var callTask: Task<Void, Never>?
+    /// Sends the call events of the user to the product.
+    let roomEvents: ChatRoomEventPublishing?
+    /// The call of the room that the product set (P10.7).
+    var call: Chat.RoomCall?
+    /// The ringing banner and the call bar of the room screen.
+    let callBar = ChatRoomCallBarModel()
     /// The last console marker of each key, for the E2E harness.
     var e2eMarks: [String: String] = [:]
     /// For the performance rows of the E2E harness: the count of window updates, the start of the wait for a
@@ -65,6 +72,8 @@ final class ChatProductRoomPresenter {
         wireframe: ChatProductRoomWireframing,
         resolver: ChatResourceResolving = ChatResourceResolver.shared,
         activityStore: ChatRoomActivityStoring = ChatRoomActivityStore.shared,
+        calls: ChatRoomCallStoring = ChatRoomCallStore.shared,
+        roomEvents: ChatRoomEventPublishing? = RootDependencyLocator.getDependency(),
         logger: LoggerProtocol = Logger.shared
     ) {
         guard case let .chatExtension(productId, roomId?) = chatId else {
@@ -78,6 +87,7 @@ final class ChatProductRoomPresenter {
         self.footerImageResolver = footerImageResolver
         self.wireframe = wireframe
         self.resolver = resolver
+        self.roomEvents = roomEvents
         self.logger = logger
 
         participants = ChatParticipantDirectory(roomId: roomId, room: room, logger: logger)
@@ -89,6 +99,8 @@ final class ChatProductRoomPresenter {
         participants.onChange = { [weak self] in self?.onChange?() }
         accessory.onSuggestion = { [weak self] suggestion in self?.selectSuggestion(suggestion.suggestionId) }
         activityTask = followActivity(activityStore)
+        callTask = followCall(calls)
+        bindCallBar()
         #if targetEnvironment(simulator)
             e2eObserver = observeE2EActions()
         #endif
@@ -96,6 +108,7 @@ final class ChatProductRoomPresenter {
 
     deinit {
         activityTask?.cancel()
+        callTask?.cancel()
     }
 
     /// The view model factory gives the room that it draws. The call never asks to draw again.
@@ -123,11 +136,14 @@ final class ChatProductRoomPresenter {
         let participantsChanged = previous?.productQueries.contains(.participants)
             != policy?.productQueries.contains(.participants)
 
-        if previous?.toolbarActions != policy?.toolbarActions || previous == nil || participantsChanged {
+        if previous?.toolbarActions != policy?.toolbarActions || previous?.toolbar != policy?.toolbar
+            || previous == nil || participantsChanged {
             provideToolbar()
         }
 
         loadParticipantsIfDeclared()
+        provideCall()
+        mark("call-buttons", policy?.callButtonsE2EDescription ?? "none")
         updateAccessory()
         markWindow()
         mark("allowed", policy?.messageMenu.allowedReactions?.joined() ?? "all")

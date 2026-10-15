@@ -105,6 +105,7 @@ struct ChatRoomPolicy: Equatable {
     let messageMenu: MessageMenu
     let participants: [Participant]
     let offersReactionDetails: Bool
+    /// The header buttons that the host draws: the call buttons of `features.calls` (07-LATER §11.2).
     let toolbar: [Chat.PeerAction]
     let footer: Footer
     /// The text of an empty room. Nil means the host text.
@@ -188,7 +189,7 @@ extension ChatRoomPolicy {
             ),
             participants: defaults.participants,
             offersReactionDetails: config.reactionDetails,
-            toolbar: defaults.toolbar,
+            toolbar: Self.callButtons(for: declarations?.features),
             footer: Footer(declared: declarations?.footerConfig, legacy: footer) ?? defaults.footer,
             placeholder: config.placeholder,
             suggestions: declarations?.suggestions?.map(\.text) ?? defaults.suggestions,
@@ -203,6 +204,21 @@ extension ChatRoomPolicy {
             features: declarations?.features ?? .hostDefault,
             userState: declarations?.userState ?? .default
         )
+    }
+
+    /// The call buttons of the header (07-LATER §11.2): one button for each kind of call that the room declares, when
+    /// this build serves `call_buttons`.
+    static func callButtons(
+        for features: Chat.RoomFeatures?,
+        serves: (String) -> Bool = ChatHostCapabilities.serves
+    ) -> [Chat.PeerAction] {
+        guard let calls = features?.calls, serves(ChatHostCapabilities.callButtons) else { return [] }
+        return (calls.audio ? [.audioCall] : []) + (calls.video ? [.videoCall] : [])
+    }
+
+    /// True when the header of the room shows a call button.
+    var hasCallButtons: Bool {
+        toolbar.contains { $0 == .audioCall || $0 == .videoCall }
     }
 
     /// A thread room answers a message of another room. The chat list does not show it (07-LATER §9.2).

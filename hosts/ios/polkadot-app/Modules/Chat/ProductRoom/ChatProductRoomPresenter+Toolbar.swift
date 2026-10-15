@@ -7,9 +7,11 @@ enum ChatToolbarLayout {
     /// The number of buttons that the bar shows. The other buttons go in the overflow menu.
     static let inlineCount = 2
 
-    /// The buttons that the bar shows and the buttons of the overflow menu, in the order of the product.
-    static func split<Item>(_ items: [Item]) -> (inline: [Item], overflow: [Item]) {
-        (Array(items.prefix(inlineCount)), Array(items.dropFirst(inlineCount)))
+    /// The buttons that the bar shows and the buttons of the overflow menu, in the order of the product. With call
+    /// buttons in the header, every button of the product goes in the overflow menu (07-LATER §11.2).
+    static func split<Item>(_ items: [Item], besideCalls: Bool = false) -> (inline: [Item], overflow: [Item]) {
+        let count = besideCalls ? 0 : inlineCount
+        return (Array(items.prefix(count)), Array(items.dropFirst(count)))
     }
 }
 
@@ -19,7 +21,7 @@ extension ChatProductRoomPresenter {
         let actions = policy?.toolbarActions ?? []
         view?.didReceive(productToolbar: toolbarItems(actions, icons: [:]))
 
-        let (inline, overflow) = ChatToolbarLayout.split(actions.map(\.actionId))
+        let (inline, overflow) = ChatToolbarLayout.split(actions.map(\.actionId), besideCalls: hasCallButtons)
         mark(
             "toolbar",
             "inline=\(inline.joined(separator: ",")) overflow=\(overflow.joined(separator: ","))"
@@ -46,7 +48,7 @@ extension ChatProductRoomPresenter {
     /// The bar items, the trailing item first: the inline buttons, then one overflow button with a menu. The
     /// participants button of the host goes after the buttons of the product.
     func toolbarItems(_ actions: [Chat.RoomToolbarAction], icons: [String: UIImage]) -> [UIBarButtonItem] {
-        let (inline, overflow) = ChatToolbarLayout.split(actions)
+        let (inline, overflow) = ChatToolbarLayout.split(actions, besideCalls: hasCallButtons)
 
         var items: [UIBarButtonItem] = participantsButton().map { [$0] } ?? []
         if !overflow.isEmpty {

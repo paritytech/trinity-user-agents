@@ -84,6 +84,29 @@ struct TrUAPIChatHandlerWakeTests {
         }
         #expect(ContinuousClock.now - start < .seconds(5))
     }
+
+    /// A product rings only while its worker runs (07-LATER §11.2).
+    @Test func aWorkerThatStopsClearsTheRingingCallsOfItsProduct() async throws {
+        let workers = runningWorkers(MockProductExecution())
+        let calls = ChatRoomCallStore()
+        let ringing = Chat.Id.chatExtension(product, roomId: "ringing")
+        let active = Chat.Id.chatExtension(product, roomId: "active")
+        let other = Chat.Id.chatExtension("other.dot", roomId: "ringing")
+        calls.set(.ringing(callId: "c1", video: false, caller: nil), for: ringing)
+        calls.set(.active(callId: "c2", video: false, startedAt: 1, mediaSession: nil), for: active)
+        calls.set(.ringing(callId: "c3", video: false, caller: nil), for: other)
+        let handler = TrUAPIChatHandler(productId: product, workers: workers, calls: calls, wakesAtStart: false)
+        try await handler.start(messagingSupport: .init(bot: nil, context: nil))
+        try await Task.sleep(for: .milliseconds(50))
+
+        workers.publish([:])
+        try await poll { calls.call(for: ringing) == nil }
+
+        #expect(calls.call(for: active) != nil)
+        #expect(calls.call(for: other) != nil)
+
+        await handler.dispose()
+    }
 }
 
 private extension TrUAPIChatHandlerWakeTests {

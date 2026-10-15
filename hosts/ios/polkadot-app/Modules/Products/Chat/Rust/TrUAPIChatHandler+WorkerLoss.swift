@@ -29,7 +29,9 @@ extension TrUAPIChatHandler {
         }
     }
 
+    /// A product rings only while its worker runs, so the rooms of the product stop to ring (07-LATER §11.2).
     func workerStopped() async {
+        calls.clearRinging(ofProduct: productId)
         guard !disposed, !openRooms.isEmpty else { return }
 
         roomsLostWorker = true
