@@ -11,6 +11,7 @@ created: 2026-10-08
 - The core runs it in process, bound to one product.
 - Each TrUAPI call the worker makes is a wasm import.
 - The host answers it by calling the matching method of the [service traits](../../rust/crates/truapi/src/api.rs) directly on the product's [`ProductRuntimeHost`](../../rust/crates/truapi/src/runtime.rs), with no frames or dispatcher in between.
+- The calls the host starts into the product (`renderer.render`, the Chat Extension v2 queries) reach the handlers the worker registers, through a guest export. See [Calls the host starts](#calls-the-host-starts).
 
 ## Host setup
 
@@ -100,7 +101,7 @@ A call goes through three steps, joined by the import name:
 - **Host**, under the `wasm-worker` feature: `WasmEnv::link_<trait>`, the table entries for that trait. `WasmEnv::for_product` links all of them.
 - **Guest**, under the `guest` feature on wasm32: a `guest` module beside the trait, with the import declarations (public, in `guest::imports`, for raw calls) and one typed async function per method. `truapi-guest-api` re-exports it as `truapi::<trait>` and adds the executor and exports.
 
-Import names are `<trait>_<method>`, the names the wire table uses. Internal and host-initiated methods (such as `renderer_render` and the Chat Extension v2 queries `chat_messages_query` and `chat_user_action`) get no import: `link_<trait>` records them with `WasmEnv::exclude`. A test holds that every wire table method is linked or excluded, never both.
+Import names are `<trait>_<method>`, the names the wire table uses. Internal and host-initiated methods (such as `renderer_render` and the Chat Extension v2 queries `chat_messages_query` and `chat_user_action`) get no import: `link_<trait>` records them with `WasmEnv::exclude`. A test holds that every wire table method is linked or excluded, never both. For each host-initiated method the guest module gets `on_<method>` instead, which registers the handler that answers it.
 
 ## The ABI
 
@@ -117,15 +118,82 @@ Import names are `<trait>_<method>`, the names the wire table uses. Internal and
 | `now_millis` | `() -> u64` | Unix time of the host clock in milliseconds |
 | `monotonic_millis` | `() -> u64` | Milliseconds since the host loaded the worker; never goes back |
 | `sleep` | `(millis: u64) -> handle` | Start a timer. When it elapses, the host sends one `Response` event with an empty payload; `release` cancels it |
+| `call_item` | `(call, ptr, len)` | Send one item of a call the host started: the SCALE item in the version of the request |
+| `call_end` | `(call, ptr, len)` | End a call the host started: a SCALE `Result<(), CallError<Error>>` in the version of the request. No item follows it |
 
 | Export | Signature | Meaning |
 | --- | --- | --- |
 | `truapi_start` | `()` | Run the entry point |
 | `truapi_on_event` | `(handle, kind, len)` | Announce one event for a call; the guest reads its payload with `read_event` |
+| `truapi_on_call` | `(call, method_len, request_len)` | Start a call of the host; the guest reads the UTF-8 method name, then the SCALE versioned request, with `read_event` |
+| `truapi_on_cancel` | `(call)` | The host stopped a call it started; it drops each answer that comes after |
+
+A module exports both `truapi_on_call` and `truapi_on_cancel`, or neither. Without them the host ends each of its calls at once with `Unsupported`. The `call` ids are the host's own, apart from the handles of the guest's calls.
 
 The guest owns all of its memory: it passes the buffers for requests and events, and the host never allocates in it. This is the caller-provided buffer pattern of WASI preview 1 and `pallet-revive-uapi`, so the ABI itself needs no allocator in the guest. The typed bindings in `truapi-guest-api` still allocate, since protocol types hold `Vec` and `String`.
 
 An event is a `Response` (`Result<Response, CallError<Error>>`), an `Item` of a subscription, or the `End` of a subscription (`Result<(), CallError<Error>>`). Payloads are the versioned SCALE values the wire carries, so a worker built against an older protocol is answered in its own version.
+
+## Calls the host starts
+
+The host starts a call into the product when it needs the product's answer: a rendered body (`renderer.render`), or for a room the product keeps (`productSource`), a page of messages, what the user did, and the other Chat Extension v2 queries. Every such method is a subscription: the product sends items, then one end, and the host may stop it before the end. A script worker answers them over frames; a wasm worker answers them through the export `truapi_on_call` and the imports `call_item` and `call_end`.
+
+```
+ core (host)                                      worker (guest)
+ execution.chat_user_action(request)
+   HostInitiatedSubscriptionManager: Start frame
+   WorkerFrames: Start -> HostCalls::start
+                                              --> truapi_on_call(3, 16, len)
+                                                  allocate, import read_event(ptr)
+                                                  the executor spawns the handler of
+                                                  "chat_user_action" as a task
+                                                  sink.send(item) -> import call_item(3, ...)
+                                                  Ok(())          -> import call_end(3, ...)
+   the worker passes each answer on after the entry returns
+   WorkerFrames: Receive, Interrupt frames
+   HostInitiatedSubscriptionManager -> the query's stream
+```
+
+- **Where it plugs in.** The core starts every host-initiated call the same way, through the `HostInitiatedSubscriptionManager` of the product's connection, which sends a `Start` frame to the connection's frame sink and takes `Receive` and `Interrupt` frames back. `WasmWorker::for_product_runtime(wasm, open)` builds the connection with a frame sink of its own (`WorkerFrames`, in [`wasm_worker/product.rs`](../../rust/crates/truapi/src/wasm_worker/product.rs)): it maps the `(trait, method)` ids of a `Start` frame to the wire name, starts the call in the worker, and routes each answer back as a frame through `ProductRuntimeControl::receive_host_call_answer`. A `Stop` frame stops the call in the worker. Thus the core's own checks (the room declares the handler, a worker reference while the product answers, the screen of the answer, the persona check) apply to a wasm worker unchanged, and no method has code of its own. The native execution (`NativeProductExecution::start_wasm_worker`, so `render`, `chat_messages_query`, `chat_user_action` and the other queries) and `truapi-host dev --worker-wasm` both use it.
+- **The worker side.** `WasmWorker::host_calls()` gives a `HostCalls` handle that any thread can use. `HostCalls::start(method, request, answers)` queues the call; the worker takes it between two entries, so an import never calls back into the guest. The worker gives each answer to `answers` (`HostCallEvent::Item`, then one `HostCallEvent::End`). Dropping the returned `HostCall` stops the call: the worker calls `truapi_on_cancel` and drops what comes after. `HostCalls::stream` gives the same answers as a stream.
+- **Ends.** A method with no handler ends at once with `Unsupported`. A worker that ends, traps or never ran ends each open call with `HostFailure { reason: "the wasm worker ended" }`, so the host never waits on a worker that is gone.
+- **Waiting.** While the host holds a `HostCalls` handle, a worker that waits on nothing else waits for calls. `run` returns `Stalled` only when no call of the worker is in flight and no handle is left.
+
+### Guest API
+
+`#[wasm_env]` generates one registration function for each host-initiated method, in the guest module of its service, mirroring the TypeScript client's `truapi.chat.onUserAction((request, send, interrupt) => ...)`:
+
+| Function | Signature |
+| --- | --- |
+| `truapi::renderer::on_render` | `fn on_render<H, A>(handler: H) where H: Fn(ProductRendererRenderRequest, Sink<ProductRendererRenderItem>) -> A + 'static, A: Future<Output = Result<(), CallError<ProductRendererRenderError>>> + 'static` |
+| `truapi::chat::on_<method>` | the same shape for `messages_query`, `user_action`, `reactions_query`, `participants_query`, `message_actions_query`, `participant_actions_query` and `search_query` |
+| `truapi::Sink<Item>` | `fn send(&self, item: Item::Latest)`; `Clone`. Encodes the item in the version of the request |
+| `truapi::raw::on_call` | `fn on_call<H, A>(method: &'static str, handler: H) where H: Fn(Vec<u8>, RawSink) -> A + 'static, A: Future<Output = Vec<u8>> + 'static` |
+| `truapi::raw::RawSink` | `fn send(&self, item: &[u8])`; `Clone` |
+
+Requests and items are `truapi::latest` types. The handler runs as a task on the guest executor. It sends items through the sink, and its result ends the call: `Ok(())` completes it, and an error interrupts it with the method's own error, in the version of the request. When the host stops the call, the executor drops the task, which releases the calls it holds. A second handler for a method replaces the first. A raw handler gets the SCALE versioned request and gives the SCALE end. Register the handlers before the first `.await` of the entry point: the host starts no call before the start entry returns, and a call that comes before its handler ends with `Unsupported`.
+
+```rust
+#[truapi::main]
+async fn main() -> Result<(), truapi::Error> {
+    truapi::chat::on_user_action(|request, sink| async move {
+        if request.room_id != "notes" {
+            return Err(CallError::Domain(ProductChatUserActionError::UnknownRoom));
+        }
+        sink.send(ProductChatUserActionItem::Acknowledged);
+        Ok(())
+    });
+    truapi::renderer::on_render(|request, sink| async move {
+        sink.send(RendererNode::String { text: format!("{} bytes", request.payload.len()) });
+        // The body stays on screen until the host stops the render, which drops this task.
+        futures::future::pending().await
+    });
+    truapi::chat::create_room(/* a room with `product_source: true` */).await?;
+    futures::future::pending().await
+}
+```
+
+[`rust/guests/chat-source`](../../rust/guests/chat-source) is a complete example: it keeps the room `notes` (`messages_query`, `user_action`), draws the `Custom` body of its first message (`render`), and answers `participants_query` with a raw handler.
 
 ## Writing a worker
 
@@ -158,6 +226,8 @@ Beside the service modules, `truapi-guest-api` has:
 | `truapi::raw::call` | `fn call(import: StartImport, request: &[u8]) -> RawCall` | Start a request with an encoded versioned request; `RawCall: Future<Output = Vec<u8>> + Send` resolves to the SCALE `Result<Response, CallError<Error>>` |
 | `truapi::raw::subscribe` | `fn subscribe(import: StartImport, request: &[u8]) -> RawSubscription` | Start a subscription; `RawSubscription: Stream<Item = RawEvent> + Send` yields `RawEvent::Item(bytes)`, then one `RawEvent::End(bytes)` with the SCALE `Result<(), CallError<Error>>` |
 | `truapi::raw::StartImport` | `extern "C" fn(*const u8, u32) -> u32` | The import of a method, such as `truapi::local_storage::imports::read` |
+| `truapi::<service>::on_<method>` | see [Guest API](#guest-api) | Answer the calls of a host-initiated method, such as `truapi::chat::on_user_action` |
+| `truapi::raw::on_call` | `fn on_call(method: &'static str, handler)` | Answer the calls of a host-initiated method with encoded requests and items |
 
 `truapi::codec`, `truapi::versioned`, `truapi::v01` and `truapi::v02` re-export the codec and the protocol types that a raw call encodes and decodes.
 
@@ -188,13 +258,15 @@ cargo build --manifest-path rust/guests/Cargo.toml --target wasm32-unknown-unkno
 and run against a CLI host with `/worker <wasm-path>`, as the selected product.
 `truapi-host dev --worker-wasm <wasm-path>` runs one as the `Worker` of the
 product beside the chat page `/chat` and its socket `/chat/ws`, so a person or
-a test can act in its rooms; `chat-actions` is the example for that.
+a test can act in its rooms; `chat-actions` is the example for a room the host
+stores, and `chat-source` for a room the worker keeps. `/worker` takes no calls
+from the host.
 
 ## Limits
 
 - Fuel: each entry from the host (the start, or the delivery of one event) gets `DEFAULT_FUEL_PER_ENTRY`, 20 billion, about one unit for each wasm instruction. An entry that uses all of it traps. Release builds of wasmi on an Apple M-series machine use about 400 million fuel each second, so one entry can run for about 50 seconds. The value is high for crypto and database work in one entry (X448, sntrup761, an encrypted SQLite image), and it still stops a worker in an endless loop. No such workload has been measured yet. `WasmWorker::with_fuel_per_entry` changes it.
 - Memory: `DEFAULT_MEMORY_LIMIT`, 256 MiB of linear memory. The engine gets memory only when the worker grows it. `WasmWorker::with_memory_limit` changes it.
-- A worker may pass at most 8 MiB per request or log line (and for each `random` call), and may hold 1024 calls and timers open.
+- A worker may pass at most 8 MiB per request, item, end or log line (and for each `random` call), and may hold 1024 calls and timers open.
 - Timers use `futures-timer`, so they work on any executor that drives `WasmWorker::run`, Tokio included, and come through the same event queue as calls. Releasing a timer removes it at once.
 - Releasing a call fires its cancellation token, as a `Cancel` frame does, and the host keeps polling it until it settles, dropping its events.
 - Wasm runs synchronously on the task that drives the worker, so a long entry blocks that thread until it returns or runs out of fuel.
@@ -216,7 +288,6 @@ On iOS a worker installed by hand declares it in `Products/<host>/ChatExtension/
 
 ## Open questions
 
-- Host-initiated methods (such as `renderer.render`) need a guest export that accepts a call the host starts.
 - How the manifest marks a Worker executable as wasm rather than JavaScript.
 - `truapi::latest` does not yet re-export every request type a worker builds.
 - Whether browsers run workers through this engine or the platform's own `WebAssembly`.
