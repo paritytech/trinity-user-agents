@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -23,18 +24,20 @@ import org.junit.Before
 import org.junit.Test
 
 private const val TAB_ID = 7L
+private const val OTHER_TAB_ID = 8L
 
 class SpaBrowserViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
 
     private val productSessionController: ProductSessionController = mockk(relaxUnitFun = true)
     private val router: ProductsRouter = mockk(relaxUnitFun = true)
+    private val openTabs = MutableStateFlow(listOf(activeTab()))
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         every { productSessionController.activeTab } returns MutableStateFlow(null)
-        every { productSessionController.openTabs } returns MutableStateFlow(listOf(activeTab()))
+        every { productSessionController.openTabs } returns openTabs
         every { productSessionController.webView } returns MutableStateFlow(null)
         every { productSessionController.loadProgress } returns MutableStateFlow(DotNsLoadProgress.Idle)
     }
@@ -100,6 +103,37 @@ class SpaBrowserViewModelTest {
         coEvery { productSessionController.isTabOutdated(TAB_ID) } returns Result.failure(IllegalStateException("no node"))
         val model = viewModel()
 
+        model.onScreenStarted()
+        advanceUntilIdle()
+
+        assertFalse(model.state.value.isNewBuildPromptShown)
+    }
+
+    // The answer comes from the chain, and by then the user may be looking at another product.
+    @Test
+    fun `a new build is not offered over a tab the user switched to`() = runTest(testDispatcher) {
+        val answer = CompletableDeferred<Result<Boolean>>()
+        coEvery { productSessionController.isTabOutdated(TAB_ID) } coAnswers { answer.await() }
+        val model = viewModel()
+        model.onScreenStarted()
+        advanceUntilIdle()
+
+        openTabs.value = listOf(activeTab().copy(isActive = false), activeTab().copy(id = OTHER_TAB_ID))
+        answer.complete(Result.success(true))
+        advanceUntilIdle()
+
+        assertFalse(model.state.value.isNewBuildPromptShown)
+    }
+
+    // A tab that woke up from sleep already runs the latest build, so an offer made before must not stay up.
+    @Test
+    fun `a later check that finds the tab up to date withdraws the offer`() = runTest(testDispatcher) {
+        withOutdatedTab()
+        val model = viewModel()
+        model.onScreenStarted()
+        advanceUntilIdle()
+
+        coEvery { productSessionController.isTabOutdated(TAB_ID) } returns Result.success(false)
         model.onScreenStarted()
         advanceUntilIdle()
 

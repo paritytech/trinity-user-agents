@@ -34,6 +34,7 @@ class RealDotNsResolverTest {
     private val domain = "peopl.testnet"
     private val releasedBuild = byteArrayOf(1, 2, 3)
     private val newBuild = byteArrayOf(4, 5, 6)
+    private val nextBuild = byteArrayOf(7, 8, 9)
 
     @Before
     fun setUp() {
@@ -138,6 +139,36 @@ class RealDotNsResolverTest {
 
         assertServes(releasedBuild, resolver.resolveLatestToLocalUri(domain))
         assertEquals(DotNsLoadProgress.Completed, resolver.getProgressByDomain(domain).first())
+    }
+
+    // Reloading would land on the build in use again, and the user would lose their work for nothing on every visit.
+    @Test
+    fun `a build that failed to download is not offered`() = runTest {
+        withChainRecord(releasedBuild)
+        withDownloaded(releasedBuild)
+        val resolver = resolver()
+        resolver.resolveToLocalUri(domain)
+
+        withChainRecord(newBuild)
+        withFailingDownload()
+        resolver.resolveLatestToLocalUri(domain)
+
+        assertEquals(false, resolver.isOutdated(domain, localUriOf(releasedBuild)).getOrNull())
+    }
+
+    @Test
+    fun `a build released after one that failed to download is offered`() = runTest {
+        withChainRecord(releasedBuild)
+        withDownloaded(releasedBuild)
+        val resolver = resolver()
+        resolver.resolveToLocalUri(domain)
+        withChainRecord(newBuild)
+        withFailingDownload()
+        resolver.resolveLatestToLocalUri(domain)
+
+        withChainRecord(nextBuild)
+
+        assertEquals(true, resolver.isOutdated(domain, localUriOf(releasedBuild)).getOrNull())
     }
 
     // The check runs while the user is in the product, so it must not start a download behind their back.

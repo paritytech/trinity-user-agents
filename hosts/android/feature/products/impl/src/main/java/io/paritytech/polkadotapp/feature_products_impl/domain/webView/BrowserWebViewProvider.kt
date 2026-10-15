@@ -10,6 +10,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -139,9 +140,13 @@ class BrowserWebViewProvider @AssistedInject constructor(
         accessWebView { it.loadUrl(initialUrl) }
     }
 
-    suspend fun isContentOutdated(): Result<Boolean> = contentLoader.isDocumentOutdated()
+    suspend fun isContentOutdated(): Result<Boolean> {
+        val host = accessWebView { it.url }?.toUri()?.host ?: return Result.success(false)
+        return contentLoader.isDocumentOutdated(servingHostResolver.servingHostFor(host, servedExecutable))
+    }
 
     suspend fun reload() {
+        contentLoader.pickUpLatestOnNextDocument()
         accessWebView { it.reload() }
     }
 

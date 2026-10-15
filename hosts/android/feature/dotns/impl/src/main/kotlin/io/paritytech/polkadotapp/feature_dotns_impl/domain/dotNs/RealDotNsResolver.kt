@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 private typealias DomainName = String
@@ -40,6 +41,10 @@ internal class RealDotNsResolver @Inject constructor(
 
     private val contentInUseMutex = Mutex()
     private val contentInUse = mutableMapOf<DomainName, ResolvedContent>()
+
+    // A page whose new content failed to download is served its content in use, so offering that content as a new
+    // build would only reload the page into the same one. Read without the lock, which a download may hold.
+    private val unavailableContent = ConcurrentHashMap<DomainName, ContentHash>()
 
     override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
         contentInUseMutex.withLock {
@@ -62,7 +67,7 @@ internal class RealDotNsResolver @Inject constructor(
                 .flatMap { contentHash ->
                     inUse?.takeIf { it.contentHash == contentHash }
                         ?.let { Result.success(it.uri) }
-                        ?: useContent(dotNsName, contentHash)
+                        ?: useContent(dotNsName, contentHash).onFailure { unavailableContent[dotNsName] = contentHash }
                 }
                 .flatRecover { error -> inUse?.let { keepInUse(dotNsName, it, error) } ?: Result.failure(error) }
                 .reportFailure(dotNsName)
@@ -71,7 +76,8 @@ internal class RealDotNsResolver @Inject constructor(
 
     override suspend fun isOutdated(dotNsName: String, localUri: Uri): Result<Boolean> = withContext(dispatchers.computation) {
         readContentHash(dotNsName).map { contentHash ->
-            contentStorage.getContentDirectory(contentHash)?.absolutePath != localUri.path
+            contentHash != unavailableContent[dotNsName] &&
+                contentStorage.getContentDirectory(contentHash)?.absolutePath != localUri.path
         }
     }
 
@@ -85,7 +91,10 @@ internal class RealDotNsResolver @Inject constructor(
 
     private suspend fun useContent(dotNsName: DomainName, contentHash: ContentHash): Result<Uri> {
         return resolveContentHash(dotNsName, contentHash)
-            .onSuccess { uri -> contentInUse[dotNsName] = ResolvedContent(contentHash, uri) }
+            .onSuccess { uri ->
+                contentInUse[dotNsName] = ResolvedContent(contentHash, uri)
+                unavailableContent.remove(dotNsName)
+            }
     }
 
     private fun keepInUse(dotNsName: DomainName, inUse: ResolvedContent, cause: Throwable): Result<Uri> {
@@ -154,6 +163,7 @@ internal class RealDotNsResolver @Inject constructor(
 
     override suspend fun clearCache() {
         contentInUseMutex.withLock { contentInUse.clear() }
+        unavailableContent.clear()
         progressRegistry.clear()
 
         contentStorage.deleteAll()

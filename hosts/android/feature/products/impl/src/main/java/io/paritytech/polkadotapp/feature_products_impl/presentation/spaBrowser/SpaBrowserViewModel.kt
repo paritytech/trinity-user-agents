@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPay
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.SpaBrowserInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -51,6 +52,11 @@ class SpaBrowserViewModel @Inject constructor(
     val webView: StateFlow<WebView?> = productSessionController.webView
 
     private val outdatedTabId = MutableStateFlow<Long?>(null)
+    private var outdatedTabCheck: Job? = null
+
+    private val activeTabId: Flow<Long?> = productSessionController.openTabs
+        .map { tabs -> tabs.firstOrNull { it.isActive }?.id }
+        .distinctUntilChanged()
 
     // One load per tab, in two phases: resolve the manifest, then serve the archive. Both report
     // into this stream, so progress and page state are views of it rather than separate truths.
@@ -82,13 +88,15 @@ class SpaBrowserViewModel @Inject constructor(
         productSessionController.activeTab,
         pageLoad,
         outdatedTabId,
-    ) { info, load, outdatedTabId ->
+        activeTabId,
+    ) { info, load, outdatedTabId, activeTabId ->
         SpaBrowserUiState(
             title = info?.title,
             subtitle = info?.host,
             loadProgress = load.toProgress(),
             pageState = load.toPageState(),
-            isNewBuildPromptShown = outdatedTabId != null,
+            // A check answers for the tab it started on, which may no longer be the one on screen.
+            isNewBuildPromptShown = outdatedTabId != null && outdatedTabId == activeTabId,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, SpaBrowserUiState())
 
@@ -128,10 +136,11 @@ class SpaBrowserViewModel @Inject constructor(
     override fun onScreenStarted() {
         val tabId = productSessionController.openTabs.value.firstOrNull { it.isActive }?.id ?: return
 
-        launch {
+        outdatedTabCheck?.cancel()
+        outdatedTabCheck = launch {
             productSessionController.isTabOutdated(tabId)
                 .logFailure("failed to check tab $tabId for a new build")
-                .onSuccess { isOutdated -> if (isOutdated) outdatedTabId.value = tabId }
+                .onSuccess { isOutdated -> outdatedTabId.value = tabId.takeIf { isOutdated } }
         }
     }
 

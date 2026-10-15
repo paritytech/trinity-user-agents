@@ -57,6 +57,8 @@ fun DebugMenuScreen(contract: DebugMenuContract) {
         onSpaBrowserUrlEntered = contract::onSpaBrowserUrlEntered,
         onSpaBrowserDialogDismissed = contract::onSpaBrowserDialogDismissed,
         onClearDotNsCacheClick = contract::onClearDotNsCacheClick,
+        onDotNsCacheClearConfirmed = contract::onDotNsCacheClearConfirmed,
+        onDotNsCacheClearCancelled = contract::onDotNsCacheClearCancelled,
         onClearJWTTokenClick = contract::onClearJWTTokenClick,
         onCoinageDebugWidgetsToggled = contract::onCoinageDebugWidgetsToggled,
         onTruapiRuntimeToggled = contract::onTruapiRuntimeToggled,
@@ -81,6 +83,8 @@ private fun DebugMenuScreenInternal(
     onSpaBrowserUrlEntered: (String) -> Unit,
     onSpaBrowserDialogDismissed: () -> Unit,
     onClearDotNsCacheClick: () -> Unit,
+    onDotNsCacheClearConfirmed: () -> Unit,
+    onDotNsCacheClearCancelled: () -> Unit,
     onClearJWTTokenClick: () -> Unit,
     onCoinageDebugWidgetsToggled: (Boolean) -> Unit,
     onTruapiRuntimeToggled: (Boolean) -> Unit,
@@ -216,16 +220,26 @@ private fun DebugMenuScreenInternal(
     }
 
     if (state.runtimeRestartRevertsTo != null) {
-        RuntimeRestartDialog(
+        RestartDialog(
+            message = stringResource(RCommon.string.debug_menu_runtime_restart_message),
             onDismiss = onRuntimeRestartCancelled,
             onConfirm = onRuntimeRestartConfirmed,
+        )
+    }
+
+    if (state.showDotNsCacheClearDialog) {
+        RestartDialog(
+            message = stringResource(RCommon.string.debug_menu_dotns_cache_restart_message),
+            onDismiss = onDotNsCacheClearCancelled,
+            onConfirm = onDotNsCacheClearConfirmed,
         )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RuntimeRestartDialog(
+private fun RestartDialog(
+    message: String,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -247,7 +261,7 @@ private fun RuntimeRestartDialog(
                 VerticalSpacer { mediumIncreased }
 
                 NovaText(
-                    text = stringResource(RCommon.string.debug_menu_runtime_restart_message),
+                    text = message,
                     style = PolkadotTheme.typography.body.large,
                     color = PolkadotTheme.colors.fg.secondary
                 )
@@ -382,6 +396,8 @@ private fun DebugMenuScreenPreview() {
             onSpaBrowserUrlEntered = {},
             onSpaBrowserDialogDismissed = {},
             onClearDotNsCacheClick = {},
+            onDotNsCacheClearConfirmed = {},
+            onDotNsCacheClearCancelled = {},
             onClearJWTTokenClick = {},
             onCoinageDebugWidgetsToggled = {},
             onTruapiRuntimeToggled = {},

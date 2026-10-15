@@ -15,6 +15,7 @@ class DotNsContentLoaderTest {
     private val domain = "app.game.dot"
     private val releasedBuild: Uri = mockk()
     private val newBuild: Uri = mockk()
+    private val nextBuild: Uri = mockk()
 
     // A page loads its scripts after its document. If another page moved the domain to a new build in
     // between, those scripts would come from a build the document knows nothing about.
@@ -29,16 +30,45 @@ class DotNsContentLoaderTest {
         assertEquals(releasedBuild, loader.resolveToLocalUri(domain).getOrNull())
     }
 
+    // A link in a multi-page product loads a new document. Switching builds there would drop the user's work
+    // without asking them.
     @Test
-    fun `a reload moves the page to the latest build`() = runBlocking<Unit> {
+    fun `another document of the same domain stays on the page's build`() = runBlocking<Unit> {
         withLatestBuild(releasedBuild)
         val loader = DotNsContentLoader(resolver)
         loader.resolveLatestToLocalUri(domain)
 
         withLatestBuild(newBuild)
+
+        assertEquals(releasedBuild, loader.resolveLatestToLocalUri(domain).getOrNull())
+        assertEquals(releasedBuild, loader.resolveToLocalUri(domain).getOrNull())
+    }
+
+    @Test
+    fun `a reload the user agreed to moves the page to the latest build`() = runBlocking<Unit> {
+        withLatestBuild(releasedBuild)
+        val loader = DotNsContentLoader(resolver)
+        loader.resolveLatestToLocalUri(domain)
+
+        withLatestBuild(newBuild)
+        loader.pickUpLatestOnNextDocument()
         loader.resolveLatestToLocalUri(domain)
 
         assertEquals(newBuild, loader.resolveToLocalUri(domain).getOrNull())
+    }
+
+    @Test
+    fun `only the next document after the user agreed moves to the latest build`() = runBlocking<Unit> {
+        withLatestBuild(releasedBuild)
+        val loader = DotNsContentLoader(resolver)
+        loader.resolveLatestToLocalUri(domain)
+        withLatestBuild(newBuild)
+        loader.pickUpLatestOnNextDocument()
+        loader.resolveLatestToLocalUri(domain)
+
+        withLatestBuild(nextBuild)
+
+        assertEquals(newBuild, loader.resolveLatestToLocalUri(domain).getOrNull())
     }
 
     // The domain may already serve a newer build to other pages, so only the page's own build tells
@@ -50,14 +80,17 @@ class DotNsContentLoaderTest {
         val loader = DotNsContentLoader(resolver)
         loader.resolveLatestToLocalUri(domain)
 
-        assertEquals(true, loader.isDocumentOutdated().getOrNull())
+        assertEquals(true, loader.isDocumentOutdated(domain).getOrNull())
     }
 
+    // The page on screen may be one the session never served, such as an ordinary web page.
     @Test
-    fun `a page with no document loaded is not outdated`() = runBlocking<Unit> {
+    fun `a domain with no document loaded is not outdated`() = runBlocking<Unit> {
+        withLatestBuild(releasedBuild)
         val loader = DotNsContentLoader(resolver)
+        loader.resolveLatestToLocalUri(domain)
 
-        assertEquals(false, loader.isDocumentOutdated().getOrNull())
+        assertEquals(false, loader.isDocumentOutdated("other.dot").getOrNull())
         coVerify(exactly = 0) { resolver.isOutdated(any(), any()) }
     }
 
