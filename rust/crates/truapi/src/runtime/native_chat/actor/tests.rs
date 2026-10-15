@@ -974,6 +974,95 @@ fn prepare_rejects_injected_keys_and_requires_authenticated_revocation_ack() {
 	});
 }
 
+/// Both hosts swap devices when a chat is accepted, so a contact's own swap
+/// can land while ours is still unacknowledged. That must not lose ours: the
+/// contact becomes ready once every device it then lists has acknowledged.
+#[test]
+fn a_contacts_device_change_keeps_our_pending_swap() {
+	block_on(async {
+		for acknowledged_first in [false, true] {
+			let fixture = Fixture::new();
+			let actor = fixture.actor().await;
+			let registry = NativeChatRegistry::default();
+			let identity = IdentityFixture::new();
+			let peer = DeviceFixture::new(1);
+			let second = DeviceFixture::new(2);
+			seed_peer(&actor, &identity, &[&peer]).await;
+			let swap = [
+				wire::encode_device_added_message(
+					"own-device",
+					fixture.timestamp,
+					&actor.public.account_id,
+					&actor.public.chat_public_key,
+				)
+				.unwrap(),
+				wire::encode_device_removed_message(
+					"legacy-device",
+					fixture.timestamp,
+					&actor.legacy_account,
+				)
+				.unwrap(),
+			];
+			actor
+				.prepare(
+					&fixture.context,
+					identity.account,
+					HostNativeChatRoute::Device,
+					wire::encode_transport_request_plaintext("retire-legacy", &swap).unwrap(),
+				)
+				.await
+				.unwrap();
+			let ready =
+				|| async { actor.store.read(|state| state.peers[0].ready()).await.unwrap() };
+			let acknowledge = |device: &DeviceFixture| {
+				acknowledgment(&actor, &identity, device, "retire-legacy", false)
+			};
+			let contacts_device_change = native_packet(
+				&actor,
+				&identity,
+				&peer,
+				&wire::encode_transport_request_plaintext(
+					"peer-device",
+					&[wire::encode_device_added_message(
+						"second-device",
+						fixture.timestamp,
+						&second.account(),
+						&second.public_key(),
+					)
+					.unwrap()],
+				)
+				.unwrap(),
+				false,
+				false,
+			);
+
+			if acknowledged_first {
+				actor
+					.open_statement(&fixture.context, &registry, acknowledge(&peer))
+					.await
+					.unwrap();
+				assert!(ready().await, "the only device acknowledged");
+			}
+			actor
+				.open_statement(&fixture.context, &registry, contacts_device_change)
+				.await
+				.unwrap();
+			if !acknowledged_first {
+				actor
+					.open_statement(&fixture.context, &registry, acknowledge(&peer))
+					.await
+					.unwrap();
+			}
+			assert!(!ready().await, "the contact's new device has not acknowledged yet");
+			actor
+				.open_statement(&fixture.context, &registry, acknowledge(&second))
+				.await
+				.unwrap();
+			assert!(ready().await, "every device the contact lists has acknowledged");
+		}
+	});
+}
+
 #[test]
 fn payment_ack_survives_wallet_failure_and_actor_store_reopen() {
 	block_on(async {

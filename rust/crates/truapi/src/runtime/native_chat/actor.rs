@@ -115,6 +115,19 @@ impl Peer {
 	fn ready(&self) -> bool {
 		self.established && self.revocation_acked && self.devices.iter().any(|device| device.active)
 	}
+	/// Check our pending device swap against the peer's current devices. An
+	/// acknowledgement from a device the peer still lists keeps counting, and
+	/// every device now active must have acknowledged.
+	fn refresh_revocation_acked(&mut self) {
+		let devices = &self.devices;
+		self.revocation_acks
+			.retain(|account| devices.iter().any(|device| device.account == *account));
+		self.revocation_acked = self.revocation_request.is_some() &&
+			self.devices
+				.iter()
+				.filter(|device| device.active)
+				.all(|device| self.revocation_acks.contains(&device.account));
+	}
 	fn payment_devices(&self) -> impl Iterator<Item = PeerDevice> + '_ {
 		self.devices.iter().filter_map(|device| {
 			if !device.active || !self.revocation_acks.contains(&device.account) {

@@ -224,9 +224,7 @@ impl NativeChatActor {
 					return Err(Error::InvalidStatement);
 				}
 				if prospective.revision != original_revision {
-					prospective.revocation_acks.clear();
-					prospective.revocation_acked = false;
-					prospective.revocation_request = None;
+					prospective.refresh_revocation_acked();
 				}
 				let identity = peer.identity;
 				let valid = context.session_valid.clone();
@@ -643,11 +641,7 @@ impl NativeChatActor {
 					if !peer.revocation_acks.contains(&sender) {
 						peer.revocation_acks.push(sender);
 					}
-					peer.revocation_acked = peer
-						.devices
-						.iter()
-						.filter(|device| device.active)
-						.all(|device| peer.revocation_acks.contains(&device.account));
+					peer.refresh_revocation_acked();
 				}
 				let revocation_ready = peer.revocation_acked;
 				if let Some(entry) = state
