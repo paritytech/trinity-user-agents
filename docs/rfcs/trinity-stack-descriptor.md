@@ -145,6 +145,7 @@ type Descriptor = {
   tld: string; // dotNS TLD without the leading dot, e.g. "testnet". Hosts check it against the chain's NetworkSuffix before deriving keys.
   expiresAt?: string; // When the stack itself is shut down, e.g. a two-hour fork. Reaches readers that already imported it.
   validUntil?: string; // When this copy goes stale and must be fetched again. The stack keeps running.
+  fork?: Fork; // Set when the stack is a fork of another. See Forks below.
   chains: Chain[];
   services: Service[];
   assets?: Asset[]; // Assets readers treat specially, such as the one a wallet pays in.
@@ -160,6 +161,12 @@ type Chain = {
   statementStore?: boolean; // The chain's nodes serve the statement store.
   lightSpec?: SpecFile; // Light-client chain spec, the kind smoldot loads.
   fullSpec?: SpecFile; // Full chain spec with the whole genesis storage, for running a node.
+  forkedAt?: { number: number; hash: string }; // The source's block this chain was forked at. Set on every chain of a fork.
+};
+
+type Fork = {
+  of: { url: string; key?: string }; // Pointer of the stack this one was forked from; key only when the source is signed.
+  at: string; // When it was forked.
 };
 
 type SpecFile = {
@@ -195,8 +202,10 @@ schemes.
   one `Relay` chain, and `paraId` values MUST be unique. `Asset.chain` and `coinage.chain` MUST name a role present in
   `chains`. Chain roles are those of [RFC 0026](0026-supported-chains.md), plus others such as `Web3Storage`.
 - `sequence` MUST be an integer from 0 to 2^53 - 1. Times are RFC 3339 in UTC, ending in `Z`.
-- Hex values MUST be 0x-prefixed and lowercase. Genesis hashes, SHA-256 digests and keys are 32 bytes, signatures 64
-  bytes, and `contracts` addresses are 20-byte Asset Hub contract addresses.
+- Hex values MUST be 0x-prefixed and lowercase. Genesis hashes, block hashes, SHA-256 digests and keys are 32 bytes,
+  signatures 64 bytes, and `contracts` addresses are 20-byte Asset Hub contract addresses.
+- When `fork` is set, every chain MUST have `forkedAt`, and no chain may have it otherwise. `fork.of` follows the same
+  rules as a pointer.
 - URLs, in the descriptor and in a pointer, MUST use `https`, `wss` or, for `stun` services, `stun`. The one exception
   is a URL whose host is a literal address in a private range (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
   `192.168.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`), which MAY use `http` or `ws`, so a stack running on a laptop can be
@@ -241,6 +250,20 @@ facts are deliberately not in a descriptor, and readers get them from elsewhere:
 | runtime versions and transaction extension versions | each chain's runtime and metadata                                                       |
 | DUB attester                                        | the DUB's `api/v1/attester`                                                             |
 | TURN servers and their short-lived credentials      | the `turn` service, when needed                                                         |
+
+A **fork** copies a stack's chains at some block and runs them under new validators, as a PPN spawner instance does with
+zombie-bite. It keeps its source's genesis hashes, so nothing on the chain tells the two apart. A fork's operator sets
+`fork` and each chain's `forkedAt`, so readers can show what the stack is, such as "Fork of previewnet, forked at
+#1,735".
+
+- `fork` only explains. Readers MUST NOT trust a stack more or less for having it, and its absence proves nothing: what
+  makes a stack the one a reader expects is the key its pointer names.
+- A reader names the source, such as "previewnet", only when `fork.of` has a key it already holds for that stack.
+  Otherwise it shows the URL.
+- A reader that holds two stacks with the same genesis hashes and different pointers SHOULD show them as different
+  stacks, with or without `fork`.
+- A reader MAY check a chain's `forkedAt` by asking the fork for its block hash at that number.
+- A fork MUST NOT be signed with its source's key. A descriptor signed with a stack's key is that stack.
 
 Previewnet's descriptor follows, with spec digests shortened to `...` and the specs of four chains left out. Previewnet
 has no `expiresAt`, which a two-hour spawner fork sets to the end of its lifetime, and no `contracts`, which a stack
@@ -463,7 +486,9 @@ The appendices are informative.
 
 previewnet-engine can build the descriptor once every chain is up, sign it, and serve it next to `/api/network`, for
 example at `/.well-known/trinity-stack.json`. The spawner can publish each instance's descriptor unsigned, because the
-instance is the only host that serves it. The engine already knows each field:
+instance is the only host that serves it. A forking tool such as zombie-bite can take the source's pointer instead of
+RPC URLs, check the chains' genesis hashes against it, and write the fork's descriptor with `fork` and `forkedAt` filled
+in. The engine already knows each field:
 
 | Descriptor field                 | Source in previewnet-engine                                                                                                                                                   |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -478,6 +503,7 @@ instance is the only host that serves it. The engine already knows each field:
 | `tld`                            | the network file's `genesisConfig.networkSuffix`                                                                                                                              |
 | `generation`                     | the spawn record in `/api/provenance`                                                                                                                                         |
 | `expiresAt`                      | the spawner instance's lifetime, for spawner forks                                                                                                                            |
+| `fork`, `chains[].forkedAt`      | the source pointer the fork was made from, and the head each chain was bitten at, for spawner forks                                                                           |
 
 A stack that no single piece of software runs, such as paseo-next-v2 or Polkadot, can keep its descriptor in a git
 repository. CI checks each change against the live chains, signs on merge, and a scheduled job opens a pull request with
