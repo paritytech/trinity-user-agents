@@ -679,8 +679,9 @@ does not provision or pair a signer-bot user.
 To exercise the shared-core Chat path with the first-party TrUAPI Playground
 worker, build and serve the local product, install its worker into the
 simulator app's product storage, and open its native Chat application. The
-worker drives all five Chat methods and both Renderer methods, so a host
-without bot registration reports that row red:
+worker drives all five Chat methods and both Renderer methods. The iOS app
+keeps `register_bot` as a bot persona (Chat Extension v2 additions), so the
+launcher fails unless the `Chat/register_bot` row passes:
 
 ```bash
 make ios-chat-run
@@ -721,18 +722,6 @@ make ios-chat-v2-run
 
 Run every integration with one iOS build using `make ios-chat-all`.
 
-The Android emulator runs the same sample product with its own launcher and
-writes the Android rows. See
-[docs/chat-android-emulator.md](docs/chat-android-emulator.md):
-
-```bash
-make android-chat-v2-run
-```
-
-Every host that runs the sample product, and the order to run them in, is
-listed in the Chat Extension v2 section of
-[docs/local-e2e-testing.md](docs/local-e2e-testing.md#8-chat-extension-v2).
-
 The Android twin of `make ios-chat-run` runs the TrUAPI Playground worker
 against the shared core inside a headless emulator, and writes its report to
 `playground/test-results/android-chat/diagnosis-report.md`:
@@ -766,6 +755,12 @@ diagnosis row per Android scenario of the test plan to
 ```bash
 make android-chat-v2-run ANDROID_GOOGLE_SERVICES_JSON=<path>/google-services.json
 ```
+
+Every host that runs the sample product (the test host, the CLI chat page, the
+iOS simulator and the Android emulator), the order to run them in, the
+simulator and emulator switches and the known limits are listed in the Chat
+Extension v2 section of
+[docs/local-e2e-testing.md](docs/local-e2e-testing.md#8-chat-extension-v2).
 
 The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md).
 
