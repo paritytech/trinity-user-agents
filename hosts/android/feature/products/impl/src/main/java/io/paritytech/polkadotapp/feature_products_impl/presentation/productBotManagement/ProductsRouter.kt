@@ -15,7 +15,9 @@ interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
     fun leaveBrowser()
     fun openProductChat(productId: ProductId)
     fun openChat(chatId: ChatId)
-    suspend fun openPermissionPrompt(requestId: String)
+
+    /** Shows the prompt of [requestId]. Returns false when no screen can show it, for example with no activity. */
+    suspend fun openPermissionPrompt(requestId: String): Boolean
     suspend fun closePermissionPrompt(requestId: String?)
     suspend fun openPaymentRequestPrompt()
     suspend fun openTopUpRequestPrompt()
