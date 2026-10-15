@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFaceP
 
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
-import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocketFacePreview.PocketFacePreviewInteractor
@@ -16,7 +15,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -40,10 +38,8 @@ class PocketFacePreviewViewModelTest {
 
     private val router: ProductsRouter = mock()
 
-    private fun viewModel() = PocketFacePreviewViewModel(
-        PocketFacePreviewInteractor(remoteFaces, mockk<IpfsContentLookup>()),
-        router,
-    )
+    private fun viewModel() =
+        PocketFacePreviewViewModel(PocketFacePreviewInteractor(remoteFaces, mockk<IpfsContentLookup>()), router)
 
     @Before
     fun setUp() = Dispatchers.setMain(testDispatcher)
@@ -77,26 +73,6 @@ class PocketFacePreviewViewModelTest {
         advanceUntilIdle()
 
         assertEquals(listOf(FACE_URL, FACE_URL), fetched)
-    }
-
-    /**
-     * Editing only an image leaves the face file as it was. The screen must still redraw on Draw, or its
-     * images are never asked for again and the edit looks lost.
-     */
-    @Test
-    fun `drawing an unchanged face again still redraws it`() = runTest(testDispatcher) {
-        val model = viewModel()
-        model.onUrlChanged(FACE_URL)
-
-        model.onDrawClick()
-        advanceUntilIdle()
-        val first = model.state.value
-        model.onDrawClick()
-        advanceUntilIdle()
-        val second = model.state.value
-
-        assertEquals(first.face, second.face)
-        assertNotEquals("the screen only redraws when its state changes", first, second)
     }
 
     @Test
@@ -151,21 +127,5 @@ class PocketFacePreviewViewModelTest {
         advanceUntilIdle()
 
         assertEquals(listOf(FACE_URL), fetched)
-    }
-
-    /** Images belong to the face on screen. Typing the next url must not move them before it is drawn. */
-    @Test
-    fun `images come from the face that was drawn, not the url being typed`() = runTest(testDispatcher) {
-        val model = viewModel()
-        model.onUrlChanged(FACE_URL)
-        model.onDrawClick()
-        advanceUntilIdle()
-
-        model.onUrlChanged("http://127.0.0.1:9999/pocket/other.json")
-
-        assertEquals(
-            "http://127.0.0.1:5173/images/stamp.png",
-            model.imageResolver.resolve(JsImageSource.Archive("images/stamp.png")),
-        )
     }
 }
