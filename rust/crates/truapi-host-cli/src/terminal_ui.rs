@@ -206,6 +206,7 @@ pub enum SystemEvent {
 		url: String,
 		worker_bundle: Option<std::path::PathBuf>,
 		worker_bundle_built: bool,
+		wasm_worker: Option<std::path::PathBuf>,
 	},
 	SigningHostReady,
 	SigningHostProvisioning,
@@ -1598,19 +1599,24 @@ impl App {
                 url,
                 worker_bundle,
                 worker_bundle_built,
+                wasm_worker,
             } => self.notice(
                 NoticeTone::Info,
                 "Chat surface".to_string(),
                 Some(format!(
                     "{url}\n{}",
-                    match worker_bundle {
-                        None => "The page will not boot a worker until --worker-bundle is given"
+                    match (worker_bundle, wasm_worker) {
+                        (_, Some(path)) => format!(
+                            "Open it to chat as a person with the wasm worker {}, which this host runs",
+                            path.display()
+                        ),
+                        (None, None) => "The page will not boot a worker until --worker-bundle is given"
                             .to_string(),
-                        Some(path) if !worker_bundle_built => format!(
+                        (Some(path), None) if !worker_bundle_built => format!(
                             "{} does not exist yet; the page boots the worker once it is built",
                             path.display()
                         ),
-                        Some(path) => format!(
+                        (Some(path), None) => format!(
                             "Open it to boot the worker from {} and chat with it as a person",
                             path.display()
                         ),
