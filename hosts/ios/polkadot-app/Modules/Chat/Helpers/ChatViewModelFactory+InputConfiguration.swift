@@ -7,7 +7,12 @@ extension ChatViewModelFactory {
         for metadata: ChatMetadata,
         actions: ChatViewModelActions
     ) -> (any ChatInputViewConfigurationProtocol)? {
-        switch metadata.peerMetadata.input {
+        // A product room draws the footer that its product declares (P6.6).
+        if let productInput = MainActor.assumeIsolated({ productRoom?.inputConfiguration() }) {
+            return productInput
+        }
+
+        return switch metadata.peerMetadata.input {
         case let .inputField(inputFieldMetadata):
             makeTextInputConfiguration(inputFieldMetadata)
         case .incomingRequest:

@@ -128,6 +128,7 @@ struct ChatRuntimeTests {
         let runtime = makeRustRuntime(workers: workers)
 
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+        try await runtime.open(roomId: "room")
         #expect(workers.references.acquired == [chatProduct])
 
         await runtime.dispose()
@@ -170,15 +171,30 @@ struct ChatRuntimeTests {
         await live.dispose()
     }
 
-    /// The bot posts its welcome message the moment `start` returns, so `start`
+    /// The discovery of the bot holds no worker (02-DESIGN D10): `start` returns at once and asks for nothing.
+    @Test func rustRuntimeStartHoldsNoWorker() async throws {
+        let workers = StubWorkerManager()
+        let runtime = makeRustRuntime(workers: workers)
+
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+
+        #expect(workers.references.acquired.isEmpty)
+        #expect(workers.context(of: chatProduct).chat.currentMessaging != nil)
+
+        await runtime.dispose()
+        #expect(workers.references.released.isEmpty)
+    }
+
+    /// The room screen sends its first request the moment `open` returns, so `open`
     /// has to wait for the worker rather than return onto an execution that is
     /// not there yet.
-    @Test func rustRuntimeStartWaitsForTheWorkerToComeUp() async throws {
+    @Test func rustRuntimeOpenWaitsForTheWorkerToComeUp() async throws {
         let workers = StubWorkerManager()
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workers)
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
-        let start = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
+        let opening = Task { try await runtime.open(roomId: "room") }
         try await withTimeout(.seconds(5)) {
             var asks = workers.asks.makeAsyncIterator()
             _ = await asks.next()
@@ -186,7 +202,7 @@ struct ChatRuntimeTests {
 
         workers.publish([chatProduct: execution])
         try await withTimeout(.seconds(5)) {
-            try await withTaskCancellationHandler { try await start.value } onCancel: { start.cancel() }
+            try await withTaskCancellationHandler { try await opening.value } onCancel: { opening.cancel() }
         }
 
         try await runtime.onUserMessage(text: "hi", roomId: "room")
@@ -204,7 +220,7 @@ struct ChatRuntimeTests {
         let runtime = makeRustRuntime(workers: workers)
 
         var asks = workers.asks.makeAsyncIterator()
-        let starting = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
+        let starting = Task { try await runtime.holdWorker() }
         await asks.next()
 
         await runtime.dispose()
@@ -222,11 +238,14 @@ struct ChatRuntimeTests {
         let runtime = makeRustRuntime(workers: workers)
 
         await #expect(throws: TimeoutError.self) {
-            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+            try await runtime.open(roomId: "room")
+        }
+        await #expect(throws: TimeoutError.self) {
+            try await runtime.holdWorker()
         }
 
-        #expect(workers.references.acquired == [chatProduct])
-        #expect(workers.references.released == [chatProduct])
+        #expect(workers.references.acquired == [chatProduct, chatProduct])
+        #expect(workers.references.released == [chatProduct, chatProduct])
     }
 
     /// `ProductBot` downgrades this one to a debug log, so it has to stay distinct

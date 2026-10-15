@@ -43,6 +43,28 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     /// a test counting `render` calls has to hold it open to be deterministic.
     var keepsRenderStreamOpen = false
 
+    /// One chat query that the host asked, with its timeout.
+    enum ChatQueryCall {
+        case messages(ProductChatMessagesQueryRequest, Duration)
+        case userAction(ProductChatUserActionRequest, Duration)
+        case reactions(ProductChatReactionsQueryRequest, Duration)
+        case participants(ProductChatParticipantsQueryRequest, Duration)
+        case messageActions(ProductChatMessageActionsQueryRequest, Duration)
+        case participantActions(ProductChatParticipantActionsQueryRequest, Duration)
+    }
+
+    /// The chat queries, in order.
+    private(set) var queryLog: [ChatQueryCall] = []
+    /// The answers of the chat queries. Nil answers as the product without the query does.
+    var messagesAnswer: Result<ProductChatMessagesQueryItem, Error>?
+    var userActionAnswer: Result<ProductChatUserActionItem, Error>?
+    var reactionsAnswer: Result<ProductChatReactionsQueryItem, Error>?
+    var participantsAnswer: Result<ProductChatParticipantsQueryItem, Error>?
+    /// Answers each participants question by its kind. It wins over `participantsAnswer`.
+    var participantsAnswerFor: ((ChatParticipantsQuery) -> Result<ProductChatParticipantsQueryItem, Error>)?
+    var messageActionsAnswer: Result<ProductChatMessageActionsQueryItem, Error>?
+    var participantActionsAnswer: Result<ProductChatParticipantActionsQueryItem, Error>?
+
     private let renderSignal: AsyncStream<Void>.Continuation
     private var renderSignals: AsyncStream<Void>.AsyncIterator
     private let closeSignal: AsyncStream<Void>.Continuation
@@ -110,45 +132,54 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     }
 
     func chatMessagesQuery(
-        _: ProductChatMessagesQueryRequest,
-        timeout _: Duration
+        _ request: ProductChatMessagesQueryRequest,
+        timeout: Duration
     ) async throws -> ProductChatMessagesQueryItem {
-        throw ChatQueryError.refused(.notAvailable)
+        queryLog.append(.messages(request, timeout))
+        return try (messagesAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
     }
 
     func chatUserAction(
-        _: ProductChatUserActionRequest,
-        timeout _: Duration
+        _ request: ProductChatUserActionRequest,
+        timeout: Duration
     ) async throws -> ProductChatUserActionItem {
-        throw ChatQueryError.actionRefused(.unknownRoom)
+        queryLog.append(.userAction(request, timeout))
+        return try (userActionAnswer ?? .failure(ChatQueryError.actionRefused(.unknownRoom))).get()
     }
 
     func chatReactionsQuery(
-        _: ProductChatReactionsQueryRequest,
-        timeout _: Duration
+        _ request: ProductChatReactionsQueryRequest,
+        timeout: Duration
     ) async throws -> ProductChatReactionsQueryItem {
-        throw ChatQueryError.refused(.notAvailable)
+        queryLog.append(.reactions(request, timeout))
+        return try (reactionsAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
     }
 
     func chatParticipantsQuery(
-        _: ProductChatParticipantsQueryRequest,
-        timeout _: Duration
+        _ request: ProductChatParticipantsQueryRequest,
+        timeout: Duration
     ) async throws -> ProductChatParticipantsQueryItem {
-        throw ChatQueryError.refused(.notAvailable)
+        queryLog.append(.participants(request, timeout))
+        if let participantsAnswerFor {
+            return try participantsAnswerFor(request.query).get()
+        }
+        return try (participantsAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
     }
 
     func chatMessageActionsQuery(
-        _: ProductChatMessageActionsQueryRequest,
-        timeout _: Duration
+        _ request: ProductChatMessageActionsQueryRequest,
+        timeout: Duration
     ) async throws -> ProductChatMessageActionsQueryItem {
-        throw ChatQueryError.refused(.notAvailable)
+        queryLog.append(.messageActions(request, timeout))
+        return try (messageActionsAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
     }
 
     func chatParticipantActionsQuery(
-        _: ProductChatParticipantActionsQueryRequest,
-        timeout _: Duration
+        _ request: ProductChatParticipantActionsQueryRequest,
+        timeout: Duration
     ) async throws -> ProductChatParticipantActionsQueryItem {
-        throw ChatQueryError.refused(.notAvailable)
+        queryLog.append(.participantActions(request, timeout))
+        return try (participantActionsAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
     }
 
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {

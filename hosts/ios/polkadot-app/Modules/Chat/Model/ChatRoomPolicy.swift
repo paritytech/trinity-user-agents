@@ -3,8 +3,8 @@ import Foundation
 /// What a product room offers. The value comes from the declarations of the product and, for each aspect
 /// that the product does not declare, from the host defaults of 02-DESIGN §4.
 ///
-/// The policy reads the footer, the chat-list preview, the configuration and the commands of a room. The
-/// toolbar and the activity line keep the defaults until the room screen draws them (P6).
+/// The policy reads the footer, the chat-list preview, the configuration, the toolbar, the suggestions and the
+/// commands of a room. The activity line lives in ``ChatRoomActivityStore``, because the host does not keep it.
 struct ChatRoomPolicy: Equatable {
     enum MessageStore: Equatable {
         /// The host database keeps the messages. `post_message` and feed updates write to it.
@@ -73,6 +73,8 @@ struct ChatRoomPolicy: Equatable {
     enum Footer: Equatable {
         case input(Input)
         case empty
+        /// The product draws the footer through the renderer (P6.6).
+        case custom
     }
 
     /// Only a declared command name after `/` is a command. Any other `/text` is a message
@@ -115,6 +117,12 @@ struct ChatRoomPolicy: Equatable {
     var productQueries: Set<ProductQuery> = []
     /// Goes up by one at each configuration that the product sets, so an open room knows to reload.
     var configGeneration: Int64 = 0
+    /// The buttons of the room toolbar that the product set (`set_room_toolbar`).
+    var toolbarActions: [Chat.RoomToolbarAction] = []
+    /// The quick replies above the input that the product set (`set_room_suggestions`).
+    var roomSuggestions: [Chat.RoomSuggestion] = []
+    /// The slash commands that the product declares (`set_room_commands`), for the catalogue of the input.
+    var roomCommands: [Chat.RoomCommand] = []
 }
 
 extension ChatRoomPolicy {
@@ -179,7 +187,10 @@ extension ChatRoomPolicy {
             activity: defaults.activity,
             hostAppliesUserActions: !config.productSource,
             productQueries: ProductQuery.declared(by: config),
-            configGeneration: declarations?.configGeneration ?? 0
+            configGeneration: declarations?.configGeneration ?? 0,
+            toolbarActions: declarations?.toolbar ?? [],
+            roomSuggestions: declarations?.suggestions ?? [],
+            roomCommands: declarations?.commands ?? []
         )
     }
 
@@ -189,7 +200,8 @@ extension ChatRoomPolicy {
     /// show no attachment button.
     var peerInput: Chat.PeerMetadataInput {
         switch footer {
-        case .empty:
+        case .empty,
+             .custom:
             .empty
         case let .input(input):
             .inputField(.init(canPay: input.allowsPayment, canAttachFile: false))
@@ -221,8 +233,7 @@ extension ChatRoomPolicy {
 }
 
 private extension ChatRoomPolicy.Footer {
-    /// The declared footer wins over the footer of the first version. A product draws no custom footer on this
-    /// host yet (P6.6), so the bridge refuses one and a stored one reads as no declaration.
+    /// The declared footer wins over the footer of the first version.
     init?(declared: Chat.RoomFooterConfig?, legacy: Chat.RoomFooter?) {
         switch declared {
         case let .input(input):
@@ -235,8 +246,9 @@ private extension ChatRoomPolicy.Footer {
             ))
         case .empty:
             self = .empty
-        case .custom,
-             nil:
+        case .custom:
+            self = .custom
+        case nil:
             guard legacy == .empty else { return nil }
             self = .empty
         }
@@ -285,5 +297,12 @@ extension Chat.LocalModel {
         case .chatExtension:
             ChatRoomPolicy(footer: roomFooter, declarations: roomDeclarations)
         }
+    }
+}
+
+extension ChatRoomPolicy.Footer {
+    /// True when the footer is the host input, so the user can reply and react.
+    var showsInput: Bool {
+        if case .input = self { true } else { false }
     }
 }

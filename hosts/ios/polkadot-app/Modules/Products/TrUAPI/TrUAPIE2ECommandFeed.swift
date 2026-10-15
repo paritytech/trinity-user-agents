@@ -9,10 +9,16 @@ import Foundation
     /// sends the files in name order. After each send it writes `<name>.done` with
     /// the send time in milliseconds, or `<name>.failed` with the error, and
     /// removes the file.
+    ///
+    /// A file with `host` in place of `text` is an action of the user on the screen of the room, as
+    /// ``TrUAPIE2EHostAction`` describes it.
     enum TrUAPIE2ECommandFeed {
         private struct Command: Decodable {
             let room: String
-            let text: String
+            let text: String?
+            let host: String?
+            let argument: String?
+            let target: String?
         }
 
         private static let pollInterval: Duration = .milliseconds(100)
@@ -27,8 +33,17 @@ import Foundation
                 && environment["TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST"] == productId
         }
 
+        /// True when the harness drives this product, so the product must run while no room screen is open.
+        static func holdsWorker(for productId: String) -> Bool {
+            let environment = ProcessInfo.processInfo.environment
+            return environment["TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST"] == productId
+                && (environment["TRUAPI_IOS_E2E_CHAT_COMMANDS"] == "1"
+                    || environment["TRUAPI_IOS_E2E_CHAT_MESSAGE"] != nil)
+        }
+
         /// Sends the queued messages with `send` until the task stops.
         static func run(
+            productId: String,
             logger: LoggerProtocol,
             send: (_ text: String, _ roomId: String) async throws -> Void
         ) async {
@@ -49,7 +64,16 @@ import Foundation
                     do {
                         let command = try JSONDecoder().decode(Command.self, from: Data(contentsOf: file))
                         logger.debug("[e2e] sending \(name) to room \(command.room)")
-                        try await send(command.text, command.room)
+                        if let host = command.host {
+                            await TrUAPIE2EHostAction(
+                                room: command.room,
+                                action: host,
+                                argument: command.argument,
+                                target: command.target
+                            ).run(productId: productId)
+                        } else if let text = command.text {
+                            try await send(text, command.room)
+                        }
                         let sentAt = String(Int64(Date().timeIntervalSince1970 * 1_000))
                         try Data(sentAt.utf8).write(to: directory.appendingPathComponent("\(name).done"))
                     } catch {

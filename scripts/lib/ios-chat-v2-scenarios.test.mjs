@@ -7,7 +7,10 @@ import {
   IOS_CHAT_V2_SCENARIOS,
   appStartFailure,
   blockedRows,
+  eventMatches,
+  lastUserMessage,
   parseEventLog,
+  parseUiMarkers,
   refusalReason,
   skipRow,
 } from "./ios-chat-v2-scenarios.mjs";
@@ -23,7 +26,58 @@ test("every iOS scenario of the test plan has one entry", () => {
   }
   for (const scenario of IOS_CHAT_V2_SCENARIOS) {
     assert.match(scenario.phase, /^P\d$/);
+    assert.ok(
+      Boolean(scenario.drive) !== Boolean(scenario.skip),
+      `${scenario.id} is driven or names why it is not`,
+    );
+    for (const phase of scenario.drive?.phases ?? []) {
+      assert.ok(phase.expect.length > 0, `${scenario.id} checks each phase`);
+    }
   }
+});
+
+test("every scenario from S1 to S41 is driven, except the ones the sample cannot drive", () => {
+  const skipped = IOS_CHAT_V2_SCENARIOS.filter((scenario) => scenario.skip).map(
+    (scenario) => scenario.id,
+  );
+  assert.deepEqual(skipped.sort(), ["S23", "S44", "S47", "S5", "S6"].sort());
+});
+
+test("the harness markers come out of the app console", () => {
+  const console = [
+    "19:46:47.448 💚 DEBUG ChatProductRoomPresenter.mark(_:_:):12 - [e2e:ui] window source count=51 tail=source-h-00120:in-seen:text,source-u-0001:out-sent:text",
+    "19:46:47.449 💚 DEBUG something else",
+    "19:46:47.450 💚 DEBUG ChatProductRoomPresenter.mark(_:_:):12 - [e2e:ui] toolbar host inline=tb-1,tb-2 overflow= participants=false",
+  ].join("\n");
+  const markers = parseUiMarkers(console);
+
+  assert.deepEqual(
+    markers.map((marker) => [marker.key, marker.room]),
+    [
+      ["window", "source"],
+      ["toolbar", "host"],
+    ],
+  );
+  assert.equal(lastUserMessage(markers, "source"), "source-u-0001");
+  assert.equal(lastUserMessage(markers, "host"), undefined);
+});
+
+test("an expected event names its route, kind, room and data", () => {
+  const entry = {
+    via: "action_subscribe",
+    kind: "MessagePosted",
+    room: "host",
+    data: { messageId: "", body: { text: "/help" } },
+  };
+
+  assert.ok(
+    eventMatches(entry, { via: "action_subscribe", data: "/help" }, "host"),
+  );
+  assert.ok(!eventMatches(entry, { kind: "Command" }, "host"));
+  assert.ok(!eventMatches(entry, { kind: "MessagePosted" }, "source"));
+  assert.ok(
+    !eventMatches(entry, { kind: "MessagePosted", hostId: true }, "host"),
+  );
 });
 
 test("the event log lines come out of the app console", () => {
@@ -78,16 +132,13 @@ test("a blocked run fails the driven scenarios and keeps the skips", () => {
     rows.find((entry) => entry.id === "S1").evidence,
     "not run: no config",
   );
-  assert.equal(
-    rows.find((entry) => entry.id === "S9").evidence,
-    "skip: needs P4",
-  );
+  assert.match(rows.find((entry) => entry.id === "S5").evidence, /^skip: /);
 });
 
-test("a skip row carries what the launcher observed", () => {
-  const scenario = IOS_CHAT_V2_SCENARIOS.find((entry) => entry.id === "S7");
+test("a skip row carries its reason and what the launcher observed", () => {
+  const scenario = IOS_CHAT_V2_SCENARIOS.find((entry) => entry.id === "S47");
   assert.equal(
-    skipRow(scenario, "refused").evidence,
-    "skip: needs P4; refused",
+    skipRow(scenario, "observed").evidence,
+    "skip: needs P7; observed",
   );
 });

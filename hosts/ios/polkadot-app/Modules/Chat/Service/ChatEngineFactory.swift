@@ -68,7 +68,11 @@ final class ChatEngineFactory: ChatEngineFactoryProtocol {
             case .person:
                 nil
             case let .chatExtension(extensionId, _):
-                ProductRoomServices(bot: flowState.extensionsRegistry.getChatExtensionBot(for: extensionId))
+                // The bot of the product can come after the room screen, so each call finds it then.
+                ProductRoomServices(bot: RegistryProductRoom(
+                    extensionId: extensionId,
+                    registry: flowState.extensionsRegistry
+                ))
             }
 
         return ChatEngine(

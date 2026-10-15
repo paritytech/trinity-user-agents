@@ -17,7 +17,7 @@ extension ChatMessage {
             ? .outgoing(status.outgoingStatus)
             : .incoming(isUnread ? .new : .seen)
 
-        return Chat.LocalMessage(
+        var message = Chat.LocalMessage(
             messageId: messageId,
             chatId: chatId,
             origin: isFromUser ? .user : .chatExtension(extensionId),
@@ -29,6 +29,11 @@ extension ChatMessage {
             compactionId: nil,
             relatedMessages: []
         )
+
+        if !isFromUser, origin.participantId != Chat.ProductParticipant.product {
+            message.authorParticipantId = origin.participantId
+        }
+        return message
     }
 
     var isFromUser: Bool {
@@ -143,6 +148,8 @@ extension Chat.LocalMessage.Content {
             .reactionPlaced(messageId: reaction.messageId, emoji: reaction.emoji)
         case let .reactionRemoved(reaction):
             .reactionRemoved(messageId: reaction.messageId, emoji: reaction.emoji)
+        case let .productBody(body):
+            body.userWireBody.map { .newMessage(body: $0, replyTo: nil) }
         default:
             nil
         }

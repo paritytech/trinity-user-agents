@@ -174,6 +174,14 @@ extension UserNotificationService: UserNotificationServicing {
     }
 
     func requestNotificationsAuthorization(completion: ((Bool) -> Void)?) {
+        #if targetEnvironment(simulator)
+            // The truapi E2E harness cannot answer the system prompt, which covers the screen it photographs.
+            if ProcessInfo.processInfo.environment["TRUAPI_IOS_E2E_NO_PUSH_PROMPT"] == "1" {
+                completion?(false)
+                return
+            }
+        #endif
+
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             guard let completion else {
                 return

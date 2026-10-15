@@ -76,9 +76,30 @@ extension ChatViewModelFactory {
             onReactionTap: actions.map { action in
                 { emoji in action.toggleReaction(messageId, emoji) }
             },
-            onReactionLongPress: actions.map { action in
-                { action.showReactionDetails(messageId) }
-            }
+            onReactionLongPress: reactionDetailsAction(messageId: messageId, actions: actions)
         )
+    }
+}
+
+private extension ChatViewModelFactory {
+    /// The long press on the reactions of a message: the reactions that the host keeps, the answer of the product
+    /// in a room that declares `reaction_details` (P6.5), or nothing.
+    func reactionDetailsAction(messageId: String, actions: ChatViewModelActions?) -> (() -> Void)? {
+        guard let actions else {
+            return nil
+        }
+
+        let route = MainActor.assumeIsolated { productRoom?.reactionDetailsRoute ?? .localRows }
+
+        switch route {
+        case .localRows:
+            return { actions.showReactionDetails(messageId) }
+        case .product:
+            return { [weak productRoom] in
+                MainActor.assumeIsolated { productRoom?.showReactionDetails(for: messageId) }
+            }
+        case .none:
+            return nil
+        }
     }
 }
