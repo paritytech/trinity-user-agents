@@ -22,6 +22,10 @@
 //! }
 //! ```
 //!
+//! [`spawn`] runs more tasks beside the entry point. [`time`] has the clocks
+//! and a timer, [`random`] has random bytes, and [`raw`] makes calls with
+//! requests and payloads that are already encoded.
+//!
 //! The crate is empty on targets other than wasm32.
 
 #![cfg(target_arch = "wasm32")]
@@ -29,20 +33,23 @@
 #[doc(hidden)]
 pub mod exports;
 
+/// The SCALE codec of the requests and payloads, for [`raw`] calls.
+pub use parity_scale_codec as codec;
 pub use truapi::{
 	CallError,
 	api::{
 		account::guest as account, chain::guest as chain, chat::guest as chat,
 		coin_payment::guest as coin_payment, contacts::guest as contacts,
-		entropy::guest as entropy, game::guest as game, local_storage::guest as local_storage,
-		locale::guest as locale, notifications::guest as notifications, payment::guest as payment,
+		entropy::guest as entropy, expanded_card::guest as expanded_card, game::guest as game,
+		local_storage::guest as local_storage, locale::guest as locale,
+		notifications::guest as notifications, payment::guest as payment,
 		permissions::guest as permissions, pocket::guest as pocket, preimage::guest as preimage,
 		renderer::guest as renderer, resource_allocation::guest as resource_allocation,
 		scanner::guest as scanner, signing::guest as signing,
 		statement_store::guest as statement_store, system::guest as system, theme::guest as theme,
 		worker::guest as worker,
 	},
-	latest,
+	latest, v01, v02, versioned,
 };
 pub use truapi_macros::guest_main as main;
 
@@ -53,6 +60,107 @@ mod imports {
 		pub safe fn read_event(payload: *mut u8);
 		pub safe fn log(line: *const u8, line_len: u32);
 		pub safe fn finish(succeeded: u32, message: *const u8, message_len: u32);
+		pub safe fn random(buffer: *mut u8, buffer_len: u32);
+		pub safe fn now_millis() -> u64;
+		pub safe fn monotonic_millis() -> u64;
+	}
+}
+
+/// Run `future` as a task beside the entry point.
+///
+/// A task runs while the entry point waits. When the entry point returns, the
+/// worker ends and every task stops, which releases the calls it holds.
+pub fn spawn(future: impl core::future::Future<Output = ()> + 'static) {
+	exports::spawn(future);
+}
+
+/// The clocks and timers of the host.
+pub mod time {
+	use core::{
+		future::Future,
+		pin::Pin,
+		task::{Context, Poll},
+		time::Duration,
+	};
+
+	use truapi::guest::RawCall;
+
+	use crate::imports;
+
+	/// The Unix time of the host clock, in milliseconds. It can go back
+	/// when the clock of the device changes.
+	pub fn now_unix_millis() -> u64 {
+		imports::now_millis()
+	}
+
+	/// The milliseconds since the host loaded the worker. The value never
+	/// goes back, so use it to measure intervals.
+	pub fn monotonic_millis() -> u64 {
+		imports::monotonic_millis()
+	}
+
+	/// Wait for `duration`, rounded up to a full millisecond. Dropping the
+	/// future cancels the timer on the host.
+	pub fn sleep(duration: Duration) -> Sleep {
+		let millis =
+			duration.as_millis() + u128::from(!duration.subsec_nanos().is_multiple_of(1_000_000));
+		Sleep(truapi::guest::sleep(u64::try_from(millis).unwrap_or(u64::MAX)))
+	}
+
+	/// A timer of the host, from [`sleep`]. It holds only the timer handle,
+	/// so it is `Send`.
+	pub struct Sleep(RawCall);
+
+	impl Future for Sleep {
+		type Output = ();
+
+		fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<()> {
+			Pin::new(&mut self.0).poll(context).map(drop)
+		}
+	}
+}
+
+/// Random bytes from the host.
+pub mod random {
+	use crate::imports;
+
+	/// Largest part of the buffer that one import call fills.
+	const CHUNK: usize = 1 << 20;
+
+	/// Fill `buffer` with random bytes from the operating system generator of
+	/// the host. They are good for keys.
+	pub fn fill(buffer: &mut [u8]) {
+		for chunk in buffer.chunks_mut(CHUNK) {
+			imports::random(chunk.as_mut_ptr(), chunk.len() as u32);
+		}
+	}
+}
+
+/// Calls with encoded requests and payloads, for code that does its own
+/// SCALE codec.
+///
+/// A request is a versioned request envelope, for example
+/// `HostLocalStorageReadRequest::V1(key).encode()`. A call resolves to the
+/// payload of the `Response` event, a SCALE
+/// `Result<Response, CallError<Error>>` in the version of the request. A
+/// subscription yields [`RawEvent::Item`](raw::RawEvent::Item) with the SCALE item, then one
+/// [`RawEvent::End`](raw::RawEvent::End) with a SCALE `Result<(), CallError<Error>>`.
+///
+/// The import of a method is in the `imports` module of its service, for
+/// example `truapi::local_storage::imports::read`. Its name is
+/// `<trait>_<method>` in the `truapi` wasm module.
+pub mod raw {
+	pub use truapi::guest::{RawCall, RawEvent, RawSubscription, StartImport};
+
+	/// Start a request through `import` with an encoded versioned request.
+	pub fn call(import: StartImport, request: &[u8]) -> RawCall {
+		RawCall::start(import, request)
+	}
+
+	/// Start a subscription through `import` with an encoded versioned
+	/// request.
+	pub fn subscribe(import: StartImport, request: &[u8]) -> RawSubscription {
+		RawSubscription::start(import, request)
 	}
 }
 

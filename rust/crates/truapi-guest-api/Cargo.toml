@@ -10,6 +10,7 @@ publish = false
 truapi = { path = "../truapi", default-features = false, features = ["guest"] }
 truapi-macros = { path = "../truapi-macros" }
 derive_more = { workspace = true, features = ["display"] }
+parity-scale-codec = { workspace = true }
 
 [lints]
 workspace = true
