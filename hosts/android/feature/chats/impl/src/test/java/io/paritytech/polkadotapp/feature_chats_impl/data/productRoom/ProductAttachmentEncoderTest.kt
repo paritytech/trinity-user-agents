@@ -11,12 +11,14 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.Attachment
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaItemModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductAttachmentDraft
 import io.paritytech.polkadotapp.feature_chats_impl.data.storage.FileTooLargeException
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -93,6 +95,54 @@ class ProductAttachmentEncoderTest {
         assertEquals("report.pdf", file.fileName)
         assertEquals("application/pdf", file.meta.mimeType)
         assertArrayEquals(bytes, (file.resource as ChatResourceModel.Inline).bytes.value)
+    }
+
+    @Test
+    fun `only an attachment above 1 MiB goes to staging, and an image above 8 MiB goes inline again`() {
+        val above = (ProductAttachmentEncoder.LIMIT_BYTES + 1).bytes
+        val huge = (ProductAttachmentEncoder.STAGED_LIMIT_BYTES + 1).bytes
+
+        assertFalse(encoder.goesToStaging("image/png", ProductAttachmentEncoder.LIMIT))
+        assertTrue(encoder.goesToStaging("image/png", above))
+        assertTrue(encoder.goesToStaging("application/pdf", ProductAttachmentEncoder.STAGED_LIMIT))
+        assertTrue(encoder.goesToStaging("application/pdf", huge))
+        assertFalse(encoder.goesToStaging("image/png", huge))
+    }
+
+    @Test
+    fun `a staged image keeps its original bytes and its meta`() = runBlocking {
+        val bytes = ByteArray(3 * 1024 * 1024) { 3 }
+        given(bytes, Attachment.Meta.Image(width = 4_000, height = 3_000, blurHash = "LKO2", mimeType = "image/jpeg", size = bytes.size.bytes))
+
+        val draft = encoder.prepareStaged(uri, "image/jpeg", bytes.size.bytes).getOrThrow()
+
+        assertEquals(ProductAttachmentDraft.Kind.IMAGE, draft.kind)
+        assertArrayEquals(bytes, draft.bytes)
+        assertEquals(bytes.size.toLong(), draft.meta.sizeBytes)
+        assertEquals(4_000, draft.meta.width)
+        assertEquals("LKO2", draft.meta.placeholder)
+    }
+
+    @Test
+    fun `a staged file keeps its name`() = runBlocking {
+        val bytes = ByteArray(6 * 1024 * 1024)
+        given(bytes, Attachment.Meta.General(fileName = "", mimeType = "application/pdf", size = bytes.size.bytes))
+
+        val draft = encoder.prepareStaged(uri, "application/pdf", bytes.size.bytes).getOrThrow()
+
+        assertEquals(ProductAttachmentDraft.Kind.FILE, draft.kind)
+        assertEquals("file", draft.fileName)
+    }
+
+    @Test
+    fun `an attachment above 8 MiB is not staged, and is not read`() = runBlocking {
+        val size = (ProductAttachmentEncoder.STAGED_LIMIT_BYTES + 1).bytes
+
+        val failure = encoder.prepareStaged(uri, "application/pdf", size).exceptionOrNull()
+
+        assertTrue(failure is FileTooLargeException)
+        assertEquals(ProductAttachmentEncoder.STAGED_LIMIT, (failure as FileTooLargeException).maxSize)
+        verify(exactly = 0) { contentResolver.openInputStream(any()) }
     }
 
     private fun given(bytes: ByteArray, meta: Attachment.Meta) {

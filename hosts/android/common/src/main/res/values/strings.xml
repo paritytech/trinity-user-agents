@@ -903,6 +903,11 @@
     <string name="chat_product_menu_loading">Loading…</string>
     <string name="chat_product_link_question">Open this link?</string>
     <string name="chat_product_link_open">Open</string>
+    <string name="chat_public_storage_notice_title">Files over 1 MB are public</string>
+    <string name="chat_public_storage_notice_message">Files over 1 MB sent in %1$s are stored on the public Bulletin chain, without encryption. Anyone with the link can read them.</string>
+    <string name="chat_public_storage_notice_send">Send</string>
+    <string name="chat_attachment_not_sent">The file was not sent: %1$s</string>
+    <string name="chat_attachment_not_sent_permission">The file was not sent. Allow the app to store files on the Bulletin chain, then retry.</string>
     <string name="chat_product_toolbar_more">More actions</string>
     <string name="chat_participants_title">Participants</string>
     <string name="chat_participants_failed">Participants did not load. Tap to try again.</string>

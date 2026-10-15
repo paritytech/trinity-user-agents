@@ -25,6 +25,7 @@ fun ChatFeedMenu(
     onBlockUserConfirm: () -> Unit,
     onDeleteMessageConfirm: (ChatMessageId) -> Unit,
     onProductLinkConfirm: (String) -> Unit,
+    onPublicStorageNoticeAccept: () -> Unit,
     participants: ParticipantListUiState,
     participantSheet: ParticipantSheetUiState?,
     onProductRoomAction: (ProductRoomAction) -> Unit,
@@ -103,6 +104,14 @@ fun ChatFeedMenu(
                         ProductLinkConfirmationContent(
                             url = it.url,
                             onConfirm = { onProductLinkConfirm(it.url) },
+                            onCancel = onDismiss
+                        )
+                    }
+
+                    is ChatMenuType.PublicStorageNotice -> {
+                        PublicStorageNoticeContent(
+                            productName = it.productName,
+                            onConfirm = onPublicStorageNoticeAccept,
                             onCancel = onDismiss
                         )
                     }

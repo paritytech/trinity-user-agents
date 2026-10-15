@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.resources
 
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ChatOutboxPreviews
 import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatResourceDiskCache
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import kotlinx.coroutines.withContext
@@ -28,6 +29,7 @@ class RealChatMediaLoader @Inject constructor(
     private val ipfsContentLookup: IpfsContentLookup,
     private val cache: ChatResourceDiskCache,
     private val dispatchers: CoroutineDispatchers,
+    private val outboxPreviews: ChatOutboxPreviews = ChatOutboxPreviews { null },
 ) : ChatMediaLoader {
     override suspend fun load(resource: ChatResourceModel, extension: String?): Result<File> = withContext(dispatchers.io) {
         when (resource) {
@@ -41,8 +43,10 @@ class RealChatMediaLoader @Inject constructor(
                 ipfsContentLookup.lookupRawHash(resource.key.value).mapCatching { bytes -> keep(key, extension, bytes).getOrThrow() }
             }
 
-            is ChatResourceModel.Url -> runCatching { decodeDataUrl(resource.url) }
-                .mapCatching { bytes -> keep(inlineKey(bytes), extension, bytes).getOrThrow() }
+            // An attachment that waits in the outbox shows its kept file (07-LATER §7).
+            is ChatResourceModel.Url -> outboxPreviews.file(resource.url)?.let { Result.success(it) }
+                ?: runCatching { decodeDataUrl(resource.url) }
+                    .mapCatching { bytes -> keep(inlineKey(bytes), extension, bytes).getOrThrow() }
         }
     }
 

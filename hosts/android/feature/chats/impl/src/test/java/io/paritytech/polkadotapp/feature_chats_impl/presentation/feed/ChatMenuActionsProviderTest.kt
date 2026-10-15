@@ -53,6 +53,15 @@ class ChatMenuActionsProviderTest {
     }
 
     @Test
+    fun `a failed attachment of the outbox offers retry in both room modes`() {
+        val failed = text(failed = true).copy(id = "outbox:1")
+
+        assertEquals(AllowedMessageMenuAction.Retry, provider.getMessageActions(failed, canSend, hostStoreRoom).first())
+        assertEquals(AllowedMessageMenuAction.Retry, provider.getMessageActions(failed, canSend, productSourceRoom).first())
+        assertFalse(AllowedMessageMenuAction.Retry in provider.getMessageActions(failed, canSend, roomPolicy = null))
+    }
+
+    @Test
     fun `a message that did not fail offers no retry`() {
         assertFalse(AllowedMessageMenuAction.Retry in provider.getMessageActions(text(), canSend, productSourceRoom))
     }

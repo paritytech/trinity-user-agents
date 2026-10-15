@@ -17,6 +17,9 @@ sealed interface ChatMenuType {
     /** A product action opens [url] after the user confirms it. */
     data class ProductLinkConfirmation(val url: String) : ChatMenuType
 
+    /** Files over 1 MiB go to the public Bulletin chain. The host shows it one time for each product (07-LATER §7.2). */
+    data class PublicStorageNotice(val productName: String) : ChatMenuType
+
     /** The participants of a product room. The product room state holds the list. */
     data object Participants : ChatMenuType
 
