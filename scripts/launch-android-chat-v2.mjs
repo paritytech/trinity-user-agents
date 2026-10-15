@@ -924,7 +924,8 @@ const DRIVERS = {
       "Markdown list of /help": (screen) => screen.some((node) => /\/help/.test(node.text) && /\/meta/.test(node.text)),
     };
     await scrollToNewest();
-    for (let attempt = 0; attempt < 12 && seen.size < Object.keys(marks).length; attempt += 1) {
+    // The /help message of the sample takes several screens, and the bodies of /post all are above it.
+    for (let attempt = 0; attempt < 30 && seen.size < Object.keys(marks).length; attempt += 1) {
       const screen = parseUiNodes(uiDump(serial));
       let fresh = false;
       for (const [name, test] of Object.entries(marks)) {
