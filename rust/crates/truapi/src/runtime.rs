@@ -30,6 +30,7 @@ mod product_accounts;
 mod product_consent;
 pub mod product_manifest;
 mod product_subtree;
+mod remote_account_holder;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
@@ -64,6 +65,7 @@ pub use authority::{AccountHolder, AuthorityError, BulletinAllowanceKey, Product
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 pub use host_session::HostSession;
+pub use remote_account_holder::RemoteAccountHolder;
 
 /// The host's contact picker plus the key its handles are minted under:
 /// everything one `contacts.pick` call needs from the connection.
