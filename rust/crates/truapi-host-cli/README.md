@@ -291,7 +291,7 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   line: the feature names this host lists in `capabilities`
   (`product_source_rooms`, `reaction_details`, `participants`, `message_menus`,
   `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`,
-  `bot_personas`) and both attachment bounds. The host keeps what a product declares with
+  `bot_personas`, `mute_archive`) and both attachment bounds. The host keeps what a product declares with
   `set_room_features` whole, and the room header lists each declared feature,
   marked "not served" where the host does not serve it. The host also keeps the
   meta of each message (`set_message_meta`), the call of each room
@@ -300,6 +300,15 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
 - **Bot personas.** A message or an activity line from `bot:<id>` draws with
   the name and icon of the persona `<id>` the product registered, with no
   `participants_query`; the **Bots** list of the rooms pane shows each persona.
+- **Mute and archive.** The room header has **Mute** (1 hour, 8 hours, 1 week
+  or always) or **Unmute**, and **Archive** or **Unarchive**. A muted row shows
+  a speaker mark and a grey badge; an archived room moves under an **Archived**
+  row at the top of the list and stays there when a message arrives. Each change
+  goes to the product as `UserStateChanged`. The core shows nothing for a
+  notification the product sends at once into a muted room, and the
+  **Notifications** list of the rooms pane shows every notification the host
+  delivered, so the missing one is visible; a click opens the room its deeplink
+  names.
 
 A room the host keeps stores what you send and tells the product with the
 events of `chat.actionSubscribe()` (`MessagePosted` with the host's id,
@@ -325,12 +334,13 @@ remembered across reloads.
 On `/chat/ws` the host sends a `snapshot` (rooms with their declarations,
 features, meta, call, user state and list row, bots, the messages of rooms the
 host keeps, the time-outs and the capabilities) first,
-then a `room`, `roomDeleted`, `bot` or `message` event as each lands, and
+then a `room`, `roomDeleted`, `bot`, `message` or `notification` event as each lands, and
 `workers` whenever a worker connects or disconnects. The page sends one
 operation per thing a person does: `post`, `edit`, `delete`, `react`, `seen`,
 `retry`, `trigger`, `command`, `messageAction`, `participantAction`, `toolbar`,
 `suggestion`, `open`, `close` and `userState` (which mutes or archives a room
-and sends `UserStateChanged` to `chat.roomEventsSubscribe()`), and the queries
+and sends `UserStateChanged` to `chat.roomEventsSubscribe()`; `mutedForever`
+mutes with no end), and the queries
 `messages`, `reactions`, `participants`, `messageActions` and
 `participantActions`. An event is answered
 with `delivered` and the number of workers that took it, where 0 means none is

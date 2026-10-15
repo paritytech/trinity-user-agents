@@ -221,6 +221,14 @@ aside[hidden], section[hidden] { display: none; }
 .roomhead .titles { flex: 1; min-width: 0; }
 .roomhead .titles p { margin: 2px 0 0; font: 12px var(--ui); color: var(--muted); white-space: pre-wrap; }
 .caps { padding: 10px 14px; border-top: 1px solid var(--line); }
+.notes { padding: 10px 14px; border-top: 1px solid var(--line); }
+.notes .note-row { display: block; width: 100%; text-align: left; margin: 0 0 6px; padding: 6px 8px; font: 12px var(--ui); }
+.notes .note-row small { display: block; font: 10px var(--mono); color: var(--faint); }
+.room .muted { font: 11px var(--mono); color: var(--faint); }
+.badge.muted { background: var(--faint); color: var(--bg); }
+.archived-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 18px; border: 0; border-radius: 0; background: none; text-align: left; font: 12px var(--mono); color: var(--muted); }
+.room.archived { padding-left: 30px; }
+.userstate { display: flex; gap: 6px; }
 .caps p { margin: 0; font: 11px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .roomhead .features { display: block; font: 11px var(--mono); color: var(--muted); }
 .roomhead .people { font: 11px var(--mono); color: var(--muted); background: none; border: 0; padding: 0; text-decoration: underline dotted; }
@@ -303,6 +311,7 @@ aside[hidden], section[hidden] { display: none; }
     <div id="rooms"></div>
     <div class="bots" id="botsBox" hidden><h2>Bots</h2><div id="bots"></div></div>
     <div class="caps"><h2>Capabilities</h2><p id="capabilities">unknown</p></div>
+    <div class="notes" id="notesBox" hidden><h2>Notifications</h2><div id="notifications"></div></div>
   </nav>
   <div class="gutter" id="gutter-rooms" title="Drag to resize"></div>
   <section id="chat-pane">
@@ -379,6 +388,10 @@ const state = {
   drawn: new Set(),
   replyTo: null,
   editing: null,
+  // Whether the archived rooms show under their row.
+  showArchived: false,
+  // The notifications the host delivered, newest first.
+  notifications: [],
 };
 const $ = (id) => document.getElementById(id);
 let statusTimer = null;
@@ -760,35 +773,72 @@ function badgeNode(badge) {
   return null;
 }
 
+// The user's mute and archive state of a room; a mute whose end passed is
+// no mute.
+function isMuted(room) {
+  const until = room.userState && room.userState.mutedUntil;
+  return until != null && Number(until) > Date.now();
+}
+function isArchived(room) { return !!(room.userState && room.userState.archived); }
+
+function setUserState(room, change) {
+  const current = { mutedUntil: isMuted(room) ? room.userState.mutedUntil : null, archived: isArchived(room) };
+  const next = Object.assign(current, change);
+  const forever = next.mutedUntil === "forever" || (next.mutedUntil != null && Number(next.mutedUntil) >= Number.MAX_SAFE_INTEGER);
+  send({ op: "userState", roomId: room.roomId, mutedUntil: forever || next.mutedUntil == null ? null : Number(next.mutedUntil), mutedForever: forever, archived: next.archived });
+}
+
+// An "Archived" row at the top opens the rooms the user archived; a room
+// stays archived when a message arrives.
 function renderRooms() {
   const list = $("rooms");
   list.textContent = "";
-  for (const room of sortedRooms()) {
-    const button = el("button", room.roomId === state.selected ? "room active" : "room");
-    button.type = "button";
-    button.dataset.roomId = room.roomId;
-    if (room.list && room.list.pinned) button.dataset.pinned = "true";
-    button.appendChild(roomAvatar(room));
-    const text = el("span", "rowtext");
-    const name = el("span", "rowname");
-    name.appendChild(el("b", null, room.name));
-    if (room.list && room.list.pinned) name.appendChild(el("span", "pin", "PIN"));
-    text.appendChild(name);
-    const line = room.list && room.list.text;
-    if (line) {
-      const node = el("span", line.ongoing ? "line ongoing dots" : "line", line.text);
-      node.dataset.preview = line.text;
-      if (line.ongoing) node.dataset.ongoing = "true";
-      text.appendChild(node);
-    } else {
-      text.appendChild(el("span", "line", room.description || room.roomId));
-    }
-    button.appendChild(text);
-    const badge = badgeNode(room.list && room.list.badge);
-    if (badge) button.appendChild(badge);
-    button.onclick = () => selectRoom(room.roomId);
-    list.appendChild(button);
+  const rooms = sortedRooms();
+  const archived = rooms.filter(isArchived);
+  if (archived.length) {
+    const row = el("button", "archived-row", `${state.showArchived ? "▾" : "▸"} Archived (${archived.length})`);
+    row.type = "button";
+    row.id = "archived";
+    row.onclick = () => { state.showArchived = !state.showArchived; renderRooms(); };
+    list.appendChild(row);
+    if (state.showArchived) for (const room of archived) list.appendChild(roomRow(room));
   }
+  for (const room of rooms.filter((room) => !isArchived(room))) list.appendChild(roomRow(room));
+  renderBots();
+}
+
+function roomRow(room) {
+  const button = el("button", room.roomId === state.selected ? "room active" : "room");
+  button.type = "button";
+  button.dataset.roomId = room.roomId;
+  if (isArchived(room)) { button.dataset.archived = "true"; button.classList.add("archived"); }
+  if (isMuted(room)) button.dataset.muted = "true";
+  if (room.list && room.list.pinned) button.dataset.pinned = "true";
+  button.appendChild(roomAvatar(room));
+  const text = el("span", "rowtext");
+  const name = el("span", "rowname");
+  name.appendChild(el("b", null, room.name));
+  if (room.list && room.list.pinned) name.appendChild(el("span", "pin", "PIN"));
+  if (isMuted(room)) name.appendChild(el("span", "muted", "\u{1F507}"));
+  text.appendChild(name);
+  const line = room.list && room.list.text;
+  if (line) {
+    const node = el("span", line.ongoing ? "line ongoing dots" : "line", line.text);
+    node.dataset.preview = line.text;
+    if (line.ongoing) node.dataset.ongoing = "true";
+    text.appendChild(node);
+  } else {
+    text.appendChild(el("span", "line", room.description || room.roomId));
+  }
+  button.appendChild(text);
+  const badge = badgeNode(room.list && room.list.badge);
+  if (badge && isMuted(room)) badge.classList.add("muted");
+  if (badge) button.appendChild(badge);
+  button.onclick = () => selectRoom(room.roomId);
+  return button;
+}
+
+function renderBots() {
   const bots = $("bots");
   bots.textContent = "";
   $("botsBox").hidden = !state.bots.length;
@@ -797,6 +847,30 @@ function renderRooms() {
     row.appendChild(avatar(bot.icon, bot.name, true));
     row.appendChild(el("span", null, bot.name));
     bots.appendChild(row);
+  }
+}
+
+// The room a notification's deeplink `polkadot://<product>/-/chat/<room>`
+// opens, or null.
+function roomOfLink(deeplink) {
+  const match = /^polkadot:\/\/([^/?#]+)\/-\/chat\/([^?#]+)/.exec(String(deeplink || ""));
+  if (!match || match[1].toLowerCase() !== String(state.productId).toLowerCase()) return null;
+  try { return decodeURIComponent(match[2]); } catch (_) { return null; }
+}
+
+function renderNotifications() {
+  const box = $("notifications");
+  box.textContent = "";
+  $("notesBox").hidden = !state.notifications.length;
+  for (const note of state.notifications) {
+    const row = el("button", "note-row", note.text);
+    row.type = "button";
+    row.dataset.notification = String(note.id);
+    const roomId = roomOfLink(note.deeplink);
+    if (roomId) row.dataset.room = roomId;
+    row.appendChild(el("small", null, `#${note.id} · ${clock(note.at)}${note.deeplink ? ` · ${note.deeplink}` : ""}`));
+    row.onclick = () => { if (roomId && state.rooms.has(roomId)) selectRoom(roomId); };
+    box.appendChild(row);
   }
 }
 
@@ -1021,7 +1095,30 @@ function renderHeader2() {
     titles.appendChild(line);
   }
   head.appendChild(titles);
+  head.appendChild(userStateNode(room));
   head.appendChild(toolbarNode(room));
+}
+
+// Mute and archive, kept by the host and told to the product with
+// `UserStateChanged`.
+function userStateNode(room) {
+  const box = el("div", "userstate");
+  if (!state.capabilities.features.includes("mute_archive")) return box;
+  const mute = el("button", null, isMuted(room) ? "Unmute" : "Mute");
+  mute.type = "button";
+  mute.id = "mute";
+  mute.onclick = (event) => {
+    if (isMuted(room)) { setUserState(room, { mutedUntil: null }); return; }
+    const hour = 60 * 60 * 1000;
+    showMenu(event, [["1 hour", hour], ["8 hours", 8 * hour], ["1 week", 7 * 24 * hour], ["Always", null]].map(([label, span]) =>
+      menuItem(label, () => setUserState(room, { mutedUntil: span == null ? "forever" : Date.now() + span }), { id: `mute-${label.replace(/\s+/g, "-").toLowerCase()}` })));
+  };
+  const archive = el("button", null, isArchived(room) ? "Unarchive" : "Archive");
+  archive.type = "button";
+  archive.id = "archive";
+  archive.onclick = () => setUserState(room, { archived: !isArchived(room) });
+  box.append(mute, archive);
+  return box;
 }
 
 // The optional features a room declares, each marked when this host does not
@@ -1613,6 +1710,11 @@ function handle(frame) {
       if (state.opened === frame.roomId) state.opened = null;
       ensureSelection();
       renderRooms(); renderRoom(true);
+      break;
+    case "notification":
+      state.notifications.unshift(Object.assign(strip(frame), { at: Date.now() }));
+      state.notifications.splice(20);
+      renderNotifications();
       break;
     case "bot":
       state.bots = state.bots.filter((b) => b.botId !== frame.botId).concat([strip(frame)]);

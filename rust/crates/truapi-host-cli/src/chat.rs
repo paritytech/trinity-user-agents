@@ -75,7 +75,7 @@ const SENT_A_MESSAGE: &str = "Sent a message";
 /// room links, so `inline_attachments`, `custom_bodies`, `custom_footer` and
 /// `room_links` are not here. A P10 item adds its name when the page serves
 /// it.
-pub const CLI_CHAT_FEATURES: [&str; 10] = [
+pub const CLI_CHAT_FEATURES: [&str; 11] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -86,6 +86,7 @@ pub const CLI_CHAT_FEATURES: [&str; 10] = [
 	"commands",
 	"activity",
 	"bot_personas",
+	"mute_archive",
 ];
 
 /// A room this host created, with everything the product declared about it.
@@ -424,6 +425,13 @@ impl CliChatHost {
 		let event = with_kind("room", room_json(room_id, room));
 		Self::broadcast(&mut state, event);
 		Ok(())
+	}
+
+	/// Show one notification the host delivered on every page, as a phone
+	/// shows it in its notification list.
+	pub fn notification_shown(&self, id: u32, text: &str, deeplink: Option<&str>) {
+		let event = json!({ "kind": "notification", "id": id, "text": text, "deeplink": deeplink });
+		Self::broadcast(&mut self.lock(), event);
 	}
 
 	/// The state of each room the user muted or archived, in room-id order.
@@ -2855,6 +2863,26 @@ mod tests {
 		host.set_user_state("support", None, false).expect("the room exists");
 		assert_eq!(host.user_states().len(), 1);
 		assert!(host.set_user_state("gone", None, true).is_err());
+	}
+
+	// S54: the page lists what the host delivered, so it can show that a
+	// notification into a muted room never came.
+	#[test]
+	fn a_delivered_notification_reaches_every_page() {
+		let host = CliChatHost::new(None);
+		let (_, mut page) = host.observe();
+
+		host.notification_shown(3, "Ping", Some("polkadot://chat.dot/-/chat/main"));
+
+		assert_eq!(
+			page.try_recv().expect("an event"),
+			json!({
+				"kind": "notification",
+				"id": 3,
+				"text": "Ping",
+				"deeplink": "polkadot://chat.dot/-/chat/main",
+			})
+		);
 	}
 
 	// D30: a repeat registration keeps the persona and replaces its name.

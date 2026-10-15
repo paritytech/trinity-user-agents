@@ -388,10 +388,14 @@ enum PageOp {
 		participant_id: String,
 	},
 	/// The user muted, unmuted, archived or unarchived the room.
+	/// `muted_forever` mutes the room with no end, a time a page cannot write
+	/// as a JSON number.
 	UserState {
 		room_id: String,
 		#[serde(default)]
 		muted_until: Option<u64>,
+		#[serde(default)]
+		muted_forever: bool,
 		#[serde(default)]
 		archived: bool,
 	},
@@ -904,14 +908,12 @@ impl ChatSurface {
 					)
 				}))
 			},
-			PageOp::UserState { muted_until, archived, .. } => {
-				if let Err(reason) = self.chat.set_user_state(&room_id, *muted_until, *archived) {
+			PageOp::UserState { muted_until, muted_forever, archived, .. } => {
+				let muted_until = if *muted_forever { Some(u64::MAX) } else { *muted_until };
+				if let Err(reason) = self.chat.set_user_state(&room_id, muted_until, *archived) {
 					return Applied::Now(error_reply(reason));
 				}
-				let event = ChatRoomEvent::UserStateChanged {
-					muted_until: *muted_until,
-					archived: *archived,
-				};
+				let event = ChatRoomEvent::UserStateChanged { muted_until, archived: *archived };
 				Applied::Now(self.deliver_room_event("userState", &room_id, event))
 			},
 		}
@@ -2297,12 +2299,27 @@ mod tests {
 
 		let (worker, _attachment) = attach(&surface);
 		assert_eq!(now(&surface, op)["kind"], "delivered");
+		// A page cannot write `u64::MAX` as a JSON number, so it asks for a
+		// mute with no end by name.
+		let forever =
+			json!({"op":"userState","roomId":"daily","mutedForever":true,"archived":false});
+		assert_eq!(now(&surface, forever)["kind"], "delivered");
+		assert_eq!(surface.chat().user_states()[0].muted_until, Some(u64::MAX));
 		assert_eq!(
 			*worker.room_events.lock().expect("not poisoned"),
-			[HostChatRoomEventsSubscribeItem {
-				room_id: "daily".to_string(),
-				event: ChatRoomEvent::UserStateChanged { muted_until: Some(5), archived: true },
-			}]
+			[
+				HostChatRoomEventsSubscribeItem {
+					room_id: "daily".to_string(),
+					event: ChatRoomEvent::UserStateChanged { muted_until: Some(5), archived: true },
+				},
+				HostChatRoomEventsSubscribeItem {
+					room_id: "daily".to_string(),
+					event: ChatRoomEvent::UserStateChanged {
+						muted_until: Some(u64::MAX),
+						archived: false,
+					},
+				},
+			]
 		);
 	}
 }
