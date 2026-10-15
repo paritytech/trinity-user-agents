@@ -22,25 +22,17 @@ class FundingUnitsTest {
     }
 
     @Test
-    fun `fiat minor units come from ISO 4217`() {
-        assertEquals(FundingAssetUnit("EUR", 2, isFiat = true), FundingAssetUnit.of("eur"))
-        assertEquals(FundingAssetUnit("JPY", 0, isFiat = true), FundingAssetUnit.of("JPY"))
-        assertEquals(FundingAssetUnit("KWD", 3, isFiat = true), FundingAssetUnit.of("KWD"))
-    }
-
-    @Test
-    fun `crypto decimals come from the table, and an unknown symbol reads as six`() {
-        assertEquals(
-            listOf(6, 6, 10, 18, 8, 9, 6, 6),
-            listOf("USDC", "USDT", "DOT", "ETH", "BTC", "SOL", "TRX", "XYZ").map { FundingAssetUnit.of(it).decimals },
-        )
+    fun `the stated decimals count, and a code ISO 4217 knows reads as money`() {
+        assertEquals(FundingAssetUnit("EUR", 2, isFiat = true), FundingAssetUnit.of("eur", 2))
+        assertEquals(FundingAssetUnit("ETH", 18, isFiat = false), FundingAssetUnit.of("ETH", 18))
+        assertEquals(BigDecimal("1.5"), FundingAssetUnit.of("WETH", 18).decimal("1500000000000000000"))
     }
 
     @Test
     fun `quotes are set as the provider list and deposit screens show them`() {
-        assertEquals("25.10 EUR", FundingAssetUnit.of("EUR").formatWithCode("2510"))
-        assertEquals("51.8 USDT", FundingAssetUnit.of("USDT").format("51800000", Locale.US))
-        assertEquals("€50.05", FundingAssetUnit.of("EUR").format("5005", Locale.US))
+        assertEquals("25.10 EUR", FundingAssetUnit.of("EUR", 2).formatWithCode("2510"))
+        assertEquals("51.8 USDT", FundingAssetUnit.of("USDT", 6).format("51800000", Locale.US))
+        assertEquals("€50.05", FundingAssetUnit.of("EUR", 2).format("5005", Locale.US))
     }
 
     @Test

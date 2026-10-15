@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Test
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingCountrySupport
@@ -53,34 +54,47 @@ class FundingFlowStateTest {
     }
 
     @Test
-    fun `no limit shows until a provider has refused`() {
-        assertEquals(FundingLimits(null, null), state(listOf(candidate("a", card()))).learnedLimits)
+    fun `no limit shows until the core reports one`() {
+        val flow = state(listOf(candidate("a", card())), amount = "5")
+
+        assertEquals(FundingLimits(null, null), flow.amountLimits)
+        assertNull(flow.amountIssue)
     }
 
     @Test
-    fun `the learned limits span the providers serving the rail`() {
-        val flow = state(
-            listOf(
-                candidate("a", card(), limits = listOf(limit(FundingRail.CARD, min = "10000000", max = "2000000000"))),
-                candidate("b", card(), limits = listOf(limit(FundingRail.CARD, min = "20000000", max = "5000000000"))),
-                candidate("c", crypto(), limits = listOf(limit(FundingRail.CRYPTO, min = "1000000", max = null))),
-            ),
-            amount = "5",
-        )
+    fun `the core's limits bound the amount`() {
+        val limits = FundingLimits(BigDecimal("10"), BigDecimal("5000"))
+        val below = state(listOf(candidate("a", card())), amount = "5").withAmountLimits(limits)
+        val above = state(listOf(candidate("a", card())), amount = "6000").withAmountLimits(limits)
 
-        assertEquals(FundingLimits(BigDecimal("10"), BigDecimal("5000")), flow.learnedLimits)
-        assertEquals(FundingAmountIssue.BelowMinimum(BigDecimal("10")), flow.amountIssue)
+        assertEquals(FundingAmountIssue.BelowMinimum(BigDecimal("10")), below.amountIssue)
+        assertFalse(below.canContinue)
+        assertEquals(FundingAmountIssue.AboveMaximum(BigDecimal("5000")), above.amountIssue)
     }
 
     @Test
-    fun `an amount every provider refused reads as the lowest minimum`() {
-        val flow = state(listOf(candidate("a", card()), candidate("b", card())), amount = "5").let { start ->
-            start.asking(requireNotNull(start.currentAsk()))
-                .receiving(list(refused("a", FundingQuoteRefusal.BelowMinimum("20000000")), refused("b", FundingQuoteRefusal.BelowMinimum("10000000"))))
+    fun `a list for an earlier request is dropped`() {
+        val asked = state(listOf(candidate("a", card())), amount = "50").let { start ->
+            start.asking(requireNotNull(start.currentAsk())).requested(2u)
         }
 
-        assertEquals(FundingAmountIssue.BelowMinimum(BigDecimal("10")), flow.refusalForCurrentAmount)
-        assertFalse(flow.canContinue)
+        val late = asked.receiving(list(quoted("a", send = "500"), best = "a", requestId = 1u))
+
+        assertSame(asked, late)
+        assertNull(late.selectedProviderId)
+    }
+
+    @Test
+    fun `a new ask drops the lists of the request before it`() {
+        val first = state(listOf(candidate("a", card())), amount = "50").let { start ->
+            start.asking(requireNotNull(start.currentAsk()))
+                .requested(1u)
+                .receiving(list(quoted("a", send = "500"), best = "a", requestId = 1u))
+        }
+        val second = first.withAmountText("60").let { it.asking(requireNotNull(it.currentAsk())) }
+
+        assertSame(second, second.receiving(list(quoted("a", send = "500"), best = "a", requestId = 1u)))
+        assertEquals("a", second.receiving(list(quoted("a", send = "600"), best = "a", requestId = 2u)).selectedProviderId)
     }
 
     @Test
@@ -127,7 +141,7 @@ class FundingFlowStateTest {
     }
 
     @Test
-    fun `the core's country support marks unsupported countries and asks for the payment country's minimum`() {
+    fun `the core's country support marks unsupported countries and lists each country's minimum`() {
         val flow = state(listOf(candidate("a", card())), amount = "5").withCountrySupport(
             listOf(
                 CoreFundingCountry("fr", FundingCountrySupport.Unsupported),
@@ -138,7 +152,6 @@ class FundingFlowStateTest {
 
         assertEquals(setOf("FR"), flow.unsupportedCountries)
         assertEquals(mapOf("DE" to BigDecimal("20")), flow.countryMinimums)
-        assertEquals(FundingAmountIssue.BelowMinimum(BigDecimal("20")), flow.amountIssue)
     }
 
     @Test
@@ -203,11 +216,8 @@ class FundingFlowStateTest {
             countries = null,
         )
 
-    private fun list(vararg rows: FundingQuoteRow, best: String? = null) =
-        FundingQuoteList(rows = rows.toList(), best = best, refreshAtMs = REFRESH_AT_MS)
-
-    private fun limit(rail: FundingRail, min: String?, max: String?) =
-        FundingLimit(rail = rail, asset = "EUR", network = null, min = min, max = max)
+    private fun list(vararg rows: FundingQuoteRow, best: String? = null, requestId: ULong = 1u) =
+        FundingQuoteList(requestId = requestId, rows = rows.toList(), best = best, refreshAtMs = REFRESH_AT_MS)
 
     private fun refused(providerId: String, refusal: FundingQuoteRefusal) = FundingQuoteRow(
         providerId = providerId,
@@ -225,6 +235,7 @@ class FundingFlowStateTest {
                 networkFee = "5",
                 etaSecs = 300uL,
                 expiresAt = 60_000uL,
+                assetDecimals = 2u,
             ),
         ),
     )

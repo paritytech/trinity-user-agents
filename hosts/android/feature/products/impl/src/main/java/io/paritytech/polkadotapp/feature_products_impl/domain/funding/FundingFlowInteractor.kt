@@ -43,7 +43,20 @@ class FundingFlowInteractor @Inject constructor(
 
     suspend fun progress(intent: String): FundingProgress? = runtime.progress(intent)
 
-    suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<Unit> = runtime.requestQuote(intent, ask)
+    suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong> = runtime.requestQuote(intent, ask)
+
+    /** What the providers take for the choice on screen, in the balance's decimals; unknown bounds stay `null`. */
+    suspend fun amountLimits(
+        intent: String,
+        cash: FundingCash,
+        rail: FundingRail,
+        asset: String,
+        network: String?,
+        country: String?,
+    ): FundingLimits {
+        val limits = runtime.amountLimits(intent, rail, asset, network, country)
+        return FundingLimits(minimum = limits?.min?.let(cash::decimal), maximum = limits?.max?.let(cash::decimal))
+    }
 
     suspend fun stopQuotes(intent: String) = runtime.stopQuotes(intent)
 

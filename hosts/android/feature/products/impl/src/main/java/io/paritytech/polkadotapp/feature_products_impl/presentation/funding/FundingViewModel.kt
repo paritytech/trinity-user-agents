@@ -42,7 +42,6 @@ import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
 import java.math.BigDecimal
 import javax.inject.Inject
-import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -67,8 +66,6 @@ class FundingViewModel @Inject constructor(
 ) : BaseViewModel() {
     private companion object {
         val REQUOTE_DELAY = 600.milliseconds
-        val TICK = 1.seconds
-        val QUOTED_SCREENS = setOf(FundingScreen.SUMMARY, FundingScreen.PROVIDERS)
         val DEPOSIT_POLL = 3.seconds
     }
 
@@ -82,7 +79,6 @@ class FundingViewModel @Inject constructor(
 
     private val brands = MutableStateFlow<Map<String, FundingProviderBrand>>(emptyMap())
     private val countryQuery = MutableStateFlow("")
-    private val now = MutableStateFlow(Clock.System.now())
     private val countries by lazy { interactor.countries() }
     private val detectedCountry = MutableStateFlow<FundingCountry?>(null)
 
@@ -91,15 +87,15 @@ class FundingViewModel @Inject constructor(
         path,
         combine(start, progress) { start, progress -> start to progress },
         brands,
-        combine(countryQuery, now, detectedCountry) { query, now, detected -> Triple(query, now, detected) },
-    ) { flow, path, (start, progress), brands, (query, now, detected) ->
+        combine(countryQuery, detectedCountry) { query, detected -> query to detected },
+    ) { flow, path, (start, progress), brands, (query, detected) ->
         FundingSheetUiState(
             screen = path.lastOrNull() ?: FundingScreen.AMOUNT,
             amount = flow.toAmountUiState(),
             summary = flow.toSummaryUiState(brands, start),
             fees = flow.toFeesUiState(),
             country = flow.toCountryUiState(countries, detected, query),
-            providers = flow.toProvidersUiState(brands, now),
+            providers = flow.toProvidersUiState(brands),
             networks = flow.toNetworkRows(),
             tokens = flow.toTokensUiState(),
             deposit = flow.toDepositUiState(progress, start),
@@ -113,9 +109,9 @@ class FundingViewModel @Inject constructor(
             val initial = initialState()
             flow.value = initial
             loadBrands(initial)
+            refreshAmountLimits()
             if (context.mode == FundingOverlayMode.Resumed) resume()
         }
-        launch { path.map { it.lastOrNull() in QUOTED_SCREENS }.distinctUntilChanged().collectLatest { if (it) tickWhileQuoted() } }
         launch { path.map { it.lastOrNull() == FundingScreen.DEPOSIT }.distinctUntilChanged().collectLatest { if (it) followDeposit() } }
     }
 
@@ -124,11 +120,17 @@ class FundingViewModel @Inject constructor(
         push(FundingScreen.TOKEN)
     }
 
+    fun onOpenNetworks() {
+        push(FundingScreen.NETWORK)
+        launchUnit { refreshNetworkMinimums() }
+    }
+
     /** Value in goes straight to the deposit screen, which starts with the best quote once every provider answered. */
     fun onTokenChosen(symbol: String) {
         val current = flow.value ?: return
         flow.value = current.withAsset(symbol)
         requestQuote()
+        launchUnit { refreshAmountLimits() }
 
         if (current.direction == CoreFundingDirection.IN) {
             startsWhenQuoted = true
@@ -161,6 +163,7 @@ class FundingViewModel @Inject constructor(
     fun onRailSelected(rail: FundingRail) {
         flow.update { it?.withRail(rail) }
         scheduleQuote()
+        launchUnit { refreshAmountLimits() }
     }
 
     fun onKey(key: FundingKey) {
@@ -177,7 +180,7 @@ class FundingViewModel @Inject constructor(
         val current = flow.value?.takeIf { it.canContinue } ?: return
 
         when (current.rail) {
-            FundingRail.CRYPTO -> push(FundingScreen.NETWORK)
+            FundingRail.CRYPTO -> onOpenNetworks()
             FundingRail.CARD, FundingRail.BANK -> {
                 if (current.ask != current.currentAsk()) requestQuote()
                 push(FundingScreen.SUMMARY)
@@ -206,6 +209,7 @@ class FundingViewModel @Inject constructor(
         flow.update { it?.withCountry(chosen) }
         pop()
         requestQuote()
+        launchUnit { refreshAmountLimits() }
     }
 
     fun onProviderChosen(providerId: String) {
@@ -282,9 +286,17 @@ class FundingViewModel @Inject constructor(
     }
 
     private fun onQuoteList(list: FundingQuoteList) {
-        val updated = flow.value?.receiving(list) ?: return
+        val current = flow.value ?: return
+        val updated = current.receiving(list)
+        if (updated === current) return
         flow.value = updated
-        if (updated.allAnswered) launchUnit { refreshCountrySupport() }
+        // What the answers showed about each provider is learned by the core, so the limits may have moved.
+        if (updated.allAnswered) {
+            launchUnit {
+                refreshCountrySupport()
+                refreshAmountLimits()
+            }
+        }
 
         if (startsWhenQuoted && updated.allAnswered) {
             startsWhenQuoted = false
@@ -348,12 +360,30 @@ class FundingViewModel @Inject constructor(
         }
     }
 
-    /** Drives the countdown to the core's next refresh. */
-    private suspend fun tickWhileQuoted() {
-        while (true) {
-            now.value = Clock.System.now()
-            delay(TICK)
+    /** What the providers take for the rail, asset, network and country on screen, as the core works it out. */
+    private suspend fun refreshAmountLimits() {
+        val current = flow.value ?: return
+        val asset = current.asset ?: current.fiatAsset
+        val limits = interactor.amountLimits(intent, current.cash, current.rail, asset, current.network, current.country?.code)
+        flow.update { it?.withAmountLimits(limits) }
+    }
+
+    /** The least each crypto network takes: the lowest minimum across its tokens. */
+    private suspend fun refreshNetworkMinimums() {
+        val current = flow.value ?: return
+        val minimums = current.networks.associate { network ->
+            val assets = current.cryptoRoutes
+                .filter { route -> route.networks?.contains(network.id) ?: true }
+                .flatMap { it.assets }
+                .distinct()
+            val minimum = assets
+                .mapNotNull { asset ->
+                    interactor.amountLimits(intent, current.cash, FundingRail.CRYPTO, asset, network.id, current.country?.code).minimum
+                }
+                .minOrNull()
+            network.id to minimum
         }
+        flow.update { state -> state?.withNetworkMinimums(minimums.mapNotNull { (id, min) -> min?.let { id to it } }.toMap()) }
     }
 
     /** What the core now knows about each country for the rail and asset on screen. */
@@ -381,7 +411,9 @@ class FundingViewModel @Inject constructor(
         flow.update { it?.asking(ask) }
 
         launchUnit {
-            interactor.requestQuote(intent, ask).logFailure("Funding quote request failed")
+            interactor.requestQuote(intent, ask)
+                .logFailure("Funding quote request failed")
+                .onSuccess { id -> flow.update { it?.requested(id) } }
         }
     }
 }

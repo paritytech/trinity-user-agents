@@ -26,7 +26,6 @@ import java.math.BigInteger
 import java.math.RoundingMode
 import kotlin.math.ceil
 import kotlin.math.max
-import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val PRESETS = listOf(BigDecimal("10"), BigDecimal("50"), BigDecimal("100"))
@@ -52,7 +51,7 @@ private fun FundingFlowState.amountNote(): FundingAmountNote? = when (val issue 
     is FundingAmountIssue.BelowMinimum -> FundingAmountNote.BelowMinimum(cash.label(issue.minimum))
     is FundingAmountIssue.AboveMaximum -> FundingAmountNote.AboveMaximum(cash.label(issue.maximum))
     FundingAmountIssue.NotEnoughBalance -> FundingAmountNote.NotEnough(cash.symbol)
-    null -> learnedLimits.minimum?.let {
+    null -> amountLimits.minimum?.let {
         FundingAmountNote.Minimum(cash.label(it), withdraw = direction == FundingDirection.OUT)
     }
 }
@@ -72,7 +71,7 @@ fun FundingFlowState.toSummaryUiState(
     return FundingSummaryUiState(
         isWithdraw = !inbound,
         rail = rail,
-        headline = quote?.let { quoteUnit.format(if (inbound) it.sendAmount else it.receiveAmount) },
+        headline = quote?.let { unitOf(it).format(if (inbound) it.sendAmount else it.receiveAmount) },
         isQuoting = isQuoting,
         showCountry = rail != FundingRail.CRYPTO,
         country = country?.toUi(refused = false, minimum = null, selected = true),
@@ -132,6 +131,7 @@ fun etaOf(seconds: ULong): FundingEta {
 fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
     val quote = selectedQuote ?: return null
     val inbound = direction == FundingDirection.IN
+    val quoteUnit = unitOf(quote)
     val feeText = { units: String -> if (inbound) quoteUnit.format(units) else cash.label(cash.decimal(units)) }
     val total = (quote.providerFee.toBigIntegerOrNull() ?: BigInteger.ZERO) + (quote.networkFee.toBigIntegerOrNull() ?: BigInteger.ZERO)
 
@@ -152,6 +152,7 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
 /** What one unit of the balance is worth in the provider-side asset. */
 private fun FundingFlowState.rateOf(quote: FundingQuote): FundingRate? {
     val inbound = direction == FundingDirection.IN
+    val quoteUnit = unitOf(quote)
     val providerSide = quoteUnit.decimal(if (inbound) quote.sendAmount else quote.receiveAmount)
     val cashSide = cash.decimal(if (inbound) quote.receiveAmount else quote.sendAmount)
     if (cashSide.signum() <= 0) return null
@@ -204,7 +205,6 @@ private fun FundingCountry.toUi(refused: Boolean, minimum: String?, selected: Bo
 /** Counts down to the core's next refresh of the prices on screen; while it runs, the countdown holds at zero. */
 fun FundingFlowState.toProvidersUiState(
     brands: Map<String, FundingProviderBrand>,
-    now: Instant,
 ): FundingProvidersUiState {
     val selected = selectedProviderId
     val severalQuoted = quotedProviders.size > 1
@@ -212,9 +212,9 @@ fun FundingFlowState.toProvidersUiState(
 
     return FundingProvidersUiState(
         countdown = when {
-            pending && staleQuotes.isNotEmpty() -> FundingCountdown.Remaining(0)
+            pending && staleQuotes.isNotEmpty() -> FundingCountdown.Refreshing
             pending -> FundingCountdown.Pending
-            refreshAt != null -> FundingCountdown.Remaining(max(0L, (refreshAt - now).inWholeSeconds))
+            refreshAt != null -> FundingCountdown.Until(refreshAt)
             else -> null
         },
         rows = servingCandidates.map { candidate ->
@@ -253,7 +253,7 @@ private fun FundingFlowState.providerPrice(state: FundingQuoteState, stale: Fund
         val inbound = direction == FundingDirection.IN
         val quote = state.quote
         FundingProviderPrice.Quoted(
-            price = quoteUnit.formatWithCode(if (inbound) quote.sendAmount else quote.receiveAmount),
+            price = unitOf(quote).formatWithCode(if (inbound) quote.sendAmount else quote.receiveAmount),
             forAmount = forAmount(quote),
         )
     }

@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRun
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingCountry
 import uniffi.truapi.FundingDirection
@@ -31,8 +32,16 @@ class TrUAPIFundingRuntime @Inject constructor(
 
     override suspend fun candidates(intent: String): List<FundingCandidate> = read { it.fundingCandidates(intent) }.orEmpty()
 
-    override suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<Unit> =
+    override suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong> =
         runtimeProvider.runtime().mapCatching { it.getFundingQuote(intent, ask) }
+
+    override suspend fun amountLimits(
+        intent: String,
+        rail: FundingRail,
+        asset: String,
+        network: String?,
+        country: String?,
+    ): FundingAmountLimits? = read { it.fundingAmountLimits(intent, rail, asset, network, country) }
 
     override suspend fun stopQuotes(intent: String) {
         read { it.stopFundingQuotes(intent) }

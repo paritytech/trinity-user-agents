@@ -120,7 +120,7 @@ class AppFundingOverlayTest {
         updates = emptyList(),
         started = emptyList(),
         choice = FundingChoice(
-            quote = FundingQuote("q", "5100", "50000000", "90", "10", null, null),
+            quote = FundingQuote("q", "5100", "50000000", "90", "10", null, null, 2u),
             rail = rail,
             asset = "EUR",
             network = null,

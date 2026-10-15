@@ -11,8 +11,8 @@ import java.util.Locale
 
 /**
  * What a quote's `send_amount` (In) or `receive_amount` (Out) is counted in: the asset the ask named, in its
- * smallest unit. Fiat minor units come from ISO 4217 through [Currency]; crypto symbols have no such table, so
- * the ones funding providers name are listed here.
+ * smallest unit, at the decimals the provider stated with the quote or the deposit. A code ISO 4217 knows is
+ * shown as money.
  */
 data class FundingAssetUnit(
     val code: String,
@@ -20,38 +20,13 @@ data class FundingAssetUnit(
     val isFiat: Boolean,
 ) {
     companion object {
-        private const val DEFAULT_CRYPTO_DECIMALS = 6
         private const val CRYPTO_DISPLAY_DIGITS = 6
         private const val CODE_MINIMUM_DIGITS = 2
 
-        private val CRYPTO_DECIMALS = mapOf(
-            "USDC" to 6,
-            "USDT" to 6,
-            "DOT" to 10,
-            "ETH" to 18,
-            "BTC" to 8,
-            "SOL" to 9,
-            "TRX" to 6,
-            "DAI" to 18,
-        )
-
-        fun of(code: String): FundingAssetUnit {
-            val upper = code.uppercase(Locale.ROOT)
-            val cryptoDecimals = CRYPTO_DECIMALS[upper]
-            val currency = isoCurrency(upper)
-
-            return when {
-                cryptoDecimals != null -> FundingAssetUnit(upper, cryptoDecimals, isFiat = false)
-                currency != null -> FundingAssetUnit(upper, currency.defaultFractionDigits.coerceAtLeast(0), isFiat = true)
-                else -> FundingAssetUnit(upper, DEFAULT_CRYPTO_DECIMALS, isFiat = false)
-            }
-        }
-
-        /** A unit whose decimals the provider stated, as a deposit instruction does. */
+        /** A unit at the decimals the provider stated with a quote or a deposit instruction. */
         fun of(code: String, decimals: Int): FundingAssetUnit {
             val upper = code.uppercase(Locale.ROOT)
-            val isFiat = upper !in CRYPTO_DECIMALS && isoCurrency(upper) != null
-            return FundingAssetUnit(upper, decimals, isFiat)
+            return FundingAssetUnit(upper, decimals, isFiat = isoCurrency(upper) != null)
         }
 
         private fun isoCurrency(code: String): Currency? = runCatching { Currency.getInstance(code) }.getOrNull()

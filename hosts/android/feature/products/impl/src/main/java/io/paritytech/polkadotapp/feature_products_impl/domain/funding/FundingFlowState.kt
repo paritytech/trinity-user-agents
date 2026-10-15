@@ -6,7 +6,6 @@ import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
-import uniffi.truapi.FundingQuoteRefusal
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
@@ -25,7 +24,7 @@ sealed interface FundingAmountIssue {
     data object NotEnoughBalance : FundingAmountIssue
 }
 
-/** The lowest minimum and highest maximum the providers have refused with; `null` until one has. */
+/** The amounts the providers take, as the core works them out; `null` where a bound is not known. */
 data class FundingLimits(
     val minimum: BigDecimal?,
     val maximum: BigDecimal?,
@@ -56,6 +55,15 @@ data class FundingFlowState(
     val refreshAt: Instant? = null,
     /** What the core knows about each country on this rail and asset, by ISO code. */
     val countrySupport: Map<String, FundingCountrySupport> = emptyMap(),
+    /**
+     * The earliest quote request whose lists still belong on screen; a list for an earlier one is dropped. The core
+     * numbers requests in order, so a new ask moves this past every request made so far.
+     */
+    val requestId: ULong? = null,
+    /** What the core says this rail, asset, network and country take. */
+    val amountLimits: FundingLimits = FundingLimits(minimum = null, maximum = null),
+    /** The least each crypto network takes, as the core says. */
+    val networkMinimums: Map<String, BigDecimal> = emptyMap(),
 ) {
     companion object {
         private const val DEFAULT_FIAT = "USD"
@@ -103,54 +111,20 @@ data class FundingFlowState(
     val canContinue: Boolean
         get() = amount.signum() > 0 && amountIssue == null && rail in availableRails
 
-    /** Learned by the core from refusals and kept on the candidates, so none shows before a provider refused. */
-    val learnedLimits: FundingLimits
-        get() {
-            val limits = servingCandidates
-                .flatMap { it.limits }
-                .filter { limit ->
-                    limit.rail == rail &&
-                        (asset == null || limit.asset.equals(asset, ignoreCase = true)) &&
-                        (network == null || limit.network == null || limit.network == network)
-                }
-
-            return FundingLimits(
-                minimum = limits.mapNotNull { limit -> limit.min?.let(cash::decimal) }.minOrNull(),
-                maximum = limits.mapNotNull { limit -> limit.max?.let(cash::decimal) }.maxOrNull(),
-            )
-        }
-
     val amountIssue: FundingAmountIssue?
         get() {
             if (direction == FundingDirection.OUT && spendable != null && amount > spendable) {
                 return FundingAmountIssue.NotEnoughBalance
             }
-            refusalForCurrentAmount?.let { return it }
 
-            val limits = learnedLimits
-            val minimum = countryMinimum ?: limits.minimum
+            val (minimum, maximum) = amountLimits
             return when {
                 amount.signum() > 0 && minimum != null && amount < minimum -> FundingAmountIssue.BelowMinimum(minimum)
 
-                limits.maximum != null && amount > limits.maximum -> FundingAmountIssue.AboveMaximum(limits.maximum)
+                maximum != null && amount > maximum -> FundingAmountIssue.AboveMaximum(maximum)
 
                 else -> null
             }
-        }
-
-    /** Every provider asked about this exact amount refused it on a limit. */
-    val refusalForCurrentAmount: FundingAmountIssue?
-        get() {
-            val asked = ask ?: return null
-            if (asked.amount != cash.units(amount) || rows.isEmpty()) return null
-            if (rows.values.any { it.isPending || it.quote != null }) return null
-
-            val refusals = rows.values.mapNotNull { it.refusal }
-            val minimum = refusals.filterIsInstance<FundingQuoteRefusal.BelowMinimum>().minOfOrNull { cash.decimal(it.min) }
-            if (minimum != null) return FundingAmountIssue.BelowMinimum(minimum)
-
-            val maximum = refusals.filterIsInstance<FundingQuoteRefusal.AboveMaximum>().maxOfOrNull { cash.decimal(it.max) }
-            return maximum?.let { FundingAmountIssue.AboveMaximum(it) }
         }
 
     /** The payment country's currency when a provider takes it, otherwise the first one a provider lists. */
@@ -164,9 +138,9 @@ data class FundingFlowState(
             return listed.firstOrNull() ?: currency ?: DEFAULT_FIAT
         }
 
-    /** The asset the quote's provider-side figures are counted in. */
-    val quoteUnit: FundingAssetUnit
-        get() = FundingAssetUnit.of(ask?.asset ?: fiatAsset)
+    /** What [quote]'s provider-side figures are counted in: the asked asset, at the decimals the quote states. */
+    fun unitOf(quote: FundingQuote): FundingAssetUnit =
+        FundingAssetUnit.of(ask?.asset ?: fiatAsset, quote.assetDecimals.toInt())
 
     val quotedProviders: List<Pair<String, FundingQuote>>
         get() = rows.mapNotNull { (providerId, state) -> state.quote?.let { providerId to it } }
@@ -187,9 +161,9 @@ data class FundingFlowState(
     val noProviderQuoted: Boolean
         get() = allAnswered && quotedProviders.isEmpty()
 
-    /** What every provider said when none would quote, for the summary screen. */
+    /** Why no provider would quote, for the summary screen, when the amount is outside what they take. */
     val unavailableIssue: FundingAmountIssue?
-        get() = if (noProviderQuoted) refusalForCurrentAmount else null
+        get() = if (noProviderQuoted) amountIssue else null
 
     val cryptoRoutes: List<FundingRoute>
         get() = candidates.flatMap { it.routes(FundingRail.CRYPTO, direction) }
@@ -197,12 +171,8 @@ data class FundingFlowState(
     val networks: List<FundingNetwork>
         get() = cryptoRoutes.flatMap { it.networks.orEmpty() }.distinct().map(::FundingNetwork)
 
-    /** The lowest minimum a provider has refused with on [networkId]. */
-    fun minimum(networkId: String): BigDecimal? = candidates
-        .flatMap { it.limits }
-        .filter { it.rail == FundingRail.CRYPTO && it.network == networkId }
-        .mapNotNull { limit -> limit.min?.let(cash::decimal) }
-        .minOrNull()
+    /** The least [networkId] takes, as the core says. */
+    fun minimum(networkId: String): BigDecimal? = networkMinimums[networkId]
 
     val tokens: List<FundingToken>
         get() = cryptoRoutes
@@ -220,10 +190,6 @@ data class FundingFlowState(
         get() = countrySupport.mapNotNull { (code, support) ->
             (support as? FundingCountrySupport.Supported)?.min?.let { code to cash.decimal(it) }
         }.toMap()
-
-    /** The least the payment country takes, which the amount must reach. */
-    val countryMinimum: BigDecimal?
-        get() = country?.code?.uppercase(Locale.ROOT)?.let(countryMinimums::get)
 
     fun currentAsk(): FundingQuoteAsk? {
         if (amount.signum() <= 0) return null
@@ -260,6 +226,7 @@ data class FundingFlowState(
 
     /** Every serving provider is asked again, so each row reads pending until its answer arrives. */
     fun asking(newAsk: FundingQuoteAsk): FundingFlowState = copy(
+        requestId = requestId?.plus(1u),
         ask = newAsk,
         rows = servingCandidates.associate { it.providerId to FundingQuoteState.Pending },
         staleQuotes = if (newAsk == ask) quotedProviders.toMap() else emptyMap(),
@@ -267,8 +234,17 @@ data class FundingFlowState(
         refreshAt = null,
     )
 
-    /** The core's latest list. A row back to pending at a refresh keeps its last quote greyed until it answers. */
+    /** Request [id] went out, so lists for any earlier request are no longer this screen's. */
+    fun requested(id: ULong): FundingFlowState = copy(requestId = maxOf(requestId ?: id, id))
+
+    /**
+     * The core's latest list, unless it answers an earlier request than the one on screen. A row back to pending at
+     * a refresh keeps its last quote greyed until it answers.
+     */
     fun receiving(list: FundingQuoteList): FundingFlowState {
+        val latest = requestId
+        if (latest != null && list.requestId < latest) return this
+
         val newRows = list.rows.associate { it.providerId to it.state }
         val stale = newRows
             .filterValues { it.isPending }
@@ -276,12 +252,17 @@ data class FundingFlowState(
             .toMap()
 
         return copy(
+            requestId = list.requestId,
             rows = newRows,
             staleQuotes = stale,
             best = list.best,
             refreshAt = Instant.fromEpochMilliseconds(list.refreshAtMs.toLong()),
         )
     }
+
+    fun withAmountLimits(limits: FundingLimits): FundingFlowState = copy(amountLimits = limits)
+
+    fun withNetworkMinimums(minimums: Map<String, BigDecimal>): FundingFlowState = copy(networkMinimums = minimums)
 
     fun withCountrySupport(countries: List<CoreFundingCountry>): FundingFlowState =
         copy(countrySupport = countries.associate { it.country.uppercase(Locale.ROOT) to it.support })

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import kotlinx.coroutines.flow.Flow
+import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingProgress
@@ -23,8 +24,20 @@ interface FundingRuntime {
 
     suspend fun candidates(intent: String): List<FundingCandidate>
 
-    /** The list arrives through [quoteLists], and is asked for again every minute until [stopQuotes]. */
-    suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<Unit>
+    /**
+     * The list arrives through [quoteLists], and is asked for again every minute until [stopQuotes]. Returns the
+     * request id every list for this ask carries.
+     */
+    suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong>
+
+    /** What the providers take on [rail], [asset] and [network] in [country], as the core works it out. */
+    suspend fun amountLimits(
+        intent: String,
+        rail: FundingRail,
+        asset: String,
+        network: String?,
+        country: String?,
+    ): FundingAmountLimits?
 
     suspend fun stopQuotes(intent: String)
 

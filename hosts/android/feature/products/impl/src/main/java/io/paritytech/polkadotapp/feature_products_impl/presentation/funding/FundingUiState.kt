@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingPro
 import kotlinx.collections.immutable.ImmutableList
 import uniffi.truapi.FundingRail
 import java.math.BigDecimal
+import kotlin.time.Instant
 
 /** The screens of the funding sheet, the amount screen at the root. */
 enum class FundingScreen {
@@ -165,10 +166,16 @@ data class FundingProvidersUiState(
     val rows: ImmutableList<FundingProviderRow>,
 )
 
+/** How long the prices on screen hold before the core asks every provider again. */
 sealed interface FundingCountdown {
+    /** No price has arrived yet. */
     data object Pending : FundingCountdown
 
-    data class Remaining(val seconds: Long) : FundingCountdown
+    /** The prices are being asked for again; the countdown holds at zero. */
+    data object Refreshing : FundingCountdown
+
+    /** The core asks again at [at]; the screen counts down to it. */
+    data class Until(val at: Instant) : FundingCountdown
 }
 
 data class FundingProviderRow(

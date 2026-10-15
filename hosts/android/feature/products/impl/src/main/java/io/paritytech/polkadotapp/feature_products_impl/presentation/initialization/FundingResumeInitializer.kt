@@ -14,7 +14,8 @@ import javax.inject.Inject
  *
  * The core resumes funding when it starts: it reloads the sessions, takes their providers' workers and follows their
  * top-ups and payments again. Left to a screen or product to start the core, a session could sit where it stopped
- * until the user happened to open one. Every session change keeps the answer current for the next launch.
+ * until the user happened to open one. The answer is recorded again once the core is up, from what it stored, and on
+ * every session change after that, so a launch that finds nothing left to resume stops starting the core early.
  */
 class FundingResumeInitializer @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
@@ -24,19 +25,24 @@ class FundingResumeInitializer @Inject constructor(
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> {
         scope.launch {
-            fundingBridge.changedSessions().collect {
-                runtimeProvider.runtime()
-                    .map { runtime -> preferences.putBoolean(IN_PROGRESS, runtime.fundingInProgress()) }
-                    .logFailure("Failed to record whether funding is in progress")
-            }
+            fundingBridge.changedSessions().collect { recordInProgress() }
         }
         if (preferences.getBoolean(IN_PROGRESS, false)) {
             scope.launch {
-                runtimeProvider.runtime().logFailure("Failed to start the core to resume funding")
+                runtimeProvider.runtime()
+                    .logFailure("Failed to start the core to resume funding")
+                    .onSuccess { recordInProgress() }
             }
         }
 
         return Result.success(Unit)
+    }
+
+    private suspend fun recordInProgress() {
+        runtimeProvider.runtime()
+            .mapCatching { runtime -> runtime.fundingInProgress() }
+            .onSuccess { inProgress -> preferences.putBoolean(IN_PROGRESS, inProgress) }
+            .logFailure("Failed to record whether funding is in progress")
     }
 
     private companion object {

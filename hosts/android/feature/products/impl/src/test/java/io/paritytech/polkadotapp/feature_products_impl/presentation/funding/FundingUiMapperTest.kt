@@ -30,9 +30,9 @@ class FundingUiMapperTest {
             .let { it.asking(requireNotNull(it.currentAsk())) }
             .receiving(bothQuoted())
 
-        val providers = state.toProvidersUiState(emptyMap(), now = Instant.fromEpochMilliseconds(30_000))
+        val providers = state.toProvidersUiState(emptyMap())
 
-        assertEquals(FundingCountdown.Remaining(30), providers.countdown)
+        assertEquals(FundingCountdown.Until(Instant.fromEpochMilliseconds(60_000)), providers.countdown)
         assertEquals(listOf(null, FundingProviderBadge.LowestPrice), providers.rows.map { it.badge })
         assertEquals(
             FundingProviderPrice.Quoted(price = "51.00 EUR", forAmount = "$50 CASH"),
@@ -47,9 +47,9 @@ class FundingUiMapperTest {
             .receiving(bothQuoted())
 
         val providers = quotedOnce.asking(requireNotNull(quotedOnce.currentAsk()))
-            .toProvidersUiState(emptyMap(), now = Instant.fromEpochMilliseconds(60_000))
+            .toProvidersUiState(emptyMap())
 
-        assertEquals(FundingCountdown.Remaining(0), providers.countdown)
+        assertEquals(FundingCountdown.Refreshing, providers.countdown)
         assertEquals(FundingProviderPrice.Updating(forAmount = "$50 CASH"), providers.rows[0].price)
     }
 
@@ -78,6 +78,7 @@ class FundingUiMapperTest {
     )
 
     private fun bothQuoted() = FundingQuoteList(
+        requestId = 1u,
         rows = listOf(quoted("a", send = "5200", expiresAt = 90_000uL), quoted("b", send = "5100", expiresAt = 60_000uL)),
         best = "b",
         refreshAtMs = 60_000uL,
@@ -94,6 +95,7 @@ class FundingUiMapperTest {
                 networkFee = "10",
                 etaSecs = null,
                 expiresAt = expiresAt,
+                assetDecimals = 2u,
             ),
         ),
     )

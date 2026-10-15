@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingLimits
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
@@ -62,7 +63,8 @@ class FundingViewModelTest {
         coEvery { countrySupport("intent", any(), any()) } returns emptyList()
         coEvery { stopQuotes("intent") } returns Unit
         every { sessionChanges("intent") } returns emptyFlow()
-        coEvery { requestQuote("intent", any()) } returns Result.success(Unit)
+        coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
+        coEvery { amountLimits("intent", any(), any(), any(), any(), any()) } returns FundingLimits(null, null)
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg(), null) }
         coEvery { selectProvider("intent", "ramp.dot", "q-1") } returns Result.success(true)
         coEvery { progress("intent") } returns null
@@ -192,10 +194,11 @@ class FundingViewModelTest {
         networkFee = "10",
         etaSecs = 120uL,
         expiresAt = null,
+        assetDecimals = 2u,
     )
 
     private fun list(vararg rows: FundingQuoteRow, best: String?) =
-        FundingQuoteList(rows = rows.toList(), best = best, refreshAtMs = 60_000uL)
+        FundingQuoteList(requestId = 1uL, rows = rows.toList(), best = best, refreshAtMs = 60_000uL)
 
     private fun viewModel() = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true))
 
