@@ -97,7 +97,7 @@ pub struct CliPlatform {
 	chain: WsChainProvider,
 	/// Chain roles this host serves, answered by `Features::supported_chains`.
 	chains: truapi::platform::HostChainSet,
-	product_storage: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
+	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
 	/// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
@@ -218,7 +218,7 @@ impl CliPlatform {
 
 	fn persist_product_storage(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		values: &HashMap<String, Vec<u8>>,
 	) -> Result<(), String> {
 		let Some(directory) = self
@@ -425,7 +425,7 @@ impl ProductStorage for CliPlatform {
 			.product_storage
 			.lock()
 			.expect("product storage mutex poisoned")
-			.get(scoped.product_id().as_str())
+			.get(scoped.product_id())
 			.and_then(|values| values.get(scoped.key()))
 			.cloned())
 	}
@@ -438,9 +438,9 @@ impl ProductStorage for CliPlatform {
 		let scoped = ProductStorageKey::decode(&key)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		let values = storage.entry(scoped.product_id().to_string()).or_default();
+		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.insert(scoped.key().to_string(), value);
-		self.persist_product_storage(scoped.product_id().as_str(), values)
+		self.persist_product_storage(scoped.product_id(), values)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
 	}
 
@@ -448,9 +448,9 @@ impl ProductStorage for CliPlatform {
 		let scoped = ProductStorageKey::decode(&key)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		let values = storage.entry(scoped.product_id().to_string()).or_default();
+		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.remove(scoped.key());
-		self.persist_product_storage(scoped.product_id().as_str(), values)
+		self.persist_product_storage(scoped.product_id(), values)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
 	}
 
@@ -464,7 +464,7 @@ impl ProductStorage for CliPlatform {
 			self.product_storage
 				.lock()
 				.expect("product storage mutex poisoned")
-				.get(scoped.product_id().as_str())
+				.get(scoped.product_id())
 				.and_then(|values| values.get(scoped.key()))
 				.cloned()
 		});
@@ -970,8 +970,8 @@ struct ProductStorageDocument {
 	values: HashMap<String, String>,
 }
 
-fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec<u8>>> {
-	let mut products = HashMap::<String, HashMap<String, Vec<u8>>>::new();
+fn load_product_storage(directory: &Path) -> HashMap<ProductId, HashMap<String, Vec<u8>>> {
+	let mut products = HashMap::<ProductId, HashMap<String, Vec<u8>>>::new();
 
 	let entries = match fs::read_dir(directory) {
 		Ok(entries) => Some(entries),
@@ -1010,7 +1010,7 @@ fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec
 	products
 }
 
-fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec<u8>>)> {
+fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, Vec<u8>>)> {
 	let text = match fs::read_to_string(path) {
 		Ok(text) => text,
 		Err(error) => {
@@ -1034,7 +1034,7 @@ fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec
 		},
 	};
 	let normalized = match ProductId::parse(&document.product_id) {
-		Ok(product_id) => String::from(product_id),
+		Ok(product_id) => product_id,
 		Err(error) => {
 			tracing::warn!(
 				path = %path.display(),
@@ -1065,7 +1065,7 @@ fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec
 
 fn save_product_storage(
 	directory: &Path,
-	product_id: &str,
+	product_id: &ProductId,
 	values: &HashMap<String, Vec<u8>>,
 ) -> Result<(), String> {
 	fs::create_dir_all(directory).map_err(|error| {
@@ -1080,8 +1080,9 @@ fn save_product_storage(
 	atomic_write(&product_storage_path(directory, product_id), text.as_bytes())
 }
 
-fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
+fn product_storage_path(directory: &Path, product_id: &ProductId) -> PathBuf {
 	let mut slug = product_id
+		.as_str()
 		.chars()
 		.map(|character| {
 			if character.is_ascii_alphanumeric() || matches!(character, '.' | '-') {
@@ -1096,7 +1097,7 @@ fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
 	if slug.is_empty() {
 		slug.push_str("product");
 	}
-	let digest = Sha256::digest(product_id.as_bytes());
+	let digest = Sha256::digest(product_id.as_str().as_bytes());
 	directory.join(format!("{slug}--{}.json", hex::encode(digest)))
 }
 
@@ -1775,7 +1776,7 @@ mod tests {
 		);
 		save_product_storage(
 			&network_dir.join("pairing-host/storage"),
-			"product.dot",
+			&ProductId::parse("product.dot").expect("valid product id"),
 			&HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 		)
 		.expect("write bootstrap pairing product storage");
@@ -1799,7 +1800,7 @@ mod tests {
 		assert_eq!(
 			load_product_storage(&network_dir.join("alice.dot_pairing_host/storage")),
 			HashMap::from([(
-				"product.dot".to_string(),
+				ProductId::parse("product.dot").expect("valid product id"),
 				HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 			)])
 		);
@@ -1950,8 +1951,8 @@ mod tests {
 	#[test]
 	fn product_storage_is_isolated_by_session_then_product() {
 		let temporary = tempdir().expect("create session storage root");
-		let key =
-			ProductStorageKey::new(ProductId::parse("same.dot").expect("product key"), "value");
+		let same_product = ProductId::parse("same.dot").expect("product key");
+		let key = ProductStorageKey::new(same_product.clone(), "value");
 		let first = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "first")),
@@ -1971,9 +1972,9 @@ mod tests {
 		});
 
 		let first_path =
-			product_storage_path(&temporary.path().join("storage").join("first"), "same.dot");
+			product_storage_path(&temporary.path().join("storage").join("first"), &same_product);
 		let second_path =
-			product_storage_path(&temporary.path().join("storage").join("second"), "same.dot");
+			product_storage_path(&temporary.path().join("storage").join("second"), &same_product);
 		assert!(first_path.is_file());
 		assert!(second_path.is_file());
 		assert_ne!(

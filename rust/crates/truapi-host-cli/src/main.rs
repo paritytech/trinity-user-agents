@@ -61,7 +61,9 @@ use truapi::{
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 	},
-	platform::{ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind},
+	platform::{
+		ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind, ProductId,
+	},
 	statement_allowance as alloc,
 	subscription::Spawner,
 };
@@ -3187,17 +3189,15 @@ async fn pairing_interactive_loop(
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				match product.select(product_id) {
-					Ok(true) => {
-						let product_id = product.current();
-						ui.set_product(product_id.clone());
-						ui.success(
-							format!("Product set to {product_id}"),
-							Some("Reconnect product clients to continue.".to_string()),
-						);
-					},
-					Ok(false) => ui.system(product.current()),
-					Err(error) => ui.error(error.to_string()),
+				if product.select(product_id) {
+					let product_id = product.current();
+					ui.set_product(product_id.clone());
+					ui.success(
+						format!("Product set to {product_id}"),
+						Some("Reconnect product clients to continue.".to_string()),
+					);
+				} else {
+					ui.system(product.current());
 				}
 			},
 			ShellCommand::Quit => return Ok(()),
@@ -3239,12 +3239,12 @@ async fn pairing_interactive_loop(
 
 async fn run_pairing_login(
 	runtime: &PairingHostRuntime,
-	product_id: &str,
+	product_id: &ProductId,
 	label: String,
 	ui: &mut ActiveTerminalUi,
 ) -> Result<()> {
 	let checkpoint = ui.activity_checkpoint();
-	match ui.drive_pairing_login(label, runtime.login(product_id)).await? {
+	match ui.drive_pairing_login(label, runtime.login(product_id.as_str())).await? {
 		DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::Success)) => {},
 		DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::AlreadyConnected)) => {
 			ui.success("Already logged in", None);
@@ -3272,7 +3272,7 @@ async fn run_pairing_login(
 
 async fn run_pairing_script(
 	frame_url: &str,
-	product_id: &str,
+	product_id: &ProductId,
 	script: &std::path::Path,
 	label: String,
 	ui: &mut ActiveTerminalUi,
@@ -3376,17 +3376,15 @@ async fn signing_interactive_loop(
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				match product.select(product_id) {
-					Ok(true) => {
-						let product_id = product.current();
-						ui.set_product(product_id.clone());
-						ui.success(
-							format!("Product set to {product_id}"),
-							Some("Reconnect product clients to continue.".to_string()),
-						);
-					},
-					Ok(false) => ui.system(product.current()),
-					Err(error) => ui.error(error.to_string()),
+				if product.select(product_id) {
+					let product_id = product.current();
+					ui.set_product(product_id.clone());
+					ui.success(
+						format!("Product set to {product_id}"),
+						Some("Reconnect product clients to continue.".to_string()),
+					);
+				} else {
+					ui.system(product.current());
 				}
 			},
 			ShellCommand::Session(SessionCommand::Current) => {
@@ -3542,7 +3540,7 @@ async fn signing_interactive_loop(
 async fn run_interactive_operation(
 	session: &mut SigningHostSession,
 	frame_url: &str,
-	product_id: &str,
+	product_id: &ProductId,
 	command: ShellCommand,
 	label: String,
 	ui: &mut ActiveTerminalUi,
@@ -3604,7 +3602,7 @@ async fn run_interactive_pairing_image(
 async fn execute_interactive_operation(
 	session: &mut SigningHostSession,
 	frame_url: &str,
-	product_id: &str,
+	product_id: &ProductId,
 	command: ShellCommand,
 	ui: UiHandle,
 ) -> Result<()> {
@@ -3730,7 +3728,7 @@ async fn execute_non_interactive_command(
 			println!("{}", product.current());
 		},
 		ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-			if product.select(product_id)? {
+			if product.select(product_id) {
 				terminal_ui::output_success(
 					format!("Product set to {}", product.current()),
 					Some("Reconnect product clients to continue.".to_string()),

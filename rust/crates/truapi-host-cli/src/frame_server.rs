@@ -39,7 +39,8 @@ use tracing::{debug, warn};
 use crate::bootstrap;
 use truapi::{
 	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
-	ProductRuntimeError, SigningHostRuntime, platform::ProductExecutionKind,
+	ProductRuntimeError, SigningHostRuntime,
+	platform::{ProductExecutionKind, ProductId},
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -81,23 +82,22 @@ impl ProductSelection {
 		Ok(Arc::new(Self { current, execution_kind }))
 	}
 
-	/// Return the normalized current product id.
-	pub fn current(&self) -> String {
-		self.current.borrow().product_id.to_string()
+	/// The current product id.
+	pub fn current(&self) -> ProductId {
+		self.current.borrow().product_id.clone()
 	}
 
-	/// Select a validated product, returning whether the selection changed.
-	pub fn select(&self, product_id: String) -> Result<bool> {
-		let product = ProductContext::new_with_execution(product_id, self.execution_kind)
-			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
-		Ok(self.current.send_if_modified(|current| {
+	/// Select a product, returning whether the selection changed.
+	pub fn select(&self, product_id: ProductId) -> bool {
+		let product = ProductContext::from_parts(product_id, self.execution_kind);
+		self.current.send_if_modified(|current| {
 			if current == &product {
 				false
 			} else {
 				*current = product;
 				true
 			}
-		}))
+		})
 	}
 
 	fn subscribe(&self) -> watch::Receiver<ProductContext> {
@@ -1063,15 +1063,21 @@ mod tests {
 		Ok(())
 	}
 
+	fn product_id(product_id: &str) -> ProductId {
+		ProductId::parse(product_id).expect("valid product id")
+	}
+
 	#[test]
 	fn product_selection_validates_and_normalizes_ids() -> Result<()> {
 		let product = ProductSelection::new(" Dotli.DOT ".to_string(), ProductExecutionKind::App)?;
 
-		assert_eq!(product.current(), "dotli.dot");
-		assert!(product.select("localhost:3000".to_string())?);
-		assert_eq!(product.current(), "localhost:3000");
-		assert!(!product.select("LOCALHOST:3000".to_string())?);
-		assert!(product.select("example.com".to_string()).is_err());
+		assert_eq!(product.current().as_str(), "dotli.dot");
+		assert!(product.select(product_id("localhost:3000")));
+		assert_eq!(product.current().as_str(), "localhost:3000");
+		assert!(!product.select(product_id("LOCALHOST:3000")));
+		assert!(
+			ProductSelection::new("example.com".to_string(), ProductExecutionKind::App).is_err()
+		);
 		Ok(())
 	}
 
@@ -1080,10 +1086,10 @@ mod tests {
 		let product = ProductSelection::new("first.dot".to_string(), ProductExecutionKind::App)?;
 		let mut connection = product.subscribe();
 
-		assert!(product.select("second.dot".to_string())?);
+		assert!(product.select(product_id("second.dot")));
 		connection.changed().await?;
 		assert_eq!(connection.borrow().product_id.as_str(), "second.dot");
-		assert!(!product.select("SECOND.DOT".to_string())?);
+		assert!(!product.select(product_id("SECOND.DOT")));
 		assert!(!connection.has_changed()?);
 		Ok(())
 	}

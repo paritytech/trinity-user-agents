@@ -20,6 +20,8 @@ use tokio::{
 	process::Command,
 };
 
+use truapi::platform::ProductId;
+
 use crate::{
 	script_project,
 	terminal_ui::{self, SystemEvent, UiHandle},
@@ -144,7 +146,7 @@ fn parse_editor(specification: &str) -> Result<(String, Vec<String>)> {
 /// prompts share the terminal. Returns the child's exit status.
 pub async fn run(
 	frame_url: &str,
-	product_id: &str,
+	product_id: &ProductId,
 	script: &Path,
 	host_role: ScriptHostRole,
 ) -> Result<ExitStatus> {
@@ -161,7 +163,7 @@ pub async fn run(
 /// Run a product script with stdout and stderr streamed into the terminal UI.
 pub async fn run_captured(
 	frame_url: &str,
-	product_id: &str,
+	product_id: &ProductId,
 	script: &Path,
 	ui: UiHandle,
 	host_role: ScriptHostRole,
@@ -202,7 +204,7 @@ pub async fn capture(mut command: Command, ui: UiHandle) -> Result<ExitStatus> {
 
 fn command(
 	frame_url: &str,
-	product_id: &str,
+	product_id: &ProductId,
 	script: &Path,
 	host_role: ScriptHostRole,
 ) -> Result<Command> {
@@ -224,7 +226,7 @@ fn command(
 	let mut command = bun_command(&runner, &directory)?;
 	command
 		.env("TRUAPI_FRAME_URL", frame_url)
-		.env("TRUAPI_PRODUCT_ID", product_id)
+		.env("TRUAPI_PRODUCT_ID", product_id.as_str())
 		.env("TRUAPI_SCRIPT", &script)
 		.env("TRUAPI_CLI_HOST_ROLE", host_role.as_env_value());
 	Ok(command)
@@ -248,6 +250,10 @@ fn bun_command(entrypoint: &Path, caller_directory: &Path) -> Result<Command> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	fn example_product() -> ProductId {
+		ProductId::parse("example.dot").expect("valid product id")
+	}
 
 	#[tokio::test]
 	#[ignore = "requires Bun; run with --include-ignored"]
@@ -423,8 +429,12 @@ console.log(JSON.stringify({
 		fs::write(&script, "console.log('hello');\n")?;
 
 		let runner = runner_path().canonicalize()?;
-		let command =
-			command("ws://127.0.0.1:1234", "example.dot", &script, ScriptHostRole::SigningHost)?;
+		let command = command(
+			"ws://127.0.0.1:1234",
+			&example_product(),
+			&script,
+			ScriptHostRole::SigningHost,
+		)?;
 		let command = command.as_std();
 		assert_eq!(command.get_program(), std::ffi::OsStr::new("bun"));
 		assert_eq!(
@@ -453,7 +463,7 @@ console.log(JSON.stringify({
 		if let Some(script) = std::env::var_os("TRUAPI_TEST_SCRIPT") {
 			let command = command(
 				"ws://127.0.0.1:1234",
-				"example.dot",
+				&example_product(),
 				Path::new(&script),
 				ScriptHostRole::PairingHost,
 			)?;
@@ -488,8 +498,12 @@ console.log(JSON.stringify({
 		let script = project.path().join("script.ts");
 		fs::write(&script, "console.log('hello');\n")?;
 
-		let command =
-			command("ws://127.0.0.1:1234", "example.dot", &script, ScriptHostRole::SigningHost)?;
+		let command = command(
+			"ws://127.0.0.1:1234",
+			&example_product(),
+			&script,
+			ScriptHostRole::SigningHost,
+		)?;
 
 		assert_eq!(
 			command

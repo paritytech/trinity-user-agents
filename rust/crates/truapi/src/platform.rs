@@ -273,7 +273,12 @@ impl ProductContext {
 		product_id: String,
 		execution_kind: ProductExecutionKind,
 	) -> Result<Self, RuntimeConfigValidationError> {
-		Ok(Self { product_id: ProductId::parse(&product_id)?, execution_kind })
+		Ok(Self::from_parts(ProductId::parse(&product_id)?, execution_kind))
+	}
+
+	/// Build a product context from an id that is already parsed.
+	pub fn from_parts(product_id: ProductId, execution_kind: ProductExecutionKind) -> Self {
+		Self { product_id, execution_kind }
 	}
 }
 

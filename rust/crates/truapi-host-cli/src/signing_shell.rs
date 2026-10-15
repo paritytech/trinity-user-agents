@@ -16,7 +16,7 @@ pub enum ProductCommand {
 	/// Print the currently selected product.
 	Current,
 	/// Switch to the validated, normalized product id.
-	Switch(String),
+	Switch(ProductId),
 }
 
 /// Operation selected through `/devices`.
@@ -271,7 +271,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 				return Ok(ShellCommand::Product(ProductCommand::Current));
 			}
 			let product_id = ProductId::parse(argument).map_err(|error| error.to_string())?;
-			Ok(ShellCommand::Product(ProductCommand::Switch(product_id.into())))
+			Ok(ShellCommand::Product(ProductCommand::Switch(product_id)))
 		},
 		"/session" => {
 			if argument.is_empty() {
@@ -923,7 +923,9 @@ mod tests {
 		assert_eq!(parse_command("/product"), Ok(ShellCommand::Product(ProductCommand::Current)));
 		assert_eq!(
 			parse_command("/product Dotli.DOT"),
-			Ok(ShellCommand::Product(ProductCommand::Switch("dotli.dot".to_string())))
+			Ok(ShellCommand::Product(ProductCommand::Switch(
+				ProductId::parse("dotli.dot").expect("valid product id")
+			)))
 		);
 		assert_eq!(parse_command("/copy"), Ok(ShellCommand::Copy));
 		assert_eq!(parse_command("/renew"), Ok(ShellCommand::Renew));
