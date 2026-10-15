@@ -1185,7 +1185,13 @@ const DRIVERS = {
     try {
       amStart(serial, ["-n", launcherActivity]);
       await waitForProcess(serial, packageName);
-      const list = await showChatList();
+      await showChatList();
+      // The reset notice of the app can show after the list and cover a row. `waitScreen` closes the notice first.
+      const list = await waitScreen(
+        (screen) => findTag(screen, "chats_title") && [ROOMS.host.name, ROOMS.source.name].every((name) => findText(screen, name)) && screen,
+        "the host and source rows in the chat list",
+        30_000,
+      );
       const names = [ROOMS.host.name, ROOMS.source.name].filter((name) => findText(list, name));
       expect(names.length === 2, `the list shows ${names.join(", ") || "no product room"}`);
       await delay(5_000);
