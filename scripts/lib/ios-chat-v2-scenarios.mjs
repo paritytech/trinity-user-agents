@@ -949,7 +949,16 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     drive: {
       phases: [
         {
-          steps: ["/participants 6", { wait: 1_000 }],
+          // The room asks the count when it opens and when its
+          // configuration changes. `/participants` keeps the configuration
+          // when the room declares participants already, so the room opens
+          // again.
+          steps: [
+            "/participants 6",
+            { host: "list" },
+            { host: "open" },
+            { wait: 1_000 },
+          ],
           expect: [
             { ui: "header", match: "^10 participants$" },
             { ui: "author-p1", match: "Person #1" },
