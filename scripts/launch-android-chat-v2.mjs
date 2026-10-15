@@ -302,7 +302,7 @@ const DRIVERS = {
     note("Edited: the bubble shows the new text in place");
     await command("source", `/react ${id} 👍`, { reply: true });
     const reacted = await waitScreen((screen) => reactionChip(screen, "Edited in the source room", "👍"), "a 👍 chip");
-    note(`ReactionPlaced: chip "${reacted.text}"`);
+    note(`ReactionPlaced: chip "${reacted.text || reacted.description}"`);
     await screenshot(scenarioById("S18"), "react");
     await command("source", `/unreact ${id} 👍`, { reply: true });
     await waitScreen((screen) => !reactionChip(screen, "Edited in the source room", "👍") && screen, "no 👍 chip");
