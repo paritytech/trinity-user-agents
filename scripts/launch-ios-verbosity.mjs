@@ -15,9 +15,12 @@
 //   username on chain, as after a restore through the screens;
 // - installs the wasm module as the product's worker
 //   (`Products/<host>/ChatExtension/index.wasm`), so the app runs it in the
-//   core with no web view;
-// - starts the app with the product as a chat bot, its worker held, and the
-//   command feed on.
+//   core with no web view, and beside it a Worker executable manifest
+//   (`ChatExtension/manifest.json`) that declares a foreground worker;
+// - starts the app with the product as a chat bot and the command feed on.
+//   The worker runs while the app is in the foreground, as for a user
+//   (VERBOSITY-WASM-PRODUCT I5); `TRUAPI_IOS_E2E_VERBOSITY_HOLD=1` also holds
+//   it for the whole session, as the harness did before.
 //
 // Then it writes the state of the run to `<out>/state.json` and keeps the
 // consoles of both apps in `<out>/<user>.log` until it is stopped. Drive the
@@ -32,6 +35,7 @@
 //   TRUAPI_IOS_E2E_VERBOSITY_SESSION   username base of the accounts
 //   TRUAPI_IOS_E2E_VERBOSITY_DEVICES   two simulator names or udids
 //   TRUAPI_IOS_E2E_VERBOSITY_FRESH=1   reinstall the app (drops its data)
+//   TRUAPI_IOS_E2E_VERBOSITY_HOLD=1    the harness holds the worker
 //   TRUAPI_IOS_E2E_VERBOSITY_OUT       output directory
 //   TRUAPI_IOS_E2E_VERBOSITY_PROMPTS   the answer to a permission prompt of
 //                                      the product: always (default), once,
@@ -59,6 +63,8 @@ import {
 import {
   USERS,
   SimulatorUser,
+  WORKER_MANIFEST,
+  launchEnvironment,
   provisionIdentity,
   writeState,
 } from "./lib/ios-verbosity.mjs";
@@ -100,6 +106,9 @@ const START_TIMEOUT_MS = 180_000;
  * `statementSubmitAccess`.
  */
 const promptAnswer = environment.TRUAPI_IOS_E2E_VERBOSITY_PROMPTS ?? "always";
+
+/** The harness holds the worker, beside the foreground hold of the core. */
+const holdWorker = environment.TRUAPI_IOS_E2E_VERBOSITY_HOLD === "1";
 
 if (!existsSync(app)) throw new Error(`iOS app bundle not found: ${app}`);
 if (!wasm || !existsSync(wasm)) {
@@ -230,6 +239,10 @@ function prepareUser(name, device, identity) {
   const destination = resolve(products, "ChatExtension/index.wasm");
   mkdirSync(dirname(destination), { recursive: true });
   writeFileSync(destination, module);
+  writeFileSync(
+    resolve(products, "ChatExtension/manifest.json"),
+    `${JSON.stringify(WORKER_MANIFEST, null, 2)}\n`,
+  );
 
   return new SimulatorUser({
     name,
@@ -287,14 +300,7 @@ function launch(user) {
     {
       env: {
         ...environment,
-        SIMCTL_CHILD_RUST_BACKTRACE: "1",
-        SIMCTL_CHILD_TRUAPI_IOS_E2E_RESTORE_WALLET: "1",
-        SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST: productHost,
-        SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_PRODUCT_NAME: productName,
-        SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_COMMANDS: "1",
-        SIMCTL_CHILD_TRUAPI_IOS_E2E_RUNTIME_MARKERS: "1",
-        SIMCTL_CHILD_TRUAPI_IOS_E2E_NO_PUSH_PROMPT: "1",
-        SIMCTL_CHILD_TRUAPI_IOS_E2E_GRANT_NOTIFICATIONS: "1",
+        ...launchEnvironment({ productHost, productName, holdWorker }),
       },
       stdio: ["ignore", "pipe", "pipe"],
     },

@@ -42,6 +42,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     let activityStore: ChatRoomActivityStoring
     let calls: ChatRoomCallStoring
     private let wakesAtStart: Bool
+    /// When the worker runs beside the room screens (I5), see `TrUAPIChatHandler+Foreground.swift`.
+    let keepAlive: ProductWorkerKeepAlive
     private let roomsOfProduct: ProductFirstRoomHold.RoomsOfProduct
     let feedListeners: ProductFeedListeners
     let logger: LoggerProtocol
@@ -73,6 +75,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         activityStore: ChatRoomActivityStoring = ChatRoomActivityStore.shared,
         calls: ChatRoomCallStoring = ChatRoomCallStore.shared,
         wakesAtStart: Bool = true,
+        keepAlive: ProductWorkerKeepAlive = .onDemand,
         roomsOfProduct: @escaping ProductFirstRoomHold.RoomsOfProduct = { try await $0.chat.subscribeRooms() },
         feedListeners: ProductFeedListeners = .shared,
         logger: LoggerProtocol = Logger.shared
@@ -84,6 +87,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         self.activityStore = activityStore
         self.calls = calls
         self.wakesAtStart = wakesAtStart
+        self.keepAlive = keepAlive
         self.roomsOfProduct = roomsOfProduct
         self.feedListeners = feedListeners
         self.logger = logger
@@ -110,6 +114,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         startRoomsForwarding()
         startFollowingWorker()
         startFirstRoomHold()
+        declareForegroundWorker()
 
         logger.debug("Rust chat runtime started for: \(productId)")
     }
@@ -326,6 +331,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         // is what releases the chat context. Only this runtime's own binding,
         // because the surface is the product's and another runtime may hold it.
         context.chat.unbind(owner: self)
+        if started { withdrawForegroundWorker() }
 
         // A release, not a close. The product's cards may still be asking for
         // the same worker, and the core stops it once the last request goes.
@@ -436,13 +442,6 @@ private extension TrUAPIChatHandler {
                 try await Task.sleep(for: Self.renderRetryInterval)
             }
         }
-    }
-
-    func requireExecution() throws -> TrUAPIProductExecutionProtocol {
-        guard let execution = workers.currentExecution(of: productId) else {
-            throw ChatSeamError.notStarted
-        }
-        return execution
     }
 
     func startFirstRoomHold() {

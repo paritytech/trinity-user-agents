@@ -7,7 +7,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { decodeMessageText, readIdentity } from "./ios-verbosity.mjs";
+import {
+  WORKER_MANIFEST,
+  decodeMessageText,
+  launchEnvironment,
+  readIdentity,
+} from "./ios-verbosity.mjs";
 
 const NETWORK = "paseo-next-v2";
 const WORDS = "one two three four five six seven eight nine ten eleven twelve";
@@ -60,6 +65,35 @@ test("an account of another network is no identity", () => {
 
   assert.equal(readIdentity(base, NETWORK), undefined);
   assert.equal(readIdentity(join(base, "missing"), NETWORK), undefined);
+});
+
+test("the installed worker declares a foreground worker", () => {
+  assert.equal(WORKER_MANIFEST.kind, "worker");
+  assert.equal(WORKER_MANIFEST.keepAlive, "foreground");
+  assert.deepEqual(WORKER_MANIFEST.includes, { chat: true, pocket: false });
+});
+
+test("the app runs the worker without the hold of the harness by default", () => {
+  const environment = launchEnvironment({
+    productHost: "verbosity.dot",
+    productName: "Verbosity",
+    holdWorker: false,
+  });
+  assert.equal(environment.SIMCTL_CHILD_TRUAPI_IOS_E2E_HOLD_WORKER, "0");
+  assert.equal(environment.SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_COMMANDS, "1");
+  assert.equal(
+    environment.SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST,
+    "verbosity.dot",
+  );
+});
+
+test("the hold of the harness stays an option", () => {
+  const environment = launchEnvironment({
+    productHost: "verbosity.dot",
+    productName: "Verbosity",
+    holdWorker: true,
+  });
+  assert.equal(environment.SIMCTL_CHILD_TRUAPI_IOS_E2E_HOLD_WORKER, "1");
 });
 
 /** The SCALE `String` of `text` (short texts only). */

@@ -24,6 +24,11 @@ public extension ChatScriptStorageProtocol {
     func wasmEntrypointRelativePath() -> String {
         "ChatExtension/index.wasm"
     }
+
+    /// The Worker executable manifest of a worker installed by hand. The host reads only its `keepAlive` field.
+    func workerManifestRelativePath() -> String {
+        "ChatExtension/manifest.json"
+    }
 }
 
 public final class FileChatScriptStorage: ChatScriptStorageProtocol {

@@ -325,6 +325,46 @@ struct TrUAPIWorkerManagerTests {
 
         #expect(builder.built == ["game.paseo", "game.paseo", "barrier.paseo"])
     }
+
+    // MARK: - Foreground workers (VERBOSITY-WASM-PRODUCT I5)
+
+    /// A fault ends the worker, and the core still holds it for the foreground. The worker starts again when the
+    /// app comes back to the foreground, not at once, so a worker that faults at each start does not loop.
+    @Test
+    func aFaultedWorkerStartsAgainWhenTheAppComesBackToTheForeground() async throws {
+        let builder = StubBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        try await settle()
+        try await builder.engine?.invokeNative(TrUAPIWorkerRuntime.faultHandlerName, args: "boom")
+        try await settle()
+        #expect(manager.currentExecution(of: "game.paseo") == nil)
+
+        manager.appForegroundChanged(false)
+        try await settle()
+        #expect(builder.built == ["game.paseo"])
+
+        manager.appForegroundChanged(true)
+        try await settle()
+        #expect(builder.built == ["game.paseo", "game.paseo"])
+        #expect(manager.currentExecution(of: "game.paseo") != nil)
+    }
+
+    /// A worker that runs and has no fault is the core's to start and stop, so a return to the foreground does not
+    /// start a second one.
+    @Test
+    func theForegroundStartsNoWorkerThatHasNoFault() async throws {
+        let builder = StubBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        try await settle()
+        manager.appForegroundChanged(true)
+        try await settle()
+
+        #expect(builder.built == ["game.paseo"])
+    }
 }
 
 // MARK: - Fixtures

@@ -83,6 +83,41 @@ export const USERS = ["a", "b"];
 export const COMMAND_TIMEOUT_MS = 30_000;
 
 /**
+ * The Worker executable manifest that the launcher installs beside the module
+ * (`ChatExtension/manifest.json`). The app reads its `keepAlive` field: a
+ * `foreground` worker runs while the app is in the foreground, with no room
+ * screen open and no hold of the harness, as for a user (VERBOSITY-WASM-PRODUCT
+ * I5).
+ */
+export const WORKER_MANIFEST = Object.freeze({
+  $v: 1,
+  kind: "worker",
+  appVersion: [0, 1, 0],
+  entrypoint: "index.wasm",
+  includes: { chat: true, pocket: false },
+  keepAlive: "foreground",
+});
+
+/**
+ * The environment of the app of one user. The command feed is on, and the
+ * harness holds the worker only when `holdWorker` is true: else the worker
+ * runs as the foreground worker that its manifest declares.
+ */
+export function launchEnvironment({ productHost, productName, holdWorker }) {
+  return {
+    SIMCTL_CHILD_RUST_BACKTRACE: "1",
+    SIMCTL_CHILD_TRUAPI_IOS_E2E_RESTORE_WALLET: "1",
+    SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST: productHost,
+    SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_PRODUCT_NAME: productName,
+    SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_COMMANDS: "1",
+    SIMCTL_CHILD_TRUAPI_IOS_E2E_HOLD_WORKER: holdWorker ? "1" : "0",
+    SIMCTL_CHILD_TRUAPI_IOS_E2E_RUNTIME_MARKERS: "1",
+    SIMCTL_CHILD_TRUAPI_IOS_E2E_NO_PUSH_PROMPT: "1",
+    SIMCTL_CHILD_TRUAPI_IOS_E2E_GRANT_NOTIFICATIONS: "1",
+  };
+}
+
+/**
  * The live account of one user: a mnemonic and a registered lite username,
  * which `truapi-host signing-host` makes on the network the app uses. The
  * CLI registers the username through the identity backend and waits for the

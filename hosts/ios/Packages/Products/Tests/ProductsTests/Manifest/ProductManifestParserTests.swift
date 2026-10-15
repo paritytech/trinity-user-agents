@@ -199,6 +199,31 @@ struct ProductManifestParserTests {
         #expect(!worker.serves(.pocket))
     }
 
+    // MARK: - Keep alive
+
+    /// A worker that declares nothing runs on demand, as every worker did before the field.
+    @Test func runsAWorkerOnDemandWhenTheManifestDeclaresNoKeepAlive() throws {
+        let worker = try #require(parsedWorker(Fixtures.worker()))
+        #expect(worker.keepAlive == .onDemand)
+    }
+
+    @Test(arguments: [
+        (#""foreground""#, ProductWorkerKeepAlive.foreground),
+        (#""onDemand""#, ProductWorkerKeepAlive.onDemand)
+    ])
+    func readsTheKeepAliveOfAWorker(_ value: String, _ expected: ProductWorkerKeepAlive) throws {
+        let worker = try #require(parsedWorker(Fixtures.worker(keepAlive: value)))
+        #expect(worker.keepAlive == expected)
+    }
+
+    /// A later value of the manifest format must not take the worker down on this host. It runs on demand.
+    @Test(arguments: [#""background""#, "true", "1"])
+    func keepsTheWorkerOnDemandWhenTheKeepAliveIsUnknown(_ value: String) throws {
+        let worker = try #require(parsedWorker(Fixtures.worker(keepAlive: value)))
+        #expect(worker.keepAlive == .onDemand)
+        #expect(worker.serves(.chat))
+    }
+
     // MARK: - Pocket cards
 
     @Test func parsesPocketCardsAWorkerPublishes() throws {
@@ -407,6 +432,13 @@ private enum Fixtures {
         return """
         {"$v":1,"kind":"widget","appVersion":[1,0,0],"description":"A tagline",
          "dimensions":{"height":\(heights)\(widthField)}}
+        """
+    }
+
+    static func worker(keepAlive: String) -> String {
+        """
+        {"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.wasm",
+         "includes":{"chat":true,"pocket":false},"keepAlive":\(keepAlive)}
         """
     }
 
