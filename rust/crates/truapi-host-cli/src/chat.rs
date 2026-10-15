@@ -74,7 +74,7 @@ const SENT_A_MESSAGE: &str = "Sent a message";
 /// `CHAT_FEATURE_NAMES`. The page has no renderer and no room links, so
 /// `custom_bodies`, `custom_footer` and `room_links` are not here. A P10 item
 /// adds its name when the page serves it.
-pub const CLI_CHAT_FEATURES: [&str; 14] = [
+pub const CLI_CHAT_FEATURES: [&str; 18] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -89,6 +89,10 @@ pub const CLI_CHAT_FEATURES: [&str; 14] = [
 	"search",
 	"bot_personas",
 	"mute_archive",
+	"threads",
+	"branches",
+	"reasoning_rows",
+	"read_aloud",
 ];
 
 /// A room this host created, with everything the product declared about it.
@@ -188,9 +192,18 @@ impl RoomRecord {
 
 	/// The message the chat list shows: the newest to arrive in a room the
 	/// host keeps, the newest by time in the page cache of a room the
-	/// product keeps.
+	/// product keeps. A reasoning row is never the list preview.
 	fn last_message(&self) -> Option<&ChatMessage> {
-		let mut live = self.messages.iter().filter(|stored| !stored.deleted);
+		let reasoning = |stored: &&StoredMessage| {
+			self.meta
+				.get(&stored.message.message_id)
+				.is_some_and(|meta| meta.reasoning.is_some())
+		};
+		let mut live = self
+			.messages
+			.iter()
+			.filter(|stored| !stored.deleted)
+			.filter(|stored| !reasoning(stored));
 		if self.host_store() {
 			live.next_back().map(|stored| &stored.message)
 		} else {
@@ -1506,13 +1519,27 @@ impl ChatPlatform for CliChatHost {
 		request: HostChatDeleteRoomRequest,
 	) -> Result<(), GenericError> {
 		let mut state = self.lock();
-		// Idempotent: a room that is gone is deleted.
+		// Idempotent: a room that is gone is deleted. Its thread rooms, which
+		// no list shows, go with it.
 		if state.rooms.remove(&request.room_id).is_some() {
+			let threads: Vec<String> = state
+				.rooms
+				.iter()
+				.filter(|(_, room)| {
+					room.features
+						.thread_of
+						.as_ref()
+						.is_some_and(|parent| parent.room_id == request.room_id)
+				})
+				.map(|(room_id, _)| room_id.clone())
+				.collect();
+			for thread in &threads {
+				state.rooms.remove(thread);
+			}
 			Self::republish(&mut state);
-			Self::broadcast(
-				&mut state,
-				json!({ "kind": "roomDeleted", "roomId": request.room_id }),
-			);
+			for room_id in std::iter::once(&request.room_id).chain(&threads) {
+				Self::broadcast(&mut state, json!({ "kind": "roomDeleted", "roomId": room_id }));
+			}
 		}
 		drop(state);
 		self.record_declaration("deleteRoom", &request.room_id, &request);
@@ -2930,6 +2957,60 @@ mod tests {
 				"deeplink": "polkadot://chat.dot/-/chat/main",
 			})
 		);
+	}
+
+	// S64: deleting a parent room deletes its thread rooms, which no list
+	// shows, so none stays hidden for ever.
+	#[test]
+	fn deleting_a_room_deletes_its_threads() {
+		let host = host_with_rooms(None);
+		create(&host, room("support-thread"));
+		futures::executor::block_on(host.set_chat_room_features(
+			&product(),
+			HostChatSetRoomFeaturesRequest {
+				room_id: "support-thread".to_string(),
+				features: ChatRoomFeatures {
+					thread_of: Some(truapi::latest::ChatThreadParent {
+						room_id: "support".to_string(),
+						message_id: "m1".to_string(),
+					}),
+					..ChatRoomFeatures::default()
+				},
+			},
+		))
+		.expect("the thread room exists");
+
+		futures::executor::block_on(host.delete_chat_room(
+			&product(),
+			HostChatDeleteRoomRequest { room_id: "support".to_string() },
+		))
+		.expect("deleted");
+
+		let rooms: Vec<_> =
+			host.observe().0.rooms.iter().map(|room| room["roomId"].clone()).collect();
+		assert_eq!(rooms, [json!("kept")]);
+	}
+
+	// S66: a reasoning row is never the list preview.
+	#[test]
+	fn a_reasoning_row_is_not_the_list_preview() {
+		let host = host_with_rooms(None);
+		feed(&host, "support", ChatFeedUpdate::New(message("m1", PRODUCT, "the answer")), true)
+			.expect("stored");
+		feed(&host, "support", ChatFeedUpdate::New(message("m2", PRODUCT, "thinking")), true)
+			.expect("stored");
+		set_meta(
+			&host,
+			"support",
+			"m2",
+			ChatMessageMeta {
+				reasoning: Some(truapi::latest::ChatReasoning { duration_ms: Some(4000) }),
+				..ChatMessageMeta::default()
+			},
+		)
+		.expect("kept");
+
+		assert_eq!(room_view(&host, "support")["list"]["text"]["text"], "the answer");
 	}
 
 	// D30: a repeat registration keeps the persona and replaces its name.

@@ -141,6 +141,14 @@ section { display: grid; grid-template-rows: auto auto 1fr auto; min-height: 0; 
 #searchresults .hit { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; padding: 5px 2px; font: 12px var(--ui); }
 #searchresults .hit small { display: block; font: 10px var(--mono); color: var(--faint); }
 #searchresults mark { background: var(--accent); color: var(--accent-ink); }
+.threadchip { display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 3px 8px; font: 11px var(--mono); border-radius: 999px; }
+.threadchip .avatar { width: 16px; height: 16px; font-size: 9px; border-radius: 5px; }
+.branch { display: flex; align-items: center; gap: 6px; margin-top: 6px; font: 11px var(--mono); color: var(--muted); }
+.branch button { padding: 1px 7px; }
+.msg.reasoning .bubble { background: transparent; border-style: dashed; font-size: 12px; color: var(--muted); cursor: pointer; }
+.msg.reasoning .reasontext { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
+#threadroot { align-self: stretch; border-left: 3px solid var(--accent); padding: 4px 10px; font-size: 12px; color: var(--muted); }
+#speaking { display: flex; gap: 8px; align-items: center; font: 12px var(--ui); color: var(--ok); }
 .roomhead { padding: 12px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
 .roomhead h1 { font: 500 19px var(--sans); margin: 0; }
 .roomhead code { font: 11px var(--mono); color: var(--faint); }
@@ -329,6 +337,7 @@ aside[hidden], section[hidden] { display: none; }
     <footer id="footer">
       <div class="composer">
         <div id="activity" hidden></div>
+        <div id="speaking" hidden><span id="spokentext"></span><button id="stop-speaking" type="button">Stop</button></div>
         <div id="banner" class="banner" hidden></div>
         <div id="catalogue" class="catalogue" hidden></div>
         <div id="suggestions" class="chips" hidden></div>
@@ -406,6 +415,14 @@ const state = {
   notifications: [],
   // The search of the open room: { roomId, text, hits, next, loading, unavailable }.
   search: null,
+  // messageId -> { index, timer } of a branch arrow waiting for the product.
+  pendingBranches: new Map(),
+  // Reasoning rows the person expanded, as "roomId\nmessageId".
+  expandedReasoning: new Set(),
+  // What "Read aloud" speaks now: { roomId, text }.
+  speaking: null,
+  // The message a thread room opened from: { roomId, messageId }.
+  threadReturn: null,
 };
 const $ = (id) => document.getElementById(id);
 let statusTimer = null;
@@ -807,7 +824,7 @@ function setUserState(room, change) {
 function renderRooms() {
   const list = $("rooms");
   list.textContent = "";
-  const rooms = sortedRooms();
+  const rooms = sortedRooms().filter((room) => !isThread(room));
   const archived = rooms.filter(isArchived);
   if (archived.length) {
     const row = el("button", "archived-row", `${state.showArchived ? "▾" : "▸"} Archived (${archived.length})`);
@@ -820,6 +837,9 @@ function renderRooms() {
   for (const room of rooms.filter((room) => !isArchived(room))) list.appendChild(roomRow(room));
   renderBots();
 }
+
+// A thread room is not in the list: its root's chip opens it.
+function isThread(room) { return !!(room && room.features && room.features.threadOf); }
 
 function roomRow(room) {
   const button = el("button", room.roomId === state.selected ? "room active" : "room");
@@ -891,6 +911,7 @@ function renderNotifications() {
 function selectRoom(roomId) {
   state.picked = true;
   if (state.selected === roomId && state.opened === roomId) return;
+  stopSpeaking();
   state.selected = roomId;
   state.replyTo = null;
   state.editing = null;
@@ -1005,8 +1026,77 @@ function statusTick(status) {
   return { Preparing: "◷", Sent: "✓", Delivered: "✓✓", Read: "✓✓", Failed: "⚠ failed" }[status] || status;
 }
 
+function metaOf(room, messageId) { return (room.meta && room.meta[messageId]) || {}; }
+
+// A reasoning row: "Thinking…" with the streamed text while `Preparing`,
+// then "Thought for N s", which a click expands.
+function reasoningRow(room, msg, reasoning) {
+  const row = el("div", "msg reasoning");
+  row.dataset.messageId = msg.messageId;
+  row.dataset.origin = msg.origin;
+  row.dataset.status = msg.status;
+  const key = `${room.roomId}\n${msg.messageId}`;
+  const thinking = msg.status === "Preparing";
+  const expanded = !thinking && state.expandedReasoning.has(key);
+  row.dataset.reasoning = thinking ? "thinking" : expanded ? "expanded" : "collapsed";
+  const bubble = el("div", "bubble");
+  const seconds = reasoning.durationMs != null ? Math.round(reasoning.durationMs / 1000) : null;
+  bubble.appendChild(el("div", thinking ? "dots" : null, thinking ? "Thinking" : seconds != null ? `Thought for ${seconds} s` : "Thought"));
+  bubble.setAttribute("role", "button");
+  bubble.setAttribute("aria-expanded", String(thinking || expanded));
+  bubble.setAttribute("aria-label", `Reasoning, ${thinking || expanded ? "expanded" : "collapsed"}`);
+  if (thinking || expanded) bubble.appendChild(el("div", "reasontext", msg.body && msg.body.text != null ? msg.body.text : msg.preview));
+  if (!thinking) bubble.onclick = () => { if (expanded) state.expandedReasoning.delete(key); else state.expandedReasoning.add(key); renderRoom(false); };
+  row.appendChild(bubble);
+  return row;
+}
+
+// The chip under a message that has a thread.
+function threadChip(room, msg, thread) {
+  const chip = el("button", "threadchip");
+  chip.type = "button";
+  chip.dataset.threadChip = thread.roomId;
+  for (const id of thread.participantIds || []) {
+    const bot = persona(id);
+    chip.appendChild(avatar(bot ? bot.icon : null, participantName(room.roomId, id), true));
+  }
+  chip.appendChild(document.createTextNode(`${thread.replyCount} ${thread.replyCount === 1 ? "reply" : "replies"}${thread.lastReplyAt != null ? ` · ${clock(thread.lastReplyAt)}` : ""}`));
+  chip.onclick = () => { state.threadReturn = { roomId: room.roomId, messageId: msg.messageId }; selectRoom(thread.roomId); };
+  return chip;
+}
+
+// "‹ i/n ›": an arrow asks the product for another alternative and waits
+// 5 s for its answer, then the control stays where it was.
+function branchControl(room, msg, branch) {
+  const box = el("div", "branch");
+  box.dataset.branch = `${branch.index}/${branch.count}`;
+  const pending = state.pendingBranches.get(msg.messageId);
+  if (pending && pending.index === branch.index) { clearTimeout(pending.timer); state.pendingBranches.delete(msg.messageId); }
+  const waiting = state.pendingBranches.get(msg.messageId);
+  const arrow = (label, index, name) => {
+    const b = el("button", null, label);
+    b.type = "button";
+    b.dataset[name] = "true";
+    b.disabled = !!waiting || index < 1 || index > branch.count;
+    b.onclick = () => {
+      send({ op: "branch", roomId: room.roomId, messageId: msg.messageId, index });
+      const timer = setTimeout(() => { state.pendingBranches.delete(msg.messageId); setStatus("no alternative came; the message stays", "warn"); renderRoom(false); }, 5000);
+      state.pendingBranches.set(msg.messageId, { index, timer });
+      renderRoom(false);
+    };
+    return b;
+  };
+  box.appendChild(arrow("‹", branch.index - 1, "branchPrev"));
+  box.appendChild(el("span", null, `${branch.index}/${branch.count}`));
+  box.appendChild(arrow("›", branch.index + 1, "branchNext"));
+  if (waiting) { const spin = el("span", "dots", "…"); spin.dataset.branchPending = String(waiting.index); box.appendChild(spin); }
+  return box;
+}
+
 function renderMessage(room, msg, temp) {
   const roomId = room.roomId;
+  const decoration = temp ? {} : metaOf(room, msg.messageId);
+  if (decoration.reasoning && !msg.deleted) return reasoningRow(room, msg, decoration.reasoning);
   const mine = msg.origin === USER;
   const row = el("div", `msg ${mine ? "person" : msg.origin === PRODUCT ? "product" : "other"}${msg.deleted ? " deleted" : ""}`);
   // Only a message drawn for the first time rises in; a redraw stays still.
@@ -1064,6 +1154,8 @@ function renderMessage(room, msg, temp) {
     meta.appendChild(tick);
   }
   bubble.appendChild(meta);
+  if (!msg.deleted && decoration.branch && state.capabilities.features.includes("branches")) bubble.appendChild(branchControl(room, msg, decoration.branch));
+  if (!msg.deleted && decoration.thread && state.capabilities.features.includes("threads")) bubble.appendChild(threadChip(room, msg, decoration.thread));
   row.appendChild(bubble);
   if (!msg.deleted) {
     const tools = el("span", "tools");
@@ -1087,9 +1179,18 @@ function renderHeader2() {
     head.appendChild(el("h1", null, "No room"));
     return;
   }
+  const parent = isThread(room) ? roomOf(room.features.threadOf.roomId) : null;
+  if (isThread(room)) {
+    const back = el("button", null, "‹");
+    back.type = "button";
+    back.id = "thread-back";
+    back.title = "Back to the message";
+    back.onclick = () => { const root = room.features.threadOf; selectRoom(root.roomId); setTimeout(() => jumpTo(root.roomId, root.messageId), 50); };
+    head.appendChild(back);
+  }
   head.appendChild(roomAvatar(room, true));
   const titles = el("div", "titles");
-  const h1 = el("h1", null, room.name);
+  const h1 = el("h1", null, isThread(room) ? `Thread · ${parent ? parent.name : room.features.threadOf.roomId}` : room.name);
   h1.id = "roomname";
   titles.appendChild(h1);
   if (room.description) { const p = el("p", null, room.description); p.id = "roomdescription"; titles.appendChild(p); }
@@ -1323,6 +1424,14 @@ function renderRoom(forceBottom) {
       line.onclick = () => loadPage(room.roomId, paging.next);
     } else if (paging.next === null && messages.length) line = el("div", "paging", "start of the conversation");
     if (line) thread.appendChild(line);
+  }
+  if (isThread(room)) {
+    const root = room.features.threadOf;
+    const quoted = messagesOf(root.roomId).find((m) => m.messageId === root.messageId);
+    const pinned = el("div", null, quoted ? quoteText(quoted) : "Earlier message");
+    pinned.id = "threadroot";
+    pinned.dataset.root = root.messageId;
+    thread.appendChild(pinned);
   }
   if (!messages.length && !temps.length) {
     const empty = emptyState(room.config.placeholder != null ? room.config.placeholder : "No messages yet");
@@ -1627,7 +1736,47 @@ function builtInItems(room, msg, temp, hidden) {
     items.push(picker);
   }
   if (room.config.reactionDetails && (msg.reactions || []).length) items.push(menuItem("Who reacted", () => whoReacted(room.roomId, msg.messageId), { id: "WhoReacted" }));
+  const spoken = readAloudText(room, msg);
+  if (spoken) items.push(menuItem("Read aloud", () => speak(room, spoken), { id: "ReadAloud" }));
   return items;
+}
+
+// "Read aloud" is offered on text, Markdown read as plain text, and a custom
+// body's preview, where the room declares it and the host serves it.
+function readAloudText(room, msg) {
+  if (!(room.features && room.features.readAloud) || !state.capabilities.features.includes("read_aloud")) return null;
+  const b = msg.body || {};
+  if (b.type === "Text") return b.text;
+  if (b.type === "RichText" && b.text) return markdown(b.text).textContent;
+  if (b.type === "Custom") return b.previewText || null;
+  return null;
+}
+
+function speak(room, text) {
+  stopSpeaking();
+  state.speaking = { roomId: room.roomId, text };
+  document.body.dataset.lastSpoken = text;
+  if (window.speechSynthesis) {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = navigator.language;
+    utterance.onend = () => { if (state.speaking && state.speaking.text === text) { state.speaking = null; renderSpeaking(); } };
+    window.speechSynthesis.speak(utterance);
+  }
+  renderSpeaking();
+}
+
+function stopSpeaking() {
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  state.speaking = null;
+  renderSpeaking();
+}
+
+// A "Stop" line in the footer while the host speaks.
+function renderSpeaking() {
+  const line = $("speaking");
+  line.hidden = !state.speaking;
+  $("spokentext").textContent = state.speaking ? `Reading aloud: ${state.speaking.text}` : "";
+  line.dataset.spoken = state.speaking ? state.speaking.text : "";
 }
 
 // The built-in entries, then the product's own when the room asks for them.
@@ -1804,7 +1953,7 @@ function strip(frame) {
 function ensureSelection() {
   const wanted = params.get("room");
   if (!state.picked && wanted && state.rooms.has(wanted)) state.selected = wanted;
-  else if (!state.rooms.has(state.selected)) state.selected = (sortedRooms()[0] || {}).roomId || null;
+  else if (!state.rooms.has(state.selected)) state.selected = (sortedRooms().filter((room) => !isThread(room))[0] || {}).roomId || null;
   openSelected();
 }
 
@@ -1896,6 +2045,7 @@ function handle(frame) {
 }
 
 $("compose").onsubmit = (event) => { event.preventDefault(); submit(); };
+$("stop-speaking").onclick = () => stopSpeaking();
 $("searchtext").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => runSearch(null), 300); };
 for (const key of ["photo", "video", "file"]) {
   const input = $(`attach-${key}`);

@@ -432,6 +432,13 @@ enum PageOp {
 		room_id: String,
 		participant_id: String,
 	},
+	/// The user picked alternative `index` of a message with a branch
+	/// position.
+	Branch {
+		room_id: String,
+		message_id: String,
+		index: u16,
+	},
 	/// The user searches a room: the host's own store, or `search_query` to
 	/// a room the product keeps that declares `search`.
 	Search {
@@ -709,6 +716,11 @@ impl ChatSurface {
 				reply_to.clone(),
 				source,
 			),
+			PageOp::Branch { message_id, index, .. } => {
+				let event =
+					ChatRoomEvent::BranchSelected { message_id: message_id.clone(), index: *index };
+				Applied::Now(self.deliver_room_event("branch", &room_id, event))
+			},
 			PageOp::Search { req_id, text, cursor, .. } => {
 				if !source {
 					let skip =
@@ -1283,6 +1295,7 @@ fn op_room(op: &PageOp) -> &str {
 		PageOp::ParticipantActions { room_id, .. } |
 		PageOp::Attach { room_id, .. } |
 		PageOp::Search { room_id, .. } |
+		PageOp::Branch { room_id, .. } |
 		PageOp::UserState { room_id, .. } => room_id,
 	}
 }
@@ -1329,6 +1342,7 @@ fn op_name(op: &PageOp) -> &'static str {
 		PageOp::ParticipantActions { .. } => "participantActions",
 		PageOp::Attach { .. } => "attach",
 		PageOp::Search { .. } => "search",
+		PageOp::Branch { .. } => "branch",
 		PageOp::UserState { .. } => "userState",
 	}
 }
@@ -2653,6 +2667,23 @@ mod tests {
 		);
 		assert!(worker.events().is_empty());
 		assert!(surface.chat().observe().0.messages.is_empty());
+	}
+
+	// S65: a branch arrow is a room event for the product.
+	#[test]
+	fn a_branch_arrow_reaches_the_product() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+
+		let op = json!({"op":"branch","roomId":"kept","messageId":"m4","index":2});
+		assert_eq!(now(&surface, op)["kind"], "delivered");
+		assert_eq!(
+			*worker.room_events.lock().expect("not poisoned"),
+			[HostChatRoomEventsSubscribeItem {
+				room_id: "kept".to_string(),
+				event: ChatRoomEvent::BranchSelected { message_id: "m4".to_string(), index: 2 },
+			}]
+		);
 	}
 
 	#[test]

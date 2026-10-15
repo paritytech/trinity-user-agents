@@ -292,7 +292,8 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   (`product_source_rooms`, `reaction_details`, `participants`, `message_menus`,
   `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`,
   `inline_attachments`, `preimage_attachments`, `search`, `bot_personas`,
-  `mute_archive`) and both attachment bounds. The host keeps what a product declares with
+  `mute_archive`, `threads`, `branches`, `reasoning_rows`, `read_aloud`) and
+  both attachment bounds. The host keeps what a product declares with
   `set_room_features` whole, and the room header lists each declared feature,
   marked "not served" where the host does not serve it. The host also keeps the
   meta of each message (`set_message_meta`), the call of each room
@@ -313,6 +314,19 @@ truapi-host dev --product-id truapi-chat-v2.dot --worker-bundle out/worker/index
   match shows its author, time and line with the match marked, and a click
   jumps to the message. A room the product keeps without `search` shows no
   search.
+- **Threads, branches, reasoning rows, read aloud.** A room whose features
+  carry `thread_of` is not in the list: the root message shows a chip with the
+  reply count, the repliers and the last reply time, which opens the thread
+  room with "Thread" and the parent's name in the header, the root quoted at
+  the top, and a back button to the root. Deleting a room deletes its thread
+  rooms. A message with a branch position shows "‹ i/n ›"; an arrow sends
+  `BranchSelected` and waits 5 s for the product's answer, then stays where it
+  was. A message with `reasoning` draws as a reasoning row: "Thinking" and the
+  streamed text while `Preparing`, then "Thought for N s", which a click
+  expands; it is never the list preview. With `read_aloud` the message menu
+  offers **Read aloud** on text, Markdown read as plain text and a custom
+  body's preview, spoken by the browser, with a **Stop** line in the footer
+  until it ends or you leave the room.
 - **Bot personas.** A message or an activity line from `bot:<id>` draws with
   the name and icon of the persona `<id>` the product registered, with no
   `participants_query`; the **Bots** list of the rooms pane shows each persona.
@@ -355,7 +369,8 @@ then a `room`, `roomDeleted`, `bot`, `message` or `notification` event as each l
 operation per thing a person does: `post`, `edit`, `delete`, `react`, `seen`,
 `retry`, `trigger`, `command`, `messageAction`, `participantAction`, `toolbar`,
 `suggestion`, `open`, `close`, `attach` (a photo, video or file in base64,
-inline or staged), `search` and `userState` (which mutes or archives a room
+inline or staged), `search`, `branch` (sends `BranchSelected`) and
+`userState` (which mutes or archives a room
 and sends `UserStateChanged` to `chat.roomEventsSubscribe()`; `mutedForever`
 mutes with no end), and the queries
 `messages`, `reactions`, `participants`, `messageActions` and
