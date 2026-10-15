@@ -125,6 +125,7 @@ final class ChatProductRoomPresenter {
         updateAccessory()
         markWindow()
         mark("allowed", policy?.messageMenu.allowedReactions?.joined() ?? "all")
+        mark("policy", "generation=\(policy?.configGeneration ?? 0)")
     }
 
     /// The id under which the product knows a message of the room.

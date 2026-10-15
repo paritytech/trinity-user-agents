@@ -1065,7 +1065,28 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     title: "configuration generation reload",
     mode: "host",
     phase: "P7",
-    skip: "needs P7",
+    drive: {
+      // The first phase opens the room screen, and then no step opens it
+      // again. Each `set_room_config` writes a new generation, and the open
+      // screen draws the new policy.
+      phases: [
+        {
+          steps: [{ host: "list" }, { host: "open" }, "/allowed 👍"],
+          expect: [
+            { console: "[e2e:ui] policy host generation=" },
+            { ui: "allowed", match: "^👍$" },
+          ],
+        },
+        {
+          steps: ["/allowed"],
+          expect: [
+            { console: "[e2e:ui] policy host generation=" },
+            { ui: "allowed", match: "^all$" },
+          ],
+        },
+      ],
+      after: ["/allowed"],
+    },
   },
 ]);
 

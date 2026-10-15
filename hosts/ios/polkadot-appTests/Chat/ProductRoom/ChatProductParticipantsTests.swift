@@ -142,6 +142,18 @@ struct ChatProductParticipantsTests {
         #expect(presenter.headerSubtitle(default: nil) == "10 participants")
     }
 
+    /// P7.3: a count that the product does not give in the lookup time (02-DESIGN §3.6) keeps the host default,
+    /// the description of the room.
+    @Test func aCountThatTimesOutKeepsTheDescription() async throws {
+        room.participantsAnswer = { _ in .failure(ChatQueryError.timedOut) }
+        let presenter = try makePresenter(participants: true)
+        try await waitUntil { !room.calls.participants.isEmpty }
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(presenter.participants.count == nil)
+        #expect(presenter.headerSubtitle(default: "A room") == "A room")
+    }
+
     @Test func aRoomWithoutParticipantsAsksNothingAndKeepsTheDescription() async throws {
         let presenter = try makePresenter(participants: false)
         var message = Data.message("m1")
