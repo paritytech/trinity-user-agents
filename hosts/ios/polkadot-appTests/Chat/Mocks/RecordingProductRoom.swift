@@ -129,6 +129,17 @@ final class RecordingProductRoomWireframe: ChatProductRoomWireframing {
     func placeParentRoom(_ parentChatId: Chat.Id, returnTo rootMessageId: String, below _: ControllerBackedProtocol?) {
         placedParents.append((parentChatId, rootMessageId))
     }
+
+    /// The media items that the room showed, as the local file and the kind.
+    private(set) var shownMedia: [(url: URL, kind: Chat.LocalMessage.Content.ProductMediaInfo.Kind)] = []
+
+    func showProductMedia(
+        _ fileURL: URL,
+        kind: Chat.LocalMessage.Content.ProductMediaInfo.Kind,
+        from _: ControllerBackedProtocol?
+    ) {
+        shownMedia.append((fileURL, kind))
+    }
 }
 
 /// A resolver that has no image.

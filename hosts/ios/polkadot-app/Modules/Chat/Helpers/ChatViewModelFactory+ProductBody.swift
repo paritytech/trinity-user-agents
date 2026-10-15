@@ -83,11 +83,25 @@ extension ChatViewModelFactory {
         context: ProductBodyRenderContext
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
         let text = richText.text?.nilIfEmpty
+        let items = richText.media.indices.map { index in
+            ChatMediaStackItem(
+                source: richText.media[index],
+                kind: Self.mediaKind(richText.info(at: index)),
+                alt: richText.alt(at: index)
+            )
+        }
         let view = ChatMediaStackView(
-            sources: richText.media,
-            alts: richText.media.indices.map(richText.alt(at:)),
-            text: text.map { ChatMarkdownText(markdown: $0, onOpenLink: context.actions?.openLink) },
-            loader: productMediaLoader
+            items: items,
+            text: text.map { text in
+                ChatMarkdownText(
+                    markdown: text,
+                    onOpenLink: context.actions?.openLink,
+                    collapse: productTextCollapse(of: context.messageId, text: text)
+                )
+            },
+            loader: productMediaLoader,
+            posterLoader: productPosterLoader,
+            opening: mediaOpening(of: context.messageId)
         )
 
         var configuration = ChatMessageContainerConfiguration(
@@ -145,8 +159,21 @@ extension ChatViewModelFactory {
         _ file: Chat.LocalMessage.Content.ProductFile,
         context: ProductBodyRenderContext
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
-        let url = URL(string: file.url)
+        let url = URL(string: file.url).flatMap { $0.scheme?.lowercased() == "https" ? $0 : nil }
         let openLink = context.actions?.openLink
+        let messageId = context.messageId
+        let openFile: () -> Void = { [weak productRoom] in
+            // An `https` file opens after the confirmation of the link. Inline and preimage bytes open from a
+            // local file (PARITY row 4).
+            if let url {
+                openLink?(url)
+                return
+            }
+            MainActor.assumeIsolated {
+                guard let productRoom, let request = productRoom.mediaRequest(of: messageId, at: 0) else { return }
+                Task { await productRoom.openMedia(request) }
+            }
+        }
 
         let viewModel = ChatMessageFileCell.ViewModel(
             name: file.fileName,
@@ -156,10 +183,7 @@ extension ChatViewModelFactory {
                 countStyle: .file
             ),
             text: file.text?.nilIfEmpty,
-            onTap: {
-                guard let url else { return }
-                openLink?(url)
-            }
+            onTap: openFile
         )
 
         var configuration = ChatMessageContainerConfiguration.file(
@@ -173,6 +197,45 @@ extension ChatViewModelFactory {
         setProductMenu(on: &configuration, text: file.text?.nilIfEmpty, context: context)
 
         return .init(context.messageId, configuration)
+    }
+}
+
+// MARK: - Product media (02-DESIGN §6.2, PARITY row 4)
+
+private extension ChatViewModelFactory {
+    static func mediaKind(_ info: Chat.LocalMessage.Content.ProductMediaInfo) -> ChatMediaStackItem.Kind {
+        switch info.kind {
+        case .image:
+            return .image
+        case .video:
+            return .video
+        case .file:
+            let size = info.sizeBytes.map {
+                ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file)
+            }
+            return .file(name: info.fileName ?? String(localized: .Common.mediaFile), detail: size ?? info.mimeType)
+        }
+    }
+
+    /// A tap on an item opens it through the product room. Nil outside a product room.
+    func mediaOpening(of messageId: String) -> ChatMediaOpening? {
+        MainActor.assumeIsolated {
+            guard let productRoom else { return nil }
+
+            let titles = ChatMediaOpening.Titles(
+                retry: String(localized: .ChatExtension.mediaRetry),
+                openImage: String(localized: .ChatExtension.mediaOpenImage),
+                playVideo: String(localized: .ChatExtension.mediaPlayVideo),
+                openFile: String(localized: .ChatExtension.mediaOpenFile),
+                failed: String(localized: .ChatExtension.mediaFailed)
+            )
+            return ChatMediaOpening(titles: titles) { [weak productRoom] index in
+                guard let productRoom, let request = productRoom.mediaRequest(of: messageId, at: index) else {
+                    return false
+                }
+                return await productRoom.openMedia(request)
+            }
+        }
     }
 }
 

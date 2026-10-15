@@ -66,8 +66,8 @@ extension ChatMessageBody {
         return message.toChatMessageContent()
     }
 
-    /// One file with no other media is a file bubble. Else the images and the videos go into one media
-    /// bubble, and the bubble cannot show a file among them, so such a file is not kept.
+    /// One file with no other media is a file bubble. Else the images, the videos and the files go into one media
+    /// bubble, which draws a file among them as a row (02-DESIGN §6.2, PARITY row 4).
     private static func richTextContent(text: String?, media: [ChatMediaItem]) -> Chat.LocalMessage.Content {
         if media.count == 1, case let .file(_, meta, fileName) = media[0] {
             let message = ProductBotMessage.file(ProductBotFile(
@@ -80,11 +80,11 @@ extension ChatMessageBody {
             return message.toChatMessageContent()
         }
 
-        let visual = media.filter(\.isVisual)
         return .productBody(.richText(.init(
             text: text,
-            media: visual.map(\.productResource.source),
-            alts: visual.map(\.alt)
+            media: media.map(\.productResource.source),
+            alts: media.map(\.alt),
+            items: media.map(\.info)
         )))
     }
 }
@@ -113,11 +113,15 @@ extension ChatMediaItem {
         }
     }
 
-    var isVisual: Bool {
+    /// The kind of the item, which the media bubble needs to open it.
+    var info: Chat.LocalMessage.Content.ProductMediaInfo {
         switch self {
-        case .image,
-             .video: true
-        case .file: false
+        case let .image(_, meta):
+            .init(kind: .image, mimeType: meta.mimeType, fileName: nil, sizeBytes: meta.sizeBytes)
+        case let .video(_, meta):
+            .init(kind: .video, mimeType: meta.mimeType, fileName: nil, sizeBytes: meta.sizeBytes)
+        case let .file(_, meta, fileName):
+            .init(kind: .file, mimeType: meta.mimeType, fileName: fileName, sizeBytes: meta.sizeBytes)
         }
     }
 }

@@ -46,6 +46,14 @@ protocol ChatProductRoomWireframing: AnyObject {
     /// button returns to the parent at the root.
     func placeParentRoom(_ parentChatId: Chat.Id, returnTo rootMessageId: String, below view: ControllerBackedProtocol?)
 
+    /// Shows a media item of a product body from a local file (02-DESIGN §6.2): an image full screen, a video in
+    /// the player, and a file in the document preview, from which the user opens or shares it.
+    func showProductMedia(
+        _ fileURL: URL,
+        kind: Chat.LocalMessage.Content.ProductMediaInfo.Kind,
+        from view: ControllerBackedProtocol?
+    )
+
     /// Tells the user that files over 1 MiB sent in the product go to public storage, and gives the answer
     /// (P10.3, D27).
     func confirmPublicStorage(
@@ -56,6 +64,18 @@ protocol ChatProductRoomWireframing: AnyObject {
 }
 
 extension ChatWireframe: ChatProductRoomWireframing {
+    func showProductMedia(
+        _ fileURL: URL,
+        kind: Chat.LocalMessage.Content.ProductMediaInfo.Kind,
+        from view: ControllerBackedProtocol?
+    ) {
+        switch kind {
+        case .image: showPhoto(url: fileURL, from: view?.controller)
+        case .video: showVideo(url: fileURL, from: view?.controller)
+        case .file: showDocument(at: fileURL)
+        }
+    }
+
     func showThread(_ threadChatId: Chat.Id, from view: ControllerBackedProtocol?) {
         guard let threadView = ChatViewFactory.createChatView(with: .existingChat(threadChatId), flowState: flowState)
         else {
