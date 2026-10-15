@@ -16,10 +16,14 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import uniffi.truapi.HostCallbacks
+import uniffi.truapi.HostDevicePermissionRequest
+import uniffi.truapi.HostRejection
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.NativeTrUApiHostRuntime
 
@@ -43,6 +47,23 @@ class TrUAPIHostRuntimeProviderTest {
         provider().runtime().getOrThrow()
 
         assertEquals("1.0.0 (1022)", runtimeConfig.captured.hostVersion)
+    }
+
+    @Test
+    fun `a permission ask with no product screen ends with an error and not with a refusal`() = runTest {
+        val callbacks = slot<HostCallbacks>()
+        every {
+            NativeTrUApiHostRuntime.withRuntimeConfig(capture(callbacks), capture(runtimeConfig))
+        } returns mockk(relaxed = true)
+        provider().runtime().getOrThrow()
+
+        val device = runCatching {
+            callbacks.captured.devicePermission(mockk(relaxed = true), HostDevicePermissionRequest.entries.first())
+        }
+        val remote = runCatching { callbacks.captured.remotePermission(mockk(relaxed = true), mockk(relaxed = true)) }
+
+        assertTrue(device.exceptionOrNull() is HostRejection)
+        assertTrue(remote.exceptionOrNull() is HostRejection)
     }
 
     private fun TestScope.provider() = TrUAPIHostRuntimeProvider(
