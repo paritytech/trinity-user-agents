@@ -958,8 +958,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     @discardableResult
     public func setTopUp(_ topUp: TopUpHostBridge) -> Bool {
         let adapter = TopUpCallbackAdapter(bridge: topUp)
+        guard inner.setTopUpCallbacks(callbacks: adapter) else { return false }
         topUpRetainer = adapter
-        return inner.setTopUpCallbacks(callbacks: adapter)
+        return true
     }
 
     /// Report a later status of `productId`'s top-up `id` to the products
@@ -973,8 +974,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     @discardableResult
     public func setPayments(_ payments: PaymentHostBridge) -> Bool {
         let adapter = PaymentCallbackAdapter(bridge: payments)
+        guard inner.setPaymentCallbacks(callbacks: adapter) else { return false }
         paymentsRetainer = adapter
-        return inner.setPaymentCallbacks(callbacks: adapter)
+        return true
     }
 
     /// Report a later status of `productId`'s payment `id` to the products
@@ -988,8 +990,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     @discardableResult
     public func setBalance(_ balance: BalanceHostBridge) -> Bool {
         let adapter = BalanceCallbackAdapter(bridge: balance)
+        guard inner.setBalanceCallbacks(callbacks: adapter) else { return false }
         balanceRetainer = adapter
-        return inner.setBalanceCallbacks(callbacks: adapter)
+        return true
     }
 
     /// Report the new balance of `purse` (`nil` for the main purse), a decimal

@@ -49,9 +49,8 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
         )
         paymentStatuses = EngineStatusFollowers(
             statuses: { [payments] key in
-                // The engine ends the stream after its first terminal status.
                 payments.paymentStatuses(productId: key.productId, id: key.id)
-                    .map { ($0.wireStatus, false) }
+                    .map { ($0.wireStatus, $0.wireStatus.isFinal) }
                     .eraseToAnyAsyncSequence()
             },
             isNotFound: { ($0 as? ExternalPaymentError) == .notFound },
@@ -225,46 +224,57 @@ private final class RuntimeTarget: @unchecked Sendable {
 
 // MARK: - Engine status followers
 
-private struct EngineStatusKey: Hashable, Sendable {
+struct EngineStatusKey: Hashable, Sendable {
     let productId: String
     let id: Data
 }
 
-/// Follows an engine's status streams, at most one per id, remembering each id's latest status so
-/// the core's synchronous "current status" read can be answered.
-private final class EngineStatusFollowers<Status>: @unchecked Sendable {
-    /// A stream of statuses, each with whether it is terminal.
-    typealias Statuses = (EngineStatusKey) async throws -> AnyAsyncSequence<(Status, Bool)>
-
+/// Limits of ``EngineStatusFollowers``, which as a generic type cannot hold them.
+enum EngineStatusFollowing {
     /// How long a status read waits for the engine's first answer on an id nobody follows yet. The
     /// read is synchronous on the core's thread; the engines answer from their stores.
-    private static var firstStatusTimeout: TimeInterval { 5 }
+    static let firstStatusTimeout: TimeInterval = 5
+    /// How many ids' final statuses are kept.
+    static let finalCapacity = 512
+}
+
+/// Follows an engine's status streams, at most one per id, remembering each id's latest status so
+/// the core's synchronous "current status" read can be answered. A final status is kept, for the
+/// most recent ``EngineStatusFollowing/finalCapacity`` ids, so reading it again answers at once.
+final class EngineStatusFollowers<Status>: @unchecked Sendable {
+    /// A stream of statuses, each with whether it is final.
+    typealias Statuses = (EngineStatusKey) async throws -> AnyAsyncSequence<(Status, Bool)>
 
     final class Entry {
         var latest: Status?
         /// Set once the first status arrived or the stream ended.
         var settled = false
-        var failure: Error?
+        var failed = false
+        var isFinal = false
     }
 
     private let statuses: Statuses
     private let isNotFound: (Error) -> Bool
     private let notify: (EngineStatusKey, Status) -> Void
     private let logger: LoggerProtocol
+    private let timeout: TimeInterval
 
     private let condition = NSCondition()
     private var entries: [EngineStatusKey: Entry] = [:]
+    private var finalKeys: [EngineStatusKey] = []
 
     init(
         statuses: @escaping Statuses,
         isNotFound: @escaping (Error) -> Bool,
         notify: @escaping (EngineStatusKey, Status) -> Void,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        timeout: TimeInterval = EngineStatusFollowing.firstStatusTimeout
     ) {
         self.statuses = statuses
         self.isNotFound = isNotFound
         self.notify = notify
         self.logger = logger
+        self.timeout = timeout
     }
 
     /// Start following `key` unless it already is.
@@ -273,31 +283,33 @@ private final class EngineStatusFollowers<Status>: @unchecked Sendable {
     }
 
     /// The latest status of `key`, following it when nobody does and waiting for the engine's first
-    /// answer if none arrived yet. `nil` when the engine holds no such id.
+    /// answer if none arrived yet. `nil` when the engine holds no such id. An engine that fails, or
+    /// does not answer in time, is reported as the status being unavailable; the reason is logged,
+    /// never handed to the product.
     func current(_ key: EngineStatusKey) throws -> Status? {
         let entry = entry(for: key)
 
         condition.lock()
         defer { condition.unlock() }
 
-        let deadline = Date(timeIntervalSinceNow: Self.firstStatusTimeout)
+        let deadline = Date(timeIntervalSinceNow: timeout)
         while !entry.settled {
             guard condition.wait(until: deadline) else {
-                logger.error("[truapi] no status within \(Self.firstStatusTimeout)s")
+                logger.error("[truapi] no status within \(timeout)s")
                 throw HostRejection.Rejected(reason: "status is unavailable")
             }
         }
 
         if let latest = entry.latest { return latest }
-        if let failure = entry.failure { throw failure }
+        if entry.failed { throw HostRejection.Rejected(reason: "status is unavailable") }
         return nil
     }
 }
 
 private extension EngineStatusFollowers {
     /// The entry following `key`, starting one when there is none. Each status is remembered, then
-    /// pushed; following ends after a terminal status or when the stream ends, and the entry is
-    /// dropped so a later read follows afresh from the engine's record.
+    /// pushed. Following ends after a final status, which is kept, or when the stream ends, and then
+    /// the entry is dropped so a later read follows afresh from the engine's record.
     func entry(for key: EngineStatusKey) -> Entry {
         condition.lock()
         if let existing = entries[key] {
@@ -310,18 +322,21 @@ private extension EngineStatusFollowers {
 
         Task { [self] in
             do {
-                for try await (status, terminal) in try await statuses(key) {
-                    settle(entry) { $0.latest = status }
+                for try await (status, isFinal) in try await statuses(key) {
+                    settle(entry) {
+                        $0.latest = status
+                        $0.isFinal = isFinal
+                    }
                     notify(key, status)
-                    if terminal { break }
+                    if isFinal { break }
                 }
-                finish(key, entry, failure: nil)
+                finish(key, entry, failed: false)
             } catch {
                 let notFound = isNotFound(error)
                 if !notFound {
                     logger.error("[truapi] status stream failed: \(error)")
                 }
-                finish(key, entry, failure: notFound ? nil : error)
+                finish(key, entry, failed: !notFound)
             }
         }
 
@@ -336,18 +351,25 @@ private extension EngineStatusFollowers {
         condition.unlock()
     }
 
-    func finish(_ key: EngineStatusKey, _ entry: Entry, failure: Error?) {
+    func finish(_ key: EngineStatusKey, _ entry: Entry, failed: Bool) {
         settle(entry) { entry in
             if entry.latest == nil {
-                entry.failure = failure
+                entry.failed = failed
             }
         }
 
         condition.lock()
-        if entries[key] === entry {
+        defer { condition.unlock() }
+        guard entries[key] === entry else { return }
+
+        if entry.isFinal {
+            finalKeys.append(key)
+            if finalKeys.count > EngineStatusFollowing.finalCapacity {
+                entries[finalKeys.removeFirst()] = nil
+            }
+        } else {
             entries[key] = nil
         }
-        condition.unlock()
     }
 }
 
@@ -405,6 +427,18 @@ private extension ExternalPaymentStatus {
         case .completed: .completed
         case let .partiallyCompleted(settled): .claimedPartially(actualClaimed: String(settled))
         case let .failed(reason): .failed(reason: reason)
+        }
+    }
+}
+
+private extension HostPaymentStatusSubscribeItem {
+    /// `Completed`, `Failed` and `ClaimedPartially` do not change again.
+    var isFinal: Bool {
+        switch self {
+        case .processing: false
+        case .completed,
+             .failed,
+             .claimedPartially: true
         }
     }
 }
