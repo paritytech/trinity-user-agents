@@ -43,6 +43,14 @@ class ExpandedProductPage(
         shownSession.value = product.session
     }
 
+    /**
+     * Shows the product held for [url], and does nothing for any other. It builds nothing, so it is
+     * safe to call while the card is still moving.
+     */
+    fun showIfHeld(url: String) {
+        if (held?.url == url) open(url)
+    }
+
     /** The product stays alive for the card being opened again, paused so it does nothing unseen. */
     fun close() {
         shownSession.value = null

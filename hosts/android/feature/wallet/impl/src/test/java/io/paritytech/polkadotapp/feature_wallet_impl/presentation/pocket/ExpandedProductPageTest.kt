@@ -83,6 +83,37 @@ class ExpandedProductPageTest {
         assertEquals(1, sessions.single().resumed)
     }
 
+    // A card opened again should ride up with its product already under it. The product exists, so
+    // showing it costs the card's move nothing, while waiting for the card to settle put a spinner in
+    // its place for the whole move.
+    @Test
+    fun `a card opened again shows its held product at the tap`() = runTest {
+        val page = page(screenScope())
+        page.open("https://game.dot?card=loyalty")
+        page.close()
+
+        page.showIfHeld("https://game.dot?card=loyalty")
+
+        assertEquals(1, opened.size)
+        assertEquals(sessions.single(), page.session.value)
+        assertEquals(1, sessions.single().resumed)
+    }
+
+    // Building a WebView while the card moves starves the animation, so a product that is not held
+    // yet waits for the card to settle. Until then the held one is left as it is.
+    @Test
+    fun `a tap on a card whose product is not held builds nothing`() = runTest {
+        val page = page(screenScope())
+        page.open("https://game.dot?card=loyalty")
+        page.close()
+
+        page.showIfHeld("https://shop.dot?card=points")
+
+        assertEquals(1, opened.size)
+        assertTrue(opened.single().second.isActive)
+        assertNull(page.session.value)
+    }
+
     // Only one product is ever held, so a second card cannot leave the first one's WebView behind.
     @Test
     fun `opening another card takes the held product down`() = runTest {

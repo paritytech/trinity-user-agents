@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -25,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -39,13 +41,16 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalNavAnimatedVisibilityScope
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.milliseconds
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
@@ -67,14 +72,15 @@ fun ProductPocketCardDetails(
 
     val fold = rememberExpandedCardFoldState()
 
-    // The product is asked for only once the card has arrived, so its WebView is not built while the
-    // card is still travelling. The fold starts after the arrival, so the shared-element transition
-    // lands on the card's real bounds; showFace returns as the fold starts, so the page is requested
-    // while it animates. Applied once: a recreated screen must not fold away a face the user has
+    // A product not held yet is asked for only once the card has arrived, so its WebView is not built
+    // while the card is still travelling. The fold starts after the arrival, so the shared-element
+    // transition lands on the card's real bounds; showFace returns as the fold starts, so the page is
+    // requested while it animates. Applied once: a recreated screen must not fold away a face the user has
     // pulled back.
     val arrival = LocalNavAnimatedVisibilityScope.current?.transition
     val arrived = arrival == null || arrival.currentState == EnterExitState.Visible
     var openingFaceApplied by rememberSaveable { mutableStateOf(false) }
+    var settled by remember { mutableStateOf(false) }
     LaunchedEffect(arrived, openingFaceShown) {
         if (!arrived || openingFaceShown == null) return@LaunchedEffect
 
@@ -82,19 +88,29 @@ fun ProductPocketCardDetails(
             if (!openingFaceShown) fold.showFace(false)
             openingFaceApplied = true
         }
+        settled = true
         onSettled()
     }
 
     // A card being left stays composed while it fades out, and the next card's requests are for that
-    // card's fold alone.
+    // card's fold alone. A held product is on screen while its card still travels, and its requests
+    // wait for the card to settle so the fold never starts mid-flight.
     val leaving = arrival?.targetState == EnterExitState.PostExit
-    LaunchedEffect(session, fold, leaving) {
-        if (leaving) return@LaunchedEffect
+    LaunchedEffect(session, fold, leaving, settled) {
+        if (leaving || !settled) return@LaunchedEffect
         session?.faceShownRequests?.collect { request ->
             val handling = launch { request.reply.complete(fold.showFace(request.shown)) }
             // A withdrawn request was answered NotPresented, so its face must not move after all.
             request.reply.invokeOnCompletion { cause -> if (cause != null) handling.cancel() }
         }
+    }
+
+    // Products draw their own loading state, so the host's spinner is kept for one that is clearly
+    // late. Counted from the tap: the product is asked for only once the card has settled, which can
+    // wait on a chain read.
+    val slowToOpen by produceState(initialValue = false) {
+        delay(PRODUCT_PROGRESS_DELAY)
+        value = true
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -118,9 +134,12 @@ fun ProductPocketCardDetails(
             VerticalSpacer { mediumIncreased }
         }
 
+        // There is one WebView per product, and showing it takes it from wherever it was, so a card
+        // being left must not take the page from the card arriving over the same product.
         ExpandedProductContent(
             modifier = Modifier.fillMaxSize(),
-            session = session
+            session = session.takeUnless { leaving },
+            showLoading = slowToOpen && !leaving,
         )
     }
 }
@@ -164,6 +183,7 @@ private fun FoldableCard(
 private fun ExpandedProductContent(
     modifier: Modifier = Modifier,
     session: SpaHostSession?,
+    showLoading: Boolean,
 ) {
     // Stand-ins for a product that has not been asked for yet, so the card still has ground under it
     // on its way up. Remembered unconditionally: a composable cannot remember only sometimes.
@@ -192,7 +212,8 @@ private fun ExpandedProductContent(
             productShowing -> ProductWebViewHost(
                 modifier = Modifier
                     .fillMaxSize()
-                    .windowInsetsPadding(LocalAppNavigationBarInsets.current),
+                    .windowInsetsPadding(LocalAppNavigationBarInsets.current)
+                    .testTag(PocketTestTags.PRODUCT_PAGE),
                 webView = webView,
             )
 
@@ -202,7 +223,7 @@ private fun ExpandedProductContent(
                 color = PolkadotTheme.colors.fg.secondary
             )
 
-            else -> ProductLoadProgress(progress = loadProgress)
+            showLoading -> ProductLoadProgress(progress = loadProgress)
         }
     }
 }
@@ -215,11 +236,13 @@ private fun ExpandedProductContent(
 @Composable
 private fun ProductLoadProgress(progress: DotNsLoadProgress) {
     val downloaded = (progress as? DotNsLoadProgress.Downloading)?.fraction
+    val indicator = Modifier.size(PRODUCT_PROGRESS_SIZE).testTag(PocketTestTags.PRODUCT_LOADING)
     if (downloaded == null) {
-        NovaCircularProgressIndicator(modifier = Modifier.size(PRODUCT_PROGRESS_SIZE))
+        NovaCircularProgressIndicator(modifier = indicator)
     } else {
-        NovaCircularProgressIndicator(modifier = Modifier.size(PRODUCT_PROGRESS_SIZE), progress = { downloaded })
+        NovaCircularProgressIndicator(modifier = indicator, progress = { downloaded })
     }
 }
 
 private val PRODUCT_PROGRESS_SIZE = 48.dp
+private val PRODUCT_PROGRESS_DELAY = 1500.milliseconds

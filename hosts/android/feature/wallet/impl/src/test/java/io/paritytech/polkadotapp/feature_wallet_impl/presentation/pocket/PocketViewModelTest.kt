@@ -112,6 +112,9 @@ class PocketViewModelTest {
 
     @Before
     fun setUp() {
+        // a product card's page is hosted at its launch URL, which android.net.Uri encodes
+        mockkStatic(Uri::class)
+        every { Uri.encode(any()) } answers { firstArg() }
         Dispatchers.setMain(testDispatcher)
         whenever(interactor.observeBackupProgress()).thenReturn(flowOf(BackupProgress.Unknown))
         whenever(interactor.observeAccountBackupPending()).thenReturn(flowOf(false))
@@ -305,10 +308,6 @@ class PocketViewModelTest {
     // page could still fold the new card's face.
     @Test
     fun `a link to another card closes the open one's page first`() = runTest(testDispatcher) {
-        // the open card's page is hosted at its launch URL, which android.net.Uri encodes
-        mockkStatic(Uri::class)
-        every { Uri.encode(any()) } answers { firstArg() }
-
         val open = productCard("loyalty")
         val linked = productCard("stamps")
         whenever(interactor.observeProductCards()).thenReturn(MutableStateFlow(listOf(open, linked)))
@@ -412,5 +411,36 @@ class PocketViewModelTest {
         viewModel.hostExpandedProduct(leftCard)
 
         assertNull(viewModel.expandedProductSession.value)
+    }
+
+    // A card opened again should ride up with the product it left. Handed over only once the card
+    // settled, the product was replaced by a spinner for the whole move.
+    @Test
+    fun `a card opened again gets its held product at the tap`() = runTest(testDispatcher) {
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
+        val viewModel = createViewModel()
+        val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        viewModel.selectCard(card)
+        viewModel.hostExpandedProduct(card)
+        viewModel.dismissCard()
+
+        viewModel.selectCard(card)
+
+        assertNotNull(viewModel.expandedProductSession.value)
+    }
+
+    // Building a WebView while the card is still moving starves the animation.
+    @Test
+    fun `a card opened for the first time gets its product only once it settles`() = runTest(testDispatcher) {
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
+        val viewModel = createViewModel()
+        val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+
+        viewModel.selectCard(card)
+        advanceUntilIdle()
+        assertNull(viewModel.expandedProductSession.value)
+
+        viewModel.hostExpandedProduct(card)
+        assertNotNull(viewModel.expandedProductSession.value)
     }
 }
