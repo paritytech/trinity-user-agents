@@ -19,6 +19,7 @@ enum class FundingScreen {
     TOKEN,
     DEPOSIT,
     CANCEL_CONFIRM,
+    CANCEL_OFFER,
 }
 
 data class FundingSheetUiState(
@@ -228,11 +229,32 @@ data class FundingTokensUiState(
 
 data class FundingDepositUiState(
     val rail: FundingRail,
+    val withdraw: Boolean,
     val started: Boolean,
     val failed: Boolean,
     val isCancelling: Boolean,
+    val cancel: FundingCancelUiState?,
     val content: FundingDepositContent,
-)
+) {
+    /** The user can ask to cancel, and ask again after a refusal, but not while a cancel is with the provider. */
+    val canCancel: Boolean
+        get() = started && !failed && (cancel == null || cancel is FundingCancelUiState.Refused)
+}
+
+/** Where the user's cancel stands once money has moved, so the provider decides it. */
+sealed interface FundingCancelUiState {
+    /** With the provider, which has not answered. */
+    data object Requested : FundingCancelUiState
+
+    /** The provider will not cancel; the session carries on. */
+    data class Refused(val reason: String) : FundingCancelUiState
+
+    /** The provider can cancel, keeping [fee] and returning [refund], both as "$1,000.25 CASH". */
+    data class Offered(val fee: String, val refund: String) : FundingCancelUiState
+
+    /** The user accepted and the provider is refunding them. */
+    data object Cancelling : FundingCancelUiState
+}
 
 sealed interface FundingDepositContent {
     data class Crypto(

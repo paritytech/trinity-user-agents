@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
+import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
@@ -24,7 +25,7 @@ data class FundingRecord(
     val settledAmount: Balance?,
     val outcome: FundingRecordOutcome,
     val payout: FundingRecordPayout?,
-    /** What the provider's refund of a failed payout returned to the balance, once its claim is final. */
+    /** What the provider's refund of a failed payout or an accepted cancel returned to the balance, once its claim is final. */
     val refunded: Balance?,
     val transactionId: String?,
     val reference: String?,
@@ -37,7 +38,11 @@ data class FundingRecord(
             val (outcome, amount, settledAtMs) = when (val stage = session.stage) {
                 FundingStage.Open -> return null
                 is FundingStage.Delivered -> Triple(FundingRecordOutcome.Delivered, stage.credited, stage.settledAtMs)
-                is FundingStage.Released -> Triple(FundingRecordOutcome.Released, stage.debited, stage.settledAtMs)
+                is FundingStage.Released -> Triple(
+                    if (session.cancel is FundingCancel.Accepted) FundingRecordOutcome.Cancelled else FundingRecordOutcome.Released,
+                    stage.debited,
+                    stage.settledAtMs,
+                )
                 is FundingStage.Failed -> Triple(stage.reason.toOutcome(), null, stage.settledAtMs)
             }
 
@@ -67,6 +72,9 @@ sealed interface FundingRecordOutcome {
     data object Released : FundingRecordOutcome
 
     data object Refunded : FundingRecordOutcome
+
+    /** Value out, cancelled on the provider's terms after the balance was debited; the refund is the record's `refunded`. */
+    data object Cancelled : FundingRecordOutcome
 
     /** Kept with an `Other` failure's message, so a stored one reads back the same. */
     data class Failed(val reason: FundingFailureReason) : FundingRecordOutcome

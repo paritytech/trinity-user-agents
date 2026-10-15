@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.design.components.qr.QrCode
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCancelUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDepositContent
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDepositUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCircleButton
@@ -43,6 +44,7 @@ fun FundingDepositScreen(
     onBack: () -> Unit,
     onCopy: (String) -> Unit,
     onCancel: () -> Unit,
+    onReviewOffer: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -96,6 +98,8 @@ fun FundingDepositScreen(
             }
         }
 
+        state.cancel?.let { CancelStatus(cancel = it, withdraw = state.withdraw, onReviewOffer = onReviewOffer) }
+
         if (state.failed) {
             PolkadotTextButton(
                 modifier = Modifier.fillMaxWidth(),
@@ -104,12 +108,14 @@ fun FundingDepositScreen(
             )
         } else if (state.started) {
             Row(horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)) {
-                PolkadotTextButton(
-                    modifier = Modifier.weight(1f),
-                    text = stringResource(RCommon.string.common_cancel),
-                    style = PolkadotButtonStyle.destructive(),
-                    onClick = onCancel,
-                )
+                if (state.canCancel) {
+                    PolkadotTextButton(
+                        modifier = Modifier.weight(1f),
+                        text = stringResource(RCommon.string.common_cancel),
+                        style = PolkadotButtonStyle.destructive(),
+                        onClick = onCancel,
+                    )
+                }
                 WaitingPill(modifier = Modifier.weight(1f))
             }
         }
@@ -209,10 +215,127 @@ private fun WaitingPill(modifier: Modifier = Modifier) {
     }
 }
 
-/** Asks before giving up on a deposit the user may already have paid. */
+/** Where the user's cancel stands, once money has moved and the provider decides it. */
+@Composable
+private fun CancelStatus(cancel: FundingCancelUiState, withdraw: Boolean, onReviewOffer: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
+    ) {
+        when (cancel) {
+            FundingCancelUiState.Requested -> PendingLine(stringResource(RCommon.string.funding_cancel_requested))
+            FundingCancelUiState.Cancelling -> PendingLine(stringResource(RCommon.string.funding_cancel_accepted))
+            is FundingCancelUiState.Refused -> NovaText(
+                text = stringResource(
+                    if (withdraw) RCommon.string.funding_cancel_refused_withdrawal else RCommon.string.funding_cancel_refused_top_up,
+                    cancel.reason,
+                ),
+                style = PolkadotTheme.typography.body.medium,
+                color = PolkadotTheme.colors.fg.secondary,
+                textAlign = TextAlign.Center,
+            )
+
+            is FundingCancelUiState.Offered -> {
+                NovaText(
+                    text = stringResource(RCommon.string.funding_cancel_offer_waiting),
+                    style = PolkadotTheme.typography.body.medium,
+                    color = PolkadotTheme.colors.fg.secondary,
+                    textAlign = TextAlign.Center,
+                )
+                PolkadotTextButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    text = stringResource(RCommon.string.funding_cancel_offer_review),
+                    onClick = onReviewOffer,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingLine(text: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.extraSmall),
+    ) {
+        NovaCircularProgressIndicator(modifier = Modifier.size(SMALL_INDICATOR_SIZE), strokeWidth = INDICATOR_STROKE)
+        NovaText(text = text, style = PolkadotTheme.typography.body.medium, color = PolkadotTheme.colors.fg.secondary)
+    }
+}
+
+/** The provider's terms for cancelling: what it keeps and what comes back, for the user to accept or decline. */
+@Composable
+fun FundingCancelOfferScreen(
+    offer: FundingCancelUiState.Offered,
+    isAnswering: Boolean,
+    onBack: () -> Unit,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
+    ) {
+        FundingHeader(title = "", onBack = onBack)
+        NovaText(
+            text = stringResource(RCommon.string.funding_cancel_offer_title),
+            style = PolkadotTheme.typography.headline.medium,
+            color = PolkadotTheme.colors.fg.primary,
+        )
+        NovaText(
+            text = stringResource(RCommon.string.funding_cancel_offer_body),
+            style = PolkadotTheme.typography.body.medium,
+            color = PolkadotTheme.colors.fg.primary,
+            textAlign = TextAlign.Center,
+        )
+        Column(modifier = Modifier.fillMaxWidth()) {
+            OfferRow(stringResource(RCommon.string.funding_cancel_offer_fee), offer.fee)
+            OfferRow(stringResource(RCommon.string.funding_cancel_offer_refund), offer.refund)
+        }
+        PolkadotTextButton(
+            modifier = Modifier.fillMaxWidth(),
+            text = stringResource(RCommon.string.funding_cancel_offer_accept),
+            style = PolkadotButtonStyle.destructive(),
+            loading = isAnswering,
+            onClick = onAccept,
+        )
+        PolkadotTextButton(
+            modifier = Modifier.fillMaxWidth(),
+            text = stringResource(RCommon.string.funding_cancel_offer_keep),
+            enabled = !isAnswering,
+            onClick = onDecline,
+        )
+    }
+}
+
+@Composable
+private fun OfferRow(title: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = PolkadotTheme.spacings.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NovaText(
+            modifier = Modifier.weight(1f),
+            text = title,
+            style = PolkadotTheme.typography.body.medium,
+            color = PolkadotTheme.colors.fg.secondary,
+        )
+        NovaText(text = value, style = PolkadotTheme.typography.body.mediumEmphasized, color = PolkadotTheme.colors.fg.primary)
+    }
+}
+
+/**
+ * Asks before cancelling. A crypto top-up's deposit address stops working; once money has moved, the provider decides
+ * whether it can still cancel, and may charge a fee.
+ */
 @Composable
 fun FundingCancelConfirmScreen(
-    isCancelling: Boolean,
+    state: FundingDepositUiState,
     onBack: () -> Unit,
     onConfirm: () -> Unit,
     modifier: Modifier = Modifier,
@@ -224,12 +347,14 @@ fun FundingCancelConfirmScreen(
     ) {
         FundingHeader(title = "", onBack = onBack)
         NovaText(
-            text = stringResource(RCommon.string.funding_cancel_title),
+            text = stringResource(if (state.withdraw) RCommon.string.funding_cancel_withdrawal_title else RCommon.string.funding_cancel_title),
             style = PolkadotTheme.typography.headline.medium,
             color = PolkadotTheme.colors.fg.primary,
         )
         NovaText(
-            text = stringResource(RCommon.string.funding_cancel_body),
+            text = stringResource(
+                if (state.content is FundingDepositContent.Crypto) RCommon.string.funding_cancel_body else RCommon.string.funding_cancel_body_provider,
+            ),
             style = PolkadotTheme.typography.body.medium,
             color = PolkadotTheme.colors.fg.primary,
             textAlign = TextAlign.Center,
@@ -238,7 +363,7 @@ fun FundingCancelConfirmScreen(
             modifier = Modifier.fillMaxWidth(),
             text = stringResource(RCommon.string.common_cancel),
             style = PolkadotButtonStyle.destructive(),
-            loading = isCancelling,
+            loading = state.isCancelling,
             onClick = onConfirm,
         )
         PolkadotTextButton(

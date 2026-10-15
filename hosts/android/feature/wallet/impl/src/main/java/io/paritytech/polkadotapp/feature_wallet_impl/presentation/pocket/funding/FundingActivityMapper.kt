@@ -53,7 +53,11 @@ class FundingActivityMapper(
         val status = item.status
         val inbound = item.direction == FundingDirection.IN
         val moved = status is FundingActivityStatus.InProgress || status == FundingActivityStatus.ToppedUp || status == FundingActivityStatus.Sent
-        val refunded = (status as? FundingActivityStatus.PayoutFailed)?.refunded
+        val refunded = when (status) {
+            is FundingActivityStatus.PayoutFailed -> status.refunded
+            is FundingActivityStatus.Cancelled -> status.refunded
+            else -> null
+        }
 
         return FundingActivityRowUi(
             id = item.id,
@@ -70,7 +74,11 @@ class FundingActivityMapper(
                     if (status.step.isSlow) FundingRowIcon.IN_PROGRESS_WARNING else FundingRowIcon.IN_PROGRESS
 
                 FundingActivityStatus.ToppedUp, FundingActivityStatus.Sent -> if (inbound) FundingRowIcon.MOVED_IN else FundingRowIcon.MOVED_OUT
-                FundingActivityStatus.Refunded, is FundingActivityStatus.PayoutFailed, is FundingActivityStatus.Failed -> FundingRowIcon.FAILED
+                FundingActivityStatus.Refunded,
+                is FundingActivityStatus.PayoutFailed,
+                is FundingActivityStatus.Failed,
+                is FundingActivityStatus.Cancelled,
+                -> FundingRowIcon.FAILED
             },
             amount = item.amount?.let { balance ->
                 val sign = if (!moved) "" else if (inbound) "+" else "-"
@@ -91,6 +99,7 @@ class FundingActivityMapper(
         FundingActivityStatus.Refunded -> FundingRowTitle.REFUNDED
         is FundingActivityStatus.PayoutFailed -> FundingRowTitle.PAYOUT_FAILED
         is FundingActivityStatus.Failed -> if (inbound) FundingRowTitle.TOP_UP_FAILED else FundingRowTitle.WITHDRAWAL_FAILED
+        is FundingActivityStatus.Cancelled -> FundingRowTitle.CANCELLED
     }
 
     private fun dayTitle(date: Instant): FundingDayTitle {
@@ -118,7 +127,8 @@ class FundingActivityMapper(
     private val FundingActivityStep.isSlow: Boolean
         get() = this == FundingActivityStep.Retrying ||
             this == FundingActivityStep.RetryingPayout ||
-            this == FundingActivityStep.TakingLonger
+            this == FundingActivityStep.TakingLonger ||
+            this is FundingActivityStep.CancelRefused
 
     private fun localDate(instant: Instant): LocalDate = instant.toJavaInstant().atZone(zone).toLocalDate()
 }

@@ -6,6 +6,8 @@ import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import uniffi.truapi.CancelConfirmation
+import uniffi.truapi.CancelOutcome
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteAsk
@@ -66,7 +68,10 @@ class FundingFlowInteractor @Inject constructor(
     suspend fun selectProvider(intent: String, providerId: String, quoteId: String?): Result<Boolean> =
         runtime.selectProvider(intent, providerId, quoteId)
 
-    suspend fun cancel(intent: String): Result<Boolean> = runtime.cancel(intent)
+    suspend fun cancel(intent: String): Result<CancelOutcome> = runtime.cancel(intent)
+
+    suspend fun confirmCancel(intent: String, accept: Boolean): Result<CancelConfirmation> =
+        runtime.confirmCancel(intent, accept)
 
     /** The provider's screen has done its part once the payment is seen or the session is over. */
     suspend fun paymentMoved(intent: String): Boolean = runtime.paymentMoved(intent)

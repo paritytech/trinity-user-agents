@@ -40,6 +40,9 @@ sealed interface FundingActivityStatus {
     data class PayoutFailed(val refunded: Balance?) : FundingActivityStatus
 
     data class Failed(val reason: FundingFailureReason) : FundingActivityStatus
+
+    /** Value out, cancelled on the provider's terms; [refunded] is what came back to the balance, once it has. */
+    data class Cancelled(val refunded: Balance?) : FundingActivityStatus
 }
 
 /** Where a session in flight stands, as one line under it. */
@@ -73,4 +76,16 @@ sealed interface FundingActivityStep {
 
     /** Slower than the time the chosen quote gave. */
     data object TakingLonger : FundingActivityStep
+
+    /** The user asked to cancel, and the provider has not answered. */
+    data object CancelRequested : FundingActivityStep
+
+    /** The provider can cancel for a fee, and waits for the user. */
+    data object CancelOffered : FundingActivityStep
+
+    /** The provider will not cancel, for [reason]; the session carries on. */
+    data class CancelRefused(val reason: String) : FundingActivityStep
+
+    /** The user accepted the provider's terms, and the provider is refunding them. */
+    data object Cancelling : FundingActivityStep
 }

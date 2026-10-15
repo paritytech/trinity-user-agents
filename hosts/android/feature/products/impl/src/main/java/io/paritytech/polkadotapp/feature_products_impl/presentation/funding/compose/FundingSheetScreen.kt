@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaBottomSheetSurface
 import io.paritytech.polkadotapp.design.components.progress.Shimmer
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCancelUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingScreen
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingViewModel
 
@@ -83,15 +84,27 @@ fun FundingSheetScreen(viewModel: FundingViewModel) {
                         onBack = viewModel::onBack,
                         onCopy = viewModel::onCopy,
                         onCancel = viewModel::onCancelTopUp,
+                        onReviewOffer = viewModel::onReviewCancelOffer,
                         onClose = viewModel::onClose,
                     )
 
                     FundingScreen.CANCEL_CONFIRM -> FundingCancelConfirmScreen(
                         modifier = contentModifier,
-                        isCancelling = current.data.deposit.isCancelling,
+                        state = current.data.deposit,
                         onBack = viewModel::onBack,
                         onConfirm = viewModel::onConfirmCancel,
                     )
+
+                    FundingScreen.CANCEL_OFFER -> (current.data.deposit.cancel as? FundingCancelUiState.Offered)?.let { offer ->
+                        FundingCancelOfferScreen(
+                            modifier = contentModifier,
+                            offer = offer,
+                            isAnswering = current.data.deposit.isCancelling,
+                            onBack = viewModel::onBack,
+                            onAccept = viewModel::onAcceptCancelOffer,
+                            onDecline = viewModel::onDeclineCancelOffer,
+                        )
+                    }
 
                     FundingScreen.AMOUNT -> FundingAmountScreen(
                         modifier = contentModifier,

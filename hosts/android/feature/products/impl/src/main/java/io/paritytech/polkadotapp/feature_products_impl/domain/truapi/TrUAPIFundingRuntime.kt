@@ -6,6 +6,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRun
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import uniffi.truapi.CancelConfirmation
+import uniffi.truapi.CancelOutcome
 import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingCountry
@@ -59,8 +61,11 @@ class TrUAPIFundingRuntime @Inject constructor(
     override suspend fun selectProvider(intent: String, providerId: String, quoteId: String?): Result<Boolean> =
         runtimeProvider.runtime().mapCatching { it.selectFundingProvider(intent, providerId, quoteId) }
 
-    override suspend fun cancel(intent: String): Result<Boolean> =
+    override suspend fun cancel(intent: String): Result<CancelOutcome> =
         runtimeProvider.runtime().mapCatching { it.cancelFunding(intent) }
+
+    override suspend fun confirmCancel(intent: String, accept: Boolean): Result<CancelConfirmation> =
+        runtimeProvider.runtime().mapCatching { it.confirmFundingCancel(intent, accept) }
 
     override suspend fun acknowledge(intent: String): Result<Boolean> =
         runtimeProvider.runtime().mapCatching { it.acknowledgeFundingSession(intent) }

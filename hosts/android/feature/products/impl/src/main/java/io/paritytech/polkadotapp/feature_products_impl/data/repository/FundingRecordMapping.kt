@@ -31,6 +31,7 @@ internal fun FundingRecord.toLocal() = ProductFundingRecordLocal(
         FundingRecordOutcome.Delivered -> ProductFundingRecordLocal.Outcome.DELIVERED
         FundingRecordOutcome.Released -> ProductFundingRecordLocal.Outcome.RELEASED
         FundingRecordOutcome.Refunded -> ProductFundingRecordLocal.Outcome.REFUNDED
+        FundingRecordOutcome.Cancelled -> ProductFundingRecordLocal.Outcome.CANCELLED
         is FundingRecordOutcome.Failed -> ProductFundingRecordLocal.Outcome.FAILED
     },
     failureCode = (outcome as? FundingRecordOutcome.Failed)?.reason?.code,
@@ -69,6 +70,7 @@ internal fun ProductFundingRecordLocal.toRecord() = FundingRecord(
         ProductFundingRecordLocal.Outcome.DELIVERED -> FundingRecordOutcome.Delivered
         ProductFundingRecordLocal.Outcome.RELEASED -> FundingRecordOutcome.Released
         ProductFundingRecordLocal.Outcome.REFUNDED -> FundingRecordOutcome.Refunded
+        ProductFundingRecordLocal.Outcome.CANCELLED -> FundingRecordOutcome.Cancelled
         ProductFundingRecordLocal.Outcome.FAILED -> FundingRecordOutcome.Failed(FundingFailureReason.of(failureCode.orEmpty(), failureMessage))
     },
     payout = when (payout) {

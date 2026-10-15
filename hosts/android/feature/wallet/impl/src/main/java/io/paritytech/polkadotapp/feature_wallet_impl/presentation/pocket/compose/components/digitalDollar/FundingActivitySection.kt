@@ -256,6 +256,10 @@ private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {
         is FundingActivityStep.ConvertingOut -> stringResource(RCommon.string.funding_activity_converting_out, step.asset)
         FundingActivityStep.RetryingPayout -> stringResource(RCommon.string.funding_activity_retrying_payout)
         FundingActivityStep.TakingLonger -> stringResource(RCommon.string.funding_activity_delayed)
+        FundingActivityStep.CancelRequested -> stringResource(RCommon.string.funding_activity_cancel_requested)
+        FundingActivityStep.CancelOffered -> stringResource(RCommon.string.funding_activity_cancel_offered)
+        is FundingActivityStep.CancelRefused -> stringResource(RCommon.string.funding_activity_cancel_refused)
+        FundingActivityStep.Cancelling -> stringResource(RCommon.string.funding_activity_cancelling)
     }
 
     is FundingRowSubtitle.Refunded -> stringResource(RCommon.string.funding_activity_refunded_amount, subtitle.amount)
@@ -292,6 +296,7 @@ private fun FundingRowTitle.textRes(): Int = when (this) {
     FundingRowTitle.PAYOUT_FAILED -> RCommon.string.funding_activity_payout_failed
     FundingRowTitle.TOP_UP_FAILED -> RCommon.string.funding_activity_top_up_failed
     FundingRowTitle.WITHDRAWAL_FAILED -> RCommon.string.funding_activity_withdrawal_failed
+    FundingRowTitle.CANCELLED -> RCommon.string.funding_activity_cancelled
 }
 
 private fun FundingRailType.textRes(): Int = when (this) {

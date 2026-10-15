@@ -24,6 +24,12 @@ internal fun FundingStatus.toActivityStatus(): FundingActivityStatus = when (thi
     FundingStatus.Refunded -> FundingActivityStatus.Refunded
     is FundingStatus.PayoutFailed -> FundingActivityStatus.PayoutFailed(refunded?.toBalance())
     is FundingStatus.Failed -> FundingActivityStatus.Failed(reason.toReason())
+
+    FundingStatus.CancelRequested -> inProgress(FundingActivityStep.CancelRequested)
+    is FundingStatus.CancelOffered -> inProgress(FundingActivityStep.CancelOffered)
+    is FundingStatus.CancelRefused -> inProgress(FundingActivityStep.CancelRefused(reason))
+    FundingStatus.Cancelling -> inProgress(FundingActivityStep.Cancelling)
+    is FundingStatus.Cancelled -> FundingActivityStatus.Cancelled(refunded?.toBalance())
 }
 
 private fun inProgress(step: FundingActivityStep) = FundingActivityStatus.InProgress(step)

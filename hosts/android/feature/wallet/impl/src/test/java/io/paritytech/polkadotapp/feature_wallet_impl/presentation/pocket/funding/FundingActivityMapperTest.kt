@@ -45,6 +45,29 @@ class FundingActivityMapperTest {
     }
 
     @Test
+    fun `a cancelled withdrawal says what came back, with no sign on the amount`() {
+        val row = mapper.map(history(item("out", FundingDirection.OUT, FundingActivityStatus.Cancelled(45_000_000.intoBalance()))))
+            .days.single().rows.single()
+
+        assertEquals(FundingRowTitle.CANCELLED, row.title)
+        assertEquals(FundingRowSubtitle.Refunded("$45 CASH"), row.subtitle)
+        assertEquals(FundingRowIcon.FAILED, row.icon)
+        assertEquals(false, row.amount?.startsWith("-"))
+    }
+
+    // A refusal leaves the session running on the provider's terms, which the user should notice.
+    @Test
+    fun `a refused cancel is flagged in flight`() {
+        val refused = FundingActivityStep.CancelRefused("already converted")
+        val row = mapper.map(
+            FundingActivity(inFlight = listOf(item("out", FundingDirection.OUT, FundingActivityStatus.InProgress(refused))), history = emptyList()),
+        ).inFlight.single()
+
+        assertEquals(FundingRowIcon.IN_PROGRESS_WARNING, row.icon)
+        assertEquals(FundingRowSubtitle.Step(refused), row.subtitle)
+    }
+
+    @Test
     fun `a session taking longer than quoted is flagged`() {
         val row = mapper.map(
             FundingActivity(inFlight = listOf(item("in", FundingDirection.IN, FundingActivityStatus.InProgress(FundingActivityStep.TakingLonger))), history = emptyList()),

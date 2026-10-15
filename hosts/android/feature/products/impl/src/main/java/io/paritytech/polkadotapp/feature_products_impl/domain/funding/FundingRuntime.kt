@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import kotlinx.coroutines.flow.Flow
+import uniffi.truapi.CancelConfirmation
+import uniffi.truapi.CancelOutcome
 import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingDirection
@@ -49,7 +51,11 @@ interface FundingRuntime {
 
     suspend fun selectProvider(intent: String, providerId: String, quoteId: String?): Result<Boolean>
 
-    suspend fun cancel(intent: String): Result<Boolean>
+    /** The user's cancel, and what it did. */
+    suspend fun cancel(intent: String): Result<CancelOutcome>
+
+    /** The user's answer to the provider's cancel offer. */
+    suspend fun confirmCancel(intent: String, accept: Boolean): Result<CancelConfirmation>
 
     suspend fun acknowledge(intent: String): Result<Boolean>
 

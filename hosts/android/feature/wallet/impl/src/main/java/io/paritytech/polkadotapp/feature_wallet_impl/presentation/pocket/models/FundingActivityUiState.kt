@@ -43,6 +43,7 @@ enum class FundingRowTitle {
     PAYOUT_FAILED,
     TOP_UP_FAILED,
     WITHDRAWAL_FAILED,
+    CANCELLED,
 }
 
 sealed interface FundingRowSubtitle {

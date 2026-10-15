@@ -131,6 +131,7 @@ class FundingActivityCenter @Inject constructor(
                 if (payout is FundingRecordPayout.Failed) FundingActivityStatus.PayoutFailed(refunded) else FundingActivityStatus.Sent
 
             FundingRecordOutcome.Refunded -> FundingActivityStatus.Refunded
+            FundingRecordOutcome.Cancelled -> FundingActivityStatus.Cancelled(refunded)
             is FundingRecordOutcome.Failed -> FundingActivityStatus.Failed(outcome.reason)
         },
     )

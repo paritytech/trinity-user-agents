@@ -37,6 +37,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import uniffi.truapi.CancelConfirmation
+import uniffi.truapi.CancelOutcome
+import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
@@ -54,6 +57,8 @@ data class FundingStartState(
     val started: Boolean,
     val failure: FundingFailureReason? = null,
     val isCancelling: Boolean = false,
+    /** The user's cancel as the core holds it, once money has moved and the provider decides it. */
+    val cancel: FundingCancel? = null,
 )
 
 @HiltViewModel
@@ -147,18 +152,38 @@ class FundingViewModel @Inject constructor(
 
     fun onCancelTopUp() = push(FundingScreen.CANCEL_CONFIRM)
 
-    /** Ends a started session. A refusal means the payment is already on its way, so the deposit stays up. */
+    /**
+     * Asks to cancel a started session. Before money moves that ends it; after, it is a request the provider answers
+     * with a refusal or an offer, which the deposit screen then shows.
+     */
     fun onConfirmCancel() = launchUnit {
         if (start.value.isCancelling) return@launchUnit
         start.update { it.copy(isCancelling = true) }
 
         interactor.cancel(intent)
             .logFailure("Funding cancel failed")
-            .onSuccess { cancelled -> if (cancelled) onClose() else leaveCancelConfirm(RCommon.string.funding_error_cancel_refused) }
+            .onSuccess { outcome ->
+                when (outcome) {
+                    CancelOutcome.ENDED -> onClose()
+                    CancelOutcome.REQUESTED, CancelOutcome.PENDING -> leaveCancelConfirm(RCommon.string.funding_cancel_requested)
+                    CancelOutcome.TOO_LATE -> leaveCancelConfirm(RCommon.string.funding_cancel_too_late)
+                    CancelOutcome.REFUSED -> leaveCancelConfirm(RCommon.string.funding_error_cancel_refused)
+                }
+            }
             .onFailure { leaveCancelConfirm(RCommon.string.funding_error_cancel_failed) }
 
         start.update { it.copy(isCancelling = false) }
+        refreshSession()
     }
+
+    /** Shows the provider's cancel offer again, after the user went back from it. */
+    fun onReviewCancelOffer() {
+        if (start.value.cancel is FundingCancel.Offered) push(FundingScreen.CANCEL_OFFER)
+    }
+
+    fun onAcceptCancelOffer() = answerCancelOffer(accept = true)
+
+    fun onDeclineCancelOffer() = answerCancelOffer(accept = false)
 
     fun onRailSelected(rail: FundingRail) {
         flow.update { it?.withRail(rail) }
@@ -307,7 +332,9 @@ class FundingViewModel @Inject constructor(
     /** The core's view of the session moved on: read it again, and leave once it is over. A failed one stays up with its reason. */
     private suspend fun refreshSession() {
         progress.value = interactor.progress(intent)
-        val stage = interactor.session(intent)?.stage
+        val session = interactor.session(intent)
+        followCancel(session?.cancel)
+        val stage = session?.stage
         val failure = stage?.failure?.toReason()
         if (failure != start.value.failure) start.update { it.copy(failure = failure) }
 
@@ -332,6 +359,43 @@ class FundingViewModel @Inject constructor(
     private fun leaveCancelConfirm(message: Int) {
         if (path.value.lastOrNull() == FundingScreen.CANCEL_CONFIRM) pop()
         showMessage(message)
+    }
+
+    private fun answerCancelOffer(accept: Boolean) = launchUnit {
+        if (start.value.isCancelling) return@launchUnit
+        start.update { it.copy(isCancelling = true) }
+
+        interactor.confirmCancel(intent, accept)
+            .logFailure("Funding cancel answer failed")
+            .onSuccess { leaveCancelOffer(it.message()) }
+            .onFailure { leaveCancelOffer(RCommon.string.funding_error_cancel_failed) }
+
+        start.update { it.copy(isCancelling = false) }
+        refreshSession()
+    }
+
+    private fun CancelConfirmation.message(): Int? = when (this) {
+        CancelConfirmation.ACCEPTED -> RCommon.string.funding_cancel_accepted
+        CancelConfirmation.DECLINED -> null
+        CancelConfirmation.LAPSED -> RCommon.string.funding_cancel_offer_lapsed
+        CancelConfirmation.NO_OFFER -> RCommon.string.funding_cancel_offer_gone
+    }
+
+    private fun leaveCancelOffer(message: Int?) {
+        if (path.value.lastOrNull() == FundingScreen.CANCEL_OFFER) pop()
+        message?.let(::showMessage)
+    }
+
+    /** Opens a new offer from the provider once, and closes the offer screen when the offer is gone. */
+    private fun followCancel(cancel: FundingCancel?) {
+        if (cancel == start.value.cancel) return
+        start.update { it.copy(cancel = cancel) }
+
+        val onOffer = path.value.lastOrNull() == FundingScreen.CANCEL_OFFER
+        when {
+            cancel is FundingCancel.Offered && !onOffer -> push(FundingScreen.CANCEL_OFFER)
+            cancel !is FundingCancel.Offered && onOffer -> pop()
+        }
     }
 
     private suspend fun followDeposit() {

@@ -19,6 +19,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
@@ -111,6 +112,45 @@ class FundingActivityCenterTest {
         assertEquals(listOf(FundingActivityStatus.Failed(FundingFailureReason.Declined)), activity.history.map { it.status })
     }
 
+    @Test
+    fun `a cancel the provider decides shows in flight at each step`() = runBlocking {
+        serve(
+            session("requested", FundingDirection.OUT, FundingStage.Open) to progress(FundingStatus.CancelRequested),
+            session("offered", FundingDirection.OUT, FundingStage.Open) to progress(FundingStatus.CancelOffered(fee = "5", refund = "45")),
+            session("refused", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.CancelRefused("already converted")),
+            session("cancelling", FundingDirection.OUT, FundingStage.Open) to progress(FundingStatus.Cancelling),
+        )
+
+        val activity = center.observe().first()
+
+        assertEquals(
+            mapOf(
+                "requested" to FundingActivityStep.CancelRequested,
+                "offered" to FundingActivityStep.CancelOffered,
+                "refused" to FundingActivityStep.CancelRefused("already converted"),
+                "cancelling" to FundingActivityStep.Cancelling,
+            ),
+            activity.inFlight.associate { it.id to (it.status as FundingActivityStatus.InProgress).step },
+        )
+    }
+
+    // An accepted cancel ends a withdrawal released, so only the session's cancel tells it from a sent one.
+    @Test
+    fun `a withdrawal cancelled on the provider's terms is kept as cancelled with its refund`() = runBlocking {
+        val cancelled = session(
+            "out",
+            FundingDirection.OUT,
+            FundingStage.Released("50", settledAtMs = 1uL),
+            cancel = FundingCancel.Accepted(fee = "5", refund = "45"),
+        )
+        serve(cancelled to progress(FundingStatus.Cancelled(refunded = "45"), refunded = "45"))
+
+        val activity = center.observe().first()
+
+        assertEquals(listOf(FundingRecordOutcome.Cancelled), saved.map { it.outcome })
+        assertEquals(listOf(FundingActivityStatus.Cancelled(45.intoBalance())), activity.history.map { it.status })
+    }
+
     // No status change announces a session turning slow, so the list wakes itself at the time the core gave.
     @Test
     fun `the list is read again once a session turns taking longer`() = runBlocking {
@@ -146,7 +186,13 @@ class FundingActivityCenterTest {
         longerAtMs = longerAtMs,
     )
 
-    private fun session(intent: String, direction: FundingDirection, stage: FundingStage, acknowledged: Boolean = false) = FundingSession(
+    private fun session(
+        intent: String,
+        direction: FundingDirection,
+        stage: FundingStage,
+        acknowledged: Boolean = false,
+        cancel: FundingCancel? = null,
+    ) = FundingSession(
         intent = intent,
         ownerProductId = null,
         direction = direction,
@@ -157,7 +203,7 @@ class FundingActivityCenterTest {
         acknowledged = acknowledged,
         providerId = "ramp.dot",
         assignedAtMs = 0uL,
-        cancelRequested = false,
+        cancel = cancel,
         updates = emptyList(),
         started = emptyList(),
         choice = null,

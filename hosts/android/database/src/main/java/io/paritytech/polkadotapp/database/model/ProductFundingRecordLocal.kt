@@ -41,6 +41,7 @@ class ProductFundingRecordLocal(
         RELEASED,
         REFUNDED,
         FAILED,
+        CANCELLED,
     }
 
     enum class Payout {

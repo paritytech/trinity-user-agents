@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingReas
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FUNDING_RAIL_ORDER
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAmountIssue
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowState
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingNetwork
@@ -13,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingDeposit
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingProgress
@@ -318,11 +320,21 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
 
     return FundingDepositUiState(
         rail = rail,
+        withdraw = direction == FundingDirection.OUT,
         started = start.started,
         failed = start.failure != null,
         isCancelling = start.isCancelling,
+        cancel = start.cancel?.toUi(cash),
         content = start.failure?.let { FundingDepositContent.Problem(FundingSummaryProblem.Failed(it)) } ?: content,
     )
+}
+
+private fun FundingCancel.toUi(cash: FundingCash): FundingCancelUiState? = when (this) {
+    FundingCancel.Requested -> FundingCancelUiState.Requested
+    is FundingCancel.Refused -> FundingCancelUiState.Refused(reason)
+    is FundingCancel.Offered -> FundingCancelUiState.Offered(fee = cash.label(cash.decimal(fee)), refund = cash.label(cash.decimal(refund)))
+    is FundingCancel.Accepted -> FundingCancelUiState.Cancelling
+    FundingCancel.Declined -> null
 }
 
 private fun shortened(address: String): String =

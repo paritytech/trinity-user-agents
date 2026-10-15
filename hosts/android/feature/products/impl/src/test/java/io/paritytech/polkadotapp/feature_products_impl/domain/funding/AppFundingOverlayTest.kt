@@ -116,7 +116,7 @@ class AppFundingOverlayTest {
         acknowledged = false,
         providerId = "ramp.dot",
         assignedAtMs = 0uL,
-        cancelRequested = false,
+        cancel = null,
         updates = emptyList(),
         started = emptyList(),
         choice = FundingChoice(

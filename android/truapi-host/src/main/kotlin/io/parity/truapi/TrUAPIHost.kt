@@ -106,6 +106,8 @@ import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
 import uniffi.truapi.HostFundingStatusSubscribeItem
+import uniffi.truapi.CancelConfirmation
+import uniffi.truapi.CancelOutcome
 import uniffi.truapi.NativeFundingCallbacks
 import uniffi.truapi.U128
 import uniffi.truapi.HostScan
@@ -961,9 +963,18 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     @Throws(HostRejection::class)
     suspend fun fundingInProgress(): Boolean = inner.fundingInProgress()
 
-    /** Cancel session [intent] at the user's request; its provider, if any, is asked to stop. */
+    /**
+     * Cancel session [intent] at the user's request, and say what that did. Once money has moved, a cancel is a request
+     * its provider answers with a refusal or an offer, read from the session's `cancel`. [CancelOutcome.TOO_LATE] means
+     * the balance was already credited.
+     */
     @Throws(HostRejection::class)
-    suspend fun cancelFunding(intent: String): Boolean = inner.cancelFunding(intent)
+    suspend fun cancelFunding(intent: String): CancelOutcome = inner.cancelFunding(intent)
+
+    /** Answer the provider's cancel offer on session [intent], as the user chose on the host's native screen. */
+    @Throws(HostRejection::class)
+    suspend fun confirmFundingCancel(intent: String, accept: Boolean): CancelConfirmation =
+        inner.confirmFundingCancel(intent, accept)
 
     /** Record that the host wrote ended session [intent] into its own history. */
     @Throws(HostRejection::class)
