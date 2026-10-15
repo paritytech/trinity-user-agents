@@ -60,7 +60,8 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     dispatchers: CoroutineDispatchers,
 ) {
-    private class RunningWorker(val scope: CoroutineScope) {
+    // `bootLosses` counts the renderers that stopped during a boot of this start chain.
+    private class RunningWorker(val scope: CoroutineScope, val bootLosses: Int) {
         var webViewRuntime: WebViewRuntime? = null
     }
 
@@ -104,9 +105,9 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     fun executionState(productId: ProductId): Flow<WorkerExecutionState?> =
         executionStates.map { it[productId] }.distinctUntilChanged()
 
-    private fun start(productId: ProductId) {
+    private fun start(productId: ProductId, bootLosses: Int = 0) {
         if (productId in workers) return
-        val worker = RunningWorker(scope.childScope())
+        val worker = RunningWorker(scope.childScope(), bootLosses)
         workers[productId] = worker
         executionStates.update { it - productId }
         worker.scope.launch {
@@ -176,16 +177,29 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             }
     }
 
-    // The renderer takes the running script with it, and only a fresh boot runs the script again.
+    // The renderer takes the running script with it, and only a fresh boot runs the script again. A renderer
+    // that stops during the boot also gets a fresh boot. That boot waits for a page that does not come, and after
+    // its failure only a room that opens starts the worker again. Each start chain gets a limited number of
+    // these boots, so a renderer that always stops ends as a failed start.
     private fun rebootAfterRendererLoss(productId: ProductId, worker: RunningWorker) {
         scope.launch {
             transitions.withLock {
-                if (workers[productId] !== worker || currentExecution(productId) == null) return@withLock
+                if (workers[productId] !== worker) return@withLock
+                val booting = currentExecution(productId) == null
                 stop(productId)
-                start(productId)
+                when {
+                    !booting -> start(productId)
+                    worker.bootLosses < MAX_BOOT_LOSSES -> {
+                        Timber.w("TrUAPI worker for %s lost its renderer during the boot; it boots again", productId.value)
+                        start(productId, worker.bootLosses + 1)
+                    }
+                    else -> executionStates.update { it + (productId to WorkerExecutionState.Failed(RendererLostException())) }
+                }
             }
         }
     }
+
+    private class RendererLostException : Exception("the WebView renderer of the worker stopped during each boot")
 
     private fun stop(productId: ProductId) {
         executionStates.update { it - productId }
@@ -204,5 +218,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         private val READY_TIMEOUT = 60.seconds
 
         val EXECUTION_WAIT_TIMEOUT = READY_TIMEOUT + 30.seconds
+
+        private const val MAX_BOOT_LOSSES = 2
     }
 }

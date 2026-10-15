@@ -18,14 +18,17 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebVie
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -36,6 +39,7 @@ class TrUAPIWorkerSupervisorTest {
     private val executions = mutableListOf<TrUAPIProductExecution>()
     private val chatBridges = mutableListOf<ChatHostBridge?>()
     private var includesChat = true
+    private var pagesThatNeverFinish = 0
 
     @Before
     fun parseScriptUrls() {
@@ -65,6 +69,38 @@ class TrUAPIWorkerSupervisorTest {
         advanceUntilIdle()
 
         assertEquals(listOf(null, executions[0], null, executions[1]), seen)
+    }
+
+    // When the renderer stops before the page is ready, the boot waits for a page that does not come. The core
+    // still wants the worker and sends no new start, so only the supervisor can boot it again.
+    @Test
+    fun `a worker whose renderer died during the boot boots again`() = runTest {
+        pagesThatNeverFinish = 1
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        runCurrent()
+        rendererGoneListeners.getValue(providers.single()).forEach { it() }
+        advanceUntilIdle()
+
+        assertEquals(2, providers.size)
+        assertEquals(executions[1], supervisor.currentExecution(PRODUCT))
+    }
+
+    @Test
+    fun `a renderer that dies during each boot ends as a failed start`() = runTest {
+        pagesThatNeverFinish = Int.MAX_VALUE
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        repeat(3) {
+            runCurrent()
+            rendererGoneListeners.getValue(providers.last()).forEach { it() }
+        }
+        runCurrent()
+
+        assertEquals(3, providers.size)
+        assertTrue(supervisor.executionState(PRODUCT).first() is WorkerExecutionState.Failed)
     }
 
     @Test
@@ -128,7 +164,8 @@ class TrUAPIWorkerSupervisorTest {
         every { provider.addOnWebViewDestroyedListener(any()) } answers {
             rendererGoneListeners.getOrPut(provider) { mutableListOf() } += firstArg<() -> Unit>()
         }
-        coEvery { provider.loadInitialContent() } answers { pageFinished.forEach { it() } }
+        val finishes = pagesThatNeverFinish-- <= 0
+        coEvery { provider.loadInitialContent() } answers { if (finishes) pageFinished.forEach { it() } }
         coEvery { provider.accessWebView<Any?>(any()) } returns Unit
         providers += provider
     }
