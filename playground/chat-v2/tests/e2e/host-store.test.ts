@@ -52,6 +52,28 @@ function eventTags(run: Running): string[] {
 }
 
 suite("host-store room on the test host", () => {
+  test("S44: /flood sends 25 edits at once and the core refuses the ones past the budget", async () => {
+    const run = await start();
+    const { host } = run;
+    await host.chatUser.send("host", "/flood");
+    const reply = await until(
+      () => texts(run.host, "host").find((text) => text?.startsWith("ok /flood ")),
+      "the /flood reply",
+      10_000,
+    );
+    const [, accepted, refused] = /^ok \/flood accepted=(\d+) refused=(\d+)$/.exec(reply) ?? [];
+    // The budget is 20, and it refills at one call each 50 ms, so a slow
+    // burst can get one or two more.
+    expect(Number(accepted)).toBeGreaterThanOrEqual(20);
+    expect(Number(refused)).toBeGreaterThanOrEqual(1);
+    expect(Number(accepted) + Number(refused)).toBe(25);
+    const target = host.feed("host").find((message) => message.body.tag === "Text" && message.body.value.text === "Flood of 25 edits");
+    expect(target?.editedAt).toBeDefined();
+    expect(run.log().filter((line) => line.via === "flood")).toEqual([
+      expect.objectContaining({ room: "host", kind: "Done", data: { sent: 25, accepted: Number(accepted), refused: Number(refused) } }),
+    ]);
+  }, 15_000);
+
   test("S9: Deleted removes the message and the list line recomputes", async () => {
     const run = await start();
     const { host } = run;

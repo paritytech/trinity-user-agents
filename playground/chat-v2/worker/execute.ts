@@ -19,6 +19,8 @@ import {
   customBody,
   DEEPLINK_TEXT,
   fileBody,
+  FLOOD_TARGET_TEXT,
+  floodBody,
   FOOTER_PLACEHOLDER,
   hostStoreConfig,
   LEGACY_TEXT,
@@ -31,6 +33,8 @@ import {
   STREAM_WORDS,
   SUGGESTIONS,
   textBody,
+  THROWAWAY_ROOM,
+  throwawayMetadata,
   toolbar,
   videoBody,
 } from "./fixtures";
@@ -44,6 +48,15 @@ export const MAX_HISTORY = 100_000;
 export const MAX_GUESTS = 100_000;
 export const MAX_TOOLBAR = 16;
 export const MAX_SLOW_MS = 60_000;
+/** The edits `/flood` sends when the command gives no count. */
+export const DEFAULT_FLOOD = 25;
+export const MAX_FLOOD = 200;
+/**
+ * The wait before and after the `/flood` edits. The core gives each room a
+ * budget of 20 `update_feed` calls, and refills it at 20 calls a second. One
+ * second fills an empty budget, and the rest is a margin.
+ */
+export const FLOOD_SETTLE_MS = 1_100;
 
 const POST_KINDS = ["text", "rich", "video", "file", "actions", "custom", "legacy"] as const;
 type PostKind = (typeof POST_KINDS)[number];
@@ -83,8 +96,10 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
   help: (ctx, room) => ctx.feed.post(room, { tag: "RichText", value: { text: helpMarkdown(), media: [] } }).then(() => {}),
   meta: runMeta,
   preview: runPreview,
+  room: runRoom,
   post: runPost,
   stream: runStream,
+  flood: runFlood,
   edit: runEdit,
   delete: async (ctx, room, command) => {
     const [id] = expectArgs(command, 1, "<id>");
@@ -270,6 +285,30 @@ async function runPreview(ctx: ProductContext, room: RoomId, command: ParsedComm
   }
 }
 
+/**
+ * `/room create` creates the host-store room `throwaway`, and `/room delete`
+ * deletes it. The command takes no room id, so it cannot delete `host`,
+ * `source` or `host-empty`. The host answers a `delete_room` of a missing
+ * room with success, so the product keeps its own record of the room.
+ */
+async function runRoom(ctx: ProductContext, _room: RoomId, command: ParsedCommand): Promise<void> {
+  const [sub] = command.args;
+  if (command.args.length !== 1 || (sub !== "create" && sub !== "delete")) throw usage(command, "create|delete");
+  if (sub === "create") {
+    const created = await call(
+      "create_room",
+      ctx.chat.createRoom({ roomId: THROWAWAY_ROOM, metadata: throwawayMetadata(ctx.assets), config: hostStoreConfig() }),
+    );
+    ctx.state.throwawayCreated = true;
+    ctx.record({ via: "room", room: THROWAWAY_ROOM, kind: created.status, data: { roomId: THROWAWAY_ROOM } });
+    return;
+  }
+  if (!ctx.state.throwawayCreated) throw new CommandError(`no room ${THROWAWAY_ROOM}`);
+  await call("delete_room", ctx.chat.deleteRoom({ roomId: THROWAWAY_ROOM }));
+  ctx.state.throwawayCreated = false;
+  ctx.record({ via: "room", room: THROWAWAY_ROOM, kind: "Deleted", data: { roomId: THROWAWAY_ROOM } });
+}
+
 async function runMenu(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
   const modes: readonly MenuMode[] = ["custom", "extend", "hide-edit", "none"];
   const mode = modes.find((candidate) => candidate === command.args[0]);
@@ -395,6 +434,26 @@ async function runStream(ctx: ProductContext, room: RoomId): Promise<void> {
     await ctx.feed.edit(room, id, textBody(STREAM_WORDS.slice(0, words).join(" ")));
   }
   await ctx.feed.status(room, id, "Sent");
+}
+
+/**
+ * Post one message, then send `n` edits of it with no wait between them. The
+ * core refuses the edits past the budget of the room. The waits before and
+ * after the edits give each run a full budget, and give the reply a budget.
+ */
+async function runFlood(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const count = command.args.length === 0 ? DEFAULT_FLOOD : expectCount(command, MAX_FLOOD, "[n]");
+  const id = await ctx.feed.post(room, textBody(FLOOD_TARGET_TEXT));
+  await delay(FLOOD_SETTLE_MS);
+  // Every edit has the same body, so the order in which the host applies
+  // them does not change the result.
+  const body = floodBody(count);
+  const outcomes = await Promise.allSettled(Array.from({ length: count }, () => ctx.feed.edit(room, id, body)));
+  const accepted = outcomes.filter((outcome) => outcome.status === "fulfilled").length;
+  const refused = count - accepted;
+  ctx.record({ via: "flood", room, kind: "Done", data: { sent: count, accepted, refused } });
+  await delay(FLOOD_SETTLE_MS);
+  await ctx.feed.reply(room, `ok ${command.line} accepted=${accepted} refused=${refused}`);
 }
 
 async function runEdit(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {

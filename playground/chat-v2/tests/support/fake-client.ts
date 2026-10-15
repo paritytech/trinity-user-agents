@@ -37,9 +37,26 @@ function observable<Item>() {
   };
 }
 
+/**
+ * How the fake fails one call: `error` plays a host that answers with that
+ * `CallError`, and `reject` plays a client whose promise rejects, as a
+ * closed connection does.
+ */
+export type FakeFailure = { error: unknown } | { reject: Error };
+
+/** The `CallError` of a call that the core refuses with `variant`. */
+export function domainError(variant: unknown): unknown {
+  return { tag: "Domain", value: { tag: "V1", value: variant } };
+}
+
 export interface FakeClientOptions {
   /** Methods the fake refuses with `Unknown`. */
   refuse?: ReadonlySet<string>;
+  /**
+   * Fail one call of `method`. `index` counts the calls of that method from
+   * 1. Give `undefined` to let the call succeed.
+   */
+  fail?: (method: string, index: number, request: unknown) => FakeFailure | undefined;
   /** The product local storage; share it to play a worker restart. */
   storage?: Map<string, `0x${string}`>;
 }
@@ -51,14 +68,20 @@ export function createFakeClient(options: FakeClientOptions = {}) {
   const rendererActions = observable<HostRendererActionSubscribeItem>();
   const storage = options.storage ?? new Map<string, `0x${string}`>();
   let hostIds = 0;
+  const counts = new Map<string, number>();
 
   const unary =
     (method: string, answer: (request: never) => unknown = () => undefined) =>
     (request: never) => {
       calls.push({ method, request });
+      const index = (counts.get(method) ?? 0) + 1;
+      counts.set(method, index);
       if (options.refuse?.has(method)) {
-        return errAsync({ tag: "Domain", value: { tag: "V1", value: { tag: "Unknown", value: { reason: "refused by the fake" } } } });
+        return errAsync(domainError({ tag: "Unknown", value: { reason: "refused by the fake" } }));
       }
+      const failure = options.fail?.(method, index, request);
+      if (failure && "reject" in failure) return Promise.reject(failure.reject);
+      if (failure) return errAsync(failure.error);
       return okAsync(answer(request));
     };
 

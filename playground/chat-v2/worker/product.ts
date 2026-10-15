@@ -162,7 +162,10 @@ export class SampleProduct {
   #state: ProductState = initialState();
   #store = new SourceStore(this.#state.source);
   #clock = new Clock(this.#state.clock);
+  /** The last preimage submit. It never rejects. */
   #preimage: Promise<HexString> = Promise.resolve(MISSING_PREIMAGE_KEY);
+  /** `true` while a preimage submit has no result. */
+  #preimagePending = false;
   #queue: Promise<void> = Promise.resolve();
   #saves: Promise<void> = Promise.resolve();
   /** The storage in use: the host's, or memory when the host has none. */
@@ -269,23 +272,57 @@ export class SampleProduct {
     this.#preimage = this.#preparePreimage();
   }
 
+  /** The preimage key, or `undefined` when no submit succeeded. */
+  #storedPreimageKey(): HexString | undefined {
+    const key = this.#state.preimageKey;
+    return key === undefined || key === MISSING_PREIMAGE_KEY ? undefined : key;
+  }
+
   /**
-   * Submit `assets/sample.png` at the first start and keep the key. A host
-   * that refuses leaves the key of no preimage, so `/post rich` then shows
-   * the missing-preimage placeholder.
+   * Submit `assets/sample.png` when the state has no key, and keep the key.
+   * When the host refuses, or the call rejects, the result is the key of no
+   * preimage, so `/post rich` shows the missing-preimage placeholder. The
+   * state keeps no key then, so the next `/post rich` submits again. The
+   * promise never rejects: a client that closes before the submit settles
+   * gives no unhandled rejection.
    */
   async #preparePreimage(): Promise<HexString> {
-    let submitted = this.#state.preimageKey !== undefined;
-    if (!submitted) {
-      const result = await this.#client.preimage.submit(this.#assets.samplePng);
-      submitted = result.isOk();
-      this.#state.preimageKey = result.isOk() ? result.value : MISSING_PREIMAGE_KEY;
-      if (result.isErr()) console.error(`chat-v2: preimage submit failed: ${describeCallError(result.error)}`);
-      this.#save();
+    this.#preimagePending = true;
+    try {
+      if (this.#storedPreimageKey() === undefined) {
+        delete this.#state.preimageKey;
+        try {
+          const result = await this.#client.preimage.submit(this.#assets.samplePng);
+          if (result.isOk()) {
+            this.#state.preimageKey = result.value;
+            void this.#save();
+          } else {
+            console.error(`chat-v2: preimage submit failed: ${describeCallError(result.error)}`);
+          }
+        } catch (error) {
+          console.error("chat-v2: preimage submit failed", error);
+        }
+      }
+      const key = this.#storedPreimageKey() ?? MISSING_PREIMAGE_KEY;
+      this.#record({ via: "preimage", room: null, kind: key === MISSING_PREIMAGE_KEY ? "Missing" : "Submitted", data: { key } });
+      return key;
+    } catch (error) {
+      console.error("chat-v2: the preimage key is not available", error);
+      return MISSING_PREIMAGE_KEY;
+    } finally {
+      this.#preimagePending = false;
     }
-    const key = this.#state.preimageKey ?? MISSING_PREIMAGE_KEY;
-    this.#record({ via: "preimage", room: null, kind: key === MISSING_PREIMAGE_KEY ? "Missing" : "Submitted", data: { key } });
-    return key;
+  }
+
+  /**
+   * The key for `/post rich`. When the last submit failed and no submit is
+   * open, submit again.
+   */
+  #preimageKey(): Promise<HexString> {
+    if (!this.#preimagePending && this.#storedPreimageKey() === undefined) {
+      this.#preimage = this.#preparePreimage();
+    }
+    return this.#preimage;
   }
 
   // ------------------------------------------------------------- plumbing
@@ -304,7 +341,8 @@ export class SampleProduct {
       store: this.#store,
       feed: this.#feed,
       settings: (room) => this.#settings(room),
-      preimageKey: () => this.#preimage,
+      preimageKey: () => this.#preimageKey(),
+      record: (entry) => this.#record(entry),
     };
   }
 
