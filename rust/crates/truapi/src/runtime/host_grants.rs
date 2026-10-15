@@ -122,12 +122,17 @@ pub struct HostGrantGuard<'a> {
 /// Orders durable grants and session writes against revocation.
 pub struct HostGrantPersistence<'a> {
 	store: &'a HostGrantStore,
-	_barrier: GrantBarrier,
+	_barrier: Barrier<'a>,
 }
 
 /// Holds back grant writes while a session changes or its grants are revoked.
 pub struct GrantBarrier {
 	_guard: OwnedMutexGuard<()>,
+}
+
+enum Barrier<'a> {
+	Owned { _barrier: GrantBarrier },
+	Held { _barrier: &'a GrantBarrier },
 }
 
 impl HostGrantStore {
@@ -155,12 +160,20 @@ impl HostGrantStore {
 
 	/// Serialize persistence and replacement publication.
 	pub async fn persistence(&self) -> HostGrantPersistence<'_> {
-		HostGrantPersistence { store: self, _barrier: self.barrier().await }
+		HostGrantPersistence {
+			store: self,
+			_barrier: Barrier::Owned { _barrier: self.barrier().await },
+		}
 	}
 
 	/// Hold back grant writes across another component's session change.
 	pub async fn barrier(&self) -> GrantBarrier {
 		GrantBarrier { _guard: self.persistence.clone().lock_owned().await }
+	}
+
+	/// Persist under a barrier this store already handed out.
+	pub fn persistence_under<'a>(&'a self, barrier: &'a GrantBarrier) -> HostGrantPersistence<'a> {
+		HostGrantPersistence { store: self, _barrier: Barrier::Held { _barrier: barrier } }
 	}
 
 	/// Stop grant work for `previous`, revoking its durable grants when it was cleared.
