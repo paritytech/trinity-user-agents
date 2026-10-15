@@ -34,6 +34,17 @@ use crate::{
 	},
 };
 
+/// Wallet call bound to a session and the origin that supplied its caller.
+#[derive(Clone, Copy)]
+pub struct AccountInvocation<'a> {
+	/// Cancellation and deadline for this operation.
+	pub call: &'a CallContext,
+	/// Session selected before the operation began.
+	pub session: &'a AuthoritySession,
+	/// This host's product binding or a paired host's reported identity.
+	pub caller: AccountCaller<'a>,
+}
+
 /// Trust boundary for product identity and host permissions.
 #[derive(Clone, Copy)]
 pub enum AccountCaller<'a> {
@@ -365,6 +376,19 @@ pub enum AccountGrant {
 	AutoSigning(AutoSigningKey),
 }
 
+/// One resource result in an otherwise valid allocation batch.
+pub enum AccountGrantOutcome {
+	/// Issued capability material.
+	Allocated(AccountGrant),
+	/// The holder declined this resource.
+	Rejected,
+	/// No grant is available; local issuers may supply diagnostic context.
+	NotAvailable {
+		/// Issuer detail absent from the existing SSO response.
+		reason: Option<String>,
+	},
+}
+
 /// How a host keeps the grants its account holder issues.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GrantKeeping {
@@ -372,6 +396,148 @@ pub enum GrantKeeping {
 	Wallet,
 	/// A host paired with a wallet on another device: grants persist under the pairing.
 	Paired,
+}
+
+/// Wallet account operations bound to a selected session.
+#[async_trait]
+pub trait AccountHolder: Send + Sync + 'static {
+	/// How the host keeps the grants this holder issues.
+	const GRANT_KEEPING: GrantKeeping;
+
+	/// Current account-authority session, if connected.
+	fn current_session(&self) -> Option<AuthoritySession>;
+
+	/// Reject replacement of the originally selected wallet or paired channel.
+	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError>;
+
+	/// Lazily issue the ordered grants of an explicit request the caller confirmed.
+	async fn allocate_grants<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
+		request: HostRequestResourceAllocationRequest,
+		policy: crate::host_internal::sso_messages::OnExistingAllowancePolicy,
+	) -> Result<
+		futures::stream::BoxStream<'a, Result<AccountGrantOutcome, AuthorityError>>,
+		AuthorityError,
+	>;
+
+	/// Obtain one allowance when the host has no usable grant.
+	async fn ensure_allowance(
+		&self,
+		invocation: AccountInvocation<'_>,
+		resource: super::allowances::AllowanceResource,
+		policy: crate::host_internal::sso_messages::OnExistingAllowancePolicy,
+	) -> Result<AccountGrant, AuthorityError>;
+
+	/// Resolve the public hard subtree under the selected account holder.
+	async fn product_subtree_public_key(
+		&self,
+		invocation: AccountInvocation<'_>,
+		product_id: String,
+	) -> Result<[u8; 32], AuthorityError>;
+
+	/// Sign an RFC-0023 Merlin transcript with a product account.
+	async fn sign_vrf(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountSignVrfRequest,
+	) -> Result<VrfSignature, AuthorityError>;
+
+	/// Sign a SCALE transaction payload for a product account.
+	///
+	/// The caller confirms the request with the user first.
+	async fn sign_payload(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: SignPayloadAuthorityRequest,
+	) -> Result<HostSignPayloadResponse, AuthorityError>;
+
+	/// Sign arbitrary bytes for a product account.
+	///
+	/// Confirmed by the caller like [`AccountHolder::sign_payload`].
+	async fn sign_raw(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: SignRawAuthorityRequest,
+		watermarked: bool,
+	) -> Result<HostSignPayloadResponse, AuthorityError>;
+
+	/// Build a transaction for a product account, signed unless the request
+	/// supplies its own V5 `VerifyMultiSignature` extension.
+	/// Confirmed by the caller like [`AccountHolder::sign_payload`].
+	async fn create_transaction(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: CreateTransactionAuthorityRequest,
+	) -> Result<HostCreateTransactionResponse, AuthorityError>;
+
+	/// Derive a product-scoped contextual alias for an explicit registered key.
+	///
+	/// The Account Holder resolves `key_handle` from the registry and derives
+	/// the alias bound to `context`; `create_proof` derives the same alias.
+	async fn account_alias(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountGetAliasRequest,
+	) -> Result<HostAccountGetAliasResponse, RingVrfError>;
+
+	/// Create a ring-VRF proof bound to a context and message.
+	///
+	/// Uses the request's explicit registered key, so the returned
+	/// `contextual_alias` matches `account_alias` for the same inputs.
+	async fn create_proof(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountCreateProofRequest,
+	) -> Result<HostAccountCreateProofResponse, RingVrfError>;
+
+	/// Register a ring-VRF key owned by the calling product and record it in
+	/// the registry this host reads.
+	async fn register_ring_vrf_key(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRegisterRingVrfKeyRequest,
+	) -> Result<HostAccountRegisterRingVrfKeyResponse, RingVrfError>;
+
+	/// List an owner's registered ring-VRF keys, keeping the registry this host reads current.
+	async fn list_ring_vrf_keys(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountListRingVrfKeysRequest,
+	) -> Result<HostAccountListRingVrfKeysResponse, RingVrfError>;
+
+	/// Sign bytes directly with a registered ring-VRF key.
+	async fn ring_vrf_sign(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRingVrfSignRequest,
+	) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
+
+	/// Sign exact statement-store proof bytes with a product-derived account.
+	async fn sign_statement_store_product_payload(
+		&self,
+		invocation: AccountInvocation<'_>,
+		account: ProductAccountId,
+		payload: Vec<u8>,
+	) -> Result<[u8; 64], AuthorityError>;
+
+	/// Derive product-scoped entropy for a connected session.
+	fn derive_entropy(
+		&self,
+		session: &AuthoritySession,
+		product_id: &str,
+		context: &[u8],
+	) -> Result<[u8; 32], AuthorityError>;
+
+	/// Mint and resolve contact handles under the session's root entropy source.
+	///
+	/// Handles match across products and host roles. The key stays inside
+	/// `ContactHandles`, so no product can recover contacts by hashing
+	/// candidate accounts.
+	fn contact_handles(
+		&self,
+		session: &AuthoritySession,
+	) -> Result<super::contacts::ContactHandles, AuthorityError>;
 }
 
 /// Host account authority used by product runtimes.
