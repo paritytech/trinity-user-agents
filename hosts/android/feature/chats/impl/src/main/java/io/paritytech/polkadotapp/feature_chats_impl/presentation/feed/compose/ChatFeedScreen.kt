@@ -188,6 +188,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onBlockUserConfirm = contract::onBlockUserConfirm,
         onDeleteMessageConfirm = contract::onDeleteMessageConfirm,
         onProductLinkConfirm = { contract.onProductRoomAction(ProductRoomAction.OpenLink(it)) },
+        onPublicStorageNoticeAccept = contract::onPublicStorageNoticeAccept,
         participants = productRoomState.participants.list,
         participantSheet = productRoomState.participantSheet,
         onProductRoomAction = contract::onProductRoomAction,

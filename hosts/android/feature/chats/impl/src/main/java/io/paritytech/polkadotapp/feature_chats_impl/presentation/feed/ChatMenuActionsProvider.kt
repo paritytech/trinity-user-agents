@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.AllowedMes
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.isIncoming
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.isOutgoing
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductAttachmentOutbox
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.canSendMessage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.isPeerLeft
@@ -49,7 +50,9 @@ class ChatMenuActionsProvider @Inject constructor() {
         roomPolicy: ChatRoomPolicy?,
     ): List<AllowedMessageMenuAction> {
         return buildList {
-            if (roomPolicy?.offersRetry == true && message.status == ChatMessageUiModel.Status.FAILED && message.isOutgoing()) {
+            // An attachment of the outbox offers Retry in both room modes (07-LATER §7).
+            val retries = roomPolicy?.offersRetry == true || ProductAttachmentOutbox.isOutboxId(message.id)
+            if (roomPolicy != null && retries && message.status == ChatMessageUiModel.Status.FAILED && message.isOutgoing()) {
                 add(AllowedMessageMenuAction.Retry)
             }
 

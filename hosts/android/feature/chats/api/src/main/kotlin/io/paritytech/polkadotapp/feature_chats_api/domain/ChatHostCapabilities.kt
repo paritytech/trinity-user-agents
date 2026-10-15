@@ -20,6 +20,9 @@ object ChatHostCapabilities {
     /** The mute and the archive of the user, which the product reads through `UserStateChanged`: S54 to S56. */
     const val MUTE_ARCHIVE = "mute_archive"
 
+    /** A user attachment above 1 MiB goes to the Bulletin chain as a preimage that the product pays for: S57 to S60. */
+    const val PREIMAGE_ATTACHMENTS = "preimage_attachments"
+
     /** `register_bot` keeps a persona, and the host draws `bot:<id>` with its name and icon: S53. */
     const val BOT_PERSONAS = "bot_personas"
 

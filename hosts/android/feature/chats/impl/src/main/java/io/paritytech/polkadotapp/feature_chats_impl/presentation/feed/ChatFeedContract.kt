@@ -83,6 +83,9 @@ interface ChatFeedContract {
     fun onCloseMenu()
     fun onDeleteMessageConfirm(messageId: ChatMessageId)
 
+    /** The user accepted the public-storage notice. The host sends the attachment that waits for it. */
+    fun onPublicStorageNoticeAccept()
+
     /** An action on a part of a product room that its product declares. */
     fun onProductRoomAction(action: ProductRoomAction)
 
