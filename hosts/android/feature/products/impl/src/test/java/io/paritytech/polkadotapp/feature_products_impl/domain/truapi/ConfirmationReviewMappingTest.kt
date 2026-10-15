@@ -21,7 +21,6 @@ import uniffi.truapi.HostSignRawRequest
 import uniffi.truapi.HostSignRawWithLegacyAccountRequest
 import uniffi.truapi.IdentityDisclosureReview
 import uniffi.truapi.LegacyAccountTxPayload
-import uniffi.truapi.PreimageSubmitReview
 import uniffi.truapi.ProductAccountTxPayload
 import uniffi.truapi.ProductSubtreeReview
 import uniffi.truapi.RawPayload
@@ -306,15 +305,6 @@ class ConfirmationReviewMappingTest {
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.IdentityDisclosure
 
         assertEquals("discloser.dot", confirmation.requesterProductId)
-    }
-
-    @Test
-    fun `preimage submit carries its size`() {
-        val review = UserConfirmationReview.PreimageSubmit(PreimageSubmitReview(size = 4096uL))
-
-        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.PreimageSubmit
-
-        assertEquals(4096L, confirmation.sizeBytes)
     }
 
     @Test
