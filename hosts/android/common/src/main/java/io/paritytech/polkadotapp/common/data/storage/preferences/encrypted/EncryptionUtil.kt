@@ -119,6 +119,12 @@ class EncryptionUtil @Inject constructor(
         keyPairGenerator.generateKeyPair()
     }
 
+    internal fun encryptOrThrow(cleartext: String): String =
+        Base64.toBase64String(encrypt(getPrerenceAesKey().encoded, cleartext.toByteArray()))
+
+    internal fun decryptOrThrow(encryptedBase64: String): String =
+        String(decrypt(getPrerenceAesKey().encoded, Base64.decode(encryptedBase64)))
+
     fun encrypt(cleartext: String?): String {
         if (!cleartext.isNullOrEmpty()) {
             try {

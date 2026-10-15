@@ -123,16 +123,28 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let product_id =
 			normalize_product_identifier(product_id).map_err(|error| error.to_string())?;
 		self.consent.forget_allowed_once_for(&product_id);
-		let session = {
-			let mut lifecycle = self.grants.lifecycle();
-			lifecycle.revoke_product(&product_id);
-			self.session_state.current()
-		};
-		self.grants
-			.persistence()
-			.await
-			.clear_product(session.as_ref(), &product_id)
-			.await
+		self.grants.clear_product_grants(&self.session_state, &product_id).await
+	}
+
+	/// Revoke the grants `owner`'s wallet left on this host. When that wallet
+	/// is the active one, its activation ends through `end_activation` before
+	/// any grant can be used again, and this returns true.
+	pub fn revoke_wallet(&self, owner: [u8; 32], end_activation: impl FnOnce()) -> bool {
+		let mut lifecycle = self.grants.lifecycle();
+		lifecycle.revoke_native_owner(owner);
+		let active =
+			self.session_state.current().is_some_and(|session| session.public_key == owner);
+		if active {
+			lifecycle.clear_memory();
+			self.consent.forget_allowed_once();
+			end_activation();
+		}
+		active
+	}
+
+	/// Finish deleting revoked grants from storage.
+	pub async fn finish_grant_cleanup(&self) -> Result<(), String> {
+		self.grants.persistence().await.drain_cleanup().await
 	}
 
 	/// Forget this activation's grants and Allow once answers, then make

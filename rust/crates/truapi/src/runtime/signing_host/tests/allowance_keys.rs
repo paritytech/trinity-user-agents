@@ -186,18 +186,67 @@ fn a_new_period_keeps_the_sponsorship_key_until_submission() {
 }
 
 #[test]
-fn a_new_session_looks_the_allowance_up_again() {
-	let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
+fn a_new_session_reuses_the_same_wallet_allowance() {
+	let platform = Arc::new(StubPlatform::default());
+	let signing_host = active_signing_host(platform.clone());
 	remember(&signing_host, PRODUCT_ID, PERIOD);
 
 	futures::executor::block_on(signing_host.disconnect());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
-		.expect("re-activation succeeds");
+	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec())).unwrap();
+	let after_lock = remembered(&signing_host, PRODUCT_ID);
+	let restarted = active_signing_host(platform);
+	let state = restarted.session_state();
+	let session = state.current().unwrap();
+	let revision = restarted.accounts().grants_for_tests().lifecycle().revision();
+	let restored =
+		futures::executor::block_on(restarted.accounts().grants_for_tests().cached_allowance(
+			&state,
+			&session,
+			revision,
+			PRODUCT_ID,
+			AllowanceResource::StatementStore,
+		))
+		.unwrap();
+	futures::executor::block_on(restarted.activate_local_session(vec![0xAC; 16])).unwrap();
 
 	assert_eq!(
-		remembered(&signing_host, PRODUCT_ID),
-		None,
-		"the second session served the first session's key"
+		(
+			after_lock,
+			restored.map(|grant| match grant {
+				AccountGrant::StatementStore { key, period } => (period, *key.as_secret_bytes()),
+				_ => panic!("expected statement-store grant"),
+			}),
+			remembered(&restarted, PRODUCT_ID)
+		),
+		(Some(SECRET), Some((None, SECRET)), None),
+		"same-wallet restart retains its key without exposing it to another owner",
+	);
+}
+
+#[test]
+fn deleting_a_wallet_clears_its_grants_and_only_disconnects_that_wallet() {
+	let platform = Arc::new(StubPlatform::default());
+	let host = active_signing_host(platform.clone());
+	let owner = host.session_state().current().unwrap().public_key;
+	remember(&host, PRODUCT_ID, PERIOD);
+	futures::executor::block_on(host.activate_local_session(vec![0xAC; 16])).unwrap();
+	let other_owner = host.session_state().current().unwrap().public_key;
+	remember(&host, PRODUCT_ID, PERIOD);
+	futures::executor::block_on(host.clear_wallet_state(owner)).unwrap();
+	let other_grant = remembered(&host, PRODUCT_ID);
+	let other_selected = host.session_state().current().unwrap().public_key;
+	futures::executor::block_on(host.activate_local_session(ENTROPY.to_vec())).unwrap();
+	let deleted_grant = remembered(&host, PRODUCT_ID);
+	futures::executor::block_on(host.clear_wallet_state(owner)).unwrap();
+	assert_eq!(
+		(
+			other_selected,
+			other_grant,
+			deleted_grant,
+			host.session_state().current().is_none(),
+			platform.auth_states.lock().unwrap().last().cloned(),
+		),
+		(other_owner, Some(SECRET), None, true, Some(crate::platform::AuthState::Disconnected)),
 	);
 }
 
@@ -574,6 +623,50 @@ fn a_failed_bulletin_extension_keeps_the_retained_key_without_a_prompt() {
 		(outcome, platform.resource_allocation_reviews.lock().unwrap().len()),
 		((true, Some(key.secret.to_bytes())), 0)
 	);
+}
+
+#[test]
+fn started_native_writes_survive_lock_but_not_an_interrupted_product_reset() {
+	for change in ["lock", "reset-and-drop-write", "reset"] {
+		let platform = Arc::new(StubPlatform::default());
+		let host = active_signing_host(platform.clone());
+		remember(&host, "other.dot", PERIOD);
+		let state = host.session_state();
+		let session = state.current().unwrap();
+		let revision = host.accounts().grants_for_tests().lifecycle().revision();
+		let (release, gate) = futures::channel::oneshot::channel();
+		*platform.core_storage_write_gate.lock().unwrap() = Some(gate);
+		let grant = AccountGrant::StatementStore { key: secret_key(), period: Some(PERIOD) };
+		let mut write = Box::pin(
+			host.accounts()
+				.grants_for_tests()
+				.retain_allowance(&state, &session, revision, PRODUCT_ID, &grant),
+		);
+		assert!(write.as_mut().now_or_never().is_none());
+		if change == "lock" {
+			futures::executor::block_on(host.disconnect());
+		} else {
+			let mut reset = Box::pin(host.clear_product_state(PRODUCT_ID));
+			assert!(reset.as_mut().now_or_never().is_none());
+			drop(reset);
+		}
+		if change == "reset-and-drop-write" {
+			drop(write);
+			let _ = release.send(());
+		} else {
+			release.send(()).unwrap();
+			assert_eq!(
+				futures::executor::block_on(write).map(|_| ()),
+				Err(AuthorityError::Disconnected)
+			);
+		}
+		futures::executor::block_on(host.activate_local_session(ENTROPY.to_vec())).unwrap();
+		assert_eq!(
+			(remembered(&host, PRODUCT_ID), remembered(&host, "other.dot")),
+			(if change == "lock" { Some(SECRET) } else { None }, Some(SECRET)),
+			"{change}",
+		);
+	}
 }
 
 fn sent_methods(platform: &StubPlatform) -> Vec<String> {
