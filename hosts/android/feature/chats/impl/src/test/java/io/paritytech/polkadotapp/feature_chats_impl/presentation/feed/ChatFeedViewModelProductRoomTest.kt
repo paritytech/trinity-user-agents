@@ -53,6 +53,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoo
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ParticipantSheetEntry
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductToolbarItemUiModel
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.collections.immutable.persistentListOf
@@ -498,5 +499,6 @@ class ChatFeedViewModelProductRoomTest {
         ),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk<CallStateTracker> { every { observeActiveCall() } returns flowOf(null) },
+        roomSearchFactory = ChatRoomSearchController.Factory(mockk(relaxed = true)),
     )
 }

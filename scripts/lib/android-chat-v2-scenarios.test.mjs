@@ -27,7 +27,7 @@ test("every Android scenario of the test plan has one entry", () => {
     assert.ok(!ids.includes(id), `${id} has no Android layer`);
   }
   for (const scenario of ANDROID_CHAT_V2_SCENARIOS) {
-    assert.match(scenario.phase, /^P(8|10)\.\d$/);
+    assert.match(scenario.phase, /^P(8|10)\.\d+$/);
   }
 });
 
@@ -42,6 +42,14 @@ test("S1 to S24 and S46 are driven, the P8.6 scenarios are skips", () => {
     const scenario = ANDROID_CHAT_V2_SCENARIOS.find((entry) => entry.id === `S${number}`);
     assert.equal(skipRow(scenario).evidence, "skip: needs P8.6");
   }
+});
+
+test("the P10.10 and P10.5 rows are driven, and S62 waits for the sample", () => {
+  const byId = (id) => ANDROID_CHAT_V2_SCENARIOS.find((scenario) => scenario.id === id);
+  for (const id of ["S54", "S55", "S56", "S61", "S63"]) {
+    assert.equal(byId(id).drive, true, id);
+  }
+  assert.match(skipRow(byId("S62")).evidence, /^skip: needs P10\.5\.1 sample/);
 });
 
 test("a scenario with its own skip reason keeps it", () => {

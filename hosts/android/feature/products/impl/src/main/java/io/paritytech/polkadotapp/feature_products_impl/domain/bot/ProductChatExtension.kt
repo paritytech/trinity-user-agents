@@ -47,6 +47,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMes
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductSearchPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -267,6 +268,11 @@ class ProductChatExtension(
             override suspend fun participantMenu(chatId: ChatId, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> {
                 val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
                 return runningWorker.participantMenu(room, entry)
+            }
+
+            override suspend fun searchPage(chatId: ChatId, text: String, cursor: String?, pageSize: Int): Result<ProductSearchPage> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.searchPage(room, text, cursor, pageSize)
             }
         }
     }

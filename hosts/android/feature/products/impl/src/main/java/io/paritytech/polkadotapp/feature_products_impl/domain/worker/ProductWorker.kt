@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductCha
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductSearchPage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -74,6 +75,10 @@ interface ProductWorker : JsEventDispatcher {
         Result.failure(ProductChatQueryException.Unavailable(cause = null))
 
     suspend fun participantMenu(roomId: ProductChatIdParameter, entry: ChatParticipantEntryModel): Result<ChatParticipantMenuModel> =
+        Result.failure(ProductChatQueryException.Unavailable(cause = null))
+
+    /** The messages of [roomId] that match [text], newest first (`search_query`). */
+    suspend fun searchPage(roomId: ProductChatIdParameter, text: String, cursor: String?, pageSize: Int): Result<ProductSearchPage> =
         Result.failure(ProductChatQueryException.Unavailable(cause = null))
 
     /** The tree of the footer that the product draws for [roomId] (`RenderContext::ChatFooter`). */

@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMes
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReactionSummaryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductSearchPage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageBody
@@ -21,6 +22,7 @@ import uniffi.truapi.ChatPageAnchor
 import uniffi.truapi.ChatUserAction
 import uniffi.truapi.ProductChatMessagesQueryItem
 import uniffi.truapi.ProductChatQueryError
+import uniffi.truapi.ProductChatSearchQueryItem
 import uniffi.truapi.ProductChatUserActionError
 import uniffi.truapi.ProductChatUserActionItem
 import uniffi.truapi.ChatMessage as CoreChatMessage
@@ -103,6 +105,9 @@ fun ChatUserActionModel.toCore(): ChatUserAction? = when (this) {
 
 fun ProductChatMessagesQueryItem.toModel(rendererId: String) =
     ProductMessagesPage(messages = messages.map { it.toModel(rendererId) }, next = next)
+
+fun ProductChatSearchQueryItem.toModel(rendererId: String) =
+    ProductSearchPage(hits = hits.map { it.toModel(rendererId) }, next = next)
 
 fun ProductChatUserActionItem.toModel(rendererId: String): ChatUserActionOutcome = when (this) {
     is ProductChatUserActionItem.MessageCreated -> ChatUserActionOutcome.MessageCreated(v1.toModel(rendererId))

@@ -648,6 +648,12 @@
     <string name="chat_search_recents_clear">CLEAR</string>
     <string name="chat_search_recent_menu_remove">Remove from Recents</string>
     <string name="chat_search_error_message">Search failed. Please try again</string>
+    <string name="chat_room_search">Search in chat</string>
+    <string name="chat_room_search_close">Close search</string>
+    <string name="chat_room_search_placeholder">Search messages</string>
+    <string name="chat_room_search_no_results">No messages found</string>
+    <string name="chat_room_search_not_available">Search is not available</string>
+    <string name="chat_search_author_you">You</string>
 
     <string name="search_section_recent">RECENT</string>
     <string name="search_section_contacts">CONTACTS</string>
@@ -929,6 +935,16 @@
     <string name="product_chat_menu_remove_chat">Remove chat</string>
     <string name="product_chat_menu_remove_confirmation_text">Remove chat?</string>
     <string name="product_chat_menu_remove_confirmation_positive">Remove</string>
+    <string name="chat_room_mute">Mute</string>
+    <string name="chat_room_unmute">Unmute</string>
+    <string name="chat_room_archive">Archive</string>
+    <string name="chat_room_unarchive">Unarchive</string>
+    <string name="chat_room_mute_title">Mute notifications</string>
+    <string name="chat_room_mute_one_hour">For 1 hour</string>
+    <string name="chat_room_mute_eight_hours">For 8 hours</string>
+    <string name="chat_room_mute_one_week">For 1 week</string>
+    <string name="chat_room_mute_always">Always</string>
+    <string name="chat_list_archived">Archived</string>
 
     <string name="chain_health_state_connected">Connected</string>
     <string name="chain_health_state_not_producing">Not producing blocks</string>

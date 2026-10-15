@@ -123,8 +123,7 @@ private fun Chat?.toRowStatus(): ChatSearchRowStatus {
     if (this == null) return NoRowStatus
 
     return ChatSearchRowStatus(
-        // TODO: wire mute state from domain Chat once the field exists — mirrors ChatListViewModel.
-        isMuted = false,
+        isMuted = roomPolicy?.userState?.isMutedAt(System.currentTimeMillis()) == true,
         hasReaction = hasUnseenReaction,
         badge = unreadBadge.toBadgeUi(),
     )

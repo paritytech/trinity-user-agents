@@ -1,8 +1,10 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components
 
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
@@ -18,6 +20,7 @@ import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatToolbarAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductToolbarUiModel
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchButton
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
@@ -35,6 +38,8 @@ internal fun ChatFeedToolbar(
     onMenuClick: () -> Unit,
     onProductToolbarClick: (actionId: String) -> Unit,
     onParticipantsClick: () -> Unit,
+    /** Null when the room has no in-room search (07-LATER §8.2). */
+    onSearchClick: (() -> Unit)? = null,
 ) {
     val isLoaded = displayState is LoadingState.Loaded
     val displayData = displayState.dataOrNull
@@ -70,6 +75,7 @@ internal fun ChatFeedToolbar(
     }
 
     val hasProductButtons = isLoaded && (productToolbar.inline.isNotEmpty() || productToolbar.overflow.isNotEmpty() || showsParticipants)
+    val searchClick = onSearchClick?.takeIf { isLoaded }
 
     PolkadotTopBar(
         navigationAction = rememberTopBarAction(action = onBack, icon = NovaIcons.ArrowLeft),
@@ -77,14 +83,20 @@ internal fun ChatFeedToolbar(
         subtitle = subtitle,
         actions = resolvedActions,
         leadingContent = leadingAvatar,
-        extraActions = if (hasProductButtons) {
+        extraActions = if (hasProductButtons || searchClick != null) {
             {
-                ProductToolbarButtons(
-                    toolbar = productToolbar,
-                    showsParticipants = showsParticipants,
-                    onClick = onProductToolbarClick,
-                    onParticipantsClick = onParticipantsClick,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (searchClick != null) ChatRoomSearchButton(onClick = searchClick)
+
+                    if (hasProductButtons) {
+                        ProductToolbarButtons(
+                            toolbar = productToolbar,
+                            showsParticipants = showsParticipants,
+                            onClick = onProductToolbarClick,
+                            onParticipantsClick = onParticipantsClick,
+                        )
+                    }
+                }
             }
         } else {
             null

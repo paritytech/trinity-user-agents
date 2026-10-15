@@ -182,6 +182,8 @@ async function runScenario(scenario) {
 const FEATURE_ROWS = {
   product_source_rooms: "S15 to S24 and S46",
   custom_bodies: "S7",
+  mute_archive: "S54 to S56",
+  search: "S61 to S63",
 };
 
 const DRIVERS = {
@@ -633,6 +635,242 @@ const DRIVERS = {
     note(`\`${await screenshot(scenarioById("S49"), "host")}\``);
     note(
       `the app lists ${listed.join(", ") || "none"}; the product read ${read.join(", ") || "none"}; inline ${match[2]} B, preimage ${match[3]} B; the rows of the listed names: ${listed.map((name) => `${name} ${FEATURE_ROWS[name]}`).join(", ") || "none"}`,
+    );
+  },
+
+  // S61: the host searches the messages it keeps, without case and
+  // diacritics, and a tap on a result jumps to the message.
+  async S61({ note }) {
+    await openRoom("host");
+    const text = "Crème brûlée at the CAFÉ";
+    await typeAndSend(text);
+    await waitFor(() => messages("host").some((message) => message.text === text), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: `"${text}" is not stored`,
+    });
+    // Newer messages push the match out of the screen, so the tap must jump to it.
+    const posted = messages("host");
+    await command("host", "/post all");
+    await waitFor(() => addedMessages("host", posted).length >= 8, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the /post all messages are not stored" });
+    await delay(2_000);
+    await scrollToNewest();
+    const before = parseUiNodes(uiDump(serial));
+    expect(!findText(before, text), `"${text}" is still on screen after /post all`);
+
+    const found = {};
+    for (const query of ["creme BRULEE", "café"]) {
+      const screen = await searchInRoom(query);
+      const hit = screen.find((node) => /Crème brûlée at the CAFÉ/.test(node.text));
+      expect(hit, `no result "${text}" for "${query}"; the screen shows ${screenSummary(screen)}`);
+      found[query] = hit;
+      note(`\`${await screenshot(scenarioById("S61"), query.replaceAll(" ", "-").toLowerCase())}\``);
+    }
+    inputTap(serial, found["café"].center.x, found["café"].center.y);
+    const jumped = await waitScreen(
+      (screen) => !findTag(screen, "chat_room_search_field") && findText(screen, text) && screen,
+      `"${text}" in the feed after the tap`,
+    );
+    const bubble = findText(jumped, text);
+    expect(bubble.center.y > 300 && bubble.center.y < 2100, `"${text}" is outside the feed at y ${bubble.center.y}`);
+    note(`\`${await screenshot(scenarioById("S61"), "jump")}\``);
+    note(
+      `the user's "${text}" is found by "creme BRULEE" and by "café" (case and diacritics ignored); a tap closes the field and the feed shows it at y ${Math.round(bubble.center.y)} after /post all pushed it out of the screen. A host-store room loads all its messages, so the jump is a scroll, not a page load`,
+    );
+  },
+
+  // S54: the user mutes the room for one hour from the list; the row shows
+  // the mute and a grey count, /notify into the room shows nothing (now and
+  // later), and the product hears of the mute.
+  async S54({ note }) {
+    await resetUserState("host");
+    await showChatList();
+    const muted = eventMark();
+    const asked = Date.now();
+    await swipeRow(ROOMS.host.name, "mute");
+    await tapWhenShown("For 1 hour", "the mute durations");
+    const stored = await waitFor(() => {
+      const row = userStateRow("host");
+      return row?.mutedUntil ? row : undefined;
+    }, { timeoutMs: COMMAND_TIMEOUT_MS, message: "chat_room_declarations.mutedUntil is not set" });
+    const hours = (Number(stored.mutedUntil) - asked) / 3_600_000;
+    expect(hours > 0.95 && hours < 1.05, `mutedUntil is ${hours.toFixed(3)} h from now`);
+    // The core keeps a room event until the worker runs. A new message of the product starts the worker and gives
+    // the row an unread count.
+    await hookPost("host", "/post text");
+    const event = await waitEvent(
+      muted,
+      (entry) => entry.via === "room_events" && entry.room === "host" && entry.kind === "UserStateChanged",
+      "UserStateChanged for the host room",
+    );
+    expect(String(event.data?.mutedUntil) === String(stored.mutedUntil), `the product got mutedUntil ${event.data?.mutedUntil}, stored ${stored.mutedUntil}`);
+    note(`chat_room_declarations.mutedUntil = now + ${hours.toFixed(3)} h; the product got UserStateChanged ${JSON.stringify(event.data)} (seq ${event.seq})`);
+
+    const list = await waitScreen(
+      (screen) => rowNodes(screen, ROOMS.host.name).some((node) => node.tag === "chat_list_mute_icon") &&
+        rowNodes(screen, ROOMS.host.name).some((node) => node.tag === "chat_list_muted_badge") && screen,
+      "the mute icon and the grey count in the host row",
+    );
+    expect(list, "no muted row");
+    note(`\`${await screenshot(scenarioById("S54"), "list")}\``);
+    note("the host row shows the speaker icon and the grey count (chat_list_mute_icon, chat_list_muted_badge)");
+
+    // The notification checks come last: the product must be able to send a notification at all, and a notification
+    // that a chat worker sends needs the notifications permission of the product first.
+    await notifyFromRoom("/notify", { mutedRoom: true });
+    const shownBefore = productNotifications();
+    await notifyFromRoom("/notify 3");
+    await delay(8_000);
+    const shownMuted = productNotifications();
+    expect(shownMuted === shownBefore, `${shownMuted - shownBefore} notification(s) of the product showed while the room is muted`);
+    note("/notify and /notify 3 into the muted room: the product got ok for both, and no notification showed in 8 s (dumpsys notification)");
+
+    await showChatList();
+    const unmuted = eventMark();
+    await swipeRow(ROOMS.host.name, "mute");
+    await waitFor(() => userStateRow("host")?.mutedUntil == null, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unmute is not stored" });
+    await notifyFromRoom("/notify");
+    await waitEvent(
+      unmuted,
+      (entry) => entry.via === "room_events" && entry.room === "host" && entry.kind === "UserStateChanged" && entry.data?.mutedUntil == null,
+      "UserStateChanged on unmute",
+    );
+    const shown = await waitFor(() => (productNotifications() > shownMuted ? productNotifications() : undefined), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "/notify after the unmute showed no notification",
+    });
+    note(`after a swipe unmutes the room, the product gets UserStateChanged with no mute and /notify shows ${shown - shownMuted} notification`);
+  },
+
+  // S55: an archived room leaves the main list for the archived section, and
+  // stays there when a message arrives; unarchive brings it back.
+  async S55({ note }) {
+    await resetUserState("host");
+    await showChatList();
+    const archived = eventMark();
+    await swipeRow(ROOMS.host.name, "archive");
+    await waitFor(() => Number(userStateRow("host")?.archived) === 1, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the archive is not stored" });
+    const main = await waitScreen(
+      (screen) => findTag(screen, "chat_list_archived_row") && !findText(screen, ROOMS.host.name) && screen,
+      "the Archived row and no host row",
+    );
+    note(`\`${await screenshot(scenarioById("S55"), "main")}\``);
+
+    // The message starts the worker, which then gets the room event that the core kept.
+    await hookPost("host", "/post text");
+    const event = await waitEvent(
+      archived,
+      (entry) => entry.via === "room_events" && entry.room === "host" && entry.kind === "UserStateChanged" && entry.data?.archived === true,
+      "UserStateChanged on archive",
+    );
+    await delay(2_000);
+    const after = await showChatList();
+    expect(!findText(after, ROOMS.host.name), "the host row came back to the main list after /post text");
+    expect(Number(userStateRow("host")?.archived) === 1, "the room is no longer archived after /post text");
+
+    tapText(main, "Archived");
+    const section = await waitScreen(
+      (screen) => findTag(screen, "chat_list_archived_header") && findText(screen, ROOMS.host.name) && screen,
+      "the archived section with the host row",
+    );
+    expect(!findText(section, ROOMS.source.name), "the archived section shows the source room");
+    note(`\`${await screenshot(scenarioById("S55"), "archived")}\``);
+
+    const unarchived = eventMark();
+    await swipeRow(ROOMS.host.name, "archive");
+    await waitFor(() => Number(userStateRow("host")?.archived ?? 0) === 0, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unarchive is not stored" });
+    await waitScreen(
+      (screen) => !findTag(screen, "chat_list_archived_header") && !findTag(screen, "chat_list_archived_row") && findText(screen, ROOMS.host.name) && screen,
+      "the host row back in the main list",
+    );
+    note(`\`${await screenshot(scenarioById("S55"), "restored")}\``);
+    await hookPost("host", "/post text");
+    await waitEvent(
+      unarchived,
+      (entry) => entry.via === "room_events" && entry.room === "host" && entry.kind === "UserStateChanged" && entry.data?.archived === false,
+      "UserStateChanged on unarchive",
+    );
+    note(
+      `a swipe archives the room: UserStateChanged ${JSON.stringify(event.data)}, the main list shows the Archived row and not the room, the room stays archived after /post text, the archived section shows it, a swipe there unarchives it and it is back in the main list; delete is not driven (the sample has no delete_room command, S5)`,
+    );
+  },
+
+  // S56: a worker that starts again first hears which rooms the user muted
+  // or archived.
+  async S56({ note }) {
+    await resetUserState("host");
+    await resetUserState("source");
+    await showChatList();
+    await swipeRow(ROOMS.host.name, "mute");
+    await tapWhenShown("Always", "the mute durations");
+    await waitFor(() => userStateRow("host")?.mutedUntil, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the mute is not stored" });
+    await swipeRow(ROOMS.source.name, "archive");
+    await waitFor(() => Number(userStateRow("source")?.archived) === 1, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the archive is not stored" });
+    try {
+      const lastBoot = Math.max(0, ...events().map((entry) => entry.boot ?? 0));
+      shell(serial, ["am", "force-stop", packageName]);
+      amStart(serial, ["-n", launcherActivity]);
+      await waitForProcess(serial, packageName);
+      // The app starts no worker for a product that has rooms, so the launcher opens a room to start it.
+      currentRoom = undefined;
+      await openRoom("host");
+      const snapshot = await waitFor(
+        () => {
+          const fresh = events().filter((entry) => entry.boot > lastBoot && entry.via === "room_events");
+          const host = fresh.find((entry) => entry.room === "host" && entry.kind === "UserStateChanged");
+          const source = fresh.find((entry) => entry.room === "source" && entry.kind === "UserStateChanged");
+          return host && source ? { fresh, host, source } : undefined;
+        },
+        { timeoutMs: START_TIMEOUT_MS, intervalMs: 2_000, message: "the new worker got no UserStateChanged snapshot for both rooms" },
+      );
+      const boot = snapshot.host.boot;
+      const firstOthers = events().filter((entry) => entry.boot === boot && entry.via === "room_events" && entry.kind !== "UserStateChanged");
+      const snapshotSeq = Math.max(snapshot.host.seq, snapshot.source.seq);
+      expect(firstOthers.every((entry) => entry.seq > snapshotSeq), "a room event came before the snapshot");
+      expect(snapshot.host.data?.archived === false && snapshot.host.data?.mutedUntil != null, `host snapshot ${JSON.stringify(snapshot.host.data)}`);
+      expect(snapshot.source.data?.archived === true && snapshot.source.data?.mutedUntil == null, `source snapshot ${JSON.stringify(snapshot.source.data)}`);
+      note(
+        `after an app restart, worker boot ${boot} got UserStateChanged host ${JSON.stringify(snapshot.host.data)} (seq ${snapshot.host.seq}) and source ${JSON.stringify(snapshot.source.data)} (seq ${snapshot.source.seq}) as its first room events`,
+      );
+    } finally {
+      await waitProductStarted().catch(() => undefined);
+      await showChatList();
+      await swipeRow(ROOMS.host.name, "mute");
+      await waitFor(() => userStateRow("host")?.mutedUntil == null, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unmute is not stored" });
+      const list = await showChatList();
+      tapText(list, "Archived");
+      await waitScreen((screen) => findTag(screen, "chat_list_archived_header") && findText(screen, ROOMS.source.name), "the archived section");
+      await swipeRow(ROOMS.source.name, "archive");
+      await waitFor(() => Number(userStateRow("source")?.archived ?? 0) === 0, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unarchive is not stored" });
+    }
+  },
+
+  // S63: the list search finds the product rooms by name and the host-store
+  // text, but never asks a product, so no worker starts.
+  async S63({ note }) {
+    await showChatList();
+    await waitFor(async () => (await workerPages()) === 0, {
+      timeoutMs: 120_000,
+      intervalMs: 3_000,
+      message: "the worker page still runs 120 s after the rooms closed",
+    });
+    const mark = eventMark();
+    const logged = logMark();
+    const byName = await searchList("Sample");
+    expect(findText(byName, ROOMS.host.name) && findText(byName, ROOMS.source.name), `the search "Sample" shows ${screenSummary(byName)}`);
+    note(`\`${await screenshot(scenarioById("S63"), "name")}\``);
+    const byText = await searchList("crème");
+    expect(byText.some((node) => /Crème brûlée/.test(node.text)), `the search "crème" shows ${screenSummary(byText)}`);
+    note(`\`${await screenshot(scenarioById("S63"), "text")}\``);
+    const sourceText = await searchList("History message 00050");
+    const leaked = sourceText.find((node) => node.text.startsWith("History message 00050") && node.className !== "android.widget.EditText");
+    expect(!leaked, `a message of the product-source room is a result: "${leaked?.text}"`);
+    await delay(5_000);
+    const pages = await workerPages();
+    const started = logLines(logged).filter((line) => /TrUAPI worker for .* is running/.test(line.message));
+    expect(pages === 0 && started.length === 0 && eventsSince(mark).length === 0, `the list search started the worker: ${pages} page(s), ${started.length} start line(s), ${eventsSince(mark).length} event(s)`);
+    inputKeyEvent(serial, KEY.back);
+    note(
+      'the list search shows both product rooms for "Sample", the host-store message for "crème", and no result for "History message 00050", which only the product of the source room keeps; no worker page, no worker start and no event log line during the search',
     );
   },
 
@@ -1178,7 +1416,8 @@ async function showChatList() {
     const screen = parseUiNodes(uiDump(serial));
     dismissPrompts(screen);
     if (findTag(screen, "chats_title")) return screen;
-    if (findTag(screen, "chat_message_input")) inputKeyEvent(serial, KEY.back);
+    // An open sheet of the list, such as the mute durations, hides the list from the dump: Back closes it.
+    if (findTag(screen, "chat_message_input") || findText(screen, "Mute notifications")) inputKeyEvent(serial, KEY.back);
     else amStart(serial, ["-n", launcherActivity]);
     await delay(1_500);
   }
@@ -1343,6 +1582,149 @@ async function screenshot(scenario, suffix, settleMs = 800) {
   const name = `s${number}-${suffix}.png`;
   screencap(serial, resolve(outDir, name));
   return name;
+}
+
+// ----------------------------------------------- mute, archive and search
+
+/** What the user set for a room, from `chat_room_declarations`. */
+function userStateRow(room) {
+  return sql(`SELECT mutedUntil, archived FROM chat_room_declarations WHERE chatId = X'${ROOMS[room].chat}'`)[0];
+}
+
+/**
+ * Swipe the chat list row of the room named `name`: to the end mutes or
+ * unmutes it, to the start archives or unarchives it.
+ */
+async function swipeRow(name, action) {
+  const screen = await waitScreen((nodes) => findText(nodes, name) && nodes, `the row "${name}"`);
+  const title = findText(screen, name);
+  const y = title.center.y + 40;
+  // A swipe that starts at an edge of the screen is the system Back gesture, so it starts inside.
+  if (action === "mute") inputSwipe(serial, { x: 300, y }, { x: 1000, y }, 300);
+  else inputSwipe(serial, { x: 850, y }, { x: 100, y }, 300);
+  await delay(1_200);
+}
+
+async function tapWhenShown(label, what) {
+  const screen = await waitScreen((nodes) => findText(nodes, label) && nodes, what);
+  tapText(screen, label);
+  await delay(800);
+}
+
+/** Clear the mute and the archive that an earlier scenario left on the room, through the list. */
+async function resetUserState(room) {
+  const state = userStateRow(room);
+  if (!state) return;
+  if (Number(state.archived) === 1) {
+    const list = await showChatList();
+    tapText(list, "Archived");
+    await waitScreen((screen) => findTag(screen, "chat_list_archived_header") && findText(screen, ROOMS[room].name), "the archived section");
+    await swipeRow(ROOMS[room].name, "archive");
+    await waitFor(() => Number(userStateRow(room)?.archived ?? 0) === 0, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unarchive is not stored" });
+  }
+  if (userStateRow(room)?.mutedUntil != null && Number(userStateRow(room).mutedUntil) > Date.now()) {
+    await showChatList();
+    await swipeRow(ROOMS[room].name, "mute");
+    await waitFor(() => userStateRow(room)?.mutedUntil == null, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unmute is not stored" });
+  }
+  await showChatList();
+}
+
+/** Send a command that posts messages as the user through the debug hook; it has no `ok` reply. */
+async function hookPost(room, text) {
+  const before = messages(room);
+  const mark = eventMark();
+  const logged = logMark();
+  hook([
+    ["--es", "product_id", productHost],
+    ["--es", "room_id", room],
+    ["--es", "message", text],
+  ]);
+  await waitForLog(logged, (line) => line.tag === E2E_TAG && line.message === `message sent product=${productHost} room=${room}`, "the hook message");
+  await waitEvent(mark, (entry) => entry.kind === "MessagePosted" && JSON.stringify(entry.data).includes(jsonText(text)), `MessagePosted "${text}"`);
+  await waitFor(() => addedMessages(room, before).some((message) => /^Plain text message/.test(message.text)), {
+    timeoutMs: COMMAND_TIMEOUT_MS,
+    message: `no message of the product after "${text}"`,
+  });
+}
+
+/**
+ * Type a `/notify` command into the host room and wait for its `ok` reply. The first one asks the user to allow
+ * notifications for the product: the launcher taps "Allow always", before `waitScreen` can answer "Don't allow".
+ */
+async function notifyFromRoom(text, { mutedRoom = false } = {}) {
+  await openRoom("host");
+  const before = messages("host").length;
+  const mark = eventMark();
+  await typeAndSend(text);
+  await waitEvent(mark, (entry) => entry.room === "host" && JSON.stringify(entry.data ?? "").includes(jsonText(text)), `the product receives "${text}"`);
+  await waitFor(
+    () => {
+      const screen = parseUiNodes(uiDump(serial));
+      const allow = findText(screen, "Allow always");
+      if (allow) inputTap(serial, allow.center.x, allow.center.y);
+      const reply = messages("host").slice(before).find((message) => message.text === `ok ${text}` || message.text.startsWith(`error ${text}`));
+      if (reply && /Permission denied/.test(reply.text)) {
+        throw new Error(
+          `the product answered "${reply.text}"${mutedRoom ? " into the muted room" : ""}: the notifications permission of the product is refused before the mute rule runs (logcat truapi.native.callback.device_permission), so this host cannot show the suppression`,
+        );
+      }
+      if (reply) expect(reply.text === `ok ${text}`, `the product answered "${reply.text}"`);
+      return reply;
+    },
+    { timeoutMs: COMMAND_TIMEOUT_MS, intervalMs: 700, message: `no reply "ok ${text}"` },
+  );
+}
+
+/** The number of notifications of the sample product that the system shows. */
+function productNotifications() {
+  const dump = shell(serial, ["dumpsys", "notification", "--noredact"]).stdout;
+  return (dump.match(/Sample notification from host/g) ?? []).length;
+}
+
+/** Open the in-room search of the open room and type `query`; gives the screen with its results. */
+async function searchInRoom(query) {
+  let screen = parseUiNodes(uiDump(serial));
+  if (!findTag(screen, "chat_room_search_field")) {
+    const action = await waitScreen((nodes) => findTag(nodes, "chat_room_search_action") && nodes, "the search action of the header");
+    const button = findTag(action, "chat_room_search_action");
+    inputTap(serial, button.center.x, button.center.y);
+    screen = await waitScreen((nodes) => findTag(nodes, "chat_room_search_field") && nodes, "the search field");
+  }
+  await pasteInto(findTag(screen, "chat_room_search_field"), query);
+  return waitScreen((nodes) => nodes.some((node) => node.tag === "chat_room_search_result") && nodes, `the results of "${query}"`);
+}
+
+/** Open the search of the chat list and type `query`; gives the screen after the results settle. */
+async function searchList(query) {
+  let screen = parseUiNodes(uiDump(serial));
+  let field = screen.find((node) => node.className === "android.widget.EditText");
+  if (!field) {
+    screen = await showChatList();
+    if (!findText(screen, "Search")) {
+      // The search entry shows when the list is pulled down.
+      inputSwipe(serial, { x: 540, y: 700 }, { x: 540, y: 1500 }, 400);
+      screen = await waitScreen((nodes) => findText(nodes, "Search") && nodes, "the search entry of the list");
+    }
+    tapText(screen, "Search");
+    screen = await waitScreen((nodes) => nodes.find((node) => node.className === "android.widget.EditText") && nodes, "the search field of the list");
+    field = screen.find((node) => node.className === "android.widget.EditText");
+  }
+  await pasteInto(field, query);
+  await delay(2_500);
+  return parseUiNodes(uiDump(serial));
+}
+
+/** Replace the text of a field with `text` through the clipboard, as `typeAndSend` does. */
+async function pasteInto(field, text) {
+  inputTap(serial, field.center.x, field.center.y);
+  inputKeyCombination(serial, KEY.ctrlLeft, KEY.a);
+  inputKeyEvent(serial, KEY.del);
+  const mark = logMark();
+  hook([["--es", "clipboard", text]]);
+  await waitForLog(mark, (line) => line.tag === E2E_TAG && line.message === "clipboard set", "the clipboard hook");
+  inputKeyEvent(serial, KEY.paste);
+  await delay(800);
 }
 
 // ------------------------------------------------------------- evidence

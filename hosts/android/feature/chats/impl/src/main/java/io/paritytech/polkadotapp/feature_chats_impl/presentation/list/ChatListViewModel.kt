@@ -4,10 +4,12 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
-import io.paritytech.polkadotapp.common.utils.combineToPair
+import io.paritytech.polkadotapp.common.presentation.ui.errors.UnexpectedPresentationError
 import io.paritytech.polkadotapp.common.utils.inBackground
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMuteDuration
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomUserStateService
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderersById
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewRenderer
@@ -47,6 +49,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.toCallPurp
 import io.paritytech.polkadotapp.feature_chats_impl.utils.ChatMessageMappingHelper
 import io.paritytech.polkadotapp.feature_chats_impl.utils.toAttachmentType
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
@@ -59,23 +62,38 @@ class ChatListViewModel @Inject constructor(
     private val router: ChatsRouter,
     private val messageMappingHelper: ChatMessageMappingHelper,
     private val roomPolicyMapper: ChatListRoomPolicyMapper,
+    private val userStateService: ChatRoomUserStateService,
 ) : BaseViewModel() {
+    private val showsArchived = MutableStateFlow(false)
+
+    /** The room whose mute duration the user picks now, or null. */
+    val mutePicker = MutableStateFlow<ChatId?>(null)
+
     val state = combine(
-        combineToPair(
-            interactor.subscribeChats(),
-            interactor.subscribeDrafts()
+        combine(
+            interactor.subscribeChats().withMuteClock(System::currentTimeMillis),
+            interactor.subscribeDrafts(),
+            showsArchived,
+            ::Triple,
         ),
         interactor.subscribeAllCustomMessageRenderers(),
         interactor.subscribePendingIncomingRequestsCount(),
         interactor.subscribeCallSignaling(),
         interactor.subscribeActiveCall()
-    ) { (chatList, drafts), customMessageRenderers, pendingRequestsCount, callSignaling, activeCall ->
+    ) { (chatsAtTime, drafts, archivedAsked), customMessageRenderers, pendingRequestsCount, callSignaling, activeCall ->
+        val (chatList, now) = chatsAtTime
+        val sections = chatList.toSections()
+        // The archived section closes by itself when the user unarchives its last room.
+        val showsArchivedSection = archivedAsked && sections.archived.isNotEmpty()
+        val shown = if (showsArchivedSection) sections.archived else sections.main
         val callContext = buildCallResolutionContext(callSignaling, activeCall)
-        val chats = chatList.map { it.toUi(drafts, customMessageRenderers, callContext) }
+        val chats = shown.map { it.toUi(drafts, customMessageRenderers, callContext, now) }
 
         ChatListUiState(
             chats = chats.toImmutableList(),
-            pendingRequestsCount = pendingRequestsCount
+            pendingRequestsCount = pendingRequestsCount,
+            archivedCount = sections.archived.size,
+            showsArchived = showsArchivedSection,
         )
     }
         .withLoading()
@@ -104,10 +122,55 @@ class ChatListViewModel @Inject constructor(
         router.openMessageRequests()
     }
 
+    fun onArchivedRowClick() {
+        showsArchived.value = true
+    }
+
+    /** Back from the archived section to the main section. */
+    fun onArchivedBack() {
+        showsArchived.value = false
+    }
+
+    /** A muted room unmutes at once. Another room asks the user how long to mute it. */
+    fun onMuteToggle(chat: ChatListUiState.ChatItem) {
+        val userState = currentUserState(chat) ?: return
+        if (userState.isMuted) {
+            changeUserState { userStateService.unmute(chat.chatId) }
+        } else {
+            mutePicker.value = chat.chatId
+        }
+    }
+
+    fun onMuteDurationSelected(duration: ChatMuteDuration) {
+        val chatId = mutePicker.value ?: return
+        mutePicker.value = null
+        changeUserState { userStateService.mute(chatId, duration) }
+    }
+
+    fun onMutePickerDismiss() {
+        mutePicker.value = null
+    }
+
+    fun onArchiveToggle(chat: ChatListUiState.ChatItem) {
+        val userState = currentUserState(chat) ?: return
+        changeUserState { userStateService.setArchived(chat.chatId, archived = !userState.isArchived) }
+    }
+
+    /** The state of the row as the list shows it now: a gesture can name a row that the list drew before a change. */
+    private fun currentUserState(chat: ChatListUiState.ChatItem): ChatListUiState.UserState? {
+        val shown = (state.value as? LoadingState.Loaded)?.data?.chats?.find { it.chatId == chat.chatId }
+        return shown?.userState ?: chat.userState
+    }
+
+    private fun changeUserState(change: suspend () -> Result<Unit>) = launchUnit {
+        change().onFailure { showPresentationError(UnexpectedPresentationError(it)) }
+    }
+
     private suspend fun Chat.toUi(
         drafts: Map<ChatId, ChatDraft>,
         customMessageRenderers: CustomChatMessageRenderersById,
         callContext: CallResolutionContext,
+        nowMs: Long,
     ): ChatListUiState.ChatItem {
         val draftText = drafts[id]?.text?.takeIf { it.isNotBlank() }
         val productPreview = roomPolicyMapper.productPreview(this)
@@ -122,15 +185,17 @@ class ChatListViewModel @Inject constructor(
             )
         }
 
+        val userState = userStateAt(nowMs)
+
         return ChatListUiState.ChatItem(
             chatId = id,
             display = ChatDisplayUiModel(username = display.name, avatarModel = roomPolicyMapper.avatar(this)),
             badge = roomPolicyMapper.badge(unreadBadge),
             preview = previewModel,
-            // TODO: wire mute state from domain Chat once the field exists.
-            isMuted = false,
+            isMuted = userState?.isMuted == true,
             hasReaction = hasUnseenReaction,
             isOngoing = draftText == null && roomPolicyMapper.isOngoing(this),
+            userState = userState,
         )
     }
 
