@@ -388,6 +388,7 @@ async function driveScenario(scenario) {
   try {
     for (const [index, phase] of scenario.drive.phases.entries()) {
       const mark = {
+        started: Date.now(),
         console: consoleText.length,
         events: parseEventLog(consoleText).length,
         reactions: reactionCount(room),
@@ -556,7 +557,9 @@ async function check(expectation, { room, mark, baseline }) {
           `room metadata ${JSON.stringify(found)} is not ${JSON.stringify(wanted)}`,
       },
     );
-    return `metadata ${JSON.stringify(wanted)}`;
+    return expectation.timed
+      ? `metadata ${JSON.stringify(wanted)} after ${Date.now() - mark.started} ms`
+      : `metadata ${JSON.stringify(wanted)}`;
   }
   if (expectation.gone) {
     await waitFor(() => !chatExists(target), {

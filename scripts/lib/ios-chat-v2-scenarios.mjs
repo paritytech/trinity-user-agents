@@ -40,6 +40,9 @@
  *   with `via`, `kind`, and an optional `data` substring;
  * - `{ console }`: an app console line written in the phase.
  *
+ * `timed: true` on a `metadata` expectation also writes the time from the
+ * start of the phase to the match, for a benchmark row (B9).
+ *
  * `scope: "previous"` makes a `console` or `event` expectation read from the
  * start of the previous phase instead of the start of its own phase.
  *
@@ -1568,6 +1571,77 @@ export const IOS_CHAT_V2_PERF = Object.freeze([
             { console: "[e2e:ui] frames host frames=", timeoutMs: 15_000 },
           ],
         },
+      ],
+    },
+  },
+  {
+    id: "B9",
+    title: "notification wake to fresh preview, cold worker (foreground)",
+    mode: "host",
+    phase: "P10.4",
+    perf: true,
+    drive: {
+      // The harness wakes the room as the receiving layer will (O28): the
+      // core sends `Woken`, and the product sets the preview "Woken by <id>".
+      phases: [
+        {
+          steps: [{ host: "list" }, { host: "release-worker" }],
+          expect: [
+            {
+              console:
+                "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
+              timeoutMs: 60_000,
+            },
+          ],
+        },
+        {
+          steps: [{ host: "wake", argument: "b9-cold-1" }],
+          expect: [
+            {
+              metadata: { ZPREVIEWTEXT: "Woken by b9-cold-1" },
+              timed: true,
+              timeoutMs: 60_000,
+            },
+          ],
+        },
+        {
+          // The wake holds for 30 s; then the worker stops again.
+          steps: [],
+          expect: [
+            {
+              console:
+                "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
+              timeoutMs: 60_000,
+            },
+          ],
+        },
+        {
+          steps: [{ host: "wake", argument: "b9-cold-2" }],
+          expect: [
+            {
+              metadata: { ZPREVIEWTEXT: "Woken by b9-cold-2" },
+              timed: true,
+              timeoutMs: 60_000,
+            },
+          ],
+        },
+        {
+          // Warm: the worker of the last wake still runs.
+          steps: [{ host: "wake", argument: "b9-warm" }],
+          expect: [
+            {
+              metadata: { ZPREVIEWTEXT: "Woken by b9-warm" },
+              timed: true,
+              timeoutMs: 30_000,
+            },
+          ],
+        },
+      ],
+      after: [
+        "/preview none",
+        { host: "hold-worker" },
+        { wait: 4_000 },
+        { host: "open" },
       ],
     },
   },
