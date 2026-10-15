@@ -27,6 +27,10 @@ const EMULATOR_HEADLESS_ARGS = [
 ];
 
 const DEFAULT_ADB_TIMEOUT_MS = 30_000;
+/** A dump of a busy emulator can take more than 20 s; a slow dump is not a broken adb server. */
+const UI_DUMP_TIMEOUT_MS = 90_000;
+/** How long a logcat stream waits before it connects again after its adb process ended. */
+const LOGCAT_RECONNECT_MS = 1_000;
 const BOOT_TIMEOUT_MS = 300_000;
 const INSTALL_TIMEOUT_MS = 900_000;
 const ADB_MAX_BUFFER = 256 * 1024 * 1024;
@@ -205,6 +209,16 @@ function parseBroadcastResult(output) {
 }
 
 let lastAdbRestart = 0;
+const restartListeners = new Set();
+
+/**
+ * Call `listener` after each restart of the adb server. A restart drops the
+ * `adb reverse` ports, so a caller that maps a port maps it again here.
+ */
+export function onAdbServerRestart(listener) {
+  restartListeners.add(listener);
+  return () => restartListeners.delete(listener);
+}
 
 function runAdbOnce(args, timeoutMs) {
   const result = spawnSync(adbPath(), args, {
@@ -235,12 +249,20 @@ function restartAdbServer() {
       timeout: DEFAULT_ADB_TIMEOUT_MS,
     });
   }
+  for (const listener of restartListeners) {
+    try {
+      listener();
+    } catch {
+      // A listener that fails does not stop the others.
+    }
+  }
   return true;
 }
 
-function adb(args, { serial, timeoutMs = DEFAULT_ADB_TIMEOUT_MS } = {}) {
+function adb(args, { serial, timeoutMs = DEFAULT_ADB_TIMEOUT_MS, restartOnTimeout = true } = {}) {
   const full = serial ? ["-s", serial, ...args] : args;
   let result = runAdbOnce(full, timeoutMs);
+  if (result.timedOut && !restartOnTimeout) return result;
   if (isAdbUnhealthy(result) && restartAdbServer()) {
     result = runAdbOnce(full, timeoutMs);
   }
@@ -365,6 +387,15 @@ export function reversePort(serial, port) {
 
 export function removeReversePort(serial, port) {
   return adb(["reverse", "--remove", `tcp:${port}`], { serial });
+}
+
+/**
+ * Copy a file of the host to the device, and add it to the media store, so
+ * that the document picker lists it.
+ */
+export function pushFile(serial, source, destination) {
+  adbOrThrow(["push", source, destination], { serial });
+  adbShell(serial, ["content", "call", "--uri", "content://media/", "--method", "scan_volume", "--arg", "external_primary"]);
 }
 
 export function grantPermission(serial, packageName, permission) {
@@ -555,7 +586,13 @@ export function runAsSqliteJson(serial, packageName, database, sql) {
 export function uiDump(serial) {
   const result = adb(["exec-out", "uiautomator", "dump", "/dev/tty"], {
     serial,
+    timeoutMs: UI_DUMP_TIMEOUT_MS,
+    restartOnTimeout: false,
   });
+  if (result.timedOut) {
+    // A dump that does not end keeps the accessibility connection, and the next dump cannot start.
+    adbShell(serial, ["pkill", "-f", "uiautomator"]);
+  }
   const text = result.stdout ?? "";
   const end = text.lastIndexOf("</hierarchy>");
   return end < 0 ? "" : text.slice(text.indexOf("<?xml"), end + "</hierarchy>".length);
@@ -591,23 +628,50 @@ export function inputKeyCombination(serial, ...keyCodes) {
  * Write the whole logcat of the device to `destination` from now on, and
  * keep its lines in memory. `stop` ends the stream.
  */
+/** The `-T` time of a `threadtime` logcat line, or undefined. */
+export function logcatResumeTime(line) {
+  return /^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s/.exec(line ?? "")?.[1];
+}
+
+/**
+ * Record the whole logcat of the device into `destination` and into `lines`.
+ * When the adb process ends before `stop()`, for example because the adb
+ * server restarted, the stream connects again from the time of its last line
+ * and leaves out the lines that it has already.
+ */
 export function streamLogcat(serial, destination) {
-  const child = spawn(adbPath(), ["-s", serial, "logcat", "-v", "threadtime"], {
-    stdio: ["ignore", "pipe", "ignore"],
-  });
   const file = createWriteStream(destination);
   const lines = [];
-  let partial = "";
-  child.stdout.on("data", (chunk) => {
-    file.write(chunk);
-    const text = partial + chunk.toString("utf8");
-    const parts = text.split(/\r?\n/);
-    partial = parts.pop() ?? "";
-    lines.push(...parts);
-  });
+  let stopped = false;
+  let child;
+
+  const connect = () => {
+    const since = logcatResumeTime(lines.at(-1));
+    const recent = since ? new Set(lines.slice(-2000)) : undefined;
+    let partial = "";
+    child = spawn(adbPath(), ["-s", serial, "logcat", "-v", "threadtime", ...(since ? ["-T", since] : [])], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    child.stdout.on("data", (chunk) => {
+      // The adb process can still send data after stop(), which ends the file.
+      if (stopped) return;
+      const text = partial + chunk.toString("utf8");
+      const parts = text.split(/\r?\n/);
+      partial = parts.pop() ?? "";
+      const fresh = recent ? parts.filter((line) => !recent.has(line)) : parts;
+      if (fresh.length > 0) file.write(`${fresh.join("\n")}\n`);
+      lines.push(...fresh);
+    });
+    child.on("exit", () => {
+      if (!stopped) setTimeout(() => !stopped && connect(), LOGCAT_RECONNECT_MS);
+    });
+  };
+  connect();
+
   return {
     lines,
     stop() {
+      stopped = true;
       child.kill();
       file.end();
     },

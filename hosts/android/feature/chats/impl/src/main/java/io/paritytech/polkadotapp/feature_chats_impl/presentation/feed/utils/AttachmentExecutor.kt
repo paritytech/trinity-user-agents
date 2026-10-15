@@ -36,10 +36,11 @@ data class AttachmentResult(
     val size: InformationSize
 )
 
+/** The activity comes at each start, because a configuration change can make the activity again while the room screen stays. */
 class AttachmentExecutor @Inject constructor(
     private val contextManager: ContextManager,
     private val fileProvider: FileProvider
-) : ActivityResultExecutor<AttachmentResult?>(contextManager.requireActivity()) {
+) : ActivityResultExecutor<AttachmentResult?>({ contextManager.requireActivity() }) {
     private var cameraFile: File? = null
     private var cameraAllowed: Boolean = true
     private var allowedKinds: Set<AttachmentKind> = setOf(AttachmentKind.PHOTO, AttachmentKind.VIDEO)

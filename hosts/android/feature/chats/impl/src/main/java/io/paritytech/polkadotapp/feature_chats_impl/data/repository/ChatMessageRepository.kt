@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.LastMessageSum
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocal
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocalType
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toSearchableContent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -216,7 +217,13 @@ class RealChatMessageRepository @Inject constructor(
         val now = System.currentTimeMillis()
         val local = modifications.map { (id, content) ->
             val (contentSerialized, contentTypeLocal) = content.toLocal(customContentDecoder)
-            MessageContentUpdateLocal(id, contentSerialized, contentTypeLocal, updatedAt = now)
+            MessageContentUpdateLocal(
+                id = id,
+                content = contentSerialized,
+                type = contentTypeLocal,
+                updatedAt = now,
+                searchableContent = content.toSearchableContent(),
+            )
         }
         chatMessageDao.updateMessagesContents(local)
     }

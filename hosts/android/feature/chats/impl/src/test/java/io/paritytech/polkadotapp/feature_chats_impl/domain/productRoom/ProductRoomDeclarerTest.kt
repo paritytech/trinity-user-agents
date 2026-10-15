@@ -61,13 +61,13 @@ class ProductRoomDeclarerTest {
     }
 
     @Test
-    fun `the same configuration writes nothing`() = runBlocking<Unit> {
+    fun `the same configuration starts a new generation and keeps the messages`() = runBlocking<Unit> {
         withRoomExisting(true)
         withDeclaredConfig(null)
 
         declarer.setConfig(extensionId, room, ChatRoomConfigModel.HOST_DEFAULT)
 
-        coVerify(exactly = 0) { declarationsWriter.setConfig(any(), any()) }
+        coVerify(exactly = 1) { declarationsWriter.setConfig(room, ChatRoomConfigModel.HOST_DEFAULT) }
         coVerify(exactly = 0) { chatMessageRepository.deleteAllChatMessages(any()) }
     }
 

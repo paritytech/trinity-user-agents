@@ -25,6 +25,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -38,6 +39,7 @@ import uniffi.truapi.ProductChatMessagesQueryItem
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductChatUserActionItem
+import uniffi.truapi.ProductRuntimeException
 import kotlin.time.Duration.Companion.seconds
 
 class TrUAPIChatWorkerRoomsTest {
@@ -149,6 +151,28 @@ class TrUAPIChatWorkerRoomsTest {
 
         assertEquals(ChatUserActionOutcome.Acknowledged, outcome.getOrNull())
         coVerify(exactly = 2) { execution.chatUserAction(any(), any()) }
+    }
+
+    @Test
+    fun `a page asked before the client of a restarted worker connects waits for the connection`() = runTest {
+        coEvery { execution.chatMessagesQuery(any(), any()) } throws ProductRuntimeException.NotConnected() andThenThrows
+            ProductRuntimeException.NotConnected() andThenThrows ProductRuntimeException.NotConnected() andThen
+            ProductChatMessagesQueryItem(emptyList(), next = null)
+
+        val page = worker().messagesPage(room, ChatPageAnchorModel.Before(null), pageSize = 40)
+
+        assertTrue(page.isSuccess)
+        coVerify(exactly = 4) { execution.chatMessagesQuery(any(), any()) }
+    }
+
+    @Test
+    fun `a client that never connects fails the page after a limited wait`() = runTest {
+        coEvery { execution.chatMessagesQuery(any(), any()) } throws ProductRuntimeException.NotConnected()
+
+        val page = worker().messagesPage(room, ChatPageAnchorModel.Before(null), pageSize = 40)
+
+        assertTrue(page.isFailure)
+        assertTrue(currentTime < 20_000)
     }
 
     @Test

@@ -11,8 +11,12 @@
  * with the phase that adds it.
  *
  * The launcher runs the product-source scenarios before the host-store ones,
- * so that S14 can show the `Seen` reports of the product-source room, and it
- * runs S4 and S6 last, because they leave the room screen.
+ * so that S14 can show the `Seen` reports of the product-source room. The
+ * rows of the Chat Extension v2 additions (P10) come after the P8 rows, and
+ * S49 comes after every row that proves a feature that the app can list.
+ * The launcher runs S4 and S6 last, because they leave the room screen. S5
+ * and S44 are `skip` rows: the sample product has no command that drives
+ * them.
  */
 export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
   {
@@ -83,6 +87,27 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     title: "NotAvailable is retried once after 1 s",
     mode: "source",
     phase: "P8.5",
+    drive: true,
+  },
+  {
+    id: "S30",
+    title: "participants: count in the header, pages, authors by id",
+    mode: "source",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S31",
+    title: "participant sheet: entries of the kind, product actions",
+    mode: "source",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S32",
+    title: "who reacted from reactions_query; NotAvailable hides it",
+    mode: "source",
+    phase: "P8.6",
     drive: true,
   },
   {
@@ -170,10 +195,108 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
-    id: "S49",
-    title: "capabilities lists exactly the features whose rows pass, and both byte bounds",
+    id: "S25",
+    title: "ExtendBuiltIn menu: the defaults, minus Edit when hidden, plus product actions",
     mode: "host",
-    phase: "P10.8",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S26",
+    title: "Custom menu shows only product actions; a query time-out shows the defaults",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S28",
+    title: "a callback action sends MessageActionTriggered",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S27",
+    title: "a deeplink action asks for confirmation and navigates",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S29",
+    title: "toolbar: two inline, the rest in the overflow; a press sends ToolbarActionTriggered",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S33",
+    title: "footer Input honours placeholder and attachment toggles",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S36",
+    title: "inline attachment under 1 MiB; a larger one is refused",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S34",
+    title: "footer Empty hides the input",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S35",
+    title: "footer Custom draws the product's tree; a press reaches the product",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S37",
+    title: "placeholder on an empty room",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S38",
+    title: "suggestion chips: sends_text sends, the other sends SuggestionSelected",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S39",
+    title: "the / catalogue completes commands and sends Command",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S40",
+    title: "activity line shows, clears on None and on RoomClosed",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S41",
+    title: "allowed_reactions limits the picker",
+    mode: "host",
+    phase: "P8.6",
+    drive: true,
+  },
+  {
+    id: "S47",
+    title: "a configuration generation change while the room is open reloads the policy",
+    mode: "host",
+    phase: "P8.8",
     drive: true,
   },
   {
@@ -219,6 +342,13 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S49",
+    title: "capabilities lists exactly the features whose rows pass, and both byte bounds",
+    mode: "host",
+    phase: "P10.8",
+    drive: true,
+  },
+  {
     id: "S4",
     title: "every preview variant in the chat list",
     mode: "host",
@@ -237,53 +367,61 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     title: "delete_room removes the room",
     mode: "host",
     phase: "P8.4",
-    skip: "skip: the sample product has no command that calls delete_room (playground/chat-v2/README.md, Commands)",
+    skip: "skip: the sample product has no command that calls delete_room on this base (playground/chat-v2/README.md, Commands); RealDeleteRoomUseCaseTest covers the delete path",
   },
-  { id: "S25", title: "ExtendBuiltIn menu", mode: "host", phase: "P8.6" },
-  { id: "S26", title: "Custom menu", mode: "host", phase: "P8.6" },
-  { id: "S27", title: "deeplink action", mode: "host", phase: "P8.6" },
-  { id: "S28", title: "callback action", mode: "host", phase: "P8.6" },
-  { id: "S29", title: "toolbar", mode: "host", phase: "P8.6" },
-  { id: "S30", title: "participants", mode: "source", phase: "P8.6" },
-  { id: "S31", title: "participant sheet", mode: "source", phase: "P8.6" },
-  { id: "S32", title: "who reacted", mode: "source", phase: "P8.6" },
-  {
-    id: "S33",
-    title: "footer Input honours placeholder and attachment toggles",
-    mode: "host",
-    phase: "P8.6",
-  },
-  { id: "S34", title: "footer Empty hides the input", mode: "host", phase: "P8.6" },
-  { id: "S35", title: "footer Custom", mode: "host", phase: "P8.6" },
-  {
-    id: "S36",
-    title: "inline attachment under 1 MiB",
-    mode: "host",
-    phase: "P8.6",
-  },
-  {
-    id: "S37",
-    title: "placeholder on an empty room",
-    mode: "host",
-    phase: "P8.6",
-  },
-  { id: "S38", title: "suggestion chips", mode: "host", phase: "P8.6" },
-  { id: "S39", title: "the / catalogue", mode: "host", phase: "P8.6" },
-  { id: "S40", title: "activity line", mode: "host", phase: "P8.6" },
-  { id: "S41", title: "allowed_reactions", mode: "host", phase: "P8.6" },
   {
     id: "S44",
     title: "update_feed rate limit on screen",
     mode: "host",
     phase: "P8.8",
-  },
-  {
-    id: "S47",
-    title: "configuration generation reload",
-    mode: "host",
-    phase: "P8.8",
+    skip: "skip: no command of the sample product sends more than 20 updates in a second; the core tests the bound, and S8 shows the coalesced edits of /stream at 20 a second",
   },
 ]);
+
+/**
+ * The rows that prove each Chat feature that the app can list (S49). The app
+ * lists a feature only when each of these rows passes on the emulator.
+ */
+export const ANDROID_CHAT_FEATURE_ROWS = Object.freeze({
+  product_source_rooms: ["S15", "S16", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24", "S46"],
+  custom_bodies: ["S7"],
+  mute_archive: ["S54", "S55", "S56"],
+  search: ["S61", "S62", "S63"],
+});
+
+/**
+ * S49 checks the features that the app lists against the rows of the same
+ * run: each row that proves a listed feature must pass. A listed feature
+ * with a failed row, or with no rows in `featureRows`, fails S49. A row that
+ * the run did not drive (a skip, or `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY`) is
+ * named as not checked.
+ */
+export function capabilityVerdict(capsRow, rows, listed, featureRows = ANDROID_CHAT_FEATURE_ROWS) {
+  if (capsRow.result !== "pass") return capsRow;
+  const results = new Map(rows.map((entry) => [entry.id, entry.result]));
+  const failed = [];
+  const unchecked = [];
+  for (const name of listed) {
+    const ids = featureRows[name];
+    if (!ids) {
+      failed.push(`${name} (no row proves it)`);
+      continue;
+    }
+    for (const id of ids) {
+      const result = results.get(id);
+      if (result === "pass") continue;
+      (result === "fail" ? failed : unchecked).push(`${name} (${id} ${result ?? "has no row"})`);
+    }
+  }
+  if (failed.length > 0) {
+    return { ...capsRow, result: "fail", evidence: `${capsRow.evidence}; FAILED: the app lists ${failed.join(", ")}` };
+  }
+  const note =
+    unchecked.length > 0
+      ? `not checked in this run: ${unchecked.join(", ")}`
+      : "the rows of each listed feature passed";
+  return { ...capsRow, evidence: `${capsRow.evidence}; ${note}` };
+}
 
 /** The logcat tag of the console lines of a product WebView. */
 export const CONSOLE_TAG = "ProductWebChromeClientKt";

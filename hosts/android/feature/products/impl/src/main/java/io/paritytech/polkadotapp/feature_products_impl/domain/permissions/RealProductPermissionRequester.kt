@@ -14,6 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration
@@ -63,7 +64,9 @@ class RealProductPermissionRequester(
         val context = ProductPermissionContext(productId, permissions)
         try {
             permissionContextHolder.set(context)
+            // A prompt that does not show gets no answer, and the wait would hold every later request.
             if (!productsRouter.openPermissionPrompt(context.id)) {
+                Timber.w("No screen shows the permission prompt of %s", productId.value)
                 throw PermissionPromptUnavailableException("the permission prompt cannot show")
             }
             context.awaitDecision()

@@ -16,7 +16,10 @@ interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
     fun openProductChat(productId: ProductId)
     fun openChat(chatId: ChatId)
 
-    /** Shows the prompt of [requestId]. Returns false when no screen can show it, for example with no activity. */
+    /**
+     * Shows the prompt of [requestId]. Returns false when no screen can show it now, for example with no activity
+     * on the screen or with a screen that has no route to the prompt.
+     */
     suspend fun openPermissionPrompt(requestId: String): Boolean
     suspend fun closePermissionPrompt(requestId: String?)
     suspend fun openPaymentRequestPrompt()

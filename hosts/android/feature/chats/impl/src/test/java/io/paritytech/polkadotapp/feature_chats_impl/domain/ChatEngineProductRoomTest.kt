@@ -2,13 +2,22 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain
 
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
+import io.paritytech.polkadotapp.feature_chats_impl.domain.chatDisplay.ChatDisplayGenerator
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.ChatExtensionRegistry
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,6 +28,7 @@ class ChatEngineProductRoomTest {
     private val chatMessageRepository: ChatMessageRepository = mockk(relaxed = true)
     private val extension: ChatExtension = mockk(relaxed = true)
     private val chatExtensionRegistry: ChatExtensionRegistry = mockk()
+    private val chatRoomRepository: ChatRoomRepository = mockk()
 
     private val chatEngine = ChatEngine(
         chatMessageRepository = chatMessageRepository,
@@ -28,11 +38,11 @@ class ChatEngineProductRoomTest {
         contactsRepository = mockk(),
         messageRevisionRepository = mockk(),
         dmChatMessageOriginDisplayResolverFactory = mockk(),
-        chatDisplayGenerator = mockk(),
+        chatDisplayGenerator = ChatDisplayGenerator(mockk()),
         messageSaveProcessors = emptySet(),
         headerRenderers = emptyMap(),
         originConfigurations = emptyMap(),
-        chatRoomRepository = mockk(),
+        chatRoomRepository = chatRoomRepository,
         deleteRoomUseCase = mockk(),
         productRoomDeclarer = mockk(),
         productFeedApplier = mockk(),
@@ -57,6 +67,18 @@ class ChatEngineProductRoomTest {
 
         assertTrue(chatEngine.handleCommand(room, "/roll 2"))
         assertFalse(chatEngine.handleCommand(room, "roll 2"))
+    }
+
+    @Test
+    fun `the open room header follows a new name of the room`() = runBlocking<Unit> {
+        withExtension()
+        every { extension.defaultRoomMetadata } returns DefaultRoomMetadata("Game", icon = null)
+        every { chatRoomRepository.subscribeRoomMetadata(room) } returns
+            flowOf(RoomMetadata(name = "Lobby", icon = null), RoomMetadata(name = "Renamed", icon = null))
+
+        val names = chatEngine.observeChatDisplay(room).map { it.getOrThrow().name }.toList()
+
+        assertEquals(listOf("Lobby", "Renamed"), names)
     }
 
     private fun withExtension() {
