@@ -13,7 +13,6 @@ import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
-import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -69,7 +68,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val localSessionSource: TrUAPILocalSessionSource,
     private val accountRepository: AccountRepository,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val encryptedPreferences: EncryptedPreferences,
+    private val coreStorage: EncryptedHostCoreStorage,
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
@@ -213,7 +212,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private inner class HostRuntimeBridge : HostBridge {
         override val storage: HostStorage = HostLevelStorage
 
-        override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
+        override val coreStorage: HostCoreStorage = this@TrUAPIHostRuntimeProvider.coreStorage
 
         override fun onCoreLog(marker: String, detail: String) {
             Timber.tag("truapi.core").d("%s: %s", marker, detail)

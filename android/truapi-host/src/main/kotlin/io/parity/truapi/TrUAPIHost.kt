@@ -126,6 +126,9 @@ interface HostStorage {
  */
 interface HostCoreStorage {
     @Throws(HostRejection::class)
+    suspend fun keys(): List<ByteArray> = throw HostRejection.Rejected("Core storage enumeration is unavailable")
+
+    @Throws(HostRejection::class)
     suspend fun read(key: ByteArray): ByteArray?
 
     @Throws(HostRejection::class)
@@ -552,6 +555,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
         }
     }
 
+    override suspend fun coreStorageKeys(): List<ByteArray> =
+        withHostRejection { bridge.coreStorage.keys() }
+
     override suspend fun coreStorageRead(key: ByteArray): ByteArray? =
         withHostRejection { bridge.coreStorage.read(key) }
 
@@ -954,6 +960,14 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Report the core database's SQLite version, schema version and file path. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
+
+    /** Revoke retained grants when a product is uninstalled. */
+    @Throws(HostRejection::class)
+    suspend fun clearProductState(productId: String) = inner.clearProductState(productId)
+
+    /** Revoke retained grants owned by a deleted wallet. */
+    @Throws(HostRejection::class)
+    suspend fun clearWalletState(owner: ByteArray) = inner.clearWalletState(owner)
 
     /**
      * Decide durable transactions from the chain until none is live, then
