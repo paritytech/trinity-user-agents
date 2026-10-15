@@ -27,6 +27,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -661,8 +662,9 @@ async function queueCommand(payload, label) {
   const name = String(commandCounter).padStart(4, "0");
   const pending = resolve(commandDir, `${name}.tmp`);
   writeFileSync(pending, JSON.stringify(payload));
-  cpSync(pending, resolve(commandDir, `${name}.json`));
-  rmSync(pending);
+  // A rename is atomic: the app never reads a half-written file, and a copy
+  // could fail when the app takes the file before the copy sets its mode.
+  renameSync(pending, resolve(commandDir, `${name}.json`));
   const outcome = await waitFor(
     () => {
       if (existsSync(resolve(commandDir, `${name}.done`))) return "done";
