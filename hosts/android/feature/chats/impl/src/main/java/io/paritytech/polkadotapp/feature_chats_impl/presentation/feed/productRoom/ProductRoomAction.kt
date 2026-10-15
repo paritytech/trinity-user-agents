@@ -38,6 +38,7 @@ sealed interface ProductRoomAction {
 
     /** "Stop" in the footer while a message speaks (07-LATER §9.5). */
     data object StopReadAloud : ProductRoomAction
+
     /** The user acts on the call of the room (07-LATER §11.2). */
     data class Call(val action: ProductRoomCallAction) : ProductRoomAction
 }
