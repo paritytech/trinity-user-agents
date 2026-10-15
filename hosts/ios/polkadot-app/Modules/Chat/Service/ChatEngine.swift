@@ -90,6 +90,8 @@ final class ChatEngine {
     let chatRequestContext: ChatRequestEngineContext
     let leaveChatService: LeaveChatServicing
     let blockUserService: BlockUserServicing
+    /// The outbox of the attachments that the host stages (P10.3). It owns Retry and Delete of their messages.
+    let stager: ProductAttachmentStager
     let logger: LoggerProtocol
 
     init(
@@ -103,9 +105,11 @@ final class ChatEngine {
         leaveChatService: LeaveChatServicing,
         blockUserService: BlockUserServicing,
         productRoomServices: ProductRoomServices? = nil,
+        stager: ProductAttachmentStager = .shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
+        self.stager = stager
         self.chatRequestContext = chatRequestContext
         self.chatExtensionRegistry = chatExtensionRegistry
         self.settings = settings
@@ -217,7 +221,11 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome {
-        try await sourceContext.source().perform(action)
+        // A failed attachment of the outbox stages again; the product never had its message.
+        if case let .retry(messageId) = action, chatId.roomId != nil, await stager.retry(messageId) {
+            return .done
+        }
+        return try await sourceContext.source().perform(action)
     }
 
     func openRoom() async {
@@ -334,6 +342,11 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func deleteMessage(_ messageId: Chat.MessageId) async throws {
+        // An attachment of the outbox goes with its bytes. The product never had its message, so it is not told.
+        if chatId.roomId != nil, await stager.delete(messageId) {
+            return
+        }
+
         try await performRefusable(.delete(messageId))
 
         // A product-source room tells its product through `user_action` (02-DESIGN §13 item 11).

@@ -49,12 +49,16 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     let cache: ProductMessageCaching
     let settings: Settings
     let now: @Sendable () -> UInt64
+    /// The outbox of the attachments that the host stages (P10.3). Its entries of this room show at the end of the
+    /// window until the product has them.
+    let stager: ProductAttachmentStager?
     let logger: LoggerProtocol
 
     let subject: AsyncCurrentValueSubject<MessageListSnapshot>
     var firstPageTask: Task<Void, Never>?
     var olderTask: Task<ChatPageOutcome, Never>?
     var newerTask: Task<ChatPageOutcome, Never>?
+    var outboxTask: Task<Void, Never>?
 
     var pages: [Page] = []
     var messages: [String: ChatMessage] = [:]
@@ -85,6 +89,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         cache: ProductMessageCaching = ProductMessageCache.shared,
         settings: Settings = Settings(),
         now: @escaping @Sendable () -> UInt64 = { Date().toChatTimestamp() },
+        stager: ProductAttachmentStager? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
@@ -94,6 +99,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         self.cache = cache
         self.settings = settings
         self.now = now
+        self.stager = stager
         self.logger = logger
         subject = AsyncCurrentValueSubject(MessageListSnapshot(
             messages: [],
@@ -106,6 +112,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         firstPageTask?.cancel()
         olderTask?.cancel()
         newerTask?.cancel()
+        outboxTask?.cancel()
     }
 
     // MARK: - ProductFeedListening
@@ -146,6 +153,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
             restore(from: entry)
         }
 
+        await followOutbox()
         emit()
 
         firstPageTask = Task { [weak self] in

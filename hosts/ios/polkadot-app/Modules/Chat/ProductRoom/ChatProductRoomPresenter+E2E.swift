@@ -64,6 +64,19 @@ extension ChatProductRoomPresenter {
         static var onOpen: (() -> Void)?
     }
 
+    /// The public-storage notice that waits for the answer of the user (P10.3). The harness answers it with the
+    /// action `notice` (`accept` or `decline`).
+    @MainActor
+    enum TrUAPIE2EPendingNotice {
+        static var onAnswer: ((Bool) -> Void)?
+
+        static func answer(_ argument: String?) {
+            let onAnswer = onAnswer
+            self.onAnswer = nil
+            onAnswer?(argument == "accept")
+        }
+    }
+
     extension ChatProductRoomPresenter {
         func observeE2EActions() -> NSObjectProtocol? {
             guard TrUAPIE2EMarkers.isEnabled else { return nil }
@@ -100,6 +113,12 @@ extension ChatProductRoomPresenter {
                     object: action.argument ?? ""
                 )
             case "attach": runAttach(path: action.argument, kind: action.target)
+            case "notice": TrUAPIE2EPendingNotice.answer(action.argument)
+            case "notice-reset":
+                staging.notice.reset(productId: appearanceFactory.productId)
+                mark("notice", "reset")
+            case "b7": measureStagingCrossing(runs: action.argument.flatMap(Int.init) ?? 5)
+            case "outbox-clear": clearOutbox()
             case "back": view?.controller.navigationController?.popViewController(animated: false)
             case "button":
                 action.target.flatMap(e2eMessageId).map { messageId in
@@ -116,6 +135,7 @@ extension ChatProductRoomPresenter {
             case "older": interactor?.loadOlderMessages()
             case "jump": action.target.map { interactor?.jump(to: $0) }
             case "retry": action.target.flatMap(e2eMessageId).map { interactor?.retrySend(messageId: $0) }
+            case "delete": action.target.flatMap(e2eMessageId).map { interactor?.deleteMessage(messageId: $0) }
             case "retry-room":
                 e2eReadyWaitStart = .now
                 interactor?.retryRoom()
@@ -124,6 +144,60 @@ extension ChatProductRoomPresenter {
                 messages.values.max { ($0.order, $0.timestamp) < ($1.order, $1.timestamp) }
                     .map { view?.scrollToMessage($0.messageId) }
             default: logger.warning("[e2e:ui] unknown action \(action.action)")
+            }
+        }
+
+        /// Deletes the outbox entries of the room, so that a row starts with none, also after a run that stopped.
+        private func clearOutbox() {
+            Task { [weak self, staging, roomId, appearanceFactory] in
+                for entry in await staging.stager.entries(productId: appearanceFactory.productId, roomId: roomId) {
+                    await staging.stager.delete(entry.id)
+                }
+                self?.mark("outbox", "cleared")
+            }
+        }
+
+        /// B7: the time that 8 MiB takes to cross the binding into the core, and back with the refusal of a room
+        /// that declares nothing. One byte gives the time of the call without the bytes.
+        private func measureStagingCrossing(runs: Int) {
+            let productId = appearanceFactory.productId
+            Task { [weak self] in
+                let staging = TrUAPIProductAttachmentStaging()
+                var results: [String] = []
+                for size in [1, ProductAttachmentStagingPolicy.coreMaxBytes] {
+                    let bytes = Data(count: size)
+                    var samples: [Double] = []
+                    var outcome = "staged"
+                    for _ in 0 ..< runs {
+                        let start = ContinuousClock.now
+                        do {
+                            _ = try await staging.stage(
+                                productId: productId,
+                                roomId: "b7-probe",
+                                mimeType: "application/octet-stream",
+                                bytes: bytes
+                            )
+                        } catch let failure as ProductStageFailure {
+                            outcome = failure.summary.replacingOccurrences(of: " ", with: "-")
+                        } catch {
+                            outcome = "error"
+                        }
+                        let elapsed = start.duration(to: .now)
+                        samples.append(
+                            Double(elapsed.components.seconds) * 1_000 + Double(elapsed.components.attoseconds) / 1e15
+                        )
+                    }
+                    let sorted = samples.sorted()
+                    results.append(String(
+                        format: "bytes=%d median=%.1f min=%.1f max=%.1f outcome=%@",
+                        size,
+                        sorted[sorted.count / 2],
+                        sorted.first ?? 0,
+                        sorted.last ?? 0,
+                        outcome
+                    ))
+                }
+                self?.mark("b7", "runs=\(runs) " + results.joined(separator: " | "))
             }
         }
 

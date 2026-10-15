@@ -78,7 +78,7 @@ extension ChatMessageStatus {
 extension ChatMessageBody {
     /// The body as a content kind of the room screen.
     ///
-    /// A reply quote exists only for a text body. Media that is not inline is not drawn yet (P6.7).
+    /// A reply quote exists only for a text body.
     func localContent(replyTo: String?) -> Chat.LocalMessage.Content {
         switch self {
         case let .text(text):
@@ -87,12 +87,9 @@ extension ChatMessageBody {
             } else {
                 .text(text)
             }
-        case let .richText(text, media):
-            .productBody(.richText(.init(
-                text: text,
-                media: media.compactMap(\.inlineDataURL),
-                alts: media.filter { $0.inlineDataURL != nil }.map(\.alt)
-            )))
+        case .richText:
+            // As in a room that the host stores: inline and preimage media, and a file alone (P10.3).
+            localContent
         case let .actions(actions):
             .productBody(.actions(.init(
                 text: actions.text,
@@ -116,22 +113,6 @@ extension ChatMessageBody {
         case let .richText(text, _): text
         case let .actions(actions): actions.text
         case let .custom(_, _, previewText): previewText
-        }
-    }
-}
-
-private extension ChatMediaItem {
-    /// An image or a video with inline bytes, as a `data:` URL.
-    var inlineDataURL: String? {
-        switch self {
-        case let .image(resource, _),
-             let .video(resource, _):
-            guard case let .inline(mimeType, bytes) = resource else {
-                return nil
-            }
-            return "data:\(mimeType);base64,\(bytes.base64EncodedString())"
-        case .file:
-            return nil
         }
     }
 }

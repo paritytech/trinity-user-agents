@@ -34,9 +34,30 @@ extension ProductChatUserEvent {
         case let .reactionRemoved(reaction):
             self = .reacted(messageId: productId(reaction.messageId), emoji: reaction.emoji, placed: false)
         case let .productBody(body):
+            // The stager sends a staged attachment itself (P10.3). While the host stages it, the message is `new`
+            // or `failed`. After that, its media holds a preimage key.
+            guard !body.holdsPreimageMedia, message.status != .outgoing(.new), message.status != .outgoing(.failed)
+            else {
+                return nil
+            }
             self = .attachmentPosted(messageId: message.messageId, body: body)
         default:
             return nil
+        }
+    }
+}
+
+extension Chat.LocalMessage.Content.ProductBody {
+    /// True when a media item of the body is a preimage key. A user body has one only after the host staged it.
+    var holdsPreimageMedia: Bool {
+        let sources: [String] =
+            switch self {
+            case let .richText(richText): richText.media
+            case let .file(file): [file.url]
+            case .actions: []
+            }
+        return sources.contains { source in
+            if case .preimage = ChatResource(source: source) { true } else { false }
         }
     }
 }

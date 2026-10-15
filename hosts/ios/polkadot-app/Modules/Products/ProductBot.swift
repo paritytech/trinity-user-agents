@@ -165,6 +165,20 @@ private extension ProductBot {
     }
 }
 
+// MARK: - Staged attachments
+
+extension ProductBot: ProductStagedAttachmentPosting {
+    /// The stager posts an attachment when the core staged its bytes (P10.3). The product receives
+    /// `MessagePosted` with the preimage media.
+    func postStagedAttachment(
+        messageId: String,
+        body: Chat.LocalMessage.Content.ProductBody,
+        roomId: String
+    ) async {
+        await publish(.attachmentPosted(messageId: messageId, body: body), in: chatId(roomId))
+    }
+}
+
 // MARK: - Product rooms
 
 extension ProductBot: ProductChatQuerying {

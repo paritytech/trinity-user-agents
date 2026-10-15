@@ -1,4 +1,5 @@
 import Foundation
+import TrUAPIHost
 import UIKit
 
 #if targetEnvironment(simulator)
@@ -38,8 +39,30 @@ import UIKit
             case "permission":
                 // The answer of the user to the permission prompt on the screen: `always`, `once` or `deny`.
                 TrUAPIE2EPendingPermission.answer(argument)
+            case "permission-reset":
+                // The core keeps a refusal of `PreimageSubmit` for good. The harness clears it after S58, so that
+                // the next run asks again.
+                resetPreimageSubmit(productId: productId)
+            case "staging-fault":
+                // S59: the next stage fails as a failed submit.
+                TrUAPIE2EStagingFault.set(.submitFailed(reason: "E2E fault"))
             default:
                 NotificationCenter.default.post(name: Self.notification, object: self)
+            }
+        }
+    }
+
+    extension TrUAPIE2EHostAction {
+        private func resetPreimageSubmit(productId: String) {
+            let execution = ProductPocketService.current?.workers?.currentExecution(of: productId)
+            do {
+                try execution?.setPermissionAuthorizationStatus(
+                    request: .remote(RemotePermissionRequest(permission: .preimageSubmit)),
+                    status: .notDetermined
+                )
+                Logger.shared.debug("[e2e:ui] permission-reset \(productId) \(execution == nil ? "no-worker" : "done")")
+            } catch {
+                Logger.shared.warning("[e2e:ui] permission-reset \(productId) failed: \(error)")
             }
         }
     }

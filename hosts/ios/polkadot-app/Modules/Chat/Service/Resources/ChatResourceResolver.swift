@@ -69,6 +69,14 @@ final class ChatResourceResolver: ChatResourceResolving, @unchecked Sendable {
     }
 }
 
+extension ChatResourceResolver {
+    /// Keeps bytes that the app has already, for example an attachment that the user staged (P10.3). Then the
+    /// first draw of the resource needs no fetch.
+    func store(_ data: Data, for resource: ChatResource) async {
+        await cache.store(data, for: resource.cacheKey)
+    }
+}
+
 extension ChatResourceResolver: ChatResourceEvicting {
     func evict(_ resources: [ChatResource]) async {
         for resource in resources {

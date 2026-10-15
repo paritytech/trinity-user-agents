@@ -38,6 +38,14 @@ protocol ChatProductRoomWireframing: AnyObject {
         from view: ControllerBackedProtocol?,
         completion: @escaping (PickedAttachment) -> Void
     )
+
+    /// Tells the user that files over 1 MiB sent in the product go to public storage, and gives the answer
+    /// (P10.3, D27).
+    func confirmPublicStorage(
+        productName: String,
+        from view: ControllerBackedProtocol?,
+        onAnswer: @escaping (Bool) -> Void
+    )
 }
 
 extension ChatWireframe: ChatProductRoomWireframing {
@@ -119,6 +127,37 @@ extension ChatWireframe: ChatProductRoomWireframing {
     ) {
         guard let controller = view?.controller else { return }
         productAttachmentPicker.present(kind, from: controller, completion: completion)
+    }
+
+    func confirmPublicStorage(
+        productName: String,
+        from view: ControllerBackedProtocol?,
+        onAnswer: @escaping (Bool) -> Void
+    ) {
+        let alert = UIAlertController(
+            title: String(localized: .ChatExtension.attachmentStagingNoticeTitle),
+            message: String(localized: .ChatExtension.attachmentStagingNoticeMessage(product: productName)),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: String(localized: .Common.cancel), style: .cancel) { _ in
+            onAnswer(false)
+        })
+        alert.addAction(UIAlertAction(
+            title: String(localized: .ChatExtension.attachmentStagingNoticeSend),
+            style: .default
+        ) { _ in
+            onAnswer(true)
+        })
+
+        #if targetEnvironment(simulator)
+            TrUAPIE2EPendingNotice.onAnswer = { [weak alert] accepted in
+                guard let alert else { return onAnswer(accepted) }
+                // As a tap does: the answer comes after the alert left the screen.
+                alert.dismiss(animated: false) { onAnswer(accepted) }
+            }
+        #endif
+
+        view?.controller.present(alert, animated: true)
     }
 
     func openProductLink(_ url: URL, from view: ControllerBackedProtocol?) {

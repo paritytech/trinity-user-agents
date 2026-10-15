@@ -56,6 +56,8 @@ final class ChatProductRoomPresenter {
     var backgroundObserver: ChatRoomBackgroundObserver?
     /// The interactor of the room screen, for the actions that the E2E harness asks for.
     weak var interactor: ChatInteractorInputProtocol?
+    /// The attachments that the room stages above the inline limit (P10.3).
+    var staging = ProductRoomStaging()
 
     init?(
         chatId: Chat.Id,

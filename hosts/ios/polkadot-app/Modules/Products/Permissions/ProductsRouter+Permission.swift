@@ -59,11 +59,13 @@ private final class ProductPermissionPromptLifetime: NSObject {
     enum TrUAPIE2EPendingPermission {
         private weak static var context: ProductPermissionContext?
         private weak static var controller: UIViewController?
+        private static var productId = ""
 
         static func show(_ context: ProductPermissionContext, controller: UIViewController) {
             guard TrUAPIE2EMarkers.isEnabled else { return }
             self.context = context
             self.controller = controller
+            productId = context.productId
             let names = context.permissions.map { String(describing: $0) }.joined(separator: ",")
             Logger.shared.debug("[e2e:ui] prompt \(context.productId) \(names)")
         }
@@ -77,7 +79,8 @@ private final class ProductPermissionPromptLifetime: NSObject {
                 default: nil
                 }
             guard let context, let decision else {
-                Logger.shared.warning("[e2e:ui] no prompt for the answer \(argument ?? "")")
+                // The prompt went away with no answer. The marker tells the harness that no prompt waits.
+                Logger.shared.debug("[e2e:ui] prompt-answer \(productId) none")
                 return
             }
             context.deliver(decision)
