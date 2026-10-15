@@ -88,12 +88,17 @@ class SendPaymentViewModel @Inject constructor(
     ) { inputValue, results ->
         SendPaymentUiState(
             input = inputValue,
+            sendToYourselfVisible = inputValue.isEmpty(),
             results = results,
         )
     }.stateIn(
         scope = this,
         started = SharingStarted.Eagerly,
-        initialValue = SendPaymentUiState(input = "", results = PaymentSearchResults.Loading)
+        initialValue = SendPaymentUiState(
+            input = "",
+            sendToYourselfVisible = true,
+            results = PaymentSearchResults.Loading
+        )
     )
 
     fun onQrResult(payload: ScanAddressQrResultPayload) {
@@ -132,7 +137,7 @@ class SendPaymentViewModel @Inject constructor(
         walletRouter.openScanAddressQr()
     }
 
-    override fun onOutsidePocketClick() = launchUnit {
+    override fun onSendToYourselfClick() = launchUnit {
         if (withdrawalInProgress.value) return@launchUnit
         withdrawalInProgress.enable()
         interactor.openWithdrawal()

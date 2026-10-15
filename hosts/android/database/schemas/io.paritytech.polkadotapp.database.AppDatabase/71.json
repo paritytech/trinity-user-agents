@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 71,
-    "identityHash": "54eace200b796956af3f6cdd9e0ad200",
+    "identityHash": "fe490c292af5dccaf62f95e76e4ee621",
     "entities": [
       {
         "tableName": "product_funding_operations",
@@ -1515,7 +1515,7 @@
       },
       {
         "tableName": "chat_requests",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, `direction` TEXT NOT NULL, `status` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, `direction` TEXT NOT NULL, `status` TEXT NOT NULL, `deliveryStatus` TEXT NOT NULL DEFAULT 'DELIVERED', `deliveredVia` TEXT, `lastDeliveredPeriod` INTEGER, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -1540,6 +1540,23 @@
             "columnName": "status",
             "affinity": "TEXT",
             "notNull": true
+          },
+          {
+            "fieldPath": "deliveryStatus",
+            "columnName": "deliveryStatus",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'DELIVERED'"
+          },
+          {
+            "fieldPath": "deliveredVia",
+            "columnName": "deliveredVia",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastDeliveredPeriod",
+            "columnName": "lastDeliveredPeriod",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -3049,113 +3066,11 @@
             "cardId"
           ]
         }
-      },
-      {
-        "tableName": "product_funding_records",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`intent` TEXT NOT NULL, `direction` TEXT NOT NULL, `rail` TEXT, `asset` TEXT, `providerId` TEXT, `requestedPlanks` TEXT, `settledPlanks` TEXT, `outcome` TEXT NOT NULL, `failureCode` TEXT, `failureMessage` TEXT, `payout` TEXT, `payoutFailureReason` TEXT, `refundedPlanks` TEXT, `transactionId` TEXT, `reference` TEXT, `openedAtMillis` INTEGER NOT NULL, `settledAtMillis` INTEGER NOT NULL, PRIMARY KEY(`intent`))",
-        "fields": [
-          {
-            "fieldPath": "intent",
-            "columnName": "intent",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "direction",
-            "columnName": "direction",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "rail",
-            "columnName": "rail",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "asset",
-            "columnName": "asset",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "providerId",
-            "columnName": "providerId",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "requestedPlanks",
-            "columnName": "requestedPlanks",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "settledPlanks",
-            "columnName": "settledPlanks",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "outcome",
-            "columnName": "outcome",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "failureCode",
-            "columnName": "failureCode",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "failureMessage",
-            "columnName": "failureMessage",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "payout",
-            "columnName": "payout",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "payoutFailureReason",
-            "columnName": "payoutFailureReason",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "refundedPlanks",
-            "columnName": "refundedPlanks",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "transactionId",
-            "columnName": "transactionId",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "reference",
-            "columnName": "reference",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "openedAtMillis",
-            "columnName": "openedAtMillis",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "settledAtMillis",
-            "columnName": "settledAtMillis",
-            "affinity": "INTEGER",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "intent"
-          ]
-        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '54eace200b796956af3f6cdd9e0ad200')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fe490c292af5dccaf62f95e76e4ee621')"
     ]
   }
 }

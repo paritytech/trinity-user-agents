@@ -28,6 +28,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -58,14 +59,22 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
      */
     private val detailsVisible = MutableStateFlow(false)
 
+    /** The coin picked out of the grid by a tap, if any. */
+    private val focusedCoin = MutableStateFlow<String?>(null)
+
+    private val coinsState = combine(detailsVisible, focusedCoin) { expanded, focused ->
+        if (expanded) focused else null
+    }
+
     private val holdingsFlow: Flow<Result<CoinageHoldingsInfo>> = interactor.observeHoldings()
 
     val coinageState: StateFlow<LoadingState<CoinageUiState>> = combine(
         holdingsFlow,
         fundInProgress,
         interactor.observeActionsEnabled(),
-        detailsVisible
-    ) { holdingsResult, inProgress, actionsEnabled, expanded ->
+        detailsVisible,
+        coinsState
+    ) { holdingsResult, inProgress, actionsEnabled, expanded, focused ->
         val asset = interactor.asset()
 
         holdingsResult.map { holdings ->
@@ -75,7 +84,8 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
                 fundInProgress = inProgress,
                 actionsEnabled = actionsEnabled,
                 shareLogsEnabled = BuildConfig.TESTNET_FUND_ENABLED,
-                detailsVisible = expanded
+                detailsVisible = expanded,
+                focusedCoin = focused
             )
         }
     }
@@ -133,8 +143,30 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         interactor.markBackupCompleted()
     }
 
-    fun onDetailsToggled() {
-        detailsVisible.value = !detailsVisible.value
+    /**
+     * Collapsed, any tap on the coins unfurls them: they are too small and too close to pick one out of.
+     * Spread out, a coin picks it, and the picked coin or empty ground puts it back. Nothing among the coins
+     * closes the grid — a finger aimed at a coin must not collapse it.
+     */
+    fun onCoinTapped(id: String?) {
+        if (!detailsVisible.value) {
+            detailsVisible.value = true
+            return
+        }
+
+        focusedCoin.value = id.takeIf { it != focusedCoin.value }
+    }
+
+    fun onCoinsFlickedDown() {
+        detailsVisible.value = true
+    }
+
+    /** The grid closes from the card's own heading, where a finger cannot miss a coin and close it instead. */
+    fun onHeadingClicked() {
+        if (!detailsVisible.value) return
+
+        focusedCoin.value = null
+        detailsVisible.value = false
     }
 
     fun onShareLogsClick() = launchUnit {
@@ -158,6 +190,9 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         readyBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.availablePrivate)),
         clearingBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.clearing)),
         coins = CoinageBreakdownFactory.coins(holdings).toImmutableList(),
+        traces = CoinageBreakdownFactory.traces(holdings) { value ->
+            tokenAmountMapper.mapFrom(asset.withAmount(value))
+        }.toImmutableMap(),
         breakdown = CoinageBalanceBreakdownUiModel(
             availablePrivate = tokenAmountMapper.mapFrom(asset.withAmount(balance.availablePrivate)),
             gainingPrivacy = tokenAmountMapper.mapFrom(asset.withAmount(balance.gainingPrivacy.amount)),

@@ -41,9 +41,9 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.Pa
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchSectionUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.SendPaymentContract
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.SendPaymentUiState
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.OutsidePocketRow
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SearchResult
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SendPaymentEmptySearch
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SendToYourselfItem
 import kotlinx.collections.immutable.persistentListOf
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -59,10 +59,10 @@ fun SendPaymentScreen(contract: SendPaymentContract) {
         state = uiState,
         onInputChange = contract::onInputChange,
         onRecipientSelect = contract::onRecipientSelect,
+        onSendToYourselfClick = contract::onSendToYourselfClick,
         onPasteClick = contract::onPasteClick,
         onBackClick = contract::onBackClick,
         onScannerClick = contract::onScannerClick,
-        onOutsidePocketClick = contract::onOutsidePocketClick,
     )
 }
 
@@ -71,10 +71,10 @@ private fun SendPaymentScreenInternal(
     state: SendPaymentUiState,
     onInputChange: (String) -> Unit,
     onRecipientSelect: (PaymentSearchResultUiModel) -> Unit,
+    onSendToYourselfClick: () -> Unit,
     onPasteClick: () -> Unit,
     onBackClick: () -> Unit,
     onScannerClick: () -> Unit,
-    onOutsidePocketClick: () -> Unit,
 ) {
     PolkadotSurface {
         Column(
@@ -142,9 +142,13 @@ private fun SendPaymentScreenInternal(
 
             VerticalSpacer { mediumIncreased }
 
-            if (state.input.isEmpty()) {
-                OutsidePocketRow(modifier = Modifier.fillMaxWidth(), onClick = onOutsidePocketClick)
-                VerticalSpacer { medium }
+            if (state.sendToYourselfVisible) {
+                SendToYourselfItem(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onSendToYourselfClick
+                )
+
+                VerticalSpacer { mediumIncreased }
             }
 
             when (val results = state.results) {
@@ -166,6 +170,7 @@ private fun SendPaymentScreenPreview() {
         SendPaymentScreenInternal(
             state = SendPaymentUiState(
                 input = "alice",
+                sendToYourselfVisible = false,
                 results = PaymentSearchResults.Sections(
                     persistentListOf(
                         PaymentSearchSectionUiModel(
@@ -209,10 +214,10 @@ private fun SendPaymentScreenPreview() {
             ),
             onInputChange = {},
             onRecipientSelect = {},
+            onSendToYourselfClick = {},
             onPasteClick = {},
             onBackClick = {},
             onScannerClick = {},
-            onOutsidePocketClick = {},
         )
     }
 }

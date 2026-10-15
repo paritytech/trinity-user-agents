@@ -1454,7 +1454,7 @@ pub enum CoreStorageKey {
 		product_id: String,
 	},
 	/// Funding sessions: every live one plus a bounded tail of settled ones,
-	/// as one SCALE blob.
+	/// as one versioned SCALE blob.
 	#[codec(index = 13)]
 	FundingSessions,
 	/// A product's Worker executable manifest as last read from dotNS, and when,
@@ -1472,6 +1472,10 @@ pub enum CoreStorageKey {
 	/// each record trusted for twelve hours.
 	#[codec(index = 16)]
 	FundingSupport,
+	/// The last funding sessions blob the core could not read, kept as it was
+	/// so a stored session is never overwritten unread.
+	#[codec(index = 17)]
+	FundingSessionsUnreadable,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1529,6 +1533,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::WorkerManifest { product_id } => ("WorkerManifest", Some(product_id)),
 		CoreStorageKey::PublishedProducts => ("PublishedProducts", None),
 		CoreStorageKey::FundingSupport => ("FundingSupport", None),
+		CoreStorageKey::FundingSessionsUnreadable => ("FundingSessionsUnreadable", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2497,6 +2502,7 @@ mod tests {
 			),
 			(CoreStorageKey::PublishedProducts, "PublishedProducts", None),
 			(CoreStorageKey::FundingSupport, "FundingSupport", None),
+			(CoreStorageKey::FundingSessionsUnreadable, "FundingSessionsUnreadable", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
 			assert_eq!(description.kind, kind);
@@ -3256,6 +3262,9 @@ pub struct FundingPresentation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingQuoteList {
+	/// The request this list answers, as `request_funding_quotes` returned
+	/// it. A host shows only the lists of its latest request.
+	pub request_id: u64,
 	/// One row per provider asked, in the host's provider order.
 	pub rows: Vec<FundingQuoteRow>,
 	/// The provider whose quote is best for the user, which the host selects

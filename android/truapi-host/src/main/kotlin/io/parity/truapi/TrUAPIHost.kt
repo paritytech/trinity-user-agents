@@ -92,6 +92,7 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
+import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingCountry
 import uniffi.truapi.FundingDirection
@@ -946,8 +947,12 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Every funding session the core keeps, in flight first, then ended, each newest first. */
     fun fundingSessions(): List<FundingSession> = inner.fundingSessions()
 
-    /** Whether a provider still works on any funding session; a host that remembers it starts funding at its next launch. */
-    fun fundingInProgress(): Boolean = inner.fundingInProgress()
+    /**
+     * Whether a provider still works on any funding session, read from storage until funding has resumed. A host
+     * that remembers it starts funding at its next launch.
+     */
+    @Throws(HostRejection::class)
+    suspend fun fundingInProgress(): Boolean = inner.fundingInProgress()
 
     /** Cancel session [intent] at the user's request; its provider, if any, is asked to stop. */
     @Throws(HostRejection::class)
@@ -973,17 +978,28 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun fundingCountries(intent: String, rail: FundingRail, asset: String): List<FundingCountry> =
         inner.fundingCountries(intent, rail, asset)
 
+    /**
+     * The amounts session [intent] can take on [rail] and [asset] in [country]: the smallest minimum and largest
+     * maximum across providers, or no bound while some provider has shown none.
+     */
+    fun fundingAmountLimits(
+        intent: String,
+        rail: FundingRail,
+        asset: String,
+        network: String?,
+        country: String?
+    ): FundingAmountLimits = inner.fundingAmountLimits(intent, rail, asset, network, country)
+
     /** The country quotes go by until the user picks one, as [FundingHostBridge.detectedCountry] last answered. */
     suspend fun detectedFundingCountry(): String? = inner.detectedFundingCountry()
 
     /**
      * Ask every funding provider to price [ask] for session [intent]. The list arrives through
      * [FundingHostBridge.fundingQuotesChanged], and is asked for again every minute until the session is handed
-     * to a provider or ends, the host asks for another [ask], or calls [stopFundingQuotes].
+     * to a provider or ends, the host asks for another [ask], or calls [stopFundingQuotes]. Returns the request
+     * id every list for this ask carries as [FundingQuoteList.requestId]; a host shows only its latest request's.
      */
-    fun getFundingQuote(intent: String, ask: FundingQuoteAsk) {
-        inner.getFundingQuote(intent, ask)
-    }
+    fun getFundingQuote(intent: String, ask: FundingQuoteAsk): ULong = inner.getFundingQuote(intent, ask)
 
     /** Stop asking again for session [intent]'s quotes, as when the user leaves the provider list. */
     fun stopFundingQuotes(intent: String) {
@@ -1343,6 +1359,14 @@ class TrUAPIProductExecution internal constructor(
     @Throws(HostRejection::class)
     suspend fun authorizeRemotePermission(request: RemotePermissionRequest): Boolean =
         inner.authorizeRemotePermission(request)
+
+    /**
+     * Authorize one device capability the web view gates itself, using the
+     * product's saved, one-use, or prompted decision.
+     */
+    @Throws(HostRejection::class)
+    suspend fun authorizeDevicePermission(request: HostDevicePermissionRequest): Boolean =
+        inner.authorizeDevicePermission(request)
 
     /**
      * Update a stored permission authorization status. Passing `NotDetermined`

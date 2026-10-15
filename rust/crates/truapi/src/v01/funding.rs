@@ -40,18 +40,21 @@ pub enum FundingFailure {
 	/// The user abandoned the flow, or declined to authorize an outbound
 	/// release.
 	Cancelled,
+	/// Outcome not covered by the other variants. Clients render the message
+	/// and treat the code as opaque.
+	Other {
+		/// Stable machine-readable code.
+		code: String,
+		/// Human-readable text. A provider's failure carries its own text; a
+		/// failure the core decides carries English text with a code hosts
+		/// can translate: `not_claimed` when nothing reached the balance,
+		/// `payment_failed` when the user's payment did not go through.
+		message: String,
+	},
 	/// The provider returned the user's payment instead of crediting it.
 	Refunded,
 	/// The user's bank or card issuer refused the payment.
 	Declined,
-	/// Outcome not covered above. Clients render the message and treat the
-	/// code as opaque.
-	Other {
-		/// Stable machine-readable code.
-		code: String,
-		/// Human-readable text, already localized by the host.
-		message: String,
-	},
 }
 
 /// Request to open the funding modality.
@@ -78,6 +81,8 @@ pub enum HostFundingError {
 	NotConnected,
 	/// The user dismissed the funding screen without starting a session.
 	Rejected,
+	/// The amount sought is zero.
+	InvalidAmount,
 	/// Catch-all.
 	Unknown {
 		/// Human-readable failure reason.

@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.chains.util.Modules
 import io.paritytech.polkadotapp.chains.util.call
 import io.paritytech.polkadotapp.common.data.substrate.model.MultiSignature
 import io.paritytech.polkadotapp.common.domain.model.AccountId
+import io.paritytech.polkadotapp.feature_chain_resources_api.data.model.NotificationReference
 import io.paritytech.polkadotapp.feature_chain_resources_api.data.model.UsernameChoice
 
 @JvmInline
@@ -53,6 +54,22 @@ fun ResourcesCalls.setStatementStoreAccount(
             "period" to period,
             "seq" to seq,
             "target_account" to targetAccount,
+        )
+    )
+}
+
+const val SET_NOTIFICATION_STATEMENT_ACCOUNT_CALL = "set_notification_statement_account_for_sequence"
+
+fun ResourcesCalls.setNotificationStatementAccountForSequence(
+    reference: NotificationReference,
+    accountId: AccountId,
+) {
+    extrinsicBuilder.call(
+        moduleName = Modules.RESOURCES,
+        callName = SET_NOTIFICATION_STATEMENT_ACCOUNT_CALL,
+        arguments = autoEncodedArgs(
+            "reference" to reference,
+            "account_id" to accountId,
         )
     )
 }
