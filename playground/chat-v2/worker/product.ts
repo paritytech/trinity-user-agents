@@ -27,7 +27,7 @@ import { Clock, type RoomId } from "./clock";
 import { parseCommand, parseCommandEvent, type ParsedCommand } from "./commands";
 import type { ProductContext, SampleClient } from "./context";
 import { call, describeCallError, reasonOf } from "./errors";
-import { createThread, helpCommand, runCommand, selectBranch, setActivity, setPreview } from "./execute";
+import { answerWoken, createThread, helpCommand, runCommand, selectBranch, setActivity, setPreview } from "./execute";
 import { Feed } from "./feed";
 import {
   ACTION_THREAD,
@@ -744,6 +744,13 @@ export class SampleProduct {
     switch (event.tag) {
       case "UserStateChanged":
         return this.#echoRoomEvent(room, event);
+      case "Woken":
+        try {
+          await answerWoken(this.#context(), room, event.value.watchId);
+        } catch (error) {
+          console.error("chat-v2: the answer to Woken failed", error);
+        }
+        return;
       case "BranchSelected":
         // `/slow` holds this answer too, so a host can show its time-out.
         if (this.#state.slowMs > 0) await delay(this.#state.slowMs);

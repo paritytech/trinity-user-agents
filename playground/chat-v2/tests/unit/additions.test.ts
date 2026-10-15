@@ -453,3 +453,27 @@ describe("threads, branches and reasoning", () => {
     expect(running.fake.callsOf("navigateTo")).toEqual([{ url: `polkadot://sample.dot/-/chat/thread-host-${root}` }]);
   });
 });
+
+describe("wakes", () => {
+  test("Woken refreshes the preview, posts woken and notifies the room (S70)", async () => {
+    const running = start();
+    await running.product.idle();
+    running.fake.emitRoomEvent({ roomId: "host", event: { tag: "Woken", value: { watchId: "dev" } } });
+    await running.product.idle();
+
+    expect((running.fake.callsOf("setRoomPreview") as { preview: { text?: { text: string } } }[]).at(-1)?.preview.text).toEqual({
+      text: "Woken by dev",
+      ongoing: false,
+    });
+    expect(posted(running.fake)).toEqual(["woken"]);
+    expect(running.fake.callsOf("sendPushNotification")).toEqual([
+      { text: "Sample woken in host by dev", deeplink: "polkadot://sample.dot/-/chat/host" },
+    ]);
+  });
+
+  test("/wake watch answers that the host has no receiving API", async () => {
+    const running = start();
+    await command(running, "/wake watch");
+    expect(posted(running.fake)).toEqual(["error /wake watch: this host has no receiving API for a watch"]);
+  });
+});

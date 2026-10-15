@@ -345,3 +345,34 @@ suite("threads and branches on the test host", () => {
     await until(() => host.room("host")?.meta[message.messageId]?.branch?.index === 2, "the new position");
   });
 });
+
+suite("wakes on the test host", () => {
+  const woken = { tag: "Notification" as const, value: { roomId: "host", watchId: "dev" } };
+
+  test("S70: a notification wake delivers Woken, refreshes the preview and notifies, unless the room is muted", async () => {
+    const running = await start();
+    const { host } = running;
+    host.clearNotificationLog();
+    expect((await host.chatUser.wake(woken)).tag).toBe("Held");
+    await waitForText(host, "host", "woken");
+    await until(() => host.preview("host")?.text === "Woken by dev", "the woken preview");
+    await until(() => host.getNotificationLog().length === 1, "the woken notification");
+    expect(host.getNotificationLog()[0]).toMatchObject({ text: "Sample woken in host by dev" });
+
+    await host.setRoomUserState("host", { mutedUntil: BigInt(Date.now() + 3_600_000), archived: false });
+    expect((await host.chatUser.wake(woken)).tag).toBe("Held");
+    await until(() => host.feed("host").filter((message) => message.body.tag === "Text" && message.body.value.text === "woken").length === 2, "the second woken");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(host.getNotificationLog()).toHaveLength(1);
+  });
+
+  test("S71: the thirteenth notification wake of an hour answers BudgetSpent and wakes nothing", async () => {
+    const running = await start();
+    const { host } = running;
+    for (let index = 1; index <= 12; index++) expect((await host.chatUser.wake(woken)).tag).toBe("Held");
+    expect(await host.chatUser.wake(woken)).toEqual({ tag: "BudgetSpent" });
+    await until(() => running.log().filter((line) => line.via === "room_events" && line.kind === "Woken").length === 12, "twelve Woken");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(running.log().filter((line) => line.via === "room_events" && line.kind === "Woken")).toHaveLength(12);
+  });
+});

@@ -187,6 +187,12 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
   },
   branches: runBranches,
   reason: runReason,
+  wake: async (_ctx, _room, command) => {
+    if (command.args.length !== 1 || command.args[0] !== "watch") throw usage(command, "watch");
+    // A watch routed to `/-/chat/<room>` needs the receiving API of the
+    // Notifications service, which no host serves yet (O28).
+    throw new CommandError("this host has no receiving API for a watch");
+  },
 };
 
 /** The names of the commands this module runs, for the tests. */
@@ -495,6 +501,25 @@ async function runSearch(ctx: ProductContext, room: RoomId, command: ParsedComma
 /** The text of the notification `/notify` sends from `room`. */
 export function notificationText(room: RoomId): string {
   return `Sample notification from ${room}`;
+}
+
+/** The text of the notification the product sends when a watch wakes it. */
+export function wokenNotificationText(room: RoomId, watchId: string): string {
+  return `Sample woken in ${room} by ${watchId}`;
+}
+
+/**
+ * The answer to `Woken`: the preview "Woken by <watch>", the message "woken"
+ * in a room the host keeps, and a notification into the room, which the host
+ * does not show while the room is muted.
+ */
+export async function answerWoken(ctx: ProductContext, room: RoomId, watchId: string): Promise<void> {
+  await setPreview(ctx, room, { text: { text: `Woken by ${watchId}`, ongoing: false } });
+  if (modeOf(room) === "host") await ctx.feed.post(room, textBody("woken"));
+  await call(
+    "send_push_notification",
+    ctx.notifications.sendPushNotification({ text: wokenNotificationText(room, watchId), deeplink: roomLink(room, ctx.product) }),
+  );
 }
 
 /**
