@@ -52,6 +52,11 @@ impl ChainOverrides {
 }
 
 impl Network {
+	/// CLI resolution includes the opt-in disposable local-network configuration.
+	pub fn cli_config(self) -> anyhow::Result<NetworkConfig> {
+		crate::local_network::resolve(self.config())
+	}
+
 	/// Preset resolved with any environment overrides applied.
 	pub fn config(self) -> NetworkConfig {
 		let config =
