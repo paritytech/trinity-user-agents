@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.EmptyRoomPlaceholder
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.callFactory
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchController
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.collections.immutable.persistentListOf
@@ -102,7 +103,7 @@ class ChatFeedViewModelTest {
         attachmentExecutor = mockk(relaxed = true),
         dispatchers = TestCoroutineDispatchers(UnconfinedTestDispatcher()),
         resourceResolver = mockk(relaxed = true),
-        productRoomFactory = ChatProductRoomController.Factory(interactor, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true)),
+        productRoomFactory = ChatProductRoomController.Factory(interactor, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), callFactory()),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk(relaxed = true),
         roomSearchFactory = ChatRoomSearchController.Factory(mockk(relaxed = true)),

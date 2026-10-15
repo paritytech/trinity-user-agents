@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 import android.content.Context
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomCallRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
@@ -74,6 +75,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
@@ -104,6 +106,7 @@ class ProductChatExtension(
     private val declarationsRepository: ChatRoomDeclarationsRepository,
     private val feedListeners: ProductFeedListeners,
     private val roomEventSink: ProductChatRoomEventSink,
+    private val callRepository: ChatRoomCallRepository,
     val origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
@@ -438,6 +441,13 @@ class ProductChatExtension(
 
         override suspend fun setRoomCall(chatIdParameter: ProductChatIdParameter, call: ChatRoomCallModel?): Result<Unit> =
             extensionContext.setRoomCall(chatIdParameter.toChatId(id), call)
+
+        // An active call stays: the bar of a call follows the call, not the worker.
+        override suspend fun clearRingingCalls(): Result<Unit> = runCancellableCatching {
+            extensionContext.subscribeOwnRooms().first()
+                .filter { callRepository.observe(it).first() is ChatRoomCallModel.Ringing }
+                .forEach { extensionContext.setRoomCall(it, null).getOrThrow() }
+        }
 
         private fun ProductBotMessage.toChatMessageContent(): ChatMessage.Content = when (this) {
             is ProductBotMessage.Text -> ChatMessage.Content.Text(text)

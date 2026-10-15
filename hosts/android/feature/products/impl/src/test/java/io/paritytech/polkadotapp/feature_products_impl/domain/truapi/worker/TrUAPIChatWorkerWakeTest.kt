@@ -19,6 +19,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatWakeOutcome
@@ -37,11 +38,12 @@ class TrUAPIChatWorkerWakeTest {
 
     private fun TestScope.worker(
         states: Flow<WorkerExecutionState?> = flowOf(WorkerExecutionState.Running(execution)),
+        messaging: FakeChatMessaging = FakeChatMessaging(),
     ): TrUAPIChatWorker {
         val workers: TrUAPIWorkerSupervisor = mockk(relaxed = true)
         every { workers.executionState(productId) } returns states
         every { workers.currentExecution(productId) } returns execution
-        return TrUAPIChatWorker(productId, runtime, workers, FakeChatMessaging(), CoroutineScope(StandardTestDispatcher(testScheduler)))
+        return TrUAPIChatWorker(productId, runtime, workers, messaging, CoroutineScope(StandardTestDispatcher(testScheduler)))
     }
 
     private val messageWake = ChatWakeReason.MessageInFlight("lobby")
@@ -99,5 +101,21 @@ class TrUAPIChatWorkerWakeTest {
 
         verify(exactly = 3) { runtime.wakeProduct(productId.value, ChatWakeReason.ProductStart) }
         verify(exactly = 0) { runtime.acquireWorker(any()) }
+    }
+
+    @Test
+    fun `a worker that stops makes the rooms stop to ring`() = runTest {
+        val states = MutableStateFlow<WorkerExecutionState?>(null)
+        val messaging = FakeChatMessaging()
+        worker(states, messaging)
+        runCurrent()
+        assertEquals("a worker that did not run yet clears nothing", 0, messaging.ringingClears)
+
+        states.value = WorkerExecutionState.Running(execution)
+        runCurrent()
+        states.value = null
+        runCurrent()
+
+        assertEquals(1, messaging.ringingClears)
     }
 }

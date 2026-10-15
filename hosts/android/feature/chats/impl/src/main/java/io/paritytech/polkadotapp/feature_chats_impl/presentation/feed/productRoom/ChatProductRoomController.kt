@@ -23,6 +23,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.Message
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.MessagePopUpSelection
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -65,6 +66,7 @@ class ChatProductRoomController(
     private val productLinkOpener: ChatProductLinkOpener,
     appearances: ChatParticipantAppearanceFactory,
     private val clipboardService: ClipboardService,
+    callFactory: ProductRoomCallController.Factory,
 ) {
     /** What the controller asks of the room screen. */
     interface Screen {
@@ -122,19 +124,23 @@ class ChatProductRoomController(
         )
     }
 
+    /** The call buttons, the ringing banner and the call bar (07-LATER §11.2). The room draws the caller as an author. */
+    private val call = callFactory.create(scope, chatId, roomPolicy, participants::appearanceOf, screen::showFailure)
+
     val uiState: StateFlow<ProductRoomUiState> = combine(
         toolbar,
         participants.uiState,
         participantSheet,
         customFooter,
-        extras,
-    ) { toolbar, participants, sheet, customFooter, extras ->
+        combine(extras, call.uiState, ::Pair),
+    ) { toolbar, participants, sheet, customFooter, (extras, call) ->
         ProductRoomUiState(
             toolbar = toolbar,
             participants = participants,
             participantSheet = sheet,
             customFooter = customFooter,
             extras = extras,
+            call = call,
         )
     }.stateIn(scope, SharingStarted.Eagerly, ProductRoomUiState.None)
 
@@ -227,6 +233,7 @@ class ChatProductRoomController(
             is ProductRoomAction.SelectParticipant -> showParticipant(action.participantId)
             is ProductRoomAction.ParticipantSheet -> selectSheetEntry(action.entry)
             is ProductRoomAction.Suggestion -> selectSuggestion(action.suggestionId)
+            is ProductRoomAction.Call -> call.onAction(action.action)
         }
     }
 
@@ -345,6 +352,7 @@ class ChatProductRoomController(
         private val productLinkOpener: ChatProductLinkOpener,
         private val appearances: ChatParticipantAppearanceFactory,
         private val clipboardService: ClipboardService,
+        private val callFactory: ProductRoomCallController.Factory,
     ) {
         @Suppress("LongParameterList")
         fun <S> create(
@@ -367,6 +375,7 @@ class ChatProductRoomController(
             productLinkOpener = productLinkOpener,
             appearances = appearances,
             clipboardService = clipboardService,
+            callFactory = callFactory,
         )
     }
 }

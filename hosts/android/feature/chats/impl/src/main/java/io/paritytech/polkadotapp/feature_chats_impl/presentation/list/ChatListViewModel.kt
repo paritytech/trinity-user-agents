@@ -41,6 +41,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatListI
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDraft
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallListPreviews
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.models.ChatListUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.CallResolutionContext
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.buildCallResolutionContext
@@ -63,6 +64,7 @@ class ChatListViewModel @Inject constructor(
     private val messageMappingHelper: ChatMessageMappingHelper,
     private val roomPolicyMapper: ChatListRoomPolicyMapper,
     private val userStateService: ChatRoomUserStateService,
+    private val callPreviews: ProductRoomCallListPreviews,
 ) : BaseViewModel() {
     private val showsArchived = MutableStateFlow(false)
 
@@ -74,20 +76,21 @@ class ChatListViewModel @Inject constructor(
             interactor.subscribeChats().withMuteClock(System::currentTimeMillis),
             interactor.subscribeDrafts(),
             showsArchived,
-            ::Triple,
+            callPreviews.observe(),
+            ::ListInputs,
         ),
         interactor.subscribeAllCustomMessageRenderers(),
         interactor.subscribePendingIncomingRequestsCount(),
         interactor.subscribeCallSignaling(),
         interactor.subscribeActiveCall()
-    ) { (chatsAtTime, drafts, archivedAsked), customMessageRenderers, pendingRequestsCount, callSignaling, activeCall ->
+    ) { (chatsAtTime, drafts, archivedAsked, ringing), customMessageRenderers, pendingRequestsCount, callSignaling, activeCall ->
         val (chatList, now) = chatsAtTime
         val sections = chatList.toSections()
         // The archived section closes by itself when the user unarchives its last room.
         val showsArchivedSection = archivedAsked && sections.archived.isNotEmpty()
         val shown = if (showsArchivedSection) sections.archived else sections.main
         val callContext = buildCallResolutionContext(callSignaling, activeCall)
-        val chats = shown.map { it.toUi(drafts, customMessageRenderers, callContext, now) }
+        val chats = shown.map { it.toUi(drafts, customMessageRenderers, callContext, now, ringing[it.id]) }
 
         ChatListUiState(
             chats = chats.toImmutableList(),
@@ -171,11 +174,14 @@ class ChatListViewModel @Inject constructor(
         customMessageRenderers: CustomChatMessageRenderersById,
         callContext: CallResolutionContext,
         nowMs: Long,
+        ringingText: String?,
     ): ChatListUiState.ChatItem {
         val draftText = drafts[id]?.text?.takeIf { it.isNotBlank() }
         val productPreview = roomPolicyMapper.productPreview(this)
         val previewModel = when {
             draftText != null -> DraftPreviewUiModel(timestamp = timestamp, text = draftText)
+            // A ringing product room shows "Incoming call" until the call stops to ring (07-LATER §11.2).
+            ringingText != null -> LastMessageUiModel.Text(timestamp = timestamp, isIncoming = true, message = ringingText)
             productPreview != null -> productPreview
             else -> preview.toUi(
                 timestamp = timestamp,
@@ -194,7 +200,7 @@ class ChatListViewModel @Inject constructor(
             preview = previewModel,
             isMuted = userState?.isMuted == true,
             hasReaction = hasUnseenReaction,
-            isOngoing = draftText == null && roomPolicyMapper.isOngoing(this),
+            isOngoing = draftText == null && (ringingText != null || roomPolicyMapper.isOngoing(this)),
             userState = userState,
         )
     }
@@ -382,3 +388,11 @@ class ChatListViewModel @Inject constructor(
         }
     }
 }
+
+/** What the list combines before it draws its rows. [ringing] has the preview text of each room that rings. */
+private data class ListInputs(
+    val chatsAtTime: Pair<List<Chat>, Long>,
+    val drafts: Map<ChatId, ChatDraft>,
+    val archivedAsked: Boolean,
+    val ringing: Map<ChatId, String>,
+)

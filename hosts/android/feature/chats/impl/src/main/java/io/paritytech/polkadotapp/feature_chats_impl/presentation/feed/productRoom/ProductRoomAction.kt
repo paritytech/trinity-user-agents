@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom
 
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallAction
+
 /** What the user does to the parts of a product room that its product declares. */
 sealed interface ProductRoomAction {
     /** The user confirmed the link of a product action or of a message. */
@@ -25,4 +27,7 @@ sealed interface ProductRoomAction {
 
     /** A press on a quick reply above the input. */
     data class Suggestion(val suggestionId: String) : ProductRoomAction
+
+    /** The user acts on the call of the room (07-LATER §11.2). */
+    data class Call(val action: ProductRoomCallAction) : ProductRoomAction
 }

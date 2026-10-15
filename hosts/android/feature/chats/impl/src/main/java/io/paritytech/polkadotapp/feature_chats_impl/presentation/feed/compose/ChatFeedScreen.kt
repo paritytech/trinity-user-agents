@@ -59,6 +59,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.*
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomExtrasUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallScreen
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallSlot
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.catalogueFor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.inputText
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchBar
@@ -107,9 +111,11 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
 
     LifecycleStartEffect(Unit) {
         contract.onScreenStarted()
+        contract.onProductRoomAction(ProductRoomAction.Call(ProductRoomCallAction.ScreenShown(shown = true)))
 
         onStopOrDispose {
             contract.onScreenStopped()
+            contract.onProductRoomAction(ProductRoomAction.Call(ProductRoomCallAction.ScreenShown(shown = false)))
         }
     }
 
@@ -287,8 +293,16 @@ private fun ChatFeedScreenInternal(
                         } else {
                             null
                         },
+                        callButtons = productRoomState.call.buttons,
+                        onCallClick = { onProductRoomAction(ProductRoomAction.Call(ProductRoomCallAction.Request(it))) },
                     )
                 }
+            }
+
+            ProductRoomCallSlot(call = productRoomState.call.call, onAction = { onProductRoomAction(ProductRoomAction.Call(it)) })
+            val screenCall = productRoomState.call.call as? ProductRoomCallUiState.Call.Active
+            if (productRoomState.call.showsCallScreen && screenCall != null) {
+                ProductRoomCallScreen(call = screenCall, roomName = username, onAction = { onProductRoomAction(ProductRoomAction.Call(it)) })
             }
 
             val readiness = chatMessagesLoadingState.dataOrNull?.readiness

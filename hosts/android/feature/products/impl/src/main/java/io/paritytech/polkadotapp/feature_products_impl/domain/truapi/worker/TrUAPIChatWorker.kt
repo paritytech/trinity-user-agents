@@ -105,11 +105,17 @@ class TrUAPIChatWorker(
     init {
         scope.coroutineContext.job.invokeOnCompletion { holds.releaseAll() }
         scope.launch {
+            var ran = false
             workers.executionState(productId)
                 .map { (it as? WorkerExecutionState.Running)?.execution }
                 .distinctUntilChanged()
                 .collectLatest { execution ->
-                    if (execution == null) return@collectLatest
+                    if (execution == null) {
+                        // A stopped worker cannot answer a ringing call, so the rooms stop to ring (07-LATER §11.2).
+                        if (ran) chatMessaging.clearRingingCalls().logFailure("truapi.chat.calls for ${productId.value}")
+                        return@collectLatest
+                    }
+                    ran = true
                     coroutineScope { TrUAPIChatRoomForwarding(productId, execution, chatMessaging).start(this) }
                 }
         }

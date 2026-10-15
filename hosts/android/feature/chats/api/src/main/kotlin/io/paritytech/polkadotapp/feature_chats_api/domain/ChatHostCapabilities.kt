@@ -20,5 +20,8 @@ object ChatHostCapabilities {
     /** The mute and the archive of the user, which the product reads through `UserStateChanged`: S54 to S56. */
     const val MUTE_ARCHIVE = "mute_archive"
 
-    val features: List<String> = listOf(PRODUCT_SOURCE_ROOMS, CUSTOM_BODIES)
+    /** The call buttons of the header, a ringing call, the call bar and the call events: S72 to S74. */
+    const val CALL_BUTTONS = "call_buttons"
+
+    val features: List<String> = listOf(PRODUCT_SOURCE_ROOMS, CUSTOM_BODIES, CALL_BUTTONS)
 }
