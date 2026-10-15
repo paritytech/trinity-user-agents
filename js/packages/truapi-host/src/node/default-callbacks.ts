@@ -18,7 +18,7 @@ import type {
 } from "../generated/host-callbacks.js";
 
 /** What a headless pairing host must provide itself. */
-export interface HeadlessHostCallbacks {
+export interface HeadlessHostOptions {
   /** Persists the core's own state: the paired session, keys, allowances. */
   coreStorage: CoreStorage;
   /** Opens a JSON-RPC connection to the chain with a given genesis hash. */
@@ -45,7 +45,7 @@ const unsupported = (capability: string) =>
  * A stream that emits `value` once and then stays open until the consumer
  * closes it, for state that never changes on a headless host.
  */
-function constant<T>(value: T): AsyncIterable<Result<T, GenericError>> {
+function unchangingStream<T>(value: T): AsyncIterable<Result<T, GenericError>> {
   return {
     [Symbol.asyncIterator]() {
       let emitted = false;
@@ -77,8 +77,8 @@ function constant<T>(value: T): AsyncIterable<Result<T, GenericError>> {
 }
 
 /** Fill in every capability a headless pairing host does not own. */
-export function headlessHostCallbacks(
-  host: HeadlessHostCallbacks,
+export function createHeadlessHostCallbacks(
+  host: HeadlessHostOptions,
 ): RequiredHostCallbacks {
   const supportedGenesis = new Set(
     host.supportedChains.chains.map((chain) => chain.genesisHash.toLowerCase()),
@@ -123,19 +123,19 @@ export function headlessHostCallbacks(
     },
     theme: {
       subscribeTheme() {
-        return constant({ name: { tag: "Default" }, variant: "Dark" });
+        return unchangingStream({ name: { tag: "Default" }, variant: "Dark" });
       },
     },
     locale: {
       subscribeLocale() {
-        return constant({
+        return unchangingStream({
           languageTag: Intl.DateTimeFormat().resolvedOptions().locale,
         });
       },
     },
     preimage: {
       lookupPreimage() {
-        return constant<Uint8Array | undefined>(undefined);
+        return unchangingStream<Uint8Array | undefined>(undefined);
       },
     },
   };
