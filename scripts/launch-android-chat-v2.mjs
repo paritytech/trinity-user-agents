@@ -449,6 +449,7 @@ const DRIVERS = {
     expect(answer.kind === "Page", `the retry was answered ${answer.kind}`);
     expect(describeAnchor(second) === describeAnchor(first), "the retry asked another page");
     note(`\`${await screenshot(scenarioById("S46"), "source")}\``);
+    await scrollToNewest();
     note(
       `with the room open, the scroll to older messages asked ${describeAnchor(first)}, answered NotAvailable; the host asked the same page once more and got ${answer.kind} with ${pageMessages(answer).length} messages`,
     );
@@ -1408,6 +1409,7 @@ const DRIVERS = {
     tapText(sheet, "Mention");
     const triggered = await waitEvent(mark, (entry) => isRoomEvent(entry, "source", "ParticipantActionTriggered"), "ParticipantActionTriggered");
     expect(triggered.data?.participantId === "p4" && triggered.data?.actionId === "act-mention", `ParticipantActionTriggered ${JSON.stringify(triggered.data)}`);
+    await scrollToNewest();
     await waitScreen((screen) => findText(screen, "ParticipantActionTriggered act-mention on p4"), "the answer of the product");
     note(`\`${sheetShot}\`, \`${await screenshot(scenarioById("S31"), "source")}\``);
     note(
@@ -1537,11 +1539,15 @@ async function command(room, text, { reply = false, timeoutMs = COMMAND_TIMEOUT_
 async function waitReply(room, text, timeoutMs) {
   const ok = `ok ${text}`;
   const error = `error ${text}`;
+  let polls = 0;
   const answer = await waitFor(
-    () => {
+    async () => {
       if (room === "host") {
         return messages("host").find((message) => message.text === ok || message.text.startsWith(error))?.text;
       }
+      // The product keeps the messages of the source room, so the reply is read from the screen, at the newest message.
+      polls += 1;
+      if (polls % 4 === 0) await scrollToNewest();
       return parseUiNodes(uiDump(serial)).find((node) => node.text === ok || node.text.startsWith(error))?.text;
     },
     { timeoutMs, intervalMs: 500, message: `no reply "${ok}"` },
