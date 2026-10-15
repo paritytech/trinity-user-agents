@@ -20,7 +20,7 @@
 ///
 /// An enum with one variant rather than a struct because the native bindings
 /// export this type, and uniffi errors must be enums.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::From)]
 #[cfg_attr(
     all(feature = "uniffi", not(target_arch = "wasm32")),
     derive(uniffi::Error)

@@ -32,11 +32,12 @@ pub struct HostChatCreateRoomResponse {
 }
 
 /// Chat room registration error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
 pub enum HostChatCreateRoomError {
     /// Not allowed.
     PermissionDenied,
     /// Catch-all.
+    #[from]
     Unknown {
         /// Human-readable reason.
         reason: String,
@@ -75,11 +76,12 @@ pub struct HostChatRegisterBotResponse {
 }
 
 /// Chat bot registration error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
 pub enum HostChatRegisterBotError {
     /// Not allowed.
     PermissionDenied,
     /// Catch-all.
+    #[from]
     Unknown {
         /// Human-readable reason.
         reason: String,
@@ -268,11 +270,12 @@ pub struct HostChatPostMessageResponse {
 }
 
 /// Chat message posting error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
 pub enum HostChatPostMessageError {
     /// Message exceeded size limit.
     MessageTooLarge,
     /// Catch-all.
+    #[from]
     Unknown {
         /// Human-readable reason.
         reason: String,

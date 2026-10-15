@@ -198,9 +198,7 @@ impl ChainProviderBuilder {
             .inner
             .take()
             .ok_or_else(|| JsError::new("builder was already consumed by build()"))?;
-        let (builder, chains) = builder
-            .add_network(name)
-            .map_err(|err| JsError::new(&err.to_string()))?;
+        let (builder, chains) = builder.add_network(name)?;
         self.inner = Some(builder);
         Ok(NetworkChains {
             relay: hex0x(&chains.relay),
@@ -348,11 +346,7 @@ impl ChainProviderHandle {
                 ),
             }
         }
-        let connection = self
-            .inner
-            .connect(genesis)
-            .await
-            .map_err(|err| JsError::new(&err.to_string()))?;
+        let connection = self.inner.connect(genesis).await?;
         #[cfg(feature = "smoldot")]
         {
             // The relay a parachain syncs through is the chain that actually
@@ -379,10 +373,7 @@ impl ChainProviderHandle {
     #[wasm_bindgen(js_name = loadDatabase)]
     pub async fn load_database(&self, genesis_hash: &str) -> Result<bool, JsError> {
         let genesis = parse_genesis(genesis_hash)?;
-        self.inner
-            .load_database(genesis)
-            .await
-            .map_err(|err| JsError::new(&err.to_string()))
+        Ok(self.inner.load_database(genesis).await?)
     }
 
     /// Watch what the light client is doing on the chain identified by the
@@ -392,10 +383,7 @@ impl ChainProviderHandle {
     /// for warp sync progress.
     #[cfg(feature = "smoldot")]
     pub fn lifecycle(&self, genesis_hash: &str) -> Result<LifecycleWatch, JsError> {
-        let states = self
-            .inner
-            .lifecycle(parse_genesis(genesis_hash)?)
-            .map_err(|err| JsError::new(&err.to_string()))?;
+        let states = self.inner.lifecycle(parse_genesis(genesis_hash)?)?;
         let (states, stop) = futures::stream::abortable(states);
         Ok(LifecycleWatch {
             states: Arc::new(Mutex::new(states.boxed())),
@@ -415,10 +403,7 @@ impl ChainProviderHandle {
     #[wasm_bindgen(js_name = saveDatabase)]
     pub async fn save_database(&self, genesis_hash: &str) -> Result<bool, JsError> {
         let genesis = parse_genesis(genesis_hash)?;
-        self.inner
-            .save_database(genesis)
-            .await
-            .map_err(|err| JsError::new(&err.to_string()))
+        Ok(self.inner.save_database(genesis).await?)
     }
 }
 
@@ -705,10 +690,9 @@ impl crate::storage::StorageClient for HostStorageClient {
                     .call1(&methods.store, &JsValue::from_str(&hex0x(&genesis_hash))),
             )
         };
-        let value = receiver
-            .await
-            .map_err(|_| crate::storage::StorageClientError::new("the warm store never answered"))?
-            .map_err(crate::storage::StorageClientError::new)?;
+        let value = receiver.await.map_err(|_| {
+            crate::storage::StorageClientError::new("the warm store never answered")
+        })??;
         Ok(value.as_string())
     }
 
@@ -725,10 +709,9 @@ impl crate::storage::StorageClient for HostStorageClient {
                 &JsValue::from_str(&blob),
             ))
         };
-        receiver
-            .await
-            .map_err(|_| crate::storage::StorageClientError::new("the warm store never answered"))?
-            .map_err(crate::storage::StorageClientError::new)?;
+        receiver.await.map_err(|_| {
+            crate::storage::StorageClientError::new("the warm store never answered")
+        })??;
         Ok(())
     }
 }

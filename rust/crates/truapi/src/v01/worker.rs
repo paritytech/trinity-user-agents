@@ -23,7 +23,7 @@ pub struct HostWorkerEndOperationRequest {
 }
 
 /// Pending-operation error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display, derive_more::From)]
 #[cfg_attr(
     all(feature = "runtime", not(target_arch = "wasm32")),
     derive(uniffi::Enum)
@@ -35,6 +35,7 @@ pub enum HostWorkerOperationError {
     TooManyOpen,
     /// Catch-all host failure.
     #[display("{reason}")]
+    #[from]
     Unknown {
         /// Human-readable failure reason.
         reason: String,
