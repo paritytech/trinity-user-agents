@@ -448,10 +448,12 @@ async function runStep(step, room) {
   checkAppRuns();
   if (typeof step === "string") return sendCommand(fill(step, room), room);
   if (step.wait) return delay(step.wait);
-  if (step.text)
-    return sendCommand(fill(step.text, step.room ?? room), step.room ?? room);
+  if (step.text) {
+    const target = step.room ? fill(step.room, room) : room;
+    return sendCommand(fill(step.text, target), target);
+  }
   if (step.host) {
-    const target = step.room ?? room;
+    const target = step.room ? fill(step.room, room) : room;
     await sendHostAction({
       room: target,
       host: step.host,
@@ -504,7 +506,7 @@ function fill(text, room) {
 async function check(expectation, { room, mark, baseline }) {
   checkAppRuns();
   const timeoutMs = expectation.timeoutMs ?? COMMAND_TIMEOUT_MS;
-  const target = expectation.room ?? room;
+  const target = expectation.room ? fill(expectation.room, room) : room;
   if (expectation.stored !== undefined) {
     const wanted = fill(expectation.stored, target);
     await waitFor(
@@ -596,14 +598,23 @@ async function check(expectation, { room, mark, baseline }) {
     );
     return `reaction rows ${expectation.reactions > 0 ? "+" : ""}${expectation.reactions}`;
   }
+  if (expectation.previewNot !== undefined) {
+    await delay(expectation.settleMs ?? 1_000);
+    const unwanted = fill(expectation.previewNot, target);
+    if (previewContains(target, unwanted)) {
+      throw new Error(`the chat-list preview of ${target} holds "${unwanted}"`);
+    }
+    return `preview without "${unwanted}"`;
+  }
   if (expectation.ui) {
+    const key = fill(expectation.ui, target);
     const pattern = new RegExp(fill(expectation.match, target));
     // A marker repeats only when its value changes, so the newest value is the state of the screen.
     const found = await waitFor(
       () => {
         const newest = parseUiMarkers(consoleText)
           .filter(
-            (marker) => marker.key === expectation.ui && marker.room === target,
+            (marker) => marker.key === key && marker.room === target,
           )
           .at(-1);
         return newest && pattern.test(newest.value) ? newest : undefined;
@@ -614,29 +625,26 @@ async function check(expectation, { room, mark, baseline }) {
           const last = parseUiMarkers(consoleText)
             .filter(
               (marker) =>
-                marker.key === expectation.ui && marker.room === target,
+                marker.key === key && marker.room === target,
             )
             .at(-1);
-          return `no ${expectation.ui} marker of ${target} matching /${pattern.source}/ (last: ${last?.value ?? "none"})`;
+          return `no ${key} marker of ${target} matching /${pattern.source}/ (last: ${last?.value ?? "none"})`;
         },
       },
     );
-    return `${expectation.ui} "${found.value}"`;
+    return `${key} "${found.value}"`;
   }
   if (expectation.uiNot) {
     await delay(expectation.settleMs ?? 1_000);
+    const key = fill(expectation.uiNot, target);
     const pattern = new RegExp(fill(expectation.match, target));
     const last = parseUiMarkers(consoleText)
-      .filter(
-        (marker) => marker.key === expectation.uiNot && marker.room === target,
-      )
+      .filter((marker) => marker.key === key && marker.room === target)
       .at(-1);
     if (last && pattern.test(last.value)) {
-      throw new Error(
-        `${expectation.uiNot} marker "${last.value}" matches /${pattern.source}/`,
-      );
+      throw new Error(`${key} marker "${last.value}" matches /${pattern.source}/`);
     }
-    return `${expectation.uiNot} "${last?.value ?? "none"}"`;
+    return `${key} "${last?.value ?? "none"}"`;
   }
   if (expectation.event) {
     const expected = {
@@ -656,14 +664,12 @@ async function check(expectation, { room, mark, baseline }) {
     return `event ${found.via} ${found.kind} #${found.seq}`;
   }
   if (expectation.console) {
-    await waitFor(
-      () => consoleText.slice(mark.console).includes(expectation.console),
-      {
-        timeoutMs,
-        message: `no "${expectation.console}" in the console`,
-      },
-    );
-    return `console "${expectation.console}"`;
+    const wanted = fill(expectation.console, target);
+    await waitFor(() => consoleText.slice(mark.console).includes(wanted), {
+      timeoutMs,
+      message: `no "${wanted}" in the console`,
+    });
+    return `console "${wanted}"`;
   }
   throw new Error(`unknown expectation ${JSON.stringify(expectation)}`);
 }
@@ -839,6 +845,22 @@ function roomDataContains(roomId, text) {
   const count = sql(`
     SELECT count(*) FROM ZCDCHATMESSAGE AS message
     JOIN ZCDCHAT AS chat ON chat.Z_PK = message.ZCHAT
+    JOIN ZCDMESSAGECONTENT AS content ON content.Z_PK = message.ZCONTENT
+    WHERE chat.ZIDENTIFIER = ${sqlString(chatIdentifierOf(roomId))}
+    AND instr(hex(content.ZDATA), '${hex}') > 0;
+  `);
+  return Number(count ?? 0) > 0;
+}
+
+/**
+ * True when the message that the chat list shows as the preview of a room
+ * holds `text` as UTF-8 bytes.
+ */
+function previewContains(roomId, text) {
+  const hex = Buffer.from(text, "utf8").toString("hex").toUpperCase();
+  const count = sql(`
+    SELECT count(*) FROM ZCDCHAT AS chat
+    JOIN ZCDCHATMESSAGE AS message ON message.Z_PK = chat.ZLASTDISPLAYMESSAGE
     JOIN ZCDMESSAGECONTENT AS content ON content.Z_PK = message.ZCONTENT
     WHERE chat.ZIDENTIFIER = ${sqlString(chatIdentifierOf(roomId))}
     AND instr(hex(content.ZDATA), '${hex}') > 0;

@@ -78,13 +78,33 @@ the checks of each row are in `scripts/lib/ios-chat-v2-scenarios.mjs`. Every row
 | S6                                   | The list screen and `release-worker` let the core stop the worker (`[truapi] worker stopped`); `list-render` draws the product rooms from Core Data                                                                                          |
 | S23                                  | `/fail crash` makes the product throw outside a promise; the worker ends, the room shows `unavailable` with its window, and the next request (`retry-room`, or a `Seen` report that comes first) starts a new worker that hears `RoomOpened` |
 | S44                                  | `/flood` sends 25 edits at once; the core refuses the edits past 20 (`refused>=1`), the last edit is stored, and the `frames` marker gives the dropped frames and the number of list updates                                                 |
-| S49, S51                             | The rows of the Chat Extension v2 additions (P10); they run last, as below                                                                               |
+| S49, S51, S53, S64 to S68            | The rows of the Chat Extension v2 additions (P10); they run last, as below                                                                               |
 | S47                                  | S47 changes `allowed_reactions` twice on an open room; each change writes a new `policy` generation marker without a reopen                                                                                                                  |
 
 The launcher fails when a driven row fails or has no row.
 
-S51 and S49 are the rows of the Chat Extension v2 additions (P10) and run last. S51 declares two features that the app
-does not serve and reads the stored bytes in `CDChatRoomMetadata.ZFEATURES`; the run does not restart the app. S49 posts
+The rows of the Chat Extension v2 additions (P10) run last, and S49 runs after all of them. S51 declares two features
+that the app does not serve and reads the stored bytes in `CDChatRoomMetadata.ZFEATURES`; the run does not restart the
+app. The room-screen rows use the harness actions `chip`, `branch` and `reasoning` and these markers:
+
+- S53: `/bot add` and `/bot post` give the `personas` marker and an `author-bot:<id>` marker with the name of the
+  persona and `icon` when its icon loaded; the host room declares no participants, so no `participants_query` names the
+  author. `/bot typing` gives an `activity` marker with the name of the persona.
+- S64: `/thread` gives a `chip-<id>` marker; the `chat-list` marker after `list-render` does not name the thread room;
+  `chip` opens the thread room (`thread` and `root` markers); `back` gives `returned` in the parent room. The sample
+  takes commands only in its host, source and thread rooms, so the deletion cascade of `delete_room` is proven by the
+  unit test `ChatRoomAdditionsServiceTests/deletingARoomDeletesItsThreadRooms` and not on the simulator.
+- S65: `branch-<id>` markers: the position, `pending=<index>` while the arrow waits, and `reverted` after 5 s with
+  `/slow 6000`, then the late answer.
+- S66: `reasoning-<id>` (`thinking`, `collapsed Thought for 4 s`, `expanded`) and `a11y-reasoning-<id>` (the VoiceOver
+  label); `previewNot` reads `ZLASTDISPLAYMESSAGE` of the chat.
+- S67: the `menu` marker lists `readAloud` only after `/features readaloud on`; `readaloud` gives the plain text that
+  the app speaks, `readaloud-audio started` comes from the speech synthesizer, and `readaloud stopped` comes when the
+  user leaves the room.
+- S68: `/history 700` and two `jump` actions move the newest message out of the window of 500 and back; the
+  `meta-drawn` marker names the messages of the window that have meta.
+
+S49 posts
 `/caps` and expects exactly the names of `ChatHostCapabilities.served` (`IOS_CHAT_FEATURE_ROWS` in the scenario
 library), then checks that every row of each listed feature passed in the same run. With `TRUAPI_IOS_E2E_ONLY` the row
 names the feature rows that the run did not drive.

@@ -12,6 +12,7 @@ import {
   capabilityVerdict,
   capsLine,
   eventMatches,
+  lastProductMessage,
   lastUserMessage,
   parseEventLog,
   parseUiMarkers,
@@ -225,4 +226,25 @@ test("S49 passes and names the rows that the run did not drive", () => {
     capabilityVerdict({ ...caps, result: "fail" }, [], features).result,
     "fail",
   );
+});
+
+test("the newest message of the product is never an edit row", () => {
+  const markers = parseUiMarkers(
+    "[e2e:ui] window host count=3 tail=host-p-0017:in-seen:text,host-p-0018:in-seen:text,host-p-0018#edit:in-seen:edited",
+  );
+  assert.equal(lastProductMessage(markers, "host"), "host-p-0018");
+});
+
+test("the P10.6 and P10.9 rows prove the features that the app lists", () => {
+  const ids = new Set(IOS_CHAT_V2_SCENARIOS.map((scenario) => scenario.id));
+  for (const name of [
+    "bot_personas",
+    "threads",
+    "branches",
+    "reasoning_rows",
+    "read_aloud",
+  ]) {
+    assert.ok(IOS_CHAT_FEATURE_ROWS[name].length > 0, name);
+    for (const id of IOS_CHAT_FEATURE_ROWS[name]) assert.ok(ids.has(id), id);
+  }
 });

@@ -21,10 +21,16 @@ struct ChatHostCapabilitiesTests {
 
     @Test func theFeaturesThatTheAppDoesNotDrawYetAreNotListed() {
         let notDrawn = [
-            "payment_button", "preimage_attachments", "search", "bot_personas", "mute_archive", "threads",
-            "branches", "reasoning_rows", "read_aloud", "wake", "call_buttons", "room_calls"
+            "payment_button", "preimage_attachments", "search", "mute_archive", "wake", "call_buttons", "room_calls"
         ]
 
         #expect(!ChatHostCapabilities.served.contains(where: notDrawn.contains))
+    }
+
+    /// P10.6 and P10.9: the room screen draws personas, threads, branches, reasoning rows and read aloud.
+    @Test func theRoomScreenAdditionsAreListed() {
+        let drawn = ["bot_personas", "threads", "branches", "reasoning_rows", "read_aloud"]
+
+        #expect(drawn.allSatisfy(ChatHostCapabilities.served.contains))
     }
 }

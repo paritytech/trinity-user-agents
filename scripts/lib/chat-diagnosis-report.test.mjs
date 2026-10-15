@@ -4,6 +4,7 @@ import {
   REGISTER_BOT_GAP,
   decodeTextMessage,
   diagnosisFailures,
+  diagnosisRow,
   labelChatDiagnosisReport,
 } from "./chat-diagnosis-report.mjs";
 
@@ -97,4 +98,18 @@ test("a ❌ outside the table throws even when the summary says 0 failed", () =>
       acceptedFailures: REGISTER_BOT_GAP,
     }),
   );
+});
+
+test("reads the result of one method row", () => {
+  const withBot = GREEN.replace(
+    "| `Chat/create_room` | ✅ | created |",
+    "| `Chat/create_room` | ✅ | created |\n| `Chat/register_bot` | ✅ | first registration New, repeat returned Exists |",
+  );
+  assert.deepEqual(diagnosisRow(withBot, "Chat/register_bot"), {
+    method: "Chat/register_bot",
+    result: "pass",
+    details: "first registration New, repeat returned Exists",
+  });
+  assert.equal(diagnosisRow(WITH_GAP, "Chat/register_bot").result, "fail");
+  assert.equal(diagnosisRow(GREEN, "Chat/register_bot"), undefined);
 });
