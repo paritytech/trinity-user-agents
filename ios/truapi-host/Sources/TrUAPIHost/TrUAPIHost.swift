@@ -902,6 +902,20 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
     func pickContact(productId: String) async throws -> HostContactPick {
         try await withHostRejection { try await bridge.pickContact(productId: productId) }
     }
+
+    func pickContacts(productId: String, selection: ContactSelection) async throws -> HostContactsPick {
+        try await withHostRejection { try await bridge.pickContacts(productId: productId, selection: selection) }
+    }
+
+    func placeContactLabels(productId: String, placed: PlacedContactLabels) async throws {
+        do {
+            try await bridge.placeContactLabels(productId: productId, placed: placed)
+        } catch let error as HostContactsPlaceLabelsError {
+            throw error
+        } catch {
+            throw HostContactsPlaceLabelsError.Unknown(reason: "contact label callback failed")
+        }
+    }
 }
 
 /// Adapter that bridges the public `ScannerHostBridge` to the generated UniFFI
@@ -920,86 +934,6 @@ private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked S
     ) async throws -> HostScan {
         try await withHostRejection {
             try await bridge.scanCode(productId: productId, executionKind: executionKind, request: request)
-        }
-    }
-}
-
-/// Adapter that bridges the public `TopUpHostBridge` to the generated UniFFI
-/// `NativeTopUpCallbacks` protocol.
-private final class TopUpCallbackAdapter: NativeTopUpCallbacks, @unchecked Sendable {
-    private let bridge: TopUpHostBridge
-
-    init(bridge: TopUpHostBridge) {
-        self.bridge = bridge
-    }
-
-    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws {
-        do {
-            try await bridge.topUp(productId: productId, request: request)
-        } catch let error as HostPaymentTopUpError {
-            throw error
-        } catch {
-            throw HostPaymentTopUpError.Unknown(reason: hostRejectionReason(error))
-        }
-    }
-
-    func topUpStatus(productId: String, id: Bytes32) throws -> HostPaymentTopUpStatusSubscribeItem? {
-        do {
-            return try bridge.topUpStatus(productId: productId, id: id)
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
-}
-
-/// Adapter that bridges the public `PaymentHostBridge` to the generated UniFFI
-/// `NativePaymentCallbacks` protocol.
-private final class PaymentCallbackAdapter: NativePaymentCallbacks, @unchecked Sendable {
-    private let bridge: PaymentHostBridge
-
-    init(bridge: PaymentHostBridge) {
-        self.bridge = bridge
-    }
-
-    func requestPayment(productId: String, request: HostPaymentRequest) async throws {
-        do {
-            try await bridge.requestPayment(productId: productId, request: request)
-        } catch let error as HostPaymentError {
-            throw error
-        } catch {
-            throw HostPaymentError.Unknown(reason: hostRejectionReason(error))
-        }
-    }
-
-    func paymentStatus(productId: String, id: Bytes32) throws -> HostPaymentStatusSubscribeItem? {
-        do {
-            return try bridge.paymentStatus(productId: productId, id: id)
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
-
-    func pickContacts(productId: String, selection: ContactSelection) async throws -> HostContactsPick {
-        do {
-            return try await bridge.pickContacts(productId: productId, selection: selection)
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
-
-    func placeContactLabels(productId: String, placed: PlacedContactLabels) async throws {
-        do {
-            try await bridge.placeContactLabels(productId: productId, placed: placed)
-        } catch let error as HostContactsPlaceLabelsError {
-            throw error
-        } catch {
-            throw HostContactsPlaceLabelsError.Unknown(reason: "contact label callback failed")
         }
     }
 }
