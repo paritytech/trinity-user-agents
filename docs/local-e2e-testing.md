@@ -287,6 +287,90 @@ product together. Each launcher writes one diagnosis row per scenario it
 drove, and a row passes when the host's screen matches the command table and
 its event log matches the test host's log for the same commands.
 
+### What each host covers
+
+The scenarios are the S rows of the test plan; S1 to S48 are the first
+release, S49 to S75 the [additions](rfcs/chat-extension-v2-additions.md)
+(capabilities, bot personas, mute and archive, preimage attachments, search,
+threads, branches, reasoning rows, read aloud, wake and calls). The sample
+README has one command group for each addition.
+
+| Rows | Test host | CLI page | iOS simulator | Android emulator |
+|---|---|---|---|---|
+| S1 to S48 | the core and product rows | S4, S7, S8, S13, S15, S19, S45, S48 and the screening battery | every iOS row | every Android row; S5 and S44 skip until the launcher drives `/room` and `/flood` |
+| S49 to S75 | S49, S51 to S58, S61, S62, S64, S65, S70 to S74 | S49, S51, S53 to S58, S61, S62, S64 to S67, S70, S72 to S74 | S49, S51, S53 to S69 (S57 a reasoned skip), S72 to S74 | S49, S54 to S56, S61, S63; S53, S57 to S60, S64 to S69 and S72 to S74 come with the Android P10 work |
+| Benchmarks | none | none | B1 to B3, B7, B9 (`TRUAPI_IOS_E2E_PERF=1`); B4, B6, B8 as unit tests | B1 to B4, B6 on the JVM (`CHAT_V2_BENCH=1`) |
+
+S71 (the hourly wake budget) is a core test with a paused clock. S75 (a call
+with media) waits on the Media service. The CLI page lists its features in
+**Capabilities** on the rooms pane, and shows each addition: the declared
+features of the room ("not served" where the host does not serve one),
+staged attachments from the file buttons, a search field, thread chips and
+thread rooms, branch arrows, reasoning rows, **Read aloud** in the message
+menu, call buttons with the ringing banner and the call bar, a **Wake** button
+that stands in for an authenticated notification, bot personas in a **Bots**
+list, and **Mute**, **Archive**, an **Archived** row and a **Notifications**
+list. The [CLI README](../rust/crates/truapi-host-cli/README.md#chat-workers)
+describes each one.
+
+### Simulator and emulator switches
+
+The launchers set the app switches themselves. Each switch works only in a
+simulator build (iOS) or a debug build (Android), and none of them gives the
+app a key, a chain connection or a statement store that the host would not
+have.
+
+| iOS | What it does |
+|---|---|
+| `TRUAPI_IOS_E2E_DEVICE`, `TRUAPI_IOS_E2E_APP`, `TRUAPI_IOS_E2E_BUNDLE` | The simulator, the built app and its bundle id (launcher) |
+| `TRUAPI_IOS_E2E_ONLY=S3,S25` | Drives the named rows only (launcher) |
+| `TRUAPI_IOS_E2E_PERF=1` | Also drives B1 to B3, B7 and B9 (launcher) |
+| `TRUAPI_IOS_E2E_SKIP_PRODUCT_BUILD=1` | Uses the sample product as built (launcher) |
+| `TRUAPI_IOS_E2E_CHAT_PRODUCT_DIR`, `_HOST`, `_NAME`, `TRUAPI_IOS_E2E_CHAT_V2_OUT` | The product source, its DotNS name and display name, and the report folder (launcher) |
+| `TRUAPI_IOS_E2E_SEED_IDENTITY` | Creates a random wallet and a lite username when the simulator has none (app) |
+| `TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST`, `TRUAPI_IOS_E2E_CHAT_ROOM_ID` | Injects the product as a chat bot and names the first room (app) |
+| `TRUAPI_IOS_E2E_CHAT_COMMANDS=1` | Holds the worker and reads the command feed in `tmp/truapi-e2e/commands` (app) |
+| `TRUAPI_IOS_E2E_RUNTIME_MARKERS=1` | Writes the `[e2e:ui]` and runtime markers to the console (app) |
+| `TRUAPI_IOS_E2E_NO_PUSH_PROMPT=1` | Skips the notification prompt of the app (app) |
+| `TRUAPI_IOS_E2E_GRANT_NOTIFICATIONS=1` | Grants products the notification permission and logs a notification in place of the OS call, for `/notify` (app) |
+| `TRUAPI_IOS_E2E_STAGING=1` | Stages attachments in a room that declares `preimage_attachments`, although the app does not list the feature (app, P10.3 rows) |
+
+| Android | What it does |
+|---|---|
+| `TRUAPI_ANDROID_E2E_DEVICE`, `_AVD`, `_APK`, `_PACKAGE`, `TRUAPI_ANDROID_E2E_KEEP_EMULATOR=1` | The device or AVD, the APK and its package, and whether the emulator stays up (launcher) |
+| `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY=S15,S17`, `TRUAPI_ANDROID_E2E_CHAT_V2_REUSE=1` | Drives the named rows only, and keeps the installed app and its data; for work on the launcher (launcher) |
+| `TRUAPI_ANDROID_E2E_CHAT_PRODUCT_DIR`, `_HOST`, `_NAME`, `_URL`, `TRUAPI_ANDROID_E2E_SKIP_PRODUCT_BUILD=1`, `TRUAPI_ANDROID_E2E_CHAT_V2_OUT`, `TRUAPI_ANDROID_E2E_USERNAME` | The product source, name and served URL, the report folder and the seeded username (launcher) |
+| `seed_identity`, `username` | Seeds a wallet and a lite username (`E2EHookReceiver` broadcast) |
+| `product_id`, `product_name`, `worker_url` | Installs the product as a chat product with the served worker (broadcast) |
+| `message`, `room_id` | Sends a user message into a room through the real chat path (broadcast) |
+| `clipboard` | Puts a text on the clipboard, which the launcher pastes into the input (broadcast) |
+
+The Android P10 work adds `TRUAPI_ANDROID_E2E_PERF=1` and
+`TRUAPI_ANDROID_E2E_DEVTOOLS_PORT`, and the broadcast extras `wake` (a
+notification wake in place of the receiving layer), `serve_preimage_attachments`,
+`reset_preimage_permission` and `stage_probe` (B7); the
+[Android runbook](chat-android-emulator.md) describes them once they are
+merged.
+
+### Known limits
+
+- **The Bulletin bound (O32).** The live Paseo Next Bulletin chain stores at
+  most 2 MiB in one transaction, and the core reads and enforces that bound.
+  S57 (a 3 MiB photo and a 6 MiB file) is a skip on the CLI page and on both
+  devices; devices stage up to 2 MiB.
+- **No Bulletin allowance for the harness identity (O34).** The simulator and
+  emulator sign in with a new wallet that is not a personhood ring member, so
+  the core has no Bulletin allowance for the product. Every staged upload
+  stops at `AllowanceUnavailable`, and the sample's `/post rich` uses the
+  missing-preimage key. The device rows check each step before the upload.
+- **No push route for wakes (O27, O28).** No host lists `wake`. The CLI
+  **Wake** button and the iOS `wake` harness action stand in for the receiving
+  layer, so S70 runs on the test host and the CLI page only.
+- **No media in calls (O29).** No host lists `room_calls`; S75 and
+  `/call media` wait on the Media service.
+- **`preimage_attachments` is not listed by an app.** The P10.3 rows run
+  through the switches above.
+
 ## Gotchas
 
 ### yarn 1.x `file:` dep stale snapshot
