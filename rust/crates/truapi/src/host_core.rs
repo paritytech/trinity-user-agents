@@ -909,8 +909,8 @@ impl SigningHostRuntime {
 	/// The amounts funding session `intent` can take on `rail`, `asset`,
 	/// `network` and `country`, across every provider, as their refusals
 	/// showed: the bounds the host's amount screen enforces before quoting.
-	/// The host's own product floor applies on top. Unbounded for a session
-	/// the core does not know.
+	/// The minimum is never below the $10 product floor. Unbounded for a
+	/// session the core does not know.
 	pub fn funding_amount_limits(
 		&self,
 		intent: &str,

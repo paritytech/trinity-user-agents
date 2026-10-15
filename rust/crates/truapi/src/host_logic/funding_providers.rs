@@ -284,16 +284,21 @@ fn confirm(routes: &mut Vec<FundingRoute>, support: &LearnedSupport) {
 	}
 }
 
+/// The smallest amount, in CASH units (6 decimals), a funding session takes
+/// in either direction: $10. It is the floor of every [`FundingAmountLimits`].
+pub const FUNDING_MIN_AMOUNT: u128 = 10_000_000;
+
 /// The amounts a session can take on one rail, asset, network and country,
 /// across every provider, as their refusals showed: the smallest amount
 /// some provider takes, and the largest. A provider whose limit is unknown
 /// may take any amount, so a bound is only known once every provider showed
-/// one.
+/// one. The minimum is never below [`FUNDING_MIN_AMOUNT`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingAmountLimits {
-	/// The smallest amount any provider takes, in balance units, when every
-	/// provider showed a minimum.
+	/// The smallest amount the session takes, in balance units: the smallest
+	/// minimum across providers when every provider showed one, and never
+	/// below [`FUNDING_MIN_AMOUNT`].
 	pub min: Option<u128>,
 	/// The largest amount any provider takes, in balance units, when every
 	/// provider showed a maximum.
@@ -324,7 +329,7 @@ pub fn amount_limits(
 	now_ms: u64,
 ) -> FundingAmountLimits {
 	if provider_ids.is_empty() {
-		return FundingAmountLimits::default();
+		return FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None };
 	}
 	let mut mins = Vec::new();
 	let mut maxes = Vec::new();
@@ -343,7 +348,11 @@ pub fn amount_limits(
 	}
 	let all = |limits: Vec<Option<u128>>| limits.into_iter().collect::<Option<Vec<_>>>();
 	FundingAmountLimits {
-		min: all(mins).and_then(|mins| mins.into_iter().min()),
+		min: Some(
+			all(mins)
+				.and_then(|mins| mins.into_iter().min())
+				.map_or(FUNDING_MIN_AMOUNT, |min| min.max(FUNDING_MIN_AMOUNT)),
+		),
 		max: all(maxes).and_then(|maxes| maxes.into_iter().max()),
 	}
 }
@@ -694,8 +703,9 @@ mod tests {
 		};
 		let ids = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
 		let learned = [
-			refused("a.dot", Some(2_000), Some(50_000)),
-			refused("b.dot", Some(1_500), None),
+			refused("a.dot", Some(20_000_000), Some(500_000_000)),
+			refused("b.dot", Some(15_000_000), None),
+			refused("d.dot", Some(2_000_000), None),
 			LearnedSupport { country: Some("PT".to_string()), ..refused("c.dot", Some(10), None) },
 		];
 
@@ -705,12 +715,14 @@ mod tests {
 				amount_limits(&ids(&["a.dot"]), &learned, scope, NOW),
 				amount_limits(&ids(&["a.dot", "c.dot"]), &learned, scope, NOW),
 				amount_limits(&[], &learned, scope, NOW),
+				amount_limits(&ids(&["d.dot"]), &learned, scope, NOW),
 			),
 			(
-				FundingAmountLimits { min: Some(1_500), max: None },
-				FundingAmountLimits { min: Some(2_000), max: Some(50_000) },
-				FundingAmountLimits { min: None, max: None },
-				FundingAmountLimits::default(),
+				FundingAmountLimits { min: Some(15_000_000), max: None },
+				FundingAmountLimits { min: Some(20_000_000), max: Some(500_000_000) },
+				FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None },
+				FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None },
+				FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None },
 			)
 		);
 	}
