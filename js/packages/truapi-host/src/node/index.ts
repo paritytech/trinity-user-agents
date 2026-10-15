@@ -12,14 +12,14 @@ import {
 import { ThreadWorker } from "./thread-worker.js";
 
 export type {
-  CreateWebWorkerPairingHostRuntimeOptions as CreateNodePairingHostRuntimeOptions,
-  WebWorkerHostCallbacks as NodeHostCallbacks,
-  WebWorkerHostConfig as NodeHostConfig,
+  CreateWebWorkerPairingHostRuntimeOptions,
+  WebWorkerHostCallbacks,
+  WebWorkerHostConfig,
   WorkerPairingHostRuntime,
 } from "../web/create-worker-host-runtime.js";
 export {
-  headlessHostCallbacks,
-  type HeadlessHostCallbacks,
+  createHeadlessHostCallbacks,
+  type HeadlessHostOptions,
 } from "./default-callbacks.js";
 
 /**

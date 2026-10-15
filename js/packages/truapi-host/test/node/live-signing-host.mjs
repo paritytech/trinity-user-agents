@@ -17,7 +17,7 @@ import { createClient, createTransport } from "@parity/truapi";
 
 import {
   createNodePairingHostRuntime,
-  headlessHostCallbacks,
+  createHeadlessHostCallbacks,
 } from "../../dist/node/index.js";
 
 const { TRUAPI_HOST_CLI, TRUAPI_HOST_BASE, TRUAPI_HOST_SESSION } = process.env;
@@ -130,7 +130,7 @@ test(
     };
     const session = new Promise((resolve) => (connected = resolve));
     const runtime = await createNodePairingHostRuntime(
-      headlessHostCallbacks({
+      createHeadlessHostCallbacks({
         coreStorage: memoryStorage(),
         chain: webSocketChain(),
         auth: {
