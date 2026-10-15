@@ -250,11 +250,13 @@ that can't mean it:
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
   on the People chain). The v2 wire protocol uses raw X25519 keys, HKDF-SHA256,
-  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's account
-  material; [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
+  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's grants and
+  sends each wallet operation through `RemoteAccountHolder`;
+  [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
   pairing and login state, persisted auth-session reload, remote signing-host
   liveness monitoring and the request channel, and reports session changes to
-  `PairingHost` through `PairedSessionOwner`.
+  `PairingHost` through `PairedSessionOwner`, holding back its grant writes
+  until each change and the cleanup it leaves are done.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0022

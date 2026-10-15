@@ -19,7 +19,7 @@ use crate::{
 			AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
 			AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 			CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-			SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
 		},
 		remote_authority_call, remote_authority_context,
 		signing_host::ring_vrf::{MemberCandidate, context_bytes, create_proof},
@@ -409,15 +409,16 @@ impl AccountHolder for WalletAccountHolder {
 		}
 	}
 
-	async fn product_subtree_public_key(
-		&self,
-		invocation: AccountInvocation<'_>,
+	async fn product_subtree_public_key<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
 		product_id: String,
-	) -> Result<[u8; 32], AuthorityError> {
+	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		self.require_current_session(invocation.session)?;
 		let product_id = normalize_product_identifier(&product_id)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
 		self.with_keys(invocation.session, |keys| keys.product_subtree_public_key(&product_id))
+			.map(SubtreeResolution::Known)
 	}
 
 	async fn sign_vrf(
@@ -637,6 +638,23 @@ impl AccountHolder for WalletAccountHolder {
 		self.record_registration(invocation.session, handle, request.ring, public_key)
 			.await?;
 		Ok(public_key)
+	}
+
+	async fn record_ring_vrf_key(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRegisterRingVrfKeyRequest,
+		public_key: [u8; 32],
+	) -> Result<(), RingVrfError> {
+		self.require_current_session(invocation.session)?;
+		let handle = Self::caller_key_handle(&invocation, request.index)?;
+		if self.derive_ring_vrf_member(invocation.session, &handle).await? != public_key {
+			return Err(RingVrfError::Unknown {
+				reason: "the kept AutoSigning key derives a different ring-VRF key".to_string(),
+			});
+		}
+		self.record_registration(invocation.session, handle, request.ring, public_key)
+			.await
 	}
 
 	async fn list_ring_vrf_keys(

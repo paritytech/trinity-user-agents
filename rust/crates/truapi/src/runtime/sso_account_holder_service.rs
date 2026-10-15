@@ -423,6 +423,9 @@ impl SsoAccountHolderService {
 		self.wallet
 			.product_subtree_public_key(cx.account_invocation(None), request.product_id)
 			.await
+			.map_err(|err| err.to_string())?
+			.resolve()
+			.await
 			.map_err(|err| err.to_string())
 	}
 
