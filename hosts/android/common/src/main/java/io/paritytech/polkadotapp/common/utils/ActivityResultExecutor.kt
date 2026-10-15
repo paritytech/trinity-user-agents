@@ -12,9 +12,12 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.UUID
 import kotlin.coroutines.resume
 
+/** [currentActivity] gives the activity at each start, so a later start does not use an activity that is gone. */
 abstract class ActivityResultExecutor<T>(
-    private val activity: ComponentActivity
+    private val currentActivity: () -> ComponentActivity
 ) {
+    constructor(activity: ComponentActivity) : this({ activity })
+
     protected abstract fun createIntent(): Intent
     protected abstract fun handleResult(result: ActivityResult): Result<T>
 
@@ -26,6 +29,7 @@ abstract class ActivityResultExecutor<T>(
      * registers the key on each new activity of the same class, until the result comes.
      */
     suspend fun execute(): Result<T> = suspendCancellableCoroutine { continuation ->
+        val activity = currentActivity()
         val key = UUID.randomUUID().toString()
         val application = activity.application
         var launcher: ActivityResultLauncher<Intent>? = null
