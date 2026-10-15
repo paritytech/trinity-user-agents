@@ -215,8 +215,21 @@ impl<H: Send + Sync + 'static> WasmEnv<H> {
 			Arc::new(move |cx, payload| match decode_request::<Request, Error>(&payload) {
 				Ok(request) => {
 					let target = request.version();
+					// The guest releases a subscription when it drops it. Then the
+					// subscription ends at once, also when its stream does not
+					// watch the cancellation. The worker forgets the call at
+					// that end and drops the stream, which frees the resources
+					// of the host, for example a remote chain head follow.
+					let token = cx.cancel().clone();
+					let cancelled = token.cancelled();
+					let released = stream::once(async move {
+						token.is_cancelled().then(|| end_event::<Error>(Ok(())))
+					})
+					.filter_map(futures::future::ready);
 					stream::once(handler(host.clone(), cx, request))
 						.flat_map(move |subscription| subscription_events(subscription, target))
+						.take_until(cancelled)
+						.chain(released)
 						.boxed()
 				},
 				Err(error) => stream::once(futures::future::ready(end_event(Err(error)))).boxed(),
@@ -326,8 +339,9 @@ struct HostCallExports {
 struct Call {
 	events: BoxStream<'static, Event>,
 	cancel: CancellationToken,
-	/// The guest no longer awaits the call; it runs until it settles and its
-	/// events are dropped.
+	/// The guest no longer awaits the call. A request runs until it settles,
+	/// and its events are dropped. A subscription ends at once (see
+	/// [`WasmEnv::subscription`]).
 	released: bool,
 	/// A timer, which the host forgets at once when the guest releases it.
 	timer: bool,
@@ -868,6 +882,62 @@ mod tests {
 		"chat_messages_query",
 		"chat_user_action",
 	];
+
+	/// Sets its flag when the stream that holds it is dropped.
+	struct DropFlag(Arc<std::sync::atomic::AtomicBool>);
+
+	impl Drop for DropFlag {
+		fn drop(&mut self) {
+			self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+		}
+	}
+
+	#[test]
+	fn a_released_subscription_ends_also_when_its_stream_ignores_the_cancellation() {
+		use crate::versioned::preimage::{
+			RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
+			RemotePreimageLookupSubscribeRequest,
+		};
+		let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let flag = dropped.clone();
+		let mut env = WasmEnv::new(Arc::new(()));
+		env.subscription::<
+			RemotePreimageLookupSubscribeRequest,
+			RemotePreimageLookupSubscribeItem,
+			RemotePreimageLookupSubscribeError,
+			_,
+		>("lookup", move |_, _, _| {
+			let guard = DropFlag(flag.clone());
+			// A stream that never ends and never reads the cancellation.
+			let items = stream::pending().map(move |item| {
+				let _ = &guard;
+				item
+			});
+			futures::future::ready(Subscription::new(items)).boxed()
+		});
+		let method = env.methods.get("lookup").expect("linked").clone();
+		let cancel = CancellationToken::default();
+		let cx = CallContext::with_parts("wasm-1".to_string(), cancel.clone());
+		let mut events = method(
+			cx,
+			RemotePreimageLookupSubscribeRequest::V1(
+				crate::v01::RemotePreimageLookupSubscribeRequest { key: vec![1] },
+			)
+			.encode(),
+		);
+
+		let waiting = futures::executor::block_on(futures::future::poll_fn(|context| {
+			Poll::Ready(events.poll_next_unpin(context).is_pending())
+		}));
+		cancel.cancel();
+		let end = futures::executor::block_on(events.next()).map(|event| event.kind);
+		drop(events);
+
+		assert_eq!(
+			(waiting, end, dropped.load(std::sync::atomic::Ordering::SeqCst)),
+			(true, Some(EventKind::End), true)
+		);
+	}
 
 	#[test]
 	fn a_worker_can_import_every_method_a_product_starts_under_its_wire_name() {
