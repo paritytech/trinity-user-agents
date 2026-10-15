@@ -1675,7 +1675,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	.expect_err("a javascript: file url must not reach the host");
 	assert!(matches!(
 		rejected,
-		CallError::Domain(HostChatPostMessageError::V2(
+		CallError::Domain(HostChatPostMessageError::V1(
 			v01::HostChatPostMessageError::Unknown { .. }
 		))
 	));
@@ -1687,7 +1687,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	.expect_err("an over-budget body must not reach the host");
 	assert!(matches!(
 		too_large,
-		CallError::Domain(HostChatPostMessageError::V2(
+		CallError::Domain(HostChatPostMessageError::V1(
 			v01::HostChatPostMessageError::MessageTooLarge
 		))
 	));
@@ -1700,7 +1700,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	.expect_err("an over-budget custom payload must not reach the host");
 	assert!(matches!(
 		big_payload,
-		CallError::Domain(HostChatPostMessageError::V2(
+		CallError::Domain(HostChatPostMessageError::V1(
 			v01::HostChatPostMessageError::MessageTooLarge
 		))
 	));
@@ -1717,7 +1717,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	.expect_err("an over-long room id must be rejected");
 	assert!(matches!(
 		long_room,
-		CallError::Domain(HostChatPostMessageError::V2(
+		CallError::Domain(HostChatPostMessageError::V1(
 			v01::HostChatPostMessageError::Unknown { .. }
 		))
 	));

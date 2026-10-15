@@ -40,6 +40,7 @@ pub mod statement_allowance;
 /// `StatementStore` surface: proofs plus submit and subscribe flows.
 pub mod statement_store;
 mod statement_store_rpc;
+mod versioning;
 mod vrf;
 
 use core::{future::Future, time::Duration};
@@ -115,6 +116,7 @@ use truapi::{
 		},
 	},
 };
+use versioning::version;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
@@ -1223,20 +1225,20 @@ impl ProductRuntimeHost {
 	/// Ordered so a host that serves no picker answers `Unsupported` without an
 	/// overlay ever being raised. There is no permission step: the user
 	/// selecting a contact is the consent.
-	fn contacts_picker(&self) -> Result<ContactsPicker, CallError<v01::HostContactsPickError>> {
+	fn contacts_picker(&self) -> Result<ContactsPicker, CallError<latest::HostContactsPickError>> {
 		// A capability the host does not serve is a framework answer; a
 		// missing session is one the product handles.
 		let platform = self.services.contacts_platform().ok_or(CallError::Unsupported)?;
 		let session = self
 			.authority
 			.current_session()
-			.ok_or(CallError::Domain(v01::HostContactsPickError::NotConnected))?;
+			.ok_or(CallError::Domain(latest::HostContactsPickError::NotConnected))?;
 		let handle_key =
 			self.authority.contacts_handle_key(&session).map_err(|error| match error {
 				AuthorityError::Disconnected => {
-					CallError::Domain(v01::HostContactsPickError::NotConnected)
+					CallError::Domain(latest::HostContactsPickError::NotConnected)
 				},
-				other => CallError::Domain(v01::HostContactsPickError::Unknown {
+				other => CallError::Domain(latest::HostContactsPickError::Unknown {
 					reason: other.to_string(),
 				}),
 			})?;
@@ -1250,55 +1252,52 @@ impl Contacts for ProductRuntimeHost {
 	async fn pick(
 		&self,
 		cx: &CallContext,
-		_request: HostContactsPickRequest,
+		request: HostContactsPickRequest,
 	) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
-		let wrap = HostContactsPickError::V1;
-		let (platform, handles) =
-			self.contacts_picker().map_err(|error| contacts_error(error, wrap))?;
+		version(request)
+			.exec(|_request| async move {
+				let (platform, handles) = self.contacts_picker()?;
 
-		let unknown = |error: v01::GenericError| {
-			CallError::Domain(wrap(v01::HostContactsPickError::Unknown { reason: error.reason }))
-		};
+				let unknown = |error: latest::GenericError| {
+					CallError::Domain(latest::HostContactsPickError::Unknown {
+						reason: error.reason,
+					})
+				};
 
-		// Read before the picker opens: a removal signalled while the user is
-		// choosing must not be undone by caching their choice.
-		let generation = self.services.contact_handles.generation();
-		let outcome = match until_cancelled(cx, platform.pick_contact(&self.product))
+				// Read before the picker opens: a removal signalled while the user is
+				// choosing must not be undone by caching their choice.
+				let generation = self.services.contact_handles.generation();
+				let outcome = match until_cancelled(cx, platform.pick_contact(&self.product))
+					.await
+					.map_err(|cancelled| {
+						CallError::Domain(latest::HostContactsPickError::Unknown {
+							reason: cancelled.to_string(),
+						})
+					})?
+					.map_err(unknown)?
+				{
+					crate::platform::HostContactPick::Picked { account } => {
+						let handle = handles.mint(&account);
+						self.services.contact_handles.insert(handle, account, generation);
+						latest::ContactPickOutcome::Picked {
+							handle: latest::ContactHandle { bytes: handle },
+						}
+					},
+					crate::platform::HostContactPick::Dismissed => {
+						latest::ContactPickOutcome::Dismissed
+					},
+					crate::platform::HostContactPick::NoContacts => {
+						latest::ContactPickOutcome::NoContacts
+					},
+					// A host that resolves contacts but cannot present them is a
+					// framework-level gap, not an outcome the user produced.
+					crate::platform::HostContactPick::Unsupported => {
+						return Err(CallError::Unsupported);
+					},
+				};
+				Ok(latest::HostContactsPickResponse { outcome })
+			})
 			.await
-			.map_err(|cancelled| {
-				CallError::Domain(wrap(v01::HostContactsPickError::Unknown {
-					reason: cancelled.to_string(),
-				}))
-			})?
-			.map_err(unknown)?
-		{
-			crate::platform::HostContactPick::Picked { account } => {
-				let handle = handles.mint(&account);
-				self.services.contact_handles.insert(handle, account, generation);
-				v01::ContactPickOutcome::Picked { handle: v01::ContactHandle { bytes: handle } }
-			},
-			crate::platform::HostContactPick::Dismissed => v01::ContactPickOutcome::Dismissed,
-			crate::platform::HostContactPick::NoContacts => v01::ContactPickOutcome::NoContacts,
-			// A host that resolves contacts but cannot present them is a
-			// framework-level gap, not an outcome the user produced.
-			crate::platform::HostContactPick::Unsupported => return Err(CallError::Unsupported),
-		};
-		Ok(HostContactsPickResponse::V1(v01::HostContactsPickResponse { outcome }))
-	}
-}
-
-/// Re-wrap a latest-payload picker error into its versioned envelope.
-fn contacts_error<E>(
-	error: CallError<v01::HostContactsPickError>,
-	wrap: fn(v01::HostContactsPickError) -> E,
-) -> CallError<E> {
-	match error {
-		CallError::Domain(domain) => CallError::Domain(wrap(domain)),
-		CallError::Denied => CallError::Denied,
-		CallError::Unsupported => CallError::Unsupported,
-		CallError::MalformedFrame { reason } => CallError::MalformedFrame { reason },
-		CallError::HostFailure { reason } => CallError::HostFailure { reason },
-		CallError::Cancelled => CallError::Cancelled,
 	}
 }
 
@@ -1310,19 +1309,21 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatCreateRoomRequest,
 	) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
-		let platform = self.chat_platform()?;
-		let HostChatCreateRoomRequest::V1(mut request) = request;
-		request.room_id = normalize_chat_identifier("roomId", &request.room_id)
-			.map_err(chat_create_room_field_error)?;
-		request.name =
-			validate_chat_name("name", &request.name).map_err(chat_create_room_field_error)?;
-		request.icon =
-			validate_chat_icon("icon", &request.icon).map_err(chat_create_room_field_error)?;
-		platform
-			.create_chat_room(&self.product, request)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.chat_platform()?;
+				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+					.map_err(chat_create_room_field_error)?;
+				request.name = validate_chat_name("name", &request.name)
+					.map_err(chat_create_room_field_error)?;
+				request.icon = validate_chat_icon("icon", &request.icon)
+					.map_err(chat_create_room_field_error)?;
+				platform
+					.create_chat_room(&self.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(HostChatCreateRoomResponse::V1)
-			.map_err(|error| CallError::Domain(HostChatCreateRoomError::V1(error)))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.register_bot"))]
@@ -1331,41 +1332,46 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatRegisterBotRequest,
 	) -> Result<HostChatRegisterBotResponse, CallError<HostChatRegisterBotError>> {
-		let platform = self.chat_platform()?;
-		let HostChatRegisterBotRequest::V1(mut request) = request;
-		request.bot_id = normalize_chat_identifier("botId", &request.bot_id)
-			.map_err(chat_register_bot_field_error)?;
-		request.name =
-			validate_chat_name("name", &request.name).map_err(chat_register_bot_field_error)?;
-		request.icon =
-			validate_chat_icon("icon", &request.icon).map_err(chat_register_bot_field_error)?;
-		platform
-			.register_chat_bot(&self.product, request)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.chat_platform()?;
+				request.bot_id = normalize_chat_identifier("botId", &request.bot_id)
+					.map_err(chat_register_bot_field_error)?;
+				request.name = validate_chat_name("name", &request.name)
+					.map_err(chat_register_bot_field_error)?;
+				request.icon = validate_chat_icon("icon", &request.icon)
+					.map_err(chat_register_bot_field_error)?;
+				platform
+					.register_chat_bot(&self.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(HostChatRegisterBotResponse::V1)
-			.map_err(|error| CallError::Domain(HostChatRegisterBotError::V1(error)))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.list_subscribe"))]
 	async fn list_subscribe(
 		&self,
 		_cx: &CallContext,
-		_request: HostChatListSubscribeRequest,
+		request: HostChatListSubscribeRequest,
 	) -> Subscription<HostChatListSubscribeItem, CallError<HostChatListSubscribeError>> {
-		let platform = match self.chat_platform::<HostChatListSubscribeError>() {
-			Ok(platform) => platform,
-			Err(error) => return Subscription::interrupted(error),
-		};
-		Subscription::new(platform.subscribe_chat_rooms(&self.product).map(|item| match item {
-			Ok(item) => Ok(HostChatListSubscribeItem::V1(item)),
-			Err(error) => {
-				warn!(
-					reason = %error.reason,
-					"chat room list platform stream failed"
-				);
-				Err(CallError::HostFailure { reason: error.reason })
-			},
-		}))
+		version(request)
+			.exec(|()| async move {
+				let platform = match self.chat_platform::<latest::GenericError>() {
+					Ok(platform) => platform,
+					Err(error) => return Subscription::interrupted(error),
+				};
+				Subscription::new(platform.subscribe_chat_rooms(&self.product).map(|item| {
+					item.map_err(|error| {
+						warn!(
+							reason = %error.reason,
+							"chat room list platform stream failed"
+						);
+						CallError::HostFailure { reason: error.reason }
+					})
+				}))
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.post_message"))]
@@ -1374,28 +1380,32 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatPostMessageRequest,
 	) -> Result<HostChatPostMessageResponse, CallError<HostChatPostMessageError>> {
-		let platform = self.chat_platform()?;
-		let mut request = request.into_latest();
-		// The same normalization create_room applied, so a product's own
-		// spelling of a room id still resolves to the stored room.
-		request.room_id =
-			normalize_chat_identifier("roomId", &request.room_id).map_err(chat_post_field_error)?;
-		// Content is product-authored and host-rendered, so it gets the same
-		// treatment the room fields get rather than reaching a host raw.
-		request.payload =
-			validate_chat_message_content(request.payload).map_err(chat_post_field_error)?;
-		request.alt = request
-			.alt
-			.map(|alt| validate_chat_name("alt", &alt))
-			.transpose()
-			.map_err(chat_post_field_error)?
-			.filter(|alt| !alt.is_empty())
-			.filter(|_| matches!(request.payload, truapi::latest::ChatMessageContent::Custom(_)));
-		platform
-			.post_chat_message(&self.product, request)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.chat_platform()?;
+				// The same normalization create_room applied, so a product's own
+				// spelling of a room id still resolves to the stored room.
+				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+					.map_err(chat_post_field_error)?;
+				// Content is product-authored and host-rendered, so it gets the same
+				// treatment the room fields get rather than reaching a host raw.
+				request.payload = validate_chat_message_content(request.payload)
+					.map_err(chat_post_field_error)?;
+				request.alt = request
+					.alt
+					.map(|alt| validate_chat_name("alt", &alt))
+					.transpose()
+					.map_err(chat_post_field_error)?
+					.filter(|alt| !alt.is_empty())
+					.filter(|_| {
+						matches!(request.payload, truapi::latest::ChatMessageContent::Custom(_))
+					});
+				platform
+					.post_chat_message(&self.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(HostChatPostMessageResponse::V2)
-			.map_err(|error| CallError::Domain(HostChatPostMessageError::V2(error)))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.set_room_footer"))]
@@ -1404,50 +1414,54 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatSetRoomFooterRequest,
 	) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
-		let platform = self.chat_platform()?;
-		let HostChatSetRoomFooterRequest::V1(mut request) = request;
-		let failure = |reason: String| {
-			CallError::Domain(HostChatSetRoomFooterError::V1(
-				v01::HostChatSetRoomFooterError::Unknown { reason },
-			))
-		};
-		request.room_id = normalize_chat_identifier("roomId", &request.room_id)
-			.map_err(|error| failure(error.to_string()))?;
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.chat_platform()?;
+				let failure = |reason: String| {
+					CallError::Domain(latest::HostChatSetRoomFooterError::Unknown { reason })
+				};
+				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+					.map_err(|error| failure(error.to_string()))?;
 
-		// Checked here rather than by each host, so every host answers a room
-		// the product never created the same way.
-		let rooms = match platform.subscribe_chat_rooms(&self.product).next().await {
-			Some(Ok(item)) => item.rooms,
-			Some(Err(error)) => return Err(failure(error.reason)),
-			None => return Err(failure("the host published no room list".to_string())),
-		};
-		let created = rooms.iter().any(|room| {
-			room.room_id == request.room_id &&
-				room.participating_as == v01::ChatRoomParticipation::RoomHost
-		});
-		if !created {
-			return Err(CallError::Domain(HostChatSetRoomFooterError::V1(
-				v01::HostChatSetRoomFooterError::UnknownRoom,
-			)));
-		}
+				// Checked here rather than by each host, so every host answers a room
+				// the product never created the same way.
+				let rooms = match platform.subscribe_chat_rooms(&self.product).next().await {
+					Some(Ok(item)) => item.rooms,
+					Some(Err(error)) => return Err(failure(error.reason)),
+					None => return Err(failure("the host published no room list".to_string())),
+				};
+				let created = rooms.iter().any(|room| {
+					room.room_id == request.room_id &&
+						room.participating_as == latest::ChatRoomParticipation::RoomHost
+				});
+				if !created {
+					return Err(CallError::Domain(latest::HostChatSetRoomFooterError::UnknownRoom));
+				}
 
-		platform
-			.set_chat_room_footer(&self.product, request)
+				platform
+					.set_chat_room_footer(&self.product, request)
+					.await
+					.map_err(|error| failure(error.reason))
+			})
 			.await
-			.map(|()| HostChatSetRoomFooterResponse::V1)
-			.map_err(|error| failure(error.reason))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.action_subscribe"))]
 	async fn action_subscribe(
 		&self,
 		_cx: &CallContext,
-		_request: HostChatActionSubscribeRequest,
+		request: HostChatActionSubscribeRequest,
 	) -> Subscription<HostChatActionSubscribeItem, CallError<HostChatActionSubscribeError>> {
-		if let Err(error) = self.chat_platform::<HostChatActionSubscribeError>() {
-			return Subscription::interrupted(error);
-		}
-		self.chat.subscribe()
+		version(request)
+			.exec(|()| async move {
+				if let Err(error) = self.chat_platform::<latest::GenericError>() {
+					return Subscription::interrupted(error);
+				}
+				Subscription::new(
+					self.chat.subscribe().map(|item| item.map(IntoLatest::into_latest)),
+				)
+			})
+			.await
 	}
 }
 
@@ -1457,13 +1471,19 @@ impl Renderer for ProductRuntimeHost {
 	async fn action_subscribe(
 		&self,
 		_cx: &CallContext,
-		_request: HostRendererActionSubscribeRequest,
+		request: HostRendererActionSubscribeRequest,
 	) -> Subscription<HostRendererActionSubscribeItem, CallError<HostRendererActionSubscribeError>>
 	{
-		if self.renderer_access().is_err() {
-			return Subscription::interrupted(CallError::Denied);
-		}
-		self.renderer.subscribe()
+		version(request)
+			.exec(|()| async move {
+				if self.renderer_access().is_err() {
+					return Subscription::interrupted(CallError::Denied);
+				}
+				Subscription::new(
+					self.renderer.subscribe().map(|item| item.map(IntoLatest::into_latest)),
+				)
+			})
+			.await
 	}
 }
 
@@ -1473,22 +1493,25 @@ impl Pocket for ProductRuntimeHost {
 	async fn list_subscribe(
 		&self,
 		_cx: &CallContext,
-		_request: HostPocketListSubscribeRequest,
+		request: HostPocketListSubscribeRequest,
 	) -> Subscription<HostPocketListSubscribeItem, CallError<HostPocketListSubscribeError>> {
-		let platform = match self.pocket_platform::<HostPocketListSubscribeError>() {
-			Ok(platform) => platform,
-			Err(error) => return Subscription::interrupted(error),
-		};
-		Subscription::new(platform.subscribe_pocket_cards(&self.product).map(|item| match item {
-			Ok(item) => Ok(HostPocketListSubscribeItem::V1(item)),
-			Err(error) => {
-				warn!(
-					reason = %error.reason,
-					"pocket card list platform stream failed"
-				);
-				Err(CallError::HostFailure { reason: error.reason })
-			},
-		}))
+		version(request)
+			.exec(|()| async move {
+				let platform = match self.pocket_platform::<latest::GenericError>() {
+					Ok(platform) => platform,
+					Err(error) => return Subscription::interrupted(error),
+				};
+				Subscription::new(platform.subscribe_pocket_cards(&self.product).map(|item| {
+					item.map_err(|error| {
+						warn!(
+							reason = %error.reason,
+							"pocket card list platform stream failed"
+						);
+						CallError::HostFailure { reason: error.reason }
+					})
+				}))
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "pocket.remove_card"))]
@@ -1497,36 +1520,34 @@ impl Pocket for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostPocketRemoveCardRequest,
 	) -> Result<HostPocketRemoveCardResponse, CallError<HostPocketRemoveCardError>> {
-		let platform = self.pocket_platform()?;
-		let HostPocketRemoveCardRequest::V1(mut request) = request;
-		// A card id is a product-chosen label the host renders in its own
-		// chrome, so it is screened before the host ever sees it: trimmed,
-		// NFC-normalized, and rejected if it carries characters that let two
-		// distinct ids render identically.
-		request.card_id =
-			normalize_chat_identifier("cardId", &request.card_id).map_err(pocket_field_error)?;
-		platform
-			.remove_pocket_card(&self.product, request)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.pocket_platform()?;
+				// A card id is a product-chosen label the host renders in its own
+				// chrome, so it is screened before the host ever sees it: trimmed,
+				// NFC-normalized, and rejected if it carries characters that let two
+				// distinct ids render identically.
+				request.card_id = normalize_chat_identifier("cardId", &request.card_id)
+					.map_err(pocket_field_error)?;
+				platform
+					.remove_pocket_card(&self.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(|()| HostPocketRemoveCardResponse::V1)
-			.map_err(|error| CallError::Domain(HostPocketRemoveCardError::V1(error)))
 	}
 }
 
 /// Report a rejected card id as a removal domain error.
-fn pocket_field_error(error: ChatFieldError) -> CallError<HostPocketRemoveCardError> {
-	CallError::Domain(HostPocketRemoveCardError::V1(v01::HostPocketRemoveCardError::Unknown {
-		reason: error.to_string(),
-	}))
+fn pocket_field_error(error: ChatFieldError) -> CallError<latest::HostPocketRemoveCardError> {
+	CallError::Domain(latest::HostPocketRemoveCardError::Unknown { reason: error.to_string() })
 }
 
 /// Report a rejected chat bot field as a bot-registration domain error.
 fn chat_register_bot_field_error(
 	error: crate::platform::ChatFieldError,
-) -> CallError<HostChatRegisterBotError> {
-	CallError::Domain(HostChatRegisterBotError::V1(v01::HostChatRegisterBotError::Unknown {
-		reason: error.to_string(),
-	}))
+) -> CallError<latest::HostChatRegisterBotError> {
+	CallError::Domain(latest::HostChatRegisterBotError::Unknown { reason: error.to_string() })
 }
 
 /// Fields whose rejection a product resolves by sending less content, and the
@@ -1535,26 +1556,24 @@ const CHAT_SIZED_CONTENT_FIELDS: [&str; 2] = ["text", "payload"];
 
 /// Maps a rejected `post_message` field onto the wire error, reporting a size
 /// rejection as the size variant the protocol declares for it.
-fn chat_post_field_error(error: ChatFieldError) -> CallError<HostChatPostMessageError> {
+fn chat_post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMessageError> {
 	let payload = match error {
 		// `MessageTooLarge` names no field, so it is reserved for the content
 		// a product shrinks by sending less. Every other rejection reports
 		// through `Unknown`, whose reason names the field and its limit.
 		ChatFieldError::TooLong { field, .. } if CHAT_SIZED_CONTENT_FIELDS.contains(&field) => {
-			v01::HostChatPostMessageError::MessageTooLarge
+			latest::HostChatPostMessageError::MessageTooLarge
 		},
-		error => v01::HostChatPostMessageError::Unknown { reason: error.to_string() },
+		error => latest::HostChatPostMessageError::Unknown { reason: error.to_string() },
 	};
-	CallError::Domain(HostChatPostMessageError::V2(payload))
+	CallError::Domain(payload)
 }
 
 /// Report a rejected chat room field as a room-creation domain error.
 fn chat_create_room_field_error(
 	error: crate::platform::ChatFieldError,
-) -> CallError<HostChatCreateRoomError> {
-	CallError::Domain(HostChatCreateRoomError::V1(v01::HostChatCreateRoomError::Unknown {
-		reason: error.to_string(),
-	}))
+) -> CallError<latest::HostChatCreateRoomError> {
+	CallError::Domain(latest::HostChatCreateRoomError::Unknown { reason: error.to_string() })
 }
 
 impl ProductRuntimeHost {

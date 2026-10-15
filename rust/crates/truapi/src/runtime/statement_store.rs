@@ -13,6 +13,7 @@ use super::{
 	authority::{AuthorityError, StatementStoreAllowanceKey},
 	remote_authority_call, remote_authority_context,
 	statement_store_rpc::{self, StatementStoreRpc},
+	versioning::version,
 };
 use crate::host_logic::statement_store::{
 	MAX_MATCH_ALL_TOPICS, MAX_MATCH_ANY_TOPICS, TopicFilterKind, decode_signed_statement,
@@ -52,10 +53,14 @@ impl StatementStore for ProductRuntimeHost {
 		RemoteStatementStoreSubscribeItem,
 		CallError<RemoteStatementStoreSubscribeError>,
 	> {
-		match self.open_statement_subscription(request).await {
-			Ok(subscription) => subscription,
-			Err(error) => Subscription::interrupted(error),
-		}
+		version(request)
+			.exec(|request| async move {
+				match self.open_statement_subscription(request).await {
+					Ok(subscription) => subscription,
+					Err(error) => Subscription::interrupted(error),
+				}
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "statement_store.create_proof"))]
@@ -67,29 +72,34 @@ impl StatementStore for ProductRuntimeHost {
 		RemoteStatementStoreCreateProofResponse,
 		CallError<RemoteStatementStoreCreateProofError>,
 	> {
-		let RemoteStatementStoreCreateProofRequest::V1(mut inner) = request;
-		inner.product_account_id = Self::normalize_product_account_id(inner.product_account_id)
-			.map_err(|()| {
-				CallError::Domain(RemoteStatementStoreCreateProofError::V1(
-					latest::RemoteStatementStoreCreateProofError::UnknownAccount,
-				))
-			})?;
-		let Some(owner) = self
-			.authorized_product_account(&inner.product_account_id.dot_ns_identifier, cx)
+		version(request)
+			.exec(|mut request| async move {
+				request.product_account_id = Self::normalize_product_account_id(
+					request.product_account_id,
+				)
+				.map_err(|()| {
+					CallError::Domain(latest::RemoteStatementStoreCreateProofError::UnknownAccount)
+				})?;
+				let Some(owner) = self
+					.authorized_product_account(&request.product_account_id.dot_ns_identifier, cx)
+					.await
+				else {
+					return Err(CallError::Domain(
+						latest::RemoteStatementStoreCreateProofError::UnknownAccount,
+					));
+				};
+				request.product_account_id.dot_ns_identifier = owner;
+				let proof = self
+					.create_product_statement_proof(
+						cx,
+						request.product_account_id,
+						request.statement,
+					)
+					.await
+					.map_err(statement_proof_error)?;
+				Ok(latest::RemoteStatementStoreCreateProofResponse { proof })
+			})
 			.await
-		else {
-			return Err(CallError::Domain(RemoteStatementStoreCreateProofError::V1(
-				latest::RemoteStatementStoreCreateProofError::UnknownAccount,
-			)));
-		};
-		inner.product_account_id.dot_ns_identifier = owner;
-		let proof = self
-			.create_product_statement_proof(cx, inner.product_account_id, inner.statement)
-			.await
-			.map_err(statement_proof_error)?;
-		Ok(RemoteStatementStoreCreateProofResponse::V1(
-			latest::RemoteStatementStoreCreateProofResponse { proof },
-		))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "statement_store.create_proof_authorized"))]
@@ -101,14 +111,15 @@ impl StatementStore for ProductRuntimeHost {
 		RemoteStatementStoreCreateProofAuthorizedResponse,
 		CallError<RemoteStatementStoreCreateProofAuthorizedError>,
 	> {
-		let RemoteStatementStoreCreateProofAuthorizedRequest::V1(statement) = request;
-		let proof = self
-			.create_authorized_statement_proof(cx, statement)
+		version(request)
+			.exec(|statement| async move {
+				let proof = self
+					.create_authorized_statement_proof(cx, statement)
+					.await
+					.map_err(statement_proof_error)?;
+				Ok(latest::RemoteStatementStoreCreateProofResponse { proof })
+			})
 			.await
-			.map_err(statement_proof_authorized_error)?;
-		Ok(RemoteStatementStoreCreateProofAuthorizedResponse::V1(
-			latest::RemoteStatementStoreCreateProofResponse { proof },
-		))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "statement_store.submit"))]
@@ -117,47 +128,46 @@ impl StatementStore for ProductRuntimeHost {
 		cx: &CallContext,
 		request: RemoteStatementStoreSubmitRequest,
 	) -> Result<RemoteStatementStoreSubmitResponse, CallError<RemoteStatementStoreSubmitError>> {
-		let RemoteStatementStoreSubmitRequest::V1(statement) = request;
-		self.require_remote_permission(
-			latest::RemotePermission::StatementSubmit,
-			RemoteStatementStoreSubmitError::V1(latest::GenericError {
-				reason: PERMISSION_DENIED_REASON.to_string(),
-			}),
-		)
-		.await?;
-		if let Some(reason) = cx.cancel().reason() {
-			return Err(CallError::Domain(RemoteStatementStoreSubmitError::V1(
-				latest::GenericError { reason: format!("statement submit {reason}") },
-			)));
-		}
-		let encoded = signed_statement_to_scale(statement.clone()).map_err(|reason| {
-			CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError { reason }))
-		})?;
-		self.statement_store_rpc()
-			.submit_sso(encoded, "statement-store")
-			.await
-			.map_err(|reason| {
-				if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
-					statement_store_rpc::is_no_allowance_rejection(&reason)
-				{
-					self.authority.forget_statement_store_allowance_key(&self.product_id(), signer);
+		version(request)
+			.exec(|statement| async move {
+				self.require_remote_permission(
+					latest::RemotePermission::StatementSubmit,
+					latest::GenericError { reason: PERMISSION_DENIED_REASON.to_string() },
+				)
+				.await?;
+				if let Some(reason) = cx.cancel().reason() {
+					return Err(CallError::Domain(latest::GenericError {
+						reason: format!("statement submit {reason}"),
+					}));
 				}
-				CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
-					reason: format!("statement-store submit failed: {reason}"),
-				}))
-			})?;
-		self.services.cache_statement(statement);
-		Ok(RemoteStatementStoreSubmitResponse::V1)
+				let encoded = signed_statement_to_scale(statement.clone())
+					.map_err(|reason| CallError::Domain(latest::GenericError { reason }))?;
+				self.statement_store_rpc()
+					.submit_sso(encoded, "statement-store")
+					.await
+					.map_err(|reason| {
+						if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
+							statement_store_rpc::is_no_allowance_rejection(&reason)
+						{
+							self.authority
+								.forget_statement_store_allowance_key(&self.product_id(), signer);
+						}
+						CallError::Domain(latest::GenericError {
+							reason: format!("statement-store submit failed: {reason}"),
+						})
+					})?;
+				self.services.cache_statement(statement);
+				Ok(())
+			})
+			.await
 	}
 }
 
 fn statement_store_topic_filter(
-	request: RemoteStatementStoreSubscribeRequest,
+	request: latest::RemoteStatementStoreSubscribeRequest,
 ) -> Result<(TopicFilterKind, Vec<[u8; 32]>), String> {
 	match request {
-		RemoteStatementStoreSubscribeRequest::V1(
-			latest::RemoteStatementStoreSubscribeRequest::MatchAll(topics),
-		) => {
+		latest::RemoteStatementStoreSubscribeRequest::MatchAll(topics) => {
 			if topics.len() > MAX_MATCH_ALL_TOPICS {
 				return Err(format!(
 					"MatchAll has {} topics, maximum is {}",
@@ -167,9 +177,7 @@ fn statement_store_topic_filter(
 			}
 			Ok((TopicFilterKind::MatchAll, topics))
 		},
-		RemoteStatementStoreSubscribeRequest::V1(
-			latest::RemoteStatementStoreSubscribeRequest::MatchAny(topics),
-		) => {
+		latest::RemoteStatementStoreSubscribeRequest::MatchAny(topics) => {
 			if topics.len() > MAX_MATCH_ANY_TOPICS {
 				let topic_count = topics.len();
 				return Err(format!(
@@ -185,7 +193,7 @@ fn statement_store_topic_filter(
 fn statement_store_subscription_stream(
 	subscription: RpcSubscription<Value>,
 	remote_subscription_id: String,
-) -> impl futures::Stream<Item = RemoteStatementStoreSubscribeItem> + Send {
+) -> impl futures::Stream<Item = latest::RemoteStatementStoreSubscribeItem> + Send {
 	StatementStoreSubscriptionStream { subscription, remote_subscription_id, is_complete: false }
 }
 
@@ -196,7 +204,7 @@ struct StatementStoreSubscriptionStream {
 }
 
 impl futures::Stream for StatementStoreSubscriptionStream {
-	type Item = RemoteStatementStoreSubscribeItem;
+	type Item = latest::RemoteStatementStoreSubscribeItem;
 
 	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
 		let state = self.get_mut();
@@ -224,16 +232,18 @@ impl futures::Stream for StatementStoreSubscriptionStream {
 				.collect::<Vec<_>>();
 			if statements.is_empty() {
 				if is_complete && !was_complete {
-					return Poll::Ready(Some(RemoteStatementStoreSubscribeItem::V1(
-						latest::RemoteStatementStoreSubscribeItem { statements, is_complete },
-					)));
+					return Poll::Ready(Some(latest::RemoteStatementStoreSubscribeItem {
+						statements,
+						is_complete,
+					}));
 				}
 				continue;
 			}
 
-			return Poll::Ready(Some(RemoteStatementStoreSubscribeItem::V1(
-				latest::RemoteStatementStoreSubscribeItem { statements, is_complete },
-			)));
+			return Poll::Ready(Some(latest::RemoteStatementStoreSubscribeItem {
+				statements,
+				is_complete,
+			}));
 		}
 	}
 }
@@ -243,56 +253,40 @@ impl ProductRuntimeHost {
 	/// before its first item as the interrupt the subscription ends with.
 	async fn open_statement_subscription(
 		&self,
-		request: RemoteStatementStoreSubscribeRequest,
+		request: latest::RemoteStatementStoreSubscribeRequest,
 	) -> Result<
-		Subscription<
-			RemoteStatementStoreSubscribeItem,
-			CallError<RemoteStatementStoreSubscribeError>,
-		>,
-		CallError<RemoteStatementStoreSubscribeError>,
+		Subscription<latest::RemoteStatementStoreSubscribeItem, CallError<latest::GenericError>>,
+		CallError<latest::GenericError>,
 	> {
-		let (kind, topics) = match statement_store_topic_filter(request) {
-			Ok(value) => value,
-			Err(reason) => {
-				return Err(CallError::Domain(RemoteStatementStoreSubscribeError::V1(
-					latest::GenericError { reason },
-				)));
-			},
-		};
+		let (kind, topics) = statement_store_topic_filter(request)
+			.map_err(|reason| CallError::Domain(latest::GenericError { reason }))?;
 		let statement_store = self.statement_store_rpc();
 		let rpc_client = statement_store.client("statement-store").await.map_err(|reason| {
-			CallError::Domain(RemoteStatementStoreSubscribeError::V1(latest::GenericError {
-				reason: reason.to_string(),
-			}))
+			CallError::Domain(latest::GenericError { reason: reason.to_string() })
 		})?;
 		let subscription = statement_store_rpc::subscribe(&rpc_client, kind, &topics)
 			.await
 			.map_err(|err| {
-				CallError::Domain(RemoteStatementStoreSubscribeError::V1(latest::GenericError {
+				CallError::Domain(latest::GenericError {
 					reason: format!("statement-store subscribe failed: {err}"),
-				}))
+				})
 			})?;
 		let Some(remote_subscription_id) = subscription.subscription_id().map(ToString::to_string)
 		else {
-			return Err(CallError::Domain(RemoteStatementStoreSubscribeError::V1(
-				latest::GenericError {
-					reason: "statement-store subscribe returned no subscription id".to_string(),
-				},
-			)));
+			return Err(CallError::Domain(latest::GenericError {
+				reason: "statement-store subscribe returned no subscription id".to_string(),
+			}));
 		};
 		let remote_stream =
 			statement_store_subscription_stream(subscription, remote_subscription_id);
 		let cached = self.services.cached_statements(kind, &topics);
-		let cached_page = (!cached.is_empty()).then(|| {
-			RemoteStatementStoreSubscribeItem::V1(latest::RemoteStatementStoreSubscribeItem {
-				statements: cached.clone(),
-				is_complete: false,
-			})
+		let cached_page = (!cached.is_empty()).then(|| latest::RemoteStatementStoreSubscribeItem {
+			statements: cached.clone(),
+			is_complete: false,
 		});
 		let services = self.services.clone();
 		let mut pending_local = cached;
-		let remote_stream = remote_stream.filter_map(move |item| {
-			let RemoteStatementStoreSubscribeItem::V1(mut page) = item;
+		let remote_stream = remote_stream.filter_map(move |mut page| {
 			let mut visible_local = Vec::new();
 			page.statements.retain(|statement| {
 				if pending_local.contains(statement) {
@@ -305,8 +299,7 @@ impl ProductRuntimeHost {
 			pending_local.retain(|statement| !visible_local.contains(statement));
 			services.mark_statements_visible(&visible_local);
 			futures::future::ready(
-				(!page.statements.is_empty() || page.is_complete)
-					.then_some(RemoteStatementStoreSubscribeItem::V1(page)),
+				(!page.statements.is_empty() || page.is_complete).then_some(page),
 			)
 		});
 		let stream = futures::stream::iter(cached_page).chain(remote_stream);
@@ -421,10 +414,10 @@ fn statement_authority_failure(err: AuthorityError) -> StatementProofFailure {
 	}
 }
 
-fn statement_proof_domain_error(
+fn statement_proof_error(
 	failure: StatementProofFailure,
-) -> latest::RemoteStatementStoreCreateProofError {
-	match failure {
+) -> CallError<latest::RemoteStatementStoreCreateProofError> {
+	CallError::Domain(match failure {
 		StatementProofFailure::NoSession | StatementProofFailure::Refused => {
 			latest::RemoteStatementStoreCreateProofError::UnableToSign
 		},
@@ -434,23 +427,7 @@ fn statement_proof_domain_error(
 		StatementProofFailure::InvalidStatement(reason) => {
 			latest::RemoteStatementStoreCreateProofError::Unknown { reason }
 		},
-	}
-}
-
-fn statement_proof_error(
-	failure: StatementProofFailure,
-) -> CallError<RemoteStatementStoreCreateProofError> {
-	CallError::Domain(RemoteStatementStoreCreateProofError::V1(statement_proof_domain_error(
-		failure,
-	)))
-}
-
-fn statement_proof_authorized_error(
-	failure: StatementProofFailure,
-) -> CallError<RemoteStatementStoreCreateProofAuthorizedError> {
-	CallError::Domain(RemoteStatementStoreCreateProofAuthorizedError::V1(
-		statement_proof_domain_error(failure),
-	))
+	})
 }
 
 #[cfg(test)]
