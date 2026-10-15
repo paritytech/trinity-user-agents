@@ -105,9 +105,11 @@ struct IdentityProfileServiceTests {
 private extension IdentityProfileServiceTests {
     /// Asserts no subscription is started, without waiting on a clock.
     ///
-    /// The service decides whether to subscribe straight after emitting a profile, so a second
-    /// emission is proof that the decision for the first has already been made. Driving one and
-    /// awaiting it orders the assertion after that decision.
+    /// The service handles username changes in order and decides whether to subscribe straight
+    /// after each one, so the emission for a later change is proof that the decision for
+    /// `username` has already been made. That later change is a claimed sentinel: it never
+    /// subscribes, and it always differs from the profile before it, which the profile stream
+    /// would otherwise drop as a duplicate.
     func expectNoSubscription(replacing username: Username?) async throws {
         let sut = createSut()
         var profiles = sut.observe().makeAsyncIterator()
@@ -115,7 +117,12 @@ private extension IdentityProfileServiceTests {
 
         storage.username = username
         sut.processSelectedUsernameChanged(event: SelectedUsernameChanged(username: username))
-        _ = try await profiles.next()
+
+        let sentinel = Username(value: "sentinel")
+        storage.username = sentinel
+        storage.usernameClaimed = true
+        sut.processSelectedUsernameChanged(event: SelectedUsernameChanged(username: sentinel))
+        while let profile = try await profiles.next(), profile.username != sentinel {}
 
         #expect(identityService.subscribeCallCount == 0)
     }
