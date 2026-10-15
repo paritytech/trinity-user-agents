@@ -377,7 +377,7 @@ const fn hex_nibble(c: u8) -> u8 {
 		b'0'..=b'9' => c - b'0',
 		b'a'..=b'f' => c - b'a' + 10,
 		b'A'..=b'F' => c - b'A' + 10,
-		_ => panic!("invalid hex digit in genesis literal"),
+		_ => panic!("invalid hex digit in a compile-time hex literal"),
 	}
 }
 
