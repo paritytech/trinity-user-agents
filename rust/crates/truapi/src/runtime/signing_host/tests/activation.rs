@@ -243,18 +243,17 @@ fn lock_wallet_switch_and_product_reset_forget_allow_once() {
 		),
 		..StubPlatform::default()
 	});
-	let (services, authority) = signing_runtime_with_platform(platform.clone());
+	let (_, authority) = signing_runtime_with_platform(platform.clone());
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-	let runtime = product_runtime(services, authority.clone());
+	let product = ProductContext::new("myapp.dot".to_string()).unwrap();
 	let prompts_after_request = || {
-		futures::executor::block_on(runtime.get_account(
+		futures::executor::block_on(authority.accounts().get_account(
 			&CallContext::default(),
-			HostAccountGetRequest::V1(v01::HostAccountGetRequest {
-				product_account_id: v01::ProductAccountId {
-					dot_ns_identifier: "peopl.dot".to_string(),
-					derivation_index: v01::DerivationIndex::Index(0),
-				},
-			}),
+			&product,
+			truapi::latest::ProductAccountId {
+				dot_ns_identifier: "peopl.dot".to_string(),
+				derivation_index: truapi::latest::DerivationIndex::Index(0),
+			},
 		))
 		.unwrap();
 		platform.account_access_reviews.lock().unwrap().len()

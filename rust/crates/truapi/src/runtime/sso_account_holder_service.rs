@@ -160,7 +160,7 @@ impl SsoAccountHolderService {
 		};
 		self.serve_sign_raw(
 			cx,
-			SignRawAuthorityRequest::LegacyAccount {
+			SignRawAuthorityRequest::IdentityAccount {
 				account: request.account,
 				request: public_request,
 			},

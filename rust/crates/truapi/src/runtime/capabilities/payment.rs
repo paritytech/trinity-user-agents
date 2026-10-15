@@ -45,11 +45,11 @@ use crate::{
 		permissions::{PermissionsService, TemporaryPermissions},
 	},
 	platform::{PermissionAuthorizationStatus, PermissionStatusHost, Platform, ProductContext},
-	runtime::{ProductRuntimeHost, payment_id::host_payment_id},
+	runtime::{AccountHolder, ProductRuntimeHost, payment_id::host_payment_id},
 };
 
 #[truapi::async_trait]
-impl CoinPayment for ProductRuntimeHost {
+impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.create_purse"))]
 	async fn create_purse(
 		&self,
@@ -157,7 +157,7 @@ impl CoinPayment for ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Payment for ProductRuntimeHost {
+impl<H: AccountHolder> Payment for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "payment.balance_subscribe"))]
 	async fn balance_subscribe(
 		&self,
@@ -263,7 +263,7 @@ impl Payment for ProductRuntimeHost {
 	}
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// `Denied` unless a pairing session is connected.
 	pub(crate) fn require_session<E>(&self) -> Result<(), CallError<E>> {
 		match self.accounts.current_session() {

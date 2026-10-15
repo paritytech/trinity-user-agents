@@ -1,8 +1,7 @@
-//! Account authority contracts shared by product runtimes.
+//! Account calls and host grant contracts.
 //!
-//! Local and paired hosts use the same request and session types.
+//! Caller origin separates local host permissions from remote wallet consent.
 
-use super::product_consent::ProductConsent;
 use crate::platform::ProductContext;
 use async_trait::async_trait;
 use truapi::{
@@ -14,17 +13,15 @@ use truapi::{
 		HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignRequest,
 		HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
 		HostCreateTransactionResponse, HostRequestResourceAllocationRequest,
-		HostRequestResourceAllocationResponse, HostSignPayloadRequest, HostSignPayloadResponse,
-		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-		HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload, ProductAccountId,
-		ProductAccountTxPayload, VrfSignature,
+		HostSignPayloadRequest, HostSignPayloadResponse, HostSignPayloadWithLegacyAccountRequest,
+		HostSignRawRequest, HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload,
+		ProductAccountId, ProductAccountTxPayload, VrfSignature,
 	},
 };
 
 use crate::{
 	host_internal::{
-		extrinsic::LocalTransactionError,
-		sso_messages::{ProductRequest, RingVrfError},
+		extrinsic::LocalTransactionError, sso_messages::RingVrfError,
 		transaction::ExtrinsicPayloadError,
 	},
 	host_logic::{
@@ -288,6 +285,13 @@ pub enum SignRawAuthorityRequest {
 	Product(HostSignRawRequest),
 	/// Sign raw data through the legacy-account API.
 	LegacyAccount {
+		/// Product slot-zero account backing the validated legacy signer.
+		product_account: ProductAccountId,
+		/// Original legacy-account request.
+		request: HostSignRawWithLegacyAccountRequest,
+	},
+	/// Sign with the active identity through the legacy-account API.
+	IdentityAccount {
 		/// Account selected by the product and validated against the session.
 		account: [u8; 32],
 		/// Original legacy-account request.
@@ -341,7 +345,7 @@ impl SignRawAuthorityRequest {
 				request: request.clone(),
 				watermarked,
 			},
-			Self::LegacyAccount { request, .. } => {
+			Self::LegacyAccount { request, .. } | Self::IdentityAccount { request, .. } => {
 				SignRawReview::LegacyAccount { request: request.clone(), watermarked }
 			},
 		})
@@ -362,24 +366,6 @@ impl CreateTransactionAuthorityRequest {
 			},
 		})
 	}
-}
-
-/// Whether blessed `calling_product_id` is using its own account, `owner`.
-pub(crate) fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
-	use crate::platform::{has_trusted_remote_permissions, normalize_product_identifier};
-	normalize_product_identifier(calling_product_id).is_ok_and(|caller| {
-		has_trusted_remote_permissions(&caller) &&
-			normalize_product_identifier(owner).is_ok_and(|owner| owner == caller)
-	})
-}
-
-/// Whether this product account can sign without confirmation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AutoSigningGrant {
-	/// The authority holds the signing keys and needs no prompt.
-	Active,
-	/// User consent is required.
-	Absent,
 }
 
 /// Statement-store allowance signing material held by the authority layer.
@@ -625,218 +611,6 @@ pub trait AccountHolder: Send + Sync + 'static {
 		&self,
 		session: &AuthoritySession,
 	) -> Result<super::contacts::ContactHandles, AuthorityError>;
-}
-
-/// Host account authority used by product runtimes.
-#[async_trait]
-pub trait ProductAuthority: Send + Sync {
-	/// Current account-authority session, if connected.
-	fn current_session(&self) -> Option<AuthoritySession>;
-
-	/// This runtime's account-access decisions and operation reviews.
-	fn consent(&self) -> &ProductConsent;
-
-	/// Seed a product subtree for authority tests.
-	#[cfg(test)]
-	fn cache_product_subtree_for_test(
-		&self,
-		_session: &SessionInfo,
-		_product_id: &str,
-		_public_key: [u8; 32],
-	) {
-	}
-
-	/// Resolve the public key for a product's hard subtree.
-	async fn product_subtree_public_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		product_id: String,
-	) -> Result<[u8; 32], AuthorityError>;
-
-	/// Whether subtree resolution needs SSO and host consent.
-	async fn subtree_resolution_reaches_account_holder(
-		&self,
-		session: &AuthoritySession,
-		product_id: &str,
-	) -> bool;
-
-	/// Whether this product account can sign without confirmation.
-	async fn auto_signing_status(
-		&self,
-		session: &AuthoritySession,
-		calling_product_id: &str,
-		account: &ProductAccountId,
-	) -> Result<AutoSigningGrant, AuthorityError>;
-
-	/// Sign an RFC-0023 Merlin transcript with a product account.
-	async fn sign_vrf(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		calling_product_id: String,
-		request: HostAccountSignVrfRequest,
-	) -> Result<VrfSignature, AuthorityError>;
-
-	/// Sign a SCALE transaction payload for a product account.
-	///
-	/// Bind the caller to the account before local signing; `None` denotes an SSO relay.
-	async fn sign_payload(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
-		request: SignPayloadAuthorityRequest,
-	) -> Result<HostSignPayloadResponse, AuthorityError>;
-
-	/// Sign arbitrary bytes for a product account.
-	///
-	/// Uses the same caller binding as [`ProductAuthority::sign_payload`].
-	async fn sign_raw(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
-		request: SignRawAuthorityRequest,
-		watermarked: bool,
-	) -> Result<HostSignPayloadResponse, AuthorityError>;
-
-	/// Build a transaction for a product account, signed unless the request
-	/// supplies its own V5 `VerifyMultiSignature` extension.
-	/// Uses the same caller binding as [`ProductAuthority::sign_payload`].
-	async fn create_transaction(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
-		request: CreateTransactionAuthorityRequest,
-	) -> Result<HostCreateTransactionResponse, AuthorityError>;
-
-	/// Derive a product-scoped contextual alias for an explicit registered key.
-	///
-	/// The Account Holder resolves `key_handle` from the registry and derives
-	/// the alias bound to `context`; `create_proof` derives the same alias.
-	async fn account_alias(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		request: ProductRequest<HostAccountGetAliasRequest>,
-	) -> Result<HostAccountGetAliasResponse, RingVrfError>;
-
-	/// Create a ring-VRF proof bound to a context and message.
-	///
-	/// Uses the request's explicit registered key, so the returned
-	/// `contextual_alias` matches `account_alias` for the same inputs.
-	async fn create_proof(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		request: ProductRequest<HostAccountCreateProofRequest>,
-	) -> Result<HostAccountCreateProofResponse, RingVrfError>;
-
-	/// Register a ring-VRF key owned by the calling product.
-	async fn register_ring_vrf_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
-	) -> Result<HostAccountRegisterRingVrfKeyResponse, RingVrfError>;
-
-	/// List registered ring-VRF keys.
-	async fn list_ring_vrf_keys(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		request: ProductRequest<HostAccountListRingVrfKeysRequest>,
-	) -> Result<HostAccountListRingVrfKeysResponse, RingVrfError>;
-
-	/// Sign bytes directly with a registered ring-VRF key.
-	async fn ring_vrf_sign(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		request: ProductRequest<HostAccountRingVrfSignRequest>,
-	) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
-
-	/// Revision of this host's kept grants. Read before a review, it lets a
-	/// product reset during the review discard the grants it confirmed.
-	fn grant_revision(&self) -> u64;
-
-	/// Ask the account authority to allocate product-scoped resources, keeping
-	/// them only while the grants are still at `grant_revision`.
-	async fn allocate_resources(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		grant_revision: u64,
-		product_id: String,
-		request: HostRequestResourceAllocationRequest,
-	) -> Result<HostRequestResourceAllocationResponse, AuthorityError>;
-
-	/// Return statement-store allowance key material for the calling product.
-	async fn statement_store_allowance_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		product_id: String,
-	) -> Result<StatementStoreAllowanceKey, AuthorityError>;
-
-	/// Renew only statements signed by this product's retained sponsorship key.
-	async fn renew_statement_sponsorship(
-		&self,
-		cx: &CallContext,
-		product: &ProductContext,
-		signer: [u8; 32],
-	) -> Result<(), AuthorityError>;
-
-	/// Whether a preimage submission is kept in the core instead of being sent
-	/// to the Bulletin chain.
-	///
-	/// True only for a test host that answers allowances as granted without
-	/// performing them: the Bulletin allowance it hands out was never
-	/// authorized on chain, so a real `store` would always be refused.
-	#[cfg(feature = "test-host")]
-	fn submits_preimages_locally(&self) -> bool {
-		false
-	}
-
-	/// Return Bulletin allowance key material for the calling product.
-	async fn bulletin_allowance_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		product_id: String,
-	) -> Result<BulletinAllowanceKey, AuthorityError>;
-
-	/// Invalidate the cached Bulletin key and increase or recreate its allowance
-	/// after a submission is rejected for an exhausted or missing allowance.
-	async fn refresh_bulletin_allowance_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		product_id: String,
-	) -> Result<BulletinAllowanceKey, AuthorityError>;
-
-	/// Sign exact statement-store proof bytes with a product-derived account.
-	async fn sign_statement_store_product_payload(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
-		account: ProductAccountId,
-		payload: Vec<u8>,
-	) -> Result<[u8; 64], AuthorityError>;
-
-	/// Derive product-scoped entropy for a connected session.
-	fn derive_entropy(
-		&self,
-		session: &AuthoritySession,
-		product_id: &str,
-		context: &[u8],
-	) -> Result<[u8; 32], AuthorityError>;
-
-	/// Core-only root-derived key for stable contact handles across products.
-	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
 }
 
 /// Build the neutral authority-session snapshot for `session`.
