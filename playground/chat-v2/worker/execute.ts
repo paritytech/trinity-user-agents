@@ -24,6 +24,8 @@ import {
   FOOTER_PLACEHOLDER,
   hostStoreConfig,
   LEGACY_TEXT,
+  personaId,
+  pngDataUrl,
   METADATA_DESCRIPTION,
   PAYMENT_DESTINATION,
   png,
@@ -118,8 +120,12 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
     await call("set_room_suggestions", ctx.chat.setRoomSuggestions({ roomId: room, suggestions: off ? [] : [...SUGGESTIONS] }));
   },
   commands: async (ctx, room, command) => {
-    const off = expectSwitch(command, "[off]", true);
-    await call("set_room_commands", ctx.chat.setRoomCommands({ roomId: room, commands: off ? [] : commandSpecs() }));
+    const [which] = command.args;
+    if (command.args.length > 1 || (which !== undefined && which !== "additions" && which !== "off")) {
+      throw usage(command, "[additions|off]");
+    }
+    const commands = which === "off" ? [] : commandSpecs(which === "additions" ? "additions" : "v2");
+    await call("set_room_commands", ctx.chat.setRoomCommands({ roomId: room, commands }));
   },
   activity: async (ctx, room, command) => {
     const off = expectSwitch(command, "on|off", false);
@@ -156,6 +162,7 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
   },
   caps: runCaps,
   features: runFeatures,
+  bot: runBot,
 };
 
 /** The names of the commands this module runs, for the tests. */
@@ -404,6 +411,45 @@ async function runFeatures(ctx: ProductContext, room: RoomId, command: ParsedCom
   }
   await call("set_room_features", ctx.chat.setRoomFeatures({ roomId: room, features }));
   ctx.settings(room).features = features;
+}
+
+/**
+ * `/bot add <id> <name>` registers a persona and posts `bot <id> New` or
+ * `bot <id> Exists`; `/bot post <id> <text>` posts as `bot:<id>`;
+ * `/bot typing <id>` shows the activity line of `bot:<id>`.
+ */
+async function runBot(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const hint = "add <id> <name>|post <id> <text>|typing <id>";
+  const [sub, botId] = command.args;
+  if (botId === undefined) throw usage(command, hint);
+  switch (sub) {
+    case "add": {
+      const name = textAfter(command, 2);
+      if (name === "") throw usage(command, "add <id> <name>");
+      const registered = await call(
+        "register_bot",
+        ctx.chat.registerBot({ botId, name, icon: pngDataUrl(ctx.assets.avatarAlt) }),
+      );
+      await ctx.feed.post(room, textBody(`bot ${botId} ${registered.status}`));
+      return;
+    }
+    case "post": {
+      const text = textAfter(command, 2);
+      if (text === "") throw usage(command, "post <id> <text>");
+      await ctx.feed.post(room, textBody(text), { origin: personaId(botId) });
+      return;
+    }
+    case "typing":
+      if (command.args.length !== 2) throw usage(command, "typing <id>");
+      await call(
+        "set_room_activity",
+        ctx.chat.setRoomActivity({ roomId: room, activity: { text: ACTIVITY_TEXT, participantId: personaId(botId) } }),
+      );
+      await ctx.feed.reply(room, `ok ${command.line}`);
+      return;
+    default:
+      throw usage(command, hint);
+  }
 }
 
 // ---------------------------------------------------------------- messages

@@ -178,3 +178,53 @@ describe("/features", () => {
     });
   });
 });
+
+describe("/bot", () => {
+  test("registers a persona, posts and types as it (S53)", async () => {
+    const running = start();
+    for (const text of ["/bot add helper Helper", "/bot add helper Helper Two", "/bot post helper Hello there", "/bot typing helper"]) {
+      await command(running, text);
+    }
+
+    expect(running.fake.callsOf("registerBot")).toEqual([
+      { botId: "helper", name: "Helper", icon: expect.stringMatching(/^data:image\/png;base64,/) },
+      { botId: "helper", name: "Helper Two", icon: expect.stringMatching(/^data:image\/png;base64,/) },
+    ]);
+    expect(posted(running.fake)).toEqual(["bot helper New", "bot helper Exists", "Hello there", "ok /bot typing helper"]);
+    const origins = (running.fake.callsOf("updateFeed") as HostChatUpdateFeedRequest[]).flatMap(({ update }) =>
+      update.tag === "New" ? [update.value.origin.participantId] : [],
+    );
+    expect(origins).toEqual(["product", "product", "bot:helper", "product"]);
+    expect(running.fake.callsOf("setRoomActivity")).toEqual([
+      { roomId: "host", activity: { text: "Sample is typing", participantId: "bot:helper" } },
+    ]);
+  });
+
+  test("answers the usage without an id or a text", async () => {
+    const running = start();
+    for (const text of ["/bot", "/bot add helper", "/bot post helper", "/bot wave helper"]) {
+      await command(running, text);
+    }
+
+    expect(running.fake.callsOf("registerBot")).toEqual([]);
+    expect(posted(running.fake).every((line) => line.includes("usage: /bot"))).toBe(true);
+  });
+});
+
+describe("/commands", () => {
+  test("declares the v2 catalogue or the additions catalogue", async () => {
+    const running = start();
+    await command(running, "/commands");
+    await command(running, "/commands additions");
+    await command(running, "/commands off");
+
+    const names = (running.fake.callsOf("setRoomCommands") as { commands: { name: string }[] }[]).map(({ commands }) =>
+      commands.map((spec) => spec.name),
+    );
+    expect(names[0]).toContain("history");
+    expect(names[0]).not.toContain("bot");
+    expect(names[1]).toEqual(expect.arrayContaining(["help", "commands", "caps", "features", "bot"]));
+    expect(names[1]).not.toContain("history");
+    expect(names[2]).toEqual([]);
+  });
+});

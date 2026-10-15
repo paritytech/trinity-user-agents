@@ -76,6 +76,7 @@ export function createFakeClient(options: FakeClientOptions = {}) {
   const rendererActions = observable<HostRendererActionSubscribeItem>();
   const storage = options.storage ?? new Map<string, `0x${string}`>();
   let hostIds = 0;
+  const bots = new Set<string>();
 
   const unary =
     (method: string, answer: (request: never) => unknown = () => undefined) =>
@@ -117,6 +118,11 @@ export function createFakeClient(options: FakeClientOptions = {}) {
           },
       ),
       setRoomFeatures: unary("setRoomFeatures"),
+      registerBot: unary("registerBot", (request: { botId: string }) => {
+        const status = bots.has(request.botId) ? "Exists" : "New";
+        bots.add(request.botId);
+        return { status };
+      }),
       actionSubscribe: () => actions.observable,
       roomEventsSubscribe: () => roomEvents.observable,
       onMessagesQuery: register("messages_query"),

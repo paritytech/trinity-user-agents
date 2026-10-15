@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { bytesToHex, dataUrlToHex, hexLength, hexToUtf8 } from "../../worker/bytes";
+import { base64ToBytes, bytesToBase64, bytesToHex, dataUrlToHex, hexLength, hexToUtf8 } from "../../worker/bytes";
 import {
   customBody,
   FIXED_PARTICIPANTS,
@@ -50,6 +50,16 @@ describe("assets", () => {
   test("a data URL decodes to the file bytes", () => {
     const bytes = readFileSync(join(ASSETS, "sample.pdf"));
     expect(dataUrlToHex(`data:application/pdf;base64,${bytes.toString("base64")}`)).toBe(asset("sample.pdf"));
+  });
+});
+
+describe("bytes", () => {
+  test("base64 encodes every tail length and round-trips", () => {
+    for (const text of ["", "f", "fo", "foo", "foob", "fooba", "foobar"]) {
+      const bytes = new TextEncoder().encode(text);
+      expect(bytesToBase64(bytes)).toBe(Buffer.from(text).toString("base64"));
+      expect(base64ToBytes(bytesToBase64(bytes))).toEqual(bytes);
+    }
   });
 });
 

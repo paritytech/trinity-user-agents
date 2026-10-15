@@ -91,3 +91,40 @@ suite("chat additions on the test host", () => {
     expect(host.preview("host")?.order).toBe("PinToTop");
   });
 });
+
+suite("bot personas on the test host", () => {
+  test("S53: register_bot answers New then Exists, a persona speaks and types, an unknown one is refused", async () => {
+    const { host } = await start();
+    await host.chatUser.send("host", "/bot add helper Helper");
+    await waitForText(host, "host", "bot helper New");
+    await host.chatUser.send("host", "/bot add helper Helper Two");
+    await waitForText(host, "host", "bot helper Exists");
+    // A repeat replaces the name and the icon of the persona.
+    expect(host.getChatBots()).toEqual([
+      { botId: "helper", name: "Helper Two", icon: expect.stringMatching(/^data:image\/png;base64,/) },
+    ]);
+
+    await host.chatUser.send("host", "/bot post helper Hello from the persona");
+    const spoken = await waitForText(host, "host", "Hello from the persona");
+    expect(spoken.origin).toEqual({ participantId: "bot:helper" });
+    await host.chatUser.send("host", "/bot typing helper");
+    await waitForText(host, "host", "ok /bot typing helper");
+    expect(host.room("host")?.activity).toEqual({ text: "Sample is typing", participantId: "bot:helper" });
+
+    // The core refuses a persona the product did not register.
+    await host.chatUser.send("host", "/bot post ghost Boo");
+    await waitForText(host, "host", "error /bot post ghost Boo: update_feed Unknown (unknown bot ghost)");
+    await host.chatUser.send("host", "/bot typing ghost");
+    await waitForText(host, "host", "error /bot typing ghost: set_room_activity Unknown (unknown bot ghost)");
+  });
+
+  test("S53: a persona speaks in the room the product keeps", async () => {
+    const { host } = await start();
+    await host.chatUser.open("source");
+    await host.chatUser.send("source", "/bot add helper Helper");
+    await waitForText(host, "source", "bot helper New");
+    await host.chatUser.send("source", "/bot post helper In the source room");
+    const spoken = await waitForText(host, "source", "In the source room");
+    expect(spoken.origin).toEqual({ participantId: "bot:helper" });
+  });
+});

@@ -15,7 +15,7 @@ import type {
   ChatToolbarAction,
 } from "@parity/truapi";
 import type { HexString } from "@parity/truapi/scale";
-import { hexLength, repeatedByte, utf8ToHex } from "./bytes";
+import { bytesToBase64, hexLength, hexToBytes, repeatedByte, utf8ToHex } from "./bytes";
 import { historyId, historyTimestamp, pad, type RoomId } from "./clock";
 import { appDeeplink } from "./links";
 import type { StoredMessage } from "./store";
@@ -43,6 +43,16 @@ export function inline(mimeType: string, bytes: HexString): ChatResource {
 
 export function png(bytes: HexString): ChatResource {
   return inline("image/png", bytes);
+}
+
+/** A PNG as a `data:` URL, the form `register_bot` takes for an icon. */
+export function pngDataUrl(bytes: HexString): string {
+  return `data:image/png;base64,${bytesToBase64(hexToBytes(bytes))}`;
+}
+
+/** The participant id a product speaks as for its persona `botId`. */
+export function personaId(botId: string): string {
+  return `bot:${botId}`;
 }
 
 /** The preimage key the product uses when the host refuses the submit. */

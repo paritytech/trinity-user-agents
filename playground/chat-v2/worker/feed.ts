@@ -21,6 +21,8 @@ export interface FeedDeps {
 
 export interface PostOptions {
   status?: ChatMessageStatus;
+  /** The participant the message is from; the default is `"product"`. */
+  origin?: string;
   /** `true`: the message is an echo, so a `Seen` of it makes no echo. */
   echo?: boolean;
 }
@@ -46,7 +48,7 @@ export class Feed {
     const { id, counter } = clock.nextProductId(room);
     const message: ChatMessage = {
       messageId: id,
-      origin: { participantId: "product" },
+      origin: { participantId: options.origin ?? "product" },
       timestamp: clock.nextTimestamp(),
       body: typeof body === "function" ? body(counter) : body,
       status: options.status ?? "Sent",
