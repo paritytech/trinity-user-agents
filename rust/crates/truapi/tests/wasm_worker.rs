@@ -1,6 +1,7 @@
 //! Runs the example workers in `rust/guests` against an in-process host.
 
 use std::{
+	collections::HashMap,
 	path::{Path, PathBuf},
 	process::Command,
 	sync::{Arc, Mutex, OnceLock},
@@ -8,11 +9,17 @@ use std::{
 
 use futures::{StreamExt, executor::block_on, stream};
 use truapi::{
-	CallContext, CallError, CancellationToken, Subscription, WasmEnv, WasmWorker,
-	api::{Account, Preimage},
+	CallContext, CallError, CancellationToken, Subscription, WasmEnv, WasmWorker, WasmWorkerError,
+	api::{Account, LocalStorage, Preimage},
 	v01,
 	versioned::{
 		account::{HostGetUserIdError, HostGetUserIdRequest, HostGetUserIdResponse},
+		local_storage::{
+			HostLocalStorageClearError, HostLocalStorageClearRequest,
+			HostLocalStorageClearResponse, HostLocalStorageReadError, HostLocalStorageReadRequest,
+			HostLocalStorageReadResponse, HostLocalStorageWriteError, HostLocalStorageWriteRequest,
+			HostLocalStorageWriteResponse,
+		},
 		preimage::{
 			RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
 			RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitError,
@@ -27,6 +34,42 @@ struct TestHost {
 	preimages: Mutex<Vec<Vec<u8>>>,
 	lookup_cancel: Mutex<Option<CancellationToken>>,
 	lookup_cancelled_when_user_id_asked: Mutex<Option<bool>>,
+	storage: Mutex<HashMap<String, Vec<u8>>>,
+}
+
+#[truapi::async_trait]
+impl LocalStorage for TestHost {
+	async fn read(
+		&self,
+		_cx: &CallContext,
+		request: HostLocalStorageReadRequest,
+	) -> Result<HostLocalStorageReadResponse, CallError<HostLocalStorageReadError>> {
+		let HostLocalStorageReadRequest::V1(request) = request else {
+			return Err(CallError::Unsupported);
+		};
+		let value = self.storage.lock().unwrap().get(&request.key).cloned();
+		Ok(HostLocalStorageReadResponse::V2(v01::HostLocalStorageReadResponse { value }))
+	}
+
+	async fn write(
+		&self,
+		_cx: &CallContext,
+		request: HostLocalStorageWriteRequest,
+	) -> Result<HostLocalStorageWriteResponse, CallError<HostLocalStorageWriteError>> {
+		let HostLocalStorageWriteRequest::V1(request) = request;
+		self.storage.lock().unwrap().insert(request.key, request.value);
+		Ok(HostLocalStorageWriteResponse::V1)
+	}
+
+	async fn clear(
+		&self,
+		_cx: &CallContext,
+		request: HostLocalStorageClearRequest,
+	) -> Result<HostLocalStorageClearResponse, CallError<HostLocalStorageClearError>> {
+		let HostLocalStorageClearRequest::V1(request) = request;
+		self.storage.lock().unwrap().remove(&request.key);
+		Ok(HostLocalStorageClearResponse::V1)
+	}
 }
 
 #[truapi::async_trait]
@@ -105,6 +148,7 @@ fn guest(name: &str) -> Vec<u8> {
 fn env(host: impl Into<Arc<TestHost>>) -> WasmEnv<TestHost> {
 	let mut env = WasmEnv::new(host.into());
 	env.link_account();
+	env.link_local_storage();
 	env.link_preimage();
 	env
 }
@@ -156,4 +200,41 @@ fn a_worker_importing_a_method_the_host_does_not_link_is_rejected_before_it_runs
 	let error = WasmWorker::new(env, &guest("hello")).err().map(|error| error.to_string());
 
 	assert_eq!(error.as_deref(), Some("unknown import `truapi.account_get_user_id`"));
+}
+
+#[test]
+fn spawned_tasks_sleep_on_host_timers_and_a_raw_call_round_trips() {
+	let host = Arc::new(TestHost::default());
+	let lines = Arc::new(Mutex::new(Vec::new()));
+	let log = lines.clone();
+	let worker = WasmWorker::new(env(host.clone()), &guest("tasks"))
+		.unwrap()
+		.with_log(move |line| log.lock().unwrap().push(line.to_string()));
+
+	let outcome = block_on(worker.run()).map_err(|error| error.to_string());
+
+	let seed = host.storage.lock().unwrap().get("seed").map(Vec::len);
+	let lines = lines.lock().unwrap().clone();
+	assert_eq!((outcome, seed, lines), (Ok(()), Some(32), vec!["order: fast, slow".to_string()]));
+}
+
+#[test]
+fn spawned_tasks_run_on_a_tokio_runtime_too() {
+	let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+	let worker = WasmWorker::new(env(TestHost::default()), &guest("tasks")).unwrap();
+
+	let outcome = runtime.block_on(worker.run()).map_err(|error| error.to_string());
+
+	assert_eq!(outcome, Ok(()));
+}
+
+#[test]
+fn a_worker_that_never_yields_traps_when_its_fuel_ends() {
+	let worker = WasmWorker::new(env(TestHost::default()), &guest("busy"))
+		.unwrap()
+		.with_fuel_per_entry(1_000_000);
+
+	let outcome = block_on(worker.run());
+
+	assert!(matches!(outcome, Err(WasmWorkerError::Trapped { .. })), "{outcome:?}");
 }
