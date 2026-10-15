@@ -179,6 +179,29 @@ class ChatFeedViewModelProductRoomTest {
     }
 
     @Test
+    fun `a link of a message opens only after the user confirms it`() = runBlocking<Unit> {
+        val model = viewModel()
+
+        model.onProductRoomAction(ProductRoomAction.ConfirmLink("https://weather.example/radar"))
+
+        assertEquals(ChatMenuType.ProductLinkConfirmation("https://weather.example/radar"), model.menuState.value.type)
+        with(model) { coVerify(exactly = 0) { productLinkOpener.open(any()) } }
+
+        model.onProductRoomAction(ProductRoomAction.OpenLink("https://weather.example/radar"))
+
+        with(model) { coVerify(timeout = 5_000) { productLinkOpener.open("https://weather.example/radar") } }
+    }
+
+    @Test
+    fun `a link of a message with another scheme than http does not open`() = runBlocking<Unit> {
+        val model = viewModel()
+
+        model.onProductRoomAction(ProductRoomAction.ConfirmLink("intent://scan#Intent;end"))
+
+        assertEquals(null, model.menuState.value.type)
+    }
+
+    @Test
     fun `the toolbar shows the buttons of the product`() = runBlocking<Unit> {
         policy.value = ChatRoomPolicy.Defaults.copy(toolbar = listOf(toolbarAction("refresh", ChatActionHandlerModel.Callback)))
 

@@ -874,6 +874,9 @@
     <string name="chat_product_room_placeholder">No messages yet</string>
     <string name="chat_message_show_more">Show more</string>
     <string name="chat_message_video">Video</string>
+    <string name="chat_media_open_image">Open image</string>
+    <string name="chat_media_open_file">Open file</string>
+    <string name="chat_media_failed">Did not load. Tap to try again.</string>
     <string name="chat_message_action_failed">The app did not take the action. Try again.</string>
     <string name="chat_reply_earlier_message">Earlier message</string>
     <string name="chat_feed_page_failed">Messages did not load. Tap to try again.</string>

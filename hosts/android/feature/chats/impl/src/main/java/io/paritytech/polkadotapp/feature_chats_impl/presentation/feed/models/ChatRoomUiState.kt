@@ -10,9 +10,11 @@ data class ChatRoomUiState(
     val subtitle: String?,
     /** Shows while the room has no messages. Null for a person chat, which shows nothing. */
     val emptyPlaceholder: EmptyRoomPlaceholder?,
+    /** A tap on a link of a message asks the user to confirm the link first (02-DESIGN §6.1). */
+    val confirmsLinks: Boolean,
 ) {
     companion object {
-        val PersonChat = ChatRoomUiState(subtitle = null, emptyPlaceholder = null)
+        val PersonChat = ChatRoomUiState(subtitle = null, emptyPlaceholder = null, confirmsLinks = false)
     }
 }
 
@@ -28,5 +30,6 @@ fun ChatRoomPolicy?.toRoomUiState(): ChatRoomUiState {
     return ChatRoomUiState(
         subtitle = description?.takeIf { it.isNotBlank() },
         emptyPlaceholder = placeholder?.takeIf { it.isNotBlank() }?.let { EmptyRoomPlaceholder.ProductText(it) } ?: EmptyRoomPlaceholder.HostText,
+        confirmsLinks = true,
     )
 }

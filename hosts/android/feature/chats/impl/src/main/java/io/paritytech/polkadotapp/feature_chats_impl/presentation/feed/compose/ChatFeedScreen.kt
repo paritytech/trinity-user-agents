@@ -13,6 +13,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -273,8 +275,9 @@ private fun ChatFeedScreenInternal(
                     .fillMaxWidth()
                     .weight(1f)
             ) {
+                val uriHandler = rememberMessageLinkHandler(confirmsLinks = roomState.confirmsLinks, onProductRoomAction)
                 chatMessagesLoadingState.onLoaded {
-                    CompositionLocalProvider(LocalChatFooterHeight provides footerHeight) {
+                    CompositionLocalProvider(LocalChatFooterHeight provides footerHeight, LocalUriHandler provides uriHandler) {
                         ChatFeed(
                             chatMessagesState = it,
                             username = username,
@@ -338,6 +341,23 @@ private fun ChatFeedScreenInternal(
                     }
                 }
             }
+        }
+    }
+}
+
+/** In a room that confirms links, a tap on a link of a message asks the user to confirm the link first (02-DESIGN §6.1). */
+@Composable
+private fun rememberMessageLinkHandler(confirmsLinks: Boolean, onProductRoomAction: (ProductRoomAction) -> Unit): UriHandler {
+    val systemHandler = LocalUriHandler.current
+    val currentAction by rememberUpdatedState(onProductRoomAction)
+
+    return remember(confirmsLinks, systemHandler) {
+        if (confirmsLinks) {
+            object : UriHandler {
+                override fun openUri(uri: String) = currentAction(ProductRoomAction.ConfirmLink(uri))
+            }
+        } else {
+            systemHandler
         }
     }
 }

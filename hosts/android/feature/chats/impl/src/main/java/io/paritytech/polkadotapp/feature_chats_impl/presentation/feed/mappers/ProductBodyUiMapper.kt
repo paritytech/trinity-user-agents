@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers
 
 import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatActionsLayoutModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaItemModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
@@ -9,17 +8,16 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBo
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ReplyPreview
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ResolvedChatImage
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import javax.inject.Inject
 
-/** Maps the bodies of Chat Extension v2 that the native message kinds cannot hold (02-DESIGN §6). */
-class ProductBodyUiMapper @Inject constructor(
-    private val resourceResolver: ChatResourceResolver,
-) {
-    suspend fun map(
+/**
+ * Maps the bodies of Chat Extension v2 that the native message kinds cannot hold (02-DESIGN §6). The room screen
+ * loads the bytes of media items when they show, so the mapper does no network request.
+ */
+class ProductBodyUiMapper @Inject constructor() {
+    fun map(
         message: ChatMessage,
         body: ProductMessageBody,
         direction: ChatMessageUiModel.Direction,
@@ -74,12 +72,10 @@ class ProductBodyUiMapper @Inject constructor(
         }
     }
 
-    private suspend fun ChatMediaItemModel.toUi(): ChatMessageUiModel.ProductMedia.MediaItem = when (this) {
+    private fun ChatMediaItemModel.toUi(): ChatMessageUiModel.ProductMedia.MediaItem = when (this) {
         is ChatMediaItemModel.Image -> ChatMessageUiModel.ProductMedia.MediaItem.Image(
-            model = resourceResolver.resolve(resource)
-                .logFailure("Failed to resolve a product image")
-                .getOrNull()
-                ?.model,
+            resource = resource,
+            mimeType = meta.mimeType,
             width = meta.width,
             height = meta.height,
             blurHash = meta.placeholder,
@@ -87,7 +83,8 @@ class ProductBodyUiMapper @Inject constructor(
         )
 
         is ChatMediaItemModel.Video -> ChatMessageUiModel.ProductMedia.MediaItem.Video(
-            url = (resourceResolver.resolve(resource).getOrNull() as? ResolvedChatImage.Remote)?.url,
+            resource = resource,
+            mimeType = meta.mimeType,
             width = meta.width,
             height = meta.height,
             blurHash = meta.placeholder,
@@ -95,9 +92,10 @@ class ProductBodyUiMapper @Inject constructor(
         )
 
         is ChatMediaItemModel.File -> ChatMessageUiModel.ProductMedia.MediaItem.File(
+            resource = resource,
+            mimeType = meta.mimeType,
             fileName = fileName,
             size = meta.sizeBytes?.bytes,
-            mimeType = meta.mimeType,
             alt = meta.alt,
         )
     }

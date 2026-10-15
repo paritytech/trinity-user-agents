@@ -203,6 +203,7 @@ class ChatProductRoomController(
     fun handle(action: ProductRoomAction) {
         when (action) {
             is ProductRoomAction.OpenLink -> openLink(action.url)
+            is ProductRoomAction.ConfirmLink -> confirmMessageLink(action.url)
             is ProductRoomAction.Toolbar -> pressToolbar(action.actionId)
             ProductRoomAction.ShowParticipants -> showParticipants()
             ProductRoomAction.LoadMoreParticipants -> participants.loadMore()
@@ -275,6 +276,16 @@ class ChatProductRoomController(
         perform(action.handler, ChatRoomUserEvent.ToolbarActionTriggered(actionId))
     }
 
+    /** As on iOS, a link of a message opens only with an `http` or `https` address, and only after the user confirms it. */
+    private fun confirmMessageLink(url: String) {
+        val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
+        if (scheme !in MESSAGE_LINK_SCHEMES) {
+            Timber.w("A message link with the scheme '%s' does not open", scheme)
+            return
+        }
+        screen.showMenu(ChatMenuType.ProductLinkConfirmation(url))
+    }
+
     private fun openLink(url: String) {
         screen.closeMenu()
         scope.launch {
@@ -306,6 +317,10 @@ class ChatProductRoomController(
             icon ?: return@mapNotNull null
             resourceResolver.resolve(icon).getOrNull()?.let { actionId to it.model }
         }.toMap()
+
+    private companion object {
+        val MESSAGE_LINK_SCHEMES = setOf("http", "https")
+    }
 
     class Factory @Inject constructor(
         private val interactor: ChatFeedInteractor,

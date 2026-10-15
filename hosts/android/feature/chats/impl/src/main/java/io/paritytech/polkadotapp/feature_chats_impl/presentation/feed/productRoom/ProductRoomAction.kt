@@ -2,8 +2,11 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRo
 
 /** What the user does to the parts of a product room that its product declares. */
 sealed interface ProductRoomAction {
-    /** The user confirmed the link of a product action. */
+    /** The user confirmed the link of a product action or of a message. */
     data class OpenLink(val url: String) : ProductRoomAction
+
+    /** The user tapped a link in a message. The link opens only after the user confirms it (02-DESIGN §6.1). */
+    data class ConfirmLink(val url: String) : ProductRoomAction
 
     /** A press on a button of the toolbar. */
     data class Toolbar(val actionId: String) : ProductRoomAction

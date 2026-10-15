@@ -12,7 +12,7 @@ class ChatRoomUiStateTest {
 
     @Test
     fun `a product room without declarations shows the host placeholder`() {
-        assertEquals(ChatRoomUiState(subtitle = null, emptyPlaceholder = EmptyRoomPlaceholder.HostText), ChatRoomPolicy.Defaults.toRoomUiState())
+        assertEquals(ChatRoomUiState(subtitle = null, emptyPlaceholder = EmptyRoomPlaceholder.HostText, confirmsLinks = true), ChatRoomPolicy.Defaults.toRoomUiState())
     }
 
     @Test
@@ -20,7 +20,7 @@ class ChatRoomUiStateTest {
         val policy = ChatRoomPolicy.Defaults.copy(description = "Forecasts for Berlin", placeholder = "Ask about the weather")
 
         assertEquals(
-            ChatRoomUiState(subtitle = "Forecasts for Berlin", emptyPlaceholder = EmptyRoomPlaceholder.ProductText("Ask about the weather")),
+            ChatRoomUiState(subtitle = "Forecasts for Berlin", emptyPlaceholder = EmptyRoomPlaceholder.ProductText("Ask about the weather"), confirmsLinks = true),
             policy.toRoomUiState(),
         )
     }
