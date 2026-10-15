@@ -16,13 +16,12 @@ class ProductBotFactory @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
     private val workerRefCounter: ProductWorkerRefCounter,
 ) {
-    /** [hostPlaced] marks the chat of a product the host itself lists. */
-    fun create(product: Product, hostPlaced: Boolean = false): ProductChatExtension {
+    fun create(product: Product, origin: ProductChatExtensionOrigin): ProductChatExtension {
         return ProductChatExtension(
             appContext = appContext,
             product = product,
             workerRefCounter = workerRefCounter,
-            hostPlaced = hostPlaced,
+            origin = origin,
         )
     }
 }

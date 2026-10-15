@@ -12,12 +12,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 
 /**
- * Pins a chat above the rest because the host placed it, so it does not compete on recency: on a
- * fresh install every other chat gets a message later than the placed one. The row itself reads
- * like any other, from its last message, so the renderer is never asked to draw.
+ * Pins a product's chat above the rest when the host placed it, so it does not compete on recency:
+ * on a fresh install every other chat gets a message later than the placed one. Any other product
+ * gets no custom preview and is ordered like any chat. The row itself reads like any other, from
+ * its last message, so the renderer is never asked to draw.
  */
-internal object PinnedChatPreviewDelegate :
-    CustomChatPreviewDelegate<Nothing>,
+internal class ProductChatPreviewDelegate(
+    private val origin: ProductChatExtensionOrigin,
+) : CustomChatPreviewDelegate<Nothing>,
     CustomChatPreviewDataProvider<Nothing>,
     CustomChatPreviewRenderer<Nothing> {
     override val provider: CustomChatPreviewDataProvider<Nothing> get() = this
@@ -26,7 +28,11 @@ internal object PinnedChatPreviewDelegate :
 
     context(scope: ComputationalScope)
     override fun provide(): Flow<ChatPreview.Custom<Nothing>?> = flowOf(
-        ChatPreview.Custom(Order.PinToTop, CustomPreviewData.FromMessage, ChatPreview.Custom.BadgeStyle.UNREAD)
+        when (origin) {
+            ProductChatExtensionOrigin.PlacedByHost ->
+                ChatPreview.Custom(Order.PinToTop, CustomPreviewData.FromMessage, ChatPreview.Custom.BadgeStyle.UNREAD)
+            ProductChatExtensionOrigin.InstalledByUser -> null
+        }
     )
 
     @Composable

@@ -45,8 +45,8 @@ class ProductChatExtensionTest {
     private val product = Product(ProductId.fromStoredValue("truapi-playground.dot"), "TrUAPI Playground", icon = null)
     private val extensionId = product.id.toChatExtensionId()
 
-    private fun hostPlaced(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, hostPlaced = true)
+    private fun placedByHost(refCounter: ProductWorkerRefCounter) =
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, ProductChatExtensionOrigin.PlacedByHost)
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
@@ -189,7 +189,7 @@ class ProductChatExtensionTest {
 
     private suspend fun ProductChatExtension.pinnedAndRemovable(chatId: ChatId): Pair<ChatPreview?, Boolean> = coroutineScope {
         val computationalScope = object : ComputationalScope, CoroutineScope by this {}
-        val preview = with(computationalScope) { customChatPreviewDelegate(chatId)?.provider?.provide()?.first() }
+        val preview = with(computationalScope) { customChatPreviewDelegate(chatId).provider.provide().first() }
         preview to (customMenuRenderer(chatId) as ProductChatMenuRenderer).removable
     }
 
@@ -198,7 +198,7 @@ class ProductChatExtensionTest {
     // its worker kept running.
     @Test
     fun `a host-placed chat is pinned above the rest and offers no removal`() = runTest {
-        val extension = hostPlaced(FakeRefCounter(RecordingWorker()))
+        val extension = placedByHost(FakeRefCounter(RecordingWorker()))
 
         assertEquals(
             ChatPreview.Custom(Order.PinToTop, CustomPreviewData.FromMessage, ChatPreview.Custom.BadgeStyle.UNREAD) to false,

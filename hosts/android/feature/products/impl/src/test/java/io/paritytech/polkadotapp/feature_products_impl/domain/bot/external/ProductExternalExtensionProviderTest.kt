@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedP
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotFactory
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExtension
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExtensionOrigin
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -41,7 +42,7 @@ class ProductExternalExtensionProviderTest {
     fun `an installed chat product is listed as its extension`() = runTest {
         val extensions = extensions(stored = listOf(playground), placed = emptyList())
 
-        assertEquals(listOf(playground to false), extensions.map { it.product to it.hostPlaced })
+        assertEquals(listOf(playground to ProductChatExtensionOrigin.InstalledByUser), extensions.map { it.product to it.origin })
     }
 
     // Unioned rather than written to the product tables, as Pocket does with its pinned card:
@@ -51,8 +52,8 @@ class ProductExternalExtensionProviderTest {
         val extensions = extensions(stored = listOf(playground), placed = listOf(jollity))
 
         assertEquals(
-            listOf(jollity to true, playground to false),
-            extensions.map { it.product to it.hostPlaced },
+            listOf(jollity to ProductChatExtensionOrigin.PlacedByHost, playground to ProductChatExtensionOrigin.InstalledByUser),
+            extensions.map { it.product to it.origin },
         )
     }
 

@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExte
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtensionProvider
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotFactory
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExtensionOrigin
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -29,10 +30,10 @@ class ProductExternalExtensionProvider @Inject constructor(
             integrationRepository.observeProductsByType(IntegrationType.Chat),
         ) { placed, installed ->
             val placedIds = placed.map { it.id }.toSet()
-            val placedExtensions = placed.map { productBotFactory.create(it, hostPlaced = true) }
+            val placedExtensions = placed.map { productBotFactory.create(it, ProductChatExtensionOrigin.PlacedByHost) }
             val installedExtensions = installed
                 .filterNot { it.id in placedIds }
-                .map { productBotFactory.create(it) }
+                .map { productBotFactory.create(it, ProductChatExtensionOrigin.InstalledByUser) }
 
             placedExtensions + installedExtensions
         }.distinctUntilChanged()

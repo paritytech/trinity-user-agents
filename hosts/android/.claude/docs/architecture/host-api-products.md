@@ -373,7 +373,7 @@ unions them with the installed chat products, placed first and listed once when 
 is written to the product tables, so nothing can uninstall them, and the product the registry sees never changes, so
 the worker is not restarted over a resolved name. A placed product's chat extension holds the worker like any other,
 and the product registers its rooms through its own `createRoom`. A host-placed chat is pinned above the rest
-(`PinnedChatPreviewDelegate`, through `Order.PinToTop`) and its menu offers no removal.
+(`ProductChatPreviewDelegate`, through `Order.PinToTop`, for the `PlacedByHost` origin) and its menu offers no removal.
 
 ---
 
