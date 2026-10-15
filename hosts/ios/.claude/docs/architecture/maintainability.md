@@ -126,7 +126,7 @@ When temporarily disabling a feature, do it at the registration/factory level â€
 
 ```swift
 // GOOD: Don't create the extension if not needed
-// In ChatExtensionsRegistry.createDimExtensions:
+// In ChatExtensionsRegistry.createDefault:
 // simply skip creating the extension
 
 // BAD: Early return inside the feature
