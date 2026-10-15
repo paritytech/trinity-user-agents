@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed
 
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -18,10 +19,14 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.EmptyRoomPlaceholder
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.FakeProductRoomAdditionsFeed
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.FakeReadAloudController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.callFactory
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchController
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
@@ -53,7 +58,13 @@ class ChatFeedViewModelTest {
     fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
 
     @After
-    fun tearDown() = Dispatchers.resetMain()
+    fun tearDown() {
+        // A view model that a test leaves open would run on the main dispatcher of the next test.
+        models.forEach { it.viewModelScope.cancel() }
+        Dispatchers.resetMain()
+    }
+
+    private val models = mutableListOf<ChatFeedViewModel>()
 
     @Test
     fun `the room shows the description and the placeholder of the product`() = runBlocking<Unit> {
@@ -91,7 +102,9 @@ class ChatFeedViewModelTest {
         coVerify(timeout = 5_000) { interactor.retryProductRoomMessage(roomId, "message-1") }
     }
 
-    private fun viewModel() = ChatFeedViewModel(
+    private fun viewModel() = createViewModel().also { models += it }
+
+    private fun createViewModel() = ChatFeedViewModel(
         savedStateHandle = SavedStateHandle(mapOf(ChatFeedPayload::class.java.name to ChatFeedPayload.existingChat(roomId))),
         router = mockk(relaxed = true),
         interactor = interactor,
@@ -102,7 +115,17 @@ class ChatFeedViewModelTest {
         attachmentExecutor = mockk(relaxed = true),
         dispatchers = TestCoroutineDispatchers(UnconfinedTestDispatcher()),
         resourceResolver = mockk(relaxed = true),
-        productRoomFactory = ChatProductRoomController.Factory(interactor, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true)),
+        productRoomFactory = ChatProductRoomController.Factory(
+            interactor,
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+            FakeProductRoomAdditionsFeed(),
+            FakeReadAloudController(),
+            mockk(relaxed = true),
+            callFactory(),
+        ),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk(relaxed = true),
         roomSearchFactory = ChatRoomSearchController.Factory(mockk(relaxed = true)),

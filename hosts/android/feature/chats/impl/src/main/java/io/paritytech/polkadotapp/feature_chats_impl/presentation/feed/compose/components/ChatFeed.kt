@@ -32,6 +32,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomC
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatHeaderRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.MessageDrawingContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.asAnyRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatDateSeparatorStyle
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageGrouping
@@ -40,6 +41,7 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessag
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.HighlightedMessage
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageAction
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageLayoutInfo
+import io.paritytech.polkadotapp.feature_chats_api.presentation.model.isIncoming
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.isUnread
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.*
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.CompactionUnavailableMessage
@@ -50,11 +52,13 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.multimedia.MultimediaMessage
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.separators.GroupDateSeparator
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.separators.NewMessagesSeparator
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.markdown.markdownPlainText
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatPageEdgeUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomReadinessUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.EmptyRoomPlaceholder
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatParticipantUiModel
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.MessageDecorationUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.persistentMapOf
@@ -92,6 +96,9 @@ internal fun ChatFeed(
     onShowNewestMessages: () -> Unit = {},
     authors: ImmutableMap<ChatMessageId, ChatParticipantUiModel> = persistentMapOf(),
     onAuthorClick: (participantId: String) -> Unit = {},
+    decorations: ImmutableMap<ChatMessageId, MessageDecorationUiModel> = persistentMapOf(),
+    onOpenThread: (ChatId) -> Unit = {},
+    onSelectBranch: (ChatMessageId, index: Int) -> Unit = { _, _ -> },
 ) {
     val footerHeight = LocalChatFooterHeight.current
     var initialMessageIds by remember { mutableStateOf<Set<ChatMessageId>?>(null) }
@@ -190,11 +197,25 @@ internal fun ChatFeed(
                     .padding(horizontal = PolkadotTheme.spacings.mediumIncreased)
                     .padding(bottom = spacing)
 
+                val decoration = decorations[message.id]
+                val reasoning = decoration?.reasoning
+                // The layout is reversed, so the chip and the branch control that come before the message draw below it.
+                if (decoration != null && reasoning == null) {
+                    MessageDecorationsBelow(
+                        decoration = decoration,
+                        incoming = message.isIncoming(),
+                        onOpenThread = onOpenThread,
+                        onSelectBranch = { index -> onSelectBranch(message.id, index) },
+                    )
+                }
+
                 AnimatedMessageContainer(
                     animate = isNewMessage,
                     onAnimated = { animatedMessageIds.add(message.id) },
                 ) {
-                    when (message) {
+                    if (reasoning != null) {
+                        ReasoningRow(modifier = messageModifier, reasoning = reasoning, text = message.reasoningText())
+                    } else when (message) {
                         is ChatMessageUiModel.ContactAdded -> ContactAddedMessage(
                             modifier = messageModifier,
                             message = message,
@@ -395,6 +416,33 @@ internal fun ChatFeed(
             iconTint = dateSeparatorStyle?.textColor,
         )
     }
+}
+
+/** The branch control and the thread chip under a message, on the side of the message. */
+@Composable
+private fun MessageDecorationsBelow(
+    decoration: MessageDecorationUiModel,
+    incoming: Boolean,
+    onOpenThread: (ChatId) -> Unit,
+    onSelectBranch: (index: Int) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PolkadotTheme.spacings.mediumIncreased)
+            .padding(bottom = PolkadotTheme.spacings.small),
+        horizontalAlignment = if (incoming) Alignment.Start else Alignment.End,
+    ) {
+        decoration.branch?.let { BranchControl(branch = it, onSelect = onSelectBranch) }
+        decoration.thread?.let { chip -> ThreadChip(chip = chip, onOpen = { onOpenThread(chip.threadChatId) }) }
+    }
+}
+
+/** The text that a reasoning row shows: the plain text of the body of its message. */
+private fun ChatMessageUiModel.reasoningText(): String? = when (this) {
+    is ChatMessageUiModel.Text -> if (isMarkdown) markdownPlainText(text) else text
+    is ChatMessageUiModel.ProductMedia -> text?.let(::markdownPlainText)
+    else -> null
 }
 
 @Composable

@@ -13,6 +13,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
+import io.paritytech.polkadotapp.design.components.icon.vectors.AudioFilled
 import io.paritytech.polkadotapp.design.components.icon.vectors.ContentCopy
 import io.paritytech.polkadotapp.design.components.icon.vectors.Edit
 import io.paritytech.polkadotapp.design.components.icon.vectors.ReplyArrow
@@ -107,6 +108,14 @@ internal fun ActionMenuList(
                             icon = NovaIcons.Trash,
                             onClick = { onMessageAction(MessageAction.Delete(state.message)) },
                             isDestructive = true,
+                        )
+                    }
+
+                    is AllowedMessageMenuAction.ReadAloud -> {
+                        ActionMenuItem(
+                            text = stringResource(RCommon.string.chat_read_aloud),
+                            icon = NovaIcons.AudioFilled,
+                            onClick = { onMessageAction(MessageAction.ReadAloud(action.text)) }
                         )
                     }
 

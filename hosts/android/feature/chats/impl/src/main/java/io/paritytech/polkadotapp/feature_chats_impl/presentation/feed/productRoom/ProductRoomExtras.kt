@@ -14,6 +14,8 @@ data class ProductRoomExtrasUiState(
     val commands: ImmutableList<ChatCommandModel>,
     /** The activity line, for example "Bot is typing". Null shows no line. */
     val activity: String?,
+    /** The persona that the activity line is about, drawn with its icon (07-LATER §5.2). */
+    val activitySpeaker: ChatParticipantUiModel? = null,
 ) {
     companion object {
         val None = ProductRoomExtrasUiState(suggestions = persistentListOf(), commands = persistentListOf(), activity = null)

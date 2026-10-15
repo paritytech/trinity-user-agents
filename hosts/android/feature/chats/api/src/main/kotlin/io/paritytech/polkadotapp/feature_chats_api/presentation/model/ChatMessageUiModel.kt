@@ -360,6 +360,9 @@ sealed interface MessageAction {
 
     /** A product entry of the message menu. */
     data class ProductMenuAction(val message: ChatMessageUiModel, val actionId: String) : MessageAction
+
+    /** The host speaks [text], the plain text of a message (07-LATER §9.5). */
+    data class ReadAloud(val text: String) : MessageAction
     data object DismissActionMenu : MessageAction
 }
 
@@ -370,6 +373,9 @@ sealed interface AllowedMessageMenuAction {
     data object ViewEditHistory : AllowedMessageMenuAction
     data object Delete : AllowedMessageMenuAction
     data object Retry : AllowedMessageMenuAction
+
+    /** The built-in "Read aloud" of a room that declares `read_aloud`. [text] is the plain text to speak. */
+    data class ReadAloud(val text: String) : AllowedMessageMenuAction
 
     /** An entry of the product of the room. [icon] is what the image loader draws, or null. */
     data class Custom(val actionId: String, val label: String, val icon: Any?, val isDestructive: Boolean) : AllowedMessageMenuAction

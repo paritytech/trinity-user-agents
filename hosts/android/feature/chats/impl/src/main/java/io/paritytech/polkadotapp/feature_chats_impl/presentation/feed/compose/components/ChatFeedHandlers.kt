@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
@@ -15,6 +16,8 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.Highlighte
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 internal fun ScrollDownUponNewMessageHandler(
@@ -46,6 +49,10 @@ internal fun rememberHighlightedMessageId(
 
     highlightEvents.collectAsEffect { _, event ->
         currentHighlightId = event.messageId
+        // A jump to a message of a page that just loaded can come before the list has the items of that page.
+        withTimeoutOrNull(HIGHLIGHT_ITEMS_WAIT_MS) {
+            snapshotFlow { currentLazyListState.layoutInfo.totalItemsCount }.first { it > event.scrollIndex }
+        }
         currentLazyListState.animateScrollToItem(event.scrollIndex)
         delay(HIGHLIGHT_PULSE_DURATION_MS)
         currentHighlightId = null
@@ -53,3 +60,5 @@ internal fun rememberHighlightedMessageId(
 
     return currentHighlightId
 }
+
+private const val HIGHLIGHT_ITEMS_WAIT_MS = 2_000L

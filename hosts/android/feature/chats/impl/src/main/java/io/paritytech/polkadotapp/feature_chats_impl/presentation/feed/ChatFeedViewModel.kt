@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.common.presentation.loading.awaitLoaded
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.ui.errors.PresentationThrowable
 import io.paritytech.polkadotapp.common.presentation.ui.errors.UnexpectedPresentationError
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.OneShotEventChannel
@@ -53,6 +54,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.takesText
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAnotherChatPresentationError
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.toPresentationError
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.attachments.ChatAttachmentSender
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.ChatMessageUiMapper
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.toUi
@@ -78,7 +80,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.RoomSearchAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentExecutor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentKind
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentResult
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.attachmentKinds
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.roomAvatar
@@ -156,6 +157,7 @@ class ChatFeedViewModel @Inject constructor(
         roomPolicy = roomPolicy,
         feedSnapshot = feedSnapshot,
         origins = originDisplayResolver,
+        opensOverParent = payload.opensOverParent,
         screen = object : ChatProductRoomController.Screen {
             override fun showPopup(selection: MessagePopUpSelection) = messagePopupSection.update { selection }
 
@@ -193,6 +195,23 @@ class ChatFeedViewModel @Inject constructor(
         .shareInBackground()
 
     private val revealedUpTo = MutableStateFlow<Timestamp?>(null)
+
+    private val attachments = ChatAttachmentSender(
+        chatId = chatId,
+        interactor = interactor,
+        screen = object : ChatAttachmentSender.Screen {
+            override fun showNotice(productName: String) =
+                menuState.update { it.copy(isVisible = true, type = ChatMenuType.PublicStorageNotice(productName)) }
+
+            override fun closeMenu() = menuState.update { it.copy(isVisible = false) }
+
+            override fun clearInput() = messageInputState.clear()
+
+            override fun showOutcome(outcome: ChatSourceActionOutcome) = showActionOutcome(outcome)
+
+            override fun showFailure(error: PresentationThrowable) = showPresentationError(error)
+        },
+    )
 
     private val gatedDomainMessages = combine(
         feedSnapshot.map { it.messages },
@@ -278,7 +297,7 @@ class ChatFeedViewModel @Inject constructor(
         val answered = productReactions?.takeIf { popupSelection.type == MessagePopUpSelection.Type.REACTION_DETAILS }
         if (answered?.messageId == popupSelection.messageId) return@combine answered
 
-        messageUiMapper.constructPopUpState(
+        productRoom.adjustPopup(messageUiMapper.constructPopUpState(
             selection = popupSelection,
             reactions = reactions,
             originDisplayResolver = originDisplayResolver,
@@ -286,7 +305,7 @@ class ChatFeedViewModel @Inject constructor(
             userInputState = chatInputStateType,
             roomPolicy = policy,
             productMenu = productMenu,
-        )
+        ))
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     private val messageInputState = MutableStateFlow(ChatSendMessageInputState())
@@ -372,6 +391,7 @@ class ChatFeedViewModel @Inject constructor(
         markNonDisplayableMessagesAsRead()
         draftController.start()
         jumpToTargetMessageIfNeeded()
+        attachments.observeFailures().onEach(::showPresentationError).launchIn(this)
     }
 
     override fun onCleared() {
@@ -483,8 +503,11 @@ class ChatFeedViewModel @Inject constructor(
     }
 
     override fun onCloseMenu() {
+        attachments.dropPending()
         menuState.update { it.copy(isVisible = false) }
     }
+
+    override fun onPublicStorageNoticeAccept() = launchUnit { attachments.acceptNotice() }
 
     override fun onLeaveChatRequest() = launchUnit {
         val username = chatDisplay.awaitLoaded().username
@@ -632,6 +655,8 @@ class ChatFeedViewModel @Inject constructor(
                 productRoom.selectMessageMenuAction(action.message.id, action.actionId)
             }
 
+            is MessageAction.ReadAloud -> productRoom.readAloud(action.text).also { messagePopupSection.update { null } }
+
             is MessageAction.DismissActionMenu -> {
                 messagePopupSection.update { null }
             }
@@ -691,30 +716,11 @@ class ChatFeedViewModel @Inject constructor(
                 val text = inputState.inputMessage.trim().takeIf { it.isNotEmpty() }
                 val replyToMessageId = (inputState.relation as? InputMessageRelation.Reply)?.preview?.messageId
 
-                messageInputState.clear()
-
-                sendAttachmentMessage(attachmentResult, text, replyToMessageId)
+                attachments.send(attachmentResult, text, replyToMessageId)
             }
             .onFailure {
                 showPresentationError(it.asAttachmentError().toPresentationError())
             }
-    }
-
-    private suspend fun sendAttachmentMessage(
-        attachmentResult: AttachmentResult,
-        text: String?,
-        replyToMessageId: ChatMessageId?
-    ) {
-        interactor.sendAttachmentMessage(
-            chatId = chatId,
-            contentUri = attachmentResult.uri,
-            mimeType = attachmentResult.mimeType,
-            fileSize = attachmentResult.size,
-            text = text,
-            replyToMessageId = replyToMessageId
-        ).onSuccess(::showActionOutcome).onFailure {
-            showPresentationError(it.asAttachmentError().toPresentationError())
-        }
     }
 
     private suspend fun sendChatRequest(welcomeText: String) {

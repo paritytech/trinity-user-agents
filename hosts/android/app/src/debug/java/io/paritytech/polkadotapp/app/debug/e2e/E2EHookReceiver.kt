@@ -14,12 +14,15 @@ import io.paritytech.polkadotapp.feature_backup_impl.ManualMnemonicInteractor
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStagingGate
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2EAcks
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2ERuntimeMarkers
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2E_LOG_TAG
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_usernames_api.data.LocalUsernameStorage
 import io.paritytech.polkadotapp.feature_usernames_api.domain.model.Username
 import kotlinx.coroutines.CoroutineScope
@@ -28,10 +31,16 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import uniffi.truapi.ChatWakeOutcome
+import uniffi.truapi.ChatWakeReason
+import uniffi.truapi.PermissionAuthorizationRequest
+import uniffi.truapi.PermissionAuthorizationStatus
+import uniffi.truapi.RemotePermission
+import uniffi.truapi.RemotePermissionRequest
 
 /**
  * Debug-only entry point the chat e2e drives: seeds an identity, registers a product, posts a
- * user message through the real chat path, and puts a text on the clipboard.
+ * user message through the real chat path, puts a text on the clipboard, and wakes a product for a room.
  *
  * With the clipboard hook, the launcher can type a text that `adb shell input text` cannot type,
  * for example an emoji. The launcher sets the text here, and then pastes it into the input.
@@ -50,6 +59,9 @@ class E2EHookReceiver : BroadcastReceiver() {
         fun productBotManagementInteractor(): ProductBotManagementInteractor
         fun chatMessageSender(): ChatMessageSender
         fun e2eRuntimeMarkers(): E2ERuntimeMarkers
+        fun trUAPIWorkerSupervisor(): TrUAPIWorkerSupervisor
+        fun trUAPIHostRuntimeProvider(): TrUAPIHostRuntimeProvider
+        fun productAttachmentStagingGate(): ProductAttachmentStagingGate
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -82,6 +94,20 @@ class E2EHookReceiver : BroadcastReceiver() {
             registerProduct(hooks, productId, workerUrl, intent.stringExtra(EXTRA_PRODUCT_NAME) ?: productId.value)
         }
 
+        if (intent.getBooleanExtra(EXTRA_SERVE_PREIMAGE_ATTACHMENTS, false)) {
+            hooks.productAttachmentStagingGate().serveForE2E()
+            log(SERVE_PREIMAGE_ATTACHMENTS_ACK)
+        }
+
+        if (intent.getBooleanExtra(EXTRA_RESET_PREIMAGE_PERMISSION, false)) {
+            if (productId == null) logError("preimage_permission", "requires $EXTRA_PRODUCT_ID") else resetPreimagePermission(hooks, productId)
+        }
+
+        val probeBytes = intent.getIntExtra(EXTRA_STAGE_PROBE, 0)
+        if (probeBytes > 0) {
+            if (productId == null) logError("stage_probe", "requires $EXTRA_PRODUCT_ID") else probeStaging(hooks, productId, probeBytes)
+        }
+
         if (message != null) {
             val roomId = intent.stringExtra(EXTRA_ROOM_ID)
             when {
@@ -90,6 +116,32 @@ class E2EHookReceiver : BroadcastReceiver() {
                 else -> sendUserMessage(hooks, productId, roomId, message)
             }
         }
+
+        intent.stringExtra(EXTRA_WAKE)?.let { watchId ->
+            val roomId = intent.stringExtra(EXTRA_ROOM_ID)
+            when {
+                productId == null -> logError("wake", "wake requires $EXTRA_PRODUCT_ID")
+                roomId == null -> logError("wake", "wake requires $EXTRA_ROOM_ID")
+                else -> wake(hooks, productId, roomId, watchId)
+            }
+        }
+    }
+
+    // B9: a notification wake of a room, as the receiving layer will start it (07-LATER §10.2). The receiving layer
+    // is not on this branch yet (O28), so the hook takes its place.
+    private suspend fun wake(hooks: Hooks, productId: ProductId, roomId: String, watchId: String) {
+        hooks.trUAPIHostRuntimeProvider().runtime()
+            .mapCatching { it.wakeProduct(productId.value, ChatWakeReason.Notification(roomId, watchId)) }
+            .fold(
+                onSuccess = { outcome ->
+                    val text = when (outcome) {
+                        is ChatWakeOutcome.Held -> "held until=${outcome.untilMs}"
+                        ChatWakeOutcome.BudgetSpent -> "budget-spent"
+                    }
+                    log(E2EAcks.woken(productId.value, roomId, watchId, text))
+                },
+                onFailure = { logError("wake", it) },
+            )
     }
 
     private suspend fun sendUserMessage(hooks: Hooks, productId: ProductId, roomId: String, text: String) {
@@ -99,6 +151,38 @@ class E2EHookReceiver : BroadcastReceiver() {
                 onSuccess = { log(E2EAcks.messageSent(productId.value, roomId)) },
                 onFailure = { logError("message", it) },
             )
+    }
+
+    // A stored "Don't allow" of the first start would refuse every staged attachment of the run. This is the reset
+    // that a user makes in the settings of the product. The worker of the product must run.
+    private fun resetPreimagePermission(hooks: Hooks, productId: ProductId) {
+        val execution = hooks.trUAPIWorkerSupervisor().currentExecution(productId)
+            ?: return logError("preimage_permission", "the worker of ${productId.value} does not run")
+        runCatching {
+            execution.setPermissionAuthorizationStatus(
+                PermissionAuthorizationRequest.Remote(RemotePermissionRequest(RemotePermission.PreimageSubmit)),
+                PermissionAuthorizationStatus.NOT_DETERMINED,
+            )
+        }.fold(
+            onSuccess = { log(PREIMAGE_PERMISSION_RESET_ACK) },
+            onFailure = { logError("preimage_permission", it) },
+        )
+    }
+
+    // B7: the time that the bytes of an attachment take to cross the binding into the core. The probe room declares
+    // nothing, so the core answers `NotDeclared` after the bytes arrive, and uploads nothing.
+    private suspend fun probeStaging(hooks: Hooks, productId: ProductId, size: Int) {
+        val runtime = hooks.trUAPIHostRuntimeProvider().runtime().getOrElse { return logError("stage_probe", it) }
+        val bytes = ByteArray(size) { (it % PROBE_BYTE_MODULUS).toByte() }
+        val timings = mutableListOf<Long>()
+        var outcome = "Staged"
+        repeat(PROBE_ROUNDS) {
+            val started = System.nanoTime()
+            outcome = runCatching { runtime.stageChatAttachment(productId.value, PROBE_ROOM, PROBE_MIME_TYPE, bytes) }
+                .fold(onSuccess = { "Staged" }, onFailure = { it::class.simpleName ?: "Failure" })
+            timings += (System.nanoTime() - started) / NANOS_IN_MILLI
+        }
+        log("stage_probe bytes=$size ms=${timings.joinToString(",")} outcome=$outcome")
     }
 
     private suspend fun setClipboard(context: Context, text: String) {
@@ -150,6 +234,18 @@ class E2EHookReceiver : BroadcastReceiver() {
         const val EXTRA_MESSAGE = "message"
         const val EXTRA_ROOM_ID = "room_id"
         const val EXTRA_CLIPBOARD = "clipboard"
+        const val EXTRA_WAKE = "wake"
+        const val EXTRA_RESET_PREIMAGE_PERMISSION = "reset_preimage_permission"
+        const val EXTRA_STAGE_PROBE = "stage_probe"
+        const val EXTRA_SERVE_PREIMAGE_ATTACHMENTS = "serve_preimage_attachments"
+
+        const val PREIMAGE_PERMISSION_RESET_ACK = "preimage permission reset"
+        const val SERVE_PREIMAGE_ATTACHMENTS_ACK = "preimage attachments served"
+        const val PROBE_ROOM = "b7-probe"
+        const val PROBE_MIME_TYPE = "application/octet-stream"
+        const val PROBE_ROUNDS = 7
+        const val PROBE_BYTE_MODULUS = 251
+        const val NANOS_IN_MILLI = 1_000_000L
 
         const val CLIP_LABEL = "truapi-e2e"
         const val CLIPBOARD_SET_ACK = "clipboard set"

@@ -7,6 +7,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomCallRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
@@ -19,6 +20,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomEventModel
@@ -72,10 +74,11 @@ class ProductChatExtensionTest {
     private val declarations: ChatRoomDeclarationsRepository = mockk()
     private val feedListeners: ProductFeedListeners = mockk()
     private val roomEventSink: ProductChatRoomEventSink = mockk()
+    private val calls: ChatRoomCallRepository = mockk()
     private val room = ChatId.forExtensionRoom(extensionId, ROOM)
 
     private fun extension(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, roomEventSink)
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, roomEventSink, calls)
 
     private fun placedByHost(refCounter: ProductWorkerRefCounter) =
         ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, roomEventSink, ProductChatExtensionOrigin.PlacedByHost)
@@ -185,6 +188,30 @@ class ProductChatExtensionTest {
 
             assertEquals("the collector must not outlive the extension", 0, incoming.subscriptionCount.value)
             assertEquals(listOf("before"), worker.delivered.map { it.second })
+        } finally {
+            hostScope.cancel()
+        }
+    }
+
+    @Test
+    fun `a stopped worker clears the ringing calls of the product and keeps an active call`() = runTest {
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val ringing = ChatId.forExtensionRoom(extensionId, ROOM)
+        val active = ChatId.forExtensionRoom(extensionId, "active")
+        every { calls.observe(ringing) } returns flowOf(ChatRoomCallModel.Ringing("c1", video = false, caller = "p1"))
+        every { calls.observe(active) } returns flowOf(ChatRoomCallModel.Active("c2", video = true, startedAt = 1, mediaSession = null))
+        val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
+
+        try {
+            val host = chatExtensionContext(hostScope, flowOf(listOf(ringing, active)))
+            coEvery { host.setRoomCall(any(), any()) } returns Result.success(Unit)
+            with(host) { extension(refCounter).startGlobalWork() }
+            advanceUntilIdle()
+
+            assertTrue(requireNotNull(refCounter.chatSurface).clearRingingCalls().isSuccess)
+
+            coVerify(exactly = 1) { host.setRoomCall(ringing, null) }
+            coVerify(exactly = 0) { host.setRoomCall(active, any()) }
         } finally {
             hostScope.cancel()
         }

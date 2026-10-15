@@ -9,6 +9,13 @@ object ProductParticipant {
 
     /** The product itself. */
     const val PRODUCT = "product"
+
+    /** The start of the participant id `bot:<botId>` of a bot persona of the product (07-LATER §5.2). */
+    const val PERSONA_PREFIX = "bot:"
+
+    /** The bot id of a persona participant id, or null for every other participant id. */
+    fun personaBotId(participantId: String): String? =
+        participantId.takeIf { it.startsWith(PERSONA_PREFIX) }?.removePrefix(PERSONA_PREFIX)?.takeIf { it.isNotEmpty() }
 }
 
 /** The status of a message as its product gives it (`ChatMessageStatus`). */

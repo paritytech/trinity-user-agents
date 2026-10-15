@@ -1,8 +1,13 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.declarations
 
 import io.paritytech.polkadotapp.database.dao.ChatBotPersonaDao
+import io.paritytech.polkadotapp.database.dao.ChatBotRegistrationLocal
 import io.paritytech.polkadotapp.database.model.ChatBotPersonaLocal
+import io.paritytech.polkadotapp.feature_chats_api.domain.CHAT_BOT_PERSONAS_MAX
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatBotPersonaLimitException
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatBotPersonaRegistry
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatBotPersonaRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatBotRegistrationModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatBotPersonaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import kotlinx.coroutines.flow.Flow
@@ -21,12 +26,19 @@ interface ChatBotPersonaWriter {
 
 class RealChatBotPersonaRepository @Inject constructor(
     private val dao: ChatBotPersonaDao,
-) : ChatBotPersonaRepository, ChatBotPersonaWriter {
+) : ChatBotPersonaRepository, ChatBotPersonaWriter, ChatBotPersonaRegistry {
     override fun observe(extensionId: ChatExtensionId): Flow<List<ChatBotPersonaModel>> =
         dao.observe(extensionId).map { rows -> rows.map { it.toDomain() } }.distinctUntilChanged()
 
     override suspend fun put(extensionId: ChatExtensionId, persona: ChatBotPersonaModel) =
         dao.put(ChatBotPersonaLocal(extensionId, persona.botId, persona.name, persona.icon))
+
+    override suspend fun register(extensionId: ChatExtensionId, persona: ChatBotPersonaModel): ChatBotRegistrationModel =
+        when (dao.register(ChatBotPersonaLocal(extensionId, persona.botId, persona.name, persona.icon), CHAT_BOT_PERSONAS_MAX)) {
+            ChatBotRegistrationLocal.NEW -> ChatBotRegistrationModel.NEW
+            ChatBotRegistrationLocal.EXISTS -> ChatBotRegistrationModel.EXISTS
+            ChatBotRegistrationLocal.FULL -> throw ChatBotPersonaLimitException()
+        }
 
     override suspend fun exists(extensionId: ChatExtensionId, botId: String): Boolean = dao.exists(extensionId, botId)
 

@@ -5,6 +5,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.spyk
 import io.mockk.verify
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
@@ -16,14 +17,22 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomActivityWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.ProductAttachmentEncoder
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductAttachmentDraft
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatMessageSource
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContext
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContextFactory
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceAction
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatAvatar
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStagingGate
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.PublicStorageNotice
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
+import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -47,8 +56,19 @@ class ChatFeedInteractorProductRoomTest {
     private val roomPolicyProvider = mockk<ChatRoomPolicyProvider> {
         every { observePolicy(any()) } returns flowOf(ChatRoomPolicy.Defaults)
     }
-    private val productAttachmentEncoder = mockk<ProductAttachmentEncoder> {
+
+    // A spy keeps the real size rule of staging.
+    private val productAttachmentEncoder = spyk(
+        ProductAttachmentEncoder(mockk(), mockk(), { _, _ -> null }, TestCoroutineDispatchers(Dispatchers.Unconfined)),
+    ) {
         coEvery { encode(any(), any(), any()) } returns Result.success(media)
+    }
+    private val attachmentStager = mockk<ProductAttachmentStager>(relaxed = true) {
+        every { observe(any()) } returns flowOf(emptyList())
+    }
+    private val publicStorageNotice = mockk<PublicStorageNotice>(relaxed = true)
+    private val stagingGate = mockk<ProductAttachmentStagingGate> {
+        every { isServed } returns true
     }
 
     @Test
@@ -79,6 +99,74 @@ class ChatFeedInteractorProductRoomTest {
     }
 
     @Test
+    fun `an attachment above 1 MiB in a room that stages attachments goes to the outbox`() = runBlocking<Unit> {
+        val draft = mockk<ProductAttachmentDraft>()
+        val size = (ProductAttachmentEncoder.LIMIT_BYTES + 1).bytes
+        every { roomPolicyProvider.observePolicy(roomId) } returns flowOf(stagingRoom)
+        coEvery { productAttachmentEncoder.prepareStaged(uri, "application/pdf", size) } returns Result.success(draft)
+
+        val outcome = interactor().sendAttachmentMessage(roomId, uri, "application/pdf", size, text = "Report", replyToMessageId = "m0")
+
+        assertEquals(ChatSourceActionOutcome.Done, outcome.getOrThrow())
+        coVerify { attachmentStager.enqueue(roomId, draft, "Report", "m0") }
+        coVerify(exactly = 0) { productAttachmentEncoder.encode(any(), any(), any()) }
+    }
+
+    @Test
+    fun `a host that does not serve staging sends an attachment above 1 MiB inline in a room that declares it`() = runBlocking<Unit> {
+        coEvery { roomSource.productSource() } returns null
+        every { roomPolicyProvider.observePolicy(roomId) } returns flowOf(stagingRoom)
+        every { stagingGate.isServed } returns false
+        val size = (ProductAttachmentEncoder.LIMIT_BYTES + 1).bytes
+
+        interactor().sendAttachmentMessage(roomId, uri, "image/jpeg", size, text = null, replyToMessageId = null)
+
+        assertEquals(null, interactor().publicStorageNoticeFor(roomId, "image/jpeg", size))
+        coVerify { productAttachmentEncoder.encode(uri, "image/jpeg", size) }
+        coVerify(exactly = 0) { attachmentStager.enqueue(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `an attachment above 1 MiB in a room that does not stage goes inline as before`() = runBlocking<Unit> {
+        coEvery { roomSource.productSource() } returns null
+        val size = (ProductAttachmentEncoder.LIMIT_BYTES + 1).bytes
+
+        interactor().sendAttachmentMessage(roomId, uri, "image/jpeg", size, text = null, replyToMessageId = null)
+
+        coVerify { productAttachmentEncoder.encode(uri, "image/jpeg", size) }
+        coVerify(exactly = 0) { attachmentStager.enqueue(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `the public-storage notice shows one time for each product before the first staged attachment`() = runBlocking<Unit> {
+        val size = (ProductAttachmentEncoder.LIMIT_BYTES + 1).bytes
+        every { roomPolicyProvider.observePolicy(roomId) } returns flowOf(stagingRoom)
+        coEvery { chatEngine.getDefaultChatExtensionDisplay(roomId) } returns Result.success(ChatDisplay("Weather", ChatAvatar.Account("Weather", byteArrayOf())))
+        every { publicStorageNotice.isAccepted("ProductBot_weather") } returns false
+        val interactor = interactor()
+
+        assertEquals("Weather", interactor.publicStorageNoticeFor(roomId, "application/pdf", size))
+        assertEquals(null, interactor.publicStorageNoticeFor(roomId, "application/pdf", 1.bytes))
+
+        interactor.acceptPublicStorageNotice(roomId)
+        verify { publicStorageNotice.accept("ProductBot_weather") }
+        every { publicStorageNotice.isAccepted("ProductBot_weather") } returns true
+        assertEquals(null, interactor.publicStorageNoticeFor(roomId, "application/pdf", size))
+    }
+
+    @Test
+    fun `retry and delete of an outbox entry go to the stager`() = runBlocking<Unit> {
+        coEvery { attachmentStager.retry("outbox:1") } returns true
+
+        assertEquals(ChatSourceActionOutcome.Done, interactor().retryProductRoomMessage(roomId, "outbox:1").getOrThrow())
+        assertEquals(ChatSourceActionOutcome.Done, interactor().deleteProductRoomMessage(roomId, "outbox:1", ChatRoomPolicy.Defaults).getOrThrow())
+
+        coVerify { attachmentStager.retry("outbox:1") }
+        coVerify { attachmentStager.delete("outbox:1") }
+        coVerify(exactly = 0) { roomSource.productSource() }
+    }
+
+    @Test
     fun `an attachment in a host-store room is saved as a message of the user`() = runBlocking<Unit> {
         coEvery { roomSource.productSource() } returns null
 
@@ -94,6 +182,10 @@ class ChatFeedInteractorProductRoomTest {
             )
         }
     }
+
+    private val stagingRoom = ChatRoomPolicy.Defaults.copy(
+        features = ChatRoomPolicy.Defaults.features.copy(preimageAttachments = true),
+    )
 
     private fun interactor() = ChatFeedInteractor(
         chatMessageRepository = mockk(relaxed = true),
@@ -123,5 +215,8 @@ class ChatFeedInteractorProductRoomTest {
         productAttachmentEncoder = productAttachmentEncoder,
         activityRepository = mockk(relaxed = true),
         activityWriter = activityWriter,
+        attachmentStager = attachmentStager,
+        publicStorageNotice = publicStorageNotice,
+        stagingGate = stagingGate,
     )
 }

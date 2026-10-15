@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -26,6 +27,7 @@ import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFo
 import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
+import io.paritytech.polkadotapp.common.presentation.loading.map
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
@@ -46,6 +48,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.ChatFeedCo
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatFeed
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatFeedToolbar
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatRoomUnavailableLine
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ReadAloudLine
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ThreadRootBar
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.MessageActionMenuDropdown
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.ReactionDetailsDialog
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatActivityLine
@@ -59,6 +63,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.*
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomExtrasUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallScreen
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallSlot
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.catalogueFor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.inputText
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchBar
@@ -107,9 +115,13 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
 
     LifecycleStartEffect(Unit) {
         contract.onScreenStarted()
+        contract.onProductRoomAction(ProductRoomAction.Call(ProductRoomCallAction.ScreenShown(shown = true)))
 
         onStopOrDispose {
             contract.onScreenStopped()
+            // When the user leaves the room, the speech of its message stops (07-LATER §9.5).
+            contract.onProductRoomAction(ProductRoomAction.StopReadAloud)
+            contract.onProductRoomAction(ProductRoomAction.Call(ProductRoomCallAction.ScreenShown(shown = false)))
         }
     }
 
@@ -176,6 +188,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onBlockUserConfirm = contract::onBlockUserConfirm,
         onDeleteMessageConfirm = contract::onDeleteMessageConfirm,
         onProductLinkConfirm = { contract.onProductRoomAction(ProductRoomAction.OpenLink(it)) },
+        onPublicStorageNoticeAccept = contract::onPublicStorageNoticeAccept,
         participants = productRoomState.participants.list,
         participantSheet = productRoomState.participantSheet,
         onProductRoomAction = contract::onProductRoomAction,
@@ -268,11 +281,14 @@ private fun ChatFeedScreenInternal(
                         onClose = { onRoomSearchAction(RoomSearchAction.Close) },
                     )
                 } else {
+                    // A thread room reads "Thread" with the name of its parent room (07-LATER §9.2).
+                    val thread = productRoomState.thread
+                    val threadTitle = stringResource(RCommon.string.chat_thread_title)
                     ChatFeedToolbar(
-                        displayState = displayState,
+                        displayState = if (thread == null) displayState else displayState.map { ChatDisplayUiModel(username = threadTitle, avatarModel = it.avatarModel) },
                         toolbarActions = toolbarActions,
-                        subtitle = productRoomState.participants.count
-                            ?.let { pluralStringResource(RCommon.plurals.chat_participants_count, it, it) }
+                        subtitle = thread?.parentName
+                            ?: productRoomState.participants.count?.let { pluralStringResource(RCommon.plurals.chat_participants_count, it, it) }
                             ?: roomState.subtitle,
                         showAvatar = config.showAvatar,
                         productToolbar = productRoomState.toolbar,
@@ -287,8 +303,17 @@ private fun ChatFeedScreenInternal(
                         } else {
                             null
                         },
+                        callButtons = productRoomState.call.buttons,
+                        onCallClick = { onProductRoomAction(ProductRoomAction.Call(ProductRoomCallAction.Request(it))) },
                     )
                 }
+            }
+
+            productRoomState.thread?.let { ThreadRootBar(thread = it) }
+            ProductRoomCallSlot(call = productRoomState.call.call, onAction = { onProductRoomAction(ProductRoomAction.Call(it)) })
+            val screenCall = productRoomState.call.call as? ProductRoomCallUiState.Call.Active
+            if (productRoomState.call.showsCallScreen && screenCall != null) {
+                ProductRoomCallScreen(call = screenCall, roomName = username, onAction = { onProductRoomAction(ProductRoomAction.Call(it)) })
             }
 
             val readiness = chatMessagesLoadingState.dataOrNull?.readiness
@@ -332,6 +357,9 @@ private fun ChatFeedScreenInternal(
                             onShowNewestMessages = onShowNewestMessages,
                             authors = productRoomState.participants.authors,
                             onAuthorClick = { onProductRoomAction(ProductRoomAction.SelectParticipant(it)) },
+                            decorations = productRoomState.decorations,
+                            onOpenThread = { onProductRoomAction(ProductRoomAction.OpenThread(it)) },
+                            onSelectBranch = { messageId, index -> onProductRoomAction(ProductRoomAction.SelectBranch(messageId, index)) },
                         )
                     }
                 }
@@ -351,6 +379,10 @@ private fun ChatFeedScreenInternal(
                         .fillMaxWidth()
                         .onSizeChanged { footerHeight = with(density) { it.height.toDp() } }
                 ) {
+                    if (productRoomState.readingAloud) {
+                        ReadAloudLine(onStop = { onProductRoomAction(ProductRoomAction.StopReadAloud) })
+                    }
+
                     ProductRoomExtrasSlot(
                         extras = productRoomState.extras,
                         inputState = chatInputUiState,
@@ -411,7 +443,7 @@ private fun ProductRoomExtrasSlot(
     val inputText = (inputState as? ChatInputUiState.SendMessage)?.messageState?.inputMessage
     val catalogue = remember(inputText, extras.commands) { extras.commands.catalogueFor(inputText.orEmpty()) }
 
-    extras.activity?.let { ChatActivityLine(text = it) }
+    extras.activity?.let { ChatActivityLine(text = it, avatar = extras.activitySpeaker?.avatar) }
 
     if (catalogue.isNotEmpty()) {
         ChatCommandCatalogue(commands = catalogue, onSelect = onCommand)

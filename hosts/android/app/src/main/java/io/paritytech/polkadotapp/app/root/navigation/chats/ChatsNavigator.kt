@@ -21,6 +21,13 @@ class ChatsNavigator @Inject constructor(
         )
     }
 
+    override fun openThreadFeed(payload: ChatFeedPayload) {
+        performNavigation(
+            actionId = R.id.action_global_to_threadChatFeedFragment,
+            args = payload.toPayloadBundle()
+        )
+    }
+
     override fun openChatSearch() {
         performNavigation(R.id.action_global_to_chatSearchFragment)
     }

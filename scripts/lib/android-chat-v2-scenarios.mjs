@@ -1,6 +1,8 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { deflateSync } from "node:zlib";
+
 /**
  * The scenarios of the Chat Extension v2 test plan (04-TESTING section 4)
  * that name the Android layer, in the order the Android launcher runs them.
@@ -14,9 +16,9 @@
  * so that S14 can show the `Seen` reports of the product-source room. The
  * rows of the Chat Extension v2 additions (P10) come after the P8 rows, and
  * S49 comes after every row that proves a feature that the app can list.
- * The launcher runs S4 and S6 last, because they leave the room screen. S5
- * and S44 are `skip` rows: the sample product has no command that drives
- * them.
+ * S60 runs before the other rows of P10.3, because only the first staged
+ * attachment of the product shows the public-storage notice. The launcher
+ * runs S4 and S6 last, because they leave the room screen.
  */
 export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
   {
@@ -132,6 +134,13 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S68",
+    title: "the meta of a product-source message survives a reload of its pages",
+    mode: "source",
+    phase: "P10.9",
+    drive: true,
+  },
+  {
     id: "S1",
     title: "post_message V2 posts a product message in a host-store room",
     mode: "host",
@@ -190,6 +199,13 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
   {
     id: "S14",
     title: "a declared command arrives as Command; report_seen sends Seen",
+    mode: "host",
+    phase: "P8.4",
+    drive: true,
+  },
+  {
+    id: "S5",
+    title: "delete_room removes the room",
     mode: "host",
     phase: "P8.4",
     drive: true,
@@ -300,6 +316,48 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S44",
+    title: "update_feed rate limit on screen",
+    mode: "host",
+    phase: "P8.8",
+    drive: true,
+  },
+  {
+    id: "S53",
+    title: "register_bot answers New, then Exists and renames the persona; a bot message and the activity line draw its name and icon without a query; an unknown persona is refused",
+    mode: "host",
+    phase: "P10.6",
+    drive: true,
+  },
+  {
+    id: "S64",
+    title: "a root shows 3 replies and opens the thread room, which is not in the list; deleting the parent deletes the thread",
+    mode: "host",
+    phase: "P10.9",
+    drive: true,
+  },
+  {
+    id: "S65",
+    title: "branch arrows send BranchSelected; the product's answer moves the position; without an answer the control reverts after 5 s",
+    mode: "host",
+    phase: "P10.9",
+    drive: true,
+  },
+  {
+    id: "S66",
+    title: "a reasoning row streams with Thinking, collapses to Thought for 4 s, expands on a tap, reads its state, and is never the list preview",
+    mode: "host",
+    phase: "P10.9",
+    drive: true,
+  },
+  {
+    id: "S67",
+    title: "Read aloud appears only with read_aloud, speaks RichText as plain text, and stops on leaving the room",
+    mode: "host",
+    phase: "P10.9",
+    drive: true,
+  },
+  {
     id: "S61",
     title: "in-room search in a host-store room finds by text, case and diacritics ignored, and jumps",
     mode: "host",
@@ -311,7 +369,7 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     title: "product-source search pages search_query hits; /search na shows not available; no action without search",
     mode: "source",
     phase: "P10.5",
-    skip: "skip: needs P10.5.1 sample (/search on|na|off and its search_query handler), then the search capability",
+    drive: true,
   },
   {
     id: "S54",
@@ -342,6 +400,69 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S69",
+    title: "a message sent and the room closed at once still gets the product's echo and preview (wake W1)",
+    mode: "host",
+    phase: "P10.4",
+    drive: true,
+  },
+  {
+    id: "S72",
+    title: "calls shows the header buttons on a host with call_buttons and a press sends CallRequested; no buttons without the declaration",
+    mode: "host",
+    phase: "P10.7",
+    drive: true,
+  },
+  {
+    id: "S73",
+    title: "Ringing rings in the room and the list; Accept and Decline send CallAnswered; the banner clears after 60 s",
+    mode: "host",
+    phase: "P10.7",
+    drive: true,
+  },
+  {
+    id: "S74",
+    title: "Active without a session shows the call bar with its timer; Open and End send CallOpened and CallEnded",
+    mode: "host",
+    phase: "P10.7",
+    drive: true,
+  },
+  {
+    id: "S51",
+    title: "set_room_features survives a restart; a feature the app does not serve is stored and ignored",
+    mode: "host",
+    phase: "P10.8",
+    drive: true,
+  },
+  {
+    id: "S60",
+    title: "the public-storage notice shows once per product; Cancel sends nothing",
+    mode: "both",
+    phase: "P10.3",
+    drive: true,
+  },
+  {
+    id: "S57",
+    title: "a 3 MiB photo and a 6 MiB file are staged and arrive as Preimage media in both modes; the receiving side draws them",
+    mode: "both",
+    phase: "P10.3",
+    drive: true,
+  },
+  {
+    id: "S59",
+    title: "a failed submit marks the message Failed; Retry stages again and succeeds; Delete removes the kept bytes",
+    mode: "source",
+    phase: "P10.3",
+    drive: true,
+  },
+  {
+    id: "S58",
+    title: "without preimage_attachments, above 8 MiB, or with PreimageSubmit refused, nothing is uploaded",
+    mode: "host",
+    phase: "P10.3",
+    drive: true,
+  },
+  {
     id: "S49",
     title: "capabilities lists exactly the features whose rows pass, and both byte bounds",
     mode: "host",
@@ -362,20 +483,6 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     phase: "P8.3",
     drive: true,
   },
-  {
-    id: "S5",
-    title: "delete_room removes the room",
-    mode: "host",
-    phase: "P8.4",
-    skip: "skip: the sample product has no command that calls delete_room on this base (playground/chat-v2/README.md, Commands); RealDeleteRoomUseCaseTest covers the delete path",
-  },
-  {
-    id: "S44",
-    title: "update_feed rate limit on screen",
-    mode: "host",
-    phase: "P8.8",
-    skip: "skip: no command of the sample product sends more than 20 updates in a second; the core tests the bound, and S8 shows the coalesced edits of /stream at 20 a second",
-  },
 ]);
 
 /**
@@ -384,9 +491,26 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
  */
 export const ANDROID_CHAT_FEATURE_ROWS = Object.freeze({
   product_source_rooms: ["S15", "S16", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24", "S46"],
+  reaction_details: ["S32"],
+  participants: ["S30"],
+  message_menus: ["S25", "S26", "S28"],
+  participant_menus: ["S31"],
+  toolbar: ["S29"],
+  suggestions: ["S38"],
+  commands: ["S39"],
+  activity: ["S40"],
   custom_bodies: ["S7"],
+  custom_footer: ["S35"],
+  inline_attachments: ["S36"],
   mute_archive: ["S54", "S55", "S56"],
   search: ["S61", "S62", "S63"],
+  preimage_attachments: ["S57", "S58", "S59", "S60"],
+  bot_personas: ["S53"],
+  threads: ["S64"],
+  branches: ["S65"],
+  reasoning_rows: ["S66", "S68"],
+  read_aloud: ["S67"],
+  call_buttons: ["S72", "S73", "S74"],
 });
 
 /**
@@ -421,6 +545,94 @@ export function capabilityVerdict(capsRow, rows, listed, featureRows = ANDROID_C
       ? `not checked in this run: ${unchecked.join(", ")}`
       : "the rows of each listed feature passed";
   return { ...capsRow, evidence: `${capsRow.evidence}; ${note}` };
+}
+
+/**
+ * The benchmark rows of the test plan (04-TESTING section 5) that the
+ * launcher drives on Android. They run only when asked for, with
+ * `TRUAPI_ANDROID_E2E_PERF=1` or by their id in
+ * `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY`, after the scenarios.
+ */
+export const ANDROID_CHAT_V2_PERF = Object.freeze([
+  {
+    id: "B9",
+    title: "notification wake to fresh preview, cold worker (foreground)",
+    mode: "host",
+    phase: "P10.4",
+    perf: true,
+    drive: true,
+  },
+]);
+
+/** One mebibyte, the unit of the attachment bounds of P10.3. */
+export const MIB = 1024 * 1024;
+
+/**
+ * The reason to keep S57 a skip, or undefined. S57 stages a 3 MiB photo and
+ * a 6 MiB file. A Bulletin chain that stores at most `maxBytes` in one
+ * transaction refuses the larger ones (open item O32), and the core then
+ * answers `TooLarge` with that bound.
+ */
+export function stagingBoundSkip(maxBytes, sizes) {
+  const refused = sizes.filter((size) => size > maxBytes);
+  if (refused.length === 0) return undefined;
+  const mib = (bytes) => `${(bytes / MIB).toFixed(bytes % MIB === 0 ? 0 : 1)} MiB`;
+  return (
+    `skip: the Bulletin chain of the emulator stores at most ${maxBytes} B (${mib(maxBytes)}) in one transaction ` +
+    `(O32), so the core refuses the ${refused.map(mib).join(" and ")} file(s) of S57 with TooLarge`
+  );
+}
+
+/**
+ * A PNG image of `width` x `height` pixels of noise. Noise does not
+ * compress, so the file is about `3 * width * height` bytes, and the app can
+ * still read its size and draw it.
+ */
+export function noisePng(width, height, seed = 1) {
+  let state = seed >>> 0 || 1;
+  const random = () => {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return state & 0xff;
+  };
+  const raw = Buffer.alloc((width * 3 + 1) * height);
+  for (let row = 0; row < height; row += 1) {
+    const start = row * (width * 3 + 1);
+    raw[start] = 0;
+    for (let index = 1; index <= width * 3; index += 1) raw[start + index] = random();
+  }
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", deflateSync(raw, { level: 0 })),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function pngChunk(type, data) {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body), 0);
+  return Buffer.concat([length, body, crc]);
+}
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 /** The logcat tag of the console lines of a product WebView. */
@@ -553,9 +765,10 @@ function decodeXml(value) {
   });
 }
 
-/** The scenarios in the order of their number, for the report. */
+/** The scenarios in the order of their number, then the benchmark rows, for the report. */
 export function byScenarioNumber(rows) {
-  const number = (row) => Number(row.id.replace(/^S/, ""));
+  const number = (row) =>
+    row.id.startsWith("B") ? 1_000 + Number(row.id.slice(1)) : Number(row.id.replace(/^S/, ""));
   return [...rows].sort((a, b) => number(a) - number(b));
 }
 

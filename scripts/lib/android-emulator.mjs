@@ -394,8 +394,9 @@ export function removeReversePort(serial, port) {
  * that the document picker lists it.
  */
 export function pushFile(serial, source, destination) {
-  adbOrThrow(["push", source, destination], { serial });
+  const pushed = adbOrThrow(["push", source, destination], { serial, timeoutMs: INSTALL_TIMEOUT_MS });
   adbShell(serial, ["content", "call", "--uri", "content://media/", "--method", "scan_volume", "--arg", "external_primary"]);
+  return pushed;
 }
 
 export function grantPermission(serial, packageName, permission) {

@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatSuggestionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocal
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -44,9 +45,18 @@ fun interface ChatThreadRooms {
     fun observeThreadRoomIds(): Flow<Set<ChatId>>
 }
 
+/** Finds the thread rooms of a room for its deletion (07-LATER §9.2). */
+interface ChatThreadRoomCascade {
+    /** The rooms of the same extension whose features name a message of [parent] in `threadOf`. */
+    suspend fun threadRoomsOf(parent: ChatId): List<ChatId>
+
+    /** Runs [action] in one database transaction. */
+    suspend fun inTransaction(action: suspend () -> Unit)
+}
+
 class RealChatRoomDeclarationsRepository @Inject constructor(
     private val dao: ChatRoomDeclarationsDao,
-) : ChatRoomDeclarationsRepository, ChatRoomDeclarationsWriter, ChatThreadRooms {
+) : ChatRoomDeclarationsRepository, ChatRoomDeclarationsWriter, ChatThreadRooms, ChatThreadRoomCascade {
     override fun observe(chatId: ChatId): Flow<ChatRoomDeclarations?> =
         dao.observe(chatId.toLocal()).map { it?.toDomain() }.distinctUntilChanged()
 
@@ -77,6 +87,18 @@ class RealChatRoomDeclarationsRepository @Inject constructor(
         dao.setFeatures(chatId.toLocal(), features.encode())
 
     override suspend fun delete(chatId: ChatId) = dao.delete(chatId.toLocal())
+
+    override suspend fun threadRoomsOf(parent: ChatId): List<ChatId> {
+        val room = parent.extensionOrNull() ?: return emptyList()
+        val roomId = room.subRoomId ?: return emptyList()
+        return dao.getDeclaredFeatures().mapNotNull { row ->
+            val chatId = ChatId.fromRawValue(row.chatId)
+            val threadOf = row.features.decodeFeatures()?.threadOf ?: return@mapNotNull null
+            chatId.takeIf { threadOf.roomId == roomId && chatId.extensionOrNull()?.extensionId == room.extensionId && chatId != parent }
+        }
+    }
+
+    override suspend fun inTransaction(action: suspend () -> Unit) = dao.withTransaction(action)
 
     override fun observeThreadRoomIds(): Flow<Set<ChatId>> =
         dao.observeDeclaredFeatures()

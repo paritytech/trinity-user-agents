@@ -20,6 +20,9 @@ import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatToolbarAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductToolbarUiModel
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallButtons
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.allInOverflow
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchButton
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -40,6 +43,9 @@ internal fun ChatFeedToolbar(
     onParticipantsClick: () -> Unit,
     /** Null when the room has no in-room search (07-LATER §8.2). */
     onSearchClick: (() -> Unit)? = null,
+    /** The call buttons of a product room, or null (07-LATER §11.2). */
+    callButtons: ProductRoomCallUiState.Buttons? = null,
+    onCallClick: (video: Boolean) -> Unit = {},
 ) {
     val isLoaded = displayState is LoadingState.Loaded
     val displayData = displayState.dataOrNull
@@ -76,6 +82,9 @@ internal fun ChatFeedToolbar(
 
     val hasProductButtons = isLoaded && (productToolbar.inline.isNotEmpty() || productToolbar.overflow.isNotEmpty() || showsParticipants)
     val searchClick = onSearchClick?.takeIf { isLoaded }
+    val shownCallButtons = callButtons?.takeIf { isLoaded }
+    // With call buttons, every action of the product toolbar goes to the overflow menu (07-LATER §11.2).
+    val shownProductToolbar = if (shownCallButtons == null) productToolbar else productToolbar.allInOverflow()
 
     PolkadotTopBar(
         navigationAction = rememberTopBarAction(action = onBack, icon = NovaIcons.ArrowLeft),
@@ -83,14 +92,16 @@ internal fun ChatFeedToolbar(
         subtitle = subtitle,
         actions = resolvedActions,
         leadingContent = leadingAvatar,
-        extraActions = if (hasProductButtons || searchClick != null) {
+        extraActions = if (hasProductButtons || searchClick != null || shownCallButtons != null) {
             {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (shownCallButtons != null) ProductRoomCallButtons(buttons = shownCallButtons, onRequest = onCallClick)
+
                     if (searchClick != null) ChatRoomSearchButton(onClick = searchClick)
 
                     if (hasProductButtons) {
                         ProductToolbarButtons(
-                            toolbar = productToolbar,
+                            toolbar = shownProductToolbar,
                             showsParticipants = showsParticipants,
                             onClick = onProductToolbarClick,
                             onParticipantsClick = onParticipantsClick,

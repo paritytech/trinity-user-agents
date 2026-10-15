@@ -22,6 +22,8 @@
 // The launcher fails when a driven scenario fails or has no row.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
 import { relative, resolve } from "node:path";
 import {
   DEFAULT_AVD,
@@ -57,8 +59,12 @@ import {
 } from "./lib/android-emulator.mjs";
 import {
   ANDROID_CHAT_FEATURE_ROWS,
+  ANDROID_CHAT_V2_PERF,
   ANDROID_CHAT_V2_SCENARIOS,
+  MIB,
   blockedRows,
+  noisePng,
+  stagingBoundSkip,
   byScenarioNumber,
   capabilityVerdict,
   consoleMessages,
@@ -119,6 +125,11 @@ const onlyScenarios = (process.env.TRUAPI_ANDROID_E2E_CHAT_V2_ONLY ?? "")
   .split(",")
   .map((id) => id.trim())
   .filter(Boolean);
+/** Also drive the benchmark rows (B9) after the scenarios. */
+const runPerf =
+  process.env.TRUAPI_ANDROID_E2E_PERF === "1" ||
+  ANDROID_CHAT_V2_PERF.some((row) => onlyScenarios.includes(row.id));
+const ROWS = runPerf ? [...ANDROID_CHAT_V2_SCENARIOS, ...ANDROID_CHAT_V2_PERF] : ANDROID_CHAT_V2_SCENARIOS;
 /** Keep the installed app and its data (for development). */
 const reuseApp = process.env.TRUAPI_ANDROID_E2E_CHAT_V2_REUSE === "1";
 const keepEmulator = process.env.TRUAPI_ANDROID_E2E_KEEP_EMULATOR === "1";
@@ -145,6 +156,8 @@ const ROOMS = {
   source: { id: "source", name: "Sample: product source", chat: chatIdHex(extensionId, "source") },
   // The first `/placeholder` makes this room (S37).
   "host-empty": { id: "host-empty", name: "Sample: empty", chat: chatIdHex(extensionId, "host-empty") },
+  // `/room create` makes this room, and `/room delete` removes it (S5, S55).
+  throwaway: { id: "throwaway", name: "Sample: throwaway", chat: chatIdHex(extensionId, "throwaway") },
 };
 /** The attachments of S36: an image under the inline limit, and a file over it. */
 const SMALL_ATTACHMENT = "sample.png";
@@ -177,7 +190,9 @@ async function runScenario(scenario) {
   const evidence = [];
   const note = (text) => evidence.push(text);
   try {
-    await driver({ scenario, note });
+    // A driver gives `{ skip }` when the emulator cannot carry the row; the evidence keeps what it proved.
+    const outcome = await driver({ scenario, note });
+    if (outcome?.skip) return row(scenario, "skip", Date.now() - started, [outcome.skip, ...evidence].join("; "));
     return row(scenario, "pass", Date.now() - started, evidence.join("; "));
   } catch (error) {
     const shot = await screenshot(scenario, "fail").catch(() => undefined);
@@ -642,13 +657,324 @@ const DRIVERS = {
       [...read].sort().join(",") === [...listed].sort().join(","),
       `the product read ${read.join(",") || "none"}, the app lists ${listed.join(",") || "none"}`,
     );
-    expect(match[2] === String(1024 * 1024) && match[3] === "0", `bounds inline ${match[2]} B, preimage ${match[3]} B`);
+    // The core gives the staging bound of 8 MiB only when the app lists preimage_attachments.
+    const preimageBound = listed.includes("preimage_attachments") ? String(8 * MIB) : "0";
+    expect(match[2] === String(MIB) && match[3] === preimageBound, `bounds inline ${match[2]} B, preimage ${match[3]} B`);
     listedFeatures = listed;
     await waitScreen((screen) => findText(screen, /^caps: /), "the capabilities message");
     note(`\`${await screenshot(scenarioById("S49"), "host")}\``);
     note(
       `the app lists ${listed.join(", ") || "none"}; the product read ${read.join(", ") || "none"}; inline ${match[2]} B, preimage ${match[3]} B; the rows of the listed names: ${listed.map((name) => `${name} ${ANDROID_CHAT_FEATURE_ROWS[name]?.join(", ") ?? "none"}`).join("; ") || "none"}`,
     );
+  },
+
+  // S53: a persona of the product draws with its name and icon in the host
+  // room, with no participants query, also in the activity line; a repeat
+  // renames it, and an unknown persona is refused.
+  async S53({ note }) {
+    await openRoom("host");
+    const asked = eventMark();
+    const before = messages("host");
+    await command("host", "/bot add helper Helper");
+    const registered = await waitFor(
+      () => addedMessages("host", before).find((message) => /^bot helper (New|Exists)$/.test(message.text))?.text,
+      { timeoutMs: COMMAND_TIMEOUT_MS, message: "no answer to /bot add" },
+    );
+    const stored = await waitFor(() => personaRows().find((row) => row.botId === "helper"), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "chat_bots has no persona helper",
+    });
+    expect(stored.name === "Helper", `chat_bots names helper "${stored.name}"`);
+    note(`/bot add helper Helper: the product read "${registered}"; chat_bots keeps helper "${stored.name}"`);
+
+    const posted = messages("host");
+    await command("host", "/bot post helper Hello from the persona");
+    const spoken = await waitFor(
+      () => addedMessages("host", posted).find((message) => message.text === "Hello from the persona"),
+      { timeoutMs: COMMAND_TIMEOUT_MS, message: "the persona message is not stored" },
+    );
+    expect(spoken.participant === "bot:helper", `the persona message is stored as "${spoken.participant}"`);
+    await scrollToNewest();
+    await waitScreen((screen) => authorAbove(screen, "Hello from the persona", "Helper") && screen, 'the author "Helper" above the persona message');
+    note(`\`${await screenshot(scenarioById("S53"), "author")}\``);
+
+    const renamed = messages("host");
+    await command("host", "/bot add helper Helper Two");
+    await waitFor(() => addedMessages("host", renamed).some((message) => message.text === "bot helper Exists"), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: 'no "bot helper Exists" after the repeat',
+    });
+    await waitFor(() => personaRows().find((row) => row.botId === "helper")?.name === "Helper Two", {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "chat_bots did not take the new name",
+    });
+    await scrollToNewest();
+    await waitScreen((screen) => authorAbove(screen, "Hello from the persona", "Helper Two") && screen, 'the new name "Helper Two" above the persona message');
+
+    await command("host", "/bot typing helper", { reply: true });
+    const typing = await waitScreen((screen) => findText(screen, "Helper Two: Sample is typing") && screen, 'the activity line "Helper Two: Sample is typing"');
+    expect(typing, "no activity line");
+    note(`\`${await screenshot(scenarioById("S53"), "activity")}\``);
+    await command("host", "/activity off", { reply: true });
+
+    const ghost = messages("host");
+    await command("host", "/bot post ghost Boo");
+    const refused = await waitFor(
+      () => addedMessages("host", ghost).find((message) => message.text.startsWith("error /bot post ghost Boo"))?.text,
+      { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unknown persona was not refused" },
+    );
+    expect(/unknown bot ghost/.test(refused), `the refusal reads "${refused}"`);
+    const queried = eventsSince(asked).filter((entry) => entry.via === "participants_query");
+    expect(queried.length === 0, `the app asked participants_query ${queried.length} time(s)`);
+    note(
+      `the persona message is stored with originParticipantId bot:helper and drawn under the author "Helper" with no participants_query; the repeat answered Exists and renamed it to "Helper Two"; the activity line reads "Helper Two: Sample is typing"; /bot post ghost was refused: "${refused}"`,
+    );
+  },
+
+  // S64: a thread chip under the root opens the thread room, which the list
+  // does not show; Back returns to the root.
+  async S64({ note }) {
+    await openRoom("host");
+    await command("host", "/bot add helper Helper");
+    await command("host", "/post text");
+    const root = await newestPlainText("host");
+    await command("host", `/thread ${root}`, { reply: true });
+    const threadRoom = `thread-host-${root}`;
+    const threadChat = chatIdHex(extensionId, threadRoom);
+    await waitFor(() => sql(`SELECT id FROM chat_rooms WHERE id = X'${threadChat}'`)[0], {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: `chat_rooms has no ${threadRoom}`,
+    });
+    await waitFor(() => metaRows("host").some((row) => row.messageId === root), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: `chat_message_meta has no row for ${root}`,
+    });
+    await findInFeed(plainText(root));
+    const rooted = await waitScreen((screen) => chipUnder(screen, plainText(root)) && screen, `the thread chip under ${root}`);
+    const chip = chipUnder(rooted, plainText(root));
+    const chipText = rooted.filter((node) => insideOf(node, chip)).map((node) => node.text).join(" ");
+    expect(/\b3 replies\b/.test(chipText), `the chip reads "${chipText}"`);
+    const unread = rooted.some((node) => node.tag === "chat_thread_unread" && insideOf(node, chip));
+    note(`\`${await screenshot(scenarioById("S64"), "root")}\``);
+
+    const list = await showChatList();
+    expect(!findText(list, "Thread"), "the chat list shows the thread room");
+    await openRoom("host");
+    await findInFeed(plainText(root));
+    const again = await waitScreen((screen) => chipUnder(screen, plainText(root)) && screen, "the chip after the list");
+    const target = chipUnder(again, plainText(root));
+    inputTap(serial, target.center.x, target.center.y);
+    currentRoom = undefined;
+    const thread = await waitScreen(
+      (screen) =>
+        findText(screen, "Thread") &&
+        findText(screen, ROOMS.host.name) &&
+        findTag(screen, "chat_thread_root") &&
+        findText(screen, "Reply 3 from bot:helper") &&
+        screen,
+      "the thread room with its header, the pinned root and the replies",
+    );
+    const bar = findTag(thread, "chat_thread_root");
+    expect(thread.some((node) => plainText(root).test(node.text) && insideOf(node, bar)), "the pinned root is not the root message");
+    for (const reply of ["Reply 1 from p1", "Reply 2 from p2"]) expect(findText(thread, reply), `no "${reply}"`);
+    expect(authorAbove(thread, "Reply 3 from bot:helper", "Helper"), 'the persona reply has no author "Helper"');
+    note(`\`${await screenshot(scenarioById("S64"), "thread")}\``);
+
+    inputKeyEvent(serial, KEY.back);
+    const back = await waitScreen(
+      (screen) => findTag(screen, "chat_message_input") && findText(screen, ROOMS.host.name) && findText(screen, plainText(root)) && screen,
+      "the host room at the root after Back",
+    );
+    expect(back, "Back did not return to the root");
+    currentRoom = "host";
+
+    // A link into the thread room, from the chat list, puts the room of the root under the thread room.
+    await showChatList();
+    amStart(serial, ["-a", "android.intent.action.VIEW", "-d", `polkadotapp://chat?chatId=${threadChat}`]);
+    await waitScreen((screen) => findText(screen, "Thread") && findTag(screen, "chat_thread_root") && screen, "the thread room from the link");
+    // The room of the root opens first, then the thread room again on top of it.
+    await delay(2_000);
+    await waitScreen((screen) => findText(screen, "Thread") && findTag(screen, "chat_thread_root") && screen, "the thread room on top of its root");
+    inputKeyEvent(serial, KEY.back);
+    await waitScreen(
+      (screen) => findTag(screen, "chat_message_input") && findText(screen, ROOMS.host.name) && !findTag(screen, "chat_thread_root") && screen,
+      "the host room after Back from the linked thread room",
+    );
+    note(`\`${await screenshot(scenarioById("S64"), "link-back")}\``);
+    currentRoom = "host";
+
+    note(
+      `/thread ${root}: ${threadRoom} in chat_rooms and a meta row for ${root}; the chip reads "${chipText}"${unread ? " with the unread dot" : ""}; the list has no thread row; a tap opens "Thread" with "${ROOMS.host.name}", the pinned root and the replies from p1, p2 and the persona "Helper"; Back shows the root again; a link into the thread room from the chat list opens it with the host room under it, so Back lands in the host room. Deleting the parent is not driven: the sample runs commands only in host, source and its thread rooms, so no thread of the throwaway room that /room delete removes can be made (RealDeleteRoomUseCaseTest covers the cascade)`,
+    );
+  },
+
+  // S65: the branch arrows send BranchSelected; the product's answer moves
+  // the position; an answer later than 5 s leaves the control at the stored
+  // position, and the late answer then moves it.
+  async S65({ note }) {
+    await openRoom("host");
+    await command("host", "/post text");
+    const id = await newestPlainText("host");
+    await command("host", `/branches ${id} 3`, { reply: true });
+    await findInFeed(plainText(id));
+    let screen = await waitScreen((nodes) => branchUnder(nodes, plainText(id))?.position.text === "1/3" && nodes, "the branch control 1/3");
+    let mark = eventMark();
+    let control = branchUnder(screen, plainText(id));
+    inputTap(serial, control.next.center.x, control.next.center.y);
+    const selected = await waitEvent(
+      mark,
+      (entry) => entry.via === "room_events" && entry.room === "host" && entry.kind === "BranchSelected" && Number(entry.data?.index) === 2,
+      "BranchSelected { index: 2 }",
+    );
+    screen = await waitScreen(
+      (nodes) => findText(nodes, "Branch 2 of 3") && branchUnder(nodes, /^Branch 2 of 3$/)?.position.text === "2/3" && !findTag(nodes, "chat_branch_waiting") && nodes,
+      'the answer "Branch 2 of 3" at 2/3',
+    );
+    note(`\`${await screenshot(scenarioById("S65"), "answered")}\``);
+
+    // The product answers 15 s late; the app gives up after 5 s and logs it. Screen dumps are slow, so the margin is wide.
+    await command("host", "/slow 15000", { reply: true });
+    try {
+      control = branchUnder(parseUiNodes(uiDump(serial)), /^Branch 2 of 3$/);
+      expect(control, "no branch control under Branch 2 of 3");
+      mark = eventMark();
+      const logged = logMark();
+      const tapped = Date.now();
+      inputTap(serial, control.next.center.x, control.next.center.y);
+      await waitScreen((nodes) => findTag(nodes, "chat_branch_waiting") && nodes, "the spinner of the control", 4_000);
+      note(`\`${await screenshot(scenarioById("S65"), "waiting", 200)}\``);
+      const gaveUp = await waitForLog(logged, (line) => /^truapi\.chat\.branch .*: no answer for 3 in 5000 ms$/.test(line.message), "the 5 s time-out of the control", 12_000);
+      note(`the control gave up ${((Date.now() - tapped) / 1000).toFixed(1)} s after the tap ("${gaveUp.message}")`);
+      const reverted = await waitScreen(
+        (nodes) => !findTag(nodes, "chat_branch_waiting") && branchUnder(nodes, /^Branch 2 of 3$/)?.position.text === "2/3" && nodes,
+        "the control back at 2/3 with no spinner",
+        3_000,
+      );
+      expect(!findTag(reverted, "chat_branch_waiting"), "the spinner is still there after 5 s");
+      expect(branchUnder(reverted, /^Branch 2 of 3$/)?.position.text === "2/3", "the control is not back at 2/3 after 5 s");
+      note(`\`${await screenshot(scenarioById("S65"), "reverted", 100)}\``);
+      expect(Date.now() - tapped < 15_000, "the check of the revert came after the late answer");
+      await waitScreen((nodes) => branchUnder(nodes, /^Branch 3 of 3$/)?.position.text === "3/3" && nodes, "the late answer at 3/3", 30_000);
+      await waitEvent(mark, (entry) => entry.via === "room_events" && entry.kind === "BranchSelected" && Number(entry.data?.index) === 3, "BranchSelected { index: 3 }");
+    } finally {
+      await command("host", "/slow 0", { reply: true, timeoutMs: 45_000 });
+    }
+    note(
+      `a tap on › sent BranchSelected ${JSON.stringify(selected.data)}; the product's Edited "Branch 2 of 3" and meta moved the control to 2/3; with /slow 15000 the next tap showed the spinner, after 5 s the control was back at 2/3 with no spinner, and the late answer moved it to 3/3`,
+    );
+  },
+
+  // S66: a reasoning row reads "Thinking…" while the message is Preparing,
+  // then "Thought for 4 s" collapsed; a tap expands it; TalkBack reads its
+  // state; it is never the list preview.
+  async S66({ note }) {
+    await openRoom("host");
+    await scrollToNewest();
+    const before = messages("host");
+    await typeAndSend("/reason");
+    const states = new Set();
+    let thinkingShot;
+    const started = Date.now();
+    while (Date.now() - started < 20_000) {
+      const screen = parseUiNodes(uiDump(serial));
+      const row = screen.find((node) => /^Reasoning, (expanded|collapsed)$/.test(node.description));
+      if (row?.description === "Reasoning, expanded" && findText(screen, "Thinking…")) {
+        if (!states.has("thinking")) thinkingShot = await screenshot(scenarioById("S66"), "thinking", 0);
+        states.add("thinking");
+        if (screen.some((node) => node.tag === "chat_reasoning_text" && /^The user/.test(node.text))) states.add("streamed");
+      }
+      if (row && findText(screen, "Thought for 4 s") && row.description === "Reasoning, collapsed") {
+        states.add("collapsed");
+        break;
+      }
+    }
+    expect(states.has("collapsed"), `the row did not collapse to "Thought for 4 s" (seen: ${[...states].join(", ") || "nothing"})`);
+    // The stored search text of a message keeps its first body until P8.9, so it is "The".
+    const reasoning = addedMessages("host", before).find((message) => /^The( user asked|$)/.test(message.text));
+    expect(reasoning, "no reasoning message stored");
+    const collapsed = parseUiNodes(uiDump(serial));
+    expect(!collapsed.some((node) => node.tag === "chat_reasoning_text"), "the collapsed row shows its text");
+    note(`\`${await screenshot(scenarioById("S66"), "collapsed")}\``);
+    const header = collapsed.find((node) => node.description === "Reasoning, collapsed");
+    inputTap(serial, header.center.x, header.center.y);
+    const expanded = await waitScreen(
+      (screen) => screen.some((node) => node.description === "Reasoning, expanded") && screen.some((node) => node.tag === "chat_reasoning_text" && /The user asked/.test(node.text)) && screen,
+      "the expanded row with its text",
+    );
+    expect(expanded, "no expanded row");
+    note(`\`${await screenshot(scenarioById("S66"), "expanded")}\``);
+    const list = await showChatList();
+    const row = rowNodes(list, ROOMS.host.name);
+    expect(!row.some((node) => /The user asked/.test(node.text)), `the list preview is the reasoning row: ${row.map((node) => node.text).join(" | ")}`);
+    note(`\`${await screenshot(scenarioById("S66"), "list")}\``);
+    note(
+      `${states.has("thinking") ? `"Thinking…" with the streamed text (\`${thinkingShot}\`), then ` : "the Thinking state was shorter than one screen dump; "}"Thought for 4 s" with the content description "Reasoning, collapsed"; a tap gives "Reasoning, expanded" and the text; the host row of the list shows "${row.map((node) => node.text).filter(Boolean).join(" | ")}", not the reasoning row`,
+    );
+  },
+
+  // S67: Read aloud is in the menu only with read_aloud, speaks RichText as
+  // plain text, and stops when the user leaves the room.
+  async S67({ note }) {
+    await openRoom("host");
+    await command("host", "/features readaloud off", { reply: true });
+    await command("host", "/post rich");
+    await waitFor(() => messages("host").some((message) => /^# Rich text sample/.test(message.text)), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "the rich message is not stored",
+    });
+    const without = await openRichMenu();
+    expect(!findText(without, "Read aloud"), "Read aloud without read_aloud");
+    inputKeyEvent(serial, KEY.back);
+    await delay(800);
+
+    await command("host", "/features readaloud on", { reply: true });
+    await delay(1_500);
+    const menu = await openRichMenu();
+    expect(findText(menu, "Read aloud"), `no Read aloud with read_aloud; the menu shows ${menuLabels(menu).join(", ")}`);
+    note(`\`${await screenshot(scenarioById("S67"), "menu", 300)}\``);
+    const logged = logMark();
+    tapText(menu, "Read aloud");
+    const spoke = await waitForLog(logged, (line) => line.message.startsWith("truapi.chat.readAloud speak "), "the speak line");
+    const match = /speak (\d+) characters, marks (true|false)/.exec(spoke.message);
+    expect(match && match[2] === "false", `the spoken text has Markdown marks: ${spoke.message}`);
+    const speaking = await waitScreen((screen) => findTag(screen, "chat_read_aloud_stop") && screen, 'the "Stop" line while it speaks', 10_000).catch(() => undefined);
+    const engine = logLines(logged).find((line) => /truapi\.chat\.readAloud (unavailable|failed|done)/.test(line.message));
+    if (speaking) note(`\`${await screenshot(scenarioById("S67"), "speaking", 200)}\``);
+    inputKeyEvent(serial, KEY.back);
+    currentRoom = undefined;
+    const stopped = await waitForLog(logged, (line) => /truapi\.chat\.readAloud (stop|done|unavailable|failed)/.test(line.message), "the end of the speech", 10_000);
+    expect(speaking, `no Stop line while it speaks${engine ? `: ${engine.message}` : ""}`);
+    expect(/readAloud stop$/.test(stopped.message), `the speech ended with "${stopped.message}" before the user left`);
+    await delay(1_000);
+    const after = parseUiNodes(uiDump(serial));
+    expect(!findTag(after, "chat_read_aloud_stop"), "the Stop line is still on screen after leaving");
+    await command("host", "/features readaloud off", { reply: true });
+    note(
+      `without read_aloud the menu of the rich message has no Read aloud; with it, Read aloud spoke ${match[1]} characters with no Markdown marks (logcat ${JSON.stringify(spoke.message)}), the footer showed Stop, and Back stopped the speech ("${stopped.message}")`,
+    );
+  },
+
+  // S68: the meta of a message of the product-source room is kept by the
+  // host, so its branch control comes back when the room loads its pages again.
+  async S68({ note }) {
+    await openRoom("source");
+    await command("source", "/post text");
+    const id = await newestPlainText("source");
+    await command("source", `/branches ${id} 3`, { reply: true });
+    await waitFor(() => metaRows("source").some((row) => row.messageId === id), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: `chat_message_meta has no row for ${id}`,
+    });
+    await findInFeed(plainText(id));
+    await waitScreen((nodes) => branchUnder(nodes, plainText(id))?.position.text === "1/3" && nodes, "the branch control 1/3");
+    note(`\`${await screenshot(scenarioById("S68"), "before")}\``);
+    const reloaded = eventMark();
+    await reopenRoom("source");
+    await waitEvent(reloaded, (entry) => entry.via === "messages_query" && entry.room === "source", "a new messages_query page");
+    await findInFeed(plainText(id));
+    await waitScreen((nodes) => branchUnder(nodes, plainText(id))?.position.text === "1/3" && nodes, "the branch control after the reload");
+    note(`\`${await screenshot(scenarioById("S68"), "after")}\``);
+    note(`/branches ${id} 3 in the product-source room: a chat_message_meta row; after the room closed and loaded its pages again through messages_query, the control 1/3 is back under the message`);
   },
 
   // S61: the host searches the messages it keeps, without case and
@@ -689,6 +1015,61 @@ const DRIVERS = {
     note(
       `the user's "${text}" is found by "creme BRULEE" and by "café" (case and diacritics ignored); a tap closes the field and the feed shows it at y ${Math.round(bubble.center.y)} after /post all pushed it out of the screen. A host-store room loads all its messages, so the jump is a scroll, not a page load`,
     );
+  },
+
+  // S62: a product-source room offers search only when it declares it; the product answers search_query in pages, a
+  // tap jumps to an older message, and /search na shows that search is not available.
+  async S62({ note }) {
+    try {
+      await command("source", "/search off", { reply: true });
+      // `/history` replaces the stored messages and gives no reply; the reopen loads the new pages.
+      await command("source", "/history 120");
+      await reopenRoom("source");
+      await delay(1_500);
+      expect(!findTag(parseUiNodes(uiDump(serial)), "chat_room_search_action"), "the header shows the search action without search");
+
+      await command("source", "/search on", { reply: true });
+      await waitScreen((screen) => findTag(screen, "chat_room_search_action"), "the search action after /search on");
+      const first = eventMark();
+      let screen = await searchInRoom("history MESSAGE");
+      const asked = await waitEvent(first, (entry) => entry.via === "search_query" && entry.kind === "Search", "search_query");
+      screen = await waitScreen((nodes) => findText(nodes, /History message 00120/) && nodes, "the newest hit first");
+      expect(screen.filter((node) => node.tag === "chat_room_search_result").length >= 5, `the results show ${screenSummary(screen)}`);
+      note(`\`${await screenshot(scenarioById("S62"), "results")}\``);
+
+      // The next page loads when the list comes near its oldest result; the older hit is below the first 30.
+      let target;
+      for (let attempt = 0; attempt < 12 && !target; attempt += 1) {
+        inputSwipe(serial, { x: 540, y: 1800 }, { x: 540, y: 700 }, 300);
+        await delay(1_000);
+        target = findText(parseUiNodes(uiDump(serial)), /History message 00065/);
+      }
+      expect(target, "no hit History message 00065 after scrolling the results");
+      const paged = eventsSince(first).filter((entry) => entry.via === "search_query" && entry.kind === "Search");
+      expect(paged.length >= 2 && JSON.stringify(paged.at(-1).data).includes('"cursor":"'), `search_query asked ${paged.length} page(s): ${paged.map((entry) => JSON.stringify(entry.data)).join(", ")}`);
+      note(`\`${await screenshot(scenarioById("S62"), "paged")}\``);
+      inputTap(serial, target.center.x, target.center.y);
+      const jumped = await waitScreen(
+        (nodes) => !findTag(nodes, "chat_room_search_field") && findText(nodes, "History message 00065") && nodes,
+        "History message 00065 in the feed after the tap",
+        45_000,
+      );
+      const bubble = findText(jumped, "History message 00065");
+      note(`\`${await screenshot(scenarioById("S62"), "jumped")}\``);
+
+      await command("source", "/search na", { reply: true });
+      const unavailable = await searchInRoom("history", { tag: "chat_room_search_not_available" });
+      expect(findTag(unavailable, "chat_room_search_not_available"), "no notice that search is not available");
+      note(`\`${await screenshot(scenarioById("S62"), "unavailable")}\``);
+      inputKeyEvent(serial, KEY.back);
+      note(
+        `/search off: no search action; /search on: the action shows without a reopen; "history MESSAGE" asked search_query ${JSON.stringify(asked.data)} and shows History message 00120 first; a scroll asked ${paged.length - 1} more page(s) with a cursor (${JSON.stringify(paged.at(-1).data)}); a tap on History message 00065, older than the loaded window, closed the field and the feed shows it at y ${Math.round(bubble.center.y)}; /search na: "Search is not available"`,
+      );
+    } finally {
+      const open = parseUiNodes(uiDump(serial));
+      if (findTag(open, "chat_room_search_field")) inputKeyEvent(serial, KEY.back);
+      await command("source", "/search off", { reply: true });
+    }
   },
 
   // S54: the user mutes the room for one hour from the list; the row shows
@@ -802,22 +1183,57 @@ const DRIVERS = {
       (entry) => entry.via === "room_events" && entry.room === "host" && entry.kind === "UserStateChanged" && entry.data?.archived === false,
       "UserStateChanged on unarchive",
     );
+
+    // Delete works as before on an archived room: the product deletes the room `throwaway`, which the user archived.
+    await command("host", "/room create", { reply: true });
+    await waitFor(() => roomRow("throwaway")?.name === ROOMS.throwaway.name, { timeoutMs: COMMAND_TIMEOUT_MS, message: "chat_rooms has no room throwaway" });
+    await showChatList();
+    await swipeRow(ROOMS.throwaway.name, "archive", () => Number(userStateRow("throwaway")?.archived) === 1);
+    await waitFor(() => Number(userStateRow("throwaway")?.archived) === 1, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the archive of throwaway is not stored" });
+    // The list shows the Archived row without the room, or the archived section with the room.
+    const archivedView = await waitScreen(
+      (screen) =>
+        ((findTag(screen, "chat_list_archived_row") && !findText(screen, ROOMS.throwaway.name)) ||
+          (findTag(screen, "chat_list_archived_header") && findText(screen, ROOMS.throwaway.name))) &&
+        screen,
+      "the throwaway room in the archive",
+    );
+    const inSection = Boolean(findTag(archivedView, "chat_list_archived_header"));
+    const deleted = eventMark();
+    await hookCommand("host", "/room delete");
+    await waitEvent(deleted, (entry) => entry.via === "room" && entry.kind === "Deleted", "the Deleted line of /room delete");
+    await waitFor(() => !roomRow("throwaway") && !userStateRow("throwaway"), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "chat_rooms or chat_room_declarations still has the archived room throwaway",
+    });
+    const afterDelete = await showChatList();
+    // The header of an empty archived section leads back to the main section.
+    const header = findTag(afterDelete, "chat_list_archived_header");
+    if (header) inputTap(serial, header.center.x, header.center.y);
+    await waitScreen(
+      (screen) => !findTag(screen, "chat_list_archived_row") && !findText(screen, ROOMS.throwaway.name) && findText(screen, ROOMS.host.name) && screen,
+      "the list without the Archived row after the delete",
+    );
+    if (inSection) observations.push("S55: after the swipe archived the room throwaway, the list showed the archived section with it, not the main section");
+    note(`\`${await screenshot(scenarioById("S55"), "deleted")}\``);
     note(
-      `a swipe archives the room: UserStateChanged ${JSON.stringify(event.data)}, the main list shows the Archived row and not the room, the room stays archived after /post text, the archived section shows it, a swipe there unarchives it and it is back in the main list; delete is not driven (the sample has no delete_room command, S5)`,
+      `a swipe archives the room: UserStateChanged ${JSON.stringify(event.data)}, the main list shows the Archived row and not the room, the room stays archived after /post text, the archived section shows it, a swipe there unarchives it and it is back in the main list; then /room create and a swipe archive the room throwaway, and /room delete removes it with its user state (no chat_rooms or chat_room_declarations row), so the Archived row goes`,
     );
   },
 
-  // S56: a worker that starts again first hears which rooms the user muted
-  // or archived.
+  // S56: a worker that starts again first hears which rooms the user muted or archived. The menu of the room header
+  // sets both states, and clears them after the check.
   async S56({ note }) {
     await resetUserState("host");
     await resetUserState("source");
-    await showChatList();
-    await swipeRow(ROOMS.host.name, "mute", muteSheetShown);
+    await openRoom("host");
+    await roomMenuAction("Mute");
     await tapWhenShown("Always", "the mute durations");
     await waitFor(() => userStateRow("host")?.mutedUntil, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the mute is not stored" });
-    await swipeRow(ROOMS.source.name, "archive", () => Number(userStateRow("source")?.archived) === 1);
+    await openRoom("source");
+    await roomMenuAction("Archive");
     await waitFor(() => Number(userStateRow("source")?.archived) === 1, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the archive is not stored" });
+    note(`the menu of the room header: Mute, then Always, in the host room (mutedUntil ${userStateRow("host").mutedUntil}); Archive in the source room`);
     try {
       const lastBoot = Math.max(0, ...events().map((entry) => entry.boot ?? 0));
       shell(serial, ["am", "force-stop", packageName]);
@@ -846,14 +1262,13 @@ const DRIVERS = {
       );
     } finally {
       await waitProductStarted().catch(() => undefined);
-      await showChatList();
-      await swipeRow(ROOMS.host.name, "mute", () => userStateRow("host")?.mutedUntil == null);
+      await openRoom("host");
+      await roomMenuAction("Unmute");
       await waitFor(() => userStateRow("host")?.mutedUntil == null, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unmute is not stored" });
-      const list = await showChatList();
-      tapText(list, "Archived");
-      await waitScreen((screen) => findTag(screen, "chat_list_archived_header") && findText(screen, ROOMS.source.name), "the archived section");
-      await swipeRow(ROOMS.source.name, "archive", () => Number(userStateRow("source")?.archived ?? 0) === 0);
+      await openRoom("source");
+      await roomMenuAction("Unarchive");
       await waitFor(() => Number(userStateRow("source")?.archived ?? 0) === 0, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unarchive is not stored" });
+      note("Unmute and Unarchive in the menu of the room header cleared both states");
     }
   },
 
@@ -885,6 +1300,217 @@ const DRIVERS = {
     note(
       'the list search shows both product rooms for "Sample", the host-store message for "crème", and no result for "History message 00050", which only the product of the source room keeps; no worker page, no worker start and no event log line during the search',
     );
+  },
+
+  // S69: the user sends a message and leaves the room at once. The wake of the message (W1) holds the worker, so the
+  // product still answers; then the worker stops; a message to the stopped worker wakes it again.
+  async S69({ note }) {
+    await openRoom("host");
+    await command("host", "/echo", { reply: true });
+    try {
+      const text = `w1 closed at once ${String(Date.now()).slice(-5)}`;
+      const logged = logMark();
+      await typeAndSend(text);
+      await showChatList();
+      const left = Date.now();
+      const woken = await waitForLog(
+        logged,
+        (line) => line.message.startsWith(`TrUAPI ${productHost} woken for message-in-flight host until `),
+        "the wake of the message",
+      );
+      const echo = await waitFor(
+        () => messages("host").find((message) => message.text.startsWith("echo MessagePosted") && message.text.includes(text)),
+        { timeoutMs: COMMAND_TIMEOUT_MS, message: `no echo of "${text}" stored` },
+      );
+      note(`\`${await screenshot(scenarioById("S69"), "list")}\``);
+      note(`"${text}" sent and the room left at once: logcat "${woken.message}", the product stored "${echo.text}" ${Math.round((Date.now() - left) / 1000)} s after the room closed`);
+
+      await waitFor(async () => (await workerPages()) === 0, {
+        timeoutMs: 120_000,
+        intervalMs: 2_000,
+        message: "the worker page still runs 120 s after the room closed",
+      });
+      const stoppedAfter = Math.round((Date.now() - left) / 1000);
+      expect(stoppedAfter >= 25, `the worker stopped ${stoppedAfter} s after the room closed, before the wake of 30 s ended`);
+      note(`the worker page was gone ${stoppedAfter} s after the room closed (the wake holds 30 s after the message went)`);
+
+      const stopped = `w1 to a stopped worker ${String(Date.now()).slice(-5)}`;
+      const asked = logMark();
+      hook([
+        ["--es", "product_id", productHost],
+        ["--es", "room_id", "host"],
+        ["--es", "message", stopped],
+      ]);
+      await waitForLog(asked, (line) => line.message.startsWith(`TrUAPI ${productHost} woken for message-in-flight host until `), "the wake of the message to the stopped worker");
+      const second = await waitFor(
+        () => messages("host").find((message) => message.text.startsWith("echo MessagePosted") && message.text.includes(stopped)),
+        { timeoutMs: ANSWER_TIMEOUT_MS * 2, message: `no echo of "${stopped}" stored` },
+      );
+      note(`a message to the stopped worker woke it, and the product stored "${second.text}"`);
+    } finally {
+      await command("host", "/echo", { reply: true });
+    }
+  },
+
+  // S72: the room declares calls; the header draws the buttons that it declares, and a press sends CallRequested.
+  async S72({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/features calls both", { reply: true });
+      const both = await waitScreen(
+        (screen) => findTag(screen, CALL_TAGS.audio) && findTag(screen, CALL_TAGS.video) && screen,
+        "both call buttons in the header",
+      );
+      note(`\`${await screenshot(scenarioById("S72"), "buttons")}\``);
+      const mark = eventMark();
+      const video = findTag(both, CALL_TAGS.video);
+      inputTap(serial, video.center.x, video.center.y);
+      const requested = await waitEvent(
+        mark,
+        (entry) => isCallEvent(entry, "CallRequested") && entry.data?.video === true,
+        "room_events CallRequested video=true",
+      );
+      await waitFor(() => messages("host").some((message) => message.text === "call requested video=true"), {
+        timeoutMs: COMMAND_TIMEOUT_MS,
+        message: 'no "call requested video=true" stored',
+      });
+      await waitScreen((screen) => findTag(screen, CALL_TAGS.bar) && screen, "the call bar of the call that the product starts");
+      note(`a press on the video button: CallRequested ${JSON.stringify(requested.data)} (seq ${requested.seq}); the product answered Active, and the bar shows`);
+
+      await command("host", "/call end", { reply: true });
+      await waitScreen((screen) => !findTag(screen, CALL_TAGS.bar) && screen, "no call bar");
+      await command("host", "/features calls audio", { reply: true });
+      await waitScreen((screen) => findTag(screen, CALL_TAGS.audio) && !findTag(screen, CALL_TAGS.video) && screen, "the audio button only");
+      await command("host", "/features calls off", { reply: true });
+      await waitScreen((screen) => !findTag(screen, CALL_TAGS.audio) && !findTag(screen, CALL_TAGS.video) && screen, "no call button");
+      note(`\`${await screenshot(scenarioById("S72"), "none")}\``);
+      note("`/features calls audio` shows the audio button only, `/features calls off` none; a build without call_buttons shows none (ProductRoomCallControllerTest), and this build lists call_buttons (S49)");
+    } finally {
+      await command("host", "/call end", { reply: true });
+      await command("host", "/features calls off", { reply: true });
+    }
+  },
+
+  // S73: a ringing call rings in the room, in the chat list, in an in-app banner and, with the app in the background,
+  // in a CallStyle notification. Accept and Decline answer it; a call that nobody answers stops after 60 s.
+  async S73({ note }) {
+    await openRoom("host");
+    try {
+      await command("host", "/call ring", { reply: true });
+      const room = await waitScreen((screen) => findTag(screen, CALL_TAGS.ringing) && screen, "the ringing banner of the room");
+      const caller = rowTexts(room, CALL_TAGS.ringing);
+      expect(caller.includes("Incoming call"), `the banner shows ${JSON.stringify(caller)}`);
+      note(`\`${await screenshot(scenarioById("S73"), "ringing")}\``);
+      note(`/call ring: the room shows the banner ${JSON.stringify(caller)} with Accept and Decline`);
+
+      // The chat list: the row rings, and the in-app banner rings for the room.
+      await showChatList();
+      const ringAgain = logMark();
+      await hookCommand("host", "/call ring video");
+      const list = await waitScreen(
+        (screen) => rowNodes(screen, ROOMS.host.name).some((node) => /Incoming video call$/.test(node.text)) && findTag(screen, CALL_TAGS.inApp) && screen,
+        'the "Incoming video call" row and the in-app banner',
+      );
+      expect(findTag(list, CALL_TAGS.inApp), "no in-app banner");
+      await waitForLog(ringAgain, (line) => line.message.startsWith(`product call alert ${ROOMS.host.chat.toLowerCase()} banner `), "the banner alert in logcat");
+      note(`\`${await screenshot(scenarioById("S73"), "list")}\``);
+      note('/call ring video from the list: the row shows "Incoming video call" and the in-app banner shows');
+
+      // The app in the background: a CallStyle notification.
+      const background = logMark();
+      inputKeyEvent(serial, KEY.home);
+      await waitForLog(background, (line) => line.message.startsWith(`product call alert ${ROOMS.host.chat.toLowerCase()} notification `), "the notification alert in logcat");
+      const posted = await waitFor(() => callNotification(), { timeoutMs: COMMAND_TIMEOUT_MS, message: "no product call notification in dumpsys" });
+      note(`\`${await screenshot(scenarioById("S73"), "background")}\``);
+      note(`with the app in the background: a CallStyle notification (${posted})`);
+      const answered = await answerFromNotification();
+      note(answered);
+      amStart(serial, ["-n", launcherActivity]);
+      await waitFor(() => !callNotification() && true, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the notification stays with the app in the front" });
+
+      // Accept and Decline in the room.
+      await openRoom("host");
+      await command("host", "/call end", { reply: true });
+      await command("host", "/call ring", { reply: true });
+      let screen = await waitScreen((nodes) => findTag(nodes, CALL_TAGS.accept) && nodes, "Accept");
+      let mark = eventMark();
+      tapTag(screen, CALL_TAGS.accept);
+      const accept = await waitEvent(mark, (entry) => isCallEvent(entry, "CallAnswered") && entry.data?.accept === true, "CallAnswered accept=true");
+      await waitScreen((nodes) => findTag(nodes, CALL_TAGS.bar) && !findTag(nodes, CALL_TAGS.ringing) && nodes, "the call bar after Accept");
+      await command("host", "/call end", { reply: true });
+      await command("host", "/call ring", { reply: true });
+      screen = await waitScreen((nodes) => findTag(nodes, CALL_TAGS.decline) && nodes, "Decline");
+      mark = eventMark();
+      tapTag(screen, CALL_TAGS.decline);
+      const decline = await waitEvent(mark, (entry) => isCallEvent(entry, "CallAnswered") && entry.data?.accept === false, "CallAnswered accept=false");
+      await waitScreen((nodes) => !findTag(nodes, CALL_TAGS.ringing) && nodes, "no banner after Decline");
+      note(`Accept sent CallAnswered ${JSON.stringify(accept.data)} and the product showed the bar; Decline sent CallAnswered ${JSON.stringify(decline.data)} and the banner went`);
+
+      // Nobody answers: the banner goes after 60 s.
+      await command("host", "/call ring", { reply: true });
+      await waitScreen((nodes) => findTag(nodes, CALL_TAGS.ringing) && nodes, "the ringing banner");
+      const rang = Date.now();
+      await waitScreen((nodes) => !findTag(nodes, CALL_TAGS.ringing) && nodes, "no banner after 60 s", 90_000);
+      const after = Math.round((Date.now() - rang) / 1000);
+      expect(after >= 50, `the banner went after ${after} s`);
+      const listAfter = await showChatList();
+      expect(!rowNodes(listAfter, ROOMS.host.name).some((node) => /^Incoming/.test(node.text)), "the row still rings");
+      note(`a call that nobody answers: the banner went after ${after} s, and the row does not ring`);
+    } finally {
+      await openRoom("host");
+      await command("host", "/call end", { reply: true });
+    }
+  },
+
+  // S74: an active call without a media session shows the call bar with its timer. A tap on the bar sends CallOpened,
+  // End sends CallEnded.
+  async S74({ note }) {
+    await openRoom("host");
+    try {
+      const sent = Date.now();
+      await command("host", "/call active", { reply: true });
+      await waitScreen((screen) => findTag(screen, CALL_TAGS.bar) && screen, "the call bar");
+      await delay(2_500);
+      // A dump can take seconds on a busy host, so the check reads the timer twice and compares it with the clock.
+      const first = await readCallTimer();
+      expect(first.seconds >= 2 && first.seconds <= (first.at - sent) / 1000 + 2, `the timer shows ${first.text} ${Math.round((first.at - sent) / 1000)} s after /call active`);
+      await delay(2_000);
+      const second = await readCallTimer();
+      expect(second.seconds > first.seconds, `the timer stays at ${first.text} (then ${second.text})`);
+      const screen = second.screen;
+      const timer = `${first.text}, then ${second.text}`;
+      note(`\`${await screenshot(scenarioById("S74"), "bar")}\``);
+      const bar = findTag(screen, CALL_TAGS.bar);
+      let mark = eventMark();
+      inputTap(serial, bar.bounds.left + 120, bar.center.y);
+      const opened = await waitEvent(mark, (entry) => isCallEvent(entry, "CallOpened"), "CallOpened");
+      mark = eventMark();
+      tapTag(parseUiNodes(uiDump(serial)), CALL_TAGS.end);
+      const ended = await waitEvent(mark, (entry) => isCallEvent(entry, "CallEnded"), "CallEnded");
+      await waitScreen((nodes) => !findTag(nodes, CALL_TAGS.bar) && nodes, "no call bar after End");
+      note(`/call active: the bar shows the timer ${timer}; a tap sent CallOpened ${JSON.stringify(opened.data)}, End sent CallEnded ${JSON.stringify(ended.data)}, and the product cleared the call`);
+    } finally {
+      await command("host", "/call end", { reply: true });
+    }
+  },
+
+  // B9: a notification wake of the room, as the receiving layer will start it (O28: the debug hook stands in), to a
+  // fresh preview "Woken by <watch>". Two cold wakes (no worker runs) and one warm wake, in the foreground.
+  async B9({ note }) {
+    await showChatList();
+    const times = [];
+    for (const watch of ["b9-cold-1", "b9-cold-2"]) {
+      await waitFor(async () => (await workerPages()) === 0, {
+        timeoutMs: 150_000,
+        intervalMs: 2_000,
+        message: "the worker page still runs: no cold start",
+      });
+      times.push([watch, await timedWake(watch)]);
+    }
+    times.push(["b9-warm", await timedWake("b9-warm")]);
+    note(times.map(([watch, ms]) => `${watch} ${ms} ms`).join(", "));
+    note("from the wake hook to the stored preview \"Woken by <watch>\" (chat_room_declarations.preview), the app in the foreground on the chat list");
+    await command("host", "/preview none", { reply: true });
   },
 
   async S7({ note }) {
@@ -1139,6 +1765,262 @@ const DRIVERS = {
     note(`\`${await screenshot(scenarioById("S14"), "host")}\``);
     note(
       `after /commands, "/help" arrived as Command ${JSON.stringify(commandEvent.data)} with no MessagePosted and no stored message; report_seen: the source room sent ${seen.length} user_action Seen (last ${JSON.stringify(seen.at(-1).data)})`,
+    );
+  },
+
+  // S51: the app keeps the features of a room whole across a restart, also a feature that it does not serve
+  // (`preimage_attachments` is not in the capabilities of the app, so the room keeps the inline rule).
+  async S51({ note }) {
+    const features = () => sql(`SELECT hex(features) AS f FROM chat_room_declarations WHERE chatId = X'${ROOMS.host.chat}'`)[0]?.f ?? "";
+    const waitFeatures = (hex, what) =>
+      waitFor(() => features() === hex, { timeoutMs: COMMAND_TIMEOUT_MS, message: () => `${what}: chat_room_declarations.features is 0x${features()}, not 0x${hex}` });
+    // Version 1 | preimage, no search | Some(audio, no video) | no thread | read aloud.
+    const declared = "0101000101000001";
+    try {
+      for (const text of ["/features preimage on", "/features readaloud on", "/features calls audio"]) {
+        await command("host", text, { reply: true });
+      }
+      await waitFeatures(declared, "after /features");
+      shell(serial, ["am", "force-stop", packageName]);
+      amStart(serial, ["-n", launcherActivity]);
+      await waitForProcess(serial, packageName);
+      currentRoom = undefined;
+      // The room starts the worker, which declares its rooms again at its start.
+      await openRoom("host");
+      await delay(5_000);
+      await waitFeatures(declared, "after the restart");
+      note(`/features preimage on, readaloud on, calls audio: chat_room_declarations.features 0x${declared}; the same after an app restart and a new worker; the app does not list preimage_attachments (S49 checks the list), so it keeps the bytes and ignores the feature`);
+    } finally {
+      await waitProductStarted().catch(() => undefined);
+      for (const text of ["/features preimage off", "/features readaloud off", "/features calls off"]) {
+        await command("host", text, { reply: true });
+      }
+    }
+    await waitFeatures("010000000000", "after the features went off");
+    note("/features preimage off, readaloud off, calls off: chat_room_declarations.features 0x010000000000");
+  },
+
+  // S60: the first staged attachment of the product shows the public-storage
+  // notice. Cancel keeps it unsent; Send stages it; a later attachment of the
+  // same product, in the other room, shows no notice.
+  async S60({ note }) {
+    await prepareStaging(note);
+    for (const room of ["host", "source"]) await declareStaging(room, true);
+    preimageAnswer = "Allow always";
+
+    await openRoom("host");
+    let mark = logMark();
+    let notice = await pickFile(stagingFile("s60-photo.png", () => noisePng(1024, 500, RUN_SEED + 60)), { notice: true });
+    expect(findText(notice, /^Files over 1 MB sent in .* are stored on the public Bulletin chain/), "the notice names no product");
+    note(`\`${await screenshot(scenarioById("S60"), "notice")}\``);
+    await tapNoticeButton(notice, "Cancel");
+    await delay(3_000);
+    expect(outboxEntries().length === 0, `Cancel kept ${outboxEntries().length} outbox entries`);
+    expect(!stageLines(mark).length, "Cancel staged the attachment");
+    note("Cancel: no outbox entry and no staging");
+
+    mark = logMark();
+    notice = await pickFile(stagingFile("s60-photo.png", () => noisePng(1024, 500, RUN_SEED + 60)), { notice: true });
+    note("the notice shows again after Cancel");
+    await tapNoticeButton(notice, "Send");
+    const staged = await waitStage(mark, "the staging after Send");
+    note(`Send: ${staged.message}`);
+    await deleteOutboxBubbles();
+
+    await openRoom("source");
+    mark = logMark();
+    await pickFile(stagingFile("s60-file.pdf", () => bytesOf(1.2 * MIB)), { notice: false });
+    const second = await waitStage(mark, "the staging in the source room", { failOnNotice: true });
+    note(`no notice for the second attachment of the product (source room): ${second.message}`);
+    note(`\`${await screenshot(scenarioById("S60"), "source")}\``);
+    await deleteOutboxBubbles();
+  },
+
+  // S57: a 3 MiB photo and a 6 MiB file. The Bulletin chain of the emulator
+  // decides the bound (O32); the path is then proved with files under it.
+  async S57({ note }) {
+    await prepareStaging(note);
+    preimageAnswer = "Allow always";
+    const bounds = [];
+    for (const [name, make] of [
+      ["s57-photo-3mib.png", () => noisePng(1024, 1024, RUN_SEED + 57)],
+      ["s57-file-6mib.pdf", () => bytesOf(6 * MIB)],
+    ]) {
+      await openRoom("host");
+      const mark = logMark();
+      await pickFile(stagingFile(name, make), { notice: false });
+      const line = await waitStage(mark, `the staging of ${name}`);
+      note(`${name}: ${line.message.replace(/^truapi\.chat\.stage outbox:\S+ /, "")}`);
+      const tooLarge = /TooLarge \(the attachment is larger than (\d+) bytes\)/.exec(line.message);
+      if (tooLarge) {
+        bounds.push(Number(tooLarge[1]));
+        note(`the room says: ${await attachmentBanner(mark, "This file is too large to send. Choose one under 2 MB.", /TooLarge\(maxBytes=2097152\)/, line.banner)}`);
+      }
+      await deleteOutboxBubbles();
+    }
+
+    // Under the bound: a photo in the host-store room and a file in the product-source room.
+    const proof = [];
+    for (const [room, name, make] of [
+      ["host", "s57-photo-under.png", () => noisePng(1024, 600, RUN_SEED + 157)],
+      ["source", "s57-file-under.pdf", () => bytesOf(1.9 * MIB)],
+    ]) {
+      await openRoom(room);
+      const mark = logMark();
+      const events = eventMark();
+      await pickFile(stagingFile(name, make), { notice: false });
+      const line = await waitStage(mark, `the staging of ${name}`);
+      const outcome = line.message.replace(/^truapi\.chat\.stage outbox:\S+ /, "");
+      if (/: Staged$/.test(line.message)) {
+        const media = await waitEvent(events, (entry) => entry.via === "media" && entry.room === room, `the media item in ${room}`, ANSWER_TIMEOUT_MS);
+        expect(/ Preimage$/.test(media.data.line), `the product got ${media.data.line}`);
+        const fetched = await waitEvent(events, (entry) => entry.via === "preimage" && entry.room === room, `the preimage read back in ${room}`, ANSWER_TIMEOUT_MS);
+        proof.push(`${room}: ${name} ${outcome}, the product got "${media.data.line}" and read it back: ${fetched.kind} ${fetched.data.size} B`);
+      } else {
+        proof.push(`${room}: ${name} ${outcome}`);
+        await deleteOutboxBubbles();
+      }
+      note(`\`${await screenshot(scenarioById("S57"), `${room}-under`)}\``);
+    }
+    note(proof.join("; "));
+
+    // B7: 1 B gives the time of the call without the bytes.
+    note(`B7: ${await probeStaging(1)}; ${await probeStaging(8 * MIB)}`);
+
+    const failed = proof.filter((line) => !/Fetched/.test(line));
+    const boundSkip = bounds.length > 0 ? stagingBoundSkip(Math.min(...bounds), [3 * MIB, 6 * MIB]) : undefined;
+    if (!boundSkip && failed.length === 0) return undefined;
+    const allowance = failed.find((line) => /AllowanceUnavailable/.test(line));
+    expect(failed.length === 0 || allowance, `the files under the bound did not arrive: ${failed.join("; ")}`);
+    const reasons = [
+      boundSkip,
+      allowance && "the emulator account is not a personhood ring member, so the core has no Bulletin allowance for the product (AllowanceUnavailable) and nothing under the bound can arrive either",
+    ].filter(Boolean);
+    return { skip: reasons.length > 0 ? reasons.join("; ") : "skip" };
+  },
+
+  // S59: a refused submit marks the attachment Failed and keeps its bytes;
+  // Retry stages it again; Delete removes the kept bytes.
+  async S59({ note }) {
+    await prepareStaging(note);
+    await openRoom("source");
+    await resetPreimagePermission();
+    preimageAnswer = "Don't allow";
+    let mark = logMark();
+    await pickFile(stagingFile("s59-retry.pdf", () => bytesOf(1.2 * MIB)), { notice: false });
+    const failed = await waitStage(mark, "the refused staging");
+    expect(/PermissionDenied/.test(failed.message), `the first staging gave ${failed.message}`);
+    note(`the room says: ${await attachmentBanner(mark, PERMISSION_BANNER, /AttachmentPermissionPresentationError/, failed.banner)}`);
+    const entryId = /outbox:\S+/.exec(failed.message)[0];
+    expect(outboxEntries().length === 1, `the outbox keeps ${outboxEntries().length} entries`);
+    note(`\`${await screenshot(scenarioById("S59"), "failed")}\``);
+    note(`refused: ${failed.message}; the bubble is Failed and the outbox keeps the bytes`);
+
+    await resetPreimagePermission();
+    preimageAnswer = "Allow always";
+    mark = logMark();
+    const events = eventMark();
+    let menu = await openMessageMenu("s59-retry.pdf");
+    expect(findText(menu, "Retry"), `the menu of the failed attachment offers ${menuLabels(menu).join(", ")}`);
+    tapText(menu, "Retry");
+    const retried = await waitStage(mark, "the staging after Retry", { entryId });
+    note(`Retry stages again: ${retried.message}`);
+    let blocked;
+    if (/: Staged$/.test(retried.message)) {
+      const media = await waitEvent(events, (entry) => entry.via === "media" && entry.room === "source", "the media item after Retry", ANSWER_TIMEOUT_MS);
+      note(`the product got "${media.data.line}"`);
+    } else {
+      expect(/AllowanceUnavailable/.test(retried.message), `Retry gave ${retried.message}`);
+      blocked = "skip: Retry stages again, but the emulator account is not a personhood ring member, so the core has no Bulletin allowance for the product (AllowanceUnavailable) and the retry cannot succeed";
+    }
+
+    await resetPreimagePermission();
+    preimageAnswer = "Don't allow";
+    mark = logMark();
+    await pickFile(stagingFile("s59-delete.pdf", () => bytesOf(1.1 * MIB)), { notice: false });
+    await waitStage(mark, "the staging of the attachment to delete");
+    const before = outboxEntries().length;
+    menu = await openMessageMenu("s59-delete.pdf");
+    tapText(menu, "Delete");
+    const confirm = await waitScreen((screen) => screen.filter((node) => node.text === "Delete").at(-1), "the delete confirmation");
+    inputTap(serial, confirm.center.x, confirm.center.y);
+    await waitFor(() => outboxEntries().length === before - 1, { timeoutMs: COMMAND_TIMEOUT_MS, message: "Delete kept the bytes" });
+    await waitScreen((screen) => !findText(screen, "s59-delete.pdf") && screen, "the deleted bubble to go");
+    note(`Delete removes the bubble and the kept bytes (${before} to ${before - 1} outbox entries)`);
+    await deleteOutboxBubbles();
+    preimageAnswer = "Don't allow";
+    return blocked ? { skip: blocked } : undefined;
+  },
+
+  // S58: no upload without the declaration, above 8 MiB, or with
+  // PreimageSubmit refused.
+  async S58({ note }) {
+    await prepareStaging(note);
+    await declareStaging("host", false);
+    await openRoom("host");
+    const kept = outboxEntries().length;
+    let mark = logMark();
+    let events = eventMark();
+    await pickFile(stagingFile("s58-undeclared.pdf", () => bytesOf(1.5 * MIB)), { notice: false });
+    note(`without preimage_attachments: ${await attachmentBanner(mark, "This file is too large to send. Choose one under 1 MB.", /attachment exceeds 1MB/)}`);
+
+    await declareStaging("host", true);
+    const huge = logMark();
+    await pickFile(stagingFile("s58-huge.pdf", () => bytesOf(8 * MIB + 1)), { notice: false });
+    note(`above 8 MiB: ${await attachmentBanner(huge, "This file is too large to send. Choose one under 8 MB.", /attachment exceeds 8MB/)}`);
+    expect(stageLines(mark).length === 0 && outboxEntries().length === kept, "a refused attachment reached the outbox");
+
+    await resetPreimagePermission();
+    preimageAnswer = "Don't allow";
+    await pickFile(stagingFile("s58-refused.pdf", () => bytesOf(1.5 * MIB)), { notice: false });
+    const refused = await waitStage(mark, "the refused staging");
+    expect(/PermissionDenied/.test(refused.message), `the staging gave ${refused.message}`);
+    note(`the room says: ${await attachmentBanner(mark, PERMISSION_BANNER, /AttachmentPermissionPresentationError/, refused.banner)}`);
+    note(`PreimageSubmit refused: ${refused.message.replace(/^truapi\.chat\.stage outbox:\S+ /, "")}`);
+    note(`\`${await screenshot(scenarioById("S58"), "refused")}\``);
+    await delay(2_000);
+    const uploaded = eventsSince(events).filter((entry) => entry.via === "media");
+    expect(uploaded.length === 0, `the product received ${uploaded.length} media item(s)`);
+    expect(!stageLines(mark).some((line) => /: Staged$/.test(line.message)), "an attachment was staged");
+    note("nothing staged and no media item reached the product");
+    await deleteOutboxBubbles();
+    for (const room of ["host", "source"]) await declareStaging(room, false);
+  },
+
+  // S5: the product creates the room `throwaway`, and deletes it while its screen is open. The room leaves the store
+  // and the list, and its screen closes.
+  async S5({ note }) {
+    const created = eventMark();
+    await command("host", "/room create", { reply: true });
+    await waitEvent(created, (entry) => entry.via === "room" && entry.kind === "New", "the New line of /room create");
+    await waitFor(() => roomRow("throwaway")?.name === ROOMS.throwaway.name, {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "chat_rooms has no room throwaway",
+    });
+    await showChatList();
+    await waitScreen((screen) => findText(screen, ROOMS.throwaway.name), "the throwaway row in the chat list");
+    note(`\`${await screenshot(scenarioById("S5"), "created")}\``);
+    note(`/room create: the event log has room New, chat_rooms has "${ROOMS.throwaway.name}", and the chat list shows its row`);
+
+    await openRoom("throwaway");
+    const deleted = eventMark();
+    // The command goes to the host room through the debug hook, so the screen of the throwaway room stays open.
+    await hookCommand("host", "/room delete");
+    await waitEvent(deleted, (entry) => entry.via === "room" && entry.kind === "Deleted", "the Deleted line of /room delete");
+    await waitFor(() => !roomRow("throwaway") && !declarationRow("throwaway"), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "chat_rooms or chat_room_declarations still has the room throwaway",
+    });
+    const closed = await waitScreen(
+      (screen) => !findText(screen, ROOMS.throwaway.name) && screen,
+      "a screen without the throwaway room",
+    );
+    currentRoom = undefined;
+    note(`\`${await screenshot(scenarioById("S5"), "closed")}\``);
+    const list = await showChatList();
+    expect(!findText(list, ROOMS.throwaway.name), "the chat list still shows the throwaway row");
+    note(
+      `with the throwaway room open, /room delete (through the hook into the host room) gave room Deleted; the rows of chat_rooms and chat_room_declarations went, the open screen closed (it shows ${screenSummary(closed)}), and the chat list has no throwaway row`,
     );
   },
 
@@ -1633,6 +2515,33 @@ const DRIVERS = {
     }
   },
 
+  // S44: /flood sends 25 edits of one message at once. The core refuses the edits past the budget of 20 in a second,
+  // and the room screen stays usable and shows the last accepted edit.
+  async S44({ note }) {
+    await openRoom("host");
+    const before = messages("host");
+    const mark = eventMark();
+    await command("host", "/flood");
+    const done = await waitEvent(mark, (entry) => entry.via === "flood" && entry.kind === "Done", "the Done line of /flood", 60_000);
+    const reply = await waitFor(
+      () => addedMessages("host", before).find((message) => message.text.startsWith("ok /flood"))?.text,
+      { timeoutMs: COMMAND_TIMEOUT_MS, message: "no reply to /flood" },
+    );
+    const counts = /^ok \/flood accepted=(\d+) refused=(\d+)$/.exec(reply);
+    expect(counts, `the product answered "${reply}"`);
+    const [accepted, refused] = [Number(counts[1]), Number(counts[2])];
+    expect(refused >= 1 && accepted <= 20, `the core accepted ${accepted} and refused ${refused} of 25 edits`);
+    const target = addedMessages("host", before).find((message) => message.text === "Flood of 25 edits");
+    expect(target, "the flood target does not store the last accepted edit");
+    await scrollToNewest();
+    const screen = await waitScreen((nodes) => findText(nodes, "Flood of 25 edits") && nodes, "the edited flood target");
+    expect(findTag(screen, "chat_message_input"), "the room screen has no input after the flood");
+    note(`\`${await screenshot(scenarioById("S44"), "host")}\``);
+    note(
+      `/flood: the product logged flood Done ${JSON.stringify(done.data)} and answered "${reply}"; chat_messages keeps "Flood of 25 edits" with ${revisionCount(target.id)} revision row(s), and the open room draws it and keeps its input`,
+    );
+  },
+
   async S30({ note }) {
     await openRoom("source");
     const mark = eventMark();
@@ -1756,7 +2665,7 @@ function expect(condition, message) {
 }
 
 function scenarioById(id) {
-  return ANDROID_CHAT_V2_SCENARIOS.find((scenario) => scenario.id === id);
+  return ROWS.find((scenario) => scenario.id === id);
 }
 
 async function startServer() {
@@ -1929,10 +2838,32 @@ async function showChatList() {
  * notifications prompt of `/notify` gets "Allow always": a "Don't allow" there is a stored refusal of the product.
  */
 function dismissPrompts(screen) {
+  if (screen.some((node) => PREIMAGE_PROMPT.test(node.text))) {
+    const answer = findText(screen, preimageAnswer);
+    if (answer) {
+      inputTap(serial, answer.center.x, answer.center.y);
+      return true;
+    }
+  }
   const allow = findText(screen, "Allow always");
   if (allow && screen.some((node) => / would like to send notifications$/.test(node.text))) {
     inputTap(serial, allow.center.x, allow.center.y);
     return true;
+  }
+  // A tap on the share sheet that lands while its rows move can open the Quick Share setup; Back leaves it.
+  if (findText(screen, "Set up Quick Share") || findText(screen, /^Choose your account and privacy settings$/)) {
+    observations.push(`${new Date().toISOString().slice(11, 19)} a tap opened the Quick Share setup of the system; the launcher pressed Back`);
+    inputKeyEvent(serial, KEY.back);
+    return true;
+  }
+  // A busy emulator can show "isn't responding" for the app; the app goes on when the launcher waits.
+  if (screen.some((node) => / isn't responding$/.test(node.text))) {
+    const wait = findText(screen, "Wait");
+    if (wait) {
+      observations.push(`${new Date().toISOString().slice(11, 19)} the system said that the app is not responding; the launcher tapped Wait`);
+      inputTap(serial, wait.center.x, wait.center.y);
+      return true;
+    }
   }
   for (const label of ["Don't allow", "Dismiss"]) {
     const node = findText(screen, label);
@@ -2205,6 +3136,345 @@ async function screenshot(scenario, suffix, settleMs = 800) {
   return name;
 }
 
+// ------------------------------------- personas, threads, branches, reasoning
+
+/** The personas of the sample product, from `chat_bots`. */
+function personaRows() {
+  return sql(`SELECT botId, name FROM chat_bots WHERE extensionId = '${extensionId}'`);
+}
+
+/** The meta rows of a room, from `chat_message_meta`. */
+function metaRows(room) {
+  return sql(`SELECT messageId, timestamp FROM chat_message_meta WHERE chatId = X'${ROOMS[room].chat}'`);
+}
+
+/** Whether `node` lies inside the bounds of `container`. */
+function insideOf(node, container) {
+  return (
+    node.center.x >= container.bounds.left &&
+    node.center.x <= container.bounds.right &&
+    node.center.y >= container.bounds.top &&
+    node.center.y <= container.bounds.bottom
+  );
+}
+
+/** Whether the author line `name` shows just above the bubble that shows `text`. */
+function authorAbove(screen, text, name) {
+  const bubble = findText(screen, text);
+  if (!bubble) return false;
+  return screen.some((node) => node.text === name && node.center.y < bubble.center.y && bubble.center.y - node.center.y < 220);
+}
+
+/**
+ * Long-press the newest rich message of the sample, on its inline image (the Markdown text of a rich message is not
+ * a node of the screen dump), and give the screen with its menu.
+ */
+async function openRichMenu() {
+  await scrollToNewest();
+  let image;
+  for (let attempt = 0; attempt < 8 && !image; attempt += 1) {
+    image = parseUiNodes(uiDump(serial)).find(
+      (node) => node.description === "Inline sample image" && node.center.y > 380 && node.center.y < 2050,
+    );
+    if (!image) await scrollOlder(500);
+  }
+  expect(image, "no image of the rich message on screen");
+  inputLongPress(serial, image.center.x, image.center.y);
+  return waitScreen((nodes) => findText(nodes, "Copy") && nodes, "the menu of the rich message");
+}
+
+/** The thread chip under the bubble that shows `text`, or undefined. */
+function chipUnder(screen, text) {
+  const bubble = findText(screen, text);
+  if (!bubble) return undefined;
+  return screen.find(
+    (node) => node.tag === "chat_thread_chip" && node.center.y > bubble.center.y && node.bounds.top - bubble.bounds.bottom < 260,
+  );
+}
+
+/** The branch control under the bubble that shows `text`: its position and its arrows, or undefined. */
+function branchUnder(screen, text) {
+  const bubble = findText(screen, text);
+  if (!bubble) return undefined;
+  const position = screen
+    .filter((node) => node.tag === "chat_branch_position" && node.center.y > bubble.center.y && node.bounds.top - bubble.bounds.bottom < 260)
+    .sort((a, b) => a.center.y - b.center.y)[0];
+  if (!position) return undefined;
+  const near = (tag) => screen.find((node) => node.tag === tag && Math.abs(node.center.y - position.center.y) < 60);
+  return { position, previous: near("chat_branch_previous"), next: near("chat_branch_next") };
+}
+
+// ------------------------------------------------- staged attachments (P10.3)
+
+/** How the launcher answers the PreimageSubmit prompt of the product. */
+let preimageAnswer = "Don't allow";
+const PREIMAGE_PROMPT = / would like to submit preimages$/;
+const stagingDir = resolve(tmpdir(), `truapi-android-staging-${process.pid}`);
+let stagingServed = false;
+
+/**
+ * Turn staging on for the rows of P10.3. A debug build serves
+ * preimage_attachments for the launcher also while the app does not list
+ * the feature. The camera permission is granted, so the attachment picker
+ * opens without a system prompt.
+ */
+async function prepareStaging(note) {
+  grantPermission(serial, packageName, "android.permission.CAMERA");
+
+  const mark = logMark();
+  hook([["--ez", "serve_preimage_attachments", "true"]]);
+  await waitForLog(mark, (line) => line.tag === E2E_TAG && line.message === "preimage attachments served", "the staging hook");
+  if (!stagingServed) {
+    const listed = logLines(0).filter((line) => line.message.startsWith("truapi.chat.capabilities ")).at(-1);
+    note(listed?.message.includes("preimage_attachments")
+      ? "the app lists preimage_attachments"
+      : "the app does not list preimage_attachments; the debug hook serves it for this run");
+    stagingServed = true;
+  }
+  // The first start of the product stored "Don't allow" for PreimageSubmit; each row decides again.
+  await openRoom("host");
+  await resetPreimagePermission();
+}
+
+async function declareStaging(room, on) {
+  await command(room, "/footer photo", { reply: true });
+  await command(room, `/features preimage ${on ? "on" : "off"}`, { reply: true });
+}
+
+/** Clear the stored PreimageSubmit decision of the product, as a user does in its settings. The worker must run. */
+function resetPreimagePermission() {
+  const mark = logMark();
+  hook([
+    ["--es", "product_id", productHost],
+    ["--ez", "reset_preimage_permission", "true"],
+  ]);
+  return waitForLog(mark, (line) => line.tag === E2E_TAG && /^(preimage permission reset|error preimage_permission)/.test(line.message), "the permission reset")
+    .then((line) => expect(line.message === "preimage permission reset", line.message));
+}
+
+/**
+ * Tap a button of the public-storage notice until the notice closes. The sheet can take a tap while it still slides
+ * in and ignore it, so the launcher taps again, at most three times, and notes each repeat.
+ */
+async function tapNoticeButton(screen, label) {
+  let current = screen;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    tapText(current, label);
+    const closed = await waitFor(() => !findText(parseUiNodes(uiDump(serial)), "Files over 1 MB are public"), {
+      timeoutMs: 6_000,
+      intervalMs: 500,
+      message: "the notice stays",
+    }).then(() => true, () => false);
+    if (closed) return;
+    observations.push(`${new Date().toISOString().slice(11, 19)} the notice stayed after a tap on ${label}; the launcher tapped it again`);
+    current = parseUiNodes(uiDump(serial));
+  }
+  throw new Error(`the notice stayed after three taps on ${label}`);
+}
+
+/** Write a file of the run and copy it into the Download folder of the device. */
+function stagingFile(name, make) {
+  mkdirSync(stagingDir, { recursive: true });
+  const local = resolve(stagingDir, name);
+  if (!existsSync(local)) writeFileSync(local, make());
+  const remote = `/sdcard/Download/${name}`;
+  pushFile(serial, local, remote);
+  shell(serial, ["touch", remote]);
+  shell(serial, ["content", "call", "--uri", "content://media/external/file", "--method", "scan_file", "--arg", remote]);
+  return name;
+}
+
+/** Random bytes, so no two runs stage the same preimage. */
+function bytesOf(size) {
+  return randomBytes(Math.round(size));
+}
+
+/** A seed for each run, so the noise images of two runs differ. */
+const RUN_SEED = randomBytes(4).readUInt32BE(0);
+
+/**
+ * Pick `name` with the attachment button of the open room: the chooser,
+ * then the file in the recent files of the system picker. With `notice`,
+ * waits for the public-storage notice and gives the screen; without, fails
+ * when the notice shows.
+ */
+async function pickFile(name, { notice }) {
+  // A configuration change of the emulator while the picker shows can recreate the room screen, and the picked file
+  // then does not reach it. The launcher picks once more and notes it.
+  for (let attempt = 1; ; attempt += 1) {
+    const mark = logMark();
+    const screen = await pickFileOnce(name, { notice });
+    // The worker starts again when the room shows again, and its PreimageSubmit prompt can cover the room. The room
+    // gets the file only after the prompt closes.
+    const picked = await waitFor(
+      () => {
+        dismissPrompts(parseUiNodes(uiDump(serial)));
+        return logLines(mark).find((line) => line.message.startsWith("truapi.chat.attachment picked "));
+      },
+      { timeoutMs: 30_000, intervalMs: 500, message: "no picked file" },
+    ).catch(() => undefined);
+    if (picked) return screen ?? (notice ? waitScreen((nodes) => findText(nodes, "Files over 1 MB are public") && nodes, "the public-storage notice") : undefined);
+    if (attempt >= 3) throw new Error(`the room did not get ${name} from the picker`);
+    observations.push(`${new Date().toISOString().slice(11, 19)} ${name} did not reach the room from the picker; the launcher picked it again`);
+    await openRoom(currentRoom);
+  }
+}
+
+async function pickFileOnce(name, { notice }) {
+  const room = currentRoom;
+  // The caption is the name of the file, so the launcher finds a photo bubble too.
+  await typeCaption(name);
+  const screen = await waitScreen((nodes) => nodes.find((node) => node.description === "Attach") && nodes, "the attachment button");
+  const attach = screen.find((node) => node.description === "Attach");
+  inputTap(serial, attach.center.x, attach.center.y);
+  // The room and the clipboard preview show the caption too, so the launcher takes only the rows of the system
+  // chooser (`text1`) and of the document picker (`title`).
+  const pickerFile = (node) => node.text === name && node.tag === "title";
+  const chooserItem = (node) => node.tag === "text1" && /^(Photos & videos|Files)$/.test(node.text);
+  // The chooser can take a tap while it still slides in and ignore it, so the launcher taps it again until the
+  // document picker shows.
+  let tapped = 0;
+  const file = await waitFor(
+    () => {
+      const nodes = parseUiNodes(uiDump(serial));
+      const found = nodes.find(pickerFile);
+      if (found) return found;
+      if (dismissPrompts(nodes)) {
+        tapped = 0;
+        return undefined;
+      }
+      // The document picker of Files lists the Download folder; Google Photos can ask for an account first.
+      const item = nodes.find((node) => chooserItem(node) && node.text === "Files") ?? nodes.find(chooserItem);
+      if (item && Date.now() - tapped > 3_000) {
+        inputTap(serial, item.center.x, item.center.y);
+        tapped = Date.now();
+      }
+      return undefined;
+    },
+    { timeoutMs: COMMAND_TIMEOUT_MS, intervalMs: 500, message: `no ${name} in the picker` },
+  );
+  inputTap(serial, file.center.x, file.center.y);
+  currentRoom = room;
+  if (notice) {
+    return waitScreen((nodes) => findText(nodes, "Files over 1 MB are public") && nodes, "the public-storage notice", 15_000)
+      .catch(() => undefined);
+  }
+  return undefined;
+}
+
+/**
+ * Put `text` into the input of the open room. The launcher does not send it.
+ * The names of the files are plain ASCII, so `input text` types them: the
+ * clipboard preview of a paste covers the attachment button.
+ */
+async function typeCaption(text) {
+  expect(/^[A-Za-z0-9._-]+$/.test(text), `"${text}" is not a plain caption`);
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const screen = await waitScreen((nodes) => findTag(nodes, "chat_message_input") && nodes, "the message input");
+    if (findTag(screen, "chat_message_input")?.text === text) return;
+    const input = findTag(screen, "chat_message_input");
+    inputTap(serial, input.center.x, input.center.y);
+    inputKeyCombination(serial, KEY.ctrlLeft, KEY.a);
+    inputKeyEvent(serial, KEY.del);
+    // One key at a time: the app can lose or reorder the keys of a fast `input text`.
+    for (const char of text) shell(serial, ["input", "text", char]);
+    const typed = await waitScreen((nodes) => findTag(nodes, "chat_message_input")?.text === text && nodes, `"${text}" in the input`, 5_000)
+      .catch(() => undefined);
+    if (typed) {
+      hideKeyboard();
+      return;
+    }
+  }
+  throw new Error(`could not type "${text}" into the input`);
+}
+
+/**
+ * The banner of an attachment that the room did not send. The banner shows
+ * for about 3 s, so a slow screen dump can miss it; the app then proves it
+ * with the error that it logs as it shows the banner (`BaseViewModel`).
+ */
+async function attachmentBanner(mark, text, logged, seen) {
+  if (seen === text) return `"${text}"`;
+  const proof = await waitFor(
+    () => {
+      if (findText(parseUiNodes(uiDump(serial)), text)) return `"${text}"`;
+      const line = logLines(mark).find((entry) => entry.tag === "BaseViewModel" && logged.test(entry.message));
+      return line && `"${text}" (the banner went before the screen dump; the app logged ${line.message.split(": ").slice(-2).join(": ")})`;
+    },
+    { timeoutMs: COMMAND_TIMEOUT_MS, intervalMs: 300, message: `no "${text}" on screen or in the app log` },
+  );
+  return proof;
+}
+
+/** The lines of the stager since `mark`. */
+function stageLines(mark) {
+  return logLines(mark).filter((line) => /^truapi\.chat\.stage outbox:\S+ \d+ B in \d+ ms: /.test(line.message));
+}
+
+const PERMISSION_BANNER = "The file was not sent. Allow the app to store files on the Bulletin chain, then retry.";
+const ATTACHMENT_BANNER = /^(The file was not sent|This file is too large to send)/;
+
+/**
+ * Wait for the next staging outcome, and give its logcat line with the
+ * banner that the room shows for a failure (`banner`). The banner shows for
+ * a few seconds only, so the launcher reads it while it waits. With
+ * `failOnNotice`, the public-storage notice must not show meanwhile.
+ */
+async function waitStage(mark, what, { entryId, failOnNotice = false } = {}) {
+  let banner;
+  const look = () => {
+    const screen = parseUiNodes(uiDump(serial));
+    if (failOnNotice && findText(screen, "Files over 1 MB are public")) throw new Error("the notice showed again");
+    banner ??= findText(screen, ATTACHMENT_BANNER)?.text;
+    dismissPrompts(screen);
+  };
+  const line = await waitFor(
+    () => {
+      look();
+      return stageLines(mark).find((entry) => !entryId || entry.message.includes(entryId));
+    },
+    { timeoutMs: 6 * 60_000, intervalMs: 500, message: `no ${what} in logcat` },
+  );
+  if (!/: Staged$/.test(line.message)) {
+    await waitFor(() => (look(), banner), { timeoutMs: 8_000, intervalMs: 300, message: "no banner" }).catch(() => undefined);
+  }
+  return { ...line, banner };
+}
+
+/** The entries of the attachment outbox of the app. */
+function outboxEntries() {
+  const result = shell(serial, ["run-as", packageName, "ls", "files/product_attachment_outbox"]);
+  return result.status === 0 ? result.stdout.split(/\s+/).filter(Boolean) : [];
+}
+
+/** Delete each failed attachment that the open room shows, from its menu. */
+async function deleteOutboxBubbles() {
+  for (let attempt = 0; attempt < 6 && outboxEntries().length > 0; attempt += 1) {
+    const screen = parseUiNodes(uiDump(serial));
+    dismissPrompts(screen);
+    const bubble = screen.find((node) => /^s(5[7-9]|60)-.*\.(pdf|png)$/.test(node.text) && !node.tag);
+    if (!bubble) break;
+    inputLongPress(serial, bubble.center.x, bubble.center.y);
+    const menu = await waitScreen((nodes) => findText(nodes, "Delete") && nodes, "the menu of the attachment").catch(() => undefined);
+    if (!menu) continue;
+    tapText(menu, "Delete");
+    const confirm = await waitScreen((nodes) => nodes.filter((node) => node.text === "Delete").at(-1), "the delete confirmation");
+    inputTap(serial, confirm.center.x, confirm.center.y);
+    await delay(1_500);
+  }
+}
+
+/** B7: the time that the bytes of an attachment take to cross the binding into the core. */
+async function probeStaging(size) {
+  const mark = logMark();
+  hook([
+    ["--es", "product_id", productHost],
+    ["--ei", "stage_probe", String(size)],
+  ]);
+  const line = await waitForLog(mark, (entry) => entry.tag === E2E_TAG && entry.message.startsWith(`stage_probe bytes=${size} `), "the staging probe", 120_000);
+  return line.message;
+}
+
 // ----------------------------------------------- mute, archive and search
 
 /** What the user set for a room, from `chat_room_declarations`. */
@@ -2212,10 +3482,6 @@ function userStateRow(room) {
   return sql(`SELECT mutedUntil, archived FROM chat_room_declarations WHERE chatId = X'${ROOMS[room].chat}'`)[0];
 }
 
-/**
- * Swipe the chat list row of the room named `name`: to the end mutes or
- * unmutes it, to the start archives or unarchives it.
- */
 /**
  * Swipe the row `name` to the end (`mute`) or to the start (`archive`), until `done` is true. An emulator under load
  * can drop a swipe gesture, and the row then does not move. The launcher swipes again, at most three times, and notes
@@ -2241,6 +3507,22 @@ async function swipeRow(name, action, done) {
 
 /** The mute durations sheet that a swipe to the end opens on a row that is not muted. */
 const muteSheetShown = () => findText(parseUiNodes(uiDump(serial)), "Mute notifications");
+
+/**
+ * Open the menu of the room header and tap `label` in it. The menu action has no text or tag in the screen dump, so
+ * the launcher taps the action at the right end of the header, and checks that the menu of the room shows.
+ */
+async function roomMenuAction(label) {
+  const screen = await waitScreen((nodes) => findTag(nodes, "chat_message_input") && nodes, "the room screen");
+  const action = screen
+    .filter((node) => node.clickable && node.bounds.bottom < 360 && node.center.x > 800 && !/^(chat_room_search|chat_call_button)/.test(node.tag))
+    .sort((a, b) => b.center.x - a.center.x)[0];
+  expect(action, `no action at the right of the room header; the screen shows ${screenSummary(screen)}`);
+  inputTap(serial, action.center.x, action.center.y);
+  const menu = await waitScreen((nodes) => findText(nodes, "Remove chat") && findText(nodes, label) && nodes, `"${label}" in the room menu`);
+  tapText(menu, label);
+  await delay(800);
+}
 
 async function tapWhenShown(label, what) {
   const screen = await waitScreen((nodes) => findText(nodes, label) && nodes, what);
@@ -2320,7 +3602,7 @@ function productNotifications() {
 }
 
 /** Open the in-room search of the open room and type `query`; gives the screen with its results. */
-async function searchInRoom(query) {
+async function searchInRoom(query, { tag = "chat_room_search_result" } = {}) {
   let screen = parseUiNodes(uiDump(serial));
   if (!findTag(screen, "chat_room_search_field")) {
     const action = await waitScreen((nodes) => findTag(nodes, "chat_room_search_action") && nodes, "the search action of the header");
@@ -2329,7 +3611,7 @@ async function searchInRoom(query) {
     screen = await waitScreen((nodes) => findTag(nodes, "chat_room_search_field") && nodes, "the search field");
   }
   await pasteInto(findTag(screen, "chat_room_search_field"), query);
-  return waitScreen((nodes) => nodes.some((node) => node.tag === "chat_room_search_result") && nodes, `the results of "${query}"`);
+  return waitScreen((nodes) => nodes.some((node) => node.tag === tag) && nodes, `the results of "${query}"`);
 }
 
 /** Open the search of the chat list and type `query`; gives the screen after the results settle. */
@@ -2364,9 +3646,107 @@ async function pasteInto(field, text) {
   await delay(800);
 }
 
+// ------------------------------------------------------------- wakes and calls
+
+/** The test tags of the call parts of a product room (`ProductRoomCallTags`). */
+const CALL_TAGS = {
+  audio: "chat_call_button_audio",
+  video: "chat_call_button_video",
+  ringing: "chat_call_ringing_banner",
+  accept: "chat_call_accept",
+  decline: "chat_call_decline",
+  bar: "chat_call_bar",
+  timer: "chat_call_timer",
+  end: "chat_call_end",
+  inApp: "chat_call_in_app_banner",
+};
+
+function isCallEvent(entry, kind) {
+  return entry.via === "room_events" && entry.room === "host" && entry.kind === kind;
+}
+
+function tapTag(screen, tag) {
+  const node = findTag(screen, tag);
+  expect(node, `no ${tag} on screen; it shows ${screenSummary(screen)}`);
+  inputTap(serial, node.center.x, node.center.y);
+}
+
+/** The texts inside the node tagged `tag`. */
+function rowTexts(screen, tag) {
+  const box = findTag(screen, tag)?.bounds;
+  if (!box) return [];
+  return screen
+    .filter((node) => node.text && node.center.y >= box.top && node.center.y <= box.bottom && node.center.x >= box.left && node.center.x <= box.right)
+    .map((node) => node.text);
+}
+
+/** The text of the call timer in seconds, with the screen and the time of the dump. */
+async function readCallTimer() {
+  const screen = await waitScreen((nodes) => findTag(nodes, CALL_TAGS.timer) && nodes, "the call timer");
+  const text = findTag(screen, CALL_TAGS.timer).text;
+  const parts = text.split(":").map(Number);
+  expect(parts.length >= 2 && parts.every(Number.isFinite), `the timer shows "${text}"`);
+  return { text, seconds: parts.reduce((total, part) => total * 60 + part, 0), at: Date.now(), screen };
+}
+
+/** The notification of a ringing product room that the system shows, or undefined. */
+function callNotification() {
+  const dump = shell(serial, ["dumpsys", "notification", "--noredact"]).stdout;
+  const key = dump.split(/\r?\n/).find((line) => line.includes(`product-room-call.${ROOMS.host.chat.toLowerCase()}`));
+  return key?.trim().slice(0, 160);
+}
+
+/**
+ * Answer in the notification shade: the product gets CallAnswered and the room opens. The shade of a headless
+ * emulator can lay out the buttons of a call notification differently, so this step notes what it saw.
+ */
+async function answerFromNotification() {
+  const mark = eventMark();
+  shell(serial, ["cmd", "statusbar", "expand-notifications"]);
+  await delay(1_500);
+  const shade = parseUiNodes(uiDump(serial));
+  // The system labels the answer button of a video call "Video", and wraps the label in direction marks.
+  const answer = shade.find((node) => /(^|[^\p{L}])(Answer|Video)[^\p{L}]*$/u.test(node.text) && !/Incoming/.test(node.text));
+  if (!answer) {
+    shell(serial, ["cmd", "statusbar", "collapse"]);
+    return `the shade showed no Answer button (${screenSummary(shade)}); Answer from the notification is not driven`;
+  }
+  inputTap(serial, answer.center.x, answer.center.y);
+  const answered = await waitEvent(mark, (entry) => isCallEvent(entry, "CallAnswered") && entry.data?.accept === true, "CallAnswered from the notification", 45_000);
+  await waitScreen((screen) => findTag(screen, CALL_TAGS.bar) && screen, "the room with the call bar after Answer", 45_000);
+  currentRoom = "host";
+  const shot = await screenshot(scenarioById("S73"), "answered");
+  return `\`${shot}\`; Answer in the notification sent CallAnswered ${JSON.stringify(answered.data)} and opened the room with the call bar`;
+}
+
+/** Wake the host room through the debug hook, and give the time to the stored preview "Woken by <watch>". */
+async function timedWake(watch) {
+  const wanted = Buffer.from(`Woken by ${watch}`).toString("hex").toUpperCase();
+  const logged = logMark();
+  const started = Date.now();
+  hook([
+    ["--es", "product_id", productHost],
+    ["--es", "room_id", "host"],
+    ["--es", "wake", watch],
+  ]);
+  await waitFor(() => previewHex().includes(wanted), {
+    timeoutMs: 90_000,
+    intervalMs: 150,
+    message: `no preview "Woken by ${watch}" stored`,
+  });
+  const elapsed = Date.now() - started;
+  const ack = await waitForLog(logged, (line) => line.tag === E2E_TAG && line.message.startsWith("woken "), "the ack of the wake hook");
+  expect(ack.message.includes("held until="), `the wake was not held: ${ack.message}`);
+  // The answer to Woken also sends a notification; its first prompt asks for the permission of the product.
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) dismissPrompts(parseUiNodes(uiDump(serial)));
+  return elapsed;
+}
+
 // ------------------------------------------------------------- evidence
 
-const DEVTOOLS_PORT = 9339;
+/** The host port of the WebView DevTools socket; a second run on the same host needs another one. */
+const DEVTOOLS_PORT = Number(process.env.TRUAPI_ANDROID_E2E_DEVTOOLS_PORT ?? 9339);
 
 /** The `location.origin` of a WebView page, through its DevTools socket. */
 async function pageOrigin(socketUrl) {
@@ -2630,10 +4010,15 @@ async function main() {
       grantPermission(serial, packageName, "android.permission.POST_NOTIFICATIONS");
       // The Attach button asks for the camera first; S36 picks files from the Download folder.
       grantPermission(serial, packageName, "android.permission.CAMERA");
+      // The files of an earlier run stay in the Download folder and push the files of S36 out of the picker list.
+      // The helper quotes each word, so a shell on the device expands the patterns.
+      shell(serial, ["sh", "-c", "rm -f /sdcard/Download/s5[789]-* /sdcard/Download/s60-*"]);
       pushFile(serial, resolve(productRoot, "assets", SMALL_ATTACHMENT), `/sdcard/Download/${SMALL_ATTACHMENT}`);
       const large = largeAttachment();
       pushFile(serial, large, `/sdcard/Download/${LARGE_ATTACHMENT}`);
       rmSync(large);
+      // `adb push` keeps the time of the source file, and the picker lists the newest files first.
+      for (const name of [SMALL_ATTACHMENT, LARGE_ATTACHMENT]) shell(serial, ["touch", `/sdcard/Download/${name}`]);
 
       step("start the app, seed the identity and install the product");
       amStart(serial, ["-n", launcherActivity]);
@@ -2670,7 +4055,7 @@ async function main() {
     step("wait for the product to finish its start");
     await waitProductStarted();
 
-    for (const scenario of ANDROID_CHAT_V2_SCENARIOS) {
+    for (const scenario of ROWS) {
       if (onlyScenarios.length > 0 && !onlyScenarios.includes(scenario.id)) continue;
       step(`${scenario.id} ${scenario.title}`);
       const result = await runScenario(scenario);
@@ -2681,13 +4066,14 @@ async function main() {
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
     console.error(`\nthe run stopped: ${error instanceof Error ? error.stack : error}`);
-    const remaining = ANDROID_CHAT_V2_SCENARIOS.filter(
+    const remaining = ROWS.filter(
       (scenario) =>
         !rows.some((existing) => existing.id === scenario.id) &&
         (onlyScenarios.length === 0 || onlyScenarios.includes(scenario.id)),
     );
     rows.push(...blockedRows(failure, remaining));
   } finally {
+    rmSync(stagingDir, { recursive: true, force: true });
     if (serial) shell(serial, ["am", "force-stop", packageName]);
     cleanup();
   }
@@ -2711,7 +4097,7 @@ async function main() {
   const reportPath = resolve(outDir, "diagnosis-report.md");
   writeFileSync(reportPath, `${report}${notes.join("\n")}\n`);
 
-  const expected = ANDROID_CHAT_V2_SCENARIOS.filter(
+  const expected = ROWS.filter(
     (scenario) => scenario.drive && (onlyScenarios.length === 0 || onlyScenarios.includes(scenario.id)),
   );
   const failures = scenarioFailures(rows, expected);

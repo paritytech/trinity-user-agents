@@ -14,10 +14,12 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFee
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatMessageMetaWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.CustomContentDecoder
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.MessageRevisionRepository
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -34,7 +36,10 @@ class ProductFeedApplierTest {
     private val messageRevisionRepository: MessageRevisionRepository = mockk(relaxed = true)
     private val chatRoomRepository: ChatRoomRepository = mockk()
 
-    private val applier = ProductFeedApplier(chatMessageRepository, messageRevisionRepository, chatRoomRepository)
+    private val metaWriter: ChatMessageMetaWriter = mockk(relaxed = true)
+    private val preparing = PreparingProductMessages()
+
+    private val applier = ProductFeedApplier(chatMessageRepository, messageRevisionRepository, chatRoomRepository, metaWriter, preparing)
     private val saved = mutableListOf<ChatMessage>()
 
     @Before
@@ -146,6 +151,26 @@ class ProductFeedApplierTest {
         assertSuccess(apply(ProductFeedUpdateModel.StatusChanged("m1", ProductMessageStatusModel.READ)))
 
         coVerify(exactly = 0) { chatMessageRepository.updateMessageStatus(any(), any()) }
+    }
+
+    @Test
+    fun `a delete removes the meta of the message`() = runBlocking<Unit> {
+        withStoredMessage(productStored("m1"))
+
+        assertSuccess(apply(ProductFeedUpdateModel.Deleted("m1")))
+
+        coVerify { metaWriter.delete(room, "m1") }
+    }
+
+    @Test
+    fun `a message stays preparing until its status leaves Preparing`() = runBlocking<Unit> {
+        assertSuccess(apply(ProductFeedUpdateModel.New(productMessage("m1").copy(status = ProductMessageStatusModel.PREPARING))))
+        assertEquals(setOf("m1"), preparing.observe(room).first())
+
+        withStoredMessage(productStored("m1"))
+        assertSuccess(apply(ProductFeedUpdateModel.StatusChanged("m1", ProductMessageStatusModel.SENT)))
+
+        assertEquals(emptySet<String>(), preparing.observe(room).first())
     }
 
     @Test

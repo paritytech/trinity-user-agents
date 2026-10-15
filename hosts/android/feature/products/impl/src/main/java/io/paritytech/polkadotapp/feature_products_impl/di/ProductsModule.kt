@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtensionProvider
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductAttachmentStaging
 import io.paritytech.polkadotapp.feature_chats_api.domain.search.ChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
@@ -139,6 +140,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealT
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatRoomEventSink
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChatRoomEventSink
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIProductAttachmentStaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -230,6 +232,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindProductChatRoomEventSink(impl: TrUAPIChatRoomEventSink): ProductChatRoomEventSink
+
+    @Binds
+    fun bindProductAttachmentStaging(impl: TrUAPIProductAttachmentStaging): ProductAttachmentStaging
 
     @Binds
     fun bindPocketImageResolver(impl: RealPocketImageResolver): PocketImageResolver

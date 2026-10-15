@@ -10,6 +10,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUs
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatMessageMetaWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.ChatExtensionRegistry
 import kotlinx.coroutines.runBlocking
@@ -26,7 +28,9 @@ class ProductRoomUserActionsTest {
     private val registry = mockk<ChatExtensionRegistry>()
     private val repository = mockk<ChatMessageRepository>(relaxUnitFun = true)
 
-    private val actions = ProductRoomUserActions(registry, repository)
+    private val metaWriter = mockk<ChatMessageMetaWriter>(relaxUnitFun = true)
+
+    private val actions = ProductRoomUserActions(registry, repository, metaWriter)
 
     private val productSourceRoom = ChatRoomPolicy.Defaults.copy(messageStore = ChatRoomPolicy.MessageStore.PRODUCT)
 
@@ -54,6 +58,15 @@ class ProductRoomUserActionsTest {
 
         coVerify { repository.markMessageDeleted("message-1") }
         coVerify { extension.onUserEvent(roomId, ChatRoomUserEvent.MessageDeleted("message-1")) }
+    }
+
+    @Test
+    fun `a delete in a host-store room removes the meta under the id of the product`() = runBlocking<Unit> {
+        withExtension()
+
+        actions.deleteMessage(roomId, ProductMessageIds.stored("m1", roomId), ChatRoomPolicy.Defaults)
+
+        coVerify { metaWriter.delete(roomId, "m1") }
     }
 
     @Test

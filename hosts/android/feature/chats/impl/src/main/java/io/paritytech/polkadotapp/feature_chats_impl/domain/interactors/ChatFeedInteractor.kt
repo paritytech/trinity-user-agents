@@ -39,6 +39,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.onContact
@@ -54,6 +55,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload.FileUploadStarter
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatNotificationPublisher
 import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.ProductAttachmentEncoder
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductAttachmentFailure
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductAttachmentOutbox
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
@@ -79,12 +82,17 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallRe
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageEditHistoryItem
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStagingGate
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.PublicStorageNotice
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.withOutbox
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.productQueryMessage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ProductRoomUserActions
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -125,6 +133,9 @@ class ChatFeedInteractor @Inject internal constructor(
     private val productAttachmentEncoder: ProductAttachmentEncoder,
     private val activityRepository: ChatRoomActivityRepository,
     private val activityWriter: ChatRoomActivityWriter,
+    private val attachmentStager: ProductAttachmentStager,
+    private val publicStorageNotice: PublicStorageNotice,
+    private val stagingGate: ProductAttachmentStagingGate,
 ) {
     private val roomSources = ConcurrentHashMap<ChatId, ChatRoomSourceContext>()
 
@@ -199,10 +210,15 @@ class ChatFeedInteractor @Inject internal constructor(
         )
     }
 
-    /** The window of messages of the room, from the host database or from the product (02-DESIGN §8.3). */
+    /**
+     * The window of messages of the room, from the host database or from the product (02-DESIGN §8.3). The attachments
+     * that the host stages show at the newest end until the host sends them (07-LATER §7).
+     */
     @OptIn(ExperimentalCoroutinesApi::class)
-    fun subscribeMessages(chatId: ChatId): Flow<ChatFeedSnapshot> =
-        roomSource(chatId).observeSource().flatMapLatest { it.observeSnapshots() }
+    fun subscribeMessages(chatId: ChatId): Flow<ChatFeedSnapshot> = combine(
+        roomSource(chatId).observeSource().flatMapLatest { it.observeSnapshots() },
+        attachmentStager.observe(chatId),
+    ) { snapshot, outbox -> snapshot.withOutbox(outbox, attachmentStager::preview) }
 
     suspend fun loadOlderMessages(chatId: ChatId): ChatPageOutcome = roomSource(chatId).source().loadOlder()
 
@@ -279,8 +295,56 @@ class ChatFeedInteractor @Inject internal constructor(
     /**
      * An attachment in a product room goes inline, up to 1 MiB, as rich text with one media item (02-DESIGN §3.5). The
      * product of a product-source room gets it as `NewMessage`; the product of a host-store room gets `MessagePosted`.
+     * In a room that stages attachments, a larger attachment goes to the outbox, and a background job stages it as a
+     * preimage and then sends it (07-LATER §7).
      */
     private suspend fun sendProductAttachment(
+        chatId: ChatId,
+        contentUri: Uri,
+        mimeType: String,
+        fileSize: InformationSize,
+        text: String?,
+        replyToMessageId: ChatMessageId?
+    ): Result<ChatSourceActionOutcome> {
+        if (stagesAttachments(chatId, mimeType, fileSize)) {
+            return productAttachmentEncoder.prepareStaged(contentUri, mimeType, fileSize).map { draft ->
+                attachmentStager.enqueue(chatId, draft, text, replyToMessageId)
+                ChatSourceActionOutcome.Done
+            }
+        }
+
+        return sendInlineProductAttachment(chatId, contentUri, mimeType, fileSize, text, replyToMessageId)
+    }
+
+    /**
+     * The name of the product when the user must see the public-storage notice before the host stages this
+     * attachment, or null. The host shows the notice one time for each product (07-LATER §7.2).
+     */
+    suspend fun publicStorageNoticeFor(chatId: ChatId, mimeType: String, fileSize: InformationSize): String? {
+        // The host refuses an attachment above the staging bound before it shows the notice.
+        if (fileSize > ProductAttachmentEncoder.STAGED_LIMIT || !stagesAttachments(chatId, mimeType, fileSize)) return null
+        val extensionId = chatId.extensionOrNull()?.extensionId ?: return null
+        if (publicStorageNotice.isAccepted(extensionId)) return null
+
+        return chatEngine.getDefaultChatExtensionDisplay(chatId).getOrNull()?.name ?: extensionId
+    }
+
+    fun acceptPublicStorageNotice(chatId: ChatId) {
+        chatId.extensionOrNull()?.extensionId?.let(publicStorageNotice::accept)
+    }
+
+    /** The failures of the attachments that the host stages for the room, as they occur. */
+    fun observeAttachmentFailures(chatId: ChatId): Flow<ProductAttachmentFailure> =
+        attachmentStager.observeFailures(chatId).map { it.failure }
+
+    private suspend fun stagesAttachments(chatId: ChatId, mimeType: String, fileSize: InformationSize): Boolean {
+        if (!stagingGate.isServed) return false
+        if (!productAttachmentEncoder.goesToStaging(mimeType, fileSize)) return false
+
+        return roomPolicyProvider.observePolicy(chatId).first()?.features?.preimageAttachments == true
+    }
+
+    private suspend fun sendInlineProductAttachment(
         chatId: ChatId,
         contentUri: Uri,
         mimeType: String,
@@ -388,6 +452,8 @@ class ChatFeedInteractor @Inject internal constructor(
      * a refusal, no answer in time, or a room without a product: the room screen then shows the host menu.
      */
     suspend fun productMessageMenu(chatId: ChatId, message: ChatMessage, snapshot: ChatFeedSnapshot): Result<ChatMessageMenuModel> {
+        // The product does not know an attachment that waits in the outbox.
+        if (ProductAttachmentOutbox.isOutboxId(message.id)) return Result.failure(ProductChatQueryException.NotAvailable())
         val querying = roomQuerying(chatId) ?: return Result.failure(ProductChatQueryException.NotAvailable())
         return querying.messageMenu(chatId, snapshot.productQueryMessage(message))
     }
@@ -583,12 +649,18 @@ class ChatFeedInteractor @Inject internal constructor(
         productRoomUserActions.sendEvent(chatId, ChatRoomUserEvent.ActionTriggered(messageId, actionId))
 
     suspend fun deleteProductRoomMessage(chatId: ChatId, messageId: ChatMessageId, policy: ChatRoomPolicy): Result<ChatSourceActionOutcome> {
+        if (ProductAttachmentOutbox.isOutboxId(messageId)) {
+            return runCancellableCatching { attachmentStager.delete(messageId) }.map { ChatSourceActionOutcome.Done }
+        }
         performInProductRoom(chatId, ChatSourceAction.Delete(messageId))?.let { return Result.success(it) }
 
         return productRoomUserActions.deleteMessage(chatId, messageId, policy).map { ChatSourceActionOutcome.Done }
     }
 
     suspend fun retryProductRoomMessage(chatId: ChatId, messageId: ChatMessageId): Result<ChatSourceActionOutcome> {
+        if (ProductAttachmentOutbox.isOutboxId(messageId)) {
+            return runCancellableCatching { attachmentStager.retry(messageId) }.map { ChatSourceActionOutcome.Done }
+        }
         performInProductRoom(chatId, ChatSourceAction.Retry(messageId))?.let { return Result.success(it) }
 
         return productRoomUserActions.retry(chatId, messageId).map { ChatSourceActionOutcome.Done }

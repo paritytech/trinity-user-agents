@@ -71,14 +71,13 @@ asks for it (S11, S21, S23).
 ## Rows
 
 The report has one row for each scenario of the test plan that names the Android layer (04-TESTING section 4), in the
-row format of the iOS report.
+row format of the iOS report. The switches of the launcher and of the debug hook are in the tables of
+[local-e2e-testing.md §8](local-e2e-testing.md#simulator-and-emulator-switches).
 
 | Kind       | Scenarios                                                                                                                                                                                  | Row                                           |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| Driven     | S1 to S4, S6 to S14, S25 to S29, S33 to S41, S47, S49, S54, S55 and S61 (`host` room); S11, S15 to S24, S30 to S32 and S46 (`source` room); S56 and S63 (both rooms)                        | `pass`, or `fail` with the first failed check |
-| Not driven | S5 (the sample has no command that calls `delete_room`)                                                                                                                                    | `skip` with that reason                       |
-| Not driven | S44 (no command of the sample sends more than 20 updates in a second)                                                                                                                      | `skip` with that reason                       |
-| Not driven | S62                                                                                                                                                                                        | `skip: needs P10.5.1 sample`                  |
+| Driven     | S1 to S14, S25 to S29, S33 to S41, S44, S47, S49, S51, S53 to S55, S58, S61, S64 to S67, S69 and S72 to S74 (`host` room); S11, S15 to S24, S30 to S32, S46, S59, S62 and S68 (`source` room); S56, S57, S60 and S63 (both rooms) | `pass`, or `fail` with the first failed check; S57 and S59 give `skip` with the reason when the emulator chain cannot carry them |
+| Benchmark  | B9, only with `TRUAPI_ANDROID_E2E_PERF=1` or `B9` in `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY`, after the scenarios | `pass` with the times, or `fail` |
 
 The `source` scenarios run first, so S14 can show the `Seen` reports of the `source` room. The P10 rows come after the
 P8 rows, and S49 comes after every row that proves a feature that the app can list. S4 and S6 run last, because they
@@ -99,6 +98,7 @@ leave the room screen and S6 stops the product server. Each P8.6 scenario puts t
 | S1, S3   | `/post legacy` in `chat_messages`; `/meta` in `chat_rooms` and in the open header                                                                                                                   |
 | S7–S10   | `/post all` and `/help` stored and drawn; `/stream` and `/edit` with one revision row; `/delete` tombstone; reactions table                                                                         |
 | S12–S14  | `/echo`, then send, reply, edit, react, delete from the menu; the Actions press; `/commands`, then `/help` as `Command`                                                                             |
+| S5       | `/room create`: room `New` in the event log, a `chat_rooms` row "Sample: throwaway" and its list row; with its screen open, `/room delete` through the hook into `host`: room `Deleted`, no `chat_rooms` or `chat_room_declarations` row, the screen closes, no list row |
 | S30, S31 | `/participants 6`: the header count without a reopen, authors from `ByIds`, the list pages; the sheet of `p4` and its Mention action                                                                |
 | S32      | `/reactions on`, `/react`: a long press on the chip lists who reacted; `/reactions na`: `NotAvailable`, no list, and no second query                                                                |
 | S25–S28  | `/menu extend`, `hide-edit`, `custom` in the long-press menu; `/slow 6000` falls back to the defaults; Pin sends `MessageActionTriggered`; `/deeplink` asks "Open this link?" and hands the link on |
@@ -106,13 +106,31 @@ leave the room screen and S6 stops the product server. Each P8.6 scenario puts t
 | S33–S36  | `/footer input`, `photo`, `empty`, `custom` on the screen; `sample.png` through Attach and the document picker goes inline, `large.bin` is refused                                                  |
 | S37–S41  | `/placeholder` in `host-empty`; `/suggest` chips; the `/` catalogue; `/activity` and `RoomClosed`; `/allowed 👍❤️` in the picker                                                                    |
 | S47      | `configGeneration` grows on `/menu extend` and `/menu none` while the room stays open, and the menu follows each one                                                                                |
+| S44      | `/flood`: `flood` `Done` in the event log and "ok /flood accepted=<a> refused=<r>" with at least one refusal; the target stores and draws "Flood of 25 edits", and the room keeps its input |
 | S61      | the user sends "Crème brûlée at the CAFÉ", `/post all` pushes it out of the screen; the search action of the header finds it for "creme BRULEE" and "café", and a tap shows it in the feed |
+| S62      | `/search off`, `/history 120`, reopen: no search action; `/search on`: the action shows; "history MESSAGE": `search_query` and History message 00120 first; a scroll of the results asks the next page with a cursor; a tap on History message 00065 jumps to it in the feed; `/search na`: "Search is not available"; `/search off` at the end |
 | S54      | a swipe to the end and "For 1 hour": `mutedUntil` in `chat_room_declarations`, `UserStateChanged` in the event log (the core keeps it until a message starts the worker), the speaker icon and the grey count in the row; `/notify` and `/notify 3` show nothing (`dumpsys notification`); after the unmute `/notify` shows one. The launcher answers the notifications prompt of the first `/notify` with "Allow always": the core keeps a "Don't allow" for the product, and the mute rule then never runs |
-| S55      | a swipe to the start: the "Archived" row and no room row; the room stays archived after `/post text`; the archived section shows it, and a swipe there brings it back |
-| S56      | the host room muted always and the source room archived, the app restarted: the first room events of the new worker are both `UserStateChanged` |
+| S55      | a swipe to the start: the "Archived" row and no room row; the room stays archived after `/post text`; the archived section shows it, and a swipe there brings it back; then `/room create`, a swipe archives `throwaway`, and `/room delete` removes the room with its user state, so the "Archived" row goes |
+| S56      | Mute, then Always, in the menu of the host room header, and Archive in the menu of the source room header; the app restarted: the first room events of the new worker are both `UserStateChanged`; then Unmute and Unarchive in the same menus |
+| S60      | `/footer photo` and `/features preimage on` in both rooms; a 1.5 MB photo picked through the system picker (the file goes to `Download` with `adb push`) shows the public-storage notice; Cancel stages nothing and keeps no outbox entry; the notice shows again, Send stages; a file in the `source` room shows no notice |
+| S57      | a 3 MiB photo and a 6 MiB file in the `host` room: the stage line of the app (`truapi.chat.stage`) and the banner; then a photo and a file under 2 MiB in both rooms: `media` and `preimage` `Fetched` in the event log. B7: the `stage_probe` hook times 8 MiB across the binding. `skip` when the chain bound refuses the S57 sizes (O32) or the core has no Bulletin allowance for the product |
+| S59      | PreimageSubmit refused: the bubble is Failed with the banner, the outbox keeps the bytes; after a reset of the decision, Retry in the message menu stages again; Delete removes the bubble and the folder of the entry in `files/product_attachment_outbox` |
+| S58      | `/features preimage off`: "Choose one under 1 MB"; a file of 8 MiB + 1 B: "Choose one under 8 MB"; PreimageSubmit refused: `PermissionDenied`, no `media` line in the event log |
 | S63      | with no worker page, the list search shows both rooms for "Sample", the host message for "crème", nothing for a text that only the source product keeps, and no worker starts |
-| S49      | `/caps`: the stored answer has the names that the app logs (`truapi.chat.capabilities`) and the bounds 1 MiB and 0; each row that proves a listed name (`ANDROID_CHAT_FEATURE_ROWS`) passed earlier in the run |
+| S53      | `/bot add helper Helper`: `bot helper New` and a `chat_bots` row; `/bot post helper …` stored with `originParticipantId` `bot:helper` and drawn under the author "Helper" with no `participants_query`; a repeat answers `Exists` and renames it; `/bot typing helper` gives the activity line "Helper Two: Sample is typing"; `/bot post ghost` is refused with "unknown bot ghost" |
+| S64      | `/thread <id>`: the thread room in `chat_rooms` and a `chat_message_meta` row; the chip under the root reads "3 replies" with the unread dot; the list has no thread row; a tap opens "Thread" with the parent name, the pinned root (`chat_thread_root`) and the three replies; Back shows the root. Deleting the parent is not driven: the sample runs commands only in `host`, `source` and its thread rooms; from the chat list, a link `polkadotapp://chat?chatId=<thread>` opens the thread room with the host room under it, so Back lands in the host room |
+| S65      | `/branches <id> 3`: a tap on › sends `BranchSelected`, and "Branch 2 of 3" moves the control to 2/3; with `/slow 15000` the next tap shows the spinner, the app logs `truapi.chat.branch … no answer` after 5 s and the control is back at 2/3, then the late answer moves it to 3/3 |
+| S66      | `/reason`: the row collapses to "Thought for 4 s" with the content description "Reasoning, collapsed", a tap gives "Reasoning, expanded" and the text, and the list row does not show the reasoning text. The "Thinking…" state of the sample lasts about one second, so a screen dump catches it only sometimes |
+| S67      | `/post rich`: no "Read aloud" without `/features readaloud on`; with it, the entry speaks (`truapi.chat.readAloud speak N characters, marks false`), the footer shows Stop, and Back logs `truapi.chat.readAloud stop` |
+| S68      | `/branches <id> 3` in the `source` room: a `chat_message_meta` row; after the room closes and loads its pages again through `messages_query`, the control 1/3 is back |
+| S69      | `/echo`, a message sent and Back at once: the wake of the message in logcat (`TrUAPI <product> woken for message-in-flight host`), the echo stored; the worker page goes 30 s or more after the room closed; a `message` hook to the stopped worker wakes it and gets its echo |
+| S72      | `/features calls both`: both header buttons (`chat_call_button_audio`, `chat_call_button_video`); a press sends `CallRequested` and the product answers with a call bar; `audio` shows one button, `off` none |
+| S73      | `/call ring`: the banner of the room; `/call ring video` from the list: the row shows "Incoming video call" and the in-app banner shows; Home: the `CallStyle` notification in `dumpsys notification` (and Answer in the shade, when the shade shows it); Accept and Decline in the room send `CallAnswered`; a call that nobody answers goes after 60 s |
+| S74      | `/call active`: the bar with its timer; a tap on the bar sends `CallOpened`, End sends `CallEnded` |
+| S51      | `/features preimage on`, `readaloud on`, `calls audio`: `chat_room_declarations.features` is `0x0101000101000001`, also after an app restart and a new worker; the app does not list `preimage_attachments`, so it keeps the bytes and ignores the feature; all three `off` give `0x010000000000` |
+| S49      | `/caps`: the stored answer has the names that the app logs (`truapi.chat.capabilities`) and the bounds 1 MiB and 0 (8 MiB when the app lists `preimage_attachments`); each row that proves a listed name (`ANDROID_CHAT_FEATURE_ROWS`) passed earlier in the run. The app lists `product_source_rooms`, `reaction_details`, `participants`, `message_menus`, `participant_menus`, `toolbar`, `suggestions`, `commands`, `activity`, `custom_bodies`, `custom_footer`, `inline_attachments`, `search`, `bot_personas`, `mute_archive`, `threads`, `branches`, `reasoning_rows`, `read_aloud` and `call_buttons`. Not `room_links` (the sample is a `.dot` name, and the app opens only names of its own network, see S27), `preimage_attachments` (O32, O34), `wake` (O28), `payment_button` or `room_calls` |
 | S4, S6   | `/preview` variants in the chat list rows; the list with the product server stopped                                                                                                                 |
+| B9       | on the chat list with no worker page, the `wake` hook (`ChatWakeReason.Notification`, in place of the receiving layer, O28) to the stored preview "Woken by <watch>": two cold wakes and one warm wake |
 
 ## Troubleshooting
 
@@ -122,6 +140,12 @@ leave the room screen and S6 stops the product server. Each P8.6 scenario puts t
 - A screen dump of a busy emulator can take more than 20 s. The launcher waits up to 90 s for one, and stops a dump that
   does not end. When an adb command times out, the helpers restart the adb server; the logcat stream then connects again
   from its last line, and the launcher maps the product port again.
+- An emulator under load can show "isn't responding" for the app; the launcher taps Wait. A sheet can drop a tap while
+  it slides in; the launcher taps the buttons of the public-storage notice again, at most three times. A tap on the
+  share sheet that lands while its rows move can open the Quick Share setup of the system; the launcher presses Back.
+  It notes each of these under "Observed while driving the app".
+- The files of the P10.3 rows stay in the Download folder of the AVD after a run, and push the files of S36 out of the
+  document picker. The launcher removes them before it pushes the files of the run.
 - An emulator under load can drop a swipe gesture. When a mute or archive swipe on a list row changes nothing in 6 s,
   the launcher swipes again, at most three times, and notes each repeat under "Observed while driving the app".
 - The app shows "The environment has been reset" after `pm clear`, and the product asks to submit a preimage at its
@@ -132,5 +156,12 @@ leave the room screen and S6 stops the product server. Each P8.6 scenario puts t
 - S27: the deeplink handlers of the app open only names of the network that the app uses (`.testnet` on the test
   networks), and the sample product is a `.dot` name, so the app hands the link to the system, which has no handler. The
   row proves the confirmation and the hand-over, not an App page.
+- Two runs on one host need their own ports: `TRUAPI_ANDROID_E2E_CHAT_PRODUCT_URL=http://127.0.0.1:<port>` for the
+  product server and `TRUAPI_ANDROID_E2E_DEVTOOLS_PORT` for the WebView DevTools socket.
+- The P10.3 rows use two debug-only hooks of `E2EHookReceiver`: `serve_preimage_attachments` makes the app stage the
+  attachments of a room that declares `preimage_attachments` also while the app does not list the feature, and
+  `reset_preimage_permission` clears the stored PreimageSubmit decision of the product (the launcher answers "Don't
+  allow" at the first start). The launcher answers each later PreimageSubmit prompt as the row needs it. The core does
+  all staging; the hooks hold no key and open no connection.
 - `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY=S15,S17` runs some scenarios only, and `TRUAPI_ANDROID_E2E_CHAT_V2_REUSE=1` keeps the
   installed app and its data. Both are for work on the launcher; a report from them is not a full run.

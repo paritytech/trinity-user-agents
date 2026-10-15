@@ -297,9 +297,9 @@ README has one command group for each addition.
 
 | Rows | Test host | CLI page | iOS simulator | Android emulator |
 |---|---|---|---|---|
-| S1 to S48 | the core and product rows | S4, S7, S8, S13, S15, S19, S45, S48 and the screening battery | every iOS row | every Android row; S5 and S44 skip until the launcher drives `/room` and `/flood` |
-| S49 to S75 | S49, S51 to S58, S61, S62, S64, S65, S70 to S74 | S49, S51, S53 to S58, S61, S62, S64 to S67, S70, S72 to S74 | S49, S51, S53 to S69 (S57 a reasoned skip), S72 to S74 | S49, S54 to S56, S61, S63; S53, S57 to S60, S64 to S69 and S72 to S74 come with the Android P10 work |
-| Benchmarks | none | none | B1 to B3, B7, B9 (`TRUAPI_IOS_E2E_PERF=1`); B4, B6, B8 as unit tests | B1 to B4, B6 on the JVM (`CHAT_V2_BENCH=1`) |
+| S1 to S48 | the core and product rows | S4, S7, S8, S13, S15, S19, S45, S48 and the screening battery | every iOS row | every Android row |
+| S49 to S75 | S49, S51 to S58, S61, S62, S64, S65, S70 to S74 | S49, S51, S53 to S58, S61, S62, S64 to S67, S70, S72 to S74 | S49, S51, S53 to S69 (S57 a reasoned skip), S72 to S74 | S49, S51, S53 to S69 (S57 and S59 reasoned skips), S72 to S74 |
+| Benchmarks | none | none | B1 to B3, B7, B9 (`TRUAPI_IOS_E2E_PERF=1`); B4, B6, B8 as unit tests | B7 in S57; B9 (`TRUAPI_ANDROID_E2E_PERF=1`); B1 to B4, B6 on the JVM (`CHAT_V2_BENCH=1`) |
 
 S71 (the hourly wake budget) is a core test with a paused clock. S75 (a call
 with media) waits on the Media service. The CLI page lists its features in
@@ -344,13 +344,14 @@ have.
 | `product_id`, `product_name`, `worker_url` | Installs the product as a chat product with the served worker (broadcast) |
 | `message`, `room_id` | Sends a user message into a room through the real chat path (broadcast) |
 | `clipboard` | Puts a text on the clipboard, which the launcher pastes into the input (broadcast) |
+| `TRUAPI_ANDROID_E2E_PERF=1` | Also drives B9 after the scenarios (launcher) |
+| `TRUAPI_ANDROID_E2E_DEVTOOLS_PORT` | The host port of the WebView DevTools socket; two runs on one host need their own (launcher) |
+| `wake` | Wakes the product for a room with `ChatWakeReason.Notification`, in place of the receiving layer (broadcast, B9) |
+| `serve_preimage_attachments` | Stages attachments in a room that declares `preimage_attachments`, although the app does not list the feature (broadcast, P10.3 rows) |
+| `reset_preimage_permission` | Clears the stored PreimageSubmit decision of the product, as the settings of the product do (broadcast, P10.3 rows) |
+| `stage_probe` | Times the bytes of an attachment across the binding into the core, with a room that declares nothing (broadcast, B7) |
 
-The Android P10 work adds `TRUAPI_ANDROID_E2E_PERF=1` and
-`TRUAPI_ANDROID_E2E_DEVTOOLS_PORT`, and the broadcast extras `wake` (a
-notification wake in place of the receiving layer), `serve_preimage_attachments`,
-`reset_preimage_permission` and `stage_probe` (B7); the
-[Android runbook](chat-android-emulator.md) describes them once they are
-merged.
+The [Android runbook](chat-android-emulator.md) describes each row and switch.
 
 ### Known limits
 
