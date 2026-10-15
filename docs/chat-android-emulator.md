@@ -122,6 +122,8 @@ leave the room screen and S6 stops the product server. Each P8.6 scenario puts t
 - A screen dump of a busy emulator can take more than 20 s. The launcher waits up to 90 s for one, and stops a dump that
   does not end. When an adb command times out, the helpers restart the adb server; the logcat stream then connects again
   from its last line, and the launcher maps the product port again.
+- An emulator under load can drop a swipe gesture. When a mute or archive swipe on a list row changes nothing in 6 s,
+  the launcher swipes again, at most three times, and notes each repeat under "Observed while driving the app".
 - The app shows "The environment has been reset" after `pm clear`, and the product asks to submit a preimage at its
   first start. The launcher answers "Dismiss" and "Don't allow"; `/post rich` then shows the missing-preimage
   placeholder. A permission prompt that no screen can show, or that a navigation removes before an answer, ends the

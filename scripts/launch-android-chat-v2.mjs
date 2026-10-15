@@ -699,7 +699,7 @@ const DRIVERS = {
     await showChatList();
     const muted = eventMark();
     const asked = Date.now();
-    await swipeRow(ROOMS.host.name, "mute");
+    await swipeRow(ROOMS.host.name, "mute", muteSheetShown);
     await tapWhenShown("For 1 hour", "the mute durations");
     const stored = await waitFor(() => {
       const row = userStateRow("host");
@@ -739,7 +739,7 @@ const DRIVERS = {
 
     await showChatList();
     const unmuted = eventMark();
-    await swipeRow(ROOMS.host.name, "mute");
+    await swipeRow(ROOMS.host.name, "mute", () => userStateRow("host")?.mutedUntil == null);
     await waitFor(() => userStateRow("host")?.mutedUntil == null, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unmute is not stored" });
     await notifyFromRoom("/notify");
     await waitEvent(
@@ -760,7 +760,7 @@ const DRIVERS = {
     await resetUserState("host");
     await showChatList();
     const archived = eventMark();
-    await swipeRow(ROOMS.host.name, "archive");
+    await swipeRow(ROOMS.host.name, "archive", () => Number(userStateRow("host")?.archived) === 1);
     await waitFor(() => Number(userStateRow("host")?.archived) === 1, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the archive is not stored" });
     const main = await waitScreen(
       (screen) => findTag(screen, "chat_list_archived_row") && !findText(screen, ROOMS.host.name) && screen,
@@ -789,7 +789,7 @@ const DRIVERS = {
     note(`\`${await screenshot(scenarioById("S55"), "archived")}\``);
 
     const unarchived = eventMark();
-    await swipeRow(ROOMS.host.name, "archive");
+    await swipeRow(ROOMS.host.name, "archive", () => Number(userStateRow("host")?.archived ?? 0) === 0);
     await waitFor(() => Number(userStateRow("host")?.archived ?? 0) === 0, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unarchive is not stored" });
     await waitScreen(
       (screen) => !findTag(screen, "chat_list_archived_header") && !findTag(screen, "chat_list_archived_row") && findText(screen, ROOMS.host.name) && screen,
@@ -813,10 +813,10 @@ const DRIVERS = {
     await resetUserState("host");
     await resetUserState("source");
     await showChatList();
-    await swipeRow(ROOMS.host.name, "mute");
+    await swipeRow(ROOMS.host.name, "mute", muteSheetShown);
     await tapWhenShown("Always", "the mute durations");
     await waitFor(() => userStateRow("host")?.mutedUntil, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the mute is not stored" });
-    await swipeRow(ROOMS.source.name, "archive");
+    await swipeRow(ROOMS.source.name, "archive", () => Number(userStateRow("source")?.archived) === 1);
     await waitFor(() => Number(userStateRow("source")?.archived) === 1, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the archive is not stored" });
     try {
       const lastBoot = Math.max(0, ...events().map((entry) => entry.boot ?? 0));
@@ -847,12 +847,12 @@ const DRIVERS = {
     } finally {
       await waitProductStarted().catch(() => undefined);
       await showChatList();
-      await swipeRow(ROOMS.host.name, "mute");
+      await swipeRow(ROOMS.host.name, "mute", () => userStateRow("host")?.mutedUntil == null);
       await waitFor(() => userStateRow("host")?.mutedUntil == null, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unmute is not stored" });
       const list = await showChatList();
       tapText(list, "Archived");
       await waitScreen((screen) => findTag(screen, "chat_list_archived_header") && findText(screen, ROOMS.source.name), "the archived section");
-      await swipeRow(ROOMS.source.name, "archive");
+      await swipeRow(ROOMS.source.name, "archive", () => Number(userStateRow("source")?.archived ?? 0) === 0);
       await waitFor(() => Number(userStateRow("source")?.archived ?? 0) === 0, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unarchive is not stored" });
     }
   },
@@ -2210,15 +2210,31 @@ function userStateRow(room) {
  * Swipe the chat list row of the room named `name`: to the end mutes or
  * unmutes it, to the start archives or unarchives it.
  */
-async function swipeRow(name, action) {
-  const screen = await waitScreen((nodes) => findText(nodes, name) && nodes, `the row "${name}"`);
-  const title = findText(screen, name);
-  const y = title.center.y + 40;
-  // A swipe that starts at an edge of the screen is the system Back gesture, so it starts inside.
-  if (action === "mute") inputSwipe(serial, { x: 300, y }, { x: 1000, y }, 300);
-  else inputSwipe(serial, { x: 850, y }, { x: 100, y }, 300);
-  await delay(1_200);
+/**
+ * Swipe the row `name` to the end (`mute`) or to the start (`archive`), until `done` is true. An emulator under load
+ * can drop a swipe gesture, and the row then does not move. The launcher swipes again, at most three times, and notes
+ * each repeat in the report.
+ */
+async function swipeRow(name, action, done) {
+  for (let attempt = 1; ; attempt += 1) {
+    const screen = await waitScreen((nodes) => findText(nodes, name) && nodes, `the row "${name}"`);
+    const title = findText(screen, name);
+    const y = title.center.y + 40;
+    // A swipe that starts at an edge of the screen is the system Back gesture, so it starts inside.
+    if (action === "mute") inputSwipe(serial, { x: 300, y }, { x: 1000, y }, 300);
+    else inputSwipe(serial, { x: 850, y }, { x: 100, y }, 300);
+    await delay(1_200);
+    const moved = await waitFor(done, { timeoutMs: 6_000, intervalMs: 500, message: "no change" }).then(
+      () => true,
+      () => false,
+    );
+    if (moved || attempt === 3) return;
+    observations.push(`the ${action} swipe on "${name}" changed nothing; the launcher swiped again (attempt ${attempt + 1})`);
+  }
 }
+
+/** The mute durations sheet that a swipe to the end opens on a row that is not muted. */
+const muteSheetShown = () => findText(parseUiNodes(uiDump(serial)), "Mute notifications");
 
 async function tapWhenShown(label, what) {
   const screen = await waitScreen((nodes) => findText(nodes, label) && nodes, what);
@@ -2234,12 +2250,12 @@ async function resetUserState(room) {
     const list = await showChatList();
     tapText(list, "Archived");
     await waitScreen((screen) => findTag(screen, "chat_list_archived_header") && findText(screen, ROOMS[room].name), "the archived section");
-    await swipeRow(ROOMS[room].name, "archive");
+    await swipeRow(ROOMS[room].name, "archive", () => Number(userStateRow(room)?.archived ?? 0) === 0);
     await waitFor(() => Number(userStateRow(room)?.archived ?? 0) === 0, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unarchive is not stored" });
   }
   if (userStateRow(room)?.mutedUntil != null && Number(userStateRow(room).mutedUntil) > Date.now()) {
     await showChatList();
-    await swipeRow(ROOMS[room].name, "mute");
+    await swipeRow(ROOMS[room].name, "mute", () => userStateRow(room)?.mutedUntil == null);
     await waitFor(() => userStateRow(room)?.mutedUntil == null, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unmute is not stored" });
   }
   await showChatList();
