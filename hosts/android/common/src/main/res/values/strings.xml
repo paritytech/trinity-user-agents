@@ -301,6 +301,9 @@
     <string name="debug_spa_browser_title">Open SPA URL</string>
     <string name="debug_spa_browser_url_hint">Enter SPA URL</string>
     <string name="debug_spa_browser_open">Open</string>
+    <string name="debug_menu_open_dev_server">Open dev server</string>
+    <string name="debug_dev_server_title">Open dev server</string>
+    <string name="debug_dev_server_address_hint">192.168.x.x:3000, add ?product_id=name.dot to run as that product</string>
 
     <string name="settings_mnemonic_reveal_title">Recovery phrase</string>
     <string name="settings_mnemonic_reveal_description">Never share the recovery phrase. Anyone with the recovery phrase has full access to your account, cash and collectables.</string>

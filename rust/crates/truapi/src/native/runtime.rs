@@ -901,9 +901,18 @@ impl NativeProductExecution {
 	}
 
 	/// Notify this execution's chain adapter that a connection closed.
+	///
+	/// The connection belongs to exactly one of the two buses, so both are
+	/// offered the close and only the owner reacts. A miss is reported as an
+	/// early close once, against this execution's own bus, because that is the
+	/// bus whose connects this execution's ids race. Bumping both would fail
+	/// unrelated connects on the shared bus for every close an execution makes.
 	pub fn notify_chain_closed(&self, connection_id: u32) {
-		self.shared_events.notify_chain_closed(connection_id);
-		self.events.notify_chain_closed(connection_id);
+		let shared = self.shared_events.close_chain_if_registered(connection_id);
+		let scoped = self.events.close_chain_if_registered(connection_id);
+		if !shared && !scoped {
+			self.events.note_early_chain_close();
+		}
 	}
 
 	/// Push a complete native Chat room-list replacement to this execution.
@@ -1308,6 +1317,72 @@ mod tests {
 		execution.notify_chain_closed(41);
 		assert_eq!(futures::executor::block_on(shared_responses.next()), None);
 		assert_eq!(futures::executor::block_on(scoped_responses.next()), None);
+	}
+
+	/// An execution's close reaches both buses, so it necessarily misses one of
+	/// them. That miss must not read as a close racing a connect, or every
+	/// close an execution makes invalidates the shared bus's in-flight
+	/// connects and they fail with "chain connection closed during setup".
+	#[test]
+	fn an_execution_close_does_not_invalidate_shared_bus_connects() {
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+		)
+		.expect("host runtime config should be valid");
+		let execution = host
+			.open_product_execution(
+				Arc::new(EventCallbacks::new()),
+				None,
+				None,
+				None,
+				native_execution_config("chain.dot", ProductExecutionKind::App),
+			)
+			.expect("App execution should open");
+
+		// A connect on the shared bus reads the generation, then an unrelated
+		// execution connection closes while it is still in flight.
+		let generation = host.events.chain_close_generation();
+		let _scoped = execution.events.register_chain(7, 0).expect("scoped registration");
+		execution.notify_chain_closed(7);
+
+		assert_eq!(
+			host.events.chain_close_generation(),
+			generation,
+			"an execution's close bumped the shared bus generation",
+		);
+		assert!(
+			host.events.register_chain(99, generation).is_some(),
+			"a shared-bus connect was invalidated by an unrelated execution close",
+		);
+	}
+
+	/// A close for an id neither bus registered is the real early-close case
+	/// and must still invalidate the execution's own in-flight connects.
+	#[test]
+	fn an_unknown_close_still_invalidates_the_executions_own_connects() {
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+		)
+		.expect("host runtime config should be valid");
+		let execution = host
+			.open_product_execution(
+				Arc::new(EventCallbacks::new()),
+				None,
+				None,
+				None,
+				native_execution_config("chain.dot", ProductExecutionKind::App),
+			)
+			.expect("App execution should open");
+
+		let generation = execution.events.chain_close_generation();
+		execution.notify_chain_closed(404);
+
+		assert!(
+			execution.events.register_chain(404, generation).is_none(),
+			"a close that beat its own connect was not reported as an early close",
+		);
 	}
 
 	#[test]

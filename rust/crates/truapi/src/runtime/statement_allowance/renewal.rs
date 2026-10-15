@@ -183,7 +183,7 @@ pub async fn renew_targets(
 	period: u32,
 	targets: &[ResolvedRenewalTarget],
 	registration_lock: &Mutex<()>,
-) -> Result<StatementRenewalReport, StatementAllowanceError> {
+) -> StatementRenewalReport {
 	let mut target_scans = Vec::with_capacity(targets.len());
 	for target in targets {
 		let scans = {
@@ -201,11 +201,9 @@ pub async fn renew_targets(
 				},
 			)
 			.await
+			.map_err(RenewalFailure::from)
 		};
-		match scans {
-			Err(error @ StatementAllowanceError::Authority(_)) => return Err(error),
-			other => target_scans.push(other),
-		}
+		target_scans.push(scans);
 	}
 
 	let mut claimed: Vec<(PersonhoodCollection, u32)> = target_scans
@@ -217,7 +215,7 @@ pub async fn renew_targets(
 		let scans = match scans {
 			Ok(scans) => scans,
 			Err(failure) => {
-				results.push(Err(RenewalFailure::from(failure)));
+				results.push(Err(failure));
 				continue;
 			},
 		};
@@ -239,6 +237,7 @@ pub async fn renew_targets(
 					},
 				)
 				.await
+				.map_err(RenewalFailure::from)
 			};
 			match scans {
 				Ok(scans) => {
@@ -261,13 +260,10 @@ pub async fn renew_targets(
 						},
 					)
 					.await
+					.map_err(RenewalFailure::from)
 				},
 				Err(failure) => Err(failure),
 			}
-		};
-		let result = match result {
-			Err(error @ StatementAllowanceError::Authority(_)) => return Err(error),
-			other => other.map_err(RenewalFailure::from),
 		};
 		log_target_result(period, &target.label, &result);
 		if let Ok(outcome) = &result {
@@ -287,7 +283,7 @@ pub async fn renew_targets(
 			break;
 		}
 	}
-	Ok(fold_outcomes(period, targets, results))
+	fold_outcomes(period, targets, results)
 }
 
 /// Delay until the next renewal tick: hourly, but always shortly after each
@@ -457,8 +453,7 @@ mod tests {
 			memberships: &memberships,
 		};
 		let lock = Mutex::new(());
-		let report =
-			futures::executor::block_on(renew_targets(&context, 7, &targets, &lock)).unwrap();
+		let report = futures::executor::block_on(renew_targets(&context, 7, &targets, &lock));
 
 		let seqs: Vec<u32> = report
 			.outcomes
@@ -541,8 +536,7 @@ mod tests {
 			memberships: &memberships,
 		};
 		let report =
-			futures::executor::block_on(renew_targets(&context, 7, &targets, &Mutex::new(())))
-				.unwrap();
+			futures::executor::block_on(renew_targets(&context, 7, &targets, &Mutex::new(())));
 
 		assert_eq!(
 			report,
@@ -638,8 +632,7 @@ mod tests {
 			memberships: &memberships,
 		};
 		let lock = Mutex::new(());
-		let report =
-			futures::executor::block_on(renew_targets(&context, 7, &targets, &lock)).unwrap();
+		let report = futures::executor::block_on(renew_targets(&context, 7, &targets, &lock));
 
 		let seqs: Vec<u32> = report
 			.outcomes

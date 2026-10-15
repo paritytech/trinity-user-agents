@@ -294,9 +294,7 @@ pub async fn renew_now(
 		memberships: &memberships,
 	};
 	let mut report =
-		renew_targets(&context, period, &resolved, signing_host.renewal.registration_lock())
-			.await
-			.map_err(|err| err.to_string())?;
+		renew_targets(&context, period, &resolved, signing_host.renewal.registration_lock()).await;
 	report.pruned = pruned;
 	Ok(report)
 }
