@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 /** What the room screen shows of the participants of a product room (P6.3). */
 @Immutable
@@ -90,6 +91,16 @@ class ProductRoomParticipants(
 
     val directory = ChatParticipantDirectory(chatId, scope, querying)
     private val productOrigin = ChatMessageOrigin.Extension(chatId.extensionOrNull()?.extensionId.orEmpty())
+
+    // Each page of the list draws the whole list again. The appearance of a participant that did not change comes
+    // from this cache, so a page costs the same at 10,000 participants as at 100 (04-TESTING B1).
+    private val appearanceCache = ConcurrentHashMap<String, CachedAppearance>()
+
+    private class CachedAppearance(
+        val entry: ChatParticipantEntryModel?,
+        val origins: MessageOriginDisplayResolver,
+        val appearance: ChatParticipantUiModel,
+    )
 
     private val paging = MutableStateFlow(InitialPaging)
     private var pageJob: Job? = null
@@ -161,11 +172,17 @@ class ProductRoomParticipants(
         return participantIds.toSet().associateWith { appearance(it, directory.resolved.value[it], origins) }
     }
 
-    private suspend fun appearance(participantId: String, entry: ChatParticipantEntryModel?, origins: MessageOriginDisplayResolver) =
-        appearances.appearance(participantId, entry, origins, productOrigin)
+    private suspend fun appearance(participantId: String, entry: ChatParticipantEntryModel?, origins: MessageOriginDisplayResolver): ChatParticipantUiModel {
+        val cached = appearanceCache[participantId]
+        if (cached != null && cached.entry === entry && cached.origins === origins) return cached.appearance
+
+        return appearances.appearance(participantId, entry, origins, productOrigin)
+            .also { appearanceCache[participantId] = CachedAppearance(entry, origins, it) }
+    }
 
     private fun restart(declaration: Declaration) {
         pageJob?.cancel()
+        appearanceCache.clear()
         directory.reset()
         paging.value = InitialPaging
         if (declaration.declared) directory.loadCount()
