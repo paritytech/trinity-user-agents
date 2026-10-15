@@ -23,7 +23,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
@@ -35,12 +34,12 @@ import uniffi.truapi.ChatEvent
 import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatPageAnchor
 import uniffi.truapi.ChatUserAction
+import uniffi.truapi.ChatWakeReason
 import uniffi.truapi.ProductChatMessagesQueryItem
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductChatUserActionItem
 import uniffi.truapi.ProductRuntimeException
-import kotlin.time.Duration.Companion.seconds
 
 class TrUAPIChatWorkerRoomsTest {
     private val productId = ProductId.fromStoredValue("game.dot")
@@ -109,17 +108,15 @@ class TrUAPIChatWorkerRoomsTest {
     }
 
     @Test
-    fun `an event without an open room holds the worker for a short while`() = runTest {
+    fun `an event without an open room wakes the worker instead of holding it`() = runTest {
         val worker = worker()
 
         worker.publishRoomEvent(room, ProductRoomEvent.MessagePosted("h1", ChatMessage.Content.Text("hi"), null))
         runCurrent()
-        verify(exactly = 1) { runtime.acquireWorker(productId.value) }
+
+        verify(atLeast = 1) { runtime.wakeProduct(productId.value, ChatWakeReason.MessageInFlight("lobby")) }
+        verify(exactly = 0) { runtime.acquireWorker(any()) }
         verify(exactly = 0) { runtime.releaseWorker(any()) }
-
-        advanceTimeBy(31.seconds)
-
-        verify(exactly = 1) { runtime.releaseWorker(productId.value) }
     }
 
     @Test

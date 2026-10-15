@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRo
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallAction
 
 /** What the user does to the parts of a product room that its product declares. */
 sealed interface ProductRoomAction {
@@ -37,4 +38,6 @@ sealed interface ProductRoomAction {
 
     /** "Stop" in the footer while a message speaks (07-LATER §9.5). */
     data object StopReadAloud : ProductRoomAction
+    /** The user acts on the call of the room (07-LATER §11.2). */
+    data class Call(val action: ProductRoomCallAction) : ProductRoomAction
 }

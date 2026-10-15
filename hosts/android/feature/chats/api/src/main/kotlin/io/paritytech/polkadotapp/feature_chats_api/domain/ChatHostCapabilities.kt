@@ -35,5 +35,18 @@ object ChatHostCapabilities {
     /** "Read aloud" in the message menu of a room that declares it: S67. */
     const val READ_ALOUD = "read_aloud"
 
-    val features: List<String> = listOf(PRODUCT_SOURCE_ROOMS, CUSTOM_BODIES, BOT_PERSONAS, THREADS, BRANCHES, REASONING_ROWS, READ_ALOUD)
+    /** The call buttons of the header, a ringing call, the call bar and the call events: S72 to S74. */
+    const val CALL_BUTTONS = "call_buttons"
+
+    /** The names in the order of the feature table of the RFC. */
+    val features: List<String> = listOf(
+        PRODUCT_SOURCE_ROOMS,
+        CUSTOM_BODIES,
+        BOT_PERSONAS,
+        THREADS,
+        BRANCHES,
+        REASONING_ROWS,
+        READ_ALOUD,
+        CALL_BUTTONS,
+    )
 }

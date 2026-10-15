@@ -45,7 +45,10 @@ interface ProductWorker : JsEventDispatcher {
 
     suspend fun closeRoom(roomId: ProductChatIdParameter) = Unit
 
-    /** Keeps the worker for a short while without an open room, for example so a new product can create its rooms. */
+    /**
+     * Wakes the worker without an open room, so a new product can create its rooms (W2 of 07-LATER §10.2). The wake
+     * continues until the worker runs, and 30 s more.
+     */
     fun holdBriefly() = Unit
 
     suspend fun messagesPage(

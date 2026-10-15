@@ -72,4 +72,7 @@ interface ProductChatMessaging {
     suspend fun setMessageMeta(chatIdParameter: ProductChatIdParameter, messageId: String, meta: ChatMessageMetaModel): Result<Unit>
 
     suspend fun setRoomCall(chatIdParameter: ProductChatIdParameter, call: ChatRoomCallModel?): Result<Unit>
+
+    /** Removes the ringing calls of the rooms of the product, because its worker stopped (07-LATER §11.2). */
+    suspend fun clearRingingCalls(): Result<Unit> = Result.success(Unit)
 }

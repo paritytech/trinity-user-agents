@@ -20,6 +20,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2EAcks
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2ERuntimeMarkers
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2E_LOG_TAG
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_usernames_api.data.LocalUsernameStorage
 import io.paritytech.polkadotapp.feature_usernames_api.domain.model.Username
 import kotlinx.coroutines.CoroutineScope
@@ -28,10 +29,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import uniffi.truapi.ChatWakeOutcome
+import uniffi.truapi.ChatWakeReason
 
 /**
  * Debug-only entry point the chat e2e drives: seeds an identity, registers a product, posts a
- * user message through the real chat path, and puts a text on the clipboard.
+ * user message through the real chat path, puts a text on the clipboard, and wakes a product for a room.
  *
  * With the clipboard hook, the launcher can type a text that `adb shell input text` cannot type,
  * for example an emoji. The launcher sets the text here, and then pastes it into the input.
@@ -50,6 +53,7 @@ class E2EHookReceiver : BroadcastReceiver() {
         fun productBotManagementInteractor(): ProductBotManagementInteractor
         fun chatMessageSender(): ChatMessageSender
         fun e2eRuntimeMarkers(): E2ERuntimeMarkers
+        fun trUAPIHostRuntimeProvider(): TrUAPIHostRuntimeProvider
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -90,6 +94,32 @@ class E2EHookReceiver : BroadcastReceiver() {
                 else -> sendUserMessage(hooks, productId, roomId, message)
             }
         }
+
+        intent.stringExtra(EXTRA_WAKE)?.let { watchId ->
+            val roomId = intent.stringExtra(EXTRA_ROOM_ID)
+            when {
+                productId == null -> logError("wake", "wake requires $EXTRA_PRODUCT_ID")
+                roomId == null -> logError("wake", "wake requires $EXTRA_ROOM_ID")
+                else -> wake(hooks, productId, roomId, watchId)
+            }
+        }
+    }
+
+    // B9: a notification wake of a room, as the receiving layer will start it (07-LATER §10.2). The receiving layer
+    // is not on this branch yet (O28), so the hook takes its place.
+    private suspend fun wake(hooks: Hooks, productId: ProductId, roomId: String, watchId: String) {
+        hooks.trUAPIHostRuntimeProvider().runtime()
+            .mapCatching { it.wakeProduct(productId.value, ChatWakeReason.Notification(roomId, watchId)) }
+            .fold(
+                onSuccess = { outcome ->
+                    val text = when (outcome) {
+                        is ChatWakeOutcome.Held -> "held until=${outcome.untilMs}"
+                        ChatWakeOutcome.BudgetSpent -> "budget-spent"
+                    }
+                    log(E2EAcks.woken(productId.value, roomId, watchId, text))
+                },
+                onFailure = { logError("wake", it) },
+            )
     }
 
     private suspend fun sendUserMessage(hooks: Hooks, productId: ProductId, roomId: String, text: String) {
@@ -150,6 +180,7 @@ class E2EHookReceiver : BroadcastReceiver() {
         const val EXTRA_MESSAGE = "message"
         const val EXTRA_ROOM_ID = "room_id"
         const val EXTRA_CLIPBOARD = "clipboard"
+        const val EXTRA_WAKE = "wake"
 
         const val CLIP_LABEL = "truapi-e2e"
         const val CLIPBOARD_SET_ACK = "clipboard set"

@@ -349,7 +349,16 @@ class ProductChatHostBridgeTest {
     @Test
     fun `capabilities lists only the features that this build serves from end to end`() = runTest {
         assertEquals(
-            listOf("product_source_rooms", "custom_bodies", "bot_personas", "threads", "branches", "reasoning_rows", "read_aloud"),
+            listOf(
+                "product_source_rooms",
+                "custom_bodies",
+                "bot_personas",
+                "threads",
+                "branches",
+                "reasoning_rows",
+                "read_aloud",
+                "call_buttons",
+            ),
             bridge(FakeChatMessaging()).capabilities(),
         )
     }

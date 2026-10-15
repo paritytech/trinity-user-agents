@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.list
 
+import android.content.Context
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
@@ -11,10 +12,12 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPre
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomUserStateModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.DraftPreviewUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.LastMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
+import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.RealChatRoomCallRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatListInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatAvatar
@@ -23,6 +26,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDraft
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDraftRelation
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatSummaryBadge
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallListPreviews
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.models.ChatListUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +45,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import io.paritytech.polkadotapp.common.R as RCommon
 
 class ChatListViewModelTest {
     private val roomId = ChatId.forExtensionRoom("ProductBot_weather", "berlin")
@@ -58,6 +63,11 @@ class ChatListViewModelTest {
     }
     private val resolver = mockk<ChatResourceResolver>()
     private val userStateService = mockk<ChatRoomUserStateService>(relaxed = true)
+    private val calls = RealChatRoomCallRepository()
+    private val context = mockk<Context> {
+        every { getString(RCommon.string.product_room_call_incoming) } returns "Incoming call"
+        every { getString(RCommon.string.product_room_call_incoming_video) } returns "Incoming video call"
+    }
 
     @Before
     fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
@@ -73,6 +83,20 @@ class ChatListViewModelTest {
 
         assertEquals("Rain at noon", (row.preview as LastMessageUiModel.Text).message)
         assertFalse(row.isOngoing)
+    }
+
+    @Test
+    fun `a ringing call shows Incoming call as an ongoing preview until it stops to ring`() = runBlocking<Unit> {
+        chats.value = listOf(productRoom(productText = "Rain at noon", ongoing = false))
+        val viewModel = viewModel()
+
+        calls.set(roomId, ChatRoomCallModel.Ringing("c1", video = true, caller = "p1"))
+        val ringing = viewModel.loaded { (it.chats.firstOrNull()?.preview as? LastMessageUiModel.Text)?.message == "Incoming video call" }
+        assertTrue(ringing.chats.first().isOngoing)
+
+        calls.set(roomId, ChatRoomCallModel.Active("c1", video = true, startedAt = 1, mediaSession = null))
+        val active = viewModel.loaded { (it.chats.firstOrNull()?.preview as? LastMessageUiModel.Text)?.message == "Rain at noon" }
+        assertFalse(active.chats.first().isOngoing)
     }
 
     @Test
@@ -163,6 +187,7 @@ class ChatListViewModelTest {
         messageMappingHelper = mockk(),
         roomPolicyMapper = ChatListRoomPolicyMapper(resolver),
         userStateService = userStateService,
+        callPreviews = ProductRoomCallListPreviews(context, calls),
     )
 
     private suspend fun ChatListViewModel.firstRow(): ChatListUiState.ChatItem = withTimeout(5_000) {

@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   ANDROID_CHAT_FEATURE_ROWS,
+  ANDROID_CHAT_V2_PERF,
   ANDROID_CHAT_V2_SCENARIOS,
   blockedRows,
   byScenarioNumber,
@@ -119,6 +120,21 @@ test("the P10.6 and P10.9 rows are driven, S68 with the product-source rooms", (
   assert.equal(byId("S68").mode, "source");
   const order = ANDROID_CHAT_V2_SCENARIOS.map((scenario) => scenario.id);
   assert.ok(order.indexOf("S68") < order.indexOf("S1"), "S68 runs with the product-source rows");
+});
+
+test("the P10.4 and P10.7 rows are driven before the rows that leave the room", () => {
+  const ids = ANDROID_CHAT_V2_SCENARIOS.map((scenario) => scenario.id);
+  for (const id of ["S69", "S72", "S73", "S74"]) {
+    assert.equal(ANDROID_CHAT_V2_SCENARIOS.find((scenario) => scenario.id === id).drive, true, id);
+    assert.ok(ids.indexOf(id) < ids.indexOf("S4"), id);
+  }
+});
+
+test("B9 is a benchmark row of the host room that sorts after the scenarios", () => {
+  const b9 = ANDROID_CHAT_V2_PERF.find((row) => row.id === "B9");
+  assert.equal(b9.mode, "host");
+  assert.equal(b9.perf, true);
+  assert.deepEqual(byScenarioNumber([{ id: "B9" }, { id: "S74" }, { id: "S2" }]).map((row) => row.id), ["S2", "S74", "B9"]);
 });
 
 test("a scenario with its own skip reason keeps it", () => {

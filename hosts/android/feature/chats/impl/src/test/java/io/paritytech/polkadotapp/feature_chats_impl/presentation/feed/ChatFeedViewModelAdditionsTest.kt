@@ -41,6 +41,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoo
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.FakeProductRoomAdditionsFeed
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.FakeReadAloudController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.callFactory
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
@@ -229,6 +230,7 @@ class ChatFeedViewModelAdditionsTest {
             additions = additions,
             readAloud = readAloud,
             router = router,
+            callFactory = callFactory(),
         ),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk<CallStateTracker> { every { observeActiveCall() } returns flowOf(null) },

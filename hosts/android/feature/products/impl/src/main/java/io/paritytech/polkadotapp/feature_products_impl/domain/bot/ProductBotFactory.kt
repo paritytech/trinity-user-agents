@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomCallRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_products_api.model.Product
@@ -21,6 +22,7 @@ class ProductBotFactory @Inject constructor(
     private val declarationsRepository: ChatRoomDeclarationsRepository,
     private val feedListeners: ProductFeedListeners,
     private val roomEventSink: ProductChatRoomEventSink,
+    private val callRepository: ChatRoomCallRepository,
 ) {
     fun create(product: Product, origin: ProductChatExtensionOrigin): ProductChatExtension {
         return ProductChatExtension(
@@ -30,6 +32,7 @@ class ProductBotFactory @Inject constructor(
             declarationsRepository = declarationsRepository,
             feedListeners = feedListeners,
             roomEventSink = roomEventSink,
+            callRepository = callRepository,
             origin = origin,
         )
     }

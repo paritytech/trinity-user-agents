@@ -655,6 +655,16 @@
     <string name="chat_room_search_not_available">Search is not available</string>
     <string name="chat_search_author_you">You</string>
 
+    <string name="product_room_call_audio">Audio call</string>
+    <string name="product_room_call_video">Video call</string>
+    <string name="product_room_call_incoming">Incoming call</string>
+    <string name="product_room_call_incoming_video">Incoming video call</string>
+    <string name="product_room_call_accept">Accept</string>
+    <string name="product_room_call_decline">Decline</string>
+    <string name="product_room_call_bar">Call</string>
+    <string name="product_room_call_end">End</string>
+    <string name="product_room_call_media_unavailable">Media is not available yet</string>
+
     <string name="search_section_recent">RECENT</string>
     <string name="search_section_contacts">CONTACTS</string>
     <string name="search_section_all_users">ALL USERS</string>

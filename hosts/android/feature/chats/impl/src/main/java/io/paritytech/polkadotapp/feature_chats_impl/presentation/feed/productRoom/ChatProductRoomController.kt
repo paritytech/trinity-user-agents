@@ -29,6 +29,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPo
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.MessagePopUpSelection
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.readAloud.ChatReadAloudController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -74,6 +75,7 @@ class ChatProductRoomController(
     additions: ProductRoomAdditionsFeed,
     private val readAloud: ChatReadAloudController,
     private val router: ChatsRouter,
+    callFactory: ProductRoomCallController.Factory,
 ) {
     /** What the controller asks of the room screen. */
     interface Screen {
@@ -150,12 +152,15 @@ class ChatProductRoomController(
         ::Triple,
     )
 
+    /** The call buttons, the ringing banner and the call bar (07-LATER §11.2). The room draws the caller as an author. */
+    private val call = callFactory.create(scope, chatId, roomPolicy, participants::appearanceOf, screen::showFailure)
+
     val uiState: StateFlow<ProductRoomUiState> = combine(
         combine(toolbar, participants.uiState, participantSheet, ::Triple),
         customFooter,
-        extras,
+        combine(extras, call.uiState, ::Pair),
         additionsState,
-    ) { (toolbar, participants, sheet), customFooter, extras, (decorations, thread, readingAloud) ->
+    ) { (toolbar, participants, sheet), customFooter, (extras, call), (decorations, thread, readingAloud) ->
         ProductRoomUiState(
             toolbar = toolbar,
             participants = participants,
@@ -165,6 +170,7 @@ class ChatProductRoomController(
             decorations = decorations,
             thread = thread,
             readingAloud = readingAloud,
+            call = call,
         )
     }.stateIn(scope, SharingStarted.Eagerly, ProductRoomUiState.None)
 
@@ -265,6 +271,7 @@ class ChatProductRoomController(
             }
             is ProductRoomAction.SelectBranch -> decorations.selectBranch(action.messageId, action.index)
             ProductRoomAction.StopReadAloud -> readAloud.stop(chatId)
+            is ProductRoomAction.Call -> call.onAction(action.action)
         }
     }
 
@@ -414,6 +421,7 @@ class ChatProductRoomController(
         private val additions: ProductRoomAdditionsFeed,
         private val readAloud: ChatReadAloudController,
         private val router: ChatsRouter,
+        private val callFactory: ProductRoomCallController.Factory,
     ) {
         @Suppress("LongParameterList")
         fun <S> create(
@@ -439,6 +447,7 @@ class ChatProductRoomController(
             additions = additions,
             readAloud = readAloud,
             router = router,
+            callFactory = callFactory,
         )
     }
 }

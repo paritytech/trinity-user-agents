@@ -75,7 +75,8 @@ row format of the iOS report.
 
 | Kind       | Scenarios                                                                                                                                                                                  | Row                                           |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| Driven     | S1 to S4, S6 to S14, S25 to S29, S33 to S41, S47, S49, S53 to S55, S61 and S64 to S67 (`host` room); S11, S15 to S24, S30 to S32, S46 and S68 (`source` room); S56 and S63 (both rooms)                        | `pass`, or `fail` with the first failed check |
+| Driven     | S1 to S4, S6 to S14, S25 to S29, S33 to S41, S47, S49, S53 to S55, S61, S64 to S67, S69 and S72 to S74 (`host` room); S11, S15 to S24, S30 to S32, S46 and S68 (`source` room); S56 and S63 (both rooms)                        | `pass`, or `fail` with the first failed check |
+| Benchmark  | B9, only with `TRUAPI_ANDROID_E2E_PERF=1` or `B9` in `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY`, after the scenarios | `pass` with the times, or `fail` |
 | Not driven | S5 (the sample has no command that calls `delete_room`)                                                                                                                                    | `skip` with that reason                       |
 | Not driven | S44 (no command of the sample sends more than 20 updates in a second)                                                                                                                      | `skip` with that reason                       |
 | Not driven | S62                                                                                                                                                                                        | `skip: needs P10.5.1 sample`                  |
@@ -117,8 +118,13 @@ leave the room screen and S6 stops the product server. Each P8.6 scenario puts t
 | S66      | `/reason`: the row collapses to "Thought for 4 s" with the content description "Reasoning, collapsed", a tap gives "Reasoning, expanded" and the text, and the list row does not show the reasoning text. The "Thinking…" state of the sample lasts about one second, so a screen dump catches it only sometimes |
 | S67      | `/post rich`: no "Read aloud" without `/features readaloud on`; with it, the entry speaks (`truapi.chat.readAloud speak N characters, marks false`), the footer shows Stop, and Back logs `truapi.chat.readAloud stop` |
 | S68      | `/branches <id> 3` in the `source` room: a `chat_message_meta` row; after the room closes and loads its pages again through `messages_query`, the control 1/3 is back |
+| S69      | `/echo`, a message sent and Back at once: the wake of the message in logcat (`TrUAPI <product> woken for message-in-flight host`), the echo stored; the worker page goes 30 s or more after the room closed; a `message` hook to the stopped worker wakes it and gets its echo |
+| S72      | `/features calls both`: both header buttons (`chat_call_button_audio`, `chat_call_button_video`); a press sends `CallRequested` and the product answers with a call bar; `audio` shows one button, `off` none |
+| S73      | `/call ring`: the banner of the room; `/call ring video` from the list: the row shows "Incoming video call" and the in-app banner shows; Home: the `CallStyle` notification in `dumpsys notification` (and Answer in the shade, when the shade shows it); Accept and Decline in the room send `CallAnswered`; a call that nobody answers goes after 60 s |
+| S74      | `/call active`: the bar with its timer; a tap on the bar sends `CallOpened`, End sends `CallEnded` |
 | S49      | `/caps`: the stored answer has the names that the app logs (`truapi.chat.capabilities`) and the bounds 1 MiB and 0; each row that proves a listed name (`ANDROID_CHAT_FEATURE_ROWS`) passed earlier in the run |
 | S4, S6   | `/preview` variants in the chat list rows; the list with the product server stopped                                                                                                                 |
+| B9       | on the chat list with no worker page, the `wake` hook (`ChatWakeReason.Notification`, in place of the receiving layer, O28) to the stored preview "Woken by <watch>": two cold wakes and one warm wake |
 
 ## Troubleshooting
 
@@ -138,5 +144,7 @@ leave the room screen and S6 stops the product server. Each P8.6 scenario puts t
 - S27: the deeplink handlers of the app open only names of the network that the app uses (`.testnet` on the test
   networks), and the sample product is a `.dot` name, so the app hands the link to the system, which has no handler. The
   row proves the confirmation and the hand-over, not an App page.
+- Two runs on one host need their own ports: `TRUAPI_ANDROID_E2E_CHAT_PRODUCT_URL=http://127.0.0.1:<port>` for the
+  product server and `TRUAPI_ANDROID_E2E_DEVTOOLS_PORT` for the WebView DevTools socket.
 - `TRUAPI_ANDROID_E2E_CHAT_V2_ONLY=S15,S17` runs some scenarios only, and `TRUAPI_ANDROID_E2E_CHAT_V2_REUSE=1` keeps the
   installed app and its data. Both are for work on the launcher; a report from them is not a full run.

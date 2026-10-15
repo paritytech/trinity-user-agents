@@ -85,6 +85,13 @@ class FakeChatMessaging(
         notStubbed<Result<Unit>>()
 
     override suspend fun setRoomCall(chatIdParameter: ProductChatIdParameter, call: ChatRoomCallModel?) = notStubbed<Result<Unit>>()
+
+    var ringingClears = 0
+
+    override suspend fun clearRingingCalls(): Result<Unit> {
+        ringingClears++
+        return Result.success(Unit)
+    }
 }
 
 private fun <T> notStubbed(): T = error("not stubbed by this test")

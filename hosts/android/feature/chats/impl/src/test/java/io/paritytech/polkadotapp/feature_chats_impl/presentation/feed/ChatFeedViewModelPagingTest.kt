@@ -29,6 +29,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.FakeProductRoomAdditionsFeed
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.FakeReadAloudController
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.callFactory
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchController
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.collections.immutable.persistentListOf
@@ -229,6 +230,7 @@ class ChatFeedViewModelPagingTest {
             FakeProductRoomAdditionsFeed(),
             FakeReadAloudController(),
             mockk(relaxed = true),
+            callFactory(),
         ),
         draftControllerFactory = draftControllerFactory,
         callStateTracker = mockk<CallStateTracker> { every { observeActiveCall() } returns flowOf(null) },

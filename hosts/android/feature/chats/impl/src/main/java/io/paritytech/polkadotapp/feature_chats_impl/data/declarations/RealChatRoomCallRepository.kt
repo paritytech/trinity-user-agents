@@ -5,6 +5,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -23,6 +25,9 @@ class RealChatRoomCallRepository @Inject constructor() : ChatRoomCallRepository,
 
     override fun observe(chatId: ChatId): Flow<ChatRoomCallModel?> =
         calls.map { it[chatId] }.distinctUntilChanged()
+
+    /** The call of each room that has one. */
+    fun observeAll(): StateFlow<Map<ChatId, ChatRoomCallModel>> = calls.asStateFlow()
 
     override fun set(chatId: ChatId, call: ChatRoomCallModel?) {
         calls.update { if (call == null) it - chatId else it + (chatId to call) }
