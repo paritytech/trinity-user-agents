@@ -199,14 +199,14 @@ lacks them: open the host in the system browser.
 
 ### The dock
 
-A dock inside the product rectangle opens **Chat**, **Browse** and **Pocket**, as a phone host's tab bar does. Each
-destination is an ordinary product opened the way the address bar opens it. This is a first step towards a full host
-shell: the three are product SPAs today, and none of them is a host-owned surface.
+A dock inside the product rectangle opens **Chat**, **Browse** and **Pocket**, as a phone host's tab bar does. Chat and
+Browse are ordinary products opened the way the address bar opens it. Pocket is a screen the host draws itself. This is
+a first step towards a full host shell: Chat and Browse are product SPAs today, and neither is a host-owned surface.
 
-- **What each opens.** On Paseo Next v2, Chat opens `chat-spa-verbosity.paseo` and Browse opens `browse.paseo`. Pocket
-  has no published name, so it starts empty: serve a Pocket SPA, or enter its name, in the address bar while Pocket is
-  selected. An address opened while a destination is selected becomes that destination's product, kept per network in
-  this browser (`truapi-web-signing-host:dock:v1`, addresses only, none that carry a secret).
+- **What each opens.** On Paseo Next v2, Chat opens `chat-spa-verbosity.paseo` and Browse opens `browse.paseo`. An
+  address opened while Chat or Browse is selected becomes that destination's product, kept per network in this browser
+  (`truapi-web-signing-host:dock:v1`, addresses only, none that carry a secret). An address typed over Pocket opens as a
+  product of its own and leaves the Pocket screen.
 - **Products keep running behind.** Choosing another destination hides the product in front and keeps its frame, its
   channel to the core and its page state. The dock marks a destination with a green dot while its product runs. A hidden
   product can still raise a permission prompt, which names the product that asks. A reload, and any change of session
@@ -217,9 +217,18 @@ shell: the three are product SPAs today, and none of them is a host-owned surfac
   destination keeps running. Choosing a destination ends a product opened this way. A name that is already a
   destination's product resumes that destination instead of running a second copy. Any other `http` or `https` address
   goes to the browser, and anything else is refused.
-- **Pocket's balance.** A Pocket SPA reads its username through the standard identity call, which works here. Its
-  balance needs a host payment platform, which this host does not provide, so the card reads "Unavailable". See
-  [Not supported](#not-supported).
+- **The Pocket screen.** The host draws it, laid out as the native Pocket is (the Android `PocketScreen`): a large title
+  over two stacked cards, the digital dollar and then Humanity. It reads nothing and signs nothing.
+  - **Humanity:** the card the native host pins, drawn from the same bundled face, a title and "Proof of personhood".
+    The face is fixed text, not a reading of the wallet's personhood.
+  - **Digital dollar:** the native card shows the balance of the wallet's Coinage coins. This host has no Coinage engine
+    yet, so the amount slot reads "Unavailable" and says why on hover. No amount is shown, and nothing stands in for
+    one.
+  - **Not drawn yet:** a card takes no press. The native card opens a details page, which needs the Humanity product or
+    the coin balance behind it. Tilt shine, the collectibles strip and removing a card are not here either.
+  - The artwork and texture are the native drawables, and the fonts are bundled, so nothing is fetched.
+  - `payment.balanceSubscribe` still answers `Unsupported`, so a product sees no balance either. See
+    [Not supported](#not-supported).
 
 ### Differences from the native hosts
 
@@ -412,7 +421,8 @@ live chain and no real wallet. It checks that:
 - opening the menu or inspector, or resizing the product, does not reload it;
 - an entered product id is shown as entered;
 - the dock keeps a destination's product running while another is in front, resumes it with its page state, and ends
-  every held product when the wallet changes.
+  every held product when the wallet changes;
+- Pocket is drawn by the host as the native two cards, and gives the digital dollar no amount.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -429,6 +439,7 @@ and layout on narrow screens.
   `src/network-config.ts`, `src/network-choice.ts`: the light client, the networks it serves and the per-tab choice.
 - `src/dotns.ts`, `src/address.ts`: name lookup and the address bar's grammar.
 - `src/shell.ts`: the dock's destinations and saved addresses, and what a product's `navigateTo` turns into.
+  `src/pocket.ts`, `src/pocket-screen.ts`: the Pocket cards and how the screen draws them.
 - `src/archive/`: CAR, UnixFS and CID verification and unpacking.
 - `src/sandbox/`, `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The plugin
   bundles them as static files, which the build emits and the dev server also answers.
@@ -441,10 +452,10 @@ and layout on narrow screens.
 - Gating of a product's own network, device or media requests. They follow the browser.
 - Byte-range requests and non-UTF-8 HTML from a name's archive.
 - Versioned hosted releases of this host, which would let a product be tested against a chosen TrUAPI version.
-- Host-owned Chat, Contacts and Pocket. The dock opens Chat, Browse and Pocket as products. The host passes no `chat`,
-  `contacts`, `pocket` or payment callbacks, so the core answers those calls `Unsupported`, and a Pocket balance reads
-  "Unavailable". A contact picker needs `ContactsPlatform` (`contacts` and `pickContact`) and a list of contacts the
-  host owns. Live OS permission status is not provided either.
+- Host-owned Chat and Contacts, and a Coinage engine. The dock opens Chat and Browse as products, and the Pocket screen
+  has no digital dollar balance and opens no card. The host passes no `chat`, `contacts`, `pocket` or payment callbacks,
+  so the core answers those calls `Unsupported`. A contact picker needs `ContactsPlatform` (`contacts` and
+  `pickContact`) and a list of contacts the host owns. Live OS permission status is not provided either.
 - Several products in front at once. One product is in front, and the others run hidden behind it.
 - Keeping held products across a reload or a session change.
 - Worker products. Products run as `App`.

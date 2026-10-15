@@ -63,12 +63,15 @@ import {
   DESTINATIONS,
   DESTINATION_LABELS,
   destinationOf,
+  isProductDestination,
   loadAddresses,
   resolveNavigation,
   saveAddress,
   type Destination,
   type DockAddresses,
+  type ProductDestination,
 } from "./shell.js";
+import { drawPocket } from "./pocket-screen.js";
 import { openProduct, type OpenProduct } from "./product.js";
 import {
   notOpenableText,
@@ -153,6 +156,7 @@ const productMore = element<HTMLDetailsElement>("product-more");
 const productDetails = element("product-details");
 const productFrame = element("product-frame");
 const productSlot = element("product-slot");
+const pocketScreen = element("pocket-screen");
 const dockButtons = DESTINATIONS.map((destination) => ({
   destination,
   button: document.querySelector<HTMLButtonElement>(
@@ -324,7 +328,7 @@ interface Held {
   sandbox: string;
   domains: string[];
 }
-const held = new Map<Destination, Held>();
+const held = new Map<ProductDestination, Held>();
 
 /**
  * Session changes and product opens run one at a time, in order. Opening a
@@ -500,6 +504,7 @@ function renderProduct(): void {
     : "";
   productDetails.textContent = details;
   productMore.hidden = details === "";
+  renderPocket();
   renderControls();
   void refreshProductAllowance();
 }
@@ -509,17 +514,22 @@ function renderDock(): void {
   const ready = runtime !== null && !queue.busy;
   for (const { destination: id, button } of dockButtons) {
     button.setAttribute("aria-current", String(destination === id));
+    button.disabled = !ready;
+    if (!isProductDestination(id)) {
+      button.dataset.live = "false";
+      button.title = "Pocket: this wallet's identity and balance";
+      continue;
+    }
     button.dataset.live = String(
       held.has(id) || (destination === id && product !== null),
     );
-    button.disabled = !ready;
     button.title =
       dockAddresses[id] === ""
         ? `${DESTINATION_LABELS[id]}: no product yet. Enter one in the address bar.`
         : `${DESTINATION_LABELS[id]}: ${dockAddresses[id]}`;
   }
   const bare =
-    destination !== null &&
+    isProductDestination(destination) &&
     product === null &&
     dockAddresses[destination] === ""
       ? destination
@@ -532,6 +542,15 @@ function renderDock(): void {
     bare === null
       ? "Pick Chat, Browse or Pocket, or enter an address above."
       : "Enter a name or URL above. The host remembers it for this tab.";
+}
+
+/** Show or hide the Pocket screen. It is drawn once, the first time it is shown. */
+function renderPocket(): void {
+  const visible = destination === "pocket";
+  document.body.dataset.surface = visible ? "pocket" : "product";
+  pocketScreen.hidden = !visible;
+  if (visible && pocketScreen.childElementCount === 0)
+    pocketScreen.replaceChildren(...drawPocket());
 }
 
 const accountStatusList = element("account-status-rows");
@@ -979,7 +998,7 @@ function closeHeld(): void {
  * destination owns it. Either way nothing is in front afterwards.
  */
 function leaveFront(): void {
-  if (destination === null || product === null) {
+  if (!isProductDestination(destination) || product === null) {
     closeProduct();
     return;
   }
@@ -1037,9 +1056,16 @@ function rememberFront(): void {
  */
 function selectDestination(next: Destination): Promise<void> {
   return serial(async (runtime) => {
-    if (destination === next && product !== null) return;
+    if (destination === next && (product !== null || next === "pocket")) return;
     if (destination !== next) leaveFront();
     destination = next;
+    if (!isProductDestination(next)) {
+      // The address bar names a product, and Pocket is not one.
+      addressInput.value = "";
+      renderAddress();
+      renderProduct();
+      return;
+    }
     const back = held.get(next);
     if (back !== undefined) {
       held.delete(next);
@@ -1228,7 +1254,7 @@ async function openTarget(
     );
     recentsMenu.refresh();
     rememberFront();
-    if (destination !== null)
+    if (isProductDestination(destination))
       dockAddresses = saveAddress(
         localStorage,
         activeNetwork.id,
@@ -1340,7 +1366,11 @@ function openAddress(): void {
   const entered = source === "entered";
   if (entered && overrideOrigin !== null && overrideOrigin !== scopeOf(address))
     log(`product id ${productId} now applies to ${scopeOf(address)}`);
-  void serial((runtime) => openResolved(runtime, address, productId, entered));
+  void serial((runtime) => {
+    // An address typed over the Pocket screen opens as a product of its own.
+    if (destination === "pocket") destination = null;
+    return openResolved(runtime, address, productId, entered);
+  });
   chrome.dismissCovering();
 }
 
