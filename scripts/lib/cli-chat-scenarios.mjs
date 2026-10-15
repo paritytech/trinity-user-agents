@@ -95,6 +95,30 @@ export const CLI_CHAT_SCENARIOS = Object.freeze([
       "a product-source room with search pages search_query hits and jumps to one; /search na shows not available; no search without it",
     mode: "source",
   },
+  {
+    id: "S64",
+    title:
+      "a root shows 3 replies and opens the thread room, which is not in the list",
+    mode: "host",
+  },
+  {
+    id: "S65",
+    title:
+      "branch arrows send BranchSelected; the product's answer moves the position; without an answer the control reverts after 5 s",
+    mode: "host",
+  },
+  {
+    id: "S66",
+    title:
+      "a reasoning row streams with Thinking, collapses to Thought for 4 s, expands on a tap, and is never the list preview",
+    mode: "host",
+  },
+  {
+    id: "S67",
+    title:
+      "Read aloud appears only with read_aloud, speaks RichText as plain text, and stops on leaving the room",
+    mode: "host",
+  },
 ]);
 
 function cell(value) {

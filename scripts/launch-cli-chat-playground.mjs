@@ -622,8 +622,7 @@ async function drive(chat) {
         : "";
     await chat.command("host", "/features readaloud on");
     await chat.command("host", "/features calls audio");
-    const declared =
-      "features: calls audio (not served), read aloud (not served)";
+    const declared = "features: calls audio (not served), read aloud";
     await chat.until(
       async () => (await features()) === declared,
       `"${declared}"`,
@@ -932,6 +931,147 @@ async function drive(chat) {
     await chat.command("source", "/search off");
     await chat.until(async () => (await page.$("#search-toggle")) === null, "no search action without search");
     return `${shot}; ${found.hits.length} hits from search_query, jumped to source-h-00012; na not available; off hides search`;
+  });
+
+  const lastProductId = async () => {
+    const last = (await chat.messages())
+      .filter((message) => message.origin === "product")
+      .at(-1);
+    return last.id;
+  };
+
+  // S64: the root's chip opens the thread room, which the list hides.
+  await scenario(rows, byId.S64, async () => {
+    await chat.room("host");
+    await chat.command("host", "/bot add helper Helper");
+    await chat.command("host", "/post text");
+    await chat.lastProductText(/^Plain text message/);
+    const root = await lastProductId();
+    await chat.command("host", `/thread ${root}`);
+    const thread = `thread-host-${root}`;
+    const chip = await chat.until(
+      async () => {
+        const node = await page.$(`[data-thread-chip="${thread}"]`);
+        return node ? node.innerText() : null;
+      },
+      "the thread chip",
+    );
+    if (!chip.includes("3 replies")) throw new Error(`the chip says "${chip}"`);
+    if ((await page.$(`#rooms [data-room-id="${thread}"]`)) !== null)
+      throw new Error("the thread room is in the list");
+    const listed = await chat.shot("s64-root.png");
+    await page.click(`[data-thread-chip="${thread}"]`);
+    await chat.until(
+      async () =>
+        (await page.$eval("#roomname", (node) => node.innerText)).startsWith("Thread") &&
+        (await page.$eval("#threadroot", (node) => node.innerText)).includes("Plain text message"),
+      "the thread header and the pinned root",
+    );
+    const origins = await chat.until(async () => {
+      const replies = (await chat.messages()).map((message) => message.origin);
+      return replies.length === 3 ? replies : null;
+    }, "three replies");
+    if (origins.join(",") !== "p1,p2,bot:helper") throw new Error(`replies from ${origins.join(", ")}`);
+    const opened = await chat.shot("s64-thread.png");
+    await page.click("#thread-back");
+    await chat.until(
+      async () => (await page.$('[data-room-id="host"].active')) !== null,
+      "back in the parent room",
+    );
+    return `${listed}, ${opened}; ${thread} with 3 replies from ${origins.join(", ")}`;
+  });
+
+  // S65: the product moves the branch; with no answer the control reverts.
+  await scenario(rows, byId.S65, async () => {
+    await chat.command("host", "/post text");
+    await chat.lastProductText(/^Plain text message/);
+    const id = await lastProductId();
+    await chat.command("host", `/branches ${id} 3`);
+    const control = (value) => page.$(`[data-message-id="${id}"] [data-branch="${value}"]`);
+    await chat.until(async () => (await control("1/3")) !== null, "the branch control 1/3");
+    let since = chat.log.length;
+    await page.click(`[data-message-id="${id}"] [data-branch-next]`);
+    await chat.logLine(
+      (line) => line.via === "room_events" && line.kind === "BranchSelected" && line.data.index === 2,
+      since,
+    );
+    await chat.until(
+      async () =>
+        (await control("2/3")) !== null &&
+        (await page.$eval(`[data-message-id="${id}"]`, (node) => node.innerText)).includes("Branch 2 of 3"),
+      "the product's answer at 2/3",
+    );
+    // An answer later than 5 s: the control reverts, then the late answer
+    // moves it.
+    await chat.command("host", "/slow 6000");
+    since = chat.log.length;
+    await page.click(`[data-message-id="${id}"] [data-branch-next]`);
+    await chat.until(
+      async () => (await page.$(`[data-message-id="${id}"] [data-branch-pending]`)) !== null,
+      "the arrow waiting for the product",
+    );
+    await sleep(5_300);
+    if ((await page.$(`[data-message-id="${id}"] [data-branch-pending]`)) !== null || (await control("2/3")) === null)
+      throw new Error("the control did not revert after 5 s");
+    const reverted = await chat.shot("s65-reverted.png");
+    await chat.until(async () => (await control("3/3")) !== null, "the late answer at 3/3", 15_000);
+    await chat.command("host", "/slow 0");
+    return `${reverted}; 1/3 to 2/3 on the product's answer; reverted after 5 s; 3/3 on the late answer`;
+  });
+
+  // S66: a reasoning row streams, then collapses with its duration.
+  await scenario(rows, byId.S66, async () => {
+    await chat.command("host", "/reason");
+    const row = await chat.until(async () => {
+      const node = await page.$('[data-reasoning="thinking"]');
+      return node ? node.getAttribute("data-message-id") : null;
+    }, "a reasoning row thinking");
+    const thinking = await chat.shot("s66-thinking.png");
+    await chat.until(
+      async () =>
+        (await page.$(`[data-message-id="${row}"][data-reasoning="collapsed"]`)) !== null &&
+        (await page.$eval(`[data-message-id="${row}"]`, (node) => node.innerText)).includes("Thought for 4 s"),
+      "the collapsed row with its duration",
+      10_000,
+    );
+    await page.click(`[data-message-id="${row}"] .bubble`);
+    await chat.until(
+      async () => (await page.$(`[data-message-id="${row}"][data-reasoning="expanded"]`)) !== null,
+      "the expanded row",
+    );
+    const preview = await page.$eval('[data-room-id="host"]', (node) => node.innerText);
+    if (preview.includes("The user asked")) throw new Error("the reasoning row is the list preview");
+    return `${thinking}, ${await chat.shot("s66-expanded.png")}; Thinking, Thought for 4 s, expanded`;
+  });
+
+  // S67: Read aloud comes with read_aloud, and leaving the room stops it.
+  await scenario(rows, byId.S67, async () => {
+    const readAloud = async (id) => {
+      await page.click(`[data-menu="${id}"]`, { force: true });
+      await page.waitForSelector("#menu:not([hidden])");
+      const item = await page.$('#menu [data-item="ReadAloud"]');
+      if (!item) await page.keyboard.press("Escape");
+      return item;
+    };
+    await chat.command("host", "/features readaloud off");
+    await chat.command("host", "/post rich");
+    await chat.until(async () => (await chat.messages()).filter((message) => message.origin === "product").at(-1)?.body === "RichText", "the rich message");
+    const rich = await lastProductId();
+    if (await readAloud(rich)) throw new Error("Read aloud without read_aloud");
+    await chat.command("host", "/features readaloud on");
+    await chat.until(async () => (await page.$eval("#roomfeatures", (node) => node.innerText)).includes("read aloud"), "read aloud declared");
+    const item = await readAloud(rich);
+    if (!item) throw new Error("no Read aloud with read_aloud");
+    await item.click();
+    const spoken = await page.evaluate(() => document.body.dataset.lastSpoken || "");
+    if (!spoken || spoken.includes("**") || spoken.includes("`")) throw new Error(`spoke "${spoken.slice(0, 80)}"`);
+    const shot = await chat.shot("s67-speaking.png");
+    await chat.room("source");
+    if (!(await page.$eval("#speaking", (node) => node.hidden)))
+      throw new Error("still speaking after leaving the room");
+    await chat.room("host");
+    await chat.command("host", "/features readaloud off");
+    return `${shot}; spoke ${spoken.length} characters of plain text; stopped on leaving`;
   });
 
   return rows;
