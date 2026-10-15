@@ -18,6 +18,7 @@ describe("NETWORKS", () => {
         assetHubRpc: "wss://paseo-asset-hub-next-rpc.polkadot.io",
         contentResolver: "7f74d7cd50f5a834270e2ad395a01b01891ab37d",
         contenthashSlot: 0,
+        textSlot: 1,
         contentGateway: "https://paseo-bulletin-next-ipfs.polkadot.io",
       },
     });
@@ -34,6 +35,7 @@ describe("NETWORKS", () => {
         assetHubRpc: "wss://previewnet.substrate.dev/asset-hub",
         contentResolver: "7f74d7cd50f5a834270e2ad395a01b01891ab37d",
         contenthashSlot: 0,
+        textSlot: 1,
         contentGateway: "https://previewnet.substrate.dev",
       },
     });

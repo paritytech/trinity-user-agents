@@ -30,13 +30,16 @@ import {
   type RunningHost,
   type UrlProduct,
   TEST_MNEMONIC,
+  buildChatWorker,
   productHtml,
   publishApp,
   serveName,
+  serveNames,
   startCountingTarget,
   startHost,
   startUrlProduct,
 } from "./fixtures.js";
+import { PASEO_DOTNS } from "../src/dotns.js";
 
 const NAME = "smoke.paseo";
 const STEP_MS = 60_000;
@@ -729,6 +732,163 @@ describe("the dock", () => {
           browse: "behind/idle",
           pocket: "behind/idle",
         });
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+});
+
+describe("product worker chat", () => {
+  const WORKER_NAME = "fixturebot.paseo";
+  const MANIFEST = JSON.stringify({
+    $v: 1,
+    kind: "worker",
+    appVersion: [0, 1, 0],
+    entrypoint: "index.js",
+    includes: { chat: true },
+  });
+
+  test(
+    "runs a worker, shows its room and card, and carries actions and messages both ways",
+    async () => {
+      const worker = publishApp({ "index.js": await buildChatWorker() });
+      const context = await browser.newContext();
+      context.setDefaultTimeout(STEP_MS);
+      await serveNames(context, [
+        {
+          record: `worker.${WORKER_NAME}`,
+          app: worker,
+          text: { executable: MANIFEST },
+        },
+      ]);
+      // The worker frame asks only this host's origin for anything, apart
+      // from the loader fetching the archive from the stood-in gateway.
+      const outside: string[] = [];
+      context.on("request", (request) => {
+        if (request.serviceWorker() !== null) return;
+        if (!request.frame().url().includes("/product/")) return;
+        const origin = new URL(request.url()).origin;
+        if (origin !== host.origin && origin !== PASEO_DOTNS.contentGateway)
+          outside.push(request.url());
+      });
+      try {
+        const page = await openHost(context);
+        await signIn(page);
+        await page.click('#dock [data-destination="chat"]');
+        await page.click('[data-action="manage-workers"]');
+        await page.fill('[data-focus="worker-name"]', WORKER_NAME);
+        await page.press('[data-focus="worker-name"]', "Enter");
+        await page
+          .locator(`[data-worker="${WORKER_NAME}"][data-state="running"]`)
+          .waitFor();
+        expect(await page.locator("#worker-frames iframe").count()).toBe(1);
+
+        await page.click('[aria-label="Back to chats"]');
+        const row = page.locator(
+          `[data-product-room="${WORKER_NAME}/fixture"]`,
+        );
+        await row.waitFor();
+        expect(await row.innerText()).toContain("Fixture bot");
+        await row.click();
+
+        // Text from the worker, and its card drawn by the worker through the core.
+        await page
+          .locator(".chat-bubble-text", { hasText: "hello from the fixture" })
+          .waitFor();
+        const card = page.locator(
+          '.product-card[data-message-type="fixture.counter"]',
+        );
+        await card.locator(".pr-text", { hasText: "count 0" }).waitFor();
+        // Text in the tree stays text.
+        expect(await card.locator("b").count()).toBe(0);
+        expect(await card.innerText()).toContain("<b>not markup</b>");
+
+        // A press reaches the worker, and its new tree replaces the card.
+        await card.locator("button", { hasText: "bump" }).click();
+        await card.locator(".pr-text", { hasText: "count 1" }).waitFor();
+
+        // The room has a text input: what the user types reaches the worker.
+        await page.fill(".chat-composer-input", "hi there");
+        await page.press(".chat-composer-input", "Enter");
+        await page
+          .locator(".chat-message-out .chat-bubble-text", {
+            hasText: "hi there",
+          })
+          .waitFor();
+        await page
+          .locator(".chat-bubble-text", { hasText: "echo: hi there" })
+          .waitFor();
+
+        const workerFrame = page
+          .frames()
+          .find((frame) => frame.url().includes("__truapi-worker.html"));
+        const seen = await workerFrame!.evaluate(
+          () => (window as unknown as { __fixture: unknown }).__fixture,
+        );
+        expect(seen).toMatchObject({
+          registerBot: "refused",
+          room: "created",
+          actions: ["bump"],
+          messages: ["hi there"],
+          errors: [],
+        });
+        expect(outside).toEqual([]);
+
+        // The worker's frames are TrUAPI frames, so the inspector decodes them.
+        await page.click("#inspector-toggle");
+        const traces = await page.locator("#inspector-mount").innerText();
+        for (const operation of [
+          "chat.createRoom",
+          "chat.postMessage",
+          "renderer.render",
+          "renderer.actionSubscribe",
+          "chat.actionSubscribe",
+        ])
+          expect(traces).toContain(operation);
+
+        // The rooms are this wallet's on this network, and nothing else is.
+        const keys = await page.evaluate(() =>
+          Object.keys(localStorage).filter(
+            (key) =>
+              key.includes(":product-chat:") || key.includes(":workers:"),
+          ),
+        );
+        expect(keys.length).toBe(2);
+        expect(keys.every((key) => key.includes(":network:paseo:"))).toBe(true);
+
+        // Signing out stops the worker and hides its rooms.
+        await openMenu(page);
+        await page.click("#sign-out");
+        await page.waitForFunction(
+          () => document.querySelectorAll("#worker-frames iframe").length === 0,
+        );
+        await page
+          .locator(".chat-empty-title")
+          .filter({ hasText: "Sign in to chat" })
+          .waitFor();
+        expect(await page.locator("[data-product-room]").count()).toBe(0);
+
+        // Another wallet has no workers and no product rooms.
+        await signInWith(page, SYNTHETIC_MNEMONIC);
+        await page.locator(".product-section").waitFor();
+        expect(await page.locator("[data-product-room]").count()).toBe(0);
+        expect(await page.locator("#worker-frames iframe").count()).toBe(0);
+
+        // Back on the first wallet, its saved worker starts again and its
+        // room keeps what was said in it.
+        await signIn(page);
+        await row.waitFor();
+        await page.waitForFunction(
+          () => document.querySelectorAll("#worker-frames iframe").length === 1,
+        );
+        await row.click();
+        await page
+          .locator(".chat-message-out .chat-bubble-text", {
+            hasText: "hi there",
+          })
+          .waitFor();
       } finally {
         await context.close();
       }

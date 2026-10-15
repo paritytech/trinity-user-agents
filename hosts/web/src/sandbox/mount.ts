@@ -103,6 +103,8 @@ export function loaderUrl(options: {
   kind: "car" | "site";
   /** Path, query and hash the product opens at, starting with `/`. */
   start: string;
+  /** The file the content must hold; `index.html` when absent. */
+  entry?: string;
 }): URL {
   const url = new URL(
     `${options.base}${SANDBOX_DIR}index.html`,
@@ -112,6 +114,7 @@ export function loaderUrl(options: {
   url.searchParams.set("gateway", options.gateway);
   url.searchParams.set("kind", options.kind);
   url.searchParams.set("start", options.start);
+  if (options.entry !== undefined) url.searchParams.set("entry", options.entry);
   return url;
 }
 

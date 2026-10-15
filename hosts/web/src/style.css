@@ -1068,6 +1068,8 @@ body[data-surface="chat"] .stage-empty {
   --chat-accent: #e6007a;
   --chat-warning: #ffd37f;
   --chat-danger: #ff8f8f;
+  --chat-tertiary: #5d606a;
+  --chat-success: #4ade80;
   --chat-title-font: "Manrope", system-ui, -apple-system, sans-serif;
   --chat-body-font: "Inter", system-ui, -apple-system, sans-serif;
   position: absolute;
@@ -1523,6 +1525,200 @@ body[data-surface="chat"] .stage-empty {
   color: #0b0c0f;
   font: 600 14px/1 var(--chat-body-font);
   cursor: pointer;
+}
+
+/* Product chats: rooms a product's worker keeps, and the cards it draws. */
+.product-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.product-avatar {
+  object-fit: cover;
+  background: var(--chat-surface-raised);
+}
+
+.product-card-row {
+  max-width: 88%;
+}
+
+.product-card {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+  padding: 10px 12px;
+  border-radius: 20px 20px 20px 6px;
+  background: var(--chat-surface-raised);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.product-card-alt {
+  font-weight: 600;
+}
+
+.product-card-note {
+  font-size: 12px;
+  color: var(--chat-secondary);
+}
+
+.product-card[data-state="fallback"] .product-card-note {
+  color: var(--chat-warning);
+}
+
+.product-worker-form {
+  flex: none;
+  padding: 0 0 16px;
+}
+
+.product-worker-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-worker {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--chat-line);
+}
+
+.product-worker .chat-row-preview {
+  grid-column: 1;
+  white-space: normal;
+}
+
+.product-worker .chat-link {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+.product-worker[data-state="failed"] .chat-row-preview {
+  color: var(--chat-danger);
+}
+
+/* What a product's renderer tree draws: host tokens only. */
+.pr-root {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pr-column,
+.pr-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pr-column {
+  flex-direction: column;
+}
+
+.pr-box {
+  display: grid;
+  min-width: 0;
+}
+
+.pr-box > * {
+  grid-area: 1 / 1;
+}
+
+.pr-spacer {
+  flex: 1 1 auto;
+}
+
+.pr-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pr-type-headline {
+  font: 700 24px/32px var(--chat-title-font);
+}
+
+.pr-type-title {
+  font: 600 16px/22px var(--chat-title-font);
+}
+
+.pr-type-body-large {
+  font: 400 16px/22px var(--chat-body-font);
+}
+
+.pr-type-body {
+  font: 400 14px/20px var(--chat-body-font);
+}
+
+.pr-type-body-small {
+  font: 400 12px/16px var(--chat-body-font);
+}
+
+.pr-button {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--chat-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--chat-primary);
+  font: 600 14px/1 var(--chat-body-font);
+  cursor: pointer;
+}
+
+.pr-button-primary {
+  border-color: var(--chat-primary);
+  background: var(--chat-primary);
+  color: #0b0c0f;
+}
+
+.pr-button-text {
+  border-color: transparent;
+}
+
+.pr-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pr-field {
+  display: grid;
+  gap: 4px;
+}
+
+.pr-field-label {
+  font-size: 12px;
+  color: var(--chat-secondary);
+}
+
+.pr-input {
+  padding: 8px 12px;
+  border: 1px solid var(--chat-line);
+  border-radius: 12px;
+  background: var(--chat-surface);
+  color: var(--chat-primary);
+  font: inherit;
+}
+
+.pr-image {
+  display: block;
+  max-width: 100%;
+}
+
+.pr-effect-rainbow {
+  background: linear-gradient(
+    90deg,
+    #ff6b6b,
+    #ffd37f,
+    #4ade80,
+    #60a5fa,
+    #b98cff
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* The count of chat requests waiting, over the Chat button. */

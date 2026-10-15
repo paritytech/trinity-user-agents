@@ -13,6 +13,7 @@ import {
   namehash,
   PASEO_DOTNS,
   resolveContentCid,
+  resolveTextRecord,
   type ContentKind,
   type RpcCall,
 } from "./dotns.js";
@@ -168,6 +169,96 @@ function fakeChain(
     throw new Error(`unexpected ${method}`);
   };
 }
+
+/**
+ * A stand-in for Asset Hub holding one text record: the resolver's `text`
+ * mapping is `node => key => string` at slot 1, so the value sits under
+ * `keccak256(key ++ keccak256(namehash ++ uint256(1)))`.
+ */
+function fakeTextChain(name: string, key: string, value: Uint8Array): RpcCall {
+  const trieId = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+  const store = new Map<string, Uint8Array>();
+  const put = (slot: Uint8Array, word: Uint8Array) =>
+    store.set(bytesToHex(blake2b(slot, { dkLen: 32 })), word);
+  const one = new Uint8Array(32);
+  one[31] = 1;
+  const slotKey = keccak_256(
+    Uint8Array.from([
+      ...new TextEncoder().encode(key),
+      ...keccak_256(Uint8Array.from([...namehash(name), ...one])),
+    ]),
+  );
+  const length = new Uint8Array(32);
+  new DataView(length.buffer).setUint32(28, value.length * 2 + 1);
+  put(slotKey, length);
+  let base = keccak_256(slotKey);
+  for (let at = 0; at < value.length; at += 32) {
+    const word = new Uint8Array(32);
+    word.set(value.subarray(at, at + 32));
+    put(base, word);
+    base = Uint8Array.from(base);
+    for (let i = 31; i >= 0; i -= 1) {
+      if (base[i] === 0xff) base[i] = 0;
+      else {
+        base[i] += 1;
+        break;
+      }
+    }
+  }
+  const accountKey =
+    "0x735f040a5d490f1107ad9c56f5ca00d2ae37ff0591fdbbcd9c2406df7147a9dc" +
+    PASEO_DOTNS.contentResolver;
+  const prefix = `0x${bytesToHex(new TextEncoder().encode(":child_storage:default:"))}${bytesToHex(trieId)}`;
+  return async (method, params) => {
+    if (method === "state_getStorage")
+      return params[0] === accountKey
+        ? `0x00${bytesToHex(Uint8Array.of(trieId.length << 2))}${bytesToHex(trieId)}ff`
+        : null;
+    if (method === "childstate_getStorage" && params[0] === prefix) {
+      const word = store.get(params[1].slice(2));
+      return word ? `0x${bytesToHex(word)}` : null;
+    }
+    return null;
+  };
+}
+
+describe("resolveTextRecord", () => {
+  const manifest =
+    '{"$v":1,"kind":"worker","appVersion":[0,1,0],"entrypoint":"index.js","includes":{"chat":true}}';
+
+  test("reads a long text record at the resolver's text slot", async () => {
+    const rpc = fakeTextChain(
+      "worker.game.paseo",
+      "executable",
+      new TextEncoder().encode(manifest),
+    );
+    expect(
+      await resolveTextRecord("worker.game.paseo", "executable", rpc),
+    ).toBe(manifest);
+  });
+
+  test("is null for another name, another key, or bytes that are not UTF-8", async () => {
+    const rpc = fakeTextChain(
+      "worker.game.paseo",
+      "executable",
+      new TextEncoder().encode(manifest),
+    );
+    expect(
+      await resolveTextRecord("worker.other.paseo", "executable", rpc),
+    ).toBeNull();
+    expect(
+      await resolveTextRecord("worker.game.paseo", "manifest", rpc),
+    ).toBeNull();
+    const broken = fakeTextChain(
+      "worker.game.paseo",
+      "executable",
+      Uint8Array.from({ length: 40 }, () => 0xff),
+    );
+    expect(
+      await resolveTextRecord("worker.game.paseo", "executable", broken),
+    ).toBeNull();
+  });
+});
 
 describe("resolveContentCid", () => {
   test("reads a long contenthash from the resolver's child trie", async () => {

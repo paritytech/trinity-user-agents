@@ -1,5 +1,6 @@
 import { createIframeHost } from "@parity/truapi-host/web";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
+import type { TrUApiProductProvider } from "@parity/truapi-host";
 import type { FrameTap } from "./frame-tap.js";
 
 /** A product URL the host can embed: http or https only. */
@@ -46,6 +47,8 @@ export const PRODUCT_FRAME_POLICY = "camera; microphone";
 export interface OpenProduct {
   url: URL;
   productId: string;
+  /** The product's channel to the core, for host-initiated renders and actions. */
+  provider: TrUApiProductProvider;
   /**
    * Show or hide the frame without ending it. A hidden product keeps its
    * channel to the core and everything it holds in memory, and its prompts
@@ -75,6 +78,11 @@ export interface OpenProductOptions {
    * origin is refused.
    */
   mounted?: boolean;
+  /**
+   * What the core treats the frame as: the product's app (the default), or
+   * its worker executable, which alone may reach Chat and the renderer.
+   */
+  executionKind?: "App" | "Worker";
 }
 
 /**
@@ -98,7 +106,13 @@ export async function openProduct(
   container: HTMLElement,
   options: OpenProductOptions = {},
 ): Promise<OpenProduct> {
-  const { tap, onFrameLoad, onSandboxStatus, mounted = false } = options;
+  const {
+    tap,
+    onFrameLoad,
+    onSandboxStatus,
+    mounted = false,
+    executionKind = "App",
+  } = options;
   if (url.origin === window.location.origin && !mounted) {
     throw new Error(
       "A product on this host's own origin could read the saved wallets.",
@@ -106,7 +120,7 @@ export async function openProduct(
   }
   const provider = await runtime.createProvider({
     productId,
-    executionKind: "App",
+    executionKind,
   });
   let unsubscribe = () => {};
   let productPort: MessagePort | undefined;
@@ -151,6 +165,7 @@ export async function openProduct(
   return {
     url,
     productId,
+    provider,
     setVisible(visible) {
       frame.iframe.style.display = visible ? "" : "none";
     },

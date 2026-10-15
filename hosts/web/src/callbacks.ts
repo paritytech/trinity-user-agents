@@ -1,5 +1,6 @@
 import type {
   AuthState,
+  ChatPlatform,
   PermissionDecision,
   ProductContext,
   RequiredHostCallbacks,
@@ -32,6 +33,8 @@ export interface HostCallbackOptions {
   onNetworkAsked?: (domains: string[]) => void;
   /** Called once a permission prompt, or an automatic answer, has been given. */
   onPermissionDecided?: () => void;
+  /** Where product workers' chat rooms and messages go. Without it, Chat is `Unsupported`. */
+  chat?: Required<ChatPlatform>;
 }
 
 const DECISIONS: PromptChoice<PermissionDecision>[] = [
@@ -44,8 +47,9 @@ const DECISIONS: PromptChoice<PermissionDecision>[] = [
  * The host side of the core: storage, chain access, and the prompts through
  * which the user answers what a product asks for.
  *
- * Chat, contacts, Pocket and live OS permission status are left out, so the
- * core answers those product calls `Unsupported`.
+ * Contacts, Pocket and live OS permission status are left out, so the core
+ * answers those product calls `Unsupported`. Chat is served when `chat` is
+ * given.
  */
 export function createHostCallbacks(
   options: HostCallbackOptions,
@@ -58,6 +62,7 @@ export function createHostCallbacks(
     navigate,
     onNetworkAsked,
     onPermissionDecided,
+    chat,
   } = options;
   const knownGenesis = new Set(
     network.supportedChains.chains.map((chain) =>
@@ -183,13 +188,14 @@ export function createHostCallbacks(
       lookupPreimage: () => constant<Uint8Array | undefined>(undefined),
     },
 
-    // Worker products are not served here, so no operation keeps anything
-    // alive. Ids stay unique across products, which satisfies the core's
-    // per-product uniqueness requirement.
+    // A worker this host runs stays up while its wallet is signed in, so no
+    // operation needs to keep it alive. Ids stay unique across products,
+    // which satisfies the core's per-product uniqueness requirement.
     productOperations: {
       beginOperation: () => Promise.resolve({ id: nextOperationId++ }),
       endOperation: () => Promise.resolve(),
     },
+    ...(chat ? { chat } : {}),
   };
 }
 

@@ -5,6 +5,9 @@ import type { ChatDiagnostics } from "./chat/diagnostics.js";
 import { chainDirectory } from "./chat/directory.js";
 import { ChatEngine, type ChatSnapshot } from "./chat/engine.js";
 import { chatRefusal } from "./chat/gate.js";
+import type { ProductChat, ProductRoom } from "./product-chat.js";
+import { ProductRoomView, type ProductRoomDeps } from "./product-room-view.js";
+import type { ProductWorkers } from "./product-workers.js";
 import { ChatKeys } from "./chat/keys.js";
 import { StatementStore } from "./chat/statement-store.js";
 import {
@@ -45,7 +48,15 @@ export interface ChatSession {
 type View =
   | { kind: "list" }
   | { kind: "new" }
-  | { kind: "chat"; account: HexString };
+  | { kind: "chat"; account: HexString }
+  | { kind: "workers" }
+  | { kind: "product-room"; productId: string; roomId: string };
+
+/** The product side of the Chat screen: rooms product workers keep, and the workers. */
+export interface ProductChats extends ProductRoomDeps {
+  chat: ProductChat;
+  workers: ProductWorkers;
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -100,6 +111,31 @@ function avatar(
   return node;
 }
 
+const ICON = /^(?:https:\/\/|data:image\/(?:png|jpeg|gif|webp);base64,)/;
+
+/** A product room's icon when it is an `https` or inline raster image, else its initial. */
+function productAvatar(
+  room: ProductRoom,
+  size: "large" | "small" = "large",
+): HTMLElement {
+  if (ICON.test(room.icon)) {
+    const image = el("img", `chat-avatar chat-avatar-${size} product-avatar`);
+    image.src = room.icon;
+    image.alt = "";
+    image.referrerPolicy = "no-referrer";
+    return image;
+  }
+  const seed = [...room.productId].reduce(
+    (sum, char) => sum + char.charCodeAt(0),
+    0,
+  );
+  return avatar(
+    `0x${(seed % 256).toString(16).padStart(2, "0")}`,
+    room.name,
+    size,
+  );
+}
+
 function time(at: number): string {
   return new Date(at).toLocaleTimeString([], {
     hour: "2-digit",
@@ -140,14 +176,20 @@ export class ChatScreen {
   private busy = false;
   private visible = false;
   private stopListening: (() => void) | null = null;
+  private productRoom: ProductRoomView | null = null;
+  private workerName = "";
+  private workerError: string | null = null;
 
   constructor(
     private readonly root: HTMLElement,
     private readonly storage: Storage,
     private readonly diagnostics: ChatDiagnostics,
     private readonly onActivity: (pendingRequests: number) => void,
+    private readonly products: ProductChats,
   ) {
     root.dataset.chatEngine = "off";
+    products.chat.onChange(() => this.render());
+    products.workers.onChange(() => this.render());
   }
 
   /** Follow the signed-in session. A different wallet, network or identity ends the old engine. */
@@ -165,8 +207,10 @@ export class ChatScreen {
     this.stopEngine();
     // Events of one session are not shown in the next.
     this.diagnostics.clear();
+    this.leaveProductRoom();
     this.view = { kind: "list" };
-    this.draft = this.newTarget = this.newWelcome = "";
+    this.draft = this.newTarget = this.newWelcome = this.workerName = "";
+    this.workerError = null;
     if (session !== null) this.startEngine(session);
     this.render();
   }
@@ -301,12 +345,25 @@ export class ChatScreen {
           "Choose a wallet in the menu. Chat uses that wallet's identity.",
         ),
       ];
+    if (this.view.kind === "product-room") {
+      const room = this.products.chat.room(
+        this.view.productId,
+        this.view.roomId,
+      );
+      if (room !== undefined) return this.drawProductRoom(room);
+      this.leaveProductRoom();
+      this.view = { kind: "list" };
+    }
+    if (this.view.kind === "workers") return this.drawWorkers();
     const engine = this.engine;
-    if (engine === null)
-      return [
-        this.bar("Chats"),
+    if (engine === null) {
+      const body = el("div", "chat-body");
+      body.append(
         this.empty("Chat is unavailable", this.problem ?? ""),
-      ];
+        this.drawProductSection(),
+      );
+      return [this.bar("Chats"), body];
+    }
     const snapshot = engine.snapshot();
     if (this.view.kind === "chat") {
       const account = this.view.account;
@@ -319,6 +376,195 @@ export class ChatScreen {
     }
     if (this.view.kind === "new") return this.drawNewChat(snapshot);
     return this.drawList(snapshot);
+  }
+
+  private leaveProductRoom(): void {
+    this.productRoom?.dispose();
+    this.productRoom = null;
+  }
+
+  private back(): HTMLButtonElement {
+    const back = button("chat-icon-button", "‹", () => {
+      this.leaveProductRoom();
+      this.view = { kind: "list" };
+      this.render();
+    });
+    back.setAttribute("aria-label", "Back to chats");
+    return back;
+  }
+
+  /** The rooms product workers keep, and the way to manage the workers. */
+  private drawProductSection(): HTMLElement {
+    const section = el("section", "chat-section product-section");
+    const head = el("div", "product-section-head");
+    const manage = button("chat-link", "Workers", () => {
+      this.view = { kind: "workers" };
+      this.render();
+    });
+    manage.dataset.action = "manage-workers";
+    head.append(el("h3", "chat-section-title", "Product chats"), manage);
+    section.append(head);
+    const rooms = [...this.products.chat.rooms()].sort((left, right) => {
+      const last = (room: ProductRoom) =>
+        this.products.chat.messages(room.productId, room.roomId).at(-1)?.at ??
+        room.createdAt;
+      return last(right) - last(left);
+    });
+    if (rooms.length === 0) {
+      section.append(
+        el(
+          "p",
+          "chat-identity-line",
+          "No product rooms yet. Add a product's worker to chat with it.",
+        ),
+      );
+      return section;
+    }
+    const list = el("ul", "chat-list");
+    for (const room of rooms) list.append(this.drawProductRoomRow(room));
+    section.append(list);
+    return section;
+  }
+
+  private drawProductRoomRow(room: ProductRoom): HTMLElement {
+    const item = el("li", "");
+    const row = button("chat-row chat-row-button", "", () => {
+      this.leaveProductRoom();
+      this.view = {
+        kind: "product-room",
+        productId: room.productId,
+        roomId: room.roomId,
+      };
+      this.render();
+    });
+    row.dataset.productRoom = `${room.productId}/${room.roomId}`;
+    const last = this.products.chat
+      .messages(room.productId, room.roomId)
+      .at(-1);
+    const text = el("span", "chat-row-text");
+    text.append(
+      el("span", "chat-row-title", room.name),
+      el(
+        "span",
+        "chat-row-preview",
+        last === undefined
+          ? room.productId
+          : last.content.tag === "Text"
+            ? last.content.text
+            : (last.content.alt ?? room.productId),
+      ),
+    );
+    const state = this.products.workers.state(room.productId)?.state;
+    row.append(
+      productAvatar(room),
+      text,
+      el(
+        "span",
+        "chat-row-time",
+        state === "running" ? (last ? time(last.at) : "") : "offline",
+      ),
+    );
+    item.append(row);
+    return item;
+  }
+
+  private drawProductRoom(room: ProductRoom): HTMLElement[] {
+    if (
+      this.productRoom === null ||
+      this.productRoom.productId !== room.productId ||
+      this.productRoom.roomId !== room.roomId
+    ) {
+      this.leaveProductRoom();
+      this.productRoom = new ProductRoomView(
+        room.productId,
+        room.roomId,
+        this.products,
+      );
+    }
+    this.productRoom.refresh();
+    const bar = el("header", "chat-bar chat-bar-small");
+    const heading = el("div", "chat-row-text");
+    heading.append(
+      el("span", "chat-row-title", room.name),
+      el("span", "chat-row-preview", room.productId),
+    );
+    bar.append(this.back(), productAvatar(room, "small"), heading);
+    return [bar, this.productRoom.thread, this.productRoom.footer];
+  }
+
+  /** The workers added for this wallet, their state, and the form to add one. */
+  private drawWorkers(): HTMLElement[] {
+    const bar = el("header", "chat-bar chat-bar-small");
+    bar.append(this.back(), el("h2", "chat-title chat-title-small", "Workers"));
+    const body = el("div", "chat-body");
+    const form = el("form", "chat-form product-worker-form");
+    const input = el("input", "chat-input");
+    input.dataset.focus = "worker-name";
+    input.placeholder = "Product name, such as myapp.paseo";
+    input.value = this.workerName;
+    input.autocomplete = "off";
+    input.addEventListener("input", () => (this.workerName = input.value));
+    const add = el("button", "chat-pill chat-pill-primary", "Add worker");
+    add.type = "submit";
+    add.disabled = this.busy;
+    form.append(
+      el("label", "chat-label", "Run a product's worker"),
+      input,
+      add,
+    );
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const name = this.workerName;
+      this.busy = true;
+      this.workerError = null;
+      this.render();
+      this.products.workers
+        .add(name)
+        .then(() => (this.workerName = ""))
+        .catch((error: unknown) => (this.workerError = errorText(error)))
+        .finally(() => {
+          this.busy = false;
+          this.render();
+        });
+    });
+    if (this.workerError !== null)
+      form.append(el("p", "chat-error", this.workerError));
+    body.append(form);
+    const list = el("ul", "product-worker-list");
+    for (const name of this.products.workers.names()) {
+      const state = this.products.workers.state(name);
+      const item = el("li", "product-worker");
+      item.dataset.worker = name;
+      item.dataset.state = state?.state ?? "stopped";
+      const remove = button("chat-link", "Remove", () =>
+        this.products.workers.remove(name),
+      );
+      item.append(
+        el("span", "chat-row-title", name),
+        el(
+          "span",
+          "chat-row-preview",
+          state === null
+            ? "Stopped"
+            : state.state === "running"
+              ? `Running, version ${state.manifest.appVersion.join(".")}`
+              : state.state === "starting"
+                ? "Starting…"
+                : `Failed: ${state.reason}`,
+        ),
+        remove,
+      );
+      list.append(item);
+    }
+    body.append(
+      list,
+      el(
+        "p",
+        "chat-identity-line",
+        "A worker runs while this wallet is signed in and this tab is open. It is the product's own code, on this host's origin.",
+      ),
+    );
+    return [bar, body];
   }
 
   private bar(title: string, action?: HTMLElement): HTMLElement {
@@ -416,6 +662,7 @@ export class ChatScreen {
       for (const contact of ordered) list.append(this.drawContact(contact));
       body.append(list);
     }
+    body.append(this.drawProductSection());
     if (this.formError !== null)
       body.append(el("p", "chat-error", this.formError));
     if (snapshot.skipped.length > 0) {
