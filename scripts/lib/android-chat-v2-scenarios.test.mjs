@@ -38,27 +38,30 @@ test("every Android scenario of the test plan has one entry", () => {
   }
 });
 
-test("S1 to S41, S46 and S47 are driven, S5 and S44 are skips with a reason", () => {
+test("S1 to S41, S44, S46 and S47 are driven", () => {
   const driven = ANDROID_CHAT_V2_SCENARIOS.filter((scenario) => scenario.drive).map((scenario) => scenario.id);
   for (let number = 1; number <= 41; number += 1) {
-    if (number === 5) continue;
     assert.ok(driven.includes(`S${number}`), `S${number}`);
   }
-  assert.ok(driven.includes("S46"));
-  assert.ok(driven.includes("S47"));
-  for (const id of ["S5", "S44"]) {
-    const scenario = ANDROID_CHAT_V2_SCENARIOS.find((entry) => entry.id === id);
-    assert.ok(!scenario.drive, id);
-    assert.match(skipRow(scenario).evidence, /^skip: (the sample product|no command of the sample product)/);
+  for (const id of ["S44", "S46", "S47"]) {
+    assert.ok(driven.includes(id), id);
   }
 });
 
-test("the P10.10 and P10.5 rows are driven, and S62 waits for the sample", () => {
+test("the P10.10 and P10.5 rows are driven, S62 in the product-source room", () => {
   const byId = (id) => ANDROID_CHAT_V2_SCENARIOS.find((scenario) => scenario.id === id);
-  for (const id of ["S54", "S55", "S56", "S61", "S63"]) {
+  for (const id of ["S54", "S55", "S56", "S61", "S62", "S63"]) {
     assert.equal(byId(id).drive, true, id);
   }
-  assert.match(skipRow(byId("S62")).evidence, /^skip: needs P10\.5\.1 sample/);
+  assert.equal(byId("S62").mode, "source");
+});
+
+test("S5 and S44 are driven with the host rows of their phases, before the rows that leave the room", () => {
+  const ids = ANDROID_CHAT_V2_SCENARIOS.map((scenario) => scenario.id);
+  for (const [id, after] of [["S5", "S14"], ["S44", "S47"]]) {
+    assert.equal(ANDROID_CHAT_V2_SCENARIOS.find((scenario) => scenario.id === id).drive, true, id);
+    assert.equal(ids.indexOf(id), ids.indexOf(after) + 1, id);
+  }
 });
 
 test("S4 and S6 run after every other driven scenario, because they leave the room screen", () => {
@@ -172,8 +175,9 @@ test("a noise PNG has the size of its pixels and decodes", () => {
 });
 
 test("a scenario with its own skip reason keeps it", () => {
-  const scenario = ANDROID_CHAT_V2_SCENARIOS.find((entry) => entry.id === "S5");
-  assert.match(skipRow(scenario).evidence, /^skip: the sample product has no command that calls delete_room/);
+  const scenario = { id: "S99", title: "a row", mode: "host", phase: "P10.1", skip: "skip: the reason of the row" };
+  assert.equal(skipRow(scenario).evidence, "skip: the reason of the row");
+  assert.equal(skipRow({ ...scenario, skip: undefined }).evidence, "skip: needs P10.1");
 });
 
 test("the event log lines come out of the console lines of the worker", () => {
@@ -252,9 +256,10 @@ test("a run that could not start fails the driven rows and keeps the skips", () 
   const rows = blockedRows("the app did not start");
   const s7 = rows.find((row) => row.id === "S7");
   const s25 = rows.find((row) => row.id === "S25");
-  const s44 = rows.find((row) => row.id === "S44");
+  const skip = blockedRows("the app did not start", [{ id: "S99", title: "a row", mode: "host", phase: "P10.1" }])[0];
   assert.equal(s7.result, "fail");
   assert.equal(s7.evidence, "not run: the app did not start");
   assert.equal(s25.result, "fail");
-  assert.equal(s44.result, "skip");
+  assert.equal(skip.result, "skip");
+  assert.equal(skip.evidence, "skip: needs P10.1");
 });

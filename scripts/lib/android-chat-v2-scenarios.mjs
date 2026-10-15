@@ -204,6 +204,13 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S5",
+    title: "delete_room removes the room",
+    mode: "host",
+    phase: "P8.4",
+    drive: true,
+  },
+  {
     id: "S25",
     title: "ExtendBuiltIn menu: the defaults, minus Edit when hidden, plus product actions",
     mode: "host",
@@ -309,6 +316,13 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S44",
+    title: "update_feed rate limit on screen",
+    mode: "host",
+    phase: "P8.8",
+    drive: true,
+  },
+  {
     id: "S53",
     title: "register_bot answers New, then Exists and renames the persona; a bot message and the activity line draw its name and icon without a query; an unknown persona is refused",
     mode: "host",
@@ -355,7 +369,7 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     title: "product-source search pages search_query hits; /search na shows not available; no action without search",
     mode: "source",
     phase: "P10.5",
-    skip: "skip: needs P10.5.1 sample (/search on|na|off and its search_query handler), then the search capability",
+    drive: true,
   },
   {
     id: "S54",
@@ -414,6 +428,13 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     drive: true,
   },
   {
+    id: "S51",
+    title: "set_room_features survives a restart; a feature the app does not serve is stored and ignored",
+    mode: "host",
+    phase: "P10.8",
+    drive: true,
+  },
+  {
     id: "S60",
     title: "the public-storage notice shows once per product; Cancel sends nothing",
     mode: "both",
@@ -462,20 +483,6 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
     phase: "P8.3",
     drive: true,
   },
-  {
-    id: "S5",
-    title: "delete_room removes the room",
-    mode: "host",
-    phase: "P8.4",
-    skip: "skip: the sample product has no command that calls delete_room on this base (playground/chat-v2/README.md, Commands); RealDeleteRoomUseCaseTest covers the delete path",
-  },
-  {
-    id: "S44",
-    title: "update_feed rate limit on screen",
-    mode: "host",
-    phase: "P8.8",
-    skip: "skip: no command of the sample product sends more than 20 updates in a second; the core tests the bound, and S8 shows the coalesced edits of /stream at 20 a second",
-  },
 ]);
 
 /**
@@ -484,7 +491,17 @@ export const ANDROID_CHAT_V2_SCENARIOS = Object.freeze([
  */
 export const ANDROID_CHAT_FEATURE_ROWS = Object.freeze({
   product_source_rooms: ["S15", "S16", "S17", "S18", "S19", "S20", "S21", "S22", "S23", "S24", "S46"],
+  reaction_details: ["S32"],
+  participants: ["S30"],
+  message_menus: ["S25", "S26", "S28"],
+  participant_menus: ["S31"],
+  toolbar: ["S29"],
+  suggestions: ["S38"],
+  commands: ["S39"],
+  activity: ["S40"],
   custom_bodies: ["S7"],
+  custom_footer: ["S35"],
+  inline_attachments: ["S36"],
   mute_archive: ["S54", "S55", "S56"],
   search: ["S61", "S62", "S63"],
   preimage_attachments: ["S57", "S58", "S59", "S60"],

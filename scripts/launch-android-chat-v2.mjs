@@ -156,6 +156,8 @@ const ROOMS = {
   source: { id: "source", name: "Sample: product source", chat: chatIdHex(extensionId, "source") },
   // The first `/placeholder` makes this room (S37).
   "host-empty": { id: "host-empty", name: "Sample: empty", chat: chatIdHex(extensionId, "host-empty") },
+  // `/room create` makes this room, and `/room delete` removes it (S5, S55).
+  throwaway: { id: "throwaway", name: "Sample: throwaway", chat: chatIdHex(extensionId, "throwaway") },
 };
 /** The attachments of S36: an image under the inline limit, and a file over it. */
 const SMALL_ATTACHMENT = "sample.png";
@@ -786,8 +788,23 @@ const DRIVERS = {
     expect(back, "Back did not return to the root");
     currentRoom = "host";
 
+    // A link into the thread room, from the chat list, puts the room of the root under the thread room.
+    await showChatList();
+    amStart(serial, ["-a", "android.intent.action.VIEW", "-d", `polkadotapp://chat?chatId=${threadChat}`]);
+    await waitScreen((screen) => findText(screen, "Thread") && findTag(screen, "chat_thread_root") && screen, "the thread room from the link");
+    // The room of the root opens first, then the thread room again on top of it.
+    await delay(2_000);
+    await waitScreen((screen) => findText(screen, "Thread") && findTag(screen, "chat_thread_root") && screen, "the thread room on top of its root");
+    inputKeyEvent(serial, KEY.back);
+    await waitScreen(
+      (screen) => findTag(screen, "chat_message_input") && findText(screen, ROOMS.host.name) && !findTag(screen, "chat_thread_root") && screen,
+      "the host room after Back from the linked thread room",
+    );
+    note(`\`${await screenshot(scenarioById("S64"), "link-back")}\``);
+    currentRoom = "host";
+
     note(
-      `/thread ${root}: ${threadRoom} in chat_rooms and a meta row for ${root}; the chip reads "${chipText}"${unread ? " with the unread dot" : ""}; the list has no thread row; a tap opens "Thread" with "${ROOMS.host.name}", the pinned root and the replies from p1, p2 and the persona "Helper"; Back shows the root again. Deleting the parent is not driven: the sample runs commands only in host, source and its thread rooms, so no thread of the throwaway room that /room delete removes can be made (RealDeleteRoomUseCaseTest covers the cascade)`,
+      `/thread ${root}: ${threadRoom} in chat_rooms and a meta row for ${root}; the chip reads "${chipText}"${unread ? " with the unread dot" : ""}; the list has no thread row; a tap opens "Thread" with "${ROOMS.host.name}", the pinned root and the replies from p1, p2 and the persona "Helper"; Back shows the root again; a link into the thread room from the chat list opens it with the host room under it, so Back lands in the host room. Deleting the parent is not driven: the sample runs commands only in host, source and its thread rooms, so no thread of the throwaway room that /room delete removes can be made (RealDeleteRoomUseCaseTest covers the cascade)`,
     );
   },
 
@@ -1000,6 +1017,61 @@ const DRIVERS = {
     );
   },
 
+  // S62: a product-source room offers search only when it declares it; the product answers search_query in pages, a
+  // tap jumps to an older message, and /search na shows that search is not available.
+  async S62({ note }) {
+    try {
+      await command("source", "/search off", { reply: true });
+      // `/history` replaces the stored messages and gives no reply; the reopen loads the new pages.
+      await command("source", "/history 120");
+      await reopenRoom("source");
+      await delay(1_500);
+      expect(!findTag(parseUiNodes(uiDump(serial)), "chat_room_search_action"), "the header shows the search action without search");
+
+      await command("source", "/search on", { reply: true });
+      await waitScreen((screen) => findTag(screen, "chat_room_search_action"), "the search action after /search on");
+      const first = eventMark();
+      let screen = await searchInRoom("history MESSAGE");
+      const asked = await waitEvent(first, (entry) => entry.via === "search_query" && entry.kind === "Search", "search_query");
+      screen = await waitScreen((nodes) => findText(nodes, /History message 00120/) && nodes, "the newest hit first");
+      expect(screen.filter((node) => node.tag === "chat_room_search_result").length >= 5, `the results show ${screenSummary(screen)}`);
+      note(`\`${await screenshot(scenarioById("S62"), "results")}\``);
+
+      // The next page loads when the list comes near its oldest result; the older hit is below the first 30.
+      let target;
+      for (let attempt = 0; attempt < 12 && !target; attempt += 1) {
+        inputSwipe(serial, { x: 540, y: 1800 }, { x: 540, y: 700 }, 300);
+        await delay(1_000);
+        target = findText(parseUiNodes(uiDump(serial)), /History message 00065/);
+      }
+      expect(target, "no hit History message 00065 after scrolling the results");
+      const paged = eventsSince(first).filter((entry) => entry.via === "search_query" && entry.kind === "Search");
+      expect(paged.length >= 2 && JSON.stringify(paged.at(-1).data).includes('"cursor":"'), `search_query asked ${paged.length} page(s): ${paged.map((entry) => JSON.stringify(entry.data)).join(", ")}`);
+      note(`\`${await screenshot(scenarioById("S62"), "paged")}\``);
+      inputTap(serial, target.center.x, target.center.y);
+      const jumped = await waitScreen(
+        (nodes) => !findTag(nodes, "chat_room_search_field") && findText(nodes, "History message 00065") && nodes,
+        "History message 00065 in the feed after the tap",
+        45_000,
+      );
+      const bubble = findText(jumped, "History message 00065");
+      note(`\`${await screenshot(scenarioById("S62"), "jumped")}\``);
+
+      await command("source", "/search na", { reply: true });
+      const unavailable = await searchInRoom("history", { tag: "chat_room_search_not_available" });
+      expect(findTag(unavailable, "chat_room_search_not_available"), "no notice that search is not available");
+      note(`\`${await screenshot(scenarioById("S62"), "unavailable")}\``);
+      inputKeyEvent(serial, KEY.back);
+      note(
+        `/search off: no search action; /search on: the action shows without a reopen; "history MESSAGE" asked search_query ${JSON.stringify(asked.data)} and shows History message 00120 first; a scroll asked ${paged.length - 1} more page(s) with a cursor (${JSON.stringify(paged.at(-1).data)}); a tap on History message 00065, older than the loaded window, closed the field and the feed shows it at y ${Math.round(bubble.center.y)}; /search na: "Search is not available"`,
+      );
+    } finally {
+      const open = parseUiNodes(uiDump(serial));
+      if (findTag(open, "chat_room_search_field")) inputKeyEvent(serial, KEY.back);
+      await command("source", "/search off", { reply: true });
+    }
+  },
+
   // S54: the user mutes the room for one hour from the list; the row shows
   // the mute and a grey count, /notify into the room shows nothing (now and
   // later), and the product hears of the mute.
@@ -1111,22 +1183,57 @@ const DRIVERS = {
       (entry) => entry.via === "room_events" && entry.room === "host" && entry.kind === "UserStateChanged" && entry.data?.archived === false,
       "UserStateChanged on unarchive",
     );
+
+    // Delete works as before on an archived room: the product deletes the room `throwaway`, which the user archived.
+    await command("host", "/room create", { reply: true });
+    await waitFor(() => roomRow("throwaway")?.name === ROOMS.throwaway.name, { timeoutMs: COMMAND_TIMEOUT_MS, message: "chat_rooms has no room throwaway" });
+    await showChatList();
+    await swipeRow(ROOMS.throwaway.name, "archive", () => Number(userStateRow("throwaway")?.archived) === 1);
+    await waitFor(() => Number(userStateRow("throwaway")?.archived) === 1, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the archive of throwaway is not stored" });
+    // The list shows the Archived row without the room, or the archived section with the room.
+    const archivedView = await waitScreen(
+      (screen) =>
+        ((findTag(screen, "chat_list_archived_row") && !findText(screen, ROOMS.throwaway.name)) ||
+          (findTag(screen, "chat_list_archived_header") && findText(screen, ROOMS.throwaway.name))) &&
+        screen,
+      "the throwaway room in the archive",
+    );
+    const inSection = Boolean(findTag(archivedView, "chat_list_archived_header"));
+    const deleted = eventMark();
+    await hookCommand("host", "/room delete");
+    await waitEvent(deleted, (entry) => entry.via === "room" && entry.kind === "Deleted", "the Deleted line of /room delete");
+    await waitFor(() => !roomRow("throwaway") && !userStateRow("throwaway"), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "chat_rooms or chat_room_declarations still has the archived room throwaway",
+    });
+    const afterDelete = await showChatList();
+    // The header of an empty archived section leads back to the main section.
+    const header = findTag(afterDelete, "chat_list_archived_header");
+    if (header) inputTap(serial, header.center.x, header.center.y);
+    await waitScreen(
+      (screen) => !findTag(screen, "chat_list_archived_row") && !findText(screen, ROOMS.throwaway.name) && findText(screen, ROOMS.host.name) && screen,
+      "the list without the Archived row after the delete",
+    );
+    if (inSection) observations.push("S55: after the swipe archived the room throwaway, the list showed the archived section with it, not the main section");
+    note(`\`${await screenshot(scenarioById("S55"), "deleted")}\``);
     note(
-      `a swipe archives the room: UserStateChanged ${JSON.stringify(event.data)}, the main list shows the Archived row and not the room, the room stays archived after /post text, the archived section shows it, a swipe there unarchives it and it is back in the main list; delete is not driven (the sample has no delete_room command, S5)`,
+      `a swipe archives the room: UserStateChanged ${JSON.stringify(event.data)}, the main list shows the Archived row and not the room, the room stays archived after /post text, the archived section shows it, a swipe there unarchives it and it is back in the main list; then /room create and a swipe archive the room throwaway, and /room delete removes it with its user state (no chat_rooms or chat_room_declarations row), so the Archived row goes`,
     );
   },
 
-  // S56: a worker that starts again first hears which rooms the user muted
-  // or archived.
+  // S56: a worker that starts again first hears which rooms the user muted or archived. The menu of the room header
+  // sets both states, and clears them after the check.
   async S56({ note }) {
     await resetUserState("host");
     await resetUserState("source");
-    await showChatList();
-    await swipeRow(ROOMS.host.name, "mute", muteSheetShown);
+    await openRoom("host");
+    await roomMenuAction("Mute");
     await tapWhenShown("Always", "the mute durations");
     await waitFor(() => userStateRow("host")?.mutedUntil, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the mute is not stored" });
-    await swipeRow(ROOMS.source.name, "archive", () => Number(userStateRow("source")?.archived) === 1);
+    await openRoom("source");
+    await roomMenuAction("Archive");
     await waitFor(() => Number(userStateRow("source")?.archived) === 1, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the archive is not stored" });
+    note(`the menu of the room header: Mute, then Always, in the host room (mutedUntil ${userStateRow("host").mutedUntil}); Archive in the source room`);
     try {
       const lastBoot = Math.max(0, ...events().map((entry) => entry.boot ?? 0));
       shell(serial, ["am", "force-stop", packageName]);
@@ -1155,14 +1262,13 @@ const DRIVERS = {
       );
     } finally {
       await waitProductStarted().catch(() => undefined);
-      await showChatList();
-      await swipeRow(ROOMS.host.name, "mute", () => userStateRow("host")?.mutedUntil == null);
+      await openRoom("host");
+      await roomMenuAction("Unmute");
       await waitFor(() => userStateRow("host")?.mutedUntil == null, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unmute is not stored" });
-      const list = await showChatList();
-      tapText(list, "Archived");
-      await waitScreen((screen) => findTag(screen, "chat_list_archived_header") && findText(screen, ROOMS.source.name), "the archived section");
-      await swipeRow(ROOMS.source.name, "archive", () => Number(userStateRow("source")?.archived ?? 0) === 0);
+      await openRoom("source");
+      await roomMenuAction("Unarchive");
       await waitFor(() => Number(userStateRow("source")?.archived ?? 0) === 0, { timeoutMs: COMMAND_TIMEOUT_MS, message: "the unarchive is not stored" });
+      note("Unmute and Unarchive in the menu of the room header cleared both states");
     }
   },
 
@@ -1662,6 +1768,38 @@ const DRIVERS = {
     );
   },
 
+  // S51: the app keeps the features of a room whole across a restart, also a feature that it does not serve
+  // (`preimage_attachments` is not in the capabilities of the app, so the room keeps the inline rule).
+  async S51({ note }) {
+    const features = () => sql(`SELECT hex(features) AS f FROM chat_room_declarations WHERE chatId = X'${ROOMS.host.chat}'`)[0]?.f ?? "";
+    const waitFeatures = (hex, what) =>
+      waitFor(() => features() === hex, { timeoutMs: COMMAND_TIMEOUT_MS, message: () => `${what}: chat_room_declarations.features is 0x${features()}, not 0x${hex}` });
+    // Version 1 | preimage, no search | Some(audio, no video) | no thread | read aloud.
+    const declared = "0101000101000001";
+    try {
+      for (const text of ["/features preimage on", "/features readaloud on", "/features calls audio"]) {
+        await command("host", text, { reply: true });
+      }
+      await waitFeatures(declared, "after /features");
+      shell(serial, ["am", "force-stop", packageName]);
+      amStart(serial, ["-n", launcherActivity]);
+      await waitForProcess(serial, packageName);
+      currentRoom = undefined;
+      // The room starts the worker, which declares its rooms again at its start.
+      await openRoom("host");
+      await delay(5_000);
+      await waitFeatures(declared, "after the restart");
+      note(`/features preimage on, readaloud on, calls audio: chat_room_declarations.features 0x${declared}; the same after an app restart and a new worker; the app does not list preimage_attachments (S49 checks the list), so it keeps the bytes and ignores the feature`);
+    } finally {
+      await waitProductStarted().catch(() => undefined);
+      for (const text of ["/features preimage off", "/features readaloud off", "/features calls off"]) {
+        await command("host", text, { reply: true });
+      }
+    }
+    await waitFeatures("010000000000", "after the features went off");
+    note("/features preimage off, readaloud off, calls off: chat_room_declarations.features 0x010000000000");
+  },
+
   // S60: the first staged attachment of the product shows the public-storage
   // notice. Cancel keeps it unsent; Send stages it; a later attachment of the
   // same product, in the other room, shows no notice.
@@ -1847,6 +1985,43 @@ const DRIVERS = {
     note("nothing staged and no media item reached the product");
     await deleteOutboxBubbles();
     for (const room of ["host", "source"]) await declareStaging(room, false);
+  },
+
+  // S5: the product creates the room `throwaway`, and deletes it while its screen is open. The room leaves the store
+  // and the list, and its screen closes.
+  async S5({ note }) {
+    const created = eventMark();
+    await command("host", "/room create", { reply: true });
+    await waitEvent(created, (entry) => entry.via === "room" && entry.kind === "New", "the New line of /room create");
+    await waitFor(() => roomRow("throwaway")?.name === ROOMS.throwaway.name, {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "chat_rooms has no room throwaway",
+    });
+    await showChatList();
+    await waitScreen((screen) => findText(screen, ROOMS.throwaway.name), "the throwaway row in the chat list");
+    note(`\`${await screenshot(scenarioById("S5"), "created")}\``);
+    note(`/room create: the event log has room New, chat_rooms has "${ROOMS.throwaway.name}", and the chat list shows its row`);
+
+    await openRoom("throwaway");
+    const deleted = eventMark();
+    // The command goes to the host room through the debug hook, so the screen of the throwaway room stays open.
+    await hookCommand("host", "/room delete");
+    await waitEvent(deleted, (entry) => entry.via === "room" && entry.kind === "Deleted", "the Deleted line of /room delete");
+    await waitFor(() => !roomRow("throwaway") && !declarationRow("throwaway"), {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      message: "chat_rooms or chat_room_declarations still has the room throwaway",
+    });
+    const closed = await waitScreen(
+      (screen) => !findText(screen, ROOMS.throwaway.name) && screen,
+      "a screen without the throwaway room",
+    );
+    currentRoom = undefined;
+    note(`\`${await screenshot(scenarioById("S5"), "closed")}\``);
+    const list = await showChatList();
+    expect(!findText(list, ROOMS.throwaway.name), "the chat list still shows the throwaway row");
+    note(
+      `with the throwaway room open, /room delete (through the hook into the host room) gave room Deleted; the rows of chat_rooms and chat_room_declarations went, the open screen closed (it shows ${screenSummary(closed)}), and the chat list has no throwaway row`,
+    );
   },
 
   async S4({ note }) {
@@ -2340,6 +2515,33 @@ const DRIVERS = {
     }
   },
 
+  // S44: /flood sends 25 edits of one message at once. The core refuses the edits past the budget of 20 in a second,
+  // and the room screen stays usable and shows the last accepted edit.
+  async S44({ note }) {
+    await openRoom("host");
+    const before = messages("host");
+    const mark = eventMark();
+    await command("host", "/flood");
+    const done = await waitEvent(mark, (entry) => entry.via === "flood" && entry.kind === "Done", "the Done line of /flood", 60_000);
+    const reply = await waitFor(
+      () => addedMessages("host", before).find((message) => message.text.startsWith("ok /flood"))?.text,
+      { timeoutMs: COMMAND_TIMEOUT_MS, message: "no reply to /flood" },
+    );
+    const counts = /^ok \/flood accepted=(\d+) refused=(\d+)$/.exec(reply);
+    expect(counts, `the product answered "${reply}"`);
+    const [accepted, refused] = [Number(counts[1]), Number(counts[2])];
+    expect(refused >= 1 && accepted <= 20, `the core accepted ${accepted} and refused ${refused} of 25 edits`);
+    const target = addedMessages("host", before).find((message) => message.text === "Flood of 25 edits");
+    expect(target, "the flood target does not store the last accepted edit");
+    await scrollToNewest();
+    const screen = await waitScreen((nodes) => findText(nodes, "Flood of 25 edits") && nodes, "the edited flood target");
+    expect(findTag(screen, "chat_message_input"), "the room screen has no input after the flood");
+    note(`\`${await screenshot(scenarioById("S44"), "host")}\``);
+    note(
+      `/flood: the product logged flood Done ${JSON.stringify(done.data)} and answered "${reply}"; chat_messages keeps "Flood of 25 edits" with ${revisionCount(target.id)} revision row(s), and the open room draws it and keeps its input`,
+    );
+  },
+
   async S30({ note }) {
     await openRoom("source");
     const mark = eventMark();
@@ -2647,6 +2849,15 @@ function dismissPrompts(screen) {
   if (allow && screen.some((node) => / would like to send notifications$/.test(node.text))) {
     inputTap(serial, allow.center.x, allow.center.y);
     return true;
+  }
+  // A busy emulator can show "isn't responding" for the app; the app goes on when the launcher waits.
+  if (screen.some((node) => / isn't responding$/.test(node.text))) {
+    const wait = findText(screen, "Wait");
+    if (wait) {
+      observations.push(`${new Date().toISOString().slice(11, 19)} the system said that the app is not responding; the launcher tapped Wait`);
+      inputTap(serial, wait.center.x, wait.center.y);
+      return true;
+    }
   }
   for (const label of ["Don't allow", "Dismiss"]) {
     const node = findText(screen, label);
@@ -3241,10 +3452,6 @@ function userStateRow(room) {
 }
 
 /**
- * Swipe the chat list row of the room named `name`: to the end mutes or
- * unmutes it, to the start archives or unarchives it.
- */
-/**
  * Swipe the row `name` to the end (`mute`) or to the start (`archive`), until `done` is true. An emulator under load
  * can drop a swipe gesture, and the row then does not move. The launcher swipes again, at most three times, and notes
  * each repeat in the report.
@@ -3269,6 +3476,22 @@ async function swipeRow(name, action, done) {
 
 /** The mute durations sheet that a swipe to the end opens on a row that is not muted. */
 const muteSheetShown = () => findText(parseUiNodes(uiDump(serial)), "Mute notifications");
+
+/**
+ * Open the menu of the room header and tap `label` in it. The menu action has no text or tag in the screen dump, so
+ * the launcher taps the action at the right end of the header, and checks that the menu of the room shows.
+ */
+async function roomMenuAction(label) {
+  const screen = await waitScreen((nodes) => findTag(nodes, "chat_message_input") && nodes, "the room screen");
+  const action = screen
+    .filter((node) => node.clickable && node.bounds.bottom < 360 && node.center.x > 800 && !/^(chat_room_search|chat_call_button)/.test(node.tag))
+    .sort((a, b) => b.center.x - a.center.x)[0];
+  expect(action, `no action at the right of the room header; the screen shows ${screenSummary(screen)}`);
+  inputTap(serial, action.center.x, action.center.y);
+  const menu = await waitScreen((nodes) => findText(nodes, "Remove chat") && findText(nodes, label) && nodes, `"${label}" in the room menu`);
+  tapText(menu, label);
+  await delay(800);
+}
 
 async function tapWhenShown(label, what) {
   const screen = await waitScreen((nodes) => findText(nodes, label) && nodes, what);
@@ -3348,7 +3571,7 @@ function productNotifications() {
 }
 
 /** Open the in-room search of the open room and type `query`; gives the screen with its results. */
-async function searchInRoom(query) {
+async function searchInRoom(query, { tag = "chat_room_search_result" } = {}) {
   let screen = parseUiNodes(uiDump(serial));
   if (!findTag(screen, "chat_room_search_field")) {
     const action = await waitScreen((nodes) => findTag(nodes, "chat_room_search_action") && nodes, "the search action of the header");
@@ -3357,7 +3580,7 @@ async function searchInRoom(query) {
     screen = await waitScreen((nodes) => findTag(nodes, "chat_room_search_field") && nodes, "the search field");
   }
   await pasteInto(findTag(screen, "chat_room_search_field"), query);
-  return waitScreen((nodes) => nodes.some((node) => node.tag === "chat_room_search_result") && nodes, `the results of "${query}"`);
+  return waitScreen((nodes) => nodes.some((node) => node.tag === tag) && nodes, `the results of "${query}"`);
 }
 
 /** Open the search of the chat list and type `query`; gives the screen after the results settle. */
