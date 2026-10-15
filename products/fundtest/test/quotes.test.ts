@@ -38,6 +38,7 @@ describe("answerAsk", () => {
           networkFee: 10n,
           etaSecs: 300n,
           expiresAt: BigInt(NOW + 60_000),
+          assetDecimals: 2,
         },
       },
     });

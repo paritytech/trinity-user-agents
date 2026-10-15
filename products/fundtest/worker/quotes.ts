@@ -105,6 +105,13 @@ const cryptoRate = (asset: CryptoAsset): Rate => ({
   networkFee: asset.networkFee,
 });
 
+/** Decimals of the asset a rail quotes, so the host shows its amounts. */
+function decimalsOf(rail: FundingRail, asset: string): number {
+  return rail === "Crypto" && Object.hasOwn(CRYPTO_ASSETS, asset)
+    ? CRYPTO_ASSETS[asset as CryptoAsset["symbol"]].decimals
+    : FIAT.decimals;
+}
+
 /** The rate for an asset on a rail, or `undefined` when the rail does not
  *  take it. */
 function rateFor(rail: FundingRail, asset: string): Rate | undefined {
@@ -163,6 +170,7 @@ export function answerAsk(
     quoteId,
     etaSecs: ETA_SECS[ask.rail],
     expiresAt: BigInt(expiresAt),
+    assetDecimals: decimalsOf(ask.rail, ask.asset),
   };
   if (ask.direction === "In") {
     // The user pays the asset; the fees are in it too.
