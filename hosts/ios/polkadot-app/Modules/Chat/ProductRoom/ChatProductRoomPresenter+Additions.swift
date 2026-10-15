@@ -179,9 +179,11 @@ extension ChatProductRoomPresenter {
 // MARK: - Private
 
 extension ChatProductRoomPresenter {
+    /// Sends a room event of the user to the product, for example a call event or a branch selection. The core keeps
+    /// the event until the worker of the product subscribes. A lost event is logged.
     func publishRoomEvent(_ event: Chat.RoomEvent) {
         guard
-            let publisher = additions.dependencies.eventPublisher,
+            let publisher = additions.dependencies.eventPublisher ?? roomEvents,
             case let .chatExtension(productId, _) = chatId
         else {
             logger.warning("Room \(roomId) has no publisher for \(event)")

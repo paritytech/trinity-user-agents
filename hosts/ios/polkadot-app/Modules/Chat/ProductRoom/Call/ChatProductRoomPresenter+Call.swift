@@ -124,21 +124,6 @@ private extension ChatProductRoomPresenter {
             colorSeed: participantId ?? Chat.ProductParticipant.product
         )
     }
-
-    /// Sends a call event of the user to the product. The core keeps the event until the worker of the product
-    /// subscribes. A lost event is logged.
-    func publishRoomEvent(_ event: Chat.RoomEvent) {
-        guard let productId = chatId.extensionId, let roomEvents else {
-            logger.error("Product room \(roomId) cannot send a call event")
-            return
-        }
-
-        do {
-            try roomEvents.publish(event, productId: productId, roomId: roomId)
-        } catch {
-            logger.error("Product room \(roomId) did not send a call event: \(error)")
-        }
-    }
 }
 
 extension ChatProductRoomViewProtocol {
