@@ -1,10 +1,11 @@
 //! In-core Bulletin preimage submission over the shared Subxt client.
 //!
 //! One submission at a time: build + sign the `TransactionStorage.store`
-//! extrinsic with finalized mortality and best-block metadata and nonce,
-//! dry-run it at the best block via Subxt's typed transaction
-//! validation, then submit through Subxt's transaction watch and classify the
-//! dispatch outcome from the inclusion block's events.
+//! extrinsic with best-block metadata and nonce, its mortality anchored at the
+//! finalized block unless the best block is older, dry-run it at the best block
+//! via Subxt's typed transaction validation, then submit through Subxt's
+//! transaction watch and classify the dispatch outcome from the inclusion
+//! block's events.
 
 use std::sync::Mutex as StdMutex;
 #[cfg(not(target_arch = "wasm32"))]
