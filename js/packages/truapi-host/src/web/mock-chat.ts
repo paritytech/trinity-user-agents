@@ -887,6 +887,8 @@ export function createMockChat(options: MockChatOptions): MockChat {
       // Delete is idempotent: a room that is gone already is not an error.
       if (!room) return;
       rooms.delete(request.roomId);
+      // The user's mute and archive state goes with the room.
+      userStates.delete(request.roomId);
       if (room.open) {
         noticeLog.push({ roomId: request.roomId, text: "room deleted" });
       }

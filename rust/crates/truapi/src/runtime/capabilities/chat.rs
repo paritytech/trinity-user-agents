@@ -1234,6 +1234,15 @@ mod tests {
 	}
 
 	fn chat_runtime(chat: Arc<RecordingHost>) -> ProductRuntimeHost {
+		chat_runtime_on(stub_platform(), chat)
+	}
+
+	/// [`chat_runtime`] over `platform`, so that a test reads what the core
+	/// handed the host platform.
+	fn chat_runtime_on(
+		platform: Arc<crate::test_support::StubPlatform>,
+		chat: Arc<RecordingHost>,
+	) -> ProductRuntimeHost {
 		let (host_config, _) = runtime_config("chat.dot");
 		let product = ProductContext::new_with_execution(
 			"chat.dot".to_string(),
@@ -1241,7 +1250,7 @@ mod tests {
 		)
 		.expect("test chat product context is valid");
 		let services = RuntimeServices::new(
-			stub_platform(),
+			platform,
 			host_config.host.host_info.clone(),
 			host_config.people_chain_genesis_hash,
 			host_config.bulletin_chain_genesis_hash,
@@ -2119,6 +2128,46 @@ mod tests {
 		assert!(!block_on(runtime.chat_room_muted("polkadot://chat.dot/-/chat/other")));
 		chat.user_states.lock().unwrap()[0].muted_until = Some(1);
 		assert!(!block_on(runtime.chat_room_muted("polkadot://chat.dot/-/chat/main")));
+	}
+
+	// D34, S54: an immediate notification into a muted room gets an id and
+	// shows nothing. A scheduled one, which the OS may fire, and one into
+	// another room still reach the host.
+	#[test]
+	fn the_host_shows_no_immediate_notification_into_a_muted_room() {
+		use truapi::{api::Notifications, versioned::notifications::HostPushNotificationRequest};
+
+		let platform = stub_platform();
+		let chat = RecordingHost::with_rooms(&[hosted("main"), hosted("other")]);
+		*chat.user_states.lock().unwrap() = vec![crate::platform::ChatRoomUserState {
+			room_id: "main".to_string(),
+			muted_until: Some(u64::MAX),
+			archived: true,
+		}];
+		let runtime = chat_runtime_on(platform.clone(), chat);
+		let notification =
+			|room_id: &str, scheduled_at: Option<u64>| latest::HostPushNotificationRequest {
+				text: "Ping".to_string(),
+				deeplink: Some(format!("polkadot://chat.dot/-/chat/{room_id}")),
+				scheduled_at,
+			};
+		let send = |request: latest::HostPushNotificationRequest| {
+			block_on(Notifications::send_push_notification(
+				&runtime,
+				&CallContext::default(),
+				HostPushNotificationRequest::V1(request),
+			))
+			.expect("a notification gets an id")
+		};
+
+		send(notification("main", None));
+		assert!(platform.pushed_notifications.lock().unwrap().is_empty());
+		send(notification("main", Some(1_776_144_000_000)));
+		send(notification("other", None));
+		assert_eq!(
+			*platform.pushed_notifications.lock().unwrap(),
+			[notification("main", Some(1_776_144_000_000)), notification("other", None)]
+		);
 	}
 
 	#[test]

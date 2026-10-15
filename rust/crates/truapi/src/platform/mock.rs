@@ -700,6 +700,19 @@ impl MockPlatform {
 		);
 	}
 
+	/// The mute and archive state of `room_id`, or `None` for a room the user
+	/// neither muted nor archived.
+	pub fn chat_room_user_state(
+		&self,
+		room_id: &str,
+	) -> Option<crate::platform::ChatRoomUserState> {
+		self.chat_user_states
+			.lock()
+			.expect("chat user states poisoned")
+			.get(room_id)
+			.cloned()
+	}
+
 	/// Apply `change` to the declarations of `room_id`, or fail with the
 	/// injected chat fault.
 	fn declare_chat_room(
@@ -1457,6 +1470,11 @@ impl ChatPlatform for MockPlatform {
 		self.chat_declarations
 			.lock()
 			.expect("chat declarations poisoned")
+			.remove(&request.room_id);
+		// The user's mute and archive state goes with the room.
+		self.chat_user_states
+			.lock()
+			.expect("chat user states poisoned")
 			.remove(&request.room_id);
 		self.chat_messages
 			.lock()
@@ -2682,6 +2700,14 @@ mod tests {
 				archived: true,
 			}]
 		);
+		// Deleting a room drops the state the user gave it.
+		assert!(p.chat_room_user_state("lobby").is_some());
+		block_on(p.delete_chat_room(
+			&product,
+			latest::HostChatDeleteRoomRequest { room_id: "lobby".to_string() },
+		))
+		.unwrap();
+		assert_eq!(p.chat_room_user_state("lobby"), None);
 
 		let register = |name: &str| {
 			block_on(p.register_chat_bot(
