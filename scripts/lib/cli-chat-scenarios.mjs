@@ -83,6 +83,18 @@ export const CLI_CHAT_SCENARIOS = Object.freeze([
       "without preimage_attachments or above 8 MiB the attachment is refused and nothing is uploaded",
     mode: "host",
   },
+  {
+    id: "S61",
+    title:
+      "in-room search in a host-store room finds by text, case and diacritics ignored, and jumps to the match",
+    mode: "host",
+  },
+  {
+    id: "S62",
+    title:
+      "a product-source room with search pages search_query hits and jumps to one; /search na shows not available; no search without it",
+    mode: "source",
+  },
 ]);
 
 function cell(value) {

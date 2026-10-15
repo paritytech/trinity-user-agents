@@ -867,6 +867,73 @@ async function drive(chat) {
     return `"${undeclared}"; "${huge}"`;
   });
 
+  const searchFor = async (text) => {
+    await page.fill("#searchtext", text);
+    return chat.until(
+      async () => {
+        const state = await page.$eval("#searchresults", (node) => ({
+          answered: node.dataset.answered,
+          unavailable: node.dataset.unavailable === "true",
+          hits: [...node.querySelectorAll("[data-hit]")].map((hit) => hit.dataset.hit),
+        }));
+        return state.answered === text ? state : null;
+      },
+      `the results for "${text}"`,
+    );
+  };
+
+  // S61: the host searches a room it keeps itself.
+  await scenario(rows, byId.S61, async () => {
+    await chat.room("host");
+    await chat.type("Crème brûlée for the search");
+    await chat.until(
+      async () => (await chat.messages()).some((message) => message.text.includes("Crème brûlée")),
+      "the message to find",
+    );
+    await page.click("#search-toggle");
+    const found = await searchFor("CREME BRULEE");
+    if (found.hits.length === 0) throw new Error("no match with case and diacritics ignored");
+    await page.click(`[data-hit="${found.hits[0]}"]`);
+    await chat.until(
+      async () => (await page.$(`[data-message-id="${found.hits[0]}"].flash`)) !== null,
+      "the jump to the match",
+    );
+    const asked = chat.log.filter((line) => line.via === "search_query");
+    if (asked.length > 0) throw new Error("the host asked the product to search its own store");
+    const shot = await chat.shot("s61-host.png");
+    await page.click("#search-toggle");
+    return `${shot}; ${found.hits.length} match(es), jumped to ${found.hits[0]}`;
+  });
+
+  // S62: a room the product keeps asks the product, and shows search only
+  // when it declares it.
+  await scenario(rows, byId.S62, async () => {
+    await chat.room("source");
+    await chat.command("source", "/history 30");
+    await chat.reopen("source", "host");
+    await chat.command("source", "/search on");
+    await chat.until(async () => (await page.$("#search-toggle")) !== null, "the search action");
+    await page.click("#search-toggle");
+    const since = chat.log.length;
+    const found = await searchFor("message 0001");
+    const expected = Array.from({ length: 10 }, (_, index) => `source-h-${String(19 - index).padStart(5, "0")}`);
+    if (found.hits.join(",") !== expected.join(","))
+      throw new Error(`hits ${found.hits.join(", ")}`);
+    await chat.logLine((line) => line.via === "search_query" && line.room === "source", since);
+    await page.click('[data-hit="source-h-00012"]');
+    await chat.until(
+      async () => (await page.$('[data-message-id="source-h-00012"].flash')) !== null,
+      "the jump to source-h-00012",
+    );
+    const shot = await chat.shot("s62-source.png");
+    await chat.command("source", "/search na");
+    const na = await searchFor("message 0002");
+    if (!na.unavailable) throw new Error("search na did not show not available");
+    await chat.command("source", "/search off");
+    await chat.until(async () => (await page.$("#search-toggle")) === null, "no search action without search");
+    return `${shot}; ${found.hits.length} hits from search_query, jumped to source-h-00012; na not available; off hides search`;
+  });
+
   return rows;
 }
 
