@@ -22,7 +22,8 @@ protocol FundingRuntime: AnyObject, Sendable {
     ) -> FundingAmountLimits
     func detectedFundingCountry() async -> String?
     func selectFundingProvider(intent: String, providerId: String, quoteId: String?) async throws -> Bool
-    func cancelFunding(intent: String) async throws -> Bool
+    func cancelFunding(intent: String) async throws -> CancelOutcome
+    func confirmFundingCancel(intent: String, accept: Bool) async throws -> CancelConfirmation
     func acknowledgeFundingSession(intent: String) async throws -> Bool
     func openFunding(direction: FundingDirection, amount: U128?) async throws -> String?
 }

@@ -27,6 +27,13 @@ struct FundingProgressView: View {
             }
         }
         .task(id: model.progress?.longerAtMs) { await follow() }
+        .sheet(isPresented: offerShown) {
+            if let offer = model.cancelOffer {
+                FundingCancelOfferView(model: model, fee: offer.fee, refund: offer.refund)
+                    .presentationDetents([.medium])
+                    .interactiveDismissDisabled()
+            }
+        }
     }
 }
 
@@ -68,9 +75,17 @@ private extension FundingProgressView {
         }
     }
 
-    /// The line under the steps: why it is slow, or for a bank transfer not
-    /// seen yet, that it is on its way.
+    /// The provider's cancel offer stays up until the user answers it.
+    var offerShown: Binding<Bool> {
+        Binding(get: { model.cancelOffer != nil }, set: { _ in })
+    }
+
+    /// The line under the steps: where a cancel stands, why it is slow, or
+    /// for a bank transfer not seen yet, that it is on its way.
     var note: (text: String, color: Color)? {
+        if let status = model.progress?.status, let line = FundingCancelPresentation.line(for: status) {
+            return (line.text, line.isWarning ? .fgWarning : .fgSecondary)
+        }
         if isRetrying { return (String(localized: .Funding.activityRetrying), .fgWarning) }
         if isDelayed { return (String(localized: .Funding.activityDelayed), .fgWarning) }
         if model.direction == .in, model.rail == .bank, !model.hasReached(.payment) {
@@ -81,12 +96,6 @@ private extension FundingProgressView {
 
     var quotedSendAmount: String? {
         model.chosenQuote.map { model.quoteUnit($0).format($0.sendAmount) }
-    }
-
-    /// A transfer the user has not made yet can still be called off; a card
-    /// payment and value out are the provider's to finish.
-    var canCancel: Bool {
-        model.direction == .in && model.rail != .card && !model.hasReached(.payment)
     }
 }
 
@@ -105,7 +114,7 @@ private extension FundingProgressView {
                 }
             }
 
-            if canCancel {
+            if model.canRequestCancel {
                 FundingPrimaryButton(
                     title: String(localized: .Funding.depositCancel),
                     style: .destructive,
@@ -396,6 +405,59 @@ private extension FundingStepBar {
         case let .current(isAmber): isAmber ? .fgWarning : .fgPrimary
         case .upcoming: .fgTertiary
         case .failed: .fgError
+        }
+    }
+}
+
+/// The provider's terms for cancelling: what it keeps and what comes back to
+/// the balance, accepted or declined by the user.
+struct FundingCancelOfferView: View {
+    let model: FundingFlowModel
+    let fee: U128
+    let refund: U128
+
+    var body: some View {
+        VStack(spacing: DSSpacings.medium) {
+            Text(.Funding.offerTitle)
+                .typography(.headlineMedium)
+                .foregroundStyle(.fgPrimary)
+            Text(.Funding.offerBody)
+                .typography(.bodyMedium)
+                .foregroundStyle(.fgSecondary)
+                .multilineTextAlignment(.center)
+
+            VStack(spacing: DSSpacings.small) {
+                row(String(localized: .Funding.offerFee), fee)
+                row(String(localized: .Funding.offerRefund), refund)
+            }
+            .padding(DSSpacings.medium)
+            .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: 16))
+
+            Spacer(minLength: 0)
+
+            FundingPrimaryButton(
+                title: String(localized: .Funding.offerAccept),
+                style: .destructive,
+                isLoading: model.isAnsweringOffer
+            ) {
+                model.answerCancelOffer(accept: true)
+            }
+            FundingPrimaryButton(title: String(localized: .Funding.offerKeepGoing)) {
+                model.answerCancelOffer(accept: false)
+            }
+        }
+        .padding(DSSpacings.medium)
+    }
+
+    private func row(_ title: String, _ units: U128) -> some View {
+        HStack {
+            Text(verbatim: title)
+                .typography(.bodyMedium)
+                .foregroundStyle(.fgSecondary)
+            Spacer()
+            Text(verbatim: model.cash.label(model.cash.decimal(units)))
+                .typography(.bodyMediumEmphasized)
+                .foregroundStyle(.fgPrimary)
         }
     }
 }

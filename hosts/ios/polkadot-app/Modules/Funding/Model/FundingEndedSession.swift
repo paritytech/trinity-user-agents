@@ -42,6 +42,8 @@ extension FundingEndedSession {
             return .succeeded
         case .refunded:
             return .failed(.refunded)
+        case .cancelled:
+            return .failed(.cancelled)
         case let .failed(failure):
             return .failed(failure)
         }

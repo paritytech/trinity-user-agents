@@ -190,7 +190,9 @@ enum FundingReturnURL {
     static func allowsNavigation(to url: URL, mainFrame: Bool) -> Bool {
         switch url.scheme?.lowercased() {
         case "https": true
-        case "about", "blob", "data": !mainFrame
+        case "about",
+             "blob",
+             "data": !mainFrame
         default: false
         }
     }

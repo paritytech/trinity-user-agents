@@ -70,7 +70,8 @@ private extension FundingFeesView {
 
     /// What one CASH is worth in the provider-side asset, from the quote.
     func rate(_ quote: FundingQuote) -> String? {
-        let providerSide = model.quoteUnit(quote).decimal(model.direction == .in ? quote.sendAmount : quote.receiveAmount)
+        let providerUnits = model.direction == .in ? quote.sendAmount : quote.receiveAmount
+        let providerSide = model.quoteUnit(quote).decimal(providerUnits)
         let cashSide = model.cash.decimal(model.direction == .in ? quote.receiveAmount : quote.sendAmount)
         guard cashSide > 0 else { return nil }
 

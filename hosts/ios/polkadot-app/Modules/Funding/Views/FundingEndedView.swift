@@ -254,6 +254,11 @@ private extension FundingEndedView {
             }
             if ended.record.rail == .crypto { return String(localized: .Funding.progressPayoutFailed(reason: reason)) }
             return String(localized: .Funding.endedPayoutFailed)
+        case .failed(.cancelled):
+            if let refunded = ended.record.refundedAmount {
+                return String(localized: .Funding.activityRefundedAmount(amount: cash.label(cash.decimal(refunded))))
+            }
+            return ended.direction == .in ? topUpNote(.cancelled) : withdrawNote(.cancelled)
         case let .failed(failure):
             return ended.direction == .in ? topUpNote(failure) : withdrawNote(failure)
         }

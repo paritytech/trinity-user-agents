@@ -1107,10 +1107,19 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingSessions()
     }
 
-    /// Cancel session `intent` at the user's request.
+    /// Cancel session `intent` at the user's request. Before money moved the
+    /// provider is asked to stop, and asking again ends the session; after,
+    /// the provider answers with an offer the user confirms, or a refusal.
     @discardableResult
-    public func cancelFunding(intent: String) async throws -> Bool {
+    public func cancelFunding(intent: String) async throws -> CancelOutcome {
         try await inner.cancelFunding(intent: intent)
+    }
+
+    /// Answer the provider's cancel offer on session `intent`, shown from the
+    /// session's `cancel`.
+    @discardableResult
+    public func confirmFundingCancel(intent: String, accept: Bool) async throws -> CancelConfirmation {
+        try await inner.confirmFundingCancel(intent: intent, accept: accept)
     }
 
     /// Record that the host wrote ended session `intent` into its own

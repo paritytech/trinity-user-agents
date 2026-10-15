@@ -193,6 +193,7 @@ private extension FundingActivityRow {
                 .background(item.direction == .in ? Color.bgActionPrimary : Color.bgSurfaceNested, in: Circle())
         case .refunded,
              .payoutFailed,
+             .cancelled,
              .failed:
             Image(systemName: "xmark")
                 .font(.system(size: 18, weight: .semibold))
@@ -213,6 +214,7 @@ private extension FundingActivityRow {
         case .sent: return String(localized: .Funding.activitySent)
         case .refunded: return String(localized: .Funding.activityRefunded)
         case .payoutFailed: return String(localized: .Funding.activityPayoutFailed)
+        case .cancelled: return String(localized: .Funding.activityCancelled)
         case .failed:
             if item.direction == .in {
                 return String(localized: .Funding.activityTopUpFailed)
@@ -225,14 +227,16 @@ private extension FundingActivityRow {
         switch item.status {
         case let .failed(failure):
             failure.failedText
-        case let .payoutFailed(.some(refunded)):
+        case let .payoutFailed(.some(refunded)),
+             let .cancelled(.some(refunded)):
             String(localized: .Funding.activityRefundedAmount(amount: cash.label(cash.decimal(refunded))))
         case let .inProgress(status):
             inProgressText(status) ?? moment
         case .toppedUp,
              .sent,
              .refunded,
-             .payoutFailed:
+             .payoutFailed,
+             .cancelled:
             moment
         }
     }
@@ -244,7 +248,7 @@ private extension FundingActivityRow {
     }
 
     func inProgressText(_ status: FundingStatus) -> String? {
-        waitingText(status) ?? movingText(status)
+        FundingCancelPresentation.line(for: status, compact: true)?.text ?? waitingText(status) ?? movingText(status)
     }
 
     /// The line for a session waiting on the user or the provider.
@@ -278,6 +282,7 @@ private extension FundingActivityRow {
         switch item.status {
         case .refunded,
              .payoutFailed,
+             .cancelled,
              .failed:
             return cash.label(value)
         case .inProgress,
@@ -294,6 +299,7 @@ private extension FundingActivityRow {
         case .inProgress,
              .refunded,
              .payoutFailed,
+             .cancelled,
              .failed: .fgSecondary
         }
     }

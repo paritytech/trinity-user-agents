@@ -12,6 +12,9 @@ struct FundingActivityItem: Identifiable, Equatable {
         /// The payout failed after the balance was debited; `refunded` is what
         /// the provider's refund returned, once final.
         case payoutFailed(refunded: U128?)
+        /// Cancelled at the user's request; `refunded` is what came back when
+        /// money had moved.
+        case cancelled(refunded: U128?)
         case failed(FundingFailure)
     }
 
@@ -54,6 +57,9 @@ extension FundingActivityItem {
             }
         case .refunded:
             status = .refunded
+        case .cancelled,
+             .failed(.cancelled):
+            status = .cancelled(refunded: record.refundedAmount)
         case let .failed(failure):
             status = .failed(failure)
         }
@@ -79,13 +85,18 @@ extension FundingStatus {
              .preparingPayout,
              .retrying,
              .retryingPayout,
-             .takingLonger:
+             .takingLonger,
+             .cancelRequested,
+             .cancelOffered,
+             .cancelRefused,
+             .cancelling:
             true
         case .toppedUp,
              .sent,
              .refunded,
              .payoutFailed,
-             .failed:
+             .failed,
+             .cancelled:
             false
         }
     }
@@ -95,7 +106,9 @@ extension FundingStatus {
         switch self {
         case .retrying,
              .retryingPayout,
-             .takingLonger:
+             .takingLonger,
+             .cancelOffered,
+             .cancelRefused:
             true
         default:
             false

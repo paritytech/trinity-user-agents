@@ -152,6 +152,7 @@ private extension FundingRecord.Outcome {
         case "delivered": self = .delivered
         case "released": self = .released
         case "refunded": self = .refunded
+        case "cancelled": self = .cancelled
         case "failed": self = .failed(FundingFailure(code: entity.failureCode ?? "", message: entity.failureMessage))
         default: return nil
         }
@@ -162,6 +163,7 @@ private extension FundingRecord.Outcome {
         case .delivered: "delivered"
         case .released: "released"
         case .refunded: "refunded"
+        case .cancelled: "cancelled"
         case .failed: "failed"
         }
     }

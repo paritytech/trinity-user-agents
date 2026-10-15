@@ -66,6 +66,7 @@ final class FundingFlowModel {
     /// Why the chosen provider could not be handed the session.
     private(set) var startError: String?
     private(set) var isCancelling = false
+    private(set) var isAnsweringOffer = false
     private(set) var progress: FundingProgress?
     private(set) var session: FundingSession?
 
@@ -182,7 +183,7 @@ extension FundingFlowModel {
 
     /// The user left the overlay. Before `Started` that is the answer the core
     /// discards the session on; after it the session runs on without the
-    /// overlay, and only ``cancelTopUp()`` ends it.
+    /// overlay, and only ``requestCancel()`` ends it.
     func close() {
         quoteTask?.cancel()
         if !hasStarted {
@@ -203,22 +204,58 @@ extension FundingFlowModel {
         path.append(.cancelConfirm)
     }
 
-    func cancelTopUp() {
+    /// Asks the core to cancel. It ends a session no money moved on, and
+    /// otherwise asks the provider, who answers with an offer or a refusal.
+    func requestCancel() {
         guard !isCancelling else { return }
 
         isCancelling = true
         Task {
             defer { isCancelling = false }
             do {
-                guard try await runtime.cancelFunding(intent: intent) else {
-                    leaveCancelConfirm(toast: String(localized: .Funding.errorCancelRefused))
-                    return
+                let outcome = try await runtime.cancelFunding(intent: intent)
+                switch FundingCancelPresentation.after(outcome) {
+                case .close:
+                    close()
+                case let .toast(message):
+                    leaveCancelConfirm(toast: message)
+                    refreshSession()
                 }
-                close()
             } catch {
                 Logger.shared.error("[funding] \(intent): cancel failed: \(error)")
                 leaveCancelConfirm(toast: String(localized: .Funding.errorCancelFailed))
             }
+        }
+    }
+
+    /// The provider's terms for cancelling, while it waits for the user.
+    var cancelOffer: (fee: U128, refund: U128)? {
+        guard case let .cancelOffered(fee, refund) = progress?.status else { return nil }
+        return (fee, refund)
+    }
+
+    /// Whether the user can ask to cancel: the session is in flight and no
+    /// cancel is already with the provider. The core says when it is too late.
+    var canRequestCancel: Bool {
+        guard hasStarted, let status = progress?.status, status.isInFlight else { return false }
+        return !FundingCancelPresentation.isUnderway(status)
+    }
+
+    /// Answers the provider's cancel offer.
+    func answerCancelOffer(accept: Bool) {
+        guard !isAnsweringOffer else { return }
+
+        isAnsweringOffer = true
+        Task {
+            defer { isAnsweringOffer = false }
+            do {
+                let answer = try await runtime.confirmFundingCancel(intent: intent, accept: accept)
+                toast = FundingCancelPresentation.after(answer)
+            } catch {
+                Logger.shared.error("[funding] \(intent): answering the cancel offer failed: \(error)")
+                toast = String(localized: .Funding.errorCancelFailed)
+            }
+            refreshSession()
         }
     }
 

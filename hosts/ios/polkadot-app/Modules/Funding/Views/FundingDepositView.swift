@@ -201,7 +201,8 @@ struct FundingQRCode: View {
     }
 }
 
-/// Asks before giving up on a deposit the user may already have paid.
+/// Asks before cancelling: a deposit the user may already have paid, or a
+/// session the provider is working on.
 struct FundingCancelConfirmView: View {
     let model: FundingFlowModel
 
@@ -209,10 +210,10 @@ struct FundingCancelConfirmView: View {
         VStack(spacing: DSSpacings.medium) {
             FundingScreenHeader(title: "", onBack: model.back)
 
-            Text(.Funding.cancelTitle)
+            Text(model.direction == .in ? .Funding.cancelTitle : .Funding.cancelTitleWithdraw)
                 .typography(.headlineMedium)
                 .foregroundStyle(.fgPrimary)
-            Text(.Funding.cancelBody)
+            Text(isUnpaidDeposit ? .Funding.cancelBody : .Funding.cancelBodyProvider)
                 .typography(.bodyMedium)
                 .foregroundStyle(.fgPrimary)
                 .multilineTextAlignment(.center)
@@ -223,9 +224,13 @@ struct FundingCancelConfirmView: View {
                 title: String(localized: .Funding.depositCancel),
                 style: .destructive,
                 isLoading: model.isCancelling,
-                action: model.cancelTopUp
+                action: model.requestCancel
             )
             FundingPrimaryButton(title: String(localized: .Funding.cancelKeep), action: model.back)
         }
+    }
+
+    private var isUnpaidDeposit: Bool {
+        model.direction == .in && model.rail == .crypto && !model.hasReached(.payment)
     }
 }

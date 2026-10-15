@@ -8,6 +8,9 @@ struct FundingRecord: Identifiable, Equatable {
         case delivered
         case released
         case refunded
+        /// Cancelled on the provider's terms after money moved; what came
+        /// back is `refundedAmount`.
+        case cancelled
         case failed(FundingFailure)
     }
 
@@ -55,7 +58,8 @@ extension FundingRecord {
         case let .delivered(credited, settledAtMs):
             settled = Settled(outcome: .delivered, amount: credited, atMs: settledAtMs)
         case let .released(debited, settledAtMs):
-            settled = Settled(outcome: .released, amount: debited, atMs: settledAtMs)
+            let cancelled = if case .cancelled = progress?.status { true } else { false }
+            settled = Settled(outcome: cancelled ? .cancelled : .released, amount: debited, atMs: settledAtMs)
         case let .failed(reason, settledAtMs):
             let outcome: Outcome = reason == .refunded ? .refunded : .failed(reason)
             settled = Settled(outcome: outcome, amount: nil, atMs: settledAtMs)

@@ -1914,6 +1914,204 @@
           }
         }
       }
+    },
+    "activity.cancelled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelled"
+          }
+        }
+      }
+    },
+    "activity.cancelRequested" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel requested, waiting for the provider"
+          }
+        }
+      }
+    },
+    "activity.cancelOffered" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider can cancel. Review the offer"
+          }
+        }
+      }
+    },
+    "activity.cancelRefused" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider couldn't cancel"
+          }
+        }
+      }
+    },
+    "activity.cancelling" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelling…"
+          }
+        }
+      }
+    },
+    "cancel.titleWithdraw" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel withdrawal?"
+          }
+        }
+      }
+    },
+    "cancel.bodyProvider" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We'll ask the provider to stop. If your payment is already on its way, the provider may offer to cancel for a fee."
+          }
+        }
+      }
+    },
+    "cancel.tooLate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This top-up already reached your balance and can no longer be cancelled."
+          }
+        }
+      }
+    },
+    "cancel.refusedNote" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider can't cancel: %1$(reason)@. Your session continues."
+          }
+        }
+      }
+    },
+    "offer.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel on these terms?"
+          }
+        }
+      }
+    },
+    "offer.body" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider can still cancel. It keeps a fee and returns the rest to your balance."
+          }
+        }
+      }
+    },
+    "offer.fee" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Provider fee"
+          }
+        }
+      }
+    },
+    "offer.refund" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back to your balance"
+          }
+        }
+      }
+    },
+    "offer.accept" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accept"
+          }
+        }
+      }
+    },
+    "offer.keepGoing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep going"
+          }
+        }
+      }
+    },
+    "offer.accepted" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelling. Your refund is on its way."
+          }
+        }
+      }
+    },
+    "offer.lapsed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The offer expired. Your session continues."
+          }
+        }
+      }
+    },
+    "offer.none" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There's no cancel offer to answer anymore."
+          }
+        }
+      }
     }
   },
   "version" : "1.1"

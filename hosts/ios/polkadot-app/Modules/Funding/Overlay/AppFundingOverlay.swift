@@ -415,6 +415,6 @@ private extension UIViewController {
 /// The page a ``FundingOverlayCoordinator/presentPage(url:returnUrl:)`` call
 /// shows, for its cancellation to take down.
 @MainActor
-private final class PresentedPage: Sendable {
+private final class PresentedPage {
     weak var controller: FundingWebPageController?
 }
