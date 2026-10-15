@@ -218,8 +218,13 @@ final class RecordingProductRoomView: ChatProductRoomViewProtocol {
     /// The search actions of the header, nil for none (P10.5).
     private(set) var searchItems: [UIBarButtonItem?] = []
     private(set) var scrolledTo: [String] = []
+    private(set) var callBars: [ChatRoomCallBarModel] = []
 
     var isSetup: Bool { true }
+
+    func didReceive(callBar: ChatRoomCallBarModel) {
+        callBars.append(callBar)
+    }
 
     func didReceive(searchItem: UIBarButtonItem?) {
         searchItems.append(searchItem)

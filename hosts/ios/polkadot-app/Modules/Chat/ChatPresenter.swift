@@ -449,7 +449,7 @@ private extension ChatPresenter {
     }
 
     func handleStartCall(callType: ChatCallType) {
-        guard let metadata else { return }
+        guard let metadata, !routesCallToProduct(callType) else { return }
         MainActor.assumeIsolated {
             if interactor.isMicrophoneDenied() {
                 wireframe.presentMicrophoneAccessDenied(from: view)

@@ -14,6 +14,8 @@ protocol ChatProductRoomViewProtocol: ControllerBackedProtocol {
     func scrollToMessage(_ messageId: String)
     /// The search action of the header (P10.5). Nil shows none.
     func didReceive(searchItem: UIBarButtonItem?)
+    /// Shows the ringing banner and the call bar of the room. The model tells what they show.
+    func didReceive(callBar: ChatRoomCallBarModel)
 }
 
 extension ChatProductRoomViewProtocol {

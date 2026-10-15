@@ -1,4 +1,5 @@
 import Foundation
+import TrUAPIHost
 import UIKit
 
 #if targetEnvironment(simulator)
@@ -34,6 +35,13 @@ import UIKit
                 TrUAPIE2EWorkerHolds.release(productId: productId)
             case "hold-worker":
                 TrUAPIE2EWorkerHolds.hold(productId: productId)
+            case "wake":
+                // B9: a notification wake of the room, as the receiving layer will start it (07-LATER §10.2). The
+                // receiving layer is not on this branch yet (O28), so the harness stands in for it.
+                TrUAPIE2EWorkerHolds.wake(
+                    productId: productId,
+                    reason: .notification(roomId: room, watchId: argument ?? "dev")
+                )
             default:
                 NotificationCenter.default.post(name: Self.notification, object: self)
             }
@@ -46,6 +54,7 @@ import UIKit
         struct Hold {
             let release: @Sendable () async -> Void
             let hold: @Sendable () async throws -> Void
+            let wake: @Sendable (ChatWakeReason) async -> Void
         }
 
         private static var holds: [String: Hold] = [:]
@@ -62,6 +71,11 @@ import UIKit
         static func hold(productId: String) {
             guard let hold = holds[productId] else { return }
             Task { try? await hold.hold() }
+        }
+
+        static func wake(productId: String, reason: ChatWakeReason) {
+            guard let hold = holds[productId] else { return }
+            Task { await hold.wake(reason) }
         }
     }
 #endif

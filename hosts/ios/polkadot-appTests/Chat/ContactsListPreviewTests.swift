@@ -22,6 +22,29 @@ struct ContactsListPreviewTests {
         #expect(!row.isOngoing)
     }
 
+    /// A room that rings shows "Incoming call" as an activity that continues (07-LATER §11.2, S73).
+    @Test func aRingingRoomShowsIncomingCall() throws {
+        let chat = room(preview: preview(text: "Your turn"))
+        let calls = ChatRoomCallStore()
+        calls.set(.ringing(callId: "c1", video: false, caller: nil), for: chat.chatId)
+
+        let row = try row(for: chat, calls: calls)
+
+        #expect(row.message == String(localized: .ChatCall.ringingTitle))
+        #expect(row.isOngoing)
+    }
+
+    @Test func aRoomWithAnActiveCallKeepsItsPreview() throws {
+        let chat = room(preview: preview(text: "Your turn"))
+        let calls = ChatRoomCallStore()
+        calls.set(.active(callId: "c1", video: false, startedAt: 1, mediaSession: nil), for: chat.chatId)
+
+        let row = try row(for: chat, calls: calls)
+
+        #expect(row.message == "Your turn")
+        #expect(!row.isOngoing)
+    }
+
     @Test func theProductTextReplacesTheLastMessage() throws {
         let row = try row(for: room(preview: preview(text: "Your turn")))
 
@@ -209,12 +232,16 @@ private extension ContactsListPreviewTests {
         )
     }
 
-    func row(for chat: Chat.LocalModel) throws -> DSChatListItemConfiguration {
+    func row(
+        for chat: Chat.LocalModel,
+        calls: ChatRoomCallStoring = ChatRoomCallStore()
+    ) throws -> DSChatListItemConfiguration {
         let chain = ChainMock.makeChainModel(from: ChainMock.makeRemoteChain(name: "Polkadot"), order: 0)
         let asset = try #require(chain.assets.first)
         let factory = ContactsListViewModelFactory(
             chatMessageDecoderFactory: FixedChatMessageDecoderFactory(decoders: []),
             productIconViewModelFactory: RecordingProductIconViewModelFactory(),
+            calls: calls,
             chain: chain,
             tokenFormatter: { info in
                 TransferAmountViewModelFactory(targetAssetInfo: info, formatterFactory: AssetBalanceFormatterFactory())

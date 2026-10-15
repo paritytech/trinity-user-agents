@@ -21,6 +21,8 @@ final class ContactsListPresenter {
     /// The last model, which the E2E harness draws again (S6).
     var lastModel: ChatListModel?
     var e2eObserver: NSObjectProtocol?
+    /// Draws the list again when a product room rings (P10.7).
+    var callsTask: Task<Void, Never>?
 
     init(
         interactor: ContactsListInteractorInputProtocol,
@@ -39,12 +41,17 @@ final class ContactsListPresenter {
         self.scope = scope
         self.logger = logger
     }
+
+    deinit {
+        callsTask?.cancel()
+    }
 }
 
 extension ContactsListPresenter: ContactsListPresenterProtocol {
     func setup() {
         didReceive(networkStatus: .connected)
         interactor.setup()
+        callsTask = followRoomCalls()
         #if targetEnvironment(simulator)
             e2eObserver = observeE2EListRender()
         #endif

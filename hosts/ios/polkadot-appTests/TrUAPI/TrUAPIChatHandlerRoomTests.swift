@@ -178,7 +178,7 @@ extension TrUAPIChatHandlerRoomTests {
             productId: product,
             workers: workers,
             activityStore: activity,
-            firstRoomHold: nil,
+            wakesAtStart: false,
             feedListeners: listeners
         )
 
@@ -208,7 +208,7 @@ extension TrUAPIChatHandlerRoomTests {
             productId: product,
             workers: workers,
             activityStore: activity,
-            firstRoomHold: nil,
+            wakesAtStart: false,
             feedListeners: listeners
         )
 

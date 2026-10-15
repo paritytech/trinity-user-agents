@@ -37,8 +37,11 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     /// The product's own chat surface and routers, which outlive any one worker.
     private let context: ProductWorkerContext
     private let renderStartupWindow: Duration
+    /// How long a user message waits for a worker that does not run yet (W1, 07-LATER §10.2).
+    let messageStartupWindow: Duration
     let activityStore: ChatRoomActivityStoring
-    private let firstRoomHold: ProductFirstRoomHold.Limits?
+    let calls: ChatRoomCallStoring
+    private let wakesAtStart: Bool
     private let roomsOfProduct: ProductFirstRoomHold.RoomsOfProduct
     let feedListeners: ProductFeedListeners
     let logger: LoggerProtocol
@@ -66,8 +69,10 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         productId: ProductId,
         workers: any TrUAPIWorkerManaging,
         renderStartupWindow: Duration = .seconds(5),
+        messageStartupWindow: Duration = .seconds(30),
         activityStore: ChatRoomActivityStoring = ChatRoomActivityStore.shared,
-        firstRoomHold: ProductFirstRoomHold.Limits? = ProductFirstRoomHold.Limits(),
+        calls: ChatRoomCallStoring = ChatRoomCallStore.shared,
+        wakesAtStart: Bool = true,
         roomsOfProduct: @escaping ProductFirstRoomHold.RoomsOfProduct = { try await $0.chat.subscribeRooms() },
         feedListeners: ProductFeedListeners = .shared,
         logger: LoggerProtocol = Logger.shared
@@ -75,8 +80,10 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         self.productId = productId
         self.workers = workers
         self.renderStartupWindow = renderStartupWindow
+        self.messageStartupWindow = messageStartupWindow
         self.activityStore = activityStore
-        self.firstRoomHold = firstRoomHold
+        self.calls = calls
+        self.wakesAtStart = wakesAtStart
         self.roomsOfProduct = roomsOfProduct
         self.feedListeners = feedListeners
         self.logger = logger
@@ -93,8 +100,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     }
 
     /// Binds the chat surface of the product, so the core can reach it whenever the worker runs. The worker starts
-    /// when a room screen opens (``open(roomId:)``) or a query is due. A product that has no room yet gets a
-    /// short hold of its worker (``ProductFirstRoomHold``).
+    /// when a room screen opens (``open(roomId:)``), a query is due, or a message wakes it. A product that has no
+    /// room yet gets a start wake (``ProductFirstRoomHold``).
     func start(messagingSupport: ProductsNativeApi.MessagingSupport) async throws {
         guard !started, !disposed else { throw CancellationError() }
         started = true
@@ -171,25 +178,10 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     }
 
     func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionItem {
-        try await withWorker { execution in
+        await wakeForMessage(in: request.roomId)
+        return try await withWorker { execution in
             try await execution.chatUserAction(request, timeout: ChatQueryTimeout.timeout(for: request.action))
         }
-    }
-
-    func onUserMessage(text: String, roomId: String?) async throws {
-        try checkNotDisposed()
-        guard let roomId else { throw ChatSeamError.roomlessChat }
-        try requireExecution().publishChatAction(HostChatActionSubscribeItem(
-            roomId: roomId,
-            peer: Self.hostUserPeer,
-            payload: .messagePosted(.text(text: text))
-        ))
-    }
-
-    func publishUserEvent(_ event: ProductChatUserEvent, roomId: String?) async throws {
-        try checkNotDisposed()
-        guard let roomId else { throw ChatSeamError.roomlessChat }
-        try requireExecution().publishChatEvent(roomId: roomId, peer: Self.hostUserPeer, event: event.chatEvent)
     }
 
     func renderMessage(
@@ -229,7 +221,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     func dispatchFooterAction(roomId: String, actionId: String, payload: String?) async {
         do {
             try checkNotDisposed()
-            try requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
+            try await executionForMessage(in: roomId).publishRendererAction(HostRendererActionSubscribeItem(
                 context: .chatFooter(roomId: roomId),
                 actionId: actionId,
                 payload: payload.map { Data($0.utf8) } ?? Data()
@@ -256,7 +248,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
             // would be delivered nowhere. Only this runtime needs the type: the
             // native one addresses by message id.
             guard let messageType else { throw ChatSeamError.untypedBody }
-            try requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
+            try await executionForMessage(in: roomId).publishRendererAction(HostRendererActionSubscribeItem(
                 context: .chatMessage(
                     roomId: roomId,
                     messageId: productMessageId(messageId, roomId: roomId),
@@ -281,7 +273,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
                 actionId: actionId,
                 payload: nil
             )
-            try requireExecution().publishChatEvent(
+            try await executionForMessage(in: roomId).publishChatEvent(
                 roomId: roomId,
                 peer: Self.hostUserPeer,
                 event: .actionTriggered(trigger)
@@ -298,7 +290,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
             try checkNotDisposed()
             guard let roomId else { throw ChatSeamError.roomlessChat }
             let chatCommand = ChatCommand(command: command.name, payload: command.arguments)
-            try requireExecution().publishChatEvent(
+            try await executionForMessage(in: roomId).publishChatEvent(
                 roomId: roomId,
                 peer: Self.hostUserPeer,
                 event: .command(chatCommand)
@@ -326,7 +318,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         workerFollowingTask?.cancel()
         workerFollowingTask = nil
 
-        // The hold gives back its own request when it ends.
+        // The core ends the start wake itself, so the handler gives nothing back for it.
         firstRoomHoldTask?.cancel()
         await firstRoomHoldTask?.value
 
@@ -346,6 +338,27 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         openRooms = [:]
 
         logger.debug("Rust chat runtime disposed for: \(productId)")
+    }
+}
+
+// MARK: - Messages of the user
+
+extension TrUAPIChatHandler {
+    func onUserMessage(text: String, roomId: String?) async throws {
+        try checkNotDisposed()
+        guard let roomId else { throw ChatSeamError.roomlessChat }
+        try await executionForMessage(in: roomId).publishChatAction(HostChatActionSubscribeItem(
+            roomId: roomId,
+            peer: Self.hostUserPeer,
+            payload: .messagePosted(.text(text: text))
+        ))
+    }
+
+    func publishUserEvent(_ event: ProductChatUserEvent, roomId: String?) async throws {
+        try checkNotDisposed()
+        guard let roomId else { throw ChatSeamError.roomlessChat }
+        try await executionForMessage(in: roomId)
+            .publishChatEvent(roomId: roomId, peer: Self.hostUserPeer, event: event.chatEvent)
     }
 }
 
@@ -433,12 +446,11 @@ private extension TrUAPIChatHandler {
     }
 
     func startFirstRoomHold() {
-        guard let firstRoomHold else { return }
+        guard wakesAtStart else { return }
 
         let hold = ProductFirstRoomHold(
             productId: productId,
             workers: workers,
-            limits: firstRoomHold,
             rooms: { [roomsOfProduct, context] in try await roomsOfProduct(context) },
             logger: logger
         )

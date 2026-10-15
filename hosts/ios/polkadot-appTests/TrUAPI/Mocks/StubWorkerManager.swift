@@ -25,6 +25,12 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
 
     private(set) var demands: [(productId: ProductId, transition: WorkerTransition)] = []
 
+    /// The wakes that the handlers asked for, in order (07-LATER §10.2).
+    var wakes: [ChatWakeReason] { wakeRecords.withLock { $0 } }
+    /// What ``wake(_:reason:)`` gives. Nil stands for a core that cannot wake the product.
+    var wakeOutcome: ChatWakeOutcome? = .held(untilMs: 0)
+    private let wakeRecords = OSAllocatedUnfairLock(initialState: [ChatWakeReason]())
+
     init(references: StubWorkerReferences = StubWorkerReferences(), startupWindow: Duration = .seconds(10)) {
         let (delivered, continuation) = AsyncStream.makeStream(of: Void.self)
         deliveredSignal = continuation
@@ -65,6 +71,11 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
 
     func releaseWorker(for productId: ProductId) {
         references.releaseWorker(productId: productId)
+    }
+
+    func wake(_: ProductId, reason: ChatWakeReason) async -> ChatWakeOutcome? {
+        wakeRecords.withLock { $0.append(reason) }
+        return wakeOutcome
     }
 
     func publish(_ executions: [ProductId: TrUAPIProductExecutionProtocol]) {
@@ -138,5 +149,11 @@ final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
             $0.released.append(productId)
             $0.log.append("release \(productId)")
         }
+    }
+
+    /// Records the wake in the log beside the requests, and holds until 30 seconds after `now`.
+    func wakeProduct(productId: ProductId, reason: ChatWakeReason) throws -> ChatWakeOutcome {
+        records.withLock { $0.log.append("wake \(productId) \(reason.logName)") }
+        return .held(untilMs: UInt64(Date().timeIntervalSince1970 * 1_000) + 30_000)
     }
 }

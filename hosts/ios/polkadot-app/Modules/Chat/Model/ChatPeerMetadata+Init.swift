@@ -13,7 +13,7 @@ extension Chat.LocalModel {
                 name: roomMetadata?.name ?? extMetadata.name,
                 icon: roomDeclarations?.avatar.map { .roomImage($0) } ?? roomMetadata?.roomIcon ?? extMetadata.icon,
                 input: policy.footer.showsInput ? extMetadata.input : .empty,
-                moreActions: extMetadata.moreActions
+                moreActions: policy.toolbar + extMetadata.moreActions
             )
         }
     }

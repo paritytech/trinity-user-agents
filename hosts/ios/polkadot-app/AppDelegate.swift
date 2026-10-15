@@ -33,6 +33,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         UserNotificationService.shared.startGatheringNotifications()
 
+        ProductRoomCallAlerts.shared.start()
+
         LegacyGameAlarmCleanup.run()
 
         PushKitService.shared.register(for: [.voIP])

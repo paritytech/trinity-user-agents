@@ -10,9 +10,8 @@ import Foundation
 ///
 /// Not listed, and why:
 /// - `payment_button`: the input draws no payment button (P10.2).
-/// - `preimage_attachments` (P10.3), `bot_personas` (P10.6), `call_buttons` (P10.7), `threads`, `branches`,
-///   `reasoning_rows`, `read_aloud` (P10.9): the host keeps what the product declares for them, but it does not draw
-///   them yet.
+/// - `preimage_attachments` (P10.3), `bot_personas` (P10.6), `threads`, `branches`, `reasoning_rows`, `read_aloud`
+///   (P10.9): the host keeps what the product declares for them, but it does not draw them yet.
 /// - `wake` (P10.4): no push route wakes a product yet.
 /// - `room_calls` (P10.7): the runtime has no Media service.
 enum ChatHostCapabilities {
@@ -31,6 +30,15 @@ enum ChatHostCapabilities {
         "inline_attachments",
         "room_links",
         "search",
-        "mute_archive"
+        "mute_archive",
+        "call_buttons"
     ]
+
+    /// The header buttons, the ringing banner, the call bar and the call events (P10.7). The room screen draws a
+    /// call bar without media: `room_calls` waits for the Media service (O29).
+    static let callButtons = "call_buttons"
+
+    static func serves(_ feature: String) -> Bool {
+        served.contains(feature)
+    }
 }

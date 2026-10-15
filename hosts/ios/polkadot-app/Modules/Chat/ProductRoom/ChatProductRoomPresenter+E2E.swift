@@ -128,7 +128,8 @@ extension ChatProductRoomPresenter {
             case "bottom":
                 messages.values.max { ($0.order, $0.timestamp) < ($1.order, $1.timestamp) }
                     .map { view?.scrollToMessage($0.messageId) }
-            default: logger.warning("[e2e:ui] unknown action \(action.action)")
+            default:
+                if !runCallE2E(action) { logger.warning("[e2e:ui] unknown action \(action.action)") }
             }
         }
 

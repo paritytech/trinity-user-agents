@@ -23,6 +23,7 @@ final class ContactsListViewModelFactory {
     let chatMessageDecoderFactory: ChatMessageDecoderMaking
     let productIconViewModelFactory: ProductIconViewModelMaking
     let resources: ChatResourceResolving
+    let calls: ChatRoomCallStoring
     let chain: ChainModel
     let tokenFormatter: (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     private var _tokenFormatter: TransferAmountViewModelFactoryProtocol?
@@ -32,6 +33,7 @@ final class ContactsListViewModelFactory {
         chatMessageDecoderFactory: ChatMessageDecoderMaking,
         productIconViewModelFactory: ProductIconViewModelMaking,
         resources: ChatResourceResolving = ChatResourceResolver.shared,
+        calls: ChatRoomCallStoring = ChatRoomCallStore.shared,
         chain: ChainModel,
         tokenFormatter: @escaping (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     ) {
@@ -39,6 +41,7 @@ final class ContactsListViewModelFactory {
         self.chatMessageDecoderFactory = chatMessageDecoderFactory
         self.productIconViewModelFactory = productIconViewModelFactory
         self.resources = resources
+        self.calls = calls
         self.chain = chain
         self.tokenFormatter = tokenFormatter
     }
@@ -153,6 +156,10 @@ private extension ContactsListViewModelFactory {
         assetDisplayInfo: AssetBalanceDisplayInfo
     ) -> ChatListRowPreview {
         let chat = chatWithPeerMetadata.chat
+
+        if let ringing = ChatRoomCallViewModel.listPreview(of: calls.call(for: chat.chatId)) {
+            return ChatListRowPreview(text: ringing, kind: .default, isOngoing: true)
+        }
 
         switch chat.roomPolicy?.listPreview ?? .lastMessage {
         case .lastMessage:

@@ -17,7 +17,9 @@
  *   screen, which the app's simulator-only harness runs (`open`, `list`,
  *   `send`, `menu`, `toolbar`, `confirm`, `participants`, `participant`,
  *   `reactions`, `suggestion`, `type`, `attach`, `button`, `footer-action`,
- *   `older`, `jump`, `retry`, `retry-room`, `back`), on the chat list
+ *   `older`, `jump`, `retry`, `retry-room`, `back`, `release-worker`,
+ *   `hold-worker`, `wake`, `call-button`, `call-answer`, `call-open`,
+ *   `call-end`, `call-timer`), on the chat list
  *   (`list-mute`, `list-unmute`, `list-archive`, `list-unarchive`,
  *   `archived`, `list-search`), on the room header (`room-mute`,
  *   `room-unmute`, `room-archive`, `room-unarchive`, `search-open`) or on
@@ -43,6 +45,9 @@
  * - `{ console }`: an app console line written in the phase;
  * - `{ consoleNot }`: no app console line holds this text, `settleMs` after
  *   the steps.
+ *
+ * `timed: true` on a `metadata` expectation also writes the time from the
+ * start of the phase to the match, for a benchmark row (B9).
  *
  * `scope: "previous"` makes a `console` or `event` expectation read from the
  * start of the previous phase instead of the start of its own phase.
@@ -90,6 +95,7 @@ export const IOS_CHAT_FEATURE_ROWS = Object.freeze({
   room_links: ["S27", "S24"],
   search: ["S61", "S62", "S63"],
   mute_archive: ["S54", "S55", "S56"],
+  call_buttons: ["S72", "S73", "S74"],
 });
 
 export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
@@ -219,13 +225,14 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
       phases: [
         {
           // The list screen holds no worker, and the harness gives back its
-          // own hold, so the core stops the worker.
+          // own hold, so the core stops the worker. The wake of the last
+          // command (W1) holds it for at most 30 s more.
           steps: [{ host: "list" }, { host: "release-worker" }],
           expect: [
             {
               console:
                 "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
-              timeoutMs: 30_000,
+              timeoutMs: 45_000,
             },
           ],
         },
@@ -1604,6 +1611,202 @@ export const IOS_CHAT_V2_SCENARIOS = Object.freeze([
     },
   },
   {
+    id: "S69",
+    title:
+      "a message sent and the room closed at once still gets the product's echo and preview (wake W1)",
+    mode: "host",
+    phase: "P10.4",
+    drive: {
+      phases: [
+        {
+          // The harness gives back its hold, so only the room screen holds
+          // the worker. The send wakes the worker, and the list closes the
+          // room at once.
+          steps: [
+            { host: "open" },
+            "/echo",
+            { host: "release-worker" },
+            { host: "send", argument: "w1 closed at once" },
+            { host: "list" },
+          ],
+          expect: [
+            {
+              console:
+                "[truapi] truapi-chat-v2.dot woken for message-in-flight host",
+            },
+            { storedMatch: "^echo MessagePosted .*w1 closed at once" },
+          ],
+        },
+        {
+          // The wake holds the worker for 30 s and no longer.
+          steps: [],
+          expect: [
+            {
+              console:
+                "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
+              timeoutMs: 60_000,
+            },
+          ],
+        },
+        {
+          // A message to a product whose worker does not run wakes it, and
+          // goes out when the worker is up.
+          steps: ["w1 to a stopped worker"],
+          expect: [
+            { storedMatch: "^echo MessagePosted .*w1 to a stopped worker" },
+          ],
+        },
+      ],
+      after: ["/echo", { host: "hold-worker" }, { wait: 4_000 }, { host: "open" }],
+    },
+  },
+  {
+    id: "S72",
+    title:
+      "calls shows the header buttons on a host with call_buttons and a press sends CallRequested; no buttons without the declaration",
+    mode: "host",
+    phase: "P10.7",
+    drive: {
+      phases: [
+        {
+          steps: [{ host: "open" }, "/features calls both"],
+          expect: [{ ui: "call-buttons", match: "^audio,video$" }],
+          shot: "buttons",
+        },
+        {
+          // The product answers CallRequested with an Active call.
+          steps: [{ host: "call-button", argument: "video" }],
+          expect: [
+            { ui: "call-button", match: "^pressed video=true$" },
+            {
+              event: {
+                via: "room_events",
+                kind: "CallRequested",
+                data: '"video":true',
+              },
+            },
+            { stored: "call requested video=true" },
+            { ui: "call", match: "^active call-\\d+ video=true media=false$" },
+          ],
+        },
+        {
+          steps: ["/call end", "/features calls audio"],
+          expect: [
+            { ui: "call", match: "^none$" },
+            { ui: "call-buttons", match: "^audio$" },
+          ],
+        },
+        {
+          steps: ["/features calls off", { host: "call-button", argument: "audio" }],
+          expect: [
+            { ui: "call-buttons", match: "^none$" },
+            { ui: "call-button", match: "^missing video=false$" },
+          ],
+        },
+      ],
+      after: ["/call end", "/features calls off"],
+    },
+  },
+  {
+    id: "S73",
+    title:
+      "Ringing rings in the room and the list; Accept and Decline send CallAnswered; the banner clears after 60 s",
+    mode: "host",
+    phase: "P10.7",
+    drive: {
+      phases: [
+        {
+          steps: [{ host: "open" }, "/call ring"],
+          expect: [
+            { ui: "call", match: "^ringing call-\\d+ video=false caller=p1$" },
+            { ui: "call-alert", match: "^room call-" },
+          ],
+          shot: "ringing",
+        },
+        {
+          // On the chat list the row rings, and an in-app banner rings.
+          steps: [{ host: "list" }, "/call ring video"],
+          expect: [
+            { ui: "list-call", match: "^Incoming video call$" },
+            { ui: "call-alert", match: "^banner call-" },
+          ],
+          shot: "list",
+        },
+        {
+          steps: [{ host: "open" }, { host: "call-answer", argument: "accept" }],
+          expect: [
+            {
+              event: {
+                via: "room_events",
+                kind: "CallAnswered",
+                data: '"accept":true',
+              },
+            },
+            { ui: "call", match: "^active call-" },
+            { ui: "list-call", match: "^none$" },
+          ],
+        },
+        {
+          steps: ["/call ring", { host: "call-answer", argument: "decline" }],
+          expect: [
+            {
+              event: {
+                via: "room_events",
+                kind: "CallAnswered",
+                data: '"accept":false',
+              },
+            },
+            { ui: "call", match: "^none$" },
+          ],
+        },
+        {
+          // Nobody answers: the banner clears after 60 s.
+          steps: ["/call ring"],
+          expect: [
+            { ui: "call", match: "^ringing " },
+            { ui: "call", match: "^none$", timeoutMs: 75_000 },
+            { ui: "list-call", match: "^none$" },
+          ],
+        },
+      ],
+      after: ["/call end"],
+    },
+  },
+  {
+    id: "S74",
+    title:
+      "Active without a session shows the call bar with its timer; Open and End send CallOpened and CallEnded",
+    mode: "host",
+    phase: "P10.7",
+    drive: {
+      phases: [
+        {
+          steps: [{ host: "open" }, "/call active"],
+          expect: [
+            { ui: "call", match: "^active call-\\d+ video=false media=false$" },
+          ],
+        },
+        {
+          steps: [{ wait: 2_500 }, { host: "call-timer" }],
+          expect: [{ ui: "call-timer", match: "^0:0[2-9]$" }],
+          shot: "bar",
+        },
+        {
+          steps: [{ host: "call-open" }],
+          expect: [{ event: { via: "room_events", kind: "CallOpened" } }],
+        },
+        {
+          steps: [{ host: "call-end" }],
+          expect: [
+            { event: { via: "room_events", kind: "CallEnded" } },
+            { ui: "call", match: "^none$" },
+          ],
+        },
+      ],
+      after: ["/call end"],
+    },
+  },
+  {
     id: "S49",
     title: "capabilities lists exactly the features whose rows pass",
     mode: "host",
@@ -1745,6 +1948,77 @@ export const IOS_CHAT_V2_PERF = Object.freeze([
             { console: "[e2e:ui] frames host frames=", timeoutMs: 15_000 },
           ],
         },
+      ],
+    },
+  },
+  {
+    id: "B9",
+    title: "notification wake to fresh preview, cold worker (foreground)",
+    mode: "host",
+    phase: "P10.4",
+    perf: true,
+    drive: {
+      // The harness wakes the room as the receiving layer will (O28): the
+      // core sends `Woken`, and the product sets the preview "Woken by <id>".
+      phases: [
+        {
+          steps: [{ host: "list" }, { host: "release-worker" }],
+          expect: [
+            {
+              console:
+                "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
+              timeoutMs: 60_000,
+            },
+          ],
+        },
+        {
+          steps: [{ host: "wake", argument: "b9-cold-1" }],
+          expect: [
+            {
+              metadata: { ZPREVIEWTEXT: "Woken by b9-cold-1" },
+              timed: true,
+              timeoutMs: 60_000,
+            },
+          ],
+        },
+        {
+          // The wake holds for 30 s; then the worker stops again.
+          steps: [],
+          expect: [
+            {
+              console:
+                "[truapi] worker stopped: polkadot://truapi-chat-v2.dot/",
+              timeoutMs: 60_000,
+            },
+          ],
+        },
+        {
+          steps: [{ host: "wake", argument: "b9-cold-2" }],
+          expect: [
+            {
+              metadata: { ZPREVIEWTEXT: "Woken by b9-cold-2" },
+              timed: true,
+              timeoutMs: 60_000,
+            },
+          ],
+        },
+        {
+          // Warm: the worker of the last wake still runs.
+          steps: [{ host: "wake", argument: "b9-warm" }],
+          expect: [
+            {
+              metadata: { ZPREVIEWTEXT: "Woken by b9-warm" },
+              timed: true,
+              timeoutMs: 30_000,
+            },
+          ],
+        },
+      ],
+      after: [
+        "/preview none",
+        { host: "hold-worker" },
+        { wait: 4_000 },
+        { host: "open" },
       ],
     },
   },
