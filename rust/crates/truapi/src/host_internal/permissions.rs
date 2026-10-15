@@ -2758,9 +2758,8 @@ mod tests {
 		);
 	}
 
-	/// A target that is not a product id owns no account. The administration
-	/// API reports nothing approved for it and refuses to record an approval,
-	/// rather than filing one under a key built from an unchecked string.
+	/// The administration API reports a target that is not a product id as not
+	/// approved, and refuses to approve it.
 	#[test]
 	fn a_signature_approval_for_a_target_that_names_no_product_is_refused() {
 		let storage = MemStorage::default();

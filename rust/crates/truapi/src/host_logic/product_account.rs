@@ -173,8 +173,8 @@ pub fn derive_ring_vrf_domain_entropy(
 	derive_ring_vrf_domain_entropy_from_junction(root_entropy, product_id.as_str())
 }
 
-/// [`derive_ring_vrf_entropy`] over a junction string, which the reserved
-/// personhood path is built from without being parsed as a product id.
+/// [`derive_ring_vrf_entropy`] for a junction string that is not parsed as a
+/// product id, such as the reserved personhood path.
 fn ring_vrf_entropy(
 	root_entropy: &[u8],
 	junction: &str,
@@ -184,10 +184,9 @@ fn ring_vrf_entropy(
 	Ok(derive_ring_vrf_entropy_from_domain(&domain, derivation_index))
 }
 
-/// [`derive_ring_vrf_domain_entropy`] over a junction taken as written rather
-/// than parsed as a product id: the reserved personhood path, and an
-/// AutoSigning allocation, which derives from the id exactly as the paired host
-/// sent it.
+/// [`derive_ring_vrf_domain_entropy`] for a junction string used as written.
+/// The reserved personhood path uses it, and so does an AutoSigning
+/// allocation, with the id exactly as the paired host sent it.
 pub fn derive_ring_vrf_domain_entropy_from_junction(
 	root_entropy: &[u8],
 	junction: &str,

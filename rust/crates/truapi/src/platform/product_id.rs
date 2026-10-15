@@ -257,8 +257,8 @@ fn has_well_formed_labels(normalized: &str) -> bool {
 					matches!(c, '/' | '\\')
 			})
 	};
-	// The development form's namespace holds that form and nothing else, so
-	// `localhost:3000.dot` cannot pass as a dotNS name.
+	// An id starting with `localhost:` must be exactly the development form,
+	// so `localhost:3000.dot` cannot pass as a dotNS name.
 	if normalized == LOCALHOST_PRODUCT_LABEL || normalized.starts_with(LOCALHOST_PORT_PREFIX) {
 		return is_localhost_form(normalized);
 	}
@@ -421,8 +421,8 @@ mod tests {
 
 	#[test]
 	fn an_overlong_product_id_is_not_an_identifier() {
-		// Every label here is well formed, so only the cap stops each length
-		// of this from being a valid, distinct, wire-supplied cache key.
+		// Every label is well formed, so without the cap any length would be
+		// a valid, distinct cache key taken from the wire.
 		let label = "a".repeat(PRODUCT_ID_MAX_BYTES);
 		let overlong = format!("{label}.dot");
 		assert!(overlong.len() > PRODUCT_ID_MAX_BYTES);

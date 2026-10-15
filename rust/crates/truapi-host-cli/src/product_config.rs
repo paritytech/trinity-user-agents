@@ -238,8 +238,8 @@ mod tests {
 
 	#[tokio::test]
 	async fn a_product_name_in_another_spelling_seeds_the_entry_the_core_reads() {
-		// The core reads a manifest under its normalized product id, so seeding
-		// the spelling the developer typed would leave every grant unseen.
+		// The core reads a manifest under its normalized product id, so a
+		// manifest seeded under the typed spelling would never be read.
 		let storage = WrittenKeys::default();
 		apply(&storage, &[config(r#"{"productName":"Peopl.Paseo"}"#)], 0)
 			.await
@@ -250,9 +250,9 @@ mod tests {
 
 	#[test]
 	fn a_product_name_that_names_no_product_is_refused_when_read() {
-		// Refused before `apply` can see it, so nothing is seeded for it. A
-		// bare label is not a product id either, because an id names its
-		// network.
+		// Refused before `apply` can see it, so nothing is seeded for it.
+		// `peopl` is refused too: a product id includes its network, as in
+		// `peopl.paseo`.
 		for name in ["example.com", "peopl"] {
 			let json = format!(r#"{{"productName":"{name}"}}"#);
 			assert!(serde_json::from_str::<LocalProductConfig>(&json).is_err(), "{name}");

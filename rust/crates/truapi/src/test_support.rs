@@ -56,7 +56,7 @@ mod scripted_chain;
 
 pub use scripted_chain::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
 
-/// A product id a test names, which must parse.
+/// Parse a product id for a test, panicking if it is invalid.
 pub fn test_product_id(product_id: &str) -> ProductId {
 	ProductId::parse(product_id).expect("test product identifier is valid")
 }

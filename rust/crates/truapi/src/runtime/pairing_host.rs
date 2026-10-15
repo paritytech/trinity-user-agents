@@ -1960,9 +1960,9 @@ impl PairingHost {
 	/// told "no prompt" and then relayed to a signing host that will prompt
 	/// for it.
 	///
-	/// A caller may name an account belonging to another product —
+	/// A caller may name an account belonging to another product.
 	/// `may_use_product_account` admits that for a `localhost` caller, and
-	/// for one the owner granted `context` — and the grant covers the owning
+	/// for one the owner granted `context`, and the grant covers the owning
 	/// product's subtree, not the caller's. Serving one locally would sign with a key the caller
 	/// was never granted and skip the confirmation the signing host raises for a
 	/// relayed request, so the binding is checked here rather than only at the

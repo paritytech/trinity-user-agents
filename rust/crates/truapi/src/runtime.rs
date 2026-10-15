@@ -521,8 +521,8 @@ impl ProductRuntimeHost {
 		self.holds_cross_product_scope_within(owner, Granted::Context, &cx).await
 	}
 
-	/// [`Self::holds_cross_product_scope`] within the caller's deadline and
-	/// cancellation, either of which refuses.
+	/// [`Self::holds_cross_product_scope`], answering `false` if the caller's
+	/// deadline passes or the call is cancelled first.
 	pub async fn holds_cross_product_scope_within(
 		&self,
 		target: &ProductId,
@@ -563,7 +563,7 @@ impl ProductRuntimeHost {
 		.await
 	}
 
-	/// Normalize the owner `account` names, in place, and return it.
+	/// Normalize `account`'s product id in place and return it.
 	fn normalize_product_account_id(
 		account: &mut latest::ProductAccountId,
 	) -> Result<ProductId, ()> {

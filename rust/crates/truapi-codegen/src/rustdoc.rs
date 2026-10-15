@@ -265,8 +265,8 @@ struct ItemCandidate {
 	kind: String,
 }
 
-/// Platform types whose only field is private, so rustdoc omits it, and which
-/// encode as that field, a `String`.
+/// Platform newtypes over a private `String`. rustdoc omits the field, so
+/// codegen emits them as `str`.
 const PLATFORM_STRING_NEWTYPES: &[&str] = &["ProductId"];
 
 /// Maps rustdoc item ids and full paths to the output type names used in
