@@ -40,7 +40,7 @@ use super::from_latest_error;
 use crate::{
 	host_logic::features::{chain_info, supported_chains},
 	runtime::{
-		AUTHORITY_CANCEL_UNWIND_GRACE, PERMISSION_DENIED_REASON, ProductConnection,
+		AUTHORITY_CANCEL_UNWIND_GRACE, AccountHolder, PERMISSION_DENIED_REASON, ProductConnection,
 		ProductRuntimeHost, runtime_failure_to_call_error,
 	},
 };
@@ -70,7 +70,7 @@ impl ProductConnection {
 }
 
 #[truapi::async_trait]
-impl Chain for ProductRuntimeHost {
+impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "chain.follow_head_subscribe"))]
 	async fn follow_head_subscribe(
 		&self,

@@ -498,7 +498,8 @@ impl AccountHolder for WalletAccountHolder {
             self.with_keys(invocation.session, |keys| {
                 let (keypair, payload) = match request {
                     SignRawAuthorityRequest::Product(request) => (keys.product_keypair(&request.account)?, request.payload),
-                    SignRawAuthorityRequest::LegacyAccount { account, request } => {
+                    SignRawAuthorityRequest::LegacyAccount { product_account, request } => (keys.product_keypair(&product_account)?, request.payload),
+                    SignRawAuthorityRequest::IdentityAccount { account, request } => {
                         let keypair = keys.identity_keypair()?;
                         if keypair.public.to_bytes() != account {
                             return Err(AuthorityError::Unavailable { reason: "signing host: the requested legacy account is not available in this CLI wallet".to_string() });
