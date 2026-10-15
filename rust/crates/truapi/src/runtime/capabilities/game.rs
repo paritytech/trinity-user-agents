@@ -8,7 +8,7 @@ use truapi::{
 	api::Game,
 	latest,
 	versioned::{
-		IntoLatest,
+		FromLatest, IntoLatest, Versioned,
 		game::{
 			HostCancelNextGameError, HostCancelNextGameRequest, HostCancelNextGameResponse,
 			HostRemindNextGameError, HostRemindNextGameRequest, HostRemindNextGameResponse,
@@ -16,17 +16,16 @@ use truapi::{
 	},
 };
 
+use super::from_latest_error;
 use crate::{platform::GamePlatform, runtime::ProductRuntimeHost, unix_time::current_unix_secs};
 
 /// A reminder for a game that has begun brings nobody back. Whole seconds are
 /// precise enough for that.
-fn ensure_upcoming(starts_at: u64) -> Result<(), CallError<HostRemindNextGameError>> {
+fn ensure_upcoming(starts_at: u64) -> Result<(), CallError<latest::HostRemindNextGameError>> {
 	if starts_at > current_unix_secs() * 1000 {
 		Ok(())
 	} else {
-		Err(CallError::Domain(HostRemindNextGameError::V1(
-			latest::HostRemindNextGameError::StartsInPast,
-		)))
+		Err(CallError::Domain(latest::HostRemindNextGameError::StartsInPast))
 	}
 }
 
@@ -51,17 +50,24 @@ impl Game for ProductRuntimeHost {
 		cx: &CallContext,
 		request: HostRemindNextGameRequest,
 	) -> Result<HostRemindNextGameResponse, CallError<HostRemindNextGameError>> {
-		let platform = self.game_platform()?;
-		let latest::HostRemindNextGameRequest { starts_at } = request.into_latest();
-		ensure_upcoming(starts_at)?;
-		if cx.cancel().is_cancelled() {
-			return Err(CallError::Cancelled);
+		let version = request.version();
+		let request = request.into_latest();
+		let result = async {
+			let platform = self.game_platform()?;
+			let latest::HostRemindNextGameRequest { starts_at } = request;
+			ensure_upcoming(starts_at)?;
+			if cx.cancel().is_cancelled() {
+				return Err(CallError::Cancelled);
+			}
+			platform
+				.schedule_game_reminder(&self.product, starts_at)
+				.await
+				.map_err(|error| CallError::HostFailure { reason: error.reason })
 		}
-		platform
-			.schedule_game_reminder(&self.product, starts_at)
-			.await
-			.map(|()| HostRemindNextGameResponse::V1)
-			.map_err(|error| CallError::HostFailure { reason: error.reason })
+		.await;
+		result
+			.map(|response| HostRemindNextGameResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "game.cancel_next_game"))]
@@ -70,12 +76,16 @@ impl Game for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostCancelNextGameRequest,
 	) -> Result<HostCancelNextGameResponse, CallError<HostCancelNextGameError>> {
-		let platform = self.game_platform()?;
-		let latest::HostCancelNextGameRequest {} = request.into_latest();
-		platform
-			.cancel_game_reminder(&self.product)
-			.await
-			.map(|()| HostCancelNextGameResponse::V1)
-			.map_err(|error| CallError::Domain(HostCancelNextGameError::V1(error)))
+		let version = request.version();
+		let request = request.into_latest();
+		let result = async {
+			let platform = self.game_platform()?;
+			let latest::HostCancelNextGameRequest {} = request;
+			platform.cancel_game_reminder(&self.product).await.map_err(CallError::Domain)
+		}
+		.await;
+		result
+			.map(|response| HostCancelNextGameResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error(error, version))
 	}
 }

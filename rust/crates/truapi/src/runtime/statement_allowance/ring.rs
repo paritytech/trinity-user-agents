@@ -460,7 +460,6 @@ mod tests {
 
 		// `Members.Members` value: the runtime's `RingPosition`, of which only
 		// `Included.ring_index` is read.
-		#[allow(dead_code)]
 		#[derive(Encode, TypeInfo)]
 		enum SourceRingPosition {
 			Onboarding { queue_page: u32, queued_at: u64 },

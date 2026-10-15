@@ -20,6 +20,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.compose.TickerWordmark
 import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
@@ -193,7 +194,7 @@ private fun SendEnterAmountScreenInternal(
                 is SendProgress.Idle ->
                     if (state.isAmountPositive) {
                         stringResource(RCommon.string.send_enter_amount_send_button, state.input, symbol)
-                            .withCurrencyTickerStyle(PolkadotTheme.typography.title.medium)
+                            .withCurrencyTickerStyle(PolkadotTheme.typography.title.medium, TickerWordmark.SmallCaps)
                     } else {
                         AnnotatedString(stringResource(RCommon.string.common_send))
                     }

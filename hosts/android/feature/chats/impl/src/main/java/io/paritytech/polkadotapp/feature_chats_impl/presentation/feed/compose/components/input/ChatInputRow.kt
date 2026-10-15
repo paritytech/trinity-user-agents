@@ -59,6 +59,9 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ChatInputMinHeight = 48.dp
 
+// Keeps a chat request inside the single 10 KiB statement a notification slot allows.
+private const val MAX_WELCOME_MESSAGE_LENGTH = 1000
+
 @Composable
 internal fun ChatInputRow(
     inputState: ChatInputUiState,
@@ -97,11 +100,16 @@ internal fun ChatInputRow(
 
                         SendMessageInput(
                             messageState = inputState.messageState,
+                            characterLimit = MAX_WELCOME_MESSAGE_LENGTH.takeIf { inputState.isChatRequest },
                             showPayButton = inputState.showPayButton,
                             showAttachmentButton = inputState.showAttachButton,
                             onClearReply = onClearReply,
                             onClearEdit = onClearEdit,
-                            onMessageChange = onMessageChange,
+                            onMessageChange = if (inputState.isChatRequest) {
+                                { text -> onMessageChange(text.take(MAX_WELCOME_MESSAGE_LENGTH)) }
+                            } else {
+                                onMessageChange
+                            },
                             onSendMessageClick = onSendMessageClick,
                             onPayClick = onPayClick,
                             onAttachClick = onAttachClick
@@ -161,6 +169,7 @@ private fun footerBackgroundBrush(state: ChatInputUiState): Brush = when (state)
 @Composable
 private fun SendMessageInput(
     messageState: ChatSendMessageInputState,
+    characterLimit: Int?,
     showPayButton: Boolean,
     showAttachmentButton: Boolean,
     onClearReply: () -> Unit,
@@ -212,6 +221,7 @@ private fun SendMessageInput(
                         .fillMaxWidth()
                         .animateContentSize(),
                     text = messageState.inputMessage,
+                    characterLimit = characterLimit,
                     onTextChanged = onMessageChange,
                     onSendAction = onSendMessageClick
                 )

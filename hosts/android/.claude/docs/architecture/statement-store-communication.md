@@ -13,6 +13,7 @@ Shared off-chain message bus used by SSO pairing and chat. End-to-end encrypted,
 - **Topics** — subscription filters. **Channel** — secondary routing key within a topic.
 - **`StatementStoreService`** — submit / fetch / subscribe. Submission retries 10× with 2-s backoff.
 - **`StatementStoreSlotAllocator`** — per-period slot lifecycle. LRU eviction after `StmtStoreReplacementCooldown`. Required before first submit.
+- **`NotificationStatementAccountAllocator`** — durable claims of anonymous notification slots (`set_notification_statement_account_for_sequence`): one statement of ≤ 10 KiB per binding, one live binding per account, valid for the current period plus grace. Callers pass a fresh account per period.
 - **`CommunicationSession`** — bidirectional shared abstraction. Polling + encryption + verification + state machine. One session per `(feature, peer pair)`.
 - **`SharedSecretDerivationDomain`** — per-feature label that prevents one ephemeral keypair seeding multiple features' channels.
 - **`CommunicationEncryption`** — ECDH + HKDF-SHA256 + AES.
@@ -40,6 +41,7 @@ Shared off-chain message bus used by SSO pairing and chat. End-to-end encrypted,
 | `SharedSecretDerivationDomain` | Per-feature key isolation | Each new feature adds a value |
 | `StatementStoreMessageProver.Factory` | Per-signing-context provers | New signing context (e.g. a non-`MetaAccount` signer) |
 | `StatementStoreSlotAllocator` | Slot lifecycle | Don't reach into the pallet; use this |
+| `NotificationStatementAccountAllocator` | Anonymous one-statement allowance for a throwaway account, claimed through the durable ledger | A one-shot statement that must not be linkable to the sender's identity |
 
 ## Anti-patterns
 
@@ -66,6 +68,7 @@ Shared off-chain message bus used by SSO pairing and chat. End-to-end encrypted,
 - Bidirectional session: `SyncPeerChannelSignaling` (`feature/device-sync`) driving a `CommunicationSession`.
 - Topic discovery + encrypted payload: `ChatRequestTransport.submitChatRequest` (three topics: day-keyed, full, session-specific).
 - Slot management: `RealStatementStoreSlotAllocator.allocate` with LRU eviction.
+- Unlinkable one-shot statement: chat requests — allocated lazily per request at first delivery (`ChatRequestDeliveryService`), renewed into each new period from a fresh account by `ChatRequestRenewalWorker`; falls back to the identity account only when no notification slot is free.
 
 ## Where new things live
 

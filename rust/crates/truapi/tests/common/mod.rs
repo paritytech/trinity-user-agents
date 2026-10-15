@@ -1,75 +1,16 @@
-#[cfg(target_arch = "wasm32")]
-use std::sync::Arc;
-
-use std::{
-	sync::{Condvar, Mutex},
-	time::{Duration, Instant},
-};
+mod spawner;
+pub use spawner::test_spawner;
 
 use futures::stream::{self, BoxStream};
 use truapi::{
-	frame::ProtocolMessage,
 	platform::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
 		JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
 		PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage,
 		ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
-	transport::Transport,
 	v01,
 };
-
-/// Transport stub that records every frame sent through it, for asserting
-/// what the core emits during a dispatch.
-#[derive(Default)]
-pub struct RecordingTransport {
-	/// Frames captured in send order.
-	pub sent: Mutex<Vec<ProtocolMessage>>,
-	recorded: Condvar,
-}
-
-impl RecordingTransport {
-	/// Wait until at least `count` frames have been recorded, or `timeout`
-	/// elapses. A subscription's frames are produced by the spawner, so a
-	/// dispatch that starts one returns before they are sent.
-	pub fn wait_for(&self, count: usize, timeout: Duration) {
-		let deadline = Instant::now() + timeout;
-		let mut sent = self.sent.lock().unwrap();
-		while sent.len() < count {
-			let now = Instant::now();
-			if now >= deadline {
-				break;
-			}
-			let (guard, _) = self.recorded.wait_timeout(sent, deadline - now).unwrap();
-			sent = guard;
-		}
-	}
-}
-
-impl Transport for RecordingTransport {
-	fn send(&self, message: ProtocolMessage) {
-		self.sent.lock().unwrap().push(message);
-		self.recorded.notify_all();
-	}
-	fn on_message(
-		&self,
-		_handler: Box<dyn Fn(ProtocolMessage) + Send + Sync>,
-	) -> Box<dyn FnOnce()> {
-		Box::new(|| {})
-	}
-}
-
-/// Test spawner that matches the current target.
-pub fn test_spawner() -> truapi::subscription::Spawner {
-	#[cfg(not(target_arch = "wasm32"))]
-	{
-		truapi::subscription::thread_per_subscription_spawner()
-	}
-	#[cfg(target_arch = "wasm32")]
-	{
-		Arc::new(futures::executor::block_on)
-	}
-}
 
 /// Runtime configuration shared by integration tests.
 pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
