@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-v2-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-v2-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run android-chat-v2-run
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -273,6 +273,22 @@ android-chat-playground-run: ## Run the TrUAPI Playground Chat diagnosis in a he
 		exit 1; \
 	}
 	TRUAPI_ANDROID_E2E_APK="$(TRUAPI_ANDROID_E2E_APK)" node scripts/launch-android-chat-playground.mjs
+
+ANDROID_HOST ?= hosts/android
+# The Firebase config of the app; the Gradle build reads it from the app module (gitignored there).
+ANDROID_GOOGLE_SERVICES_JSON ?= $(ANDROID_HOST)/app/google-services.json
+
+android-chat-v2-run: ## Build the debug APK and run the Chat Extension v2 sample product (playground/chat-v2) in a headless Android emulator; writes its diagnosis rows.
+	@test -f "$(ANDROID_GOOGLE_SERVICES_JSON)" || { \
+		echo "Missing Firebase config at $(ANDROID_GOOGLE_SERVICES_JSON)"; \
+		echo "Set ANDROID_GOOGLE_SERVICES_JSON to the google-services.json that lists the debug package"; \
+		exit 1; \
+	}
+	@if [ "$(abspath $(ANDROID_GOOGLE_SERVICES_JSON))" != "$(abspath $(ANDROID_HOST)/app/google-services.json)" ]; then \
+		cp "$(ANDROID_GOOGLE_SERVICES_JSON)" "$(ANDROID_HOST)/app/google-services.json"; \
+	fi
+	cd $(ANDROID_HOST) && ./gradlew :app:assembleVanillaDebug
+	TRUAPI_ANDROID_E2E_APK="$(TRUAPI_ANDROID_E2E_APK)" node scripts/launch-android-chat-v2.mjs
 
 UNIFFI_KOTLIN_OUT := android/truapi-host/src/main/kotlin/generated
 
