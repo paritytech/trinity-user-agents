@@ -20,9 +20,13 @@ use crate::{
 
 type Responder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 
-/// One connection's response sender. Shared rather than cloned, so dropping it
-/// through any handle ends that connection's stream.
-type SenderSlot = Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>;
+/// One connection's response sender. The provider and the connection hold the
+/// same slot rather than a clone each, so dropping it through either ends that
+/// connection's stream.
+type SenderSlot = Mutex<Option<fut_mpsc::UnboundedSender<String>>>;
+
+/// One connection's response stream, taken once by whoever reads it.
+type ReceiverSlot = Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>;
 
 /// Provider that echoes a canned response for every request it sees,
 /// driven by a `respond` closure. The closure receives each json-rpc
@@ -36,8 +40,8 @@ pub struct ScriptedProvider {
 	pub sent: Arc<Mutex<Vec<String>>>,
 	/// First connection's response sender; dropping it ends that connection's
 	/// responses. Later connections each get their own.
-	pub sender: SenderSlot,
-	receiver: Arc<Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>>,
+	pub sender: Arc<SenderSlot>,
+	receiver: Arc<ReceiverSlot>,
 	/// How many times the core asked for a connection.
 	pub connect_calls: Arc<AtomicUsize>,
 }
@@ -59,7 +63,7 @@ impl ScriptedProvider {
 		F: Fn(&str) -> Vec<String> + Send + Sync + 'static,
 	{
 		let (tx, rx) = fut_mpsc::unbounded();
-		let first: SenderSlot = Arc::new(Mutex::new(Some(tx)));
+		let first: Arc<SenderSlot> = Arc::new(Mutex::new(Some(tx)));
 		Self {
 			respond: Arc::new(respond),
 			sent: Arc::new(Mutex::new(Vec::new())),
@@ -75,8 +79,8 @@ struct ScriptedConnection {
 	sent: Arc<Mutex<Vec<String>>>,
 	/// This connection's own sender, so an answer goes back on the socket that
 	/// asked rather than on whichever one connected first.
-	sender: SenderSlot,
-	receiver: Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>,
+	sender: Arc<SenderSlot>,
+	receiver: ReceiverSlot,
 }
 
 impl JsonRpcConnection for ScriptedConnection {
@@ -121,7 +125,7 @@ impl RuntimeChainProvider for ScriptedProvider {
 			})),
 			None => {
 				let (tx, rx) = fut_mpsc::unbounded();
-				let slot: SenderSlot = Arc::new(Mutex::new(Some(tx)));
+				let slot: Arc<SenderSlot> = Arc::new(Mutex::new(Some(tx)));
 				Ok(Arc::new(ScriptedConnection {
 					respond: self.respond.clone(),
 					sent: self.sent.clone(),

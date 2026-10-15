@@ -250,6 +250,13 @@ enum ConnectionScope {
 	/// The core's own traffic: metadata, transaction assembly, internal reads.
 	Core,
 	/// One product runtime, identified by its `core_instance`.
+	///
+	/// Per runtime instance rather than per product id, so each connection has
+	/// exactly one owner and releasing it is a drop. Keying by product id would
+	/// put two concurrent runtimes of the same product on one connection, which
+	/// needs refcounting and a liveness story for a runtime that dies holding
+	/// it. The cost is that `App`, `Widget` and `Worker` are separate runtimes,
+	/// so one product with a card and a chat extension holds three connections.
 	Product(u64),
 }
 
@@ -271,13 +278,22 @@ impl ConnectionScope {
 /// [`RemoteChainHeadFollowItem`] values.
 #[derive(Clone)]
 pub struct ChainRuntime {
+	/// The way out to a host, which opens the sockets this runtime hands around.
 	provider: Arc<dyn RuntimeChainProvider>,
+	/// Where response pumps and follow setup run.
 	spawner: Spawner,
 	/// Which caller this view belongs to. Cheap to re-scope: every other
 	/// field is shared, so two scopes see the same maps under different keys.
 	scope: ConnectionScope,
+	/// Open connections, keyed by [`Self::connection_key`], which is the scope
+	/// and the genesis hash rather than the genesis hash alone. Two callers on
+	/// one chain are two entries, because a node budgets follows per connection.
 	connections: Arc<Mutex<HashMap<String, Arc<ChainConnection>>>>,
+	/// In-flight `connect` calls under the same key, so concurrent first users
+	/// of a chain share one rather than racing and orphaning the loser's socket.
 	connection_setups: Arc<Mutex<HashMap<String, ConnectionSetup>>>,
+	/// Follow setup in flight, keyed by genesis hash and local follow id, so a
+	/// follow-bound request can await the setup rather than miss the follow.
 	follow_starts: FollowStartRegistry,
 	/// Scope prefixes that have been released. A connect already in flight when
 	/// its scope ended must not insert its result: `core_instance` never repeats,
@@ -287,7 +303,11 @@ pub struct ChainRuntime {
 	/// Synchronously registered follow intents, keyed by scope and genesis hash.
 	/// Alias cardinality includes setup tasks that have not yet been polled.
 	follow_intents: Arc<Mutex<HashMap<String, HashSet<String>>>>,
+	/// Broadcast operations this runtime started, keyed by the sequence in the
+	/// id handed to the product. Shared across scopes, because the ids are too.
 	transaction_operations: Arc<Mutex<BTreeMap<u64, TransactionOperation>>>,
+	/// Mints the sequence above. One counter for every scope, so no two
+	/// callers can be handed the same operation id.
 	next_transaction_operation_id: Arc<AtomicU64>,
 }
 
@@ -1030,13 +1050,21 @@ impl ChainRuntime {
 }
 
 struct ChainConnection {
+	/// This connection's handle on the host's socket. Both this and the clone
+	/// inside `methods` count, so the socket closes once every holder is gone.
 	rpc_client: HostRpcClient,
+	/// Typed `chainHead_v1` calls over the same client.
 	methods: ChainHeadRpcMethods<TruapiRpcConfig>,
 	spawner: Spawner,
 	/// Host-configured genesis hash this connection was opened for; pins the
 	/// cached Subxt bundle's chain config.
 	genesis_hash: Vec<u8>,
+	/// Live follows on this connection, keyed by local follow id. Entries are
+	/// recorded on intent and gain a remote id once the node acknowledges one,
+	/// so a count of these is not a count of follows the node knows about.
 	follows: Mutex<HashMap<String, FollowState>>,
+	/// Follow setup in flight, so concurrent callers for one local id await a
+	/// single remote subscription rather than each opening one.
 	follow_setups: Mutex<HashMap<String, FollowSetup>>,
 	/// Cached Subxt bundle setup tagged with its generation, so invalidation
 	/// (on setup failure or backend-driver exit) can never evict a newer
