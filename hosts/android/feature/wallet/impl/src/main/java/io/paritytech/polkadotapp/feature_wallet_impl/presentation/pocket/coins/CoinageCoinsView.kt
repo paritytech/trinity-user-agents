@@ -13,6 +13,7 @@ import android.widget.FrameLayout
  * Collapsed, they are the summary strip: a fixed height however many there are, face on with margins while
  * they fit, turning about their vertical axis as they multiply, thinning once fully edge-on. Expanded, the
  * same coins spread into a honeycomb, one cell each however many there are, and the card grows and scrolls.
+ * In the grid one coin can be picked out into a band, large enough to read, with the rest faded back.
  *
  * One view, one set of coins. A toggle only moves targets, so the coins fly between the two arrangements
  * rather than one view cutting to another.
@@ -25,6 +26,10 @@ import android.widget.FrameLayout
  * and is clipped by it. Asking Compose to clip an oversized interop child did not do it — the texture was
  * placed off its own top and the coins vanished under the clip — and a view group clipping its own child is
  * not a thing that can be got wrong.
+ *
+ * The texture is at most one screen tall and pinned to the visible part of the field, so a frame costs the same
+ * however many coins the wallet holds. It is moved to the window each frame was drawn for as that frame is
+ * latched, rather than when the page scrolls, so a coin never shows a frame's worth of scroll out of place.
  */
 class CoinageCoinsView(context: Context) : FrameLayout(context), TextureView.SurfaceTextureListener {
     private val main = Handler(Looper.getMainLooper())
@@ -36,6 +41,8 @@ class CoinageCoinsView(context: Context) : FrameLayout(context), TextureView.Sur
     private var areaWidth = 0f
     private var stripHeight = CoinageStripLayout.Options().height
     private var gridBudget = DEFAULT_GRID_BUDGET
+    private var focus: CoinageArrangement.Focus? = null
+    private var window = 0f
 
     var onMetrics: ((CoinageCoinsMetrics) -> Unit)? = null
 
@@ -52,19 +59,32 @@ class CoinageCoinsView(context: Context) : FrameLayout(context), TextureView.Sur
         areaWidth: Float,
         stripHeight: Float,
         gridBudget: Float,
-        surfaceHeight: Int
+        surfaceHeight: Int,
+        focus: CoinageArrangement.Focus?,
+        window: Float
     ) {
         this.coins = coins
         this.isExpanded = isExpanded
         this.areaWidth = areaWidth
         this.stripHeight = stripHeight
         this.gridBudget = gridBudget
+        this.focus = focus
+        this.window = window
 
         if (texture.layoutParams.height != surfaceHeight) {
             texture.layoutParams = texture.layoutParams.apply { height = surfaceHeight }
         }
 
-        thread?.update(coins, isExpanded, areaWidth, stripHeight, gridBudget)
+        push()
+    }
+
+    /** The coin under a point in field coordinates, in points, or null for empty ground. */
+    fun tap(x: Float, y: Float, onResult: (String?) -> Unit) {
+        thread?.tap(x, y) { id -> main.post { onResult(id) } }
+    }
+
+    private fun push() {
+        thread?.update(coins, isExpanded, areaWidth, stripHeight, gridBudget, focus, window)
     }
 
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
@@ -74,7 +94,7 @@ class CoinageCoinsView(context: Context) : FrameLayout(context), TextureView.Sur
 
         thread = started
         started.start()
-        started.update(coins, isExpanded, areaWidth, stripHeight, gridBudget)
+        push()
         started.resize(width, height, resources.displayMetrics.density)
     }
 
@@ -90,7 +110,11 @@ class CoinageCoinsView(context: Context) : FrameLayout(context), TextureView.Sur
         return false
     }
 
-    override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
+    override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
+        val drawn = thread?.drawnWindow ?: return
+
+        texture.translationY = drawn * resources.displayMetrics.density
+    }
 
     /**
      * Covers the window going away as well as this view being hidden, which is what makes it the right hook

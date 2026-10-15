@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstallationId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageKeyIndex
@@ -106,6 +107,7 @@ class CoinageBreakdownOrderTest {
     ) = CoinageHolding(
         id = id,
         exponent = ValueExponent(exponent),
+        value = Balance.ONE,
         derivationIndex = CoinageKeyIndex(INSTALLATION, id.hashCode()),
         isReady = isReady,
         recyclerFungibility = fungibility?.let(RecyclerFungibility::ofPercent),

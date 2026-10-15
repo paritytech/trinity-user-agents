@@ -187,6 +187,7 @@ struct RustRuntimeBridgeTests {
         (.location, .notDetermined),
         (.clipboard, .notApplicable),
         (.biometrics, .notApplicable),
+        (.motion, .notApplicable),
     ])
     func devicePermissionStatusWithoutOSQuery(
         request: HostDevicePermissionRequest,
