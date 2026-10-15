@@ -392,8 +392,29 @@ connected; a query or a user action with `answer`, which carries the page's
 `reqId` and the product's answer or the reason there is none (`Timeout`,
 `NoWorker`, `NotAvailable`, `Rejected`, ...); a refusal with `error`. Every
 message and declaration the host takes is also a line of the `TRUAPI_CHAT_LOG`
-transcript. Without `--worker-bundle` the page still shows the chat, but boots
-no worker until one is given. Other host modes serve none of these routes.
+transcript. Without `--worker-bundle` or `--worker-wasm` the page still shows
+the chat, but no worker serves it. Other host modes serve none of these routes.
+
+A worker compiled to wasm runs in the host instead of the page:
+`--worker-wasm <path>` (not with `--worker-bundle`) runs the module as the
+`Worker` of the product, with the signer of the session, against the same chat
+host. The page and `/chat/ws` show its rooms and send what a person does to its
+`chat.actionSubscribe()`; each line it logs prints as `[worker] <line>`. A wasm
+worker cannot answer the queries the host starts yet, so it keeps only rooms
+the host stores. The host keeps serving the chat when the worker ends. With a
+`--session` for each user, two hosts are two users on the live network:
+
+```bash
+cargo build --manifest-path rust/guests/Cargo.toml --target wasm32-unknown-unknown --release
+truapi-host dev --port 9971 --session alice --product-id chat-actions.dot \
+  --worker-wasm rust/guests/target/wasm32-unknown-unknown/release/chat_actions_guest.wasm
+node scripts/lib/cli-chat-socket.mjs 9971 messages actions
+node scripts/lib/cli-chat-socket.mjs 9971 press actions m1 yes
+```
+
+[`scripts/lib/cli-chat-socket.mjs`](../../../scripts/lib/cli-chat-socket.mjs)
+is the person on `/chat/ws` for a test or a terminal: it lists the rooms, reads
+the messages of a room, types a message, presses a button and runs a command.
 
 `make e2e-chat-cli` runs the sample product on this page in headless Chromium
 after the content-screening phase (`scripts/launch-cli-chat-playground.mjs`):

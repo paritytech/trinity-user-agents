@@ -186,6 +186,9 @@ cargo build --manifest-path rust/guests/Cargo.toml --target wasm32-unknown-unkno
 ```
 
 and run against a CLI host with `/worker <wasm-path>`, as the selected product.
+`truapi-host dev --worker-wasm <wasm-path>` runs one as the `Worker` of the
+product beside the chat page `/chat` and its socket `/chat/ws`, so a person or
+a test can act in its rooms; `chat-actions` is the example for that.
 
 ## Limits
 
