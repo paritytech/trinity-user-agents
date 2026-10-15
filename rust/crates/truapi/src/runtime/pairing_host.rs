@@ -2087,10 +2087,18 @@ impl PairingHost {
 				.secret
 				.sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
 				.to_bytes();
-			return Ok(latest::HostSignPayloadResponse {
+			let response = latest::HostSignPayloadResponse {
 				signature: signature.to_vec(),
 				signed_transaction: None,
-			});
+			};
+			crate::host_internal::signature_log::record(
+				"sign raw data",
+				"message",
+				&response.signature,
+				&keypair.public.to_bytes(),
+				None,
+			);
+			return Ok(response);
 		}
 		self.remote_sign_raw(cx, &session, request, watermarked).await
 	}

@@ -2182,6 +2182,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_BATTERY_REPORT_PATH` | Override battery report destination. |
 | `TRUAPI_APPROVALS_LOG` | Append one line per decided confirmation to this file. |
 | `TRUAPI_NAVIGATIONS_LOG` | Append one JSON line `{"url","at"}` (`at` in Unix milliseconds) per `navigate_to` destination the host accepted. Unset, nothing is written; set, a transcript that cannot be written fails that `navigate_to` call. The terminal UI shows each accepted destination either way. |
+| `TRUAPI_SIGNATURES_LOG` | Append one JSON line per signature a local signer returned: a startup `{"type":"coverage","scope":"local-returned-signatures","id","at"}` marker, then `{"id","at","approved","action","payload","signature","signer","transaction"?}` for each successful payload or raw signature and each locally assembled transaction (hex with `0x`). No payload contents or secrets are written; a write failure is logged and leaves signing unchanged. |
 
 ## 22. Current v0.1 operational constraints
 

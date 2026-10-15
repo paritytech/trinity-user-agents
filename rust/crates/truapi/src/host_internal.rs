@@ -6,6 +6,7 @@ pub mod bulletin;
 pub mod extrinsic;
 pub mod permissions;
 pub mod product_manifest;
+pub mod signature_log;
 pub mod sso_messages;
 pub mod sso_wire;
 pub mod transaction;
