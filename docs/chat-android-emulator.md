@@ -111,6 +111,9 @@ they leave the room screen and S6 stops the product server. Each P8.6 scenario p
 - The product server listens on `127.0.0.1` of the host, and `adb reverse` connects to it from the adb server. An adb
   server that runs in a sandbox that blocks local connections gives `net::ERR_CONNECTION_REFUSED` in the worker WebView;
   restart it outside the sandbox with `adb kill-server && adb start-server`.
+- A screen dump of a busy emulator can take more than 20 s. The launcher waits up to 90 s for one, and stops a dump that
+  does not end. When an adb command times out, the helpers restart the adb server; the logcat stream then connects again
+  from its last line, and the launcher maps the product port again.
 - The app shows "The environment has been reset" after `pm clear`, and the product asks to submit a preimage at its
   first start. The launcher answers "Dismiss" and "Don't allow"; `/post rich` then shows the missing-preimage
   placeholder. A permission prompt that no screen can show, or that a navigation removes before an answer, refuses the
