@@ -45,6 +45,7 @@ mod statement_store_rpc;
 #[cfg(feature = "test-host")]
 mod test_resource_controls;
 mod vrf;
+mod wake;
 
 use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
@@ -57,7 +58,7 @@ use std::{
 pub use actions::ActionChannel;
 use authority::{AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
-pub use chat::{ChatEventChannel, chat_platform_for};
+pub use chat::{ChatEventChannel, ChatHandler, ChatRoomEventHub, chat_platform_for};
 pub use contacts::ContactResolutionError;
 pub use host_session::HostSession;
 
@@ -81,6 +82,9 @@ pub use signing_host::{
 };
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
+pub use wake::{
+	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_WAKE_HOLD_MS, ChatWakeOutcome, ChatWakeReason, ChatWakes,
+};
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
@@ -568,6 +572,29 @@ impl ProductConnection {
 	) -> Result<(), crate::host_core::ProductRuntimeError> {
 		self.native_chat_platform()?;
 		self.chat.publish(event, &self.services.spawner)
+	}
+
+	/// Send one event about a room to this product, or keep it until the
+	/// product subscribes.
+	pub fn publish_chat_room_event(
+		&self,
+		item: latest::HostChatRoomEventsSubscribeItem,
+	) -> Result<(), crate::host_core::ProductRuntimeError> {
+		self.services
+			.publish_chat_room_event(&self.product.product_id, item)
+			.map_err(|error| crate::host_core::ProductRuntimeError::Rejected {
+				reason: error.to_string(),
+			})
+	}
+
+	/// Hold the worker of this product for a wake.
+	pub fn wake(
+		&self,
+		reason: ChatWakeReason,
+	) -> Result<ChatWakeOutcome, crate::host_core::ProductRuntimeError> {
+		self.services.wake_product(&self.product.product_id, reason).map_err(|error| {
+			crate::host_core::ProductRuntimeError::Rejected { reason: error.to_string() }
+		})
 	}
 
 	/// Renderer access policy for this connection; see [`renderer_access_for`].

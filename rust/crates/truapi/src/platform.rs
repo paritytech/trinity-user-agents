@@ -30,18 +30,21 @@ pub mod mock;
 use truapi::{
 	latest::{
 		AllocatableResource, ChainIdentifier, ChatAction, ChatActionHandler, ChatActions,
-		ChatActivity, ChatCommandSpec, ChatCustomMessage, ChatFeedUpdate, ChatFile,
-		ChatInputConfig, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody,
-		ChatMessageContent, ChatMessageMenu, ChatMessageOrigin, ChatPageAnchor, ChatParticipant,
-		ChatParticipantEntry, ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction,
-		ChatReaction, ChatReactionDetail, ChatReactionSummary, ChatResource, ChatRichText,
-		ChatRoomBadge, ChatRoomConfig, ChatRoomFooter, ChatRoomMetadata, ChatRoomPreview,
-		ChatRoomPreviewText, ChatSuggestion, ChatToolbarAction, CodeFormat, GenericError,
-		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
-		HostChatDeleteRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
-		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
-		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomActivityRequest,
-		HostChatSetRoomCommandsRequest, HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest,
+		ChatActivity, ChatBranchPosition, ChatCommandSpec, ChatCustomMessage, ChatFeedUpdate,
+		ChatFile, ChatInputConfig, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
+		ChatMessageBody, ChatMessageContent, ChatMessageMenu, ChatMessageMeta, ChatMessageOrigin,
+		ChatPageAnchor, ChatParticipant, ChatParticipantEntry, ChatParticipantMenu,
+		ChatParticipantsQuery, ChatProductAction, ChatReaction, ChatReactionDetail,
+		ChatReactionSummary, ChatResource, ChatRichText, ChatRoomBadge, ChatRoomCall,
+		ChatRoomConfig, ChatRoomEvent, ChatRoomFeatures, ChatRoomFooter, ChatRoomMetadata,
+		ChatRoomPreview, ChatRoomPreviewText, ChatSuggestion, ChatThreadParent, ChatThreadSummary,
+		ChatToolbarAction, CodeFormat, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatDeleteRoomRequest,
+		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
+		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
+		HostChatRegisterBotResponse, HostChatSetMessageMetaRequest, HostChatSetRoomActivityRequest,
+		HostChatSetRoomCallRequest, HostChatSetRoomCommandsRequest, HostChatSetRoomConfigRequest,
+		HostChatSetRoomFeaturesRequest, HostChatSetRoomFooterRequest,
 		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest,
 		HostChatSetRoomSuggestionsRequest, HostChatSetRoomToolbarRequest, HostChatUpdateFeedError,
 		HostChatUpdateFeedRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
@@ -57,7 +60,8 @@ use truapi::{
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		ProductAccountId, ProductAccountTxPayload, ProductChatMessagesQueryItem,
 		ProductChatMessagesQueryRequest, ProductChatParticipantsQueryItem,
-		ProductChatParticipantsQueryRequest, ProductChatReactionsQueryItem, ProductProofContext,
+		ProductChatParticipantsQueryRequest, ProductChatReactionsQueryItem,
+		ProductChatSearchQueryItem, ProductChatSearchQueryRequest, ProductProofContext,
 		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
@@ -840,6 +844,236 @@ pub const CHAT_FEED_UPDATES_PER_SECOND: u32 = 20;
 /// Largest accepted number of `set_room_preview` or `set_room_activity` calls
 /// for one room in one second.
 pub const CHAT_PREVIEW_UPDATES_PER_SECOND: u32 = 5;
+
+/// Largest attachment a host stores as a preimage, in bytes.
+pub const CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+/// Largest accepted number of feature names in `capabilities`.
+pub const CHAT_FEATURES_MAX: usize = 64;
+
+/// Largest accepted number of participants in a thread summary.
+pub const CHAT_THREAD_PARTICIPANTS_MAX: usize = 3;
+
+/// Largest accepted number of alternatives of one message.
+pub const CHAT_BRANCHES_MAX: u16 = 64;
+
+/// Largest page of search matches a host may ask for.
+pub const CHAT_SEARCH_PAGE_MAX: u32 = 50;
+
+/// Page of search matches a host asks for when it has no reason to ask
+/// another.
+pub const CHAT_SEARCH_PAGE_DEFAULT: u32 = 30;
+
+/// Largest accepted number of personas of one product.
+pub const CHAT_PERSONAS_MAX: usize = 8;
+
+/// Largest accepted number of `set_room_call` calls for one room in one
+/// second.
+pub const CHAT_CALL_UPDATES_PER_SECOND: u32 = 2;
+
+/// Largest number of room events the core keeps for a product that has no
+/// subscriber. The oldest event goes first.
+pub const CHAT_ROOM_EVENTS_QUEUED_MAX: usize = 64;
+
+/// Largest number of messages of a product-source room whose meta a host
+/// keeps: the newest by timestamp.
+pub const CHAT_META_KEPT_MAX: usize = 2000;
+
+/// The prefix of the participant id of a persona: `bot:<bot_id>`.
+pub const CHAT_PERSONA_PREFIX: &str = "bot:";
+
+/// The Chat feature names of the Chat Extension v2 additions RFC, in the
+/// order the core lists them. A host lists a name only when it serves that
+/// feature from end to end.
+pub const CHAT_FEATURE_NAMES: [&str; 25] = [
+	"product_source_rooms",
+	"reaction_details",
+	"participants",
+	"message_menus",
+	"participant_menus",
+	"toolbar",
+	"suggestions",
+	"commands",
+	"activity",
+	"custom_bodies",
+	"custom_footer",
+	"inline_attachments",
+	"payment_button",
+	"room_links",
+	"preimage_attachments",
+	"search",
+	"bot_personas",
+	"mute_archive",
+	"threads",
+	"branches",
+	"reasoning_rows",
+	"read_aloud",
+	"wake",
+	"call_buttons",
+	"room_calls",
+];
+
+/// The bot id of a persona participant id `bot:<bot_id>`, or `None` for
+/// any other participant id.
+pub fn chat_persona_bot_id(participant_id: &str) -> Option<&str> {
+	participant_id.strip_prefix(CHAT_PERSONA_PREFIX)
+}
+
+/// The feature names a host lists that the RFC knows, each once, in the order
+/// of [`CHAT_FEATURE_NAMES`]. The core drops a name it does not know.
+pub fn known_chat_feature_names(names: &[String]) -> Vec<&'static str> {
+	CHAT_FEATURE_NAMES
+		.into_iter()
+		.filter(|known| names.iter().any(|name| name.trim() == *known))
+		.collect()
+}
+
+/// Validate the optional features of a room.
+pub fn validate_chat_room_features(
+	features: ChatRoomFeatures,
+) -> Result<ChatRoomFeatures, ChatFieldError> {
+	Ok(ChatRoomFeatures {
+		thread_of: features
+			.thread_of
+			.map(|parent| {
+				Ok::<_, ChatFieldError>(ChatThreadParent {
+					room_id: normalize_chat_identifier("threadOf.roomId", &parent.room_id)?,
+					message_id: normalize_chat_identifier(
+						"threadOf.messageId",
+						&parent.message_id,
+					)?,
+				})
+			})
+			.transpose()?,
+		..features
+	})
+}
+
+/// Validate the meta of one message.
+pub fn validate_chat_message_meta(
+	meta: ChatMessageMeta,
+) -> Result<ChatMessageMeta, ChatFieldError> {
+	let thread = match meta.thread {
+		Some(thread) => {
+			check_chat_count(
+				"participantIds",
+				&thread.participant_ids,
+				CHAT_THREAD_PARTICIPANTS_MAX,
+			)?;
+			let mut seen = BTreeSet::new();
+			Some(ChatThreadSummary {
+				room_id: normalize_chat_identifier("thread.roomId", &thread.room_id)?,
+				participant_ids: thread
+					.participant_ids
+					.iter()
+					.map(|id| unique_chat_identifier("participantIds", id, &mut seen))
+					.collect::<Result<_, _>>()?,
+				..thread
+			})
+		},
+		None => None,
+	};
+	if let Some(ChatBranchPosition { index, count }) = meta.branch {
+		if !(1..=CHAT_BRANCHES_MAX).contains(&count) {
+			return Err(ChatFieldError::OutOfRange {
+				field: "branch.count",
+				min: 1,
+				max: CHAT_BRANCHES_MAX.into(),
+			});
+		}
+		if !(1..=count).contains(&index) {
+			return Err(ChatFieldError::OutOfRange {
+				field: "branch.index",
+				min: 1,
+				max: count.into(),
+			});
+		}
+	}
+	Ok(ChatMessageMeta { thread, ..meta })
+}
+
+/// Validate the call of a room.
+pub fn validate_chat_room_call(call: ChatRoomCall) -> Result<ChatRoomCall, ChatFieldError> {
+	let call_id = |id: &str| normalize_chat_identifier("callId", id);
+	Ok(match call {
+		ChatRoomCall::Ringing { call_id: id, video, caller } => ChatRoomCall::Ringing {
+			call_id: call_id(&id)?,
+			video,
+			caller: caller
+				.map(|caller| normalize_chat_identifier("caller", &caller))
+				.transpose()?,
+		},
+		ChatRoomCall::Active { call_id: id, video, started_at, media_session } => {
+			ChatRoomCall::Active { call_id: call_id(&id)?, video, started_at, media_session }
+		},
+	})
+}
+
+/// Validate an event a host reports about a room.
+pub fn validate_chat_room_event(event: ChatRoomEvent) -> Result<ChatRoomEvent, ChatFieldError> {
+	let call_id = |id: &str| normalize_chat_identifier("callId", id);
+	Ok(match event {
+		ChatRoomEvent::Woken { watch_id } => {
+			ChatRoomEvent::Woken { watch_id: normalize_chat_identifier("watchId", &watch_id)? }
+		},
+		ChatRoomEvent::CallAnswered { call_id: id, accept } => {
+			ChatRoomEvent::CallAnswered { call_id: call_id(&id)?, accept }
+		},
+		ChatRoomEvent::CallOpened { call_id: id } => {
+			ChatRoomEvent::CallOpened { call_id: call_id(&id)? }
+		},
+		ChatRoomEvent::CallEnded { call_id: id } => {
+			ChatRoomEvent::CallEnded { call_id: call_id(&id)? }
+		},
+		ChatRoomEvent::BranchSelected { message_id, index } => {
+			if !(1..=CHAT_BRANCHES_MAX).contains(&index) {
+				return Err(ChatFieldError::OutOfRange {
+					field: "index",
+					min: 1,
+					max: CHAT_BRANCHES_MAX.into(),
+				});
+			}
+			ChatRoomEvent::BranchSelected {
+				message_id: normalize_chat_identifier("messageId", &message_id)?,
+				index,
+			}
+		},
+		event @ (ChatRoomEvent::UserStateChanged { .. } | ChatRoomEvent::CallRequested { .. }) => {
+			event
+		},
+	})
+}
+
+/// Validate a search a host asks a product.
+pub fn validate_chat_search_query(
+	request: ProductChatSearchQueryRequest,
+) -> Result<ProductChatSearchQueryRequest, ChatFieldError> {
+	let text = normalize_chat_text("text", &request.text)?;
+	if text.is_empty() {
+		return Err(ChatFieldError::Empty { field: "text" });
+	}
+	Ok(ProductChatSearchQueryRequest {
+		room_id: normalize_chat_identifier("roomId", &request.room_id)?,
+		text,
+		cursor: request
+			.cursor
+			.map(|cursor| validate_chat_cursor("cursor", cursor))
+			.transpose()?,
+		page_size: check_chat_page_size(request.page_size, CHAT_SEARCH_PAGE_MAX)?,
+	})
+}
+
+/// Validate the matches a product answers for a search of `page_size`.
+pub fn validate_chat_search_answer(
+	answer: ProductChatSearchQueryItem,
+	page_size: u32,
+) -> Result<ProductChatSearchQueryItem, ChatFieldError> {
+	check_chat_count("hits", &answer.hits, page_size as usize)?;
+	Ok(ProductChatSearchQueryItem {
+		hits: answer.hits.into_iter().map(validate_chat_message).collect::<Result<_, _>>()?,
+		next: answer.next.map(|next| validate_chat_cursor("next", next)).transpose()?,
+	})
+}
 
 /// Validate a resource the host draws as an avatar, an icon or a badge: a
 /// raster image of at most [`CHAT_ICON_MAX_BYTES`], or a preimage key.
@@ -4465,6 +4699,122 @@ pub trait ChatPlatform: Send + Sync {
 		_request: HostChatSetRoomActivityRequest,
 	) -> Result<(), GenericError> {
 		Err(chat_method_not_served("setChatRoomActivity"))
+	}
+
+	/// The names of the Chat features this host serves from end to end, from
+	/// [`CHAT_FEATURE_NAMES`]. The core removes each name it cannot back and
+	/// each name it does not know. A host that lists nothing serves the
+	/// features of Chat Extension v2 only.
+	async fn chat_capabilities(
+		&self,
+		_product: &ProductContext,
+	) -> Result<ChatFeatureNames, GenericError> {
+		Ok(ChatFeatureNames::default())
+	}
+
+	/// The optional features the product last declared for a room, or the
+	/// default features when it declared none.
+	async fn read_chat_room_features(
+		&self,
+		_product: &ProductContext,
+		_room_id: String,
+	) -> Result<ChatRoomFeatures, GenericError> {
+		Ok(ChatRoomFeatures::default())
+	}
+
+	/// Replace the optional features of a room whole and keep them across
+	/// restarts. The host keeps a feature it does not serve, so that a later
+	/// build of the host applies it. The core has already checked the product
+	/// hosts the room, and the thread parent.
+	async fn set_chat_room_features(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomFeaturesRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomFeatures"))
+	}
+
+	/// Replace the meta of one message and keep it in both room modes. For a
+	/// room that keeps its messages in the product, the host keeps the meta of
+	/// the newest [`CHAT_META_KEPT_MAX`] messages and applies the meta of a
+	/// message it does not show when the message arrives. For a room the host
+	/// stores, a message the room does not hold answers `UnknownMessage`.
+	async fn set_chat_message_meta(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetMessageMetaRequest,
+	) -> Result<(), HostChatUpdateFeedError> {
+		Err(HostChatUpdateFeedError::Unknown {
+			reason: chat_method_not_served("setChatMessageMeta").reason,
+		})
+	}
+
+	/// Show, change or remove the call of a room. The core has already
+	/// checked that the host serves the call.
+	async fn set_chat_room_call(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomCallRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomCall"))
+	}
+
+	/// The mute and archive state of each room of the product that the user
+	/// muted or archived. The core sends it to a product when its
+	/// `room_events_subscribe` starts.
+	async fn read_chat_room_user_states(
+		&self,
+		_product: &ProductContext,
+	) -> Result<ChatRoomUserStates, GenericError> {
+		Ok(ChatRoomUserStates { rooms: Vec::new() })
+	}
+
+	/// The bot ids of the personas the product registered.
+	async fn read_chat_bots(&self, _product: &ProductContext) -> Result<ChatBotIds, GenericError> {
+		Ok(ChatBotIds::default())
+	}
+}
+
+/// The mute and archive state the user gave one room of a product.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ChatRoomUserState {
+	/// The room.
+	pub room_id: String,
+	/// Milliseconds since the Unix epoch when the mute ends. `u64::MAX` mutes
+	/// the room with no end. `None`: the room is not muted.
+	pub muted_until: Option<u64>,
+	/// The room is in the archive of the user.
+	pub archived: bool,
+}
+
+/// The Chat feature names a host lists.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
+pub struct ChatFeatureNames {
+	/// Names from [`CHAT_FEATURE_NAMES`].
+	pub names: Vec<String>,
+}
+
+/// The bot ids of the personas of a product.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
+pub struct ChatBotIds {
+	/// One bot id for each persona.
+	pub bot_ids: Vec<String>,
+}
+
+/// The mute and archive state of each room of a product that the user muted
+/// or archived.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
+pub struct ChatRoomUserStates {
+	/// One entry for each such room.
+	pub rooms: Vec<ChatRoomUserState>,
+}
+
+impl ChatRoomUserState {
+	/// Whether the room is muted at `now_ms`, milliseconds since the Unix
+	/// epoch.
+	pub fn muted_at(&self, now_ms: u64) -> bool {
+		self.muted_until.is_some_and(|until| until > now_ms)
 	}
 }
 

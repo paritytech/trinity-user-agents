@@ -27,6 +27,7 @@ import {
 
 import type {
   ChatRoomConfig,
+  ChatRoomFeatures,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -36,9 +37,12 @@ import type {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetMessageMetaRequest,
   HostChatSetRoomActivityRequest,
+  HostChatSetRoomCallRequest,
   HostChatSetRoomCommandsRequest,
   HostChatSetRoomConfigRequest,
+  HostChatSetRoomFeaturesRequest,
   HostChatSetRoomFooterRequest,
   HostChatSetRoomMetadataRequest,
   HostChatSetRoomPreviewRequest,
@@ -132,6 +136,58 @@ export type AuthState =
    * in-progress presentation until a terminal state is emitted.
    */
   | { tag: "Authenticating"; value?: undefined };
+
+/**
+ * The bot ids of the personas of a product.
+ */
+export interface ChatBotIds {
+  /**
+   * One bot id for each persona.
+   */
+  botIds: Array<string>;
+}
+
+/**
+ * The Chat feature names a host lists.
+ */
+export interface ChatFeatureNames {
+  /**
+   * Names from `CHAT_FEATURE_NAMES`.
+   */
+  names: Array<string>;
+}
+
+/**
+ * The mute and archive state the user gave one room of a product.
+ */
+export interface ChatRoomUserState {
+  /**
+   * The room.
+   */
+  roomId: string;
+
+  /**
+   * Milliseconds since the Unix epoch when the mute ends. `u64::MAX` mutes
+   * the room with no end. ``undefined``: the room is not muted.
+   */
+  mutedUntil?: bigint;
+
+  /**
+   * The room is in the archive of the user.
+   */
+  archived: boolean;
+}
+
+/**
+ * The mute and archive state of each room of a product that the user muted
+ * or archived.
+ */
+export interface ChatRoomUserStates {
+  /**
+   * One entry for each such room.
+   */
+  rooms: Array<ChatRoomUserState>;
+}
 
 /**
  * Core-owned host-private storage slots. Products never address these slots;
@@ -771,6 +827,45 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
 );
 
 /**
+ * The bot ids of the personas of a product.
+ */
+export const ChatBotIds: S.Codec<ChatBotIds> = S.lazy(
+  (): S.Codec<ChatBotIds> =>
+    S.Struct({ botIds: S.Vector(S.str) }) as S.Codec<ChatBotIds>,
+);
+
+/**
+ * The Chat feature names a host lists.
+ */
+export const ChatFeatureNames: S.Codec<ChatFeatureNames> = S.lazy(
+  (): S.Codec<ChatFeatureNames> =>
+    S.Struct({ names: S.Vector(S.str) }) as S.Codec<ChatFeatureNames>,
+);
+
+/**
+ * The mute and archive state the user gave one room of a product.
+ */
+export const ChatRoomUserState: S.Codec<ChatRoomUserState> = S.lazy(
+  (): S.Codec<ChatRoomUserState> =>
+    S.Struct({
+      roomId: S.str,
+      mutedUntil: S.Option(S.u64),
+      archived: S.bool,
+    }) as S.Codec<ChatRoomUserState>,
+);
+
+/**
+ * The mute and archive state of each room of a product that the user muted
+ * or archived.
+ */
+export const ChatRoomUserStates: S.Codec<ChatRoomUserStates> = S.lazy(
+  (): S.Codec<ChatRoomUserStates> =>
+    S.Struct({
+      rooms: S.Vector(ChatRoomUserState),
+    }) as S.Codec<ChatRoomUserStates>,
+);
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -1403,6 +1498,67 @@ export interface ChatPlatform {
     product: ProductContext,
     request: HostChatSetRoomActivityRequest,
   ): Promise<void>;
+
+  /**
+   * The names of the Chat features this host serves from end to end, from
+   * `CHAT_FEATURE_NAMES`. The core removes each name it cannot back and
+   * each name it does not know. A host that lists nothing serves the
+   * features of Chat Extension v2 only.
+   */
+  chatCapabilities?(product: ProductContext): Promise<ChatFeatureNames>;
+
+  /**
+   * The optional features the product last declared for a room, or the
+   * default features when it declared none.
+   */
+  readChatRoomFeatures?(
+    product: ProductContext,
+    roomId: string,
+  ): Promise<ChatRoomFeatures>;
+
+  /**
+   * Replace the optional features of a room whole and keep them across
+   * restarts. The host keeps a feature it does not serve, so that a later
+   * build of the host applies it. The core has already checked the product
+   * hosts the room, and the thread parent.
+   */
+  setChatRoomFeatures?(
+    product: ProductContext,
+    request: HostChatSetRoomFeaturesRequest,
+  ): Promise<void>;
+
+  /**
+   * Replace the meta of one message and keep it in both room modes. For a
+   * room that keeps its messages in the product, the host keeps the meta of
+   * the newest `CHAT_META_KEPT_MAX` messages and applies the meta of a
+   * message it does not show when the message arrives. For a room the host
+   * stores, a message the room does not hold answers `UnknownMessage`.
+   */
+  setChatMessageMeta?(
+    product: ProductContext,
+    request: HostChatSetMessageMetaRequest,
+  ): Promise<void>;
+
+  /**
+   * Show, change or remove the call of a room. The core has already
+   * checked that the host serves the call.
+   */
+  setChatRoomCall?(
+    product: ProductContext,
+    request: HostChatSetRoomCallRequest,
+  ): Promise<void>;
+
+  /**
+   * The mute and archive state of each room of the product that the user
+   * muted or archived. The core sends it to a product when its
+   * `room_events_subscribe` starts.
+   */
+  readChatRoomUserStates?(product: ProductContext): Promise<ChatRoomUserStates>;
+
+  /**
+   * The bot ids of the personas the product registered.
+   */
+  readChatBots?(product: ProductContext): Promise<ChatBotIds>;
 }
 
 /**

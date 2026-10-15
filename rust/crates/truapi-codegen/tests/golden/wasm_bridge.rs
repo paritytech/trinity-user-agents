@@ -43,6 +43,13 @@ pub struct JsBridge {
     pub set_chat_room_suggestions: Function,
     pub set_chat_room_commands: Function,
     pub set_chat_room_activity: Function,
+    pub chat_capabilities: Function,
+    pub read_chat_room_features: Function,
+    pub set_chat_room_features: Function,
+    pub set_chat_message_meta: Function,
+    pub set_chat_room_call: Function,
+    pub read_chat_room_user_states: Function,
+    pub read_chat_bots: Function,
     pub contacts: Function,
     pub pick_contact: Function,
     pub read_core_storage: Function,
@@ -115,6 +122,20 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("setChatRoomCommands")),
             set_chat_room_activity: get_optional_function(callbacks, "setChatRoomActivity")?
                 .unwrap_or_else(|| missing_callback("setChatRoomActivity")),
+            chat_capabilities: get_optional_function(callbacks, "chatCapabilities")?
+                .unwrap_or_else(|| missing_callback("chatCapabilities")),
+            read_chat_room_features: get_optional_function(callbacks, "readChatRoomFeatures")?
+                .unwrap_or_else(|| missing_callback("readChatRoomFeatures")),
+            set_chat_room_features: get_optional_function(callbacks, "setChatRoomFeatures")?
+                .unwrap_or_else(|| missing_callback("setChatRoomFeatures")),
+            set_chat_message_meta: get_optional_function(callbacks, "setChatMessageMeta")?
+                .unwrap_or_else(|| missing_callback("setChatMessageMeta")),
+            set_chat_room_call: get_optional_function(callbacks, "setChatRoomCall")?
+                .unwrap_or_else(|| missing_callback("setChatRoomCall")),
+            read_chat_room_user_states: get_optional_function(callbacks, "readChatRoomUserStates")?
+                .unwrap_or_else(|| missing_callback("readChatRoomUserStates")),
+            read_chat_bots: get_optional_function(callbacks, "readChatBots")?
+                .unwrap_or_else(|| missing_callback("readChatBots")),
             contacts: get_optional_function(callbacks, "contacts")?
                 .unwrap_or_else(|| missing_callback("contacts")),
             pick_contact: get_optional_function(callbacks, "pickContact")?
@@ -166,7 +187,14 @@ impl JsBridge {
                 && get_optional_function(callbacks, "setChatRoomToolbar")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomSuggestions")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomCommands")?.is_some()
-                && get_optional_function(callbacks, "setChatRoomActivity")?.is_some(),
+                && get_optional_function(callbacks, "setChatRoomActivity")?.is_some()
+                && get_optional_function(callbacks, "chatCapabilities")?.is_some()
+                && get_optional_function(callbacks, "readChatRoomFeatures")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomFeatures")?.is_some()
+                && get_optional_function(callbacks, "setChatMessageMeta")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomCall")?.is_some()
+                && get_optional_function(callbacks, "readChatRoomUserStates")?.is_some()
+                && get_optional_function(callbacks, "readChatBots")?.is_some(),
             contacts_present: get_optional_function(callbacks, "contacts")?.is_some()
                 && get_optional_function(callbacks, "pickContact")?.is_some(),
             game_present: get_optional_function(callbacks, "scheduleGameReminder")?.is_some()
@@ -477,6 +505,123 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         )
         .await
         .map_err(generic)
+    }
+
+    async fn chat_capabilities(
+        &self,
+        _product: &crate::platform::ProductContext,
+    ) -> Result<crate::platform::ChatFeatureNames, latest::GenericError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.chat_capabilities,
+            vec![Uint8Array::from(_product.encode().as_slice()).into()],
+        )
+        .await
+        .map_err(generic)?;
+        decode_bytes::<crate::platform::ChatFeatureNames>(
+            bytes,
+            "chatCapabilities response did not decode",
+        )
+        .map_err(generic)
+    }
+
+    async fn read_chat_room_features(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _room_id: String,
+    ) -> Result<latest::ChatRoomFeatures, latest::GenericError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.read_chat_room_features,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                JsValue::from_str(&_room_id),
+            ],
+        )
+        .await
+        .map_err(generic)?;
+        decode_bytes::<latest::ChatRoomFeatures>(
+            bytes,
+            "readChatRoomFeatures response did not decode",
+        )
+        .map_err(generic)
+    }
+
+    async fn set_chat_room_features(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetRoomFeaturesRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_features,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn set_chat_message_meta(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetMessageMetaRequest,
+    ) -> Result<(), latest::HostChatUpdateFeedError> {
+        invoke_unit(
+            &self.bridge.set_chat_message_meta,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(|reason| latest::HostChatUpdateFeedError::Unknown { reason })
+    }
+
+    async fn set_chat_room_call(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetRoomCallRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_call,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn read_chat_room_user_states(
+        &self,
+        _product: &crate::platform::ProductContext,
+    ) -> Result<crate::platform::ChatRoomUserStates, latest::GenericError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.read_chat_room_user_states,
+            vec![Uint8Array::from(_product.encode().as_slice()).into()],
+        )
+        .await
+        .map_err(generic)?;
+        decode_bytes::<crate::platform::ChatRoomUserStates>(
+            bytes,
+            "readChatRoomUserStates response did not decode",
+        )
+        .map_err(generic)
+    }
+
+    async fn read_chat_bots(
+        &self,
+        _product: &crate::platform::ProductContext,
+    ) -> Result<crate::platform::ChatBotIds, latest::GenericError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.read_chat_bots,
+            vec![Uint8Array::from(_product.encode().as_slice()).into()],
+        )
+        .await
+        .map_err(generic)?;
+        decode_bytes::<crate::platform::ChatBotIds>(bytes, "readChatBots response did not decode")
+            .map_err(generic)
     }
 }
 

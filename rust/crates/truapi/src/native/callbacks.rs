@@ -352,6 +352,55 @@ pub trait NativeChatCallbacks: Send + Sync {
 		room_id: String,
 		activity: Option<truapi::latest::ChatActivity>,
 	) -> Result<(), HostRejection>;
+
+	/// The names of the Chat features this host serves from end to end, from
+	/// [`CHAT_FEATURE_NAMES`]. The core removes each name it cannot back. A
+	/// host that lists nothing serves the features of Chat Extension v2 only.
+	///
+	/// [`CHAT_FEATURE_NAMES`]: crate::platform::CHAT_FEATURE_NAMES
+	async fn capabilities(&self) -> Result<Vec<String>, HostRejection>;
+
+	/// Return the optional features the product last declared for a room, or
+	/// the default features when it declared none.
+	async fn room_features(
+		&self,
+		room_id: String,
+	) -> Result<truapi::latest::ChatRoomFeatures, HostRejection>;
+
+	/// Replace the optional features of a room whole, and keep them across
+	/// restarts. Keep a feature this host does not serve, so that a later
+	/// build applies it.
+	async fn set_room_features(
+		&self,
+		room_id: String,
+		features: truapi::latest::ChatRoomFeatures,
+	) -> Result<(), HostRejection>;
+
+	/// Replace the thread summary, the branch position and the reasoning flag
+	/// of one message, and keep them in both room modes. In a room the host
+	/// stores, a message the room does not hold answers `UnknownMessage`.
+	async fn set_message_meta(
+		&self,
+		room_id: String,
+		message_id: String,
+		meta: truapi::latest::ChatMessageMeta,
+	) -> Result<(), NativeChatFeedRejection>;
+
+	/// Show or change the call of a room, or remove it with `None`.
+	async fn set_room_call(
+		&self,
+		room_id: String,
+		call: Option<truapi::latest::ChatRoomCall>,
+	) -> Result<(), HostRejection>;
+
+	/// Return the state of each room of the product that the user muted or
+	/// archived.
+	async fn room_user_states(
+		&self,
+	) -> Result<Vec<crate::platform::ChatRoomUserState>, HostRejection>;
+
+	/// Return the bot ids of the personas the product registered.
+	async fn bots(&self) -> Result<Vec<String>, HostRejection>;
 }
 
 /// Native Pocket collection adapter. Hosts with a Pocket surface pass an

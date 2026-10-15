@@ -26,6 +26,13 @@ export const CALLBACK_NAMES = [
   "setChatRoomSuggestions",
   "setChatRoomCommands",
   "setChatRoomActivity",
+  "chatCapabilities",
+  "readChatRoomFeatures",
+  "setChatRoomFeatures",
+  "setChatMessageMeta",
+  "setChatRoomCall",
+  "readChatRoomUserStates",
+  "readChatBots",
   "contacts",
   "pickContact",
   "readCoreStorage",
@@ -218,6 +225,13 @@ function chatRawCallbacks(
     | "setChatRoomSuggestions"
     | "setChatRoomCommands"
     | "setChatRoomActivity"
+    | "chatCapabilities"
+    | "readChatRoomFeatures"
+    | "setChatRoomFeatures"
+    | "setChatMessageMeta"
+    | "setChatRoomCall"
+    | "readChatRoomUserStates"
+    | "readChatBots"
   >
 > {
   return {
@@ -300,6 +314,38 @@ function chatRawCallbacks(
         product,
         request,
       ]) as ReturnType<Required<RawCallbacks>["setChatRoomActivity"]>,
+    chatCapabilities: (product) =>
+      bridge.callbackRequest("chatCapabilities", [product]) as ReturnType<
+        Required<RawCallbacks>["chatCapabilities"]
+      >,
+    readChatRoomFeatures: (product, roomId) =>
+      bridge.callbackRequest("readChatRoomFeatures", [
+        product,
+        roomId,
+      ]) as ReturnType<Required<RawCallbacks>["readChatRoomFeatures"]>,
+    setChatRoomFeatures: (product, request) =>
+      bridge.callbackRequest("setChatRoomFeatures", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomFeatures"]>,
+    setChatMessageMeta: (product, request) =>
+      bridge.callbackRequest("setChatMessageMeta", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatMessageMeta"]>,
+    setChatRoomCall: (product, request) =>
+      bridge.callbackRequest("setChatRoomCall", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomCall"]>,
+    readChatRoomUserStates: (product) =>
+      bridge.callbackRequest("readChatRoomUserStates", [product]) as ReturnType<
+        Required<RawCallbacks>["readChatRoomUserStates"]
+      >,
+    readChatBots: (product) =>
+      bridge.callbackRequest("readChatBots", [product]) as ReturnType<
+        Required<RawCallbacks>["readChatBots"]
+      >,
   };
 }
 

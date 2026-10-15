@@ -890,6 +890,10 @@ pub use runtime::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit,
 };
+#[cfg(feature = "runtime")]
+pub use runtime::{
+	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_WAKE_HOLD_MS, ChatWakeOutcome, ChatWakeReason,
+};
 
 #[cfg(feature = "runtime")]
 #[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]

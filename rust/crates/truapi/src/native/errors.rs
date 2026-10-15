@@ -41,6 +41,35 @@ pub enum NativeChatFeedRejection {
 	},
 }
 
+/// Why the core did not stage a chat attachment as a preimage.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+pub enum NativeChatStageRejection {
+	/// The room does not declare `preimage_attachments`.
+	#[error("the room does not declare preimage attachments")]
+	NotDeclared,
+	/// The attachment is larger than the core stages.
+	#[error("the attachment is larger than {max_bytes} bytes")]
+	TooLarge {
+		/// The largest attachment the core stages, in bytes.
+		max_bytes: u32,
+	},
+	/// The user refused `PreimageSubmit` for the product.
+	#[error("the user refused preimage submission for the product")]
+	PermissionDenied,
+	/// No Bulletin allowance is available for the product.
+	#[error("no Bulletin allowance for the product: {reason}")]
+	AllowanceUnavailable {
+		/// Human-readable reason.
+		reason: String,
+	},
+	/// The submission failed.
+	#[error("the preimage submission failed: {reason}")]
+	SubmitFailed {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
 impl From<NativeChatFeedRejection> for truapi::latest::HostChatUpdateFeedError {
 	fn from(rejection: NativeChatFeedRejection) -> Self {
 		match rejection {

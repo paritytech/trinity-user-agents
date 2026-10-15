@@ -4,7 +4,7 @@
 //! and signing hosts. Pairing state, signing state, active sessions, and role
 //! controls live on the concrete role objects.
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::{
 	collections::VecDeque,
 	sync::{Arc, Mutex, OnceLock},
@@ -99,6 +99,10 @@ pub struct RuntimeServices {
 	pub worker_ledger: WorkerLedger,
 	/// Call budgets of every product chat room.
 	pub chat_rate_limits: crate::runtime::chat::ChatRateLimits,
+	/// Room events of each product, kept until the product subscribes.
+	pub chat_room_events: crate::runtime::ChatRoomEventHub,
+	/// Wake holds of each product.
+	pub chat_wakes: crate::runtime::ChatWakes,
 	/// Shared chainHead-v1 runtime behind the Chain surface.
 	pub chain: ChainRuntime,
 	/// People-chain statement store RPC client.
@@ -126,6 +130,9 @@ pub struct RuntimeServices {
 	/// persist it, leaving peers addressing an overwritten key.
 	device_encryption_key: futures::lock::Mutex<()>,
 	next_core_instance: AtomicU64,
+	/// The id of the next notification the core silences, counted down from
+	/// `u32::MAX`, far from the ids a host gives.
+	next_silenced_notification: AtomicU32,
 }
 
 impl RuntimeServices {
@@ -178,6 +185,8 @@ impl RuntimeServices {
 			asset_hub_chain_genesis_hash,
 			worker_ledger: WorkerLedger::default(),
 			chat_rate_limits: Default::default(),
+			chat_room_events: Default::default(),
+			chat_wakes: Default::default(),
 			chain,
 			statement_store,
 			bulletin,
@@ -189,6 +198,7 @@ impl RuntimeServices {
 			spawner,
 			device_encryption_key: futures::lock::Mutex::new(()),
 			next_core_instance: AtomicU64::new(1),
+			next_silenced_notification: AtomicU32::new(u32::MAX),
 		})
 	}
 
@@ -414,6 +424,12 @@ impl RuntimeServices {
 	/// operation ids within the shared host runtime.
 	pub fn next_core_instance(&self) -> u64 {
 		self.next_core_instance.fetch_add(1, Ordering::Relaxed)
+	}
+
+	/// Give a fresh id to a notification the core silences, so that the
+	/// product cannot tell it from a notification the host shows.
+	pub fn next_silenced_notification_id(&self) -> u32 {
+		self.next_silenced_notification.fetch_sub(1, Ordering::Relaxed)
 	}
 
 	/// Store a preimage value under its key for later lookup hits.

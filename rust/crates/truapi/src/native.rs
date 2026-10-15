@@ -46,8 +46,8 @@ pub use chat_query::{
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
-	HostRejection, NativeChatFeedRejection, NativeChatFieldError, NativeCoreDatabaseError,
-	NativeRendererError,
+	HostRejection, NativeChatFeedRejection, NativeChatFieldError, NativeChatStageRejection,
+	NativeCoreDatabaseError, NativeRendererError,
 };
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
