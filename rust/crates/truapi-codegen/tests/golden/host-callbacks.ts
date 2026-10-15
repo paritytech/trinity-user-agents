@@ -352,6 +352,12 @@ export interface FundingPresentation {
  */
 export interface FundingQuoteList {
   /**
+   * The request this list answers, as `request_funding_quotes` returned
+   * it. A host shows only the lists of its latest request.
+   */
+  requestId: bigint;
+
+  /**
    * One row per provider asked, in the host's provider order.
    */
   rows: Array<FundingQuoteRow>;
@@ -1031,6 +1037,7 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
 export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
   (): S.Codec<FundingQuoteList> =>
     S.Struct({
+      requestId: S.u64,
       rows: S.Vector(FundingQuoteRow),
       best: S.Option(S.str),
       refreshAtMs: S.u64,

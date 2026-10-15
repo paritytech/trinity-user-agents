@@ -137,17 +137,26 @@ struct FundingQuote {
     network_fee: u128,
     eta_secs: Option<u64>,
     expires_at: Option<u64>,
+    asset_decimals: u8,                      // decimals of the ask's asset, so the host shows its amounts
 }
 ```
 
 An ask unanswered after 10 seconds shows as timed out. An answer is reused for 30 seconds. The host's list marks the
-best quote, the least to pay inbound or the most to receive outbound, and the host selects it until the user picks
-another. While the user has not chosen, the core asks every provider again each minute.
+best quote among providers a session can be handed to, the least to pay inbound or the most to receive outbound, and
+the host selects it until the user picks another. While the user has not chosen, the core asks every provider again
+each minute. Each request for quotes has an id that every list it produces carries. A list stops at once, mid round
+too, when the session is handed to a provider or ends, the host asks again, or the host stops it, so a late answer
+for an amount the user already changed never reaches the host.
 
 Until the user picks a country, an ask carries the one the host detects without asking for a permission: the device's
-coarse location if already permitted, then its SIM or network country, then its locale's region. What answers show about a
-provider, served or refused for a country the ask named, is kept for 12 hours and folded into its manifest's routes
-while that manifest serves Funding. Quotes are asked of, and a session can be handed to, exactly the providers whose
+coarse location if already permitted, then its SIM or network country, then its locale's region. Only an ISO 3166-1
+alpha-2 code counts; a detection is reused for an hour, and one that found none is tried again after a minute. What
+answers show about a provider, served or refused for a country the ask named, is kept for 12 hours and folded into
+its manifest's routes while that manifest serves Funding. A minimum or maximum a refusal showed is kept by provider,
+rail, asset, network and country, for 12 hours from that refusal: a later quote does not renew it, and a quote at an
+amount the limit rules out clears it. The core combines them into the range a session can take across every
+provider, the smallest minimum and the largest maximum, with no bound while any provider has not shown one; the
+host's own floor applies on top. Quotes are asked of, and a session can be handed to, exactly the providers whose
 manifest serves Funding, whatever routes it declares: one still waiting for its manifest, or whose manifest is withdrawn
 or stops serving Funding, is neither asked nor chosen.
 
@@ -239,7 +248,8 @@ after the payout and any refund.
 - **A failed payout is refunded.** The user's CASH left with the release, so a provider whose payout failed gives it
   back with a top-up it names in `Refunding`. The core follows its claims and keeps what they returned beside the
   `Released` outcome. The provider keeps the session until it has reported the payout and any refund, whether or not
-  the host recorded it, and nothing expires it meanwhile.
+  the host recorded it, and nothing expires it meanwhile. A provider that never reports its payout therefore holds the
+  session, and its worker, for good.
 - **Funds moving locks the session.** Once a top-up or payment request is named, the provider can no longer fail the
   session, the user can no longer cancel it and nothing expires it.
 - **Cancel** ends a session no provider serves and asks the assigned provider otherwise. Asked again before the
@@ -272,7 +282,10 @@ The host app can be closed or crash at any point; a session carries on from its 
   On `Assigned` it resumes from `last_update` and `saved`, not from the start.
 - **What the host does.** It starts funding at launch when it has sessions in flight, rather than waiting for a
   product to need the core, and it keeps its own top-up and payment records across restarts so a claim in progress
-  carries on.
+  carries on. It learns whether sessions are in flight from `funding_in_progress`, which reads storage when funding
+  has not resumed yet, and asks again on each `funding_session_changed`.
+- **Stored sessions are versioned.** Their blob leads with a format number, and the core keeps reading every earlier
+  format, so an upgrade keeps the sessions in flight. A blob it cannot read is kept aside rather than overwritten.
 
 A worker keeps running while the user is elsewhere in the app. Running with the app in the background is out of
 scope for now.

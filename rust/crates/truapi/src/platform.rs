@@ -3262,6 +3262,9 @@ pub struct FundingPresentation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingQuoteList {
+	/// The request this list answers, as `request_funding_quotes` returned
+	/// it. A host shows only the lists of its latest request.
+	pub request_id: u64,
 	/// One row per provider asked, in the host's provider order.
 	pub rows: Vec<FundingQuoteRow>,
 	/// The provider whose quote is best for the user, which the host selects

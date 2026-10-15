@@ -79,6 +79,9 @@ pub struct FundingQuote {
 	pub eta_secs: Option<u64>,
 	/// When the provider stops honouring the quote, in Unix milliseconds.
 	pub expires_at: Option<u64>,
+	/// Decimals of the ask's asset, so the host shows its amounts without
+	/// knowing the asset.
+	pub asset_decimals: u8,
 }
 
 /// Why a provider will not price an ask.

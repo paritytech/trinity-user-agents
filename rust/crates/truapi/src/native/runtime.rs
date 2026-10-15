@@ -300,10 +300,12 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_progress(&intent)
 	}
 
-	/// Whether a provider still works on any funding session; the host keeps
-	/// the answer to start funding at its next launch.
-	pub fn funding_in_progress(&self) -> bool {
-		self.runtime.funding_in_progress()
+	/// Whether a provider still works on any funding session, read from
+	/// storage if funding has not resumed yet; the host keeps the answer to
+	/// start funding at its next launch, and asks again on each
+	/// `funding_session_changed`.
+	pub async fn funding_in_progress(&self) -> Result<bool, HostRejection> {
+		Ok(self.runtime.funding_in_progress().await?)
 	}
 
 	/// Every funding session the core keeps, in flight first, then ended,
@@ -411,6 +413,26 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_countries(&intent, rail, &asset)
 	}
 
+	/// The amounts funding session `intent` can take on `rail`, `asset`,
+	/// `network` and `country` across every provider, as their refusals
+	/// showed. The host's own product floor applies on top.
+	pub fn funding_amount_limits(
+		&self,
+		intent: String,
+		rail: v01::FundingRail,
+		asset: String,
+		network: Option<String>,
+		country: Option<String>,
+	) -> crate::host_logic::funding_providers::FundingAmountLimits {
+		self.runtime.funding_amount_limits(
+			&intent,
+			rail,
+			&asset,
+			network.as_deref(),
+			country.as_deref(),
+		)
+	}
+
 	/// The country quotes go by until the user picks one, as the host's
 	/// `detected_country` last answered.
 	pub async fn detected_funding_country(&self) -> Option<String> {
@@ -421,8 +443,10 @@ impl NativeTrUApiHostRuntime {
 	/// list arrives through `funding_quotes_changed`, and is asked for again
 	/// every minute until the session is handed to a provider or ends, the
 	/// host asks for another `ask`, or calls [`Self::stop_funding_quotes`].
-	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
-		self.runtime.request_funding_quotes(&intent, ask);
+	/// Returns the request id every list of this request carries, so the
+	/// host shows only the latest request's lists.
+	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) -> u64 {
+		self.runtime.request_funding_quotes(&intent, ask)
 	}
 
 	/// Stop asking again for session `intent`'s quotes, as when the user

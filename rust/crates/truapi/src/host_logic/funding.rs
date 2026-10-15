@@ -1156,7 +1156,7 @@ pub async fn store_sessions(
 #[cfg(test)]
 mod tests {
 	use super::{
-		stored::{ChoiceV3, SessionV1, SessionV2, SessionV3, UpdateRecordV2, UpdateV2},
+		stored::{ChoiceV3, QuoteV3, SessionV1, SessionV2, SessionV3, UpdateRecordV2, UpdateV2},
 		*,
 	};
 
@@ -1519,6 +1519,7 @@ mod tests {
 			network_fee: 0,
 			eta_secs: None,
 			expires_at: None,
+			asset_decimals: 2,
 		};
 		let choice = FundingChoice {
 			quote,
@@ -1546,6 +1547,7 @@ mod tests {
 			network_fee: 0,
 			eta_secs: None,
 			expires_at: None,
+			asset_decimals: 2,
 		};
 		let choice = FundingChoice { quote, rail, asset: "EUR".to_string(), network: None };
 		assert!(session.assign(PROVIDER, Some(choice), NOW));
@@ -2326,6 +2328,7 @@ mod tests {
 			network_fee: 0,
 			eta_secs: None,
 			expires_at: None,
+			asset_decimals: 2,
 		};
 		let failed = FundingUpdateRecord {
 			update: FundingUpdate::Failed {
@@ -2348,7 +2351,15 @@ mod tests {
 			updates: vec![failed.clone()],
 			started: Vec::new(),
 			choice: Some(ChoiceV3 {
-				quote: quote.clone(),
+				quote: QuoteV3 {
+					quote_id: quote.quote_id.clone(),
+					send_amount: quote.send_amount,
+					receive_amount: quote.receive_amount,
+					provider_fee: quote.provider_fee,
+					network_fee: quote.network_fee,
+					eta_secs: quote.eta_secs,
+					expires_at: quote.expires_at,
+				},
 				rail: FundingRail::Card,
 				asset: "EUR".to_string(),
 			}),

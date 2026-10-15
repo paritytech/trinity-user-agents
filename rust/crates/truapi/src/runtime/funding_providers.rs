@@ -31,8 +31,8 @@ use crate::{
 	host_logic::{
 		funding::FundingSessionError,
 		funding_providers::{
-			FundingCandidate, FundingCountry, FundingProviderEntry, FundingProviderOrigin,
-			LearnedSupport, country_support,
+			FundingAmountLimits, FundingCandidate, FundingCountry, FundingProviderEntry,
+			FundingProviderOrigin, LearnedSupport, LimitScope, amount_limits, country_support,
 		},
 		worker_manifest::WorkerManifest,
 	},
@@ -145,16 +145,20 @@ impl FundingProviders {
 	fn learn(&self, mut support: LearnedSupport) {
 		let mut learned = lock(&self.learned);
 		let now_ms = support.learned_at_ms;
-		// A quote says nothing about the limits, so the ones an earlier
-		// refusal of the same ask showed still stand.
 		if let Some(known) =
 			learned.iter().find(|known| known.is_fresh(now_ms) && known.same_ask(&support))
 		{
-			support.min = support.min.or(known.min);
-			support.max = support.max.or(known.max);
+			support.keep_limits_of(known);
 		}
 		learned.retain(|known| known.is_fresh(now_ms) && !known.same_ask(&support));
 		learned.push(support);
+	}
+
+	/// The amounts a session can take in `scope`, across every provider a
+	/// quote is asked of.
+	pub fn amount_limits(&self, scope: LimitScope<'_>) -> FundingAmountLimits {
+		let learned = lock(&self.learned).clone();
+		amount_limits(&self.quote_targets(), &learned, scope, current_unix_millis())
 	}
 
 	/// What the providers' manifests and recent quote answers say about each
@@ -544,32 +548,43 @@ mod tests {
 		);
 	}
 
-	// A quote says nothing about the limits, so a minimum an earlier refusal
-	// of the same ask showed survives the provider quoting it later.
+	// A limit stands on its own clock: a later quote does not renew it, and a
+	// quote at an amount below a known minimum shows that minimum is gone.
 	#[test]
-	fn a_later_quote_keeps_the_limit_a_refusal_showed() {
-		let providers = FundingProviders::default();
-		let ask = LearnedSupport {
+	fn a_limit_ages_on_its_own_and_a_lower_quote_clears_it() {
+		use crate::host_logic::funding_providers::{LEARNED_SUPPORT_TTL_MS, LearnedLimit};
+		let ask = |asked, min: Option<u128>, at_ms| LearnedSupport {
 			provider_id: "ramp.dot".to_string(),
 			direction: FundingDirection::In,
 			rail: truapi::latest::FundingRail::Card,
 			asset: "EUR".to_string(),
 			network: None,
 			country: None,
+			asked,
 			supported: true,
-			min: Some(10),
+			min: min.map(|amount| LearnedLimit { amount, learned_at_ms: at_ms }),
 			max: None,
-			learned_at_ms: 1_000,
+			learned_at_ms: at_ms,
 		};
-		providers.learn(ask.clone());
-		providers.learn(LearnedSupport { min: None, learned_at_ms: 2_000, ..ask });
-
-		assert_eq!(
+		let min_after = |answers: &[LearnedSupport]| {
+			let providers = FundingProviders::default();
+			for answer in answers {
+				providers.learn(answer.clone());
+			}
 			lock(&providers.learned)
 				.iter()
-				.map(|known| (known.min, known.learned_at_ms))
-				.collect::<Vec<_>>(),
-			vec![(Some(10), 2_000)]
+				.map(|known| known.min.map(|min| min.amount))
+				.collect::<Vec<_>>()
+		};
+		let later = LEARNED_SUPPORT_TTL_MS - 1;
+
+		assert_eq!(
+			(
+				min_after(&[ask(5, Some(10), 1_000), ask(20, None, 2_000)]),
+				min_after(&[ask(5, Some(10), 1_000), ask(8, None, 2_000)]),
+				min_after(&[ask(5, Some(10), 1_000), ask(20, None, 1_000 + later + 2)]),
+			),
+			(vec![Some(10)], vec![None], vec![None])
 		);
 	}
 

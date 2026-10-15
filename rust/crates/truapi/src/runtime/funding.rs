@@ -966,6 +966,15 @@ impl RuntimeServices {
 			.await
 	}
 
+	/// Whether a provider still works on any session, once the stored
+	/// sessions are loaded: a host asking at launch, before funding resumes,
+	/// gets the answer from storage rather than an empty registry.
+	pub async fn funding_in_progress(&self) -> Result<bool, FundingSessionError> {
+		let registry = self.funding();
+		registry.sweep(self.platform.as_ref(), current_unix_millis()).await?;
+		Ok(registry.in_progress())
+	}
+
 	/// Record that the host wrote ended session `intent` into its own
 	/// history. Returns whether it was ended and not yet acknowledged.
 	pub async fn acknowledge_funding_session(

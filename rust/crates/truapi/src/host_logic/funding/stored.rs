@@ -109,9 +109,32 @@ pub(super) struct SessionV3 {
 /// [`FundingChoice`] as stored in format 3, without a network.
 #[derive(Encode, Decode)]
 pub(super) struct ChoiceV3 {
-	pub(super) quote: FundingQuote,
+	pub(super) quote: QuoteV3,
 	pub(super) rail: FundingRail,
 	pub(super) asset: String,
+}
+
+/// [`FundingQuote`] as stored in format 3, before a quote carried its
+/// asset's decimals.
+#[derive(Clone, Encode, Decode)]
+pub(super) struct QuoteV3 {
+	pub(super) quote_id: String,
+	pub(super) send_amount: u128,
+	pub(super) receive_amount: u128,
+	pub(super) provider_fee: u128,
+	pub(super) network_fee: u128,
+	pub(super) eta_secs: Option<u64>,
+	pub(super) expires_at: Option<u64>,
+}
+
+/// Decimals a format 3 quote is read with, by its rail: card and bank quote
+/// fiat in cents, crypto the USDT and USDC that were quoted before quotes
+/// carried their decimals.
+fn quote_v3_decimals(rail: FundingRail) -> u8 {
+	match rail {
+		FundingRail::Card | FundingRail::Bank => 2,
+		FundingRail::Crypto => 6,
+	}
 }
 
 impl From<SessionV1> for FundingSession {
@@ -175,7 +198,16 @@ impl From<SessionV3> for FundingSession {
 			updates: session.updates,
 			started: session.started,
 			choice: session.choice.map(|choice| FundingChoice {
-				quote: choice.quote,
+				quote: FundingQuote {
+					quote_id: choice.quote.quote_id,
+					send_amount: choice.quote.send_amount,
+					receive_amount: choice.quote.receive_amount,
+					provider_fee: choice.quote.provider_fee,
+					network_fee: choice.quote.network_fee,
+					eta_secs: choice.quote.eta_secs,
+					expires_at: choice.quote.expires_at,
+					asset_decimals: quote_v3_decimals(choice.rail),
+				},
 				rail: choice.rail,
 				asset: choice.asset,
 				network: None,

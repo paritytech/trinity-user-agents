@@ -826,11 +826,13 @@ impl SigningHostRuntime {
 			.map(|session| session.progress(crate::unix_time::current_unix_millis()))
 	}
 
-	/// Whether a provider still works on any funding session. A host that
-	/// remembers it starts funding at its next launch, so the providers carry
-	/// on from their last checkpoint without waiting for a product.
-	pub fn funding_in_progress(&self) -> bool {
-		self.services.funding().in_progress()
+	/// Whether a provider still works on any funding session, read from
+	/// storage if funding has not resumed yet. A host that remembers it
+	/// starts funding at its next launch, so the providers carry on from
+	/// their last checkpoint without waiting for a product. Every change to
+	/// it comes with a `funding_session_changed`, so a host asks again there.
+	pub async fn funding_in_progress(&self) -> Result<bool, v01::GenericError> {
+		Ok(self.services.funding_in_progress().await?)
 	}
 
 	/// Every funding session the core keeps, in flight first, then ended,
@@ -904,6 +906,36 @@ impl SigningHostRuntime {
 			.unwrap_or_default()
 	}
 
+	/// The amounts funding session `intent` can take on `rail`, `asset`,
+	/// `network` and `country`, across every provider, as their refusals
+	/// showed: the bounds the host's amount screen enforces before quoting.
+	/// The host's own product floor applies on top. Unbounded for a session
+	/// the core does not know.
+	pub fn funding_amount_limits(
+		&self,
+		intent: &str,
+		rail: v01::FundingRail,
+		asset: &str,
+		network: Option<&str>,
+		country: Option<&str>,
+	) -> crate::host_logic::funding_providers::FundingAmountLimits {
+		self.services
+			.funding()
+			.get(intent)
+			.map(|session| {
+				self.services.funding_providers().amount_limits(
+					crate::host_logic::funding_providers::LimitScope {
+						direction: session.direction,
+						rail,
+						asset,
+						network,
+						country,
+					},
+				)
+			})
+			.unwrap_or_default()
+	}
+
 	/// The country the host detected for the user, which quotes go by until
 	/// the user picks one.
 	pub async fn detected_funding_country(&self) -> Option<String> {
@@ -925,9 +957,11 @@ impl SigningHostRuntime {
 	/// through [`FundingPlatform::funding_quotes_changed`]: every provider is
 	/// asked again at the list's `refresh_at_ms` until the session is handed
 	/// to a provider or ends, the host asks for another `ask`, or calls
-	/// [`Self::stop_funding_quotes`].
-	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) {
-		let lists = self.services.watch_funding_quotes(intent, ask);
+	/// [`Self::stop_funding_quotes`]. Returns the request id each list
+	/// carries; once any of those happens, no list of this request arrives
+	/// any more.
+	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) -> u64 {
+		let (request_id, lists) = self.services.watch_funding_quotes(intent, ask);
 		let platform = self.services.funding().platform();
 		let intent = intent.to_string();
 		(self.services.spawner)(Box::pin(async move {
@@ -939,6 +973,7 @@ impl SigningHostRuntime {
 				platform.funding_quotes_changed(intent.clone(), list);
 			}
 		}));
+		request_id
 	}
 
 	/// Stop asking again for funding session `intent`'s quotes.

@@ -8452,6 +8452,39 @@ fn wait_for_stage(
 	None
 }
 
+// A host asks whether funding is in progress at launch, before funding
+// resumes; the answer comes from storage, not from the empty registry.
+#[test]
+fn funding_in_progress_reads_storage_before_funding_resumes() {
+	let storage = stub_platform();
+	let before = funding_services_over(storage.clone());
+	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(before.open_funding(
+		None,
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot", None))
+			.expect("selected")
+	);
+
+	let relaunched = funding_services_over(storage.clone());
+
+	assert_eq!(
+		(
+			relaunched.funding().in_progress(),
+			futures::executor::block_on(relaunched.funding_in_progress()),
+		),
+		(false, Ok(true))
+	);
+}
+
 // The provider's worker takes a session from assignment to delivered, and a
 // restart in between loses nothing: the restarted worker is handed the
 // session again with its last step and the state it saved, and the host
@@ -8759,6 +8792,7 @@ fn card_quote(quote_id: &str) -> v01::FundingQuote {
 		network_fee: 5,
 		eta_secs: Some(60),
 		expires_at: None,
+		asset_decimals: 2,
 	}
 }
 
@@ -8948,7 +8982,7 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 		v01::FundingQuote { send_amount: 1_010, ..card_quote("q2") },
 	);
 	use crate::platform::FundingQuoteState;
-	let mut lists = services.watch_funding_quotes_within(
+	let (_, mut lists) = services.watch_funding_quotes_within(
 		&intent,
 		card_ask(None),
 		Duration::from_secs(5),
@@ -8983,6 +9017,47 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 			after_choice,
 		),
 		(vec!["ramp.dot", "cheap.dot"], Some("cheap.dot"), Some("cheap.dot"), true, 0)
+	);
+}
+
+// Each request's lists carry its id, and a request the host replaced stops
+// at once, mid round too: a late answer for an amount the user already
+// changed never reaches the host.
+#[test]
+fn a_replaced_quote_request_stops_mid_round() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent =
+		futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, None))
+			.expect("opened")
+			.intent;
+	let (first_id, mut first) = services.watch_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_secs(60),
+	);
+	let shown = futures::executor::block_on(first.next()).expect("first list");
+
+	let (second_id, mut second) = services.watch_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_secs(60),
+	);
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+
+	assert_eq!(
+		(
+			shown.request_id == first_id,
+			second_id > first_id,
+			futures::executor::block_on(first.next()),
+			futures::executor::block_on(second.next()).map(|list| list.request_id),
+		),
+		(true, true, None, Some(second_id))
 	);
 }
 
@@ -9206,6 +9281,7 @@ fn learning_before_the_stored_records_load_keeps_them() {
 		asset: "EUR".to_string(),
 		network: None,
 		country: None,
+		asked: 1_000,
 		supported: true,
 		min: None,
 		max: None,
