@@ -32,10 +32,12 @@ class OkHttpRemoteFaceSourceTest {
     }
 
     private var callThread: String? = null
+    private var sent: Request? = null
     private var responseCode = 200
     private var body: String = FACE
 
     private val calls = Call.Factory { request ->
+        sent = request
         FakeCall(request) {
             callThread = Thread.currentThread().name
             Response.Builder()
@@ -74,6 +76,17 @@ class OkHttpRemoteFaceSourceTest {
         val face = source.fetch("http://127.0.0.1:5173/face.json")
 
         assertTrue("expected the face to decode, got ${face.exceptionOrNull()}", face.isSuccess)
+    }
+
+    /**
+     * The app's HTTP client keeps a disk cache, and a dev server rarely says not to use it. A face is edited
+     * between draws, so an answer from the cache shows the face as it was before the edit.
+     */
+    @Test
+    fun `a face is always asked of its server`() = runBlocking {
+        source.fetch("http://127.0.0.1:5173/face.json")
+
+        assertTrue(sent?.cacheControl?.noCache == true)
     }
 
     /** A dev server answering 404 for a mistyped path must say so, not decode its error page. */
