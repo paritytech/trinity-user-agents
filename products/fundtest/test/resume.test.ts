@@ -47,6 +47,11 @@ interface Core {
   converting: boolean;
   payout?: "paid" | "failed";
   refunded: boolean;
+  /** Where the user's cancel stands, as the core's `FundingCancel` does. */
+  cancel?: "requested" | "offered" | "refused" | "accepted" | "declined";
+  /** What the user paid on an outbound session, which a refund may not
+   *  exceed. */
+  debited: bigint;
 }
 
 /** What the fake host, chain and faucet saw. */
@@ -69,6 +74,8 @@ interface World {
   dripped: boolean;
   pas: bigint;
   ticksBeforeDone: number;
+  /** Whether the user's payment completes, or stays pending. */
+  paymentStatus: "completed" | "pending";
 }
 
 const freshCore = (): Core => ({
@@ -78,6 +85,7 @@ const freshCore = (): Core => ({
   released: false,
   converting: false,
   refunded: false,
+  debited: 0n,
 });
 
 let world: World;
@@ -98,6 +106,7 @@ beforeEach(() => {
     dripped: false,
     pas: 0n,
     ticksBeforeDone: 0,
+    paymentStatus: "completed",
   };
 });
 
@@ -128,17 +137,34 @@ function rankOf(update: FundingUpdate): number | undefined {
   }
 }
 
+/** The core's answer to a provider's answer to the user's cancel, which it
+ *  takes only while the cancel waits on one. */
+function reportCancelAnswer(update: FundingUpdate): string | undefined {
+  const { core } = world;
+  if (core.failed || core.refunded || core.payout === "paid") return "NotFound";
+  if (core.cancel !== "requested" && core.cancel !== "offered")
+    return "OutOfOrder";
+  core.cancel = update.tag === "CancelOffer" ? "offered" : "refused";
+  return undefined;
+}
+
 /** The core's answer to `update` on an outbound session it released. */
 function reportReleased(update: FundingUpdate): string | undefined {
   const { core } = world;
   if (!core.released) return core.failed ? "NotFound" : "OutOfOrder";
+  const owedRefund = core.payout === "failed" || core.cancel === "accepted";
   if (update.tag === "Refunding") {
-    if (core.payout !== "failed" || core.refunded) return "OutOfOrder";
+    if (!owedRefund || core.refunded || update.value.amount > core.debited)
+      return "OutOfOrder";
     if (!world.topUps.includes(update.value.topUpId)) return "NotStarted";
     core.refunded = true;
     return undefined;
   }
-  if (core.payout || (update.tag === "Converting" && core.converting))
+  if (
+    core.payout ||
+    core.cancel === "accepted" ||
+    (update.tag === "Converting" && core.converting)
+  )
     return "OutOfOrder";
   if (update.tag === "Converting") core.converting = true;
   if (update.tag === "Payout")
@@ -151,19 +177,23 @@ function reportOpen(update: FundingUpdate): string | undefined {
   const { core } = world;
   if (core.failed || core.released) return "NotFound";
   const moving = core.named.length > 0;
+  const started =
+    moving || world.topUps.length > 0 || world.requests.length > 0;
   const rank = rankOf(update);
   const follows =
     update.tag === "Details"
       ? true
-      : update.tag === "Failed" || update.tag === "Deposit"
-        ? !moving
-        : update.tag === "Crediting"
-          ? core.lastRank <= 4 &&
-            core.named.length < 3 &&
-            !core.named.includes(update.value.topUpId)
-          : update.tag === "Delivered"
-            ? core.lastRank < 5 && moving
-            : rank !== undefined && core.lastRank < rank;
+      : update.tag === "Failed"
+        ? !started
+        : update.tag === "Deposit"
+          ? !moving
+          : update.tag === "Crediting"
+            ? core.lastRank <= 4 &&
+              core.named.length < 3 &&
+              !core.named.includes(update.value.topUpId)
+            : update.tag === "Delivered"
+              ? core.lastRank < 5 && moving
+              : rank !== undefined && core.lastRank < rank;
   if (!follows) return "OutOfOrder";
   if (update.tag === "Crediting") {
     if (!world.topUps.includes(update.value.topUpId)) return "NotStarted";
@@ -174,6 +204,7 @@ function reportOpen(update: FundingUpdate): string | undefined {
     core.named.push(update.value.paymentId);
     // The fake payment completes at once, which releases the session.
     core.released = true;
+    core.debited = update.value.amount;
   }
   if (update.tag === "Failed") core.failed = true;
   if (rank !== undefined) core.lastRank = rank;
@@ -187,6 +218,12 @@ const client = {
       if (fault) {
         world.reportFaults.splice(world.reportFaults.indexOf(fault), 1);
         return refused(fault.answer);
+      }
+      if (update.tag === "CancelOffer" || update.tag === "CancelRefused") {
+        const refusal = reportCancelAnswer(update);
+        if (refusal) return refused(refusal);
+        world.reports.push(reportKey(update));
+        return ok();
       }
       const afterRelease =
         update.tag === "Payout" ||
@@ -222,7 +259,8 @@ const client = {
       world.requests.push(id);
       return repeat ? refused("AlreadyExists") : ok();
     },
-    statusSubscribe: () => stream([{ tag: "Completed" }]),
+    statusSubscribe: () =>
+      stream(world.paymentStatus === "completed" ? [{ tag: "Completed" }] : []),
   },
   localStorage: {
     read: ({ key }: { key: string }) => ok({ value: world.storage.get(key) }),
@@ -315,6 +353,7 @@ const { Session } = await import("../worker/session");
 const { actionKey, toStored } = await import("../shared/channel");
 const { quoteIdOf } = await import("../worker/quotes");
 const { writeSaved } = await import("../worker/saved");
+type Saved = import("../worker/saved").Saved;
 
 /** Cents `.5N` stops the session at kill point N. */
 const amountStoppingAt = (point: number) =>
@@ -603,4 +642,221 @@ test("payment and top-up ids are fixed by the session and differ between session
   expect(accounts.topUpIdFor(key, 1)).toBe(accounts.topUpIdFor(key, 1));
   expect(accounts.topUpIdFor(key, 1)).not.toBe(accounts.topUpIdFor(key, 2));
   expect(accounts.topUpIdFor(key, 0)).not.toBe(accounts.topUpIdFor(key, 1));
+});
+
+// Cancelling after money moved -----------------------------------------------
+
+/** Waits until `ready` holds, as the worker's answers arrive asynchronously. */
+async function until(ready: () => boolean) {
+  for (let tries = 0; !ready(); tries++) {
+    if (tries > 1_000) throw new Error("waited too long");
+    await Bun.sleep(2);
+  }
+}
+
+/** A withdrawal the core released, its payout due in `payoutInMs`. */
+function releasedWithdrawal(
+  amount: bigint,
+  {
+    payoutInMs = 60_000,
+    cancel,
+  }: { payoutInMs?: number; cancel?: Saved["cancel"] } = {},
+): FundingAssignment {
+  const paymentId = accounts.paymentIdFor("out-session");
+  world.requests = [paymentId];
+  world.core = {
+    ...freshCore(),
+    named: [paymentId],
+    released: true,
+    lastRank: 4,
+    debited: amount,
+  };
+  // The host keeps what the session saved before the worker stopped.
+  world.saved = writeSaved({
+    v: 1,
+    amount: amount.toString(),
+    ...(cancel === undefined ? {} : { cancel }),
+    outbound: {
+      phase: "paying-out",
+      paymentId,
+      payoutAt: Date.now() + payoutInMs,
+    },
+  });
+  return assignment("Out", amount, world.saved);
+}
+
+/** The user cancels and the core hands the request to the worker. */
+function userCancels(session: InstanceType<typeof Session>) {
+  world.core.cancel = "requested";
+  session.cancel();
+}
+
+/** The user answers the worker's offer once it reached the core. */
+async function userAnswers(
+  session: InstanceType<typeof Session>,
+  accept: boolean,
+) {
+  await until(() => world.core.cancel === "offered");
+  world.core.cancel = accept ? "accepted" : "declined";
+  if (accept) session.cancelAccepted();
+  else session.cancelDeclined();
+}
+
+const updateOf = (tag: string) =>
+  world.reports.map((key) => JSON.parse(key)).find((each) => each.tag === tag)
+    ?.value;
+
+// 25 CASH: 1% would be 0.25 CASH, under the 0.50 CASH floor.
+const CANCEL_FEE = ONE_CASH / 2n;
+
+test("a cancel after the release is offered for a fee, and an accepted one refunds the rest", async () => {
+  const amount = 25n * ONE_CASH;
+  const session = new Session(releasedWithdrawal(amount));
+  const outcome = session.run();
+  await until(() => tags().includes("Converting"));
+  userCancels(session);
+  await userAnswers(session, true);
+  expect(await outcome).toBe("ended");
+  const refundId = accounts.refundIdFor("out-session");
+  expect(tags()).toEqual(["Converting", "CancelOffer", "Refunding"]);
+  expect(updateOf("CancelOffer")).toMatchObject({
+    fee: CANCEL_FEE.toString(),
+    refund: (amount - CANCEL_FEE).toString(),
+  });
+  expect(lastUpdate().value).toEqual({
+    topUpId: refundId,
+    amount: (amount - CANCEL_FEE).toString(),
+  });
+  expect(world.topUps).toEqual([refundId]);
+  expect(world.core.refunded).toBe(true);
+});
+
+// A crash between the user's answer and the refund must neither lose the
+// refund nor make it twice.
+test("an accepted cancel resumes from every checkpoint without refunding twice", async () => {
+  const amount = 25n * ONE_CASH;
+  const first = new Session(releasedWithdrawal(amount));
+  const outcome = first.run();
+  await until(() => tags().includes("Converting"));
+  userCancels(first);
+  await userAnswers(first, true);
+  expect(await outcome).toBe("ended");
+  const { checkpoints: stops, ...end } = world;
+  const refundId = accounts.refundIdFor("out-session");
+  for (const [index, stop] of [...stops, structuredClone(end)].entries()) {
+    world = { ...structuredClone(stop), checkpoints: [] };
+    const resumed = new Session(assignment("Out", amount, stop.saved));
+    const run = resumed.run();
+    // The core hands the worker what it has not heard about the cancel.
+    if (world.core.cancel === "accepted") resumed.cancelAccepted();
+    else {
+      resumed.cancel();
+      await userAnswers(resumed, true);
+    }
+    expect({ index, outcome: await run }).toEqual({ index, outcome: "ended" });
+    expect({ index, refunds: distinct(world.topUps) }).toEqual({
+      index,
+      refunds: [refundId],
+    });
+    expect({
+      index,
+      refunded: tags().filter((tag) => tag === "Refunding").length,
+    }).toEqual({ index, refunded: 1 });
+  }
+});
+
+test("a declined cancel offer lets the payout go through", async () => {
+  const session = new Session(
+    releasedWithdrawal(25n * ONE_CASH, { payoutInMs: 30 }),
+  );
+  const outcome = session.run();
+  await until(() => tags().includes("Converting"));
+  userCancels(session);
+  await userAnswers(session, false);
+  expect(await outcome).toBe("ended");
+  expect(tags()).toEqual(["Converting", "CancelOffer", "Payout"]);
+  expect(world.topUps).toEqual([]);
+});
+
+test("a cancel offer that lapsed does not hold the payout", async () => {
+  const session = new Session(
+    releasedWithdrawal(25n * ONE_CASH, {
+      payoutInMs: 0,
+      cancel: { state: "offered", expiresAt: Date.now() - 1 },
+    }),
+  );
+  expect(await session.run()).toBe("ended");
+  expect(tags()).toEqual(["Converting", "Payout"]);
+});
+
+test("cents .73 refuse a cancel and the payout goes through", async () => {
+  const session = new Session(
+    releasedWithdrawal(withCents(73), { payoutInMs: 30 }),
+  );
+  const outcome = session.run();
+  await until(() => tags().includes("Converting"));
+  userCancels(session);
+  expect(await outcome).toBe("ended");
+  expect(tags()).toEqual(["Converting", "CancelRefused", "Payout"]);
+  expect(world.core.cancel).toBe("refused");
+});
+
+test("a cancel while the user's payment is still completing is refused", async () => {
+  world.paymentStatus = "pending";
+  const amount = 25n * ONE_CASH;
+  const paymentId = accounts.paymentIdFor("out-session");
+  world.requests = [paymentId];
+  world.core = { ...freshCore(), named: [paymentId] };
+  const session = new Session(
+    assignment(
+      "Out",
+      amount,
+      writeSaved({
+        v: 1,
+        amount: amount.toString(),
+        outbound: { phase: "collecting", paymentId },
+      }),
+    ),
+  );
+  void session.run();
+  userCancels(session);
+  await until(() => tags().includes("CancelRefused"));
+  expect(updateOf("CancelRefused")).toEqual({
+    reason: "Your payment is still completing. Try again once it has",
+  });
+});
+
+test("an inbound cancel after the payment arrived is offered, and an accepted one ends refunded", async () => {
+  const amount = 25n * ONE_CASH;
+  world.ticksBeforeDone = 1_000;
+  world.core = { ...freshCore(), lastRank: 3 };
+  const session = new Session(
+    assignment(
+      "In",
+      amount,
+      writeSaved({
+        v: 1,
+        amount: amount.toString(),
+        inbound: {
+          phase: "converting",
+          plan: {
+            route: { tier: "pool" },
+            depositSymbol: "PAS",
+            deposit: DEPOSIT.toString(),
+            remoteFeeBuffer: "0",
+            keepNativeForFees: "0",
+            slippagePct: 1,
+          },
+          claims: [],
+        },
+      }),
+    ),
+  );
+  const outcome = session.run();
+  userCancels(session);
+  await userAnswers(session, true);
+  expect(await outcome).toBe("ended");
+  expect(tags()).toEqual(["CancelOffer", "Failed"]);
+  expect(lastUpdate().value).toEqual({ reason: { tag: "Refunded" } });
+  expect(world.topUps).toEqual([]);
 });

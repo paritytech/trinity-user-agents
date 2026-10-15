@@ -44,6 +44,7 @@ import {
   FIAT,
   MAX_AMOUNT,
   MIN_AMOUNT,
+  ONE_CASH,
 } from "./config";
 import {
   Aborted,
@@ -105,6 +106,12 @@ const RELEASED_REPORT_ATTEMPTS = 10;
 /** Failed payout attempts the `payout-retry` trigger makes before one goes
  *  through. */
 const PAYOUT_RETRIES = 2;
+/** How long a cancel offer stays open for the user. */
+const CANCEL_OFFER_MS = 5 * 60_000;
+/** The fee a cancel after money moved costs: 1% of the amount, at least half
+ *  a CASH, never more than the amount. */
+const CANCEL_FEE_BPS = 100n;
+const CANCEL_FEE_MIN = ONE_CASH / 2n;
 
 /** A failure the session ends on rather than retries. */
 class SessionFailure extends Error {
@@ -154,7 +161,7 @@ export class Session {
   readonly intent: string;
   private readonly terms: QuoteTerms;
   private readonly saved: Saved;
-  private readonly abort = new AbortController();
+  private abort = new AbortController();
   private cancelRequested = false;
   /** Whether part of a crypto deposit has reached the session account. */
   private fundsSeen = false;
@@ -195,23 +202,132 @@ export class Session {
     return !this.fundsSeen && (phase === "new" || phase === "awaiting-user");
   }
 
-  /** The user asked to cancel. Honoured while nothing has moved; after that
-   *  fundtest offers no terms and refuses, so the user is told rather than
-   *  left waiting. */
+  /** The user asked to cancel. While nothing has moved the session stops
+   *  and ends as cancelled. After that the cancel is a request: the session
+   *  offers to cancel for a fee, or refuses when it is past the point it can
+   *  undo. The host replays the request while an offer is open, so a
+   *  restarted worker answers it again. */
   cancel(): void {
     this.cancelRequested = true;
     if (this.cancellable) {
       this.abort.abort();
       return;
     }
-    this.report({
-      tag: "CancelRefused",
-      value: { reason: "Funds are already moving" },
-    }).catch((error: unknown) =>
+    this.answerCancel().catch((error: unknown) =>
       console.warn(
-        `[fundtest] ${this.intent}: refusing the cancel failed: ${describe(error)}`,
+        `[fundtest] ${this.intent}: answering the cancel failed: ${describe(error)}`,
       ),
     );
+  }
+
+  /** The user accepted the cancel offer: the session stops what it is doing
+   *  and settles the cancel. */
+  cancelAccepted(): void {
+    if (this.saved.cancel?.state === "accepted") return;
+    this.saved.cancel = {
+      state: "accepted",
+      expiresAt: this.saved.cancel?.expiresAt ?? Date.now(),
+    };
+    this.abort.abort();
+  }
+
+  /** The user declined the cancel offer, or it lapsed: the session carries
+   *  on. */
+  cancelDeclined(): void {
+    if (this.saved.cancel?.state !== "offered") return;
+    delete this.saved.cancel;
+    this.cancelRequested = false;
+    this.save().catch((error: unknown) =>
+      console.warn(
+        `[fundtest] ${this.intent}: saving the declined cancel failed: ${describe(error)}`,
+      ),
+    );
+  }
+
+  /** Answers a cancel after money moved: a refusal, or an offer that is
+   *  saved before it is made. An offer still open is made again as it was. */
+  private async answerCancel(): Promise<void> {
+    const refusal = this.cancelRefusal();
+    if (refusal !== undefined) {
+      await this.report({ tag: "CancelRefused", value: { reason: refusal } });
+      return;
+    }
+    const open = this.saved.cancel;
+    if (open?.state === "accepted") return;
+    if (open === undefined || Date.now() >= open.expiresAt) {
+      this.saved.cancel = {
+        state: "offered",
+        expiresAt: Date.now() + CANCEL_OFFER_MS,
+      };
+      await this.save();
+    }
+    const { fee, refund } = this.cancelTerms();
+    await this.report({
+      tag: "CancelOffer",
+      value: { fee, refund, expiresAt: BigInt(this.saved.cancel!.expiresAt) },
+    });
+  }
+
+  /** Why a cancel after money moved is refused, or nothing when the session
+   *  can still be undone for a fee: an inbound session until its credit
+   *  starts, an outbound one between its release and the payout. */
+  private cancelRefusal(): string | undefined {
+    if (this.trigger === "cancel-refuse")
+      return "This provider does not cancel a payment once it is under way";
+    if (this.terms.direction === "In") {
+      const phase = this.saved.inbound?.phase;
+      return phase === "crediting" || phase === "done"
+        ? "The CASH is already on its way to your balance"
+        : undefined;
+    }
+    switch (this.saved.outbound?.phase) {
+      case "paying-out":
+        return undefined;
+      case "refunding":
+      case "done":
+        return "The payout failed and is being refunded already";
+      default:
+        return "Your payment is still completing. Try again once it has";
+    }
+  }
+
+  /** What cancelling costs and what the user gets back, in balance units. */
+  private cancelTerms(): { fee: bigint; refund: bigint } {
+    const amount = this.requireAmount();
+    const percent = (amount * CANCEL_FEE_BPS) / 10_000n;
+    const charged = percent > CANCEL_FEE_MIN ? percent : CANCEL_FEE_MIN;
+    const fee = charged < amount ? charged : amount;
+    return { fee, refund: amount - fee };
+  }
+
+  /** Waits while a cancel offer is open, so the session does not pass the
+   *  point it can undo before the user answers. Ends the wait when the offer
+   *  lapses or is declined, and stops the session when it is accepted. */
+  private async cancelGate(): Promise<void> {
+    for (;;) {
+      const cancel = this.saved.cancel;
+      if (cancel?.state === "accepted") throw new Aborted();
+      if (cancel?.state !== "offered" || Date.now() >= cancel.expiresAt) return;
+      await sleep(Math.min(1_000, cancel.expiresAt - Date.now()), this.signal);
+    }
+  }
+
+  /** Settles a cancel the user accepted: an inbound session ends refunded on
+   *  the user's rail, and an outbound one tops the user up by the offer's
+   *  refund from the reserve account, under an id fixed by the session. */
+  private async settleCancel(): Promise<void> {
+    this.abort = new AbortController();
+    if (this.terms.direction === "In") return this.end({ tag: "Refunded" });
+    const state = this.saved.outbound!;
+    state.refund ??= {
+      id: refundIdFor(this.intent),
+      amount: this.cancelTerms().refund.toString(),
+    };
+    state.phase = "refunding";
+    await this.save();
+    await this.refund(state.refund);
+    state.phase = "done";
+    await forgetSession(this.intent);
   }
 
   /** Runs the session until it ends, reporting as it goes. Answers `killed`
@@ -221,7 +337,8 @@ export class Session {
   async run(): Promise<"ended" | "killed" | "retry"> {
     try {
       try {
-        if (this.terms.direction === "In") await this.inbound();
+        if (this.saved.cancel?.state === "accepted") await this.settleCancel();
+        else if (this.terms.direction === "In") await this.inbound();
         else await this.outbound();
       } catch (error) {
         await this.settle(error);
@@ -246,6 +363,8 @@ export class Session {
   /** Ends the session on an error that decides its outcome, and rethrows any
    *  other. */
   private async settle(error: unknown): Promise<void> {
+    if (error instanceof Aborted && this.saved.cancel?.state === "accepted")
+      return this.settleCancel();
     if (error instanceof Aborted && this.cancelRequested)
       return this.end({ tag: "Cancelled" });
     if (error instanceof SessionFailure) return this.end(error.reason);
@@ -533,6 +652,7 @@ export class Session {
       await this.save();
     }
     if (state.phase === "crediting") {
+      await this.cancelGate();
       await this.credit();
       await this.killAt(4);
       await this.report({ tag: "Delivered" });
@@ -1082,6 +1202,7 @@ export class Session {
         }
       }
       await this.waitUntil(payoutAt ?? Date.now() + this.payoutWaitMs());
+      await this.cancelGate();
       const failed = this.trigger === "refund";
       await this.report(
         {

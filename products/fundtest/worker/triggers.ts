@@ -11,8 +11,16 @@ import { ONE_CASH } from "./config";
  * - `slow`: the payment arrives only after the quoted ETA has passed.
  * - `decline`: a card or bank payment is declined before any money moves.
  * - `payout-retry`: an outbound payout fails twice and is retried before it
- *   goes through. */
-export type Trigger = "refund" | "retry" | "slow" | "decline" | "payout-retry";
+ *   goes through.
+ * - `cancel-refuse`: a cancel after money moved is refused rather than
+ *   answered with an offer. */
+export type Trigger =
+  | "refund"
+  | "retry"
+  | "slow"
+  | "decline"
+  | "payout-retry"
+  | "cancel-refuse";
 
 const CENT = ONE_CASH / 100n;
 
@@ -22,6 +30,7 @@ const BY_CENTS: Record<string, Trigger> = {
   "33": "slow",
   "43": "decline",
   "63": "payout-retry",
+  "73": "cancel-refuse",
 };
 
 /** The trigger an amount in balance units selects, if any. */

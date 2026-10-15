@@ -1,8 +1,10 @@
 // The fundtest provider's Worker: serves the FundingProvider trait.
 //
 // One stream carries everything the host asks: a price for an ask, a session
-// to run, a request to cancel one. Sessions still in flight are handed over
-// again whenever the stream opens, so a restarted worker resumes them. A
+// to run, a request to cancel one and the user's answer to a cancel offer.
+// Sessions still in flight, and cancel requests and answers the worker has
+// not settled, are handed over again whenever the stream opens, so a
+// restarted worker resumes them. A
 // session stopped at its kill point, or by an error it could not settle,
 // drops what it held in memory and the stream is opened again, which hands it
 // back the way a restart would: at once after a kill, after a growing wait
@@ -71,8 +73,10 @@ function handle(item: HostFundingServeSubscribeItem): void {
       sessions.get(item.value.intent)?.cancel();
       return;
     case "CancelAccepted":
+      sessions.get(item.value.intent)?.cancelAccepted();
+      return;
     case "CancelDeclined":
-      // fundtest refuses rather than offering terms, so no answer reaches it.
+      sessions.get(item.value.intent)?.cancelDeclined();
       return;
   }
 }

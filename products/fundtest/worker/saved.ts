@@ -85,10 +85,21 @@ export interface SavedClaim {
   attempt: number;
 }
 
+/** The cancel offer the session made, and whether the user accepted it.
+ *  The fee and refund follow from the amount, so only the offer's expiry is
+ *  kept. */
+export interface SavedCancel {
+  state: "offered" | "accepted";
+  /** When the offer lapses, Unix ms. */
+  expiresAt: number;
+}
+
 export interface Saved {
   v: 1;
   /** Balance units, once known. */
   amount?: string;
+  /** A cancel offer the user has not declined. */
+  cancel?: SavedCancel;
   inbound?: {
     phase: InboundPhase;
     plan?: SavedPlan;

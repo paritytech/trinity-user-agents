@@ -46,6 +46,7 @@ The cents of the amount choose what goes wrong:
 | `.33` | The payment arrives only after the quoted ETA has passed        | The payout arrives after the ETA                                                                            |
 | `.43` | A card or bank payment is declined: `Failed { Declined }`       | No change                                                                                                   |
 | `.63` | No change                                                       | The payout is retried twice, each reported as `PayoutRetrying`, then goes through                           |
+| `.73` | A cancel after the payment arrived is refused                   | A cancel after the release is refused                                                                       |
 
 A crypto deposit made from a wallet ignores `.13`: the refund case only runs in demo mode, before any drip. A bank
 payment quotes a two-day ETA, so `.33` on bank is seen through only with a short `FUNDTEST_BANK_ETA_SECS`.
@@ -99,8 +100,22 @@ tops the user up by the amount collected, under an id fixed by the session's int
 `Refunding { topUpId, amount }`. A user who declines the payment ends the session as `Cancelled`, and one without the
 balance as `InsufficientBalance`.
 
-**Cancel.** A cancel is honoured while the user has not paid, and the session ends as `Failed { Cancelled }`. Once a
-payment is seen the host refuses the cancel itself.
+**Cancel.** A cancel while the user has not paid stops the session, which ends as `Failed { Cancelled }`. After that a
+cancel is a request the worker answers:
+
+| Where the session is                                    | Answer                                                                                                                                       |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbound, payment sent or seen, before the credit starts | `CancelOffer`. Accepted, the session ends as `Failed { Refunded }`, the payment returned on the user's rail                                  |
+| Inbound, crediting                                      | `CancelRefused`. The host itself refuses a cancel once a top-up started                                                                      |
+| Outbound, payment still completing                      | `CancelRefused`, so the user can ask again once it completed                                                                                 |
+| Outbound, released and paying out                       | `CancelOffer`. Accepted, the reserve account tops the user up by the refund under the session's refund id and the worker reports `Refunding` |
+| Any, amount ending in `.73`                             | `CancelRefused`                                                                                                                              |
+
+An offer charges 1% of the amount, at least 0.50 CASH, and the refund is the rest. It stays open for 5 minutes. While it
+is open the session goes on but stops before the point it could not undo, the credit inbound and the payout outbound,
+until the user answers or the offer lapses. A declined or lapsed offer lets the session carry on. The offer and the
+user's acceptance are saved, and the host hands the request or the answer back after a restart, so a cancel settles
+once.
 
 **Restarts.** Each session saves its checkpoint with `fundingProvider.save` before every external action: the phase, the
 conversion plan, the pipeline's tick state, the faucet drip it is about to ask for and the top-ups it is about to make.
