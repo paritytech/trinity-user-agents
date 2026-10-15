@@ -2850,6 +2850,12 @@ function dismissPrompts(screen) {
     inputTap(serial, allow.center.x, allow.center.y);
     return true;
   }
+  // A tap on the share sheet that lands while its rows move can open the Quick Share setup; Back leaves it.
+  if (findText(screen, "Set up Quick Share") || findText(screen, /^Choose your account and privacy settings$/)) {
+    observations.push(`${new Date().toISOString().slice(11, 19)} a tap opened the Quick Share setup of the system; the launcher pressed Back`);
+    inputKeyEvent(serial, KEY.back);
+    return true;
+  }
   // A busy emulator can show "isn't responding" for the app; the app goes on when the launcher waits.
   if (screen.some((node) => / isn't responding$/.test(node.text))) {
     const wait = findText(screen, "Wait");
@@ -3333,9 +3339,7 @@ async function pickFileOnce(name, { notice }) {
       const nodes = parseUiNodes(uiDump(serial));
       const found = nodes.find(pickerFile);
       if (found) return found;
-      // The first start of Google Photos asks for an account, which the emulator has not; Back leaves it.
-      if (findText(nodes, /^Choose your account/)) {
-        inputKeyEvent(serial, KEY.back);
+      if (dismissPrompts(nodes)) {
         tapped = 0;
         return undefined;
       }
@@ -4006,6 +4010,8 @@ async function main() {
       grantPermission(serial, packageName, "android.permission.POST_NOTIFICATIONS");
       // The Attach button asks for the camera first; S36 picks files from the Download folder.
       grantPermission(serial, packageName, "android.permission.CAMERA");
+      // The files of an earlier run stay in the Download folder and push the files of S36 out of the picker list.
+      shell(serial, ["rm", "-f", "/sdcard/Download/s5[789]-*", "/sdcard/Download/s60-*"]);
       pushFile(serial, resolve(productRoot, "assets", SMALL_ATTACHMENT), `/sdcard/Download/${SMALL_ATTACHMENT}`);
       const large = largeAttachment();
       pushFile(serial, large, `/sdcard/Download/${LARGE_ATTACHMENT}`);
