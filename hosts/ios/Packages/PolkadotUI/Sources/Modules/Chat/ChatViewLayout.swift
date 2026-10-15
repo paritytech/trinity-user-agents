@@ -305,7 +305,7 @@ public extension ChatViewLayout {
 
         guard shouldAutoScroll else { return }
         scrollToBottom(animated: isInitialScrollDone)
-        isInitialScrollDone = true
+        markInitialScrollDone()
     }
 }
 
@@ -554,7 +554,7 @@ private extension ChatViewLayout {
         let closure: () -> Void = { [weak self] in
             guard let self else { return }
             performScrollToBottom(animated: animated)
-            isInitialScrollDone = true
+            markInitialScrollDone()
             updateScrollDownButtonVisibility()
         }
 
@@ -562,6 +562,15 @@ private extension ChatViewLayout {
             closure: closure,
             isInitialScrolling: !isInitialScrollDone
         )
+    }
+
+    /// The first scroll is done once the window has a message. A window that opens empty, while its first page
+    /// is on its way, keeps the first scroll for that page: else the page lands at the top of the screen, and
+    /// the window asks for older pages that the user did not scroll to.
+    private func markInitialScrollDone() {
+        guard !(viewModel?.sections.isEmpty ?? true) else { return }
+
+        isInitialScrollDone = true
     }
 
     private func performScrollToBottom(animated: Bool) {
