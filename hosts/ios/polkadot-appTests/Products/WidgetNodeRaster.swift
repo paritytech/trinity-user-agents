@@ -7,6 +7,9 @@ import UIKit
 /// that paints from one that only maps.
 @MainActor
 enum WidgetNodeRaster {
+    /// The bucket of the black every node is drawn over.
+    static let backdrop = "0-0-0"
+
     /// Colours the node paints over black, each as a coarse `r-g-b` bucket,
     /// counted. Bucketed because anti-aliasing puts an edge across dozens of
     /// neighbouring values that say nothing on their own.
@@ -26,11 +29,14 @@ enum WidgetNodeRaster {
     }
 
     /// Where each colour bucket the node paints lies, drawn in a window of the
-    /// app's scene so its image loads run, which `ImageRenderer` skips.
+    /// app's scene so its image loads run, which `ImageRenderer` skips. Drawn
+    /// again until `ready` holds, for up to two seconds, so a picture still
+    /// loading is waited for rather than raced.
     static func bounds(
         of node: CustomMessageWidgetNode,
         in size: CGSize,
-        resolveImage: WidgetImageResolver? = nil
+        resolveImage: WidgetImageResolver? = nil,
+        until ready: ([String: CGRect]) -> Bool = { _ in true }
     ) async throws -> [String: CGRect] {
         let view = CustomMessageWidgetView(node: node, resolveImage: resolveImage)
             .frame(width: size.width, height: size.height, alignment: .topLeading)
@@ -44,25 +50,25 @@ enum WidgetNodeRaster {
         window.isHidden = false
         defer { window.isHidden = true }
 
-        try await Task.sleep(for: .milliseconds(300))
+        var drawn: [String: CGRect] = [:]
+        for _ in 0 ..< 20 {
+            try await Task.sleep(for: .milliseconds(100))
+            drawn = try snapshot(of: window)
+            if ready(drawn) { break }
+        }
+        return drawn
+    }
 
+    private static func snapshot(of window: UIWindow) throws -> [String: CGRect] {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
-        let image = try #require(UIGraphicsImageRenderer(size: size, format: format).image { _ in
+        let image = try #require(UIGraphicsImageRenderer(size: window.bounds.size, format: format).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }.cgImage)
 
         return buckets(of: image).mapValues { points in
             points.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: CGSize(width: 1, height: 1))) }
         }
-    }
-
-    /// The share of the frame taken by the colour the node paints most of.
-    static func largestShare(of node: CustomMessageWidgetNode, in size: CGSize) throws -> Double {
-        let counted = try colours(of: node, in: size)
-        let total = counted.values.reduce(0, +)
-
-        return Double(counted.values.max() ?? 0) / Double(total)
     }
 
     private static func buckets(of image: CGImage) -> [String: [CGPoint]] {

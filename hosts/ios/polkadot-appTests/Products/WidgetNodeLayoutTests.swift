@@ -114,14 +114,18 @@ struct WidgetNodeLayoutTests {
         #expect(drawn[white] == CGRect(x: 0, y: 0, width: 20, height: 20))
     }
 
-    @Test
-    func aButtonIsAsWideAsItsLabel() async throws {
-        let button = node(.button(.init(text: "Tap")))
+    /// As wide as its label, unless the node is given a width.
+    @Test(arguments: [false, true])
+    func aButtonIsAsWideAsItsLabelUnlessSized(filled: Bool) async throws {
+        let button = CustomMessageWidgetNode(
+            content: .button(.init(text: "Tap")),
+            modifiers: CustomMessageWidgetNode.Modifiers(fillWidth: filled)
+        )
 
         let drawn = try await WidgetNodeRaster.bounds(of: button, in: CGSize(width: 300, height: 60))
         let painted = drawn.filter { $0.key != black }.values.reduce(CGRect.null) { $0.union($1) }
 
-        #expect(painted.width < 150)
+        #expect(filled ? painted.width == 300 : painted.width < 150)
     }
 
     /// An image that cannot be loaded leaves its space empty.
@@ -149,7 +153,8 @@ struct WidgetNodeLayoutTests {
         let drawn = try await WidgetNodeRaster.bounds(
             of: row,
             in: CGSize(width: 100, height: 40),
-            resolveImage: picture(width: 80, height: 40)
+            resolveImage: picture(width: 80, height: 40),
+            until: { $0[red] != nil }
         )
 
         #expect(drawn[red] == CGRect(x: 20, y: 0, width: 40, height: 40))
@@ -162,23 +167,49 @@ struct WidgetNodeLayoutTests {
         let drawn = try await WidgetNodeRaster.bounds(
             of: image,
             in: CGSize(width: 100, height: 100),
-            resolveImage: picture(width: 30, height: 20)
+            resolveImage: picture(width: 30, height: 20),
+            until: { $0[red] != nil }
         )
 
         #expect(drawn[red]?.size == CGSize(width: 30, height: 20))
     }
 
-    @Test
-    func anImageWithoutASizeTakesItsNaturalSize() async throws {
+    /// One pixel to a point, shrunk to fit when larger than the space given.
+    @Test(arguments: [
+        (CGSize(width: 30, height: 20), CGSize(width: 30, height: 20)),
+        (CGSize(width: 300, height: 150), CGSize(width: 100, height: 50)),
+    ])
+    func anImageWithoutASizeTakesItsNaturalSize(pictureSize: CGSize, drawnSize: CGSize) async throws {
         let image = node(.image(.init(source: .archive(path: "small.png"), fit: .contain)))
 
         let drawn = try await WidgetNodeRaster.bounds(
             of: image,
             in: CGSize(width: 100, height: 100),
-            resolveImage: picture(width: 30, height: 20)
+            resolveImage: picture(width: pictureSize.width, height: pictureSize.height),
+            until: { $0[red] != nil }
         )
 
-        #expect(drawn[red] == CGRect(x: 0, y: 0, width: 30, height: 20))
+        #expect(drawn[red]?.origin == .zero)
+        #expect(drawn[red]?.size == drawnSize)
+    }
+
+    /// An image sized on one side takes the other from its proportions, so it
+    /// never stretches to the space around it.
+    @Test
+    func anImageSizedOnOneSideTakesTheOtherFromItsProportions() async throws {
+        let column = node(.column(.init(), children: [
+            node(.image(.init(source: .archive(path: "wide.png"), fit: .none)), width: 40),
+            block(.green, width: 20, height: 20),
+        ]))
+
+        let drawn = try await WidgetNodeRaster.bounds(
+            of: column,
+            in: CGSize(width: 100, height: 100),
+            resolveImage: picture(width: 80, height: 40),
+            until: { $0[red] != nil }
+        )
+
+        #expect(drawn[green]?.minY == 20)
     }
 }
 

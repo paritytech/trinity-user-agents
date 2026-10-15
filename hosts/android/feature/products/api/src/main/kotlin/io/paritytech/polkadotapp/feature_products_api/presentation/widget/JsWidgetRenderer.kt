@@ -118,7 +118,7 @@ private fun JsImageRenderer(
     } else {
         val density = LocalDensity.current.density
         // A picture drawn at its natural size is loaded whole, not at the size of the space around it.
-        val drawsNaturalSize = widget.fit == JsImageFit.NONE || widget.fit == JsImageFit.SCALE_DOWN ||
+        val drawsNaturalSize = widget.fit == JsImageFit.NONE ||
             !widget.modifiers.hasWidth() && !widget.modifiers.hasHeight()
         AsyncImage(
             modifier = imageModifier,
@@ -243,8 +243,15 @@ private fun JsRowRenderer(
         modifier = modifier
             .then(widget.modifiers.toComposeModifier())
             // A row with no height of its own is as tall as its tallest child, so one filling the
-            // height matches it rather than the space around the row.
-            .then(if (widget.modifiers.hasHeight()) Modifier else Modifier.height(IntrinsicSize.Max)),
+            // height matches it rather than the space around the row. Only then: intrinsic heights
+            // can come out short for text that wraps.
+            .then(
+                if (widget.modifiers.hasHeight() || widget.children.none { it.fillsHeight() }) {
+                    Modifier
+                } else {
+                    Modifier.height(IntrinsicSize.Max)
+                },
+            ),
         verticalAlignment = widget.verticalAlignment?.toComposeVerticalAlignment() ?: Alignment.Top,
         horizontalArrangement = widget.horizontalArrangement?.toComposeHorizontalArrangement() ?: Arrangement.Start,
     ) {
@@ -260,6 +267,18 @@ private fun List<JsModifier>.hasWidth() =
 
 private fun List<JsModifier>.hasHeight() =
     any { it is JsModifier.FillMaxHeight || it is JsModifier.Size && (it.height ?: it.minHeight) != null }
+
+private fun JsWidget.fillsHeight(): Boolean = when (this) {
+    is JsWidget.Box -> modifiers
+    is JsWidget.Column -> modifiers
+    is JsWidget.Row -> modifiers
+    is JsWidget.Spacer -> modifiers
+    is JsWidget.Text -> modifiers
+    is JsWidget.Button -> modifiers
+    is JsWidget.TextField -> modifiers
+    is JsWidget.Image -> modifiers
+    is JsWidget.Effect -> emptyList()
+}.any { it is JsModifier.FillMaxHeight }
 
 @Composable
 private fun JsSpacerRenderer(

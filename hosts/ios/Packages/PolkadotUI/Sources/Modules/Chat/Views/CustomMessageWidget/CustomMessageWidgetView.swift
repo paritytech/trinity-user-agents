@@ -127,17 +127,22 @@ private struct NodeImageView: View {
 
     /// Until the picture arrives, and if it cannot be loaded, the node draws
     /// nothing in the size its modifiers give it. A picture with no size of
-    /// its own takes its natural one, one pixel to a point.
+    /// its own takes its natural one, one pixel to a point, shrunk to fit the
+    /// space it is given; one sized on a single side takes the other from its
+    /// proportions.
     @ViewBuilder
     private var content: some View {
         switch picture {
         case .loading:
             nothing
         case let .loaded(image):
-            if modifiers.hasWidthConstraint || modifiers.hasHeightConstraint {
+            switch (modifiers.hasWidthConstraint, modifiers.hasHeightConstraint) {
+            case (true, true):
                 props.fit.apply(to: Image(uiImage: image))
-            } else {
-                Image(uiImage: image)
+            case (false, false):
+                CustomMessageWidgetNode.ImageFit.scaleDown.apply(to: Image(uiImage: image))
+            default:
+                Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
             }
         case .unavailable:
             nothing
@@ -146,8 +151,12 @@ private struct NodeImageView: View {
         }
     }
 
+    /// Takes the sides the node's modifiers size and nothing on the others.
     private var nothing: some View {
-        Color.clear.frame(width: 0, height: 0)
+        Color.clear.frame(
+            maxWidth: modifiers.hasWidthConstraint ? .infinity : 0,
+            maxHeight: modifiers.hasHeightConstraint ? .infinity : 0
+        )
     }
 }
 
@@ -197,10 +206,10 @@ private struct NodeEffectModifier: ViewModifier {
     func body(content: Content) -> some View {
         switch effect {
         case .rainbow:
-            // A tint over the children, as strong as Android's, which leaves
-            // them the layout and the taps.
+            // A tint over the children's bounds, as strong as Android's, which
+            // leaves them the layout and the taps.
             content.overlay {
-                content
+                Rectangle()
                     .motionFillingShader(shader: HolographicShaders.iridescentShine)
                     .opacity(0.3)
                     .allowsHitTesting(false)
@@ -363,9 +372,11 @@ private struct NodeButtonView: View {
                 actionHandler?(actionId, nil)
             }
         } label: {
-            // As wide as the label, with Material's content padding, as on Android.
+            // As wide as the label unless sized, with Material's content
+            // padding, as on Android.
             Text(props.text)
                 .padding(.horizontal, 24)
+                .frame(maxWidth: modifiers.hasWidthConstraint ? .infinity : nil)
         }
         .buttonStyle(buttonStyle(for: props.variant))
         .applyWidgetNodeModifiers(modifiers)

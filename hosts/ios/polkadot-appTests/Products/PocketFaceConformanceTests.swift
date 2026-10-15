@@ -23,10 +23,14 @@ struct PocketFaceConformanceTests {
 
         // Drawn to pixels, not just mapped: these faces build their surface out
         // of nodes sized only by their own modifiers, which map to a full tree
-        // and can still reach the screen as one flat fill. The surface is bars
-        // that touch, so it is most of the card; a flat fill is all of it.
-        let share = try WidgetNodeRaster.largestShare(of: drawn, in: cardSize)
+        // and can still reach the screen unpainted, leaving the backdrop, or as
+        // one flat fill. The surface is bars that touch, so it is most of the
+        // card, with the face's details on top.
+        let colours = try WidgetNodeRaster.colours(of: drawn, in: cardSize)
+        let largest = try #require(colours.max { $0.value < $1.value })
+        let share = Double(largest.value) / Double(colours.values.reduce(0, +))
 
+        #expect(largest.key != WidgetNodeRaster.backdrop)
         #expect(share < 0.97)
     }
 
