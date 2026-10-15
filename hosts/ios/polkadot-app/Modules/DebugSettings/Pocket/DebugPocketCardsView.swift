@@ -24,7 +24,7 @@ struct DebugPocketCardsView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         if let widgetUrl = card.widgetUrl {
-                            Text(widgetUrl)
+                            Text(widgetUrl.absoluteString)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)

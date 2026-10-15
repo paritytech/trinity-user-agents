@@ -15,7 +15,7 @@ struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
     let title: String
     let faceUrl: String
     /// The page the card opens instead of its product's widget, even a published one.
-    let widgetUrl: String?
+    let widgetUrl: URL?
     let faceShown: Bool?
 
     var id: String { "\(productId)/\(cardId)" }
@@ -80,7 +80,7 @@ struct DebugPocketCards: DebugPocketCardsStoring {
     func widgetURL(for key: PocketCardKey) -> URL? {
         guard
             let widgetUrl = cards(of: key.productId).first(where: { $0.definition?.id == key.cardId })?.widgetUrl,
-            var components = URLComponents(string: widgetUrl),
+            var components = URLComponents(url: widgetUrl, resolvingAgainstBaseURL: false),
             let launchUrl = key.launchUrl,
             let launchItems = URLComponents(url: launchUrl, resolvingAgainstBaseURL: false)?.percentEncodedQueryItems
         else { return nil }

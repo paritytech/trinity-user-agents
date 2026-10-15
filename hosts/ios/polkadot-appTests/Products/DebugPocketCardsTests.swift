@@ -22,7 +22,7 @@ struct DebugPocketCardsTests {
     ])
     func opensTheWidgetPageForTheCardItSitsUnder(typed: String, opened: String) throws {
         let store = DebugPocketCards(settingsManager: InMemorySettingsManager())
-        store.save(card(productId: "GAME.paseo", widgetUrl: "http://127.0.0.1:5173/\(typed)"))
+        store.save(card(productId: "GAME.paseo", widgetUrl: URL(string: "http://127.0.0.1:5173/\(typed)")))
         store.save(card(cardId: "gold"))
         let gold = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "gold"))
 
@@ -66,7 +66,7 @@ private let loyaltyKey = PocketCardKey(productId: "game.paseo", cardId: PocketCa
 private func card(
     productId: String = "game.paseo",
     cardId: String = "loyalty",
-    widgetUrl: String? = nil
+    widgetUrl: URL? = nil
 ) -> DebugPocketCard {
     DebugPocketCard(
         productId: productId,
