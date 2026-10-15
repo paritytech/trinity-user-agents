@@ -70,7 +70,8 @@ private extension FundingActivityStatusTests {
             providerFee: "0",
             networkFee: "0",
             etaSecs: nil,
-            expiresAt: nil
+            expiresAt: nil,
+            assetDecimals: 2
         )
         return FundingSession(
             intent: "intent",

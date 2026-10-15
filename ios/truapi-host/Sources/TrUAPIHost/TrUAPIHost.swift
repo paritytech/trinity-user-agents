@@ -956,10 +956,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingProgress(intent: intent)
     }
 
-    /// Whether a provider still works on any funding session. A host that
-    /// remembers it starts funding at its next launch.
-    public func fundingInProgress() -> Bool {
-        inner.fundingInProgress()
+    /// Whether a provider still works on any funding session, read from
+    /// storage if funding has not resumed yet. A host that remembers it
+    /// starts funding at its next launch, and asks again on each
+    /// ``FundingHostBridge/fundingSessionChanged(intent:status:)``.
+    public func fundingInProgress() async throws -> Bool {
+        try await inner.fundingInProgress()
     }
 
     /// Every session the core keeps: in flight first, then ended ones the
@@ -996,8 +998,10 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// arrives through ``FundingHostBridge/fundingQuotesChanged(intent:quotes:)``
     /// and is asked for again every minute until a provider is chosen, the
     /// session ends, another ask replaces it, or
-    /// ``stopFundingQuotes(intent:)``.
-    public func getFundingQuote(intent: String, ask: FundingQuoteAsk) {
+    /// ``stopFundingQuotes(intent:)``. Returns the request id every list
+    /// of this request carries; show only the latest request's lists.
+    @discardableResult
+    public func getFundingQuote(intent: String, ask: FundingQuoteAsk) -> UInt64 {
         inner.getFundingQuote(intent: intent, ask: ask)
     }
 

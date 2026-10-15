@@ -7,9 +7,10 @@ protocol FundingRuntime: AnyObject, Sendable {
     func fundingSession(intent: String) -> FundingSession?
     func fundingProgress(intent: String) -> FundingProgress?
     func fundingSessions() -> [FundingSession]
-    func fundingInProgress() -> Bool
+    func fundingInProgress() async throws -> Bool
     func fundingCandidates(intent: String) -> [FundingCandidate]
-    func getFundingQuote(intent: String, ask: FundingQuoteAsk)
+    @discardableResult
+    func getFundingQuote(intent: String, ask: FundingQuoteAsk) -> UInt64
     func stopFundingQuotes(intent: String)
     func fundingCountries(intent: String, rail: FundingRail, asset: String) -> [FundingCountry]
     func detectedFundingCountry() async -> String?

@@ -11,7 +11,8 @@ enum FundingResumeMarker {
         UserDefaults.standard.bool(forKey: key)
     }
 
-    static func record(_ runtime: FundingRuntime) {
-        UserDefaults.standard.set(runtime.fundingInProgress(), forKey: key)
+    static func record(_ runtime: FundingRuntime) async {
+        guard let inProgress = try? await runtime.fundingInProgress() else { return }
+        UserDefaults.standard.set(inProgress, forKey: key)
     }
 }
