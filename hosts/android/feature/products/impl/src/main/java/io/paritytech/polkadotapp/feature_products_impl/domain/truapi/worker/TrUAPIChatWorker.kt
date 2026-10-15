@@ -99,7 +99,9 @@ class TrUAPIChatWorker(
     private val roomAnnouncements = ConcurrentHashMap<String, Job>()
 
     init {
-        scope.coroutineContext.job.invokeOnCompletion { holds.releaseAll() }
+        // A coroutine of the scope releases each brief hold. After the scope ends, no coroutine can release a hold,
+        // so the holds refuse each new hold.
+        scope.coroutineContext.job.invokeOnCompletion { holds.close() }
         scope.launch {
             workers.executionState(productId)
                 .map { (it as? WorkerExecutionState.Running)?.execution }

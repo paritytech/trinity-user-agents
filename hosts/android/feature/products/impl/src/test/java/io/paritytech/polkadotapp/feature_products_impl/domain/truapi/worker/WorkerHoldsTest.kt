@@ -56,4 +56,16 @@ class WorkerHoldsTest {
         assertEquals(3, released)
         assertFalse(holds.isOpen("lobby"))
     }
+
+    @Test
+    fun `a closed chat gives back its holds and refuses a new one`() {
+        holds.openRoom("lobby")
+
+        holds.close()
+        val refused = runCatching { holds.hold() }
+
+        assertTrue(refused.isFailure)
+        assertEquals(1, acquired)
+        assertEquals(1, released)
+    }
 }
