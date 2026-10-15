@@ -85,8 +85,7 @@ pub(super) enum UpdateV2 {
 }
 
 /// A session as stored in format 3, before a session kept a refund or the
-/// network its quote was asked for. Its updates are read as they are now:
-/// later formats only added variants after the ones it used.
+/// network its quote was asked for.
 #[derive(Encode, Decode)]
 pub(super) struct SessionV3 {
 	pub(super) intent: String,
