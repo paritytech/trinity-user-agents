@@ -68,11 +68,13 @@ const INCLUSION_RECHECK_BLOCKS: usize = 3;
 const INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(test)]
 const INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_millis(25);
-/// Budget for the best-block stream to replay the current chain head.
+/// Bound on each wait for the next block while picking the head: the first
+/// replayed block, and each block read on until the head reaches finality.
 const INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Quiet window after which the newest replayed block is taken as the head.
-/// The replay delivers the initialized finalized block first and any known
-/// best block right after; active chains never need the full window.
+/// The replay delivers the initialized finalized blocks first, oldest first,
+/// and any known best block right after; active chains never need the full
+/// window.
 #[cfg(not(test))]
 const BEST_BLOCK_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(test)]
@@ -1143,8 +1145,9 @@ mod tests {
 				drop(state);
 				let Some(sender) = self.sender.lock().unwrap().clone() else { return };
 				let deliver = move || {
+					// A delayed frame can outlive the test that requested it.
 					for frame in frames {
-						sender.unbounded_send(frame).unwrap();
+						let _ = sender.unbounded_send(frame);
 					}
 				};
 				match delay {
