@@ -114,6 +114,7 @@ class TrUAPIChatWorker(
     override suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> {
         runCatching { holds.openRoom(roomId.value) }
             .onFailure { return Result.failure<Unit>(it).logFailure("truapi.chat.open for ${productId.value}") }
+        workers.restartIfFailed(productId)
         // The screen does not wait for the product: `RoomOpened` goes once the worker runs.
         roomAnnouncements.put(roomId.value, scope.launch { publishNow(roomId, ChatEvent.RoomOpened) })?.cancel()
         return Result.success(Unit)

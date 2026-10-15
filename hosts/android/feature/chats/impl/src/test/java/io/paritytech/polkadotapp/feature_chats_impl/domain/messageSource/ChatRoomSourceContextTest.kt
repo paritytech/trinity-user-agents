@@ -11,7 +11,14 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLi
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -49,6 +56,26 @@ class ChatRoomSourceContextTest {
         val context = context(policy(ChatRoomPolicy.MessageStore.PRODUCT), chatId = personChat)
 
         assertSame(hostSource, context.source())
+    }
+
+    @Test
+    fun `S47 a room whose product moves its messages to the other store gets the source of that store`() = runBlocking<Unit> {
+        val policies = MutableStateFlow<ChatRoomPolicy?>(policy(ChatRoomPolicy.MessageStore.HOST))
+        val context = context(policy(ChatRoomPolicy.MessageStore.HOST), policies = policies)
+        val sources = mutableListOf<ChatMessageSource>()
+        val collection = launch(Dispatchers.Default) { context.observeSource().collect { sources += it } }
+
+        withTimeout(5_000) { while (sources.size < 1) delay(10) }
+        policies.value = policy(ChatRoomPolicy.MessageStore.HOST).copy(configGeneration = 2)
+        policies.value = policy(ChatRoomPolicy.MessageStore.PRODUCT)
+        withTimeout(5_000) { while (sources.size < 2) delay(10) }
+        policies.value = policy(ChatRoomPolicy.MessageStore.HOST)
+        withTimeout(5_000) { while (sources.size < 3) delay(10) }
+        collection.cancel()
+
+        assertEquals(listOf(hostSource, productSource, hostSource), sources)
+        assertSame(hostSource, context.source())
+        coVerify { productSource.close() }
     }
 
     @Test
@@ -95,6 +122,22 @@ class ChatRoomSourceContextTest {
     }
 
     @Test
+    fun `S23 retry of an open room closes it and opens it again, so the worker starts again`() = runBlocking<Unit> {
+        val context = context(policy(ChatRoomPolicy.MessageStore.PRODUCT))
+        context.open()
+
+        context.retry()
+
+        coVerify(timeout = 5_000) { productSource.reload() }
+        coVerifyOrder {
+            lifecycle.open(productRoom)
+            lifecycle.close(productRoom)
+            lifecycle.open(productRoom)
+            productSource.reload()
+        }
+    }
+
+    @Test
     fun `release closes an open room and stops the source`() = runBlocking<Unit> {
         val context = context(policy(ChatRoomPolicy.MessageStore.PRODUCT))
         context.source()
@@ -106,9 +149,14 @@ class ChatRoomSourceContextTest {
         coVerify(timeout = 5_000) { productSource.close() }
     }
 
-    private fun context(policy: ChatRoomPolicy, chatId: ChatId = productRoom): ChatRoomSourceContext {
+    private fun context(
+        policy: ChatRoomPolicy,
+        chatId: ChatId = productRoom,
+        policies: Flow<ChatRoomPolicy?> = flowOf(policy),
+    ): ChatRoomSourceContext {
         val services = mockk<ChatRoomServices> {
             coEvery { policy(any()) } returns policy
+            every { observePolicy(any()) } returns policies
             coEvery { lifecycle(any()) } returns lifecycle
             coEvery { querying(any()) } returns querying
             every { hostStoreSource(any()) } returns hostSource

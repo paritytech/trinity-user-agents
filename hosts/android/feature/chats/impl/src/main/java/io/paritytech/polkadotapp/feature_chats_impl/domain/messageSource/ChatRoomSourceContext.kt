@@ -15,7 +15,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -31,6 +34,8 @@ fun interface ProductMessageSourceFactory {
 interface ChatRoomServices {
     suspend fun policy(chatId: ChatId): ChatRoomPolicy?
 
+    fun observePolicy(chatId: ChatId): Flow<ChatRoomPolicy?>
+
     suspend fun lifecycle(chatId: ChatId): ChatRoomLifecycle
 
     suspend fun querying(chatId: ChatId): ProductChatQuerying?
@@ -43,6 +48,8 @@ class EngineChatRoomServices @Inject constructor(
     private val roomPolicyProvider: ChatRoomPolicyProvider,
 ) : ChatRoomServices {
     override suspend fun policy(chatId: ChatId): ChatRoomPolicy? = roomPolicyProvider.observePolicy(chatId).first()
+
+    override fun observePolicy(chatId: ChatId): Flow<ChatRoomPolicy?> = roomPolicyProvider.observePolicy(chatId)
 
     override suspend fun lifecycle(chatId: ChatId): ChatRoomLifecycle = chatEngine.roomLifecycle(chatId)
 
@@ -60,9 +67,10 @@ class ChatRoomSourceContextFactory @Inject constructor(
 }
 
 /**
- * Picks the message source of one room from its policy, once, and holds the room open while the room screen
- * shows it (02-DESIGN §5.3, §21 item 5). The open and close calls run in the order of the requests, so a
- * close never passes an open.
+ * Picks the message source of one room from its policy, and holds the room open while the room screen shows it
+ * (02-DESIGN §5.3, §21 item 5). When the product moves the messages of an open room to the other store, the room
+ * gets the source of that store (S47). The open and close calls run in the order of the requests, so a close never
+ * passes an open.
  */
 class ChatRoomSourceContext(
     private val chatId: ChatId,
@@ -72,8 +80,7 @@ class ChatRoomSourceContext(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val resolutionLock = Mutex()
-    private var resolution: Deferred<ChatMessageSource>? = null
-    private var productSource: ChatMessageSource? = null
+    private var resolution: Deferred<ResolvedSource>? = null
 
     private val roomWork = Channel<suspend () -> Unit>(Channel.UNLIMITED)
     private var openLifecycle: ChatRoomLifecycle? = null
@@ -86,15 +93,20 @@ class ChatRoomSourceContext(
 
     suspend fun source(): ChatMessageSource {
         val pending = resolutionLock.withLock {
-            resolution ?: scope.async { resolve() }.also { resolution = it }
+            resolution ?: scope.async { resolve(services.policy(chatId)) }.also { resolution = it }
         }
-        return pending.await()
+        return pending.await().source
     }
+
+    /** The source of the room, and a new one each time the product moves the messages of the room to the other store. */
+    fun observeSource(): Flow<ChatMessageSource> = services.observePolicy(chatId)
+        .distinctUntilChangedBy { storeOf(it) }
+        .map { policy -> sourceFor(policy) }
 
     /** The source of the room when the product keeps its messages, or null when the host database keeps them. */
     suspend fun productSource(): ChatMessageSource? {
         source()
-        return productSource
+        return resolution?.await()?.takeIf { it.store == ChatRoomPolicy.MessageStore.PRODUCT }?.source
     }
 
     /** Holds the product of the room while the room screen shows it. A person chat holds nothing. */
@@ -102,8 +114,12 @@ class ChatRoomSourceContext(
 
     fun close() = enqueue { closeRoom() }
 
-    /** Opens the room again when the last open failed, then asks for the newest page. */
+    /**
+     * Opens the room again, then asks for the newest page. A room that is open closes first, so the room gets the
+     * worker of its product again, and a worker whose start failed starts again (02-DESIGN §3.6, S23).
+     */
     fun retry() = enqueue {
+        closeRoom()
         openRoom()
         source().reload()
     }
@@ -112,7 +128,7 @@ class ChatRoomSourceContext(
     fun release() {
         enqueue {
             closeRoom()
-            productSource?.close()
+            productSource()?.close()
             scope.cancel()
         }
         roomWork.close()
@@ -140,10 +156,33 @@ class ChatRoomSourceContext(
         lifecycle.close(chatId)
     }
 
-    private suspend fun resolve(): ChatMessageSource {
-        val policy = if (chatId.isExtensionChat()) services.policy(chatId) else null
-        if (policy?.messageStore != ChatRoomPolicy.MessageStore.PRODUCT) return services.hostStoreSource(chatId)
+    /** The source for [policy]. A change of store replaces the source, and the source of the product stops. */
+    private suspend fun sourceFor(policy: ChatRoomPolicy?): ChatMessageSource {
+        val store = storeOf(policy)
+        val (pending, replaced) = resolutionLock.withLock {
+            val current = resolution
+            if (current != null && current.await().store == store) return@withLock current to null
 
-        return productSourceFactory.create(chatId, policy, services.querying(chatId)).also { productSource = it }
+            scope.async { resolve(policy) }.also { resolution = it } to current
+        }
+        replaced?.await()?.takeIf { it.store == ChatRoomPolicy.MessageStore.PRODUCT }?.source?.close()
+        return pending.await().source
     }
+
+    private suspend fun resolve(policy: ChatRoomPolicy?): ResolvedSource = when (storeOf(policy)) {
+        ChatRoomPolicy.MessageStore.HOST -> ResolvedSource(ChatRoomPolicy.MessageStore.HOST, services.hostStoreSource(chatId))
+        ChatRoomPolicy.MessageStore.PRODUCT -> ResolvedSource(
+            ChatRoomPolicy.MessageStore.PRODUCT,
+            productSourceFactory.create(chatId, requireNotNull(policy), services.querying(chatId)),
+        )
+    }
+
+    private fun storeOf(policy: ChatRoomPolicy?): ChatRoomPolicy.MessageStore =
+        if (chatId.isExtensionChat() && policy?.messageStore == ChatRoomPolicy.MessageStore.PRODUCT) {
+            ChatRoomPolicy.MessageStore.PRODUCT
+        } else {
+            ChatRoomPolicy.MessageStore.HOST
+        }
+
+    private class ResolvedSource(val store: ChatRoomPolicy.MessageStore, val source: ChatMessageSource)
 }

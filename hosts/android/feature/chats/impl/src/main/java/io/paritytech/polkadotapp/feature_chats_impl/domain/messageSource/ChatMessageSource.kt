@@ -80,6 +80,9 @@ enum class ChatRoomReadiness {
 
     /** The product does not answer. The window keeps the cached pages. */
     UNAVAILABLE,
+
+    /** The product did not give the newest page in time, or refused it (02-DESIGN §3.6). The window keeps the cached pages. */
+    FAILED,
 }
 
 sealed interface ChatPageOutcome {

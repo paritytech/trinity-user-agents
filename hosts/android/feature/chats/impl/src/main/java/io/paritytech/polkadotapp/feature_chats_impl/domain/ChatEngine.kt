@@ -660,6 +660,14 @@ class ChatEngine @Inject constructor(
     suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? =
         chatExtensionRegistry.getExtensionForChat(chatId)?.roomQuerying(chatId)
 
+    /** True while the room exists. A product room goes away when its product deletes it or the user uninstalls the product. */
+    fun observeRoomExists(chatId: ChatId): Flow<Boolean> {
+        val extension = chatId.extensionOrNull() ?: return flowOfValue(true)
+        return chatRoomRepository.subscribeRoomsByExtension(extension.extensionId)
+            .map { rooms -> chatId in rooms }
+            .distinctUntilChanged()
+    }
+
     suspend fun productAppAddress(chatId: ChatId): String? =
         chatExtensionRegistry.getExtensionForChat(chatId)?.productAppAddress(chatId)
 

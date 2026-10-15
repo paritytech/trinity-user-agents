@@ -34,7 +34,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -75,6 +77,9 @@ class ChatProductRoomController(
         fun showFailure(error: Throwable)
 
         fun showOutcome(outcome: ChatSourceActionOutcome)
+
+        /** Closes the room screen. */
+        fun leave()
     }
 
     private val toolbarActions = roomPolicy
@@ -140,6 +145,18 @@ class ChatProductRoomController(
 
     @Volatile
     private var reactionDetailsNotAvailable = false
+
+    init {
+        // A new configuration of the room can serve who reacted again (S47).
+        scope.launch {
+            roomPolicy.map { it?.configGeneration }.distinctUntilChanged().collect { reactionDetailsNotAvailable = false }
+        }
+        // A room that its product deletes, or a room of a product that the user uninstalls, closes its screen (02-DESIGN §5.5).
+        scope.launch {
+            val removed = interactor.observeRoomExists(chatId).dropWhile { exists -> !exists }.firstOrNull { exists -> !exists }
+            if (removed != null) screen.leave()
+        }
+    }
 
     private val _messageMenu = MutableStateFlow<ProductMessageMenuState?>(null)
     val messageMenu: StateFlow<ProductMessageMenuState?> = _messageMenu.asStateFlow()

@@ -266,8 +266,13 @@ private fun ChatFeedScreenInternal(
                 )
             }
 
-            if (chatMessagesLoadingState.dataOrNull?.readiness == ChatRoomReadinessUiState.UNAVAILABLE) {
-                ChatRoomUnavailableLine(modifier = Modifier.fillMaxWidth(), onRetry = onRetryRoom)
+            val readiness = chatMessagesLoadingState.dataOrNull?.readiness
+            if (readiness == ChatRoomReadinessUiState.UNAVAILABLE || readiness == ChatRoomReadinessUiState.FAILED) {
+                ChatRoomUnavailableLine(
+                    modifier = Modifier.fillMaxWidth(),
+                    isLoadFailure = readiness == ChatRoomReadinessUiState.FAILED,
+                    onRetry = onRetryRoom,
+                )
             }
 
             Box(

@@ -33,6 +33,7 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPa
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageAction
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessagePopUpUiState
+import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPagingState
@@ -56,6 +57,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatR
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -93,6 +95,8 @@ class ChatFeedViewModelProductRoomTest {
     )
     private val feed = MutableStateFlow(snapshot)
     private val activity = MutableStateFlow<ChatRoomActivityModel?>(null)
+    private val roomExists = MutableStateFlow(true)
+    private val router = mockk<ChatsRouter>(relaxed = true)
     private val origins = object : MessageOriginDisplayResolver {
         override fun displayOf(messageOrigin: ChatMessageOrigin) = MessageOriginDisplay("Weather", ChatAvatar.Url("https://weather"))
     }
@@ -117,6 +121,7 @@ class ChatFeedViewModelProductRoomTest {
         coEvery { roomQuerying(roomId) } returns querying
         every { subscribeUserInputState(any()) } returns flowOf(ChatUserInputState.Nothing)
         every { observeRoomActivity(any()) } returns activity
+        every { observeRoomExists(roomId) } returns roomExists
         coEvery { sendTextMessage(any(), any(), any()) } returns ChatSourceActionOutcome.Done
         coEvery { getLastRevealedTimestamp(any()) } returns null
         coEvery { productMessageMenu(any(), any(), any()) } returns Result.success(menu)
@@ -330,6 +335,51 @@ class ChatFeedViewModelProductRoomTest {
     }
 
     @Test
+    fun `S47 a configuration that changes while the room is open changes the toolbar, the input and the menu`() = runBlocking<Unit> {
+        every { interactor.subscribeUserInputState(any()) } returns flowOf(
+            ChatUserInputState.SendMessage(ChatUserInputState.SendMessage.Payment.NotAvailable, attachmentsSupported = false),
+        )
+        val model = viewModel()
+        withTimeout(5_000) { model.chatInputUiState.first { it is ChatInputUiState.SendMessage } }
+
+        val input = ChatRoomPolicy.DefaultInput.copy(placeholder = "Ask again")
+        policy.value = policy.value.copy(
+            configGeneration = 2,
+            toolbar = listOf(toolbarAction("refresh", ChatActionHandlerModel.Callback)),
+            footer = ChatRoomPolicy.Footer.TextInput(input),
+            productQueries = emptySet(),
+        )
+
+        withTimeout(5_000) { model.productRoomState.first { it.toolbar.inline.isNotEmpty() } }
+        val state = withTimeout(5_000) {
+            model.chatInputUiState.first { (it as? ChatInputUiState.SendMessage)?.placeholder == "Ask again" }
+        }
+        assertEquals("Ask again", (state as ChatInputUiState.SendMessage).placeholder)
+
+        model.onMessageAction(MessageAction.LongPress(uiMessage()))
+        coVerify(exactly = 0) { interactor.productMessageMenu(any(), any(), any()) }
+    }
+
+    @Test
+    fun `a new configuration asks the product again who reacted after NotAvailable`() = runBlocking<Unit> {
+        policy.value = ChatRoomPolicy.Defaults.copy(offersReactionDetails = true)
+        coEvery { querying.reactions(any(), "message-1") } returns Result.failure(ProductChatQueryException.NotAvailable())
+        val model = viewModel()
+
+        model.onMessageAction(MessageAction.ShowReactionDetails(uiMessage()))
+        coVerify(timeout = 5_000, exactly = 1) { querying.reactions(any(), "message-1") }
+        model.onMessageAction(MessageAction.ShowReactionDetails(uiMessage()))
+        coVerify(exactly = 1) { querying.reactions(any(), "message-1") }
+
+        policy.value = policy.value.copy(configGeneration = 3)
+        withTimeout(5_000) { model.productRoomState.first() }
+        delay(100)
+        model.onMessageAction(MessageAction.ShowReactionDetails(uiMessage()))
+
+        coVerify(timeout = 5_000, exactly = 2) { querying.reactions(any(), "message-1") }
+    }
+
+    @Test
     fun `the input of a product room shows the placeholder and the attach button of its footer`() = runBlocking<Unit> {
         val input = ChatRoomPolicy.DefaultInput.copy(placeholder = "Ask the weather", allowsPhoto = false, allowsVideo = false, allowsFile = true)
         policy.value = ChatRoomPolicy.Defaults.copy(footer = ChatRoomPolicy.Footer.TextInput(input))
@@ -390,6 +440,16 @@ class ChatFeedViewModelProductRoomTest {
     }
 
     @Test
+    fun `a room that goes away while it is open closes its screen`() = runBlocking<Unit> {
+        viewModel()
+        verify(exactly = 0) { router.back() }
+
+        roomExists.value = false
+
+        verify(timeout = 5_000) { router.back() }
+    }
+
+    @Test
     fun `closing the room screen closes the room`() = runBlocking<Unit> {
         viewModel().onScreenStopped()
 
@@ -420,7 +480,7 @@ class ChatFeedViewModelProductRoomTest {
 
     private fun viewModel() = ChatFeedViewModel(
         savedStateHandle = SavedStateHandle(mapOf(ChatFeedPayload::class.java.name to ChatFeedPayload.existingChat(roomId))),
-        router = mockk(relaxed = true),
+        router = router,
         interactor = interactor,
         messageUiMapper = mockk(relaxed = true),
         clipboardService = mockk(relaxed = true),

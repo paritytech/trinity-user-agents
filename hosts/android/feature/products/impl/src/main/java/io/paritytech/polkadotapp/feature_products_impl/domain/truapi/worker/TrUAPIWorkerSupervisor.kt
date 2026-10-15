@@ -82,6 +82,18 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         }
     }
 
+    /**
+     * Starts the worker again when its last start failed. A failed start keeps the references of the open rooms in
+     * the core, so the core sends no new start. A room calls this when it opens, also when the user asks to try again.
+     */
+    fun restartIfFailed(productId: ProductId) {
+        scope.launch {
+            transitions.withLock {
+                if (executionStates.value[productId] is WorkerExecutionState.Failed) start(productId)
+            }
+        }
+    }
+
     /** The product's worker execution while it runs, null otherwise. */
     fun execution(productId: ProductId): Flow<TrUAPIProductExecution?> =
         executionState(productId).map { (it as? WorkerExecutionState.Running)?.execution }.distinctUntilChanged()

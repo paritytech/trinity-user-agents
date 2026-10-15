@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import io.mockk.every
+import io.mockk.justRun
 import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
@@ -29,6 +30,7 @@ class TrUAPIChatWorkerEventsTest {
 
     private fun TestScope.worker(): TrUAPIChatWorker {
         val workers: TrUAPIWorkerSupervisor = mockk()
+        justRun { workers.restartIfFailed(productId) }
         every { workers.executionState(productId) } returns flowOf(WorkerExecutionState.Running(execution))
         val runtime: TrUAPIHostRuntime = mockk(relaxed = true)
         return TrUAPIChatWorker(productId, runtime, workers, FakeChatMessaging(), CoroutineScope(StandardTestDispatcher(testScheduler)))

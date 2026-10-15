@@ -15,10 +15,14 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** The pinned line of a product-source room whose product does not answer (02-DESIGN §3.6, §21 item 5). */
+/**
+ * The pinned line of a product-source room whose product does not answer, or whose newest messages did not load
+ * (02-DESIGN §3.6, §21 item 5).
+ */
 @Composable
 internal fun ChatRoomUnavailableLine(
     modifier: Modifier = Modifier,
+    isLoadFailure: Boolean,
     onRetry: () -> Unit,
 ) {
     PolkadotSurface(
@@ -31,7 +35,7 @@ internal fun ChatRoomUnavailableLine(
         ) {
             NovaText(
                 modifier = Modifier.weight(1f),
-                text = stringResource(RCommon.string.chat_product_room_unavailable),
+                text = stringResource(if (isLoadFailure) RCommon.string.chat_feed_page_failed else RCommon.string.chat_product_room_unavailable),
                 style = PolkadotTheme.typography.body.small,
                 color = PolkadotTheme.colors.fg.secondary,
             )

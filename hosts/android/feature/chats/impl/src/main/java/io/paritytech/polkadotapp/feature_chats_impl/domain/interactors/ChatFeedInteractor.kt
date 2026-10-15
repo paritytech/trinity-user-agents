@@ -83,10 +83,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.productQu
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ProductRoomUserActions
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -200,9 +200,9 @@ class ChatFeedInteractor @Inject internal constructor(
     }
 
     /** The window of messages of the room, from the host database or from the product (02-DESIGN §8.3). */
-    fun subscribeMessages(chatId: ChatId): Flow<ChatFeedSnapshot> = flow {
-        emitAll(roomSource(chatId).source().observeSnapshots())
-    }
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun subscribeMessages(chatId: ChatId): Flow<ChatFeedSnapshot> =
+        roomSource(chatId).observeSource().flatMapLatest { it.observeSnapshots() }
 
     suspend fun loadOlderMessages(chatId: ChatId): ChatPageOutcome = roomSource(chatId).source().loadOlder()
 
@@ -374,6 +374,8 @@ class ChatFeedInteractor @Inject internal constructor(
 
     /** The activity line of a product room, for example "Bot is typing". */
     fun observeRoomActivity(chatId: ChatId): Flow<ChatRoomActivityModel?> = activityRepository.observe(chatId)
+
+    fun observeRoomExists(chatId: ChatId): Flow<Boolean> = chatEngine.observeRoomExists(chatId)
 
     /** Opens the room again when the last open failed, then asks the product for the newest page. */
     fun retryRoom(chatId: ChatId) = roomSource(chatId).retry()

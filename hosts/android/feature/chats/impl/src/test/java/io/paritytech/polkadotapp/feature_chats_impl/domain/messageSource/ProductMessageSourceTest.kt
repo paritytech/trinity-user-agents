@@ -123,6 +123,24 @@ class ProductMessageSourceTest {
     }
 
     @Test
+    fun `a newest page that times out could not load, keeps the cached page and loads on retry`() = runBlocking<Unit> {
+        val cache = ProductMessageCache()
+        cache.store(productRoom, ProductRoomCacheEntry(listOf(productMessage(1)), "1", "m1", 1_000, null))
+        val answers = ArrayDeque(listOf(Result.failure<ProductMessagesPage>(ProductChatQueryException.TimedOut()), newestPage(next = null)))
+        val querying = ScriptedProductChatQuerying(answerPage = { _, _ -> answers.removeFirst() })
+
+        val source = openedSource(querying, cache = cache)
+
+        assertEquals(ChatRoomReadiness.FAILED, source.snapshot.readiness)
+        assertEquals(listOf("m1"), source.oldestFirstIds())
+        assertEquals(1, querying.pageRequests.size)
+
+        source.reload()
+
+        assertEquals(ChatRoomReadiness.READY, source.snapshot.readiness)
+    }
+
+    @Test
     fun `NotAvailable ends the older pages after one retry`() = runBlocking<Unit> {
         val querying = ScriptedProductChatQuerying(answerPage = { anchor, _ ->
             if (anchor == before(null)) newestPage(next = "1") else Result.failure(ProductChatQueryException.NotAvailable())
