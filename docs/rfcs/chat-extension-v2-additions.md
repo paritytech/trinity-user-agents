@@ -453,8 +453,10 @@ service of Realtime Media Sessions.
   the host's call screen, which presents that session itself: remote pictures, the self preview, and the device
   controls of the host's Media backend. The product places no picture rectangles for a session bound to a room. End
   ends the session and sends `CallEnded`.
-- **Worker.** A room with a `Ringing` or `Active` call holds the worker until the call is cleared. If the worker stops,
-  the host clears a ringing call; an active session lives on in the Media service and the bar follows its state.
+- **Worker.** A room with a `Ringing` or `Active` call holds the worker until the call is cleared or the room is
+  deleted. The core keeps this hold, so every host gets it. A `Ringing` call holds it for at most 60 s, the time the host
+  rings before it clears the banner. If the worker stops, the host clears a ringing call; an active session lives on in
+  the Media service and the bar follows its state.
 - A product call rings only while the product's worker runs. Ringing a closed app needs notification wakes and the
   platforms' native call screens, which this RFC leaves out.
 - `call_buttons` covers the buttons, ringing, the bar and the four events, so it ships before the Media service.
