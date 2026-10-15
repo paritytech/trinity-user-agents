@@ -1895,7 +1895,7 @@ impl ProductRuntimeControl {
 
 	/// Stage a user attachment of `room_id` as a preimage that the Bulletin
 	/// allowance of the product pays for, and answer its key; see
-	/// [`ProductRuntimeHost::stage_chat_attachment`].
+	/// `ProductRuntimeHost::stage_chat_attachment`.
 	pub async fn stage_chat_attachment(
 		&self,
 		room_id: &str,
