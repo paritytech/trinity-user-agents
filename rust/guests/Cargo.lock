@@ -38,10 +38,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "busy-guest"
+version = "0.1.0"
+dependencies = [
+ "truapi-guest-api",
+]
+
+[[package]]
 name = "byte-slice-cast"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
+
+[[package]]
+name = "chat-actions-guest"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "truapi-guest-api",
+]
 
 [[package]]
 name = "chat-echo-guest"
@@ -433,6 +448,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
+name = "tasks-guest"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "truapi-guest-api",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -480,6 +503,7 @@ name = "truapi-guest-api"
 version = "0.1.0"
 dependencies = [
  "derive_more",
+ "parity-scale-codec",
  "truapi",
  "truapi-macros",
 ]

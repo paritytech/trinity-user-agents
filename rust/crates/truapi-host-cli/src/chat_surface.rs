@@ -298,6 +298,8 @@ struct Workers {
 pub struct ChatSurface {
 	chat: Arc<CliChatHost>,
 	worker_bundle: Option<PathBuf>,
+	/// A wasm worker that the host runs itself. The page boots no worker then.
+	wasm_worker: Option<PathBuf>,
 	product_id: String,
 	workers: Mutex<Workers>,
 	/// Number of live workers, for every open page.
@@ -564,10 +566,30 @@ impl ChatSurface {
 		Arc::new(Self {
 			chat,
 			worker_bundle,
+			wasm_worker: None,
 			product_id,
 			workers: Mutex::new(Workers::default()),
 			connected: watch::channel(0).0,
 			timeouts,
+		})
+	}
+
+	/// Build a surface over `chat` for `product_id` whose worker is the wasm
+	/// module at `wasm_worker`. The host runs the module and attaches it, so
+	/// the page boots no worker.
+	pub fn for_wasm_worker(
+		chat: Arc<CliChatHost>,
+		wasm_worker: PathBuf,
+		product_id: String,
+	) -> Arc<Self> {
+		Arc::new(Self {
+			chat,
+			worker_bundle: None,
+			wasm_worker: Some(wasm_worker),
+			product_id,
+			workers: Mutex::new(Workers::default()),
+			connected: watch::channel(0).0,
+			timeouts: Timeouts::default(),
 		})
 	}
 
@@ -581,8 +603,13 @@ impl ChatSurface {
 		self.worker_bundle.as_deref()
 	}
 
+	/// The wasm worker the host runs, if one was configured.
+	pub fn wasm_worker_path(&self) -> Option<&Path> {
+		self.wasm_worker.as_deref()
+	}
+
 	fn worker_configured(&self) -> bool {
-		self.worker_bundle.is_some()
+		self.worker_bundle.is_some() || self.wasm_worker.is_some()
 	}
 
 	/// How many worker connections are attached now.
@@ -630,7 +657,7 @@ impl ChatSurface {
 
 	/// The page, booting the worker from it only when a bundle is configured.
 	pub fn page(&self) -> String {
-		let boot = if self.worker_configured() { WORKER_BOOT } else { "" };
+		let boot = if self.worker_bundle.is_some() { WORKER_BOOT } else { "" };
 		PAGE.replacen(WORKER_BOOT_MARKER, boot, 1)
 	}
 
@@ -2663,6 +2690,25 @@ mod tests {
 		assert!(!with.contains(WORKER_BOOT_MARKER));
 		assert!(with.contains(r#"<script src="/worker/bootstrap.js"></script>"#));
 		assert!(with.contains(r#"<script type="module" src="/worker/index.js"></script>"#));
+	}
+
+	#[test]
+	fn a_wasm_worker_is_configured_but_the_page_boots_no_worker() {
+		let surface = ChatSurface::for_wasm_worker(
+			CliChatHost::new(None),
+			PathBuf::from("/tmp/worker.wasm"),
+			"chat-actions.dot".to_string(),
+		);
+		let page = surface.page();
+		assert!(!page.contains(WORKER_BOOT_MARKER));
+		assert!(!page.contains(WORKER_BUNDLE_PATH));
+		assert!(surface.worker_bundle().is_err());
+		assert_eq!(surface.wasm_worker_path(), Some(Path::new("/tmp/worker.wasm")));
+		let (snapshot, _) = surface.chat().observe();
+		assert_eq!(
+			surface.snapshot(snapshot, 1)["worker"],
+			json!({ "configured": true, "connected": 1 })
+		);
 	}
 
 	#[test]

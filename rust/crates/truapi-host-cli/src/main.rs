@@ -424,6 +424,14 @@ struct DevArgs {
 	/// boots no worker.
 	#[arg(long = "worker-bundle")]
 	worker_bundle: Option<PathBuf>,
+	/// Product worker compiled to wasm, to run in this host as the `Worker`
+	/// of the product, with the signer of the session. It keeps its rooms in
+	/// the chat that the page at `/chat` and its socket `/chat/ws` serve, so a
+	/// person or a test can post, press actions and run commands there. Each
+	/// line it logs is printed as `[worker] <line>`. The host keeps serving
+	/// the chat after the worker ends.
+	#[arg(long = "worker-wasm", value_name = "PATH", conflicts_with = "worker_bundle")]
+	worker_wasm: Option<PathBuf>,
 	/// Development command to run once the host is ready, after `--`.
 	#[arg(last = true)]
 	command: Vec<String>,
@@ -1358,6 +1366,7 @@ async fn run_signing_host(
 			url,
 			worker_bundle,
 			worker_bundle_built,
+			wasm_worker: surface.wasm_worker_path().map(Path::to_path_buf),
 		});
 	}
 	report_debugger(debugger.as_ref());
@@ -1406,6 +1415,9 @@ async fn run_signing_host(
 				if let Some(deeplink) = serve_deeplink {
 					start_deeplink_responder(&mut session, deeplink).await?;
 				}
+				let wasm_worker = dev_surface
+					.as_ref()
+					.and_then(|surface| spawn_wasm_worker(&session, surface, &product.current()));
 				terminal_ui::output_event(SystemEvent::ServeReady {
 					url: serve_frame_url,
 					auto_accept,
@@ -1417,6 +1429,9 @@ async fn run_signing_host(
 						0
 					},
 				};
+				if let Some(task) = wasm_worker {
+					task.abort();
+				}
 				session.responders.stop_all();
 				Ok(code)
 			},
@@ -2045,6 +2060,38 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// cannot tell them is that the manifest is not published yet, so the host says
 /// it every run: a grant that works locally and was never deployed is the
 /// failure this feature would otherwise cause.
+/// Start the wasm worker of `surface`, if it has one, as the `Worker` of
+/// `product_id` on the runtime of `session`. The worker keeps its rooms in the
+/// chat of the surface. The task prints each line the worker logs, and tells
+/// when the worker ends. The host keeps serving the chat after that.
+fn spawn_wasm_worker(
+	session: &SigningHostSession,
+	surface: &Arc<chat_surface::ChatSurface>,
+	product_id: &str,
+) -> Option<tokio::task::JoinHandle<()>> {
+	let path = surface.wasm_worker_path()?.to_path_buf();
+	let runtime = session.runtime.clone();
+	let surface = surface.clone();
+	let product_id = product_id.to_string();
+	terminal_ui::output_success(
+		"Wasm worker started",
+		Some(format!("{} runs as the Worker of {product_id}", path.display())),
+	);
+	Some(tokio::spawn(async move {
+		let log = |line: &str| println!("[worker] {line}");
+		match worker::run_on_surface(&runtime, &surface, &product_id, &path, log).await {
+			Ok(()) => terminal_ui::output_warning(
+				"Wasm worker finished",
+				Some("its entry point returned; the chat stays open".to_string()),
+			),
+			Err(error) => terminal_ui::output_warning(
+				"Wasm worker failed",
+				Some(format!("{error:#}; the chat stays open")),
+			),
+		}
+	}))
+}
+
 async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -> Result<()> {
 	if paths.is_empty() {
 		return Ok(());
@@ -2071,15 +2118,32 @@ async fn run_dev(
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
 ) -> Result<()> {
-	bootstrap::read_container(&bootstrap::container_path())?;
+	// A wasm worker with no wrapped command has no page that loads the
+	// bridge script, so it does not need the browser sandbox.
+	if args.worker_wasm.is_none() || !args.command.is_empty() {
+		bootstrap::read_container(&bootstrap::container_path())?;
+	}
 	let product_id = args.product_id.unwrap_or_else(|| format!("localhost:{}", args.app_port));
-	let surface = chat_surface::ChatSurface::new(
-		chat::CliChatHost::from_env(),
-		args.worker_bundle,
-		truapi::platform::ProductContext::new(product_id.clone())
-			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?
-			.product_id,
-	);
+	let surface_product_id = truapi::platform::ProductContext::new(product_id.clone())
+		.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?
+		.product_id;
+	if let Some(path) = &args.worker_wasm &&
+		!path.is_file()
+	{
+		bail!("--worker-wasm {} is not a file", path.display());
+	}
+	let surface = match args.worker_wasm {
+		Some(path) => chat_surface::ChatSurface::for_wasm_worker(
+			chat::CliChatHost::from_env(),
+			path,
+			surface_product_id,
+		),
+		None => chat_surface::ChatSurface::new(
+			chat::CliChatHost::from_env(),
+			args.worker_bundle,
+			surface_product_id,
+		),
+	};
 	let signing = SigningHostArgs {
 		product_id,
 		network: args.network,
@@ -4554,6 +4618,33 @@ mod cli_tests {
 		assert_eq!(args.product_id.as_deref(), Some("playground.paseo"));
 		assert_eq!(args.app_port, 3000);
 		assert!(args.command.is_empty());
+	}
+
+	#[test]
+	fn dev_takes_a_wasm_worker_but_not_beside_a_worker_bundle() {
+		let cli = Cli::try_parse_from([
+			"truapi-host",
+			"dev",
+			"--product-id",
+			"chat-actions.dot",
+			"--worker-wasm",
+			"guest.wasm",
+		])
+		.expect("dev should parse a wasm worker");
+		let Command::Dev(args) = cli.command else {
+			panic!("expected dev command");
+		};
+		assert_eq!(args.worker_wasm, Some(PathBuf::from("guest.wasm")));
+
+		let both = Cli::try_parse_from([
+			"truapi-host",
+			"dev",
+			"--worker-wasm",
+			"guest.wasm",
+			"--worker-bundle",
+			"index.js",
+		]);
+		assert!(both.is_err(), "a product has one worker");
 	}
 
 	#[cfg(unix)]

@@ -29,16 +29,24 @@ use crate::{
 	frame::downgrade_call_error,
 	versioned::{FromLatest, IntoLatest, Versioned},
 	wasm_abi::{
-		EventKind, FINISH_IMPORT, IMPORT_MODULE, LOG_IMPORT, ON_EVENT_EXPORT, READ_EVENT_IMPORT,
-		RELEASE_IMPORT, START_EXPORT,
+		EventKind, FINISH_IMPORT, IMPORT_MODULE, LOG_IMPORT, MONOTONIC_MILLIS_IMPORT,
+		NOW_MILLIS_IMPORT, ON_EVENT_EXPORT, RANDOM_IMPORT, READ_EVENT_IMPORT, RELEASE_IMPORT,
+		SLEEP_IMPORT, START_EXPORT,
 	},
 };
 
-/// Instructions a worker may run per entry from the host before it traps.
-const FUEL_PER_ENTRY: u64 = 1_000_000_000;
+/// Default fuel of one entry from the host, about one fuel unit for each wasm
+/// instruction. An entry is the start of the worker or the delivery of one
+/// event. The value is high for crypto and database work in one entry, such as
+/// X448, sntrup761 and an encrypted SQLite image. A release build uses about 400 million fuel
+/// each second, so a worker in an endless loop traps after about 50 seconds.
+/// [`WasmWorker::with_fuel_per_entry`] changes it.
+pub const DEFAULT_FUEL_PER_ENTRY: u64 = 20_000_000_000;
 
-/// Linear memory a worker may grow to.
-const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
+/// Default limit of the linear memory of a worker: 256 MiB. The engine
+/// gets memory only when the worker grows it, so a high limit costs nothing.
+/// [`WasmWorker::with_memory_limit`] changes it.
+pub const DEFAULT_MEMORY_LIMIT: usize = 256 * 1024 * 1024;
 
 /// Largest request or log line a worker may pass, matching the frame cap of
 /// the native WebSocket bridge.
@@ -270,12 +278,15 @@ where
 
 enum Command {
 	Start { handle: u32, method: Method, request: Vec<u8> },
+	Sleep { handle: u32, millis: u64 },
 	Release { handle: u32 },
 }
 
 struct GuestState {
 	limits: StoreLimits,
 	log: Box<dyn Fn(&str) + Send + Sync>,
+	/// When the worker loaded, the zero of `monotonic_millis`.
+	loaded: std::time::Instant,
 	next_handle: u32,
 	calls_in_flight: usize,
 	commands: Vec<Command>,
@@ -295,6 +306,8 @@ struct Call {
 	/// The guest no longer awaits the call; it runs until it settles and its
 	/// events are dropped.
 	released: bool,
+	/// A timer, which the host forgets at once when the guest releases it.
+	timer: bool,
 }
 
 /// A loaded wasm worker. [`Self::run`] drives it until its entry point
@@ -305,6 +318,7 @@ pub struct WasmWorker {
 	calls: BTreeMap<u32, Call>,
 	/// Handle polling starts from, so one busy call cannot starve the rest.
 	cursor: u32,
+	fuel_per_entry: u64,
 }
 
 impl WasmWorker {
@@ -321,8 +335,9 @@ impl WasmWorker {
 		let linker = link(&engine, &module, &env.methods)?;
 
 		let state = GuestState {
-			limits: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build(),
+			limits: StoreLimitsBuilder::new().memory_size(DEFAULT_MEMORY_LIMIT).build(),
 			log: Box::new(|line| tracing::info!(target: "truapi::wasm_worker", "{line}")),
+			loaded: std::time::Instant::now(),
 			next_handle: 0,
 			calls_in_flight: 0,
 			commands: Vec::new(),
@@ -331,7 +346,7 @@ impl WasmWorker {
 		};
 		let mut store = Store::new(&engine, state);
 		store.limiter(|state| &mut state.limits);
-		store.set_fuel(FUEL_PER_ENTRY)?;
+		store.set_fuel(DEFAULT_FUEL_PER_ENTRY)?;
 		let instance = linker
 			.instantiate(&mut store, &module)
 			.and_then(|instance| instance.start(&mut store))
@@ -343,7 +358,28 @@ impl WasmWorker {
 			start: instance.get_typed_func(&store, START_EXPORT).map_err(invalid_module)?,
 			on_event: instance.get_typed_func(&store, ON_EVENT_EXPORT).map_err(invalid_module)?,
 		};
-		Ok(Self { store, exports, calls: BTreeMap::new(), cursor: 0 })
+		Ok(Self {
+			store,
+			exports,
+			calls: BTreeMap::new(),
+			cursor: 0,
+			fuel_per_entry: DEFAULT_FUEL_PER_ENTRY,
+		})
+	}
+
+	/// Set the fuel of one entry from the host. The default is
+	/// [`DEFAULT_FUEL_PER_ENTRY`]. An entry that uses all of it traps.
+	pub fn with_fuel_per_entry(mut self, fuel: u64) -> Self {
+		self.fuel_per_entry = fuel;
+		self
+	}
+
+	/// Set the limit in bytes of the worker's linear memory. The default is
+	/// [`DEFAULT_MEMORY_LIMIT`]. A memory that the module declares larger
+	/// than the limit stays as it is, but it cannot grow.
+	pub fn with_memory_limit(mut self, bytes: usize) -> Self {
+		self.store.data_mut().limits = StoreLimitsBuilder::new().memory_size(bytes).build();
+		self
 	}
 
 	/// Send the worker's log lines to `log` instead of `tracing`.
@@ -354,7 +390,7 @@ impl WasmWorker {
 
 	/// Run the entry point, answering its calls until it returns.
 	pub async fn run(mut self) -> Result<(), WasmWorkerError> {
-		self.store.set_fuel(FUEL_PER_ENTRY)?;
+		self.store.set_fuel(self.fuel_per_entry)?;
 		self.exports.start.call(&mut self.store, ())?;
 		loop {
 			self.apply_commands();
@@ -415,11 +451,30 @@ impl WasmWorker {
 				Command::Start { handle, method, request } => {
 					let cancel = CancellationToken::default();
 					let cx = CallContext::with_parts(format!("wasm-{handle}"), cancel.clone());
-					let call = Call { events: method(cx, request), cancel, released: false };
+					let call =
+						Call { events: method(cx, request), cancel, released: false, timer: false };
+					self.calls.insert(handle, call);
+				},
+				Command::Sleep { handle, millis } => {
+					let delay =
+						futures_timer::Delay::new(core::time::Duration::from_millis(millis));
+					let elapsed =
+						delay.map(|()| Event { kind: EventKind::Response, payload: Vec::new() });
+					let call = Call {
+						events: stream::once(elapsed).boxed(),
+						cancel: CancellationToken::default(),
+						released: false,
+						timer: true,
+					};
 					self.calls.insert(handle, call);
 				},
 				Command::Release { handle } => {
-					if let Some(call) = self.calls.get_mut(&handle) {
+					let Some(call) = self.calls.get_mut(&handle) else {
+						continue;
+					};
+					if call.timer {
+						self.forget(handle);
+					} else {
 						call.cancel.cancel();
 						call.released = true;
 					}
@@ -431,7 +486,7 @@ impl WasmWorker {
 	fn deliver(&mut self, handle: u32, event: Event) -> Result<(), WasmWorkerError> {
 		let length = event.payload.len() as u32;
 		self.store.data_mut().event_payload = event.payload;
-		self.store.set_fuel(FUEL_PER_ENTRY)?;
+		self.store.set_fuel(self.fuel_per_entry)?;
 		let delivered =
 			self.exports.on_event.call(&mut self.store, (handle, event.kind as u32, length));
 		self.store.data_mut().event_payload.clear();
@@ -475,6 +530,12 @@ fn link(
 			READ_EVENT_IMPORT => linker.func_wrap(IMPORT_MODULE, READ_EVENT_IMPORT, read_event),
 			LOG_IMPORT => linker.func_wrap(IMPORT_MODULE, LOG_IMPORT, log),
 			FINISH_IMPORT => linker.func_wrap(IMPORT_MODULE, FINISH_IMPORT, finish),
+			RANDOM_IMPORT => linker.func_wrap(IMPORT_MODULE, RANDOM_IMPORT, random),
+			NOW_MILLIS_IMPORT => linker.func_wrap(IMPORT_MODULE, NOW_MILLIS_IMPORT, now_millis),
+			MONOTONIC_MILLIS_IMPORT => {
+				linker.func_wrap(IMPORT_MODULE, MONOTONIC_MILLIS_IMPORT, monotonic_millis)
+			},
+			SLEEP_IMPORT => linker.func_wrap(IMPORT_MODULE, SLEEP_IMPORT, sleep),
 			name => {
 				let (name, method) = methods.get_key_value(name).ok_or_else(unknown)?;
 				let method = method.clone();
@@ -500,16 +561,54 @@ fn start_call(
 ) -> Result<u32, wasmi::Error> {
 	let request = read_guest(&caller, pointer, length)?;
 	let state = caller.data_mut();
+	let handle = open_handle(state)?;
+	state.commands.push(Command::Start { handle, method, request });
+	Ok(handle)
+}
+
+/// Give a new call or timer a handle, within [`MAX_CALLS_IN_FLIGHT`].
+fn open_handle(state: &mut GuestState) -> Result<u32, wasmi::Error> {
 	if state.calls_in_flight >= MAX_CALLS_IN_FLIGHT {
 		return Err(wasmi::Error::new("too many calls in flight"));
 	}
-	state.calls_in_flight += 1;
 	let handle = state.next_handle;
 	state.next_handle = handle
 		.checked_add(1)
 		.ok_or_else(|| wasmi::Error::new("call handles exhausted"))?;
-	state.commands.push(Command::Start { handle, method, request });
+	state.calls_in_flight += 1;
 	Ok(handle)
+}
+
+fn sleep(mut caller: Caller<'_, GuestState>, millis: u64) -> Result<u32, wasmi::Error> {
+	let state = caller.data_mut();
+	let handle = open_handle(state)?;
+	state.commands.push(Command::Sleep { handle, millis });
+	Ok(handle)
+}
+
+fn random(
+	mut caller: Caller<'_, GuestState>,
+	pointer: u32,
+	length: u32,
+) -> Result<(), wasmi::Error> {
+	if length > MAX_PAYLOAD_BYTES {
+		return Err(wasmi::Error::new("random buffer too large"));
+	}
+	let memory = guest_memory(&caller)?;
+	let start = pointer as usize;
+	let buffer = memory
+		.data_mut(&mut caller)
+		.get_mut(start..start + length as usize)
+		.ok_or_else(|| wasmi::Error::new("random buffer outside worker memory"))?;
+	getrandom::getrandom(buffer).map_err(|error| wasmi::Error::new(error.to_string()))
+}
+
+fn now_millis() -> u64 {
+	crate::unix_time::current_unix_millis()
+}
+
+fn monotonic_millis(caller: Caller<'_, GuestState>) -> u64 {
+	u64::try_from(caller.data().loaded.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 fn release(mut caller: Caller<'_, GuestState>, handle: u32) {

@@ -98,9 +98,9 @@ A call goes through three steps, joined by the import name:
 `#[wasm_env]` sits on every service trait in `truapi::api`. From one reading of the trait it emits both sides, so they cannot drift apart:
 
 - **Host**, under the `wasm-worker` feature: `WasmEnv::link_<trait>`, the table entries for that trait. `WasmEnv::for_product` links all of them.
-- **Guest**, under the `guest` feature on wasm32: a `guest` module beside the trait, with the import declarations and one typed async function per method. `truapi-guest-api` re-exports it as `truapi::<trait>` and adds the executor and exports.
+- **Guest**, under the `guest` feature on wasm32: a `guest` module beside the trait, with the import declarations (public, in `guest::imports`, for raw calls) and one typed async function per method. `truapi-guest-api` re-exports it as `truapi::<trait>` and adds the executor and exports.
 
-Import names are `<trait>_<method>`, the names the wire table uses, and a test holds the linked set equal to the wire table's product-started methods. Internal and host-initiated methods get no import.
+Import names are `<trait>_<method>`, the names the wire table uses. Internal and host-initiated methods (such as `renderer_render` and the Chat Extension v2 queries `chat_messages_query` and `chat_user_action`) get no import: `link_<trait>` records them with `WasmEnv::exclude`. A test holds that every wire table method is linked or excluded, never both.
 
 ## The ABI
 
@@ -113,6 +113,10 @@ Import names are `<trait>_<method>`, the names the wire table uses, and a test h
 | `read_event` | `(ptr)` | Copy the payload of the event being delivered into guest memory, for the length `truapi_on_event` announced |
 | `log` | `(ptr, len)` | Write a UTF-8 line to the host's log |
 | `finish` | `(succeeded, ptr, len)` | Report that the entry point returned, with an error message when it failed |
+| `random` | `(ptr, len)` | Fill guest memory with random bytes from the host's operating system generator |
+| `now_millis` | `() -> u64` | Unix time of the host clock in milliseconds |
+| `monotonic_millis` | `() -> u64` | Milliseconds since the host loaded the worker; never goes back |
+| `sleep` | `(millis: u64) -> handle` | Start a timer. When it elapses, the host sends one `Response` event with an empty payload; `release` cancels it |
 
 | Export | Signature | Meaning |
 | --- | --- | --- |
@@ -140,17 +144,58 @@ async fn main() -> Result<(), truapi::Error> {
 }
 ```
 
-Requests are futures and subscriptions are streams, both over `truapi::latest` types. Dropping either before it ends releases the call. The examples in [`rust/guests`](../../rust/guests) build with:
+Requests are futures and subscriptions are streams, both over `truapi::latest` types. Dropping either before it ends releases the call.
+
+Beside the service modules, `truapi-guest-api` has:
+
+| Item | Signature | Meaning |
+| --- | --- | --- |
+| `truapi::spawn` | `fn spawn(future: impl Future<Output = ()> + 'static)` | Run a task beside the entry point |
+| `truapi::time::now_unix_millis` | `fn now_unix_millis() -> u64` | Unix time of the host clock |
+| `truapi::time::monotonic_millis` | `fn monotonic_millis() -> u64` | Milliseconds since the worker loaded, for intervals |
+| `truapi::time::sleep` | `fn sleep(duration: Duration) -> Sleep` | A host timer, rounded up to a full millisecond; `Sleep: Future<Output = ()> + Send`, and dropping it cancels the timer |
+| `truapi::random::fill` | `fn fill(buffer: &mut [u8])` | Random bytes from the host, good for keys |
+| `truapi::raw::call` | `fn call(import: StartImport, request: &[u8]) -> RawCall` | Start a request with an encoded versioned request; `RawCall: Future<Output = Vec<u8>> + Send` resolves to the SCALE `Result<Response, CallError<Error>>` |
+| `truapi::raw::subscribe` | `fn subscribe(import: StartImport, request: &[u8]) -> RawSubscription` | Start a subscription; `RawSubscription: Stream<Item = RawEvent> + Send` yields `RawEvent::Item(bytes)`, then one `RawEvent::End(bytes)` with the SCALE `Result<(), CallError<Error>>` |
+| `truapi::raw::StartImport` | `extern "C" fn(*const u8, u32) -> u32` | The import of a method, such as `truapi::local_storage::imports::read` |
+
+`truapi::codec`, `truapi::versioned`, `truapi::v01` and `truapi::v02` re-export the codec and the protocol types that a raw call encodes and decodes.
+
+The executor polls a task only when its own waker is woken: at start, after a host event for one of its calls or timers, or after a different task wakes it. One entry from the host polls until no task is woken. Spawned tasks run while the entry point waits. When the entry point returns, the worker ends: the executor drops every task, which releases its calls, and reports the outcome. `RawCall`, `RawSubscription` and `Sleep` hold only a handle, so they are `Send` and can be in `async_trait` futures.
+
+```rust
+#[truapi::main]
+async fn main() -> Result<(), truapi::Error> {
+    let mut seed = [0u8; 32];
+    truapi::random::fill(&mut seed);
+    truapi::spawn(async {
+        truapi::time::sleep(Duration::from_secs(1)).await;
+        truapi::log!("one second later");
+    });
+    let request = HostLocalStorageReadRequest::V1(v01::HostLocalStorageReadRequest { key: "k".into() }).encode();
+    let payload = truapi::raw::call(truapi::local_storage::imports::read, &request).await;
+    let read = Result::<HostLocalStorageReadResponse, CallError<HostLocalStorageReadError>>::decode(&mut &payload[..])?;
+    Ok(())
+}
+```
+
+The examples in [`rust/guests`](../../rust/guests) build with:
 
 ```bash
 cargo build --manifest-path rust/guests/Cargo.toml --target wasm32-unknown-unknown --release
 ```
 
 and run against a CLI host with `/worker <wasm-path>`, as the selected product.
+`truapi-host dev --worker-wasm <wasm-path>` runs one as the `Worker` of the
+product beside the chat page `/chat` and its socket `/chat/ws`, so a person or
+a test can act in its rooms; `chat-actions` is the example for that.
 
 ## Limits
 
-- A worker gets a fixed amount of fuel for each entry from the host and 64 MiB of linear memory, may pass at most 8 MiB per request or log line, and may hold 1024 calls open. The values are placeholders.
+- Fuel: each entry from the host (the start, or the delivery of one event) gets `DEFAULT_FUEL_PER_ENTRY`, 20 billion, about one unit for each wasm instruction. An entry that uses all of it traps. Release builds of wasmi on an Apple M-series machine use about 400 million fuel each second, so one entry can run for about 50 seconds. The value is high for crypto and database work in one entry (X448, sntrup761, an encrypted SQLite image), and it still stops a worker in an endless loop. No such workload has been measured yet. `WasmWorker::with_fuel_per_entry` changes it.
+- Memory: `DEFAULT_MEMORY_LIMIT`, 256 MiB of linear memory. The engine gets memory only when the worker grows it. `WasmWorker::with_memory_limit` changes it.
+- A worker may pass at most 8 MiB per request or log line (and for each `random` call), and may hold 1024 calls and timers open.
+- Timers use `futures-timer`, so they work on any executor that drives `WasmWorker::run`, Tokio included, and come through the same event queue as calls. Releasing a timer removes it at once.
 - Releasing a call fires its cancellation token, as a `Cancel` frame does, and the host keeps polling it until it settles, dropping its events.
 - Wasm runs synchronously on the task that drives the worker, so a long entry blocks that thread until it returns or runs out of fuel.
 - A module that imports anything the host does not link is rejected before it runs.

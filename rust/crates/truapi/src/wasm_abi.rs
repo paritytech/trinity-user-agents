@@ -6,6 +6,9 @@
 //! guest copies the payload into a buffer of its own through
 //! [`READ_EVENT_IMPORT`]. The host never allocates in guest memory.
 //!
+//! A guest also gets random bytes, the time of two clocks, and timers. A
+//! timer has a handle and answers through the same events as a call.
+//!
 //! The host only touches guest memory behind a pointer an import passes, within
 //! the length the guest gave or was told, which is why guests declare those
 //! imports safe.
@@ -26,6 +29,22 @@ pub const LOG_IMPORT: &str = "log";
 /// Import a guest reports the end of its entry point through, with a UTF-8
 /// error message when it failed.
 pub const FINISH_IMPORT: &str = "finish";
+
+/// Import filling `(pointer, len)` of guest memory with random bytes from the
+/// host's operating system generator.
+pub const RANDOM_IMPORT: &str = "random";
+
+/// Import that returns the Unix time of the host clock in milliseconds.
+pub const NOW_MILLIS_IMPORT: &str = "now_millis";
+
+/// Import that returns the milliseconds since the host loaded the worker.
+/// The value never goes back.
+pub const MONOTONIC_MILLIS_IMPORT: &str = "monotonic_millis";
+
+/// Import that starts a timer of `millis` milliseconds and returns its handle.
+/// When the time elapses, the host sends one [`EventKind::Response`] event
+/// with an empty payload. [`RELEASE_IMPORT`] cancels the timer.
+pub const SLEEP_IMPORT: &str = "sleep";
 
 /// Export the host calls once to run the guest's entry point.
 pub const START_EXPORT: &str = "truapi_start";
