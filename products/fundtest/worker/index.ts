@@ -70,6 +70,10 @@ function handle(item: HostFundingServeSubscribeItem): void {
     case "Cancel":
       sessions.get(item.value.intent)?.cancel();
       return;
+    case "CancelAccepted":
+    case "CancelDeclined":
+      // fundtest refuses rather than offering terms, so no answer reaches it.
+      return;
   }
 }
 

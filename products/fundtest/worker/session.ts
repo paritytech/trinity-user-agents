@@ -195,14 +195,23 @@ export class Session {
     return !this.fundsSeen && (phase === "new" || phase === "awaiting-user");
   }
 
-  /** The user asked to cancel. Honoured while nothing has moved. */
+  /** The user asked to cancel. Honoured while nothing has moved; after that
+   *  fundtest offers no terms and refuses, so the user is told rather than
+   *  left waiting. */
   cancel(): void {
     this.cancelRequested = true;
-    if (this.cancellable) this.abort.abort();
-    else
-      console.info(
-        `[fundtest] ${this.intent}: cancel ignored, funds are moving`,
-      );
+    if (this.cancellable) {
+      this.abort.abort();
+      return;
+    }
+    this.report({
+      tag: "CancelRefused",
+      value: { reason: "Funds are already moving" },
+    }).catch((error: unknown) =>
+      console.warn(
+        `[fundtest] ${this.intent}: refusing the cancel failed: ${describe(error)}`,
+      ),
+    );
   }
 
   /** Runs the session until it ends, reporting as it goes. Answers `killed`
