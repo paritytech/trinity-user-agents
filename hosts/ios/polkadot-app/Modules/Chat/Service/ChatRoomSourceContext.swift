@@ -12,6 +12,8 @@ struct ProductRoomServices: Sendable {
     let settings: ProductMessageSource.Settings
     /// The outbox of the staged attachments (P10.3). Nil shows no outbox entry in the window.
     let stager: ProductAttachmentStager?
+    /// The record of the `Preparing` messages, for the reasoning rows (07-LATER §9.4). Nil records nothing.
+    let preparingMessages: ChatPreparingMessageTracking?
 
     init(
         querying: ProductChatQuerying?,
@@ -19,7 +21,8 @@ struct ProductRoomServices: Sendable {
         feedListeners: ProductFeedListeners = .shared,
         cache: ProductMessageCaching = ProductMessageCache.shared,
         settings: ProductMessageSource.Settings = .init(),
-        stager: ProductAttachmentStager? = nil
+        stager: ProductAttachmentStager? = nil,
+        preparingMessages: ChatPreparingMessageTracking? = nil
     ) {
         self.querying = querying
         self.lifecycle = lifecycle
@@ -27,6 +30,7 @@ struct ProductRoomServices: Sendable {
         self.cache = cache
         self.settings = settings
         self.stager = stager
+        self.preparingMessages = preparingMessages
     }
 
     /// The services that the bot of a product gives. A bot conforms to ``ProductChatQuerying`` and
@@ -35,7 +39,8 @@ struct ProductRoomServices: Sendable {
         self.init(
             querying: bot as? ProductChatQuerying,
             lifecycle: (bot as? ChatRoomLifecycle) ?? NoChatRoomLifecycle(),
-            stager: .shared
+            stager: .shared,
+            preparingMessages: ChatPreparingMessageStore.shared
         )
     }
 }
@@ -135,6 +140,7 @@ private extension ChatRoomSourceContext {
             cache: services.cache,
             settings: settings,
             stager: services.stager,
+            preparingMessages: services.preparingMessages,
             logger: logger
         )
         registration = services.feedListeners.register(source, for: chatId)

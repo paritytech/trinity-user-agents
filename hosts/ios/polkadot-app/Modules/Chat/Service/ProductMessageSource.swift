@@ -52,6 +52,9 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     /// The outbox of the attachments that the host stages (P10.3). Its entries of this room show at the end of the
     /// window until the product has them.
     let stager: ProductAttachmentStager?
+    /// The record of the `Preparing` messages. A page gives the status of its messages to it, so a room that
+    /// opens while the product thinks reads "Thinking" (07-LATER §9.4).
+    let preparingMessages: ChatPreparingMessageTracking?
     let logger: LoggerProtocol
 
     let subject: AsyncCurrentValueSubject<MessageListSnapshot>
@@ -90,6 +93,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         settings: Settings = Settings(),
         now: @escaping @Sendable () -> UInt64 = { Date().toChatTimestamp() },
         stager: ProductAttachmentStager? = nil,
+        preparingMessages: ChatPreparingMessageTracking? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
@@ -100,6 +104,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         self.settings = settings
         self.now = now
         self.stager = stager
+        self.preparingMessages = preparingMessages
         self.logger = logger
         subject = AsyncCurrentValueSubject(MessageListSnapshot(
             messages: [],
