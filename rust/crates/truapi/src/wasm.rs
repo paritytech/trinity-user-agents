@@ -1868,6 +1868,97 @@ impl WasmProductRuntime {
 		Ok(observe_chat_query(query, on_answer, on_complete, on_error))
 	}
 
+	/// Ask the product for the messages of a room it keeps that match what the user typed.
+	/// `request` is a SCALE-encoded `ProductChatSearchQueryRequest`. Exactly one callback
+	/// follows: `onAnswer` with the SCALE-encoded item, `onError` with the SCALE-encoded
+	/// `CallError` of the query, or `onComplete` when the product ended the query without an
+	/// answer.
+	#[wasm_bindgen(js_name = chatSearchQuery)]
+	pub fn chat_search_query(
+		&self,
+		request: Vec<u8>,
+		on_answer: Function,
+		on_complete: Function,
+		on_error: Function,
+	) -> Result<WasmChatQuery, JsValue> {
+		let request =
+			truapi::latest::ProductChatSearchQueryRequest::decode(&mut request.as_slice())
+				.map_err(|err| {
+					JsValue::from_str(&format!("chatSearchQuery request did not decode: {err}"))
+				})?;
+		let query = self
+			.inner
+			.core
+			.control()
+			.chat_search_query(request)
+			.map_err(|err| JsValue::from_str(&err.to_string()))?;
+		Ok(observe_chat_query(query, on_answer, on_complete, on_error))
+	}
+
+	/// Send one event about a room to the product, or keep it until the product subscribes to
+	/// `roomEventsSubscribe`. Takes a SCALE-encoded `HostChatRoomEventsSubscribeItem`.
+	#[wasm_bindgen(js_name = publishChatRoomEvent)]
+	pub fn publish_chat_room_event(&self, item: Vec<u8>) -> Result<(), JsValue> {
+		let item = truapi::latest::HostChatRoomEventsSubscribeItem::decode(&mut item.as_slice())
+			.map_err(|err| JsValue::from_str(&format!("chat room event did not decode: {err}")))?;
+		self.inner
+			.core
+			.control()
+			.publish_chat_room_event(item)
+			.map_err(|err| JsValue::from_str(&err.to_string()))
+	}
+
+	/// Hold the worker of the product for a wake. Without `roomId` the product started and has
+	/// no room; with `roomId` alone a message or a room event is on its way to the room; with
+	/// both a notification on watch `watchId` arrived for the room. Answers the end of the hold
+	/// in milliseconds since the Unix epoch, or `undefined` when the product used its
+	/// notification wakes of the hour.
+	#[wasm_bindgen(js_name = wakeProduct)]
+	pub fn wake_product(
+		&self,
+		room_id: Option<String>,
+		watch_id: Option<String>,
+	) -> Result<Option<f64>, JsValue> {
+		let reason = match (room_id, watch_id) {
+			(None, None) => crate::ChatWakeReason::ProductStart,
+			(Some(room_id), None) => crate::ChatWakeReason::MessageInFlight { room_id },
+			(Some(room_id), Some(watch_id)) => {
+				crate::ChatWakeReason::Notification { room_id, watch_id }
+			},
+			(None, Some(_)) => return Err(JsValue::from_str("a notification wake names its room")),
+		};
+		match self
+			.inner
+			.core
+			.control()
+			.wake_product(reason)
+			.map_err(|err| JsValue::from_str(&err.to_string()))?
+		{
+			crate::ChatWakeOutcome::Held { until_ms } => Ok(Some(until_ms as f64)),
+			crate::ChatWakeOutcome::BudgetSpent => Ok(None),
+		}
+	}
+
+	/// Stage a user attachment of a room as a preimage that the Bulletin allowance of the
+	/// product pays for, and answer its key. The core does not stage attachments yet, so that
+	/// `capabilities` never lists `preimage_attachments`, and each call rejects.
+	#[wasm_bindgen(js_name = stageChatAttachment)]
+	pub async fn stage_chat_attachment(
+		&self,
+		room_id: String,
+		mime_type: String,
+		bytes: Vec<u8>,
+	) -> Result<Vec<u8>, JsValue> {
+		tracing::debug!(%room_id, %mime_type, size = bytes.len(), "chat attachment staging is not served");
+		if bytes.len() > crate::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES {
+			return Err(JsValue::from_str(&format!(
+				"the attachment is larger than {} bytes",
+				crate::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES
+			)));
+		}
+		Err(JsValue::from_str("this core does not stage chat attachments yet"))
+	}
+
 	/// Publish one host-authored Chat action into this connection's action
 	/// stream, buffered until the product subscribes. Takes a SCALE-encoded
 	/// `HostChatActionSubscribeItem`.

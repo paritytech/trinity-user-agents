@@ -142,6 +142,21 @@ creation working.
 The core checks that the product created the room before it calls any of
 these, and bounds and screens every field.
 
+The bridge also carries the Chat Extension v2 additions
+([RFC](../../docs/rfcs/chat-extension-v2-additions.md)). Each has a default
+for a host that does not serve them: `capabilities`, `roomUserStates` and
+`bots` answer an empty list, `roomFeatures` answers
+`ChatRoomFeatures.hostDefault`, and the three setters answer a rejection.
+
+| Request | What the host does |
+| --- | --- |
+| `capabilities` | Answers the feature names it serves from end to end (the RFC's feature table). The core drops each name it does not know or cannot back, and answers the product's `capabilities` with the rest |
+| `roomFeatures`, `setRoomFeatures` | Answer and replace the optional features of a room. Keep a feature this build does not serve, so a later build applies it |
+| `setMessageMeta` | Replaces the thread summary, branch position and reasoning flag of one message, in both room modes. Throw `NativeChatFeedRejection` to refuse it |
+| `setRoomCall` | Shows, changes or removes the call of a room. The core first checks that `capabilities` lists `call_buttons` or `room_calls` |
+| `roomUserStates` | Answers each room of the product the user muted or archived; the core sends it to the product when its `roomEventsSubscribe` starts, and silences an immediate notification into a muted room |
+| `bots` | Answers the bot ids of the personas the product registered; the core refuses a `bot:<id>` author that is not one of them |
+
 ```swift
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
@@ -235,6 +250,7 @@ let page = try await execution.chatMessagesQuery(
 | `chatMessagesQuery` | 10 s (`messages`) |
 | `chatUserAction` | 30 s for a sent message (`sentMessage`), 10 s for other actions (`userAction`) |
 | `chatReactionsQuery`, `chatParticipantsQuery`, `chatMessageActionsQuery`, `chatParticipantActionsQuery` | 5 s (`lookup`) |
+| `chatSearchQuery` | 10 s (`search`) |
 
 Each query also takes `timeout:`. A query with no answer throws
 `ChatQueryError`: `.refused(.notAvailable)` asks the host to apply its default,
@@ -258,6 +274,15 @@ chat list preview of a custom card. Only a custom message carries one, since
 every other kind previews from its own content.
 Ids arriving _in_ a `Reaction` or `ReactionRemoved` are product-chosen and
 untrusted: they may name a message in another room, or one that never existed.
+
+The runtime carries the parts of the additions that need no execution:
+`publishChatRoomEvent(productId:roomId:event:)` sends a `ChatRoomEvent` (mute
+and archive, call buttons and answers, branch selection) and the core keeps the
+newest 64 of a product until its worker subscribes; `wakeProduct(productId:reason:)`
+holds the worker for 30 seconds for a `ChatWakeReason` and answers
+`ChatWakeOutcome`, at most 12 notification wakes for each product in one hour;
+`stageChatAttachment` refuses each attachment until the core stages
+preimages.
 
 ## Pocket
 

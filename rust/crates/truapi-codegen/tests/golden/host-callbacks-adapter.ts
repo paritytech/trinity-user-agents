@@ -7,6 +7,7 @@
 
 import {
   ChatRoomConfig,
+  ChatRoomFeatures,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
   HostChatDeleteRoomRequest,
@@ -15,9 +16,12 @@ import {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetMessageMetaRequest,
   HostChatSetRoomActivityRequest,
+  HostChatSetRoomCallRequest,
   HostChatSetRoomCommandsRequest,
   HostChatSetRoomConfigRequest,
+  HostChatSetRoomFeaturesRequest,
   HostChatSetRoomFooterRequest,
   HostChatSetRoomMetadataRequest,
   HostChatSetRoomPreviewRequest,
@@ -41,6 +45,9 @@ import {
 import type { GenericError } from "@parity/truapi";
 import {
   AuthState,
+  ChatBotIds,
+  ChatFeatureNames,
+  ChatRoomUserStates,
   CoreStorageKey,
   DevicePermissionStatus,
   HostChainSet,
@@ -101,6 +108,16 @@ export interface RawCallbacks {
   ): Promise<void>;
   setChatRoomCommands?(product: Uint8Array, request: Uint8Array): Promise<void>;
   setChatRoomActivity?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  chatCapabilities?(product: Uint8Array): Promise<Uint8Array>;
+  readChatRoomFeatures?(
+    product: Uint8Array,
+    roomId: string,
+  ): Promise<Uint8Array>;
+  setChatRoomFeatures?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  setChatMessageMeta?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  setChatRoomCall?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  readChatRoomUserStates?(product: Uint8Array): Promise<Uint8Array>;
+  readChatBots?(product: Uint8Array): Promise<Uint8Array>;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
@@ -257,6 +274,40 @@ export function createWasmRawCallbacks(
             await chat.setChatRoomActivity(
               ProductContext.dec(product),
               HostChatSetRoomActivityRequest.dec(request),
+            ),
+          chatCapabilities: async (product) =>
+            ChatFeatureNames.enc(
+              await chat.chatCapabilities(ProductContext.dec(product)),
+            ),
+          readChatRoomFeatures: async (product, roomId) =>
+            ChatRoomFeatures.enc(
+              await chat.readChatRoomFeatures(
+                ProductContext.dec(product),
+                roomId,
+              ),
+            ),
+          setChatRoomFeatures: async (product, request) =>
+            await chat.setChatRoomFeatures(
+              ProductContext.dec(product),
+              HostChatSetRoomFeaturesRequest.dec(request),
+            ),
+          setChatMessageMeta: async (product, request) =>
+            await chat.setChatMessageMeta(
+              ProductContext.dec(product),
+              HostChatSetMessageMetaRequest.dec(request),
+            ),
+          setChatRoomCall: async (product, request) =>
+            await chat.setChatRoomCall(
+              ProductContext.dec(product),
+              HostChatSetRoomCallRequest.dec(request),
+            ),
+          readChatRoomUserStates: async (product) =>
+            ChatRoomUserStates.enc(
+              await chat.readChatRoomUserStates(ProductContext.dec(product)),
+            ),
+          readChatBots: async (product) =>
+            ChatBotIds.enc(
+              await chat.readChatBots(ProductContext.dec(product)),
             ),
         }
       : {}),

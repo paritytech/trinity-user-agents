@@ -48,7 +48,7 @@ use super::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
 		ProductExecutionConfig,
 	},
-	errors::{HostRejection, NativeCoreDatabaseError},
+	errors::{HostRejection, NativeChatStageRejection, NativeCoreDatabaseError},
 	events::NativeEventBus,
 	executor::shared_native_executor,
 	platform::{
@@ -403,6 +403,66 @@ impl NativeTrUApiHostRuntime {
 	/// releasing with none held is a no-op.
 	pub fn release_worker(&self, product_id: String) {
 		self.runtime.worker_ledger().release(&product_id);
+	}
+
+	/// Send one event about a room to the product: the user muted or
+	/// archived the room, pressed a call button, answered a call, or picked
+	/// another alternative of a message. The core keeps the newest events of
+	/// a product that has no `room_events_subscribe` until it subscribes.
+	pub fn publish_chat_room_event(
+		&self,
+		product_id: String,
+		room_id: String,
+		event: truapi::latest::ChatRoomEvent,
+	) -> Result<(), HostRejection> {
+		self.runtime
+			.publish_chat_room_event(
+				&product_id,
+				truapi::latest::HostChatRoomEventsSubscribeItem { room_id, event },
+			)
+			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
+	}
+
+	/// Hold the worker of the product for a wake of
+	/// [`crate::CHAT_WAKE_HOLD_MS`]. A new wake moves the end of the hold. A
+	/// notification wake also sends `ChatRoomEvent::Woken` to the room, at
+	/// most [`crate::CHAT_NOTIFICATION_WAKES_PER_HOUR`] times in one hour.
+	pub fn wake_product(
+		&self,
+		product_id: String,
+		reason: crate::ChatWakeReason,
+	) -> Result<crate::ChatWakeOutcome, HostRejection> {
+		self.runtime
+			.wake_product(&product_id, reason)
+			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
+	}
+
+	/// Stage a user attachment of a room as a preimage that the Bulletin
+	/// allowance of the product pays for, and return its key. The core does
+	/// not stage attachments yet, so that `capabilities` never lists
+	/// `preimage_attachments`, and each call is refused.
+	pub async fn chat_stage_attachment(
+		&self,
+		product_id: String,
+		room_id: String,
+		mime_type: String,
+		bytes: Vec<u8>,
+	) -> Result<Vec<u8>, NativeChatStageRejection> {
+		tracing::debug!(
+			%product_id,
+			%room_id,
+			%mime_type,
+			size = bytes.len(),
+			"chat attachment staging is not served"
+		);
+		if bytes.len() > crate::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES {
+			return Err(NativeChatStageRejection::TooLarge {
+				max_bytes: crate::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES as u32,
+			});
+		}
+		Err(NativeChatStageRejection::SubmitFailed {
+			reason: "this core does not stage chat attachments yet".to_string(),
+		})
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
@@ -1086,6 +1146,25 @@ impl NativeProductExecution {
 			observer.into(),
 			self.spawner.clone(),
 			|menu| NativeChatQueryAnswer::ParticipantMenu { menu },
+			|error| NativeChatQueryRefusal::Query { error },
+		))
+	}
+
+	/// Ask the product for the messages of a room it keeps that match what the
+	/// user typed, and deliver its answer to `observer`. The core answers
+	/// `NotAvailable` itself for a room that does not set `product_source`, or
+	/// whose features do not set `search`.
+	pub fn chat_search_query(
+		&self,
+		request: v01::ProductChatSearchQueryRequest,
+		observer: Box<dyn NativeChatQueryObserver>,
+	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
+		let query = self.chat_control()?.chat_search_query(request)?;
+		Ok(observe_chat_query(
+			query,
+			observer.into(),
+			self.spawner.clone(),
+			|page| NativeChatQueryAnswer::Search { page },
 			|error| NativeChatQueryRefusal::Query { error },
 		))
 	}

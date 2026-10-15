@@ -4,6 +4,8 @@ import type { ChatQueryName, WasmChatQueryHandle } from "./chat-queries.js";
 import type { WorkerProductRuntime } from "./wasm-module.js";
 import {
   handleChatQueryStart,
+  handleStageChatAttachment,
+  handleWakeProduct,
   stopChatQueriesForCore,
   stopChatQuery,
   type ChatQueries,
@@ -40,6 +42,14 @@ function fakeCore(log: string[], started: Callbacks[]): WorkerProductRuntime {
     free: () => {},
     publishChatAction: () => {},
     publishChatEvent: () => {},
+    publishChatRoomEvent: () => {},
+    wakeProduct: (roomId, watchId) => {
+      log.push(`wake:${roomId ?? "-"}:${watchId ?? "-"}`);
+      return watchId === "spent" ? undefined : 30_000;
+    },
+    stageChatAttachment: async () => {
+      throw new Error("this core does not stage chat attachments yet");
+    },
     publishRendererAction: () => {},
     render: () => ({ cancel: () => {}, free: () => {} }),
     chatMessagesQuery: query("chatMessagesQuery"),
@@ -48,6 +58,7 @@ function fakeCore(log: string[], started: Callbacks[]): WorkerProductRuntime {
     chatParticipantsQuery: query("chatParticipantsQuery"),
     chatMessageActionsQuery: query("chatMessageActionsQuery"),
     chatParticipantActionsQuery: query("chatParticipantActionsQuery"),
+    chatSearchQuery: query("chatSearchQuery"),
   };
 }
 
@@ -190,5 +201,56 @@ describe("worker chat queries", () => {
     );
     stopChatQueriesForCore(queries, 1);
     expect([...queries.keys()]).toEqual([2]);
+  });
+});
+
+describe("worker wakes and staging", () => {
+  it("answers the end of a hold, or no end when the budget is spent", () => {
+    const messages: WorkerToMain[] = [];
+    const log: string[] = [];
+    const core = fakeCore(log, []);
+    const post = (msg: WorkerToMain) => messages.push(msg);
+
+    handleWakeProduct(core, post, 1, 3, "main", "dev");
+    handleWakeProduct(core, post, 1, 4, "main", "spent");
+    handleWakeProduct(undefined, post, 9, 5, undefined, undefined);
+
+    expect(log).toEqual(["wake:main:dev", "wake:main:spent"]);
+    expect(messages).toEqual([
+      { kind: "wakeProductResponse", requestId: 3, ok: true, untilMs: 30_000 },
+      {
+        kind: "wakeProductResponse",
+        requestId: 4,
+        ok: true,
+        untilMs: undefined,
+      },
+      {
+        kind: "wakeProductResponse",
+        requestId: 5,
+        ok: false,
+        error: "wakeProduct received for unknown core 9",
+      },
+    ]);
+  });
+
+  it("answers the refusal of a staging", async () => {
+    const messages: WorkerToMain[] = [];
+    await handleStageChatAttachment(
+      fakeCore([], []),
+      (msg) => messages.push(msg),
+      1,
+      6,
+      "main",
+      "image/png",
+      new Uint8Array([1]),
+    );
+    expect(messages).toEqual([
+      {
+        kind: "stageChatAttachmentResponse",
+        requestId: 6,
+        ok: false,
+        error: "this core does not stage chat attachments yet",
+      },
+    ]);
   });
 });

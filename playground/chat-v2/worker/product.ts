@@ -9,6 +9,7 @@ import type {
   ChatMessageBody,
   ChatUserAction,
   HostChatActionSubscribeItem,
+  HostChatRoomEventsSubscribeItem,
   HostRendererActionSubscribeItem,
   ProductChatQueryError,
   ProductChatUserActionError,
@@ -203,6 +204,12 @@ export class SampleProduct {
     this.#client.renderer.actionSubscribe().subscribe({
       next: (item) => this.#rendererAction(item),
       error: (error) => console.error("chat-v2: renderer action_subscribe ended", error),
+    });
+    // A host before the Chat additions refuses the subscription; the
+    // product works on without it.
+    this.#client.chat.roomEventsSubscribe().subscribe({
+      next: (item) => this.#roomEvent(item),
+      error: (error) => console.error("chat-v2: room_events_subscribe ended", error),
     });
     // 3. The rooms. A room that exists keeps what it declared.
     this.rooms = this.#createRooms();
@@ -626,6 +633,12 @@ export class SampleProduct {
         }
         return;
     }
+  }
+
+  #roomEvent(item: HostChatRoomEventsSubscribeItem): void {
+    void this.ready.then(() => {
+      this.#record({ via: "room_events", room: item.roomId, kind: item.event.tag, data: item.event.value ?? null });
+    });
   }
 
   // ------------------------------------------------------------- renderer

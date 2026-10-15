@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "4069c8ba3db15ade";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "0b92791b734a7344";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -348,6 +348,42 @@ pub const CHAT_MESSAGE_ACTIONS_QUERY: MethodIds = MethodIds {
 pub const CHAT_PARTICIPANT_ACTIONS_QUERY: MethodIds = MethodIds {
     trait_id: 4,
     method_id: 21,
+};
+
+/// Wire discriminants for `chat_capabilities`.
+pub const CHAT_CAPABILITIES: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 22,
+};
+
+/// Wire discriminants for `chat_set_room_features`.
+pub const CHAT_SET_ROOM_FEATURES: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 23,
+};
+
+/// Wire discriminants for `chat_set_message_meta`.
+pub const CHAT_SET_MESSAGE_META: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 24,
+};
+
+/// Wire discriminants for `chat_set_room_call`.
+pub const CHAT_SET_ROOM_CALL: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 25,
+};
+
+/// Wire discriminants for `chat_room_events_subscribe`.
+pub const CHAT_ROOM_EVENTS_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 26,
+};
+
+/// Wire discriminants for `chat_search_query`.
+pub const CHAT_SEARCH_QUERY: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 27,
 };
 
 /// Wire discriminants for `coin_payment_create_purse`.
@@ -875,6 +911,30 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "chat_participant_actions_query",
         kind: WireKind::Subscription(CHAT_PARTICIPANT_ACTIONS_QUERY),
+    },
+    WireEntry {
+        method: "chat_capabilities",
+        kind: WireKind::Request(CHAT_CAPABILITIES),
+    },
+    WireEntry {
+        method: "chat_set_room_features",
+        kind: WireKind::Request(CHAT_SET_ROOM_FEATURES),
+    },
+    WireEntry {
+        method: "chat_set_message_meta",
+        kind: WireKind::Request(CHAT_SET_MESSAGE_META),
+    },
+    WireEntry {
+        method: "chat_set_room_call",
+        kind: WireKind::Request(CHAT_SET_ROOM_CALL),
+    },
+    WireEntry {
+        method: "chat_room_events_subscribe",
+        kind: WireKind::Subscription(CHAT_ROOM_EVENTS_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "chat_search_query",
+        kind: WireKind::Subscription(CHAT_SEARCH_QUERY),
     },
     WireEntry {
         method: "coin_payment_create_purse",

@@ -8,9 +8,14 @@ import type {
   ChatMessage,
   ChatRoomConfig,
   HostChatActionSubscribeItem,
+  HostChatRoomEventsSubscribeItem,
 } from "@parity/truapi";
 
-import type { ChatHostRuntime, ChatQueryName } from "../chat-queries.js";
+import type {
+  ChatHostRuntime,
+  ChatQueryName,
+  ChatWakeReason,
+} from "../chat-queries.js";
 import { ProductContext } from "../generated/host-callbacks.js";
 import { createMockHost } from "./create-mock-host.js";
 
@@ -44,6 +49,8 @@ type Answer = (request: unknown) => unknown;
 /** A product runtime whose answers a test writes per query. */
 function scripted(answers: Partial<Record<ChatQueryName, Answer>>) {
   const published: HostChatActionSubscribeItem[] = [];
+  const roomEvents: HostChatRoomEventsSubscribeItem[] = [];
+  const wakes: ChatWakeReason[] = [];
   const asked: { name: ChatQueryName; request: unknown }[] = [];
   const query =
     (name: ChatQueryName) =>
@@ -60,11 +67,22 @@ function scripted(answers: Partial<Record<ChatQueryName, Answer>>) {
     chatParticipantsQuery: query("chatParticipantsQuery"),
     chatMessageActionsQuery: query("chatMessageActionsQuery"),
     chatParticipantActionsQuery: query("chatParticipantActionsQuery"),
+    chatSearchQuery: query("chatSearchQuery"),
     publishChatEvent: async (item) => {
       published.push(item);
     },
+    publishChatRoomEvent: async (item) => {
+      roomEvents.push(item);
+    },
+    wakeProduct: async (reason) => {
+      wakes.push(reason);
+      return { tag: "Held", value: { untilMs: 30_000 } };
+    },
+    stageChatAttachment: async () => {
+      throw new Error("not staged");
+    },
   };
-  return { runtime, published, asked };
+  return { runtime, published, roomEvents, wakes, asked };
 }
 
 async function hostWithRoom(
@@ -311,5 +329,246 @@ describe("mock host chat user", () => {
       actions: [pin],
       source: "product",
     });
+  });
+});
+
+describe("mock host chat additions", () => {
+  it("lists every feature name, or the names its configuration gives", async () => {
+    expect(
+      (await createMockHost().callbacks.chat.chatCapabilities(product)).names,
+    ).toContain("call_buttons");
+    const host = createMockHost({ chatFeatures: ["search"] });
+    expect(await host.callbacks.chat.chatCapabilities(product)).toEqual({
+      names: ["search"],
+    });
+  });
+
+  it("keeps the features, the meta and the call of a room", async () => {
+    const host = await hostWithRoom("main");
+    const { chat } = host.callbacks;
+    expect(await chat.readChatRoomFeatures(product, "main")).toEqual({
+      preimageAttachments: false,
+      search: false,
+      readAloud: false,
+    });
+    const features = {
+      preimageAttachments: true,
+      search: false,
+      calls: { audio: true, video: false },
+      readAloud: true,
+    };
+    await chat.setChatRoomFeatures(product, { roomId: "main", features });
+    expect(await chat.readChatRoomFeatures(product, "main")).toEqual(features);
+
+    // A room the host stores holds no message `m1` yet.
+    await expect(
+      chat.setChatMessageMeta(product, {
+        roomId: "main",
+        messageId: "m1",
+        meta: {},
+      }),
+    ).rejects.toThrow("UnknownMessage");
+    await chat.updateChatFeed(
+      product,
+      { roomId: "main", update: { tag: "New", value: message("m1", 1n) } },
+      true,
+    );
+    const meta = { branch: { index: 1, count: 2 } };
+    await chat.setChatMessageMeta(product, {
+      roomId: "main",
+      messageId: "m1",
+      meta,
+    });
+    const call = {
+      tag: "Ringing" as const,
+      value: { callId: "c1", video: false },
+    };
+    await chat.setChatRoomCall(product, { roomId: "main", call });
+
+    expect(host.room("main")).toMatchObject({
+      features,
+      meta: { m1: meta },
+      call,
+    });
+    await chat.setChatRoomCall(product, { roomId: "main" });
+    expect(host.room("main")?.call).toBeUndefined();
+  });
+
+  it("keeps one persona for each bot id, and a repeat replaces it", async () => {
+    const { chat } = createMockHost().callbacks;
+    const register = (name: string) =>
+      chat.registerChatBot(product, { botId: "helper", name, icon: "" });
+    expect(await register("Helper")).toEqual({ status: "New" });
+    expect(await register("Helper 2")).toEqual({ status: "Exists" });
+    expect(await chat.readChatBots(product)).toEqual({ botIds: ["helper"] });
+  });
+
+  it("keeps the user state of a room and tells an attached product", async () => {
+    const host = await hostWithRoom("main");
+    await host.setRoomUserState("quiet", {
+      mutedUntil: 18_446_744_073_709_551_615n,
+      archived: false,
+    });
+    const runtime = scripted({});
+    host.chatUser.attach(runtime.runtime);
+    await host.setRoomUserState("main", { archived: true });
+
+    expect(await host.callbacks.chat.readChatRoomUserStates(product)).toEqual({
+      rooms: [
+        { roomId: "main", archived: true },
+        {
+          roomId: "quiet",
+          mutedUntil: 18_446_744_073_709_551_615n,
+          archived: false,
+        },
+      ],
+    });
+    expect(runtime.roomEvents).toEqual([
+      {
+        roomId: "main",
+        event: { tag: "UserStateChanged", value: { archived: true } },
+      },
+    ]);
+    await host.setRoomUserState("main", { archived: false });
+    expect(
+      (await host.callbacks.chat.readChatRoomUserStates(product)).rooms.map(
+        ({ roomId }) => roomId,
+      ),
+    ).toEqual(["quiet"]);
+  });
+
+  it("plays the call buttons, the call bar and the branch control", async () => {
+    const host = await hostWithRoom("main");
+    const { chat } = host.callbacks;
+    const runtime = scripted({});
+    host.chatUser.attach(runtime.runtime);
+
+    await expect(host.chatUser.pressCall("main", false)).rejects.toThrow(
+      "no audio call button",
+    );
+    await chat.setChatRoomFeatures(product, {
+      roomId: "main",
+      features: {
+        preimageAttachments: false,
+        search: false,
+        calls: { audio: true, video: true },
+        readAloud: false,
+      },
+    });
+    await host.chatUser.pressCall("main", true);
+    await chat.setChatRoomCall(product, {
+      roomId: "main",
+      call: { tag: "Ringing", value: { callId: "c1", video: true } },
+    });
+    await host.chatUser.answerCall("main", true);
+    await chat.setChatRoomCall(product, {
+      roomId: "main",
+      call: {
+        tag: "Active",
+        value: { callId: "c1", video: true, startedAt: 1n },
+      },
+    });
+    await host.chatUser.openCall("main");
+    await host.chatUser.endCall("main");
+
+    await chat.updateChatFeed(
+      product,
+      { roomId: "main", update: { tag: "New", value: message("m1", 1n) } },
+      true,
+    );
+    await chat.setChatMessageMeta(product, {
+      roomId: "main",
+      messageId: "m1",
+      meta: { branch: { index: 1, count: 3 } },
+    });
+    await expect(host.chatUser.selectBranch("main", "m1", 4)).rejects.toThrow(
+      "no alternative 4",
+    );
+    await host.chatUser.selectBranch("main", "m1", 3);
+
+    expect(runtime.roomEvents.map(({ event }) => event)).toEqual([
+      { tag: "CallRequested", value: { video: true } },
+      { tag: "CallAnswered", value: { callId: "c1", accept: true } },
+      { tag: "CallOpened", value: { callId: "c1" } },
+      { tag: "CallEnded", value: { callId: "c1" } },
+      { tag: "BranchSelected", value: { messageId: "m1", index: 3 } },
+    ]);
+    expect(host.roomEvents()).toEqual(runtime.roomEvents);
+  });
+
+  it("searches a room it stores itself and asks a room the product keeps", async () => {
+    const host = await hostWithRoom("main");
+    const { chat } = host.callbacks;
+    await chat.createChatRoom(
+      product,
+      {
+        roomId: "source",
+        metadata: { name: "source" },
+        config: { ...CONFIG, productSource: true },
+      },
+      "",
+    );
+    for (const [id, text] of [
+      ["m1", "Hello there"],
+      ["m2", "nothing"],
+      ["m3", "hello again"],
+    ] as const) {
+      await chat.updateChatFeed(
+        product,
+        {
+          roomId: "main",
+          update: { tag: "New", value: message(id, 1n, text) },
+        },
+        true,
+      );
+    }
+    let answer: unknown = ok({ hits: [message("s1", 5n)], next: "1" });
+    const runtime = scripted({ chatSearchQuery: () => answer });
+    host.chatUser.attach(runtime.runtime);
+
+    const stored = await host.chatUser.search("main", "HELLO");
+    expect(stored?.hits.map(({ messageId }) => messageId)).toEqual([
+      "m3",
+      "m1",
+    ]);
+
+    // A room the product keeps shows search only when it declares it.
+    expect(await host.chatUser.search("source", "hi")).toBeUndefined();
+    expect(runtime.asked).toEqual([]);
+    await chat.setChatRoomFeatures(product, {
+      roomId: "source",
+      features: { preimageAttachments: false, search: true, readAloud: false },
+    });
+    expect(await host.chatUser.search("source", "hi")).toEqual({
+      hits: [message("s1", 5n)],
+      next: "1",
+    });
+    expect(runtime.asked).toEqual([
+      {
+        name: "chatSearchQuery",
+        request: { roomId: "source", text: "hi", pageSize: 30 },
+      },
+    ]);
+
+    answer = err({ tag: "Domain", value: { tag: "NotAvailable" } });
+    expect(await host.chatUser.search("source", "hi")).toBeUndefined();
+    expect(host.chatUser.notices()).toEqual([
+      { roomId: "source", text: "Search is not available" },
+    ]);
+  });
+
+  it("wakes the product through the attached runtime", async () => {
+    const host = createMockHost();
+    const runtime = scripted({});
+    host.chatUser.attach(runtime.runtime);
+    const reason: ChatWakeReason = {
+      tag: "Notification",
+      value: { roomId: "main", watchId: "dev" },
+    };
+    expect(await host.chatUser.wake(reason)).toEqual({
+      tag: "Held",
+      value: { untilMs: 30_000 },
+    });
+    expect(runtime.wakes).toEqual([reason]);
   });
 });

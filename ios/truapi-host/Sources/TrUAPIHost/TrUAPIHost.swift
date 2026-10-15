@@ -296,6 +296,38 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 
     /// Show the activity line of a room, or remove it with `nil`.
     func setRoomActivity(roomId: String, activity: ChatActivity?) async throws
+
+    /// Return the names of the Chat features that this host serves from end
+    /// to end, from the feature table of the Chat Extension v2 additions RFC.
+    /// The core removes each name that it does not know or cannot back. List
+    /// a name only in the build that serves its feature.
+    func capabilities() async throws -> [String]
+
+    /// Return the optional features the product last declared for a room, or
+    /// ``ChatRoomFeatures/hostDefault`` when it declared none.
+    func roomFeatures(roomId: String) async throws -> ChatRoomFeatures
+
+    /// Replace the optional features of a room whole, and keep them across
+    /// restarts. Keep a feature that this host does not serve, so that a later
+    /// build applies it.
+    func setRoomFeatures(roomId: String, features: ChatRoomFeatures) async throws
+
+    /// Replace the thread summary, the branch position and the reasoning flag
+    /// of one message, and keep them in both room modes. In a room that the
+    /// host stores, throw ``NativeChatFeedRejection/UnknownMessage`` for a
+    /// message that the room does not hold.
+    func setMessageMeta(roomId: String, messageId: String, meta: ChatMessageMeta) async throws
+
+    /// Show or change the call of a room, or remove it with `nil`. The core
+    /// has already checked that this host lists the feature of the call.
+    func setRoomCall(roomId: String, call: ChatRoomCall?) async throws
+
+    /// Return the state of each room of the product that the user muted or
+    /// archived.
+    func roomUserStates() async throws -> [ChatRoomUserState]
+
+    /// Return the bot ids of the personas that the product registered.
+    func bots() async throws -> [String]
 }
 
 /// Defaults for a host that does not serve the Chat Extension v2 requests yet.
@@ -339,6 +371,48 @@ public extension ChatHostBridge {
 
     func setRoomActivity(roomId _: String, activity _: ChatActivity?) async throws {
         throw unservedChatRequest("setRoomActivity")
+    }
+
+    func capabilities() async throws -> [String] {
+        []
+    }
+
+    func roomFeatures(roomId _: String) async throws -> ChatRoomFeatures {
+        .hostDefault
+    }
+
+    func setRoomFeatures(roomId _: String, features _: ChatRoomFeatures) async throws {
+        throw unservedChatRequest("setRoomFeatures")
+    }
+
+    func setMessageMeta(roomId _: String, messageId _: String, meta _: ChatMessageMeta) async throws {
+        throw NativeChatFeedRejection.Rejected(reason: unservedChatRequestReason("setMessageMeta"))
+    }
+
+    func setRoomCall(roomId _: String, call _: ChatRoomCall?) async throws {
+        throw unservedChatRequest("setRoomCall")
+    }
+
+    func roomUserStates() async throws -> [ChatRoomUserState] {
+        []
+    }
+
+    func bots() async throws -> [String] {
+        []
+    }
+}
+
+public extension ChatRoomFeatures {
+    /// The features of a room that declares none: the room shows what a
+    /// room of Chat Extension v2 shows.
+    static var hostDefault: ChatRoomFeatures {
+        ChatRoomFeatures(
+            preimageAttachments: false,
+            search: false,
+            calls: nil,
+            threadOf: nil,
+            readAloud: false
+        )
     }
 }
 
@@ -581,12 +655,8 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
     }
 
     func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
-        do {
+        try await withFeedRejection {
             try await bridge.updateFeed(roomId: roomId, update: update, persist: persist)
-        } catch let rejection as NativeChatFeedRejection {
-            throw rejection
-        } catch {
-            throw NativeChatFeedRejection.Rejected(reason: hostRejectionReason(error))
         }
     }
 
@@ -611,6 +681,50 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
     func setRoomActivity(roomId: String, activity: ChatActivity?) async throws {
         try await withHostRejection {
             try await bridge.setRoomActivity(roomId: roomId, activity: activity)
+        }
+    }
+
+    func capabilities() async throws -> [String] {
+        try await withHostRejection { try await bridge.capabilities() }
+    }
+
+    func roomFeatures(roomId: String) async throws -> ChatRoomFeatures {
+        try await withHostRejection { try await bridge.roomFeatures(roomId: roomId) }
+    }
+
+    func setRoomFeatures(roomId: String, features: ChatRoomFeatures) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomFeatures(roomId: roomId, features: features)
+        }
+    }
+
+    func setMessageMeta(roomId: String, messageId: String, meta: ChatMessageMeta) async throws {
+        try await withFeedRejection {
+            try await bridge.setMessageMeta(roomId: roomId, messageId: messageId, meta: meta)
+        }
+    }
+
+    func setRoomCall(roomId: String, call: ChatRoomCall?) async throws {
+        try await withHostRejection { try await bridge.setRoomCall(roomId: roomId, call: call) }
+    }
+
+    func roomUserStates() async throws -> [ChatRoomUserState] {
+        try await withHostRejection { try await bridge.roomUserStates() }
+    }
+
+    func bots() async throws -> [String] {
+        try await withHostRejection { try await bridge.bots() }
+    }
+
+    /// Pass a ``NativeChatFeedRejection`` to the product as it is, and any
+    /// other error as ``NativeChatFeedRejection/Rejected(reason:)``.
+    private func withFeedRejection(_ operation: () async throws -> Void) async throws {
+        do {
+            try await operation()
+        } catch let rejection as NativeChatFeedRejection {
+            throw rejection
+        } catch {
+            throw NativeChatFeedRejection.Rejected(reason: hostRejectionReason(error))
         }
     }
 }
@@ -1038,6 +1152,43 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.releaseWorker(productId: productId)
     }
 
+    /// Send one event about a room to the product: the user muted or
+    /// archived the room, pressed a call button, answered a call, or selected
+    /// another alternative of a message. The core keeps the newest events of
+    /// a product until its worker subscribes, so the worker does not have to
+    /// run.
+    public func publishChatRoomEvent(productId: String, roomId: String, event: ChatRoomEvent) throws {
+        try inner.publishChatRoomEvent(productId: productId, roomId: roomId, event: event)
+    }
+
+    /// Hold the worker of the product for a wake of 30 seconds. A new wake
+    /// moves the end of the hold. A notification wake also sends
+    /// ``ChatRoomEvent/woken(watchId:)`` to the room, at most 12 times in one
+    /// hour; after that the core answers ``ChatWakeOutcome/budgetSpent``.
+    @discardableResult
+    public func wakeProduct(productId: String, reason: ChatWakeReason) throws -> ChatWakeOutcome {
+        try inner.wakeProduct(productId: productId, reason: reason)
+    }
+
+    /// Stage a user attachment of a room as a preimage that the Bulletin
+    /// allowance of the product pays for, and return its key. The core does
+    /// not stage attachments yet: each call throws
+    /// ``NativeChatStageRejection``, and `capabilities` never lists
+    /// `preimage_attachments`.
+    public func stageChatAttachment(
+        productId: String,
+        roomId: String,
+        mimeType: String,
+        bytes: Data
+    ) async throws -> Data {
+        try await inner.chatStageAttachment(
+            productId: productId,
+            roomId: roomId,
+            mimeType: mimeType,
+            bytes: bytes
+        )
+    }
+
     /// Tell the pairing host behind `deeplink` that allowance allocation is
     /// under way, so it leaves its QR screen while the allocation runs.
     ///
@@ -1266,6 +1417,10 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
         _ request: ProductChatParticipantActionsQueryRequest,
         timeout: Duration
     ) async throws -> ProductChatParticipantActionsQueryItem
+    func chatSearchQuery(
+        _ request: ProductChatSearchQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatSearchQueryItem
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
@@ -1324,6 +1479,21 @@ public extension TrUAPIProductExecutionProtocol {
     ) async throws -> ProductChatParticipantActionsQueryItem {
         try await chatParticipantActionsQuery(request, timeout: ChatQueryTimeout.lookup)
     }
+
+    func chatSearchQuery(
+        _ request: ProductChatSearchQueryRequest
+    ) async throws -> ProductChatSearchQueryItem {
+        try await chatSearchQuery(request, timeout: ChatQueryTimeout.search)
+    }
+
+    /// An execution that does not ask searches answers that search is not
+    /// available.
+    func chatSearchQuery(
+        _: ProductChatSearchQueryRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatSearchQueryItem {
+        throw ChatQueryError.refused(.notAvailable)
+    }
 }
 
 /// How long the host waits for the answer to a chat query. After the timeout
@@ -1337,6 +1507,8 @@ public enum ChatQueryTimeout {
     public static let userAction: Duration = .seconds(10)
     /// Reactions, participants, a message menu or a participant menu.
     public static let lookup: Duration = .seconds(5)
+    /// The messages that match a search.
+    public static let search: Duration = .seconds(10)
 
     /// The timeout of one user action.
     public static func timeout(for action: ChatUserAction) -> Duration {
@@ -1489,6 +1661,19 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
             try inner.chatParticipantActionsQuery(request: request, observer: observer)
         } answer: { answer in
             if case let .participantMenu(menu) = answer { menu } else { nil }
+        }
+    }
+
+    /// Ask the product for the messages of a room that it keeps that match
+    /// what the user typed, newest first.
+    public func chatSearchQuery(
+        _ request: ProductChatSearchQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatSearchQueryItem {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatSearchQuery(request: request, observer: observer)
+        } answer: { answer in
+            if case let .search(page) = answer { page } else { nil }
         }
     }
 

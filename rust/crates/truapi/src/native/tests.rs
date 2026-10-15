@@ -166,6 +166,11 @@ pub struct EventCallbacks {
 	pub chat_room_configs: Mutex<HashMap<String, truapi::latest::ChatRoomConfig>>,
 	pub chat_feed: Mutex<Vec<(String, truapi::latest::ChatFeedUpdate, bool)>>,
 	pub chat_feed_rejection: Mutex<Option<NativeChatFeedRejection>>,
+	/// The Chat feature names this host lists.
+	pub chat_capabilities: Mutex<Vec<String>>,
+	pub chat_room_features: Mutex<HashMap<String, truapi::latest::ChatRoomFeatures>>,
+	pub chat_user_states: Mutex<Vec<crate::platform::ChatRoomUserState>>,
+	pub chat_bots: Mutex<Vec<String>>,
 	pub pocket_cards: Mutex<Vec<v01::PocketCard>>,
 	pub pocket_removed: Mutex<Vec<String>>,
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
@@ -228,6 +233,10 @@ impl EventCallbacks {
 			chat_room_configs: Mutex::new(HashMap::new()),
 			chat_feed: Mutex::new(Vec::new()),
 			chat_feed_rejection: Mutex::new(None),
+			chat_capabilities: Mutex::new(Vec::new()),
+			chat_room_features: Mutex::new(HashMap::new()),
+			chat_user_states: Mutex::new(Vec::new()),
+			chat_bots: Mutex::new(Vec::new()),
 			chat_posted: Mutex::new(Vec::new()),
 			pocket_cards: Mutex::new(Vec::new()),
 			pocket_removed: Mutex::new(Vec::new()),
@@ -646,6 +655,60 @@ impl NativeChatCallbacks for EventCallbacks {
 	) -> Result<(), HostRejection> {
 		self.declare("activity", &room_id);
 		Ok(())
+	}
+
+	async fn capabilities(&self) -> Result<Vec<String>, HostRejection> {
+		Ok(self.chat_capabilities.lock().expect("capabilities mutex poisoned").clone())
+	}
+
+	async fn room_features(
+		&self,
+		room_id: String,
+	) -> Result<truapi::latest::ChatRoomFeatures, HostRejection> {
+		let features = self.chat_room_features.lock().expect("room features mutex poisoned");
+		Ok(features.get(&room_id).cloned().unwrap_or_default())
+	}
+
+	async fn set_room_features(
+		&self,
+		room_id: String,
+		features: truapi::latest::ChatRoomFeatures,
+	) -> Result<(), HostRejection> {
+		self.declare("features", &room_id);
+		self.chat_room_features
+			.lock()
+			.expect("room features mutex poisoned")
+			.insert(room_id, features);
+		Ok(())
+	}
+
+	async fn set_message_meta(
+		&self,
+		room_id: String,
+		_message_id: String,
+		_meta: truapi::latest::ChatMessageMeta,
+	) -> Result<(), NativeChatFeedRejection> {
+		self.declare("meta", &room_id);
+		Ok(())
+	}
+
+	async fn set_room_call(
+		&self,
+		room_id: String,
+		_call: Option<truapi::latest::ChatRoomCall>,
+	) -> Result<(), HostRejection> {
+		self.declare("call", &room_id);
+		Ok(())
+	}
+
+	async fn room_user_states(
+		&self,
+	) -> Result<Vec<crate::platform::ChatRoomUserState>, HostRejection> {
+		Ok(self.chat_user_states.lock().expect("user states mutex poisoned").clone())
+	}
+
+	async fn bots(&self) -> Result<Vec<String>, HostRejection> {
+		Ok(self.chat_bots.lock().expect("bots mutex poisoned").clone())
 	}
 }
 

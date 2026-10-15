@@ -1,6 +1,6 @@
-// Worker half of the chat queries a host asks a product. The worker calls the
-// core directly, as for the render subscription, because the frame path
-// carries product requests only.
+// Worker half of the chat queries a host asks a product, of wakes and of
+// attachment staging. The worker calls the core directly, as for the render
+// subscription, because the frame path carries product requests only.
 
 import { startWasmChatQuery, type ChatQueryName } from "./chat-queries.js";
 import { errorMessage } from "./error.js";
@@ -77,5 +77,73 @@ export function stopChatQueriesForCore(
 ): void {
   for (const [queryId, entry] of [...queries]) {
     if (entry.coreId === coreId) stopChatQuery(queries, queryId);
+  }
+}
+
+/** Hold the worker of the product of one core, and answer the main thread. */
+export function handleWakeProduct(
+  core: WorkerProductRuntime | undefined,
+  postToMain: PostToMain,
+  coreId: number,
+  requestId: number,
+  roomId: string | undefined,
+  watchId: string | undefined,
+): void {
+  if (!core) {
+    postToMain({
+      kind: "wakeProductResponse",
+      requestId,
+      ok: false,
+      error: `wakeProduct received for unknown core ${coreId}`,
+    });
+    return;
+  }
+  try {
+    const untilMs = core.wakeProduct(roomId, watchId);
+    postToMain({ kind: "wakeProductResponse", requestId, ok: true, untilMs });
+  } catch (err) {
+    postToMain({
+      kind: "wakeProductResponse",
+      requestId,
+      ok: false,
+      error: errorMessage(err),
+    });
+  }
+}
+
+/** Stage one attachment on a core, and answer the main thread. */
+export async function handleStageChatAttachment(
+  core: WorkerProductRuntime | undefined,
+  postToMain: PostToMain,
+  coreId: number,
+  requestId: number,
+  roomId: string,
+  mimeType: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  if (!core) {
+    postToMain({
+      kind: "stageChatAttachmentResponse",
+      requestId,
+      ok: false,
+      error: `stageChatAttachment received for unknown core ${coreId}`,
+    });
+    return;
+  }
+  try {
+    const key = await core.stageChatAttachment(roomId, mimeType, bytes);
+    postToMain({
+      kind: "stageChatAttachmentResponse",
+      requestId,
+      ok: true,
+      key,
+    });
+  } catch (err) {
+    postToMain({
+      kind: "stageChatAttachmentResponse",
+      requestId,
+      ok: false,
+      error: errorMessage(err),
+    });
   }
 }

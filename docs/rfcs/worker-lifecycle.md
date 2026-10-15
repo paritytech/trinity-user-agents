@@ -51,6 +51,15 @@ Reference holders, by modality:
 | Funding | A funding flow with the product as selected provider is in flight, from selection until it settles.      |
 | Input   | An input round is in flight, or a `Custom` candidate is on screen ([Input Modality](input-modality.md)). |
 
+[Chat Extension v2 additions](chat-extension-v2-additions.md) adds two Chat holders:
+
+- **Wake.** The host holds the worker for 30 s from one of three sources: a message, user action or room event sent to
+  the product while no room screen holds the worker; a chat product that starts and owns no room yet, once; and an
+  authenticated notification routed to a room (`/-/chat/<room_id>`), at most 12 per product per rolling hour. A product
+  has at most one wake hold, and a new wake moves its deadline. The product extends a wake only through
+  `Worker::begin_operation`.
+- **Call.** A room with a `Ringing` or `Active` call holds the worker until the product clears the call.
+
 ### Stopping
 
 - The host may stop a worker whenever nothing references it, including while its output is on screen, so state that must

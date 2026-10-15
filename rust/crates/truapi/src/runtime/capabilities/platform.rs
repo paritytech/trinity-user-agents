@@ -493,8 +493,18 @@ impl Notifications for ProductRuntimeHost {
 				version,
 			)));
 		}
-		self.connection
-			.platform
+		// The user muted the room the notification opens: it shows nothing.
+		if inner.scheduled_at.is_none() &&
+			let Some(deeplink) = &inner.deeplink &&
+			self.chat_room_muted(deeplink).await
+		{
+			let id = self.connection.services.next_silenced_notification_id();
+			return Ok(HostPushNotificationResponse::from_latest(
+				latest::HostPushNotificationResponse { id },
+				version,
+			));
+		}
+		self.connection.platform
 			.push_notification(inner)
 			.await
 			.map(|value| HostPushNotificationResponse::from_latest(value, version))

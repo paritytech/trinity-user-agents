@@ -16,21 +16,26 @@ use truapi::{
 		FromLatest, IntoLatest, Versioned,
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
-			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
+			HostChatActionSubscribeRequest, HostChatCapabilitiesError, HostChatCapabilitiesRequest,
+			HostChatCapabilitiesResponse, HostChatCreateRoomError, HostChatCreateRoomRequest,
 			HostChatCreateRoomResponse, HostChatDeleteRoomRequest, HostChatDeleteRoomResponse,
 			HostChatListSubscribeError, HostChatListSubscribeItem, HostChatListSubscribeRequest,
 			HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
 			HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-			HostChatRoomError, HostChatSetRoomActivityRequest, HostChatSetRoomActivityResponse,
-			HostChatSetRoomCommandsRequest, HostChatSetRoomCommandsResponse,
-			HostChatSetRoomConfigRequest, HostChatSetRoomConfigResponse,
-			HostChatSetRoomFooterError, HostChatSetRoomFooterRequest,
-			HostChatSetRoomFooterResponse, HostChatSetRoomMetadataRequest,
-			HostChatSetRoomMetadataResponse, HostChatSetRoomPreviewRequest,
-			HostChatSetRoomPreviewResponse, HostChatSetRoomSuggestionsRequest,
-			HostChatSetRoomSuggestionsResponse, HostChatSetRoomToolbarRequest,
-			HostChatSetRoomToolbarResponse, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
-			HostChatUpdateFeedResponse,
+			HostChatRoomError, HostChatRoomEventsSubscribeError, HostChatRoomEventsSubscribeItem,
+			HostChatRoomEventsSubscribeRequest, HostChatSetMessageMetaRequest,
+			HostChatSetMessageMetaResponse, HostChatSetRoomActivityRequest,
+			HostChatSetRoomActivityResponse, HostChatSetRoomCallRequest,
+			HostChatSetRoomCallResponse, HostChatSetRoomCommandsRequest,
+			HostChatSetRoomCommandsResponse, HostChatSetRoomConfigRequest,
+			HostChatSetRoomConfigResponse, HostChatSetRoomFeaturesRequest,
+			HostChatSetRoomFeaturesResponse, HostChatSetRoomFooterError,
+			HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
+			HostChatSetRoomMetadataRequest, HostChatSetRoomMetadataResponse,
+			HostChatSetRoomPreviewRequest, HostChatSetRoomPreviewResponse,
+			HostChatSetRoomSuggestionsRequest, HostChatSetRoomSuggestionsResponse,
+			HostChatSetRoomToolbarRequest, HostChatSetRoomToolbarResponse, HostChatUpdateFeedError,
+			HostChatUpdateFeedRequest, HostChatUpdateFeedResponse,
 		},
 	},
 };
@@ -38,13 +43,16 @@ use truapi::{
 use super::from_latest_error;
 use crate::{
 	platform::{
-		ChatFieldError, ChatPlatform, ChatRateLimiter, normalize_chat_identifier,
+		CHAT_INLINE_MEDIA_MAX_BYTES, CHAT_PERSONA_PREFIX, CHAT_PERSONAS_MAX,
+		CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES, ChatFieldError, ChatPlatform, ChatRateLimiter,
+		chat_persona_bot_id, known_chat_feature_names, normalize_chat_identifier,
 		validate_chat_activity, validate_chat_commands, validate_chat_feed_update,
-		validate_chat_icon, validate_chat_message_content, validate_chat_name,
-		validate_chat_room_config, validate_chat_room_footer, validate_chat_room_metadata,
+		validate_chat_icon, validate_chat_message_content, validate_chat_message_meta,
+		validate_chat_name, validate_chat_room_call, validate_chat_room_config,
+		validate_chat_room_features, validate_chat_room_footer, validate_chat_room_metadata,
 		validate_chat_room_preview, validate_chat_suggestions, validate_chat_toolbar,
 	},
-	runtime::ProductRuntimeHost,
+	runtime::{ChatHandler, ProductRuntimeHost, renderer_access_for},
 	unix_time::current_unix_millis,
 };
 
@@ -238,6 +246,7 @@ impl Chat for ProductRuntimeHost {
 					let limits = &self.services.chat_rate_limits;
 					limits.feed.forget(&self.product.product_id, &room_id);
 					limits.preview.forget(&self.product.product_id, &room_id);
+					limits.call.forget(&self.product.product_id, &room_id);
 					request.room_id = room_id;
 					platform.delete_chat_room(&self.product, request).await.map_err(room_host_error)
 				},
@@ -341,6 +350,11 @@ impl Chat for ProductRuntimeHost {
 				.map_err(room_field_error)?;
 			let limiter = &self.services.chat_rate_limits.preview;
 			let room_id = self.hosted_room(&platform, &request.room_id, Some(limiter)).await?;
+			let speaker = request
+				.activity
+				.as_ref()
+				.and_then(|activity| activity.participant_id.as_deref());
+			self.check_chat_personas(&platform, speaker).await.map_err(room_failure)?;
 			request.room_id = room_id;
 			platform
 				.set_chat_room_activity(&self.product, request)
@@ -349,6 +363,171 @@ impl Chat for ProductRuntimeHost {
 		};
 		answer_room_change(result.await, version, HostChatSetRoomActivityResponse::from_latest)
 	}
+
+	#[instrument(skip_all, fields(runtime.method = "chat.capabilities"))]
+	async fn capabilities(
+		&self,
+		_cx: &CallContext,
+		request: HostChatCapabilitiesRequest,
+	) -> Result<HostChatCapabilitiesResponse, CallError<HostChatCapabilitiesError>> {
+		let version = request.version();
+		self.chat_capabilities()
+			.await
+			.map(|response| HostChatCapabilitiesResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error(error, version))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chat.set_room_features"))]
+	async fn set_room_features(
+		&self,
+		_cx: &CallContext,
+		request: HostChatSetRoomFeaturesRequest,
+	) -> Result<HostChatSetRoomFeaturesResponse, CallError<HostChatRoomError>> {
+		let version = request.version();
+		let mut request = request.into_latest();
+		let result = async {
+			let platform = self.chat_platform()?;
+			request.features =
+				validate_chat_room_features(request.features).map_err(room_field_error)?;
+			let room_id = self.hosted_room(&platform, &request.room_id, None).await?;
+			if let Some(parent) = &request.features.thread_of {
+				self.check_thread_parent(&platform, &room_id, parent).await?;
+			}
+			request.room_id = room_id;
+			platform
+				.set_chat_room_features(&self.product, request)
+				.await
+				.map_err(room_host_error)
+		};
+		answer_room_change(result.await, version, HostChatSetRoomFeaturesResponse::from_latest)
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chat.set_message_meta"))]
+	async fn set_message_meta(
+		&self,
+		_cx: &CallContext,
+		request: HostChatSetMessageMetaRequest,
+	) -> Result<HostChatSetMessageMetaResponse, CallError<HostChatUpdateFeedError>> {
+		let version = request.version();
+		self.set_chat_message_meta(request.into_latest())
+			.await
+			.map(|()| HostChatSetMessageMetaResponse::from_latest((), version))
+			.map_err(|error| from_latest_error(error, version))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chat.set_room_call"))]
+	async fn set_room_call(
+		&self,
+		_cx: &CallContext,
+		request: HostChatSetRoomCallRequest,
+	) -> Result<HostChatSetRoomCallResponse, CallError<HostChatRoomError>> {
+		let version = request.version();
+		let mut request = request.into_latest();
+		let result = async {
+			let platform = self.chat_platform()?;
+			request.call = request
+				.call
+				.map(validate_chat_room_call)
+				.transpose()
+				.map_err(room_field_error)?;
+			let limiter = &self.services.chat_rate_limits.call;
+			let room_id = self.hosted_room(&platform, &request.room_id, Some(limiter)).await?;
+			if let Some(call) = &request.call {
+				let feature = match call {
+					latest::ChatRoomCall::Active { media_session: Some(_), .. } => "room_calls",
+					_ => "call_buttons",
+				};
+				let served = self.chat_capabilities().await.map_err(|error| {
+					error.map_domain(|error| latest::HostChatRoomError::Unknown {
+						reason: error.reason,
+					})
+				})?;
+				if !served.features.iter().any(|name| name == feature) {
+					return Err(room_failure(format!("this host does not serve {feature}")));
+				}
+			}
+			request.room_id = room_id;
+			platform
+				.set_chat_room_call(&self.product, request)
+				.await
+				.map_err(room_host_error)
+		};
+		answer_room_change(result.await, version, HostChatSetRoomCallResponse::from_latest)
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chat.room_events_subscribe"))]
+	async fn room_events_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostChatRoomEventsSubscribeRequest,
+	) -> Subscription<HostChatRoomEventsSubscribeItem, CallError<HostChatRoomEventsSubscribeError>>
+	{
+		let version = request.version();
+		let platform = match self.chat_platform::<HostChatRoomEventsSubscribeError>() {
+			Ok(platform) => platform,
+			Err(error) => return Subscription::interrupted(error),
+		};
+		let states = match platform.read_chat_room_user_states(&self.product).await {
+			Ok(states) => states,
+			Err(error) => {
+				warn!(reason = %error.reason, "chat room user states could not be read");
+				return Subscription::interrupted(CallError::HostFailure { reason: error.reason });
+			},
+		};
+		let now_ms = current_unix_millis();
+		let snapshot = states
+			.rooms
+			.into_iter()
+			.filter(|state| state.muted_at(now_ms) || state.archived)
+			.map(|state| latest::HostChatRoomEventsSubscribeItem {
+				event: latest::ChatRoomEvent::UserStateChanged {
+					muted_until: state.muted_until.filter(|_| state.muted_at(now_ms)),
+					archived: state.archived,
+				},
+				room_id: state.room_id,
+			})
+			.collect();
+		let events = self
+			.services
+			.chat_room_events
+			.subscribe::<latest::GenericError>(&self.product.product_id, snapshot)
+			.map(move |item| match item {
+				Ok(item) => Ok(HostChatRoomEventsSubscribeItem::from_latest(item, version)),
+				Err(error) => Err(from_latest_error(error, version)),
+			});
+		Subscription::new(events)
+	}
+}
+
+/// The room that a room link `polkadot://<product_id>/-/chat/<room_id>` of
+/// `product_id` opens.
+fn chat_room_of_link(product_id: &str, link: &str) -> Option<String> {
+	use crate::host_logic::dotns::{NavigateDecision, parse_navigate};
+	let (identifier, path) = match parse_navigate(link) {
+		NavigateDecision::DotName { identifier, path, .. } => (identifier, path),
+		NavigateDecision::Localhost { host, path, .. } => (host, path),
+		_ => return None,
+	};
+	if identifier != product_id {
+		return None;
+	}
+	let room = path.strip_prefix("-/chat/")?.split(['?', '#']).next()?;
+	normalize_chat_identifier("roomId", &percent_decode(room)?).ok()
+}
+
+/// Decode the `%XX` escapes of one URL path segment.
+fn percent_decode(segment: &str) -> Option<String> {
+	let mut bytes = Vec::with_capacity(segment.len());
+	let mut rest = segment.bytes();
+	while let Some(byte) = rest.next() {
+		if byte != b'%' {
+			bytes.push(byte);
+			continue;
+		}
+		let digits = [rest.next()?, rest.next()?];
+		bytes.push(u8::from_str_radix(core::str::from_utf8(&digits).ok()?, 16).ok()?);
+	}
+	String::from_utf8(bytes).ok()
 }
 
 /// Why the core refuses a room-changing call before the host sees it.
@@ -420,6 +599,11 @@ fn room_field_error(error: ChatFieldError) -> CallError<latest::HostChatRoomErro
 	CallError::Domain(latest::HostChatRoomError::Unknown { reason: error.to_string() })
 }
 
+/// Refuse a room-changing call with a reason.
+fn room_failure(reason: String) -> CallError<latest::HostChatRoomError> {
+	CallError::Domain(latest::HostChatRoomError::Unknown { reason })
+}
+
 /// Report a host failure of a room-changing call.
 fn room_host_error(error: latest::GenericError) -> CallError<latest::HostChatRoomError> {
 	CallError::Domain(latest::HostChatRoomError::Unknown { reason: error.reason })
@@ -450,21 +634,142 @@ fn post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMess
 	})
 }
 
+/// Whether the core can back a feature a host lists. The core cannot back a
+/// product-drawn body without a renderer. It does not stage attachments or
+/// serve the Media service yet, and no host draws the payment button yet.
+fn core_backs_chat_feature(
+	name: &str,
+	execution_kind: crate::platform::ProductExecutionKind,
+) -> bool {
+	match name {
+		"custom_bodies" | "custom_footer" => renderer_access_for(execution_kind).is_ok(),
+		"preimage_attachments" | "room_calls" | "payment_button" => false,
+		_ => true,
+	}
+}
+
 impl ProductRuntimeHost {
-	/// Whether the configuration the host keeps for `room_id` declares the
-	/// handler `declared` reads. The core asks a product a query only when
-	/// it does.
+	/// Whether the declarations the host keeps for `room_id` declare
+	/// `handler`. The core asks a product a query only when they do.
 	pub async fn chat_handler_declared(
 		&self,
 		room_id: String,
-		declared: fn(&latest::ChatRoomConfig) -> bool,
+		handler: ChatHandler,
 	) -> Result<bool, String> {
 		let platform = self.native_chat_platform().map_err(|error| error.to_string())?;
-		platform
-			.read_chat_room_config(&self.product, room_id)
+		let config = platform
+			.read_chat_room_config(&self.product, room_id.clone())
 			.await
-			.map(|config| declared(&config))
-			.map_err(|error| error.reason)
+			.map_err(|error| error.reason)?;
+		match handler {
+			ChatHandler::Config(declared) => Ok(declared(&config)),
+			ChatHandler::Search if !config.product_source => Ok(false),
+			ChatHandler::Search => platform
+				.read_chat_room_features(&self.product, room_id)
+				.await
+				.map(|features| features.search)
+				.map_err(|error| error.reason),
+		}
+	}
+
+	/// The Chat features the host lists that the core knows and can back,
+	/// with the attachment bounds of the core.
+	pub async fn chat_capabilities(
+		&self,
+	) -> Result<latest::HostChatCapabilitiesResponse, CallError<latest::GenericError>> {
+		let platform = self.chat_platform()?;
+		let listed = platform.chat_capabilities(&self.product).await.map_err(CallError::Domain)?;
+		let features: Vec<String> = known_chat_feature_names(&listed.names)
+			.into_iter()
+			.filter(|name| core_backs_chat_feature(name, self.product.execution_kind))
+			.map(str::to_string)
+			.collect();
+		let stages = features.iter().any(|name| name == "preimage_attachments");
+		Ok(latest::HostChatCapabilitiesResponse {
+			features,
+			inline_attachment_max_bytes: CHAT_INLINE_MEDIA_MAX_BYTES as u32,
+			preimage_attachment_max_bytes: if stages {
+				CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES as u32
+			} else {
+				0
+			},
+		})
+	}
+
+	/// Refuse a participant id `bot:<bot_id>` that names no persona the
+	/// product registered. The host list of personas is read only when a
+	/// persona id is present.
+	pub async fn check_chat_personas<'a>(
+		&self,
+		platform: &Arc<dyn ChatPlatform>,
+		participant_ids: impl IntoIterator<Item = &'a str>,
+	) -> Result<(), String> {
+		let bots: Vec<&str> = participant_ids.into_iter().filter_map(chat_persona_bot_id).collect();
+		if bots.is_empty() {
+			return Ok(());
+		}
+		let registered = platform
+			.read_chat_bots(&self.product)
+			.await
+			.map_err(|error| error.reason)?
+			.bot_ids;
+		match bots.into_iter().find(|bot| !registered.iter().any(|known| known == bot)) {
+			Some(unknown) => Err(format!("unknown bot {unknown}")),
+			None => Ok(()),
+		}
+	}
+
+	/// Whether `deeplink` opens a room of this product that the user muted.
+	/// A link that names no room of the product, or a host that cannot tell,
+	/// gives `false`.
+	pub async fn chat_room_muted(&self, deeplink: &str) -> bool {
+		let Some(platform) = self.chat_platform.as_ref() else { return false };
+		let Some(room_id) = chat_room_of_link(&self.product.product_id, deeplink) else {
+			return false;
+		};
+		match platform.read_chat_room_user_states(&self.product).await {
+			Ok(states) => {
+				let now_ms = current_unix_millis();
+				states
+					.rooms
+					.iter()
+					.any(|state| state.room_id == room_id && state.muted_at(now_ms))
+			},
+			Err(error) => {
+				warn!(reason = %error.reason, "chat room user states could not be read");
+				false
+			},
+		}
+	}
+
+	/// Refuse a thread parent that is the room itself, that the product does
+	/// not host, or that is a thread room itself.
+	async fn check_thread_parent(
+		&self,
+		platform: &Arc<dyn ChatPlatform>,
+		room_id: &str,
+		parent: &latest::ChatThreadParent,
+	) -> Result<(), RoomRefusal> {
+		if parent.room_id == room_id {
+			return Err(RoomRefusal::Failed("threadOf names the room itself".to_string()));
+		}
+		match self.hosted_room(platform, &parent.room_id, None).await {
+			Ok(_) => {},
+			Err(RoomRefusal::UnknownRoom | RoomRefusal::NotRoomHost) => {
+				return Err(RoomRefusal::Failed(
+					"threadOf names no room the product hosts".to_string(),
+				));
+			},
+			Err(refusal) => return Err(refusal),
+		}
+		let parent_features = platform
+			.read_chat_room_features(&self.product, parent.room_id.clone())
+			.await
+			.map_err(|error| RoomRefusal::Failed(error.reason))?;
+		if parent_features.thread_of.is_some() {
+			return Err(RoomRefusal::Failed("threadOf names a thread room".to_string()));
+		}
+		Ok(())
 	}
 
 	/// The normalized id of a room this product hosts, once the room passed
@@ -547,8 +852,22 @@ impl ProductRuntimeHost {
 		};
 		request.bot_id =
 			normalize_chat_identifier("botId", &request.bot_id).map_err(field_error)?;
+		// The persona speaks as `bot:<bot_id>`, which must be an identifier too.
+		normalize_chat_identifier("botId", &format!("{CHAT_PERSONA_PREFIX}{}", request.bot_id))
+			.map_err(field_error)?;
 		request.name = validate_chat_name("name", &request.name).map_err(field_error)?;
 		request.icon = validate_chat_icon("icon", &request.icon).map_err(field_error)?;
+		let failure = |reason: String| {
+			CallError::Domain(latest::HostChatRegisterBotError::Unknown { reason })
+		};
+		let personas = platform
+			.read_chat_bots(&self.product)
+			.await
+			.map_err(|error| failure(error.reason))?
+			.bot_ids;
+		if personas.len() >= CHAT_PERSONAS_MAX && !personas.contains(&request.bot_id) {
+			return Err(failure(format!("a product registers at most {CHAT_PERSONAS_MAX} bots")));
+		}
 		platform
 			.register_chat_bot(&self.product, request)
 			.await
@@ -634,8 +953,58 @@ impl ProductRuntimeHost {
 		{
 			return Err(CallError::Domain(latest::HostChatUpdateFeedError::NotOwner));
 		}
+		if let latest::ChatFeedUpdate::New(message) = &request.update {
+			self.check_chat_personas(&platform, [message.origin.participant_id.as_str()])
+				.await
+				.map_err(|reason| {
+					CallError::Domain(latest::HostChatUpdateFeedError::Unknown { reason })
+				})?;
+		}
 		platform
 			.update_chat_feed(&self.product, request, persist)
+			.await
+			.map_err(CallError::Domain)
+	}
+
+	async fn set_chat_message_meta(
+		&self,
+		mut request: latest::HostChatSetMessageMetaRequest,
+	) -> Result<(), CallError<latest::HostChatUpdateFeedError>> {
+		let failure =
+			|reason: String| CallError::Domain(latest::HostChatUpdateFeedError::Unknown { reason });
+		let platform = self.chat_platform()?;
+		request.message_id = normalize_chat_identifier("messageId", &request.message_id)
+			.map_err(feed_field_error)?;
+		request.meta = validate_chat_message_meta(request.meta).map_err(feed_field_error)?;
+		let limiter = &self.services.chat_rate_limits.feed;
+		let room_id = self.hosted_room(&platform, &request.room_id, Some(limiter)).await?;
+		if let Some(thread) = &request.meta.thread {
+			// The summary names the thread room of exactly this message.
+			let thread_room = match self.hosted_room(&platform, &thread.room_id, None).await {
+				Ok(thread_room) => thread_room,
+				Err(RoomRefusal::Failed(reason)) => return Err(failure(reason)),
+				Err(_) => {
+					return Err(failure(
+						"thread.roomId names no room the product hosts".to_string(),
+					));
+				},
+			};
+			let parent = platform
+				.read_chat_room_features(&self.product, thread_room)
+				.await
+				.map_err(|error| failure(error.reason))?
+				.thread_of;
+			let expected = latest::ChatThreadParent {
+				room_id: room_id.clone(),
+				message_id: request.message_id.clone(),
+			};
+			if parent != Some(expected) {
+				return Err(failure("thread.roomId is not a thread of this message".to_string()));
+			}
+		}
+		request.room_id = room_id;
+		platform
+			.set_chat_message_meta(&self.product, request)
 			.await
 			.map_err(CallError::Domain)
 	}
@@ -664,6 +1033,10 @@ mod tests {
 		icons: Mutex<Vec<String>>,
 		feed: Mutex<Vec<(latest::HostChatUpdateFeedRequest, bool)>>,
 		calls: Mutex<Vec<String>>,
+		capabilities: Mutex<Vec<String>>,
+		features: Mutex<BTreeMap<String, latest::ChatRoomFeatures>>,
+		user_states: Mutex<Vec<crate::platform::ChatRoomUserState>>,
+		bots: Mutex<Vec<String>>,
 	}
 
 	impl RecordingHost {
@@ -790,6 +1163,73 @@ mod tests {
 		) -> Result<(), latest::HostChatUpdateFeedError> {
 			self.feed.lock().unwrap().push((request, persist));
 			Ok(())
+		}
+
+		async fn set_chat_room_activity(
+			&self,
+			_product: &ProductContext,
+			request: latest::HostChatSetRoomActivityRequest,
+		) -> Result<(), latest::GenericError> {
+			self.record("activity", &request.room_id)
+		}
+
+		async fn chat_capabilities(
+			&self,
+			_product: &ProductContext,
+		) -> Result<crate::platform::ChatFeatureNames, latest::GenericError> {
+			Ok(crate::platform::ChatFeatureNames {
+				names: self.capabilities.lock().unwrap().clone(),
+			})
+		}
+
+		async fn read_chat_room_features(
+			&self,
+			_product: &ProductContext,
+			room_id: String,
+		) -> Result<latest::ChatRoomFeatures, latest::GenericError> {
+			Ok(self.features.lock().unwrap().get(&room_id).cloned().unwrap_or_default())
+		}
+
+		async fn set_chat_room_features(
+			&self,
+			_product: &ProductContext,
+			request: latest::HostChatSetRoomFeaturesRequest,
+		) -> Result<(), latest::GenericError> {
+			self.features.lock().unwrap().insert(request.room_id.clone(), request.features);
+			self.record("features", &request.room_id)
+		}
+
+		async fn set_chat_message_meta(
+			&self,
+			_product: &ProductContext,
+			request: latest::HostChatSetMessageMetaRequest,
+		) -> Result<(), latest::HostChatUpdateFeedError> {
+			let _ = self.record("meta", &format!("{} {}", request.room_id, request.message_id));
+			Ok(())
+		}
+
+		async fn set_chat_room_call(
+			&self,
+			_product: &ProductContext,
+			request: latest::HostChatSetRoomCallRequest,
+		) -> Result<(), latest::GenericError> {
+			self.record("call", &request.room_id)
+		}
+
+		async fn read_chat_room_user_states(
+			&self,
+			_product: &ProductContext,
+		) -> Result<crate::platform::ChatRoomUserStates, latest::GenericError> {
+			Ok(crate::platform::ChatRoomUserStates {
+				rooms: self.user_states.lock().unwrap().clone(),
+			})
+		}
+
+		async fn read_chat_bots(
+			&self,
+			_product: &ProductContext,
+		) -> Result<crate::platform::ChatBotIds, latest::GenericError> {
+			Ok(crate::platform::ChatBotIds { bot_ids: self.bots.lock().unwrap().clone() })
 		}
 	}
 
@@ -1152,5 +1592,590 @@ mod tests {
 
 		std::thread::sleep(core::time::Duration::from_millis(1_300));
 		assert_eq!(drain(&mut events), [HostChatActionSubscribeItem::V2(seen(99))]);
+	}
+
+	fn capabilities(runtime: &ProductRuntimeHost) -> latest::HostChatCapabilitiesResponse {
+		match block_on(Chat::capabilities(
+			runtime,
+			&CallContext::default(),
+			HostChatCapabilitiesRequest::V1,
+		)) {
+			Ok(HostChatCapabilitiesResponse::V1(response)) => response,
+			other => panic!("capabilities failed: {other:?}"),
+		}
+	}
+
+	fn set_features(
+		runtime: &ProductRuntimeHost,
+		room_id: &str,
+		features: latest::ChatRoomFeatures,
+	) -> Result<HostChatSetRoomFeaturesResponse, CallError<HostChatRoomError>> {
+		block_on(Chat::set_room_features(
+			runtime,
+			&CallContext::default(),
+			HostChatSetRoomFeaturesRequest::V1(latest::HostChatSetRoomFeaturesRequest {
+				room_id: room_id.to_string(),
+				features,
+			}),
+		))
+	}
+
+	fn set_meta(
+		runtime: &ProductRuntimeHost,
+		room_id: &str,
+		message_id: &str,
+		meta: latest::ChatMessageMeta,
+	) -> Result<HostChatSetMessageMetaResponse, CallError<HostChatUpdateFeedError>> {
+		block_on(Chat::set_message_meta(
+			runtime,
+			&CallContext::default(),
+			HostChatSetMessageMetaRequest::V1(latest::HostChatSetMessageMetaRequest {
+				room_id: room_id.to_string(),
+				message_id: message_id.to_string(),
+				meta,
+			}),
+		))
+	}
+
+	fn set_call(
+		runtime: &ProductRuntimeHost,
+		room_id: &str,
+		call: Option<latest::ChatRoomCall>,
+	) -> Result<HostChatSetRoomCallResponse, CallError<HostChatRoomError>> {
+		block_on(Chat::set_room_call(
+			runtime,
+			&CallContext::default(),
+			HostChatSetRoomCallRequest::V1(latest::HostChatSetRoomCallRequest {
+				room_id: room_id.to_string(),
+				call,
+			}),
+		))
+	}
+
+	fn room_unknown(reason: &str) -> Result<(), CallError<HostChatRoomError>> {
+		Err(CallError::Domain(HostChatRoomError::V1(latest::HostChatRoomError::Unknown {
+			reason: reason.to_string(),
+		})))
+	}
+
+	fn feed_unknown(reason: &str) -> Result<(), CallError<HostChatUpdateFeedError>> {
+		Err(CallError::Domain(HostChatUpdateFeedError::V1(
+			latest::HostChatUpdateFeedError::Unknown { reason: reason.to_string() },
+		)))
+	}
+
+	fn thread_of(room_id: &str, message_id: &str) -> latest::ChatRoomFeatures {
+		latest::ChatRoomFeatures {
+			thread_of: Some(latest::ChatThreadParent {
+				room_id: room_id.to_string(),
+				message_id: message_id.to_string(),
+			}),
+			..Default::default()
+		}
+	}
+
+	fn ringing() -> latest::ChatRoomCall {
+		latest::ChatRoomCall::Ringing { call_id: "c1".to_string(), video: false, caller: None }
+	}
+
+	// S49: the product reads the features the host serves end to end and the
+	// core can back, in one order, and the attachment bounds of the core.
+	#[test]
+	fn capabilities_are_the_host_list_less_what_the_core_cannot_back() {
+		let chat = RecordingHost::with_rooms(&[]);
+		*chat.capabilities.lock().unwrap() = [
+			"search",
+			"call_buttons",
+			"room_calls",
+			"payment_button",
+			"preimage_attachments",
+			"custom_footer",
+			"a_name_from_a_later_rfc",
+			"search",
+		]
+		.map(str::to_string)
+		.to_vec();
+		let runtime = chat_runtime(chat);
+
+		assert_eq!(
+			capabilities(&runtime),
+			latest::HostChatCapabilitiesResponse {
+				features: ["custom_footer", "search", "call_buttons"].map(str::to_string).to_vec(),
+				inline_attachment_max_bytes: 1024 * 1024,
+				preimage_attachment_max_bytes: 0,
+			}
+		);
+	}
+
+	#[test]
+	fn a_host_that_lists_nothing_serves_the_v2_features_only() {
+		let runtime = chat_runtime(RecordingHost::with_rooms(&[]));
+
+		assert_eq!(capabilities(&runtime).features, Vec::<String>::new());
+	}
+
+	// S51: the host keeps a declaration whole, a feature it does not serve
+	// included, so that a later build applies it.
+	#[test]
+	fn the_features_of_a_room_are_stored_whole_even_when_unserved() {
+		let chat = RecordingHost::with_rooms(&[hosted("support")]);
+		let runtime = chat_runtime(chat.clone());
+		let features = latest::ChatRoomFeatures {
+			preimage_attachments: true,
+			read_aloud: true,
+			calls: Some(latest::ChatRoomCalls { audio: true, video: false }),
+			..Default::default()
+		};
+
+		assert_eq!(
+			set_features(&runtime, "support", features.clone()),
+			Ok(HostChatSetRoomFeaturesResponse::V1)
+		);
+		assert_eq!(chat.features.lock().unwrap().get("support"), Some(&features));
+	}
+
+	// A thread is one level deep, in a room of the same product.
+	#[test]
+	fn a_thread_parent_is_another_room_of_the_product_that_is_no_thread() {
+		let chat = RecordingHost::with_rooms(&[
+			hosted("main"),
+			hosted("thread"),
+			hosted("nested"),
+			("lobby", latest::ChatRoomParticipation::Bot),
+		]);
+		let runtime = chat_runtime(chat.clone());
+		let set = |room_id, features| set_features(&runtime, room_id, features).map(drop);
+
+		assert_eq!(
+			set("thread", thread_of("thread", "m1")),
+			room_unknown("threadOf names the room itself")
+		);
+		assert_eq!(
+			set("thread", thread_of("gone", "m1")),
+			room_unknown("threadOf names no room the product hosts")
+		);
+		assert_eq!(
+			set("thread", thread_of("lobby", "m1")),
+			room_unknown("threadOf names no room the product hosts")
+		);
+		assert_eq!(set("thread", thread_of("main", "m1")), Ok(()));
+		assert_eq!(
+			set("nested", thread_of("thread", "r1")),
+			room_unknown("threadOf names a thread room")
+		);
+		assert_eq!(chat.calls(), ["features thread"]);
+	}
+
+	#[test]
+	fn the_meta_of_a_message_is_screened() {
+		let chat = RecordingHost::with_rooms(&[hosted("main")]);
+		let runtime = chat_runtime(chat.clone());
+		let branch = |index, count| latest::ChatMessageMeta {
+			branch: Some(latest::ChatBranchPosition { index, count }),
+			..Default::default()
+		};
+		let repliers = |ids: &[&str]| latest::ChatMessageMeta {
+			thread: Some(latest::ChatThreadSummary {
+				room_id: "main".to_string(),
+				reply_count: 1,
+				last_reply_at: None,
+				participant_ids: ids.iter().map(|id| id.to_string()).collect(),
+			}),
+			..Default::default()
+		};
+		let meta = |meta| set_meta(&runtime, "main", "m1", meta).map(drop);
+
+		assert_eq!(meta(branch(0, 2)), feed_unknown("branch.index must be from 1 to 2"));
+		assert_eq!(meta(branch(3, 2)), feed_unknown("branch.index must be from 1 to 2"));
+		assert_eq!(meta(branch(1, 65)), feed_unknown("branch.count must be from 1 to 64"));
+		assert_eq!(
+			meta(repliers(&["a", "b", "c", "d"])),
+			feed_unknown("participantIds must not carry more than 3 entries")
+		);
+		assert_eq!(
+			meta(repliers(&["a", " a"])),
+			feed_unknown("participantIds must not repeat a value")
+		);
+		assert_eq!(meta(branch(2, 2)), Ok(()));
+		assert_eq!(
+			meta(latest::ChatMessageMeta {
+				reasoning: Some(latest::ChatReasoning { duration_ms: Some(4000) }),
+				..Default::default()
+			}),
+			Ok(())
+		);
+		assert_eq!(chat.calls(), ["meta main m1", "meta main m1"]);
+	}
+
+	// The summary of a thread names the thread room of exactly this message.
+	#[test]
+	fn a_thread_summary_names_the_thread_of_its_message() {
+		let chat = RecordingHost::with_rooms(&[hosted("main"), hosted("thread"), hosted("other")]);
+		let runtime = chat_runtime(chat.clone());
+		set_features(&runtime, "thread", thread_of("main", "m1")).expect("a thread of m1");
+		let summary = |room_id: &str| latest::ChatMessageMeta {
+			thread: Some(latest::ChatThreadSummary {
+				room_id: room_id.to_string(),
+				reply_count: 3,
+				last_reply_at: Some(5),
+				participant_ids: vec!["p1".to_string()],
+			}),
+			..Default::default()
+		};
+
+		assert_eq!(set_meta(&runtime, "main", "m1", summary("thread")).map(drop), Ok(()));
+		assert_eq!(
+			set_meta(&runtime, "main", "m2", summary("thread")).map(drop),
+			feed_unknown("thread.roomId is not a thread of this message")
+		);
+		assert_eq!(
+			set_meta(&runtime, "main", "m1", summary("other")).map(drop),
+			feed_unknown("thread.roomId is not a thread of this message")
+		);
+		assert_eq!(
+			set_meta(&runtime, "main", "m1", summary("gone")).map(drop),
+			feed_unknown("thread.roomId names no room the product hosts")
+		);
+	}
+
+	// Meta shares the feed budget of the room, so meta cannot flood a screen
+	// that feed updates cannot.
+	#[test]
+	fn the_meta_of_a_room_shares_its_feed_budget() {
+		let runtime = chat_runtime(RecordingHost::with_rooms(&[hosted("main")]));
+		for _ in 0..CHAT_FEED_UPDATES_PER_SECOND {
+			update_feed(&runtime, "main", text_message("product")).expect("within the budget");
+		}
+
+		assert_eq!(
+			set_meta(&runtime, "main", "m1", Default::default()),
+			Err(CallError::Domain(HostChatUpdateFeedError::V1(
+				latest::HostChatUpdateFeedError::RateLimited
+			)))
+		);
+	}
+
+	#[test]
+	fn a_call_needs_the_feature_that_serves_it() {
+		let chat = RecordingHost::with_rooms(&[hosted("main")]);
+		let runtime = chat_runtime(chat.clone());
+
+		assert_eq!(
+			set_call(&runtime, "main", Some(ringing())).map(drop),
+			room_unknown("this host does not serve call_buttons")
+		);
+
+		*chat.capabilities.lock().unwrap() =
+			["call_buttons", "room_calls"].map(str::to_string).to_vec();
+		std::thread::sleep(core::time::Duration::from_millis(1_000));
+		assert_eq!(
+			set_call(&runtime, "main", Some(ringing())),
+			Ok(HostChatSetRoomCallResponse::V1)
+		);
+		// The core serves no Media service, so it never backs `room_calls`.
+		assert_eq!(
+			set_call(
+				&runtime,
+				"main",
+				Some(latest::ChatRoomCall::Active {
+					call_id: "c1".to_string(),
+					video: true,
+					started_at: 1,
+					media_session: Some([7; 32]),
+				}),
+			)
+			.map(drop),
+			room_unknown("this host does not serve room_calls")
+		);
+		assert_eq!(chat.calls(), ["call main"]);
+	}
+
+	#[test]
+	fn the_call_of_a_room_is_paced() {
+		let chat = RecordingHost::with_rooms(&[hosted("main")]);
+		*chat.capabilities.lock().unwrap() = vec!["call_buttons".to_string()];
+		let runtime = chat_runtime(chat);
+
+		assert!(set_call(&runtime, "main", Some(ringing())).is_ok());
+		assert!(set_call(&runtime, "main", None).is_ok());
+		assert_eq!(
+			set_call(&runtime, "main", Some(ringing())),
+			Err(CallError::Domain(HostChatRoomError::V1(latest::HostChatRoomError::RateLimited)))
+		);
+	}
+
+	fn room_events(
+		runtime: &ProductRuntimeHost,
+	) -> Subscription<HostChatRoomEventsSubscribeItem, CallError<HostChatRoomEventsSubscribeError>>
+	{
+		block_on(Chat::room_events_subscribe(
+			runtime,
+			&CallContext::default(),
+			HostChatRoomEventsSubscribeRequest::V1,
+		))
+	}
+
+	fn drain_room_events(
+		events: &mut Subscription<
+			HostChatRoomEventsSubscribeItem,
+			CallError<HostChatRoomEventsSubscribeError>,
+		>,
+	) -> Vec<latest::HostChatRoomEventsSubscribeItem> {
+		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+		let mut items = Vec::new();
+		while let core::task::Poll::Ready(Some(Ok(HostChatRoomEventsSubscribeItem::V1(item)))) =
+			events.poll_next_unpin(&mut cx)
+		{
+			items.push(item);
+		}
+		items
+	}
+
+	fn room_event(
+		room_id: &str,
+		event: latest::ChatRoomEvent,
+	) -> latest::HostChatRoomEventsSubscribeItem {
+		latest::HostChatRoomEventsSubscribeItem { room_id: room_id.to_string(), event }
+	}
+
+	// S56: a worker that starts learns first which rooms the user muted or
+	// archived, then the events the host kept for it, then live ones.
+	#[test]
+	fn room_events_start_with_the_muted_and_archived_rooms() {
+		let chat = RecordingHost::with_rooms(&[hosted("main")]);
+		let state = |room_id: &str, muted_until, archived| crate::platform::ChatRoomUserState {
+			room_id: room_id.to_string(),
+			muted_until,
+			archived,
+		};
+		*chat.user_states.lock().unwrap() = vec![
+			state("muted", Some(u64::MAX), false),
+			state("archived", Some(1), true),
+			state("mute-ended", Some(1), false),
+		];
+		let runtime = chat_runtime(chat);
+		let requested = room_event("main", latest::ChatRoomEvent::CallRequested { video: true });
+		runtime.publish_chat_room_event(requested.clone()).expect("kept");
+
+		let mut events = room_events(&runtime);
+		let selected = room_event(
+			"main",
+			latest::ChatRoomEvent::BranchSelected { message_id: "m1".to_string(), index: 2 },
+		);
+		runtime.publish_chat_room_event(selected.clone()).expect("sent");
+
+		assert_eq!(
+			drain_room_events(&mut events),
+			[
+				room_event(
+					"muted",
+					latest::ChatRoomEvent::UserStateChanged {
+						muted_until: Some(u64::MAX),
+						archived: false
+					}
+				),
+				room_event(
+					"archived",
+					latest::ChatRoomEvent::UserStateChanged { muted_until: None, archived: true }
+				),
+				requested,
+				selected,
+			]
+		);
+	}
+
+	#[test]
+	fn the_core_keeps_the_newest_room_events_of_a_product_without_subscriber() {
+		let runtime = chat_runtime(RecordingHost::with_rooms(&[]));
+		let ended = |index: usize| {
+			room_event("main", latest::ChatRoomEvent::CallEnded { call_id: format!("c{index}") })
+		};
+		for index in 0..crate::platform::CHAT_ROOM_EVENTS_QUEUED_MAX + 2 {
+			runtime.publish_chat_room_event(ended(index)).expect("kept");
+		}
+
+		let kept = drain_room_events(&mut room_events(&runtime));
+
+		assert_eq!(kept.len(), crate::platform::CHAT_ROOM_EVENTS_QUEUED_MAX);
+		assert_eq!(kept.first(), Some(&ended(2)));
+	}
+
+	// One connection has one subscriber, as for `action_subscribe`.
+	#[test]
+	fn a_second_room_event_subscription_ends_the_first() {
+		let runtime = chat_runtime(RecordingHost::with_rooms(&[]));
+		let mut first = room_events(&runtime);
+		let mut second = room_events(&runtime);
+		let opened =
+			room_event("main", latest::ChatRoomEvent::CallOpened { call_id: "c1".to_string() });
+		runtime.publish_chat_room_event(opened.clone()).expect("sent");
+
+		assert_eq!(block_on(first.next()), None);
+		assert_eq!(drain_room_events(&mut second), [opened]);
+	}
+
+	#[test]
+	fn a_room_event_is_screened_before_the_product_sees_it() {
+		let runtime = chat_runtime(RecordingHost::with_rooms(&[]));
+
+		assert!(matches!(
+			runtime.publish_chat_room_event(room_event(
+				"main",
+				latest::ChatRoomEvent::BranchSelected { message_id: "m1".to_string(), index: 0 },
+			)),
+			Err(crate::host_core::ProductRuntimeError::Rejected { .. })
+		));
+		assert!(drain_room_events(&mut room_events(&runtime)).is_empty());
+	}
+
+	// D30: a product speaks only as a persona it registered.
+	#[test]
+	fn a_product_speaks_only_as_a_persona_it_registered() {
+		let chat = RecordingHost::with_rooms(&[hosted("main")]);
+		let runtime = chat_runtime(chat.clone());
+		let activity = |participant_id: &str| {
+			block_on(Chat::set_room_activity(
+				&runtime,
+				&CallContext::default(),
+				HostChatSetRoomActivityRequest::V1(latest::HostChatSetRoomActivityRequest {
+					room_id: "main".to_string(),
+					activity: Some(latest::ChatActivity {
+						text: "typing".to_string(),
+						participant_id: Some(participant_id.to_string()),
+					}),
+				}),
+			))
+			.map(drop)
+		};
+
+		assert_eq!(
+			update_feed(&runtime, "main", text_message("bot:helper")).map(drop),
+			feed_unknown("unknown bot helper")
+		);
+		assert_eq!(activity("bot:helper"), room_unknown("unknown bot helper"));
+
+		*chat.bots.lock().unwrap() = vec!["helper".to_string()];
+		assert_eq!(update_feed(&runtime, "main", text_message("bot:helper")).map(drop), Ok(()));
+		std::thread::sleep(core::time::Duration::from_millis(250));
+		assert_eq!(activity("bot:helper"), Ok(()));
+		assert_eq!(chat.calls(), ["activity main"]);
+	}
+
+	#[test]
+	fn a_product_registers_at_most_eight_personas() {
+		let chat = RecordingHost::with_rooms(&[]);
+		*chat.bots.lock().unwrap() =
+			(0..CHAT_PERSONAS_MAX).map(|index| format!("b{index}")).collect();
+		let runtime = chat_runtime(chat);
+		let register = |bot_id: &str| {
+			block_on(Chat::register_bot(
+				&runtime,
+				&CallContext::default(),
+				HostChatRegisterBotRequest::V1(latest::HostChatRegisterBotRequest {
+					bot_id: bot_id.to_string(),
+					name: "Bot".to_string(),
+					icon: String::new(),
+				}),
+			))
+		};
+
+		assert!(register("b0").is_ok(), "a repeat replaces a persona");
+		assert!(matches!(
+			register("b8"),
+			Err(CallError::Domain(HostChatRegisterBotError::V1(
+				latest::HostChatRegisterBotError::Unknown { .. }
+			)))
+		));
+	}
+
+	// D34: a link into a muted room of the product names the room; other
+	// links do not.
+	#[test]
+	fn a_room_link_names_a_room_of_its_product() {
+		assert_eq!(
+			chat_room_of_link("chat.dot", "polkadot://chat.dot/-/chat/main"),
+			Some("main".to_string())
+		);
+		assert_eq!(
+			chat_room_of_link("chat.dot", "polkadot://chat.dot/-/chat/a%20b?x=1"),
+			Some("a b".to_string())
+		);
+		assert_eq!(chat_room_of_link("chat.dot", "polkadot://other.dot/-/chat/main"), None);
+		assert_eq!(chat_room_of_link("chat.dot", "polkadot://chat.dot/-/pocket"), None);
+		assert_eq!(chat_room_of_link("chat.dot", "https://example.com/-/chat/main"), None);
+	}
+
+	#[test]
+	fn a_notification_into_a_muted_room_is_silenced() {
+		let chat = RecordingHost::with_rooms(&[hosted("main")]);
+		*chat.user_states.lock().unwrap() = vec![crate::platform::ChatRoomUserState {
+			room_id: "main".to_string(),
+			muted_until: Some(u64::MAX),
+			archived: false,
+		}];
+		let runtime = chat_runtime(chat.clone());
+
+		assert!(block_on(runtime.chat_room_muted("polkadot://chat.dot/-/chat/main")));
+		assert!(!block_on(runtime.chat_room_muted("polkadot://chat.dot/-/chat/other")));
+		chat.user_states.lock().unwrap()[0].muted_until = Some(1);
+		assert!(!block_on(runtime.chat_room_muted("polkadot://chat.dot/-/chat/main")));
+	}
+
+	#[test]
+	fn a_search_is_asked_only_of_a_product_source_room_that_declares_it() {
+		let chat = RecordingHost::with_rooms(&[hosted("kept"), hosted("stored")]);
+		let runtime = chat_runtime(chat.clone());
+		set_config(
+			&runtime,
+			"kept",
+			latest::ChatRoomConfig { product_source: true, ..Default::default() },
+		)
+		.expect("declared");
+		let declared = |room_id: &str| {
+			block_on(runtime.chat_handler_declared(room_id.to_string(), ChatHandler::Search))
+		};
+
+		assert_eq!(declared("kept"), Ok(false));
+		let search = latest::ChatRoomFeatures { search: true, ..Default::default() };
+		set_features(&runtime, "kept", search.clone()).expect("declared");
+		set_features(&runtime, "stored", search).expect("declared");
+		assert_eq!(declared("kept"), Ok(true));
+		assert_eq!(declared("stored"), Ok(false));
+	}
+
+	// D28: a notification wake holds the worker once and tells the room; the
+	// thirteenth one in an hour holds nothing.
+	#[test]
+	fn a_notification_wake_holds_the_worker_and_tells_the_room() {
+		let runtime = chat_runtime(RecordingHost::with_rooms(&[hosted("main")]));
+		let notification = || crate::runtime::ChatWakeReason::Notification {
+			room_id: "main".to_string(),
+			watch_id: "dev".to_string(),
+		};
+
+		assert!(matches!(
+			runtime.wake(notification()),
+			Ok(crate::runtime::ChatWakeOutcome::Held { .. })
+		));
+		assert_eq!(runtime.services.worker_ledger.count("chat.dot"), 1);
+		for _ in 1..crate::runtime::CHAT_NOTIFICATION_WAKES_PER_HOUR {
+			runtime.wake(notification()).expect("a valid reason");
+		}
+		assert_eq!(runtime.services.worker_ledger.count("chat.dot"), 1);
+		assert!(matches!(
+			runtime.wake(notification()),
+			Ok(crate::runtime::ChatWakeOutcome::BudgetSpent)
+		));
+		assert!(matches!(
+			runtime.wake(crate::runtime::ChatWakeReason::ProductStart),
+			Ok(crate::runtime::ChatWakeOutcome::Held { .. })
+		));
+
+		let woken = drain_room_events(&mut room_events(&runtime));
+		assert_eq!(woken.len(), crate::runtime::CHAT_NOTIFICATION_WAKES_PER_HOUR);
+		assert_eq!(
+			woken[0],
+			room_event("main", latest::ChatRoomEvent::Woken { watch_id: "dev".to_string() })
+		);
 	}
 }

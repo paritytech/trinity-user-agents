@@ -46,6 +46,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
   { name: "commands", args: "[off]", description: "Declare or remove the command catalogue", rooms: "both", posts: false, scenarios: "S14, S39" },
   { name: "activity", args: "on|off", description: "Show or clear the activity line", rooms: "both", posts: false, scenarios: "S40" },
   { name: "allowed", args: "[emoji]", description: "Limit the reaction picker", rooms: "both", posts: false, scenarios: "S41" },
+  { name: "caps", args: "", description: "Post the Chat features this host serves", rooms: "both", posts: true, scenarios: "S49, S50" },
+  { name: "features", args: "preimage|search|readaloud on|off, calls audio|video|both|off", description: "Declare one optional feature of the room", rooms: "both", posts: false, scenarios: "S51" },
   { name: "history", args: "<n>", description: "Replace the messages with n generated ones", rooms: "source", posts: true, scenarios: "S15 to S17, S22, B2" },
   { name: "slow", args: "<ms>", description: "Delay every later answer", rooms: "both", posts: false, scenarios: "S21, S46" },
   { name: "fail", args: "reject|timeout|crash|unavailable", description: "Make the next answer fail", rooms: "both", posts: false, scenarios: "S20, S21, S23, S32, S46" },

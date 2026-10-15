@@ -89,6 +89,17 @@ A host serving the Chat modality implements `ChatHostBridge` and passes it when 
 
 The core checks that the product created the room before it calls any of these.
 
+The bridge also carries the Chat Extension v2 additions ([RFC](../../docs/rfcs/chat-extension-v2-additions.md)). Each has an interface default for a host that does not serve them: `capabilities`, `roomUserStates` and `bots` answer an empty list, `roomFeatures` answers `HOST_DEFAULT_CHAT_ROOM_FEATURES`, and the three setters answer a rejection.
+
+| Request | What the host does |
+| --- | --- |
+| `capabilities` | Answers the feature names it serves from end to end (the RFC's feature table). The core drops each name it does not know or cannot back, and answers the product's `capabilities` with the rest |
+| `roomFeatures`, `setRoomFeatures` | Answer and replace the optional features of a room. Keep a feature this build does not serve, so a later build applies it |
+| `setMessageMeta` | Replaces the thread summary, branch position and reasoning flag of one message, in both room modes. Throw `NativeChatFeedRejection` to refuse it |
+| `setRoomCall` | Shows, changes or removes the call of a room. The core first checks that `capabilities` lists `call_buttons` or `room_calls` |
+| `roomUserStates` | Answers each room of the product the user muted or archived; the core sends it to the product when its `roomEventsSubscribe` starts, and silences an immediate notification into a muted room |
+| `bots` | Answers the bot ids of the personas the product registered; the core refuses a `bot:<id>` author that is not one of them |
+
 ```kotlin
 import io.parity.truapi.*
 import uniffi.truapi.ChatBotRegistrationStatus
@@ -169,7 +180,7 @@ names are also normalized; a message body is bounded and screened but passed
 through byte-for-byte, and `ChatFile.size_bytes` is product-asserted and
 unverified. Contextual output escaping is the host's job.
 
-The host asks a room that declares a handler in its configuration through six `suspend` queries on the execution: `chatMessagesQuery`, `chatUserAction`, `chatReactionsQuery`, `chatParticipantsQuery`, `chatMessageActionsQuery` and `chatParticipantActionsQuery`. Each one waits for one answer, and stops the query in the product after its timeout or when the coroutine is cancelled. The default timeouts are in `ChatQueryTimeout`: 10 s for a page of messages, 30 s for a sent message, 10 s for other user actions, and 5 s for reactions, participants and menus; each query also takes `timeout`. A query with no answer throws `ChatQueryException`: `Refused` with `ProductChatQueryError.NotAvailable` asks the host to apply its default, `ActionRefused` reverts a user action, and `Failed`, `NoAnswer` and `TimedOut` show the failure state of that query. The core answers `NotAvailable` itself for a room that does not declare the handler, without starting the worker.
+The host asks a room that declares a handler in its configuration through seven `suspend` queries on the execution: `chatMessagesQuery`, `chatUserAction`, `chatReactionsQuery`, `chatParticipantsQuery`, `chatMessageActionsQuery`, `chatParticipantActionsQuery` and `chatSearchQuery` (asked only of a product-source room whose features set `search`). Each one waits for one answer, and stops the query in the product after its timeout or when the coroutine is cancelled. The default timeouts are in `ChatQueryTimeout`: 10 s for a page of messages, 30 s for a sent message, 10 s for other user actions, 5 s for reactions, participants and menus, and 10 s for a search; each query also takes `timeout`. A query with no answer throws `ChatQueryException`: `Refused` with `ProductChatQueryError.NotAvailable` asks the host to apply its default, `ActionRefused` reverts a user action, and `Failed`, `NoAnswer` and `TimedOut` show the failure state of that query. The core answers `NotAvailable` itself for a room that does not declare the handler, without starting the worker.
 
 ```kotlin
 val page = execution.chatMessagesQuery(
@@ -178,6 +189,8 @@ val page = execution.chatMessagesQuery(
 ```
 
 `publishChatEvent(roomId, peer, event)` delivers what the user did in a room the host stores, and the room events of both kinds of room (`RoomOpened`, `SuggestionSelected` and the others), with peer `"native"` for the user of the host. The product receives at most one `Seen` event for each room each second, and a product at the first protocol version receives only the events that its version carries.
+
+The runtime carries the parts of the additions that need no execution: `publishChatRoomEvent(productId, roomId, event)` sends a `ChatRoomEvent` (mute and archive, call buttons and answers, branch selection) and the core keeps the newest 64 of a product until its worker subscribes; `wakeProduct(productId, reason)` holds the worker for 30 seconds for a `ChatWakeReason` and answers `ChatWakeOutcome`, at most 12 notification wakes for each product in one hour; `stageChatAttachment` refuses each attachment until the core stages preimages.
 
 `postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the host stores it. `alt` is the product's one-line description of the message, already trimmed and screened, for places that list the message rather than draw it, such as a chat list preview of a custom card. Only a custom message carries one, since every other kind previews from its own content.
 

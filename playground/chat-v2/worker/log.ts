@@ -21,7 +21,9 @@ export type LogVia =
   | "renderer_action"
   | "answer"
   /** The preimage key `/post rich` uses, once at each start. */
-  | "preimage";
+  | "preimage"
+  /** One item of `room_events_subscribe`. */
+  | "room_events";
 
 export interface LogEntry {
   via: LogVia;

@@ -5,14 +5,16 @@
  */
 import type {
   ChatMessageStatus,
+  ChatRoomCalls,
   ChatRoomConfig,
+  ChatRoomFeatures,
   ChatRoomPreview,
   HostChatSetRoomFooterRequest,
 } from "@parity/truapi";
 import type { RoomId } from "./clock";
 import { commandSpecs, findCommand, helpMarkdown, parseCommand, type ParsedCommand } from "./commands";
 import type { ProductContext } from "./context";
-import { call, CommandError, reasonOf } from "./errors";
+import { call, CommandError, describeCallError, reasonOf } from "./errors";
 import {
   ACTIVITY_TEXT,
   actionsBody,
@@ -152,6 +154,8 @@ const COMMAND_RUNNERS: Record<string, Runner> = {
     const settings = ctx.settings(room);
     settings.echo = !settings.echo;
   },
+  caps: runCaps,
+  features: runFeatures,
 };
 
 /** The names of the commands this module runs, for the tests. */
@@ -332,6 +336,74 @@ async function runFail(ctx: ProductContext, room: RoomId, command: ParsedCommand
   }
   if (kind !== "unavailable" && room !== "source") throw new CommandError("only in source");
   ctx.state.fail[kind as keyof typeof ctx.state.fail] = true;
+}
+
+// ------------------------------------------------------- chat additions
+
+/**
+ * `true` for the refusal of a host that does not know the call: a host
+ * before the additions answers `Unsupported`, and a core with the default
+ * body answers `HostFailure` with the reason `unavailable`.
+ */
+export function isUnavailable(error: unknown): boolean {
+  const { tag, value } = (error ?? {}) as { tag?: string; value?: { reason?: string } };
+  return tag === "Unsupported" || (tag === "HostFailure" && value?.reason === "unavailable");
+}
+
+/** The one line `/caps` posts for the capabilities of the host. */
+export function capsText(features: readonly string[], inline: number, preimage: number): string {
+  const names = features.length === 0 ? "none" : features.join(", ");
+  return `caps: ${names}; inline ${inline} B; preimage ${preimage} B`;
+}
+
+/** Post the Chat features the host serves, or `caps unavailable`. */
+async function runCaps(ctx: ProductContext, room: RoomId): Promise<void> {
+  const result = await ctx.chat.capabilities();
+  if (result.isErr()) {
+    if (!isUnavailable(result.error)) throw new CommandError(`capabilities ${describeCallError(result.error)}`);
+    await ctx.feed.post(room, textBody("caps unavailable"));
+    return;
+  }
+  const { features, inlineAttachmentMaxBytes, preimageAttachmentMaxBytes } = result.value;
+  await ctx.feed.post(room, {
+    tag: "RichText",
+    value: { text: capsText(features, inlineAttachmentMaxBytes, preimageAttachmentMaxBytes), media: [] },
+  });
+}
+
+const CALLS: Record<string, ChatRoomCalls | undefined> = {
+  audio: { audio: true, video: false },
+  video: { audio: false, video: true },
+  both: { audio: true, video: true },
+  off: undefined,
+};
+
+/**
+ * Declare one optional feature of the room and keep the others as last
+ * declared. The host keeps a feature it does not serve.
+ */
+async function runFeatures(ctx: ProductContext, room: RoomId, command: ParsedCommand): Promise<void> {
+  const hint = "preimage|search|readaloud on|off, calls audio|video|both|off";
+  const [name, value] = command.args;
+  if (command.args.length !== 2) throw usage(command, hint);
+  const features: ChatRoomFeatures = { ...ctx.settings(room).features };
+  const flags: Record<string, "preimageAttachments" | "search" | "readAloud"> = {
+    preimage: "preimageAttachments",
+    search: "search",
+    readaloud: "readAloud",
+  };
+  if (name === "calls") {
+    if (!(value in CALLS)) throw usage(command, hint);
+    const calls = CALLS[value];
+    if (calls) features.calls = calls;
+    else delete features.calls;
+  } else if (name in flags && (value === "on" || value === "off")) {
+    features[flags[name]] = value === "on";
+  } else {
+    throw usage(command, hint);
+  }
+  await call("set_room_features", ctx.chat.setRoomFeatures({ roomId: room, features }));
+  ctx.settings(room).features = features;
 }
 
 // ---------------------------------------------------------------- messages

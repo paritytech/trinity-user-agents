@@ -32,6 +32,9 @@ import type { ProductRuntimeConfig } from "../runtime.js";
 import {
   createChatHostQueries,
   encodeChatEvent,
+  encodeChatRoomEvent,
+  wakeArguments,
+  wakeOutcome,
   startWasmChatQuery,
   type ChatHostRuntime,
   type WasmChatQueryCore,
@@ -90,9 +93,10 @@ export interface MockClient {
   /** The mock host, exposing its recordings and control surface. */
   host: MockHost;
   /**
-   * The chat surface of the host runtime: the six chat queries and
-   * `publishChatEvent`. The client attaches it to `host.chatUser`, so the
-   * mock host can play the user against this product.
+   * The chat surface of the host runtime: the chat queries, the event
+   * publication, wakes and attachment staging. The client attaches it to
+   * `host.chatUser`, so the mock host can play the user against this
+   * product.
    */
   chat: ChatHostRuntime;
   /** Tear down the core, the channel and the client. */
@@ -177,6 +181,15 @@ export async function createMockClient(
     async publishChatEvent(item) {
       core.publishChatEvent(encodeChatEvent(item));
     },
+    async publishChatRoomEvent(item) {
+      core.publishChatRoomEvent(encodeChatRoomEvent(item));
+    },
+    async wakeProduct(reason) {
+      return wakeOutcome(core.wakeProduct(...wakeArguments(reason)));
+    },
+    stageChatAttachment(roomId, mimeType, bytes) {
+      return core.stageChatAttachment(roomId, mimeType, bytes);
+    },
   };
   const detachChat = host.chatUser.attach(chat);
 
@@ -211,5 +224,13 @@ interface ProductCore extends WasmChatQueryCore {
   receiveFrame(frame: Uint8Array): Promise<void>;
   /** Throws when the connection may not reach Chat. */
   publishChatEvent(event: Uint8Array): void;
+  /** Throws when the connection may not reach Chat. */
+  publishChatRoomEvent(item: Uint8Array): void;
+  wakeProduct(roomId?: string, watchId?: string): number | undefined;
+  stageChatAttachment(
+    roomId: string,
+    mimeType: string,
+    bytes: Uint8Array,
+  ): Promise<Uint8Array>;
   dispose(): void;
 }

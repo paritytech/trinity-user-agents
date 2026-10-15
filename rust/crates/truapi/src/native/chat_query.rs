@@ -43,6 +43,11 @@ pub enum NativeChatQueryAnswer {
 		/// The menu of the participant.
 		menu: latest::ProductChatParticipantActionsQueryItem,
 	},
+	/// The answer to `chat_search_query`.
+	Search {
+		/// One page of matches, newest first.
+		page: latest::ProductChatSearchQueryItem,
+	},
 }
 
 /// Why a chat query has no answer.

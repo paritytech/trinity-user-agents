@@ -13,10 +13,11 @@
 //!
 //! The same state is what the development chat surface draws. A room keeps
 //! what the product declared about it (metadata, configuration, preview,
-//! footer, toolbar, suggestions, commands, activity) and its messages: every
-//! message of a room the host keeps, and a page cache of a room the product
-//! keeps. Each change goes to every observer as the JSON the surface protocol
-//! names.
+//! footer, toolbar, suggestions, commands, activity, optional features, the
+//! meta of its messages and its call), the state the user gave it (mute and
+//! archive), and its messages: every message of a room the host keeps, and a
+//! page cache of a room the product keeps. Each change goes to every observer
+//! as the JSON the surface protocol names.
 
 use std::{
 	collections::BTreeMap,
@@ -39,21 +40,25 @@ use truapi::{
 	latest::{
 		ChatActionHandler, ChatActionLayout, ChatActivity, ChatBotRegistrationStatus,
 		ChatCommandSpec, ChatFeedUpdate, ChatMediaItem, ChatMediaMeta, ChatMessage,
-		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatMessageStatus,
+		ChatMessageBody, ChatMessageContent, ChatMessageMeta, ChatMessageOrigin, ChatMessageStatus,
 		ChatParticipantEntry, ChatReactionSummary, ChatResource, ChatRoom, ChatRoomBadge,
-		ChatRoomConfig, ChatRoomFooter, ChatRoomMetadata, ChatRoomOrder, ChatRoomParticipation,
-		ChatRoomPreview, ChatRoomRegistrationStatus, ChatSuggestion, ChatToolbarAction,
-		ChatUserAction, GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatCreateRoomResponse, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
-		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
-		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomActivityRequest, HostChatSetRoomCommandsRequest,
-		HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
-		HostChatSetRoomPreviewRequest, HostChatSetRoomSuggestionsRequest,
-		HostChatSetRoomToolbarRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
-		ProductChatUserActionItem,
+		ChatRoomCall, ChatRoomConfig, ChatRoomFeatures, ChatRoomFooter, ChatRoomMetadata,
+		ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview, ChatRoomRegistrationStatus,
+		ChatSuggestion, ChatToolbarAction, ChatUserAction, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatDeleteRoomRequest,
+		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
+		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
+		HostChatRegisterBotResponse, HostChatSetMessageMetaRequest, HostChatSetRoomActivityRequest,
+		HostChatSetRoomCallRequest, HostChatSetRoomCommandsRequest, HostChatSetRoomConfigRequest,
+		HostChatSetRoomFeaturesRequest, HostChatSetRoomFooterRequest,
+		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest,
+		HostChatSetRoomSuggestionsRequest, HostChatSetRoomToolbarRequest, HostChatUpdateFeedError,
+		HostChatUpdateFeedRequest, ProductChatUserActionItem,
 	},
-	platform::{ChatPlatform, ProductContext, async_trait},
+	platform::{
+		CHAT_META_KEPT_MAX, ChatBotIds, ChatFeatureNames, ChatPlatform, ChatRoomUserState,
+		ChatRoomUserStates, ProductContext, async_trait,
+	},
 };
 
 /// The reserved participant id of the host's user.
@@ -64,6 +69,23 @@ pub const PRODUCT: &str = "product";
 
 /// The list text of a message that has no text of its own.
 const SENT_A_MESSAGE: &str = "Sent a message";
+
+/// The Chat features this host serves from end to end, from
+/// `CHAT_FEATURE_NAMES`. The page has no attachment input, no renderer and no
+/// room links, so `inline_attachments`, `custom_bodies`, `custom_footer` and
+/// `room_links` are not here. A P10 item adds its name when the page serves
+/// it.
+pub const CLI_CHAT_FEATURES: [&str; 9] = [
+	"product_source_rooms",
+	"reaction_details",
+	"participants",
+	"message_menus",
+	"participant_menus",
+	"toolbar",
+	"suggestions",
+	"commands",
+	"activity",
+];
 
 /// A room this host created, with everything the product declared about it.
 struct RoomRecord {
@@ -85,6 +107,21 @@ struct RoomRecord {
 	participants: BTreeMap<String, ChatParticipantEntry>,
 	/// The newest message the user saw.
 	last_seen: Option<String>,
+	/// The optional features the product declared, kept whole, served or
+	/// not.
+	features: ChatRoomFeatures,
+	/// The meta of each message, by message id.
+	meta: BTreeMap<String, ChatMessageMeta>,
+	/// The message ids of `meta` in the order their meta arrived, oldest
+	/// first, so that a room the product keeps holds at most
+	/// `CHAT_META_KEPT_MAX` of them.
+	meta_order: std::collections::VecDeque<String>,
+	/// The call of the room now.
+	call: Option<ChatRoomCall>,
+	/// Milliseconds since the Unix epoch when the mute the user set ends.
+	muted_until: Option<u64>,
+	/// The user archived the room.
+	archived: bool,
 }
 
 impl RoomRecord {
@@ -109,6 +146,25 @@ impl RoomRecord {
 			messages: Vec::new(),
 			participants: BTreeMap::new(),
 			last_seen: None,
+			features: ChatRoomFeatures::default(),
+			meta: BTreeMap::new(),
+			meta_order: std::collections::VecDeque::new(),
+			call: None,
+			muted_until: None,
+			archived: false,
+		}
+	}
+
+	/// Keep the meta of one message. A room the product keeps holds the meta
+	/// of at most `CHAT_META_KEPT_MAX` messages and drops the oldest.
+	fn keep_meta(&mut self, message_id: &str, meta: ChatMessageMeta) {
+		self.meta_order.retain(|kept| kept != message_id);
+		self.meta_order.push_back(message_id.to_string());
+		self.meta.insert(message_id.to_string(), meta);
+		while self.meta_order.len() > CHAT_META_KEPT_MAX {
+			if let Some(oldest) = self.meta_order.pop_front() {
+				self.meta.remove(&oldest);
+			}
 		}
 	}
 
@@ -350,6 +406,37 @@ impl CliChatHost {
 		let (sender, receiver) = mpsc::unbounded();
 		state.observers.push(sender);
 		(snapshot, receiver)
+	}
+
+	/// Play the user: mute `room_id` until `muted_until` and archive it or
+	/// not. `u64::MAX` mutes the room with no end.
+	pub fn set_user_state(
+		&self,
+		room_id: &str,
+		muted_until: Option<u64>,
+		archived: bool,
+	) -> Result<(), String> {
+		let mut state = self.lock();
+		let room = state.rooms.get_mut(room_id).ok_or_else(|| unknown_room(room_id))?;
+		room.muted_until = muted_until;
+		room.archived = archived;
+		let event = with_kind("room", room_json(room_id, room));
+		Self::broadcast(&mut state, event);
+		Ok(())
+	}
+
+	/// The state of each room the user muted or archived, in room-id order.
+	pub fn user_states(&self) -> Vec<ChatRoomUserState> {
+		self.lock()
+			.rooms
+			.iter()
+			.filter(|(_, room)| room.muted_until.is_some() || room.archived)
+			.map(|(room_id, room)| ChatRoomUserState {
+				room_id: room_id.clone(),
+				muted_until: room.muted_until,
+				archived: room.archived,
+			})
+			.collect()
 	}
 
 	/// The configuration the product declared for `room_id`, if the room
@@ -793,7 +880,13 @@ fn apply_feed(
 			stored.message.edited_at = Some(*edited_at);
 			stored.legacy = None;
 		},
-		ChatFeedUpdate::Deleted { .. } => stored.deleted = true,
+		ChatFeedUpdate::Deleted { message_id } => {
+			stored.deleted = true;
+			if persist {
+				room.meta.remove(message_id);
+				room.meta_order.retain(|kept| kept != message_id);
+			}
+		},
 		ChatFeedUpdate::ReactionPlaced { participant_id, emoji, .. } => {
 			stored.react(participant_id, emoji, true, persist);
 		},
@@ -906,7 +999,58 @@ fn room_json(room_id: &str, room: &RoomRecord) -> Value {
 		})),
 		"lastSeen": room.last_seen,
 		"list": list_json(room),
+		"features": features_json(&room.features),
+		"meta": room.meta.iter().map(|(message_id, meta)| (message_id.clone(), meta_json(meta))).collect::<serde_json::Map<_, _>>(),
+		"call": room.call.as_ref().map(call_json),
+		"userState": { "mutedUntil": room.muted_until, "archived": room.archived },
 	})
+}
+
+/// The surface view of the optional features of a room.
+fn features_json(features: &ChatRoomFeatures) -> Value {
+	json!({
+		"preimageAttachments": features.preimage_attachments,
+		"search": features.search,
+		"calls": features.calls.map(|calls| json!({ "audio": calls.audio, "video": calls.video })),
+		"threadOf": features.thread_of.as_ref().map(|parent| json!({
+			"roomId": parent.room_id,
+			"messageId": parent.message_id,
+		})),
+		"readAloud": features.read_aloud,
+	})
+}
+
+/// The surface view of the meta of one message.
+fn meta_json(meta: &ChatMessageMeta) -> Value {
+	json!({
+		"thread": meta.thread.as_ref().map(|thread| json!({
+			"roomId": thread.room_id,
+			"replyCount": thread.reply_count,
+			"lastReplyAt": thread.last_reply_at,
+			"participantIds": thread.participant_ids,
+		})),
+		"branch": meta.branch.map(|branch| json!({ "index": branch.index, "count": branch.count })),
+		"reasoning": meta.reasoning.map(|reasoning| json!({ "durationMs": reasoning.duration_ms })),
+	})
+}
+
+/// The surface view of the call of a room.
+fn call_json(call: &ChatRoomCall) -> Value {
+	match call {
+		ChatRoomCall::Ringing { call_id, video, caller } => json!({
+			"type": "Ringing",
+			"callId": call_id,
+			"video": video,
+			"caller": caller,
+		}),
+		ChatRoomCall::Active { call_id, video, started_at, media_session } => json!({
+			"type": "Active",
+			"callId": call_id,
+			"video": video,
+			"startedAt": started_at,
+			"mediaSession": media_session.map(|session| format!("0x{}", hex::encode(session))),
+		}),
+	}
 }
 
 /// The chat-list row of a room: the product's preview where it set one, the
@@ -1213,15 +1357,14 @@ impl ChatPlatform for CliChatHost {
 		request: HostChatRegisterBotRequest,
 	) -> Result<HostChatRegisterBotResponse, HostChatRegisterBotError> {
 		let mut state = self.lock();
-		let status = if state.bots.contains_key(&request.bot_id) {
-			ChatBotRegistrationStatus::Exists
-		} else {
-			let bot = BotRecord { name: request.name.clone(), icon: request.icon.clone() };
-			let event = with_kind("bot", bot_json(&request.bot_id, &bot));
-			state.bots.insert(request.bot_id.clone(), bot);
-			Self::broadcast(&mut state, event);
-			ChatBotRegistrationStatus::New
+		// A repeat keeps the persona and replaces its name and icon.
+		let bot = BotRecord { name: request.name.clone(), icon: request.icon.clone() };
+		let event = with_kind("bot", bot_json(&request.bot_id, &bot));
+		let status = match state.bots.insert(request.bot_id.clone(), bot) {
+			Some(_) => ChatBotRegistrationStatus::Exists,
+			None => ChatBotRegistrationStatus::New,
 		};
+		Self::broadcast(&mut state, event);
 		drop(state);
 		self.record_registration("bot", &request.bot_id, &request.name, &request.icon);
 		Ok(HostChatRegisterBotResponse { status })
@@ -1392,6 +1535,81 @@ impl ChatPlatform for CliChatHost {
 		self.declare("activity", &request.room_id, &request, |room| {
 			room.activity = request.activity.clone();
 		})
+	}
+
+	async fn chat_capabilities(
+		&self,
+		_product: &ProductContext,
+	) -> Result<ChatFeatureNames, GenericError> {
+		Ok(ChatFeatureNames { names: CLI_CHAT_FEATURES.map(str::to_string).to_vec() })
+	}
+
+	async fn read_chat_room_features(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<ChatRoomFeatures, GenericError> {
+		Ok(self
+			.lock()
+			.rooms
+			.get(&room_id)
+			.map(|room| room.features.clone())
+			.unwrap_or_default())
+	}
+
+	async fn set_chat_room_features(
+		&self,
+		_product: &ProductContext,
+		request: HostChatSetRoomFeaturesRequest,
+	) -> Result<(), GenericError> {
+		self.declare("features", &request.room_id, &request, |room| {
+			room.features = request.features.clone();
+		})
+	}
+
+	async fn set_chat_message_meta(
+		&self,
+		_product: &ProductContext,
+		request: HostChatSetMessageMetaRequest,
+	) -> Result<(), HostChatUpdateFeedError> {
+		let mut state = self.lock();
+		let room = state
+			.rooms
+			.get_mut(&request.room_id)
+			.ok_or(HostChatUpdateFeedError::UnknownRoom)?;
+		// A room the host keeps holds meta only for a message it holds. A room
+		// the product keeps holds the meta of a message the screen did not see
+		// yet, and applies it when the page arrives.
+		if room.host_store() && room.live(&request.message_id).is_none() {
+			return Err(HostChatUpdateFeedError::UnknownMessage);
+		}
+		room.keep_meta(&request.message_id, request.meta.clone());
+		let event = with_kind("room", room_json(&request.room_id, room));
+		Self::broadcast(&mut state, event);
+		drop(state);
+		self.record_declaration("meta", &request.room_id, &request);
+		Ok(())
+	}
+
+	async fn set_chat_room_call(
+		&self,
+		_product: &ProductContext,
+		request: HostChatSetRoomCallRequest,
+	) -> Result<(), GenericError> {
+		self.declare("call", &request.room_id, &request, |room| {
+			room.call = request.call.clone();
+		})
+	}
+
+	async fn read_chat_room_user_states(
+		&self,
+		_product: &ProductContext,
+	) -> Result<ChatRoomUserStates, GenericError> {
+		Ok(ChatRoomUserStates { rooms: self.user_states() })
+	}
+
+	async fn read_chat_bots(&self, _product: &ProductContext) -> Result<ChatBotIds, GenericError> {
+		Ok(ChatBotIds { bot_ids: self.lock().bots.keys().cloned().collect() })
 	}
 }
 
@@ -2455,5 +2673,217 @@ mod tests {
 		for (content, expected) in cases {
 			assert_eq!(content_json(&content), expected);
 		}
+	}
+
+	// S49: the host lists what the page serves end to end, and nothing more.
+	#[test]
+	fn the_host_lists_the_features_the_page_serves() {
+		let host = CliChatHost::new(None);
+
+		let listed = futures::executor::block_on(host.chat_capabilities(&product()))
+			.expect("the host lists its features");
+
+		assert_eq!(listed.names, CLI_CHAT_FEATURES.map(str::to_string));
+		assert!(
+			CLI_CHAT_FEATURES
+				.iter()
+				.all(|name| truapi::platform::CHAT_FEATURE_NAMES.contains(name)),
+			"every name is a name of the RFC"
+		);
+	}
+
+	// S51: the features of a room stay whole for the life of the host, a
+	// feature the page does not serve included, so that a worker that starts
+	// again reads them back.
+	#[test]
+	fn the_features_of_a_room_stay_whole() {
+		let host = host_with_rooms(None);
+		let features = ChatRoomFeatures {
+			preimage_attachments: true,
+			read_aloud: true,
+			calls: Some(truapi::latest::ChatRoomCalls { audio: true, video: false }),
+			..ChatRoomFeatures::default()
+		};
+
+		futures::executor::block_on(host.set_chat_room_features(
+			&product(),
+			HostChatSetRoomFeaturesRequest {
+				room_id: "support".to_string(),
+				features: features.clone(),
+			},
+		))
+		.expect("the room exists");
+
+		assert_eq!(
+			futures::executor::block_on(
+				host.read_chat_room_features(&product(), "support".to_string())
+			),
+			Ok(features)
+		);
+		assert_eq!(
+			room_view(&host, "support")["features"],
+			json!({
+				"preimageAttachments": true,
+				"search": false,
+				"calls": { "audio": true, "video": false },
+				"threadOf": null,
+				"readAloud": true,
+			})
+		);
+		assert_eq!(
+			futures::executor::block_on(
+				host.read_chat_room_features(&product(), "kept".to_string())
+			),
+			Ok(ChatRoomFeatures::default())
+		);
+	}
+
+	fn set_meta(
+		host: &CliChatHost,
+		room_id: &str,
+		message_id: &str,
+		meta: ChatMessageMeta,
+	) -> Result<(), HostChatUpdateFeedError> {
+		futures::executor::block_on(host.set_chat_message_meta(
+			&product(),
+			HostChatSetMessageMetaRequest {
+				room_id: room_id.to_string(),
+				message_id: message_id.to_string(),
+				meta,
+			},
+		))
+	}
+
+	fn branch(index: u16, count: u16) -> ChatMessageMeta {
+		ChatMessageMeta {
+			branch: Some(truapi::latest::ChatBranchPosition { index, count }),
+			..ChatMessageMeta::default()
+		}
+	}
+
+	// A room the host keeps holds meta for its own messages; a room the
+	// product keeps holds meta before the page with the message arrives.
+	#[test]
+	fn the_meta_of_a_message_follows_the_room_mode() {
+		let host = host_with_rooms(None);
+		feed(&host, "support", ChatFeedUpdate::New(message("m1", PRODUCT, "hi")), true)
+			.expect("stored");
+
+		assert_eq!(
+			set_meta(&host, "support", "m2", branch(1, 2)),
+			Err(HostChatUpdateFeedError::UnknownMessage)
+		);
+		assert_eq!(set_meta(&host, "support", "m1", branch(1, 2)), Ok(()));
+		assert_eq!(set_meta(&host, "kept", "unseen", branch(2, 2)), Ok(()));
+		assert_eq!(
+			room_view(&host, "support")["meta"]["m1"]["branch"],
+			json!({ "index": 1, "count": 2 })
+		);
+		assert_eq!(
+			room_view(&host, "kept")["meta"]["unseen"]["branch"],
+			json!({ "index": 2, "count": 2 })
+		);
+
+		// The meta of a deleted message of the host's store goes with it.
+		feed(&host, "support", ChatFeedUpdate::Deleted { message_id: "m1".to_string() }, true)
+			.expect("deleted");
+		assert_eq!(room_view(&host, "support")["meta"], json!({}));
+	}
+
+	#[test]
+	fn a_room_the_product_keeps_holds_the_newest_meta_only() {
+		let host = host_with_rooms(None);
+		for index in 0..=CHAT_META_KEPT_MAX {
+			set_meta(&host, "kept", &format!("m{index}"), branch(1, 1)).expect("kept");
+		}
+
+		let meta = room_view(&host, "kept")["meta"].as_object().expect("an object").clone();
+		assert_eq!(meta.len(), CHAT_META_KEPT_MAX);
+		assert!(!meta.contains_key("m0"));
+		assert!(meta.contains_key(&format!("m{CHAT_META_KEPT_MAX}")));
+	}
+
+	#[test]
+	fn the_call_of_a_room_shows_until_the_product_clears_it() {
+		let host = host_with_rooms(None);
+		let call = |call| {
+			futures::executor::block_on(host.set_chat_room_call(
+				&product(),
+				HostChatSetRoomCallRequest { room_id: "support".to_string(), call },
+			))
+		};
+
+		call(Some(ChatRoomCall::Ringing {
+			call_id: "c1".to_string(),
+			video: true,
+			caller: Some("p1".to_string()),
+		}))
+		.expect("the room exists");
+		assert_eq!(
+			room_view(&host, "support")["call"],
+			json!({ "type": "Ringing", "callId": "c1", "video": true, "caller": "p1" })
+		);
+		call(None).expect("the room exists");
+		assert_eq!(room_view(&host, "support")["call"], Value::Null);
+	}
+
+	#[test]
+	fn the_user_state_of_a_room_reads_back() {
+		let host = host_with_rooms(None);
+
+		host.set_user_state("support", Some(u64::MAX), false).expect("the room exists");
+		host.set_user_state("kept", None, true).expect("the room exists");
+
+		assert_eq!(
+			futures::executor::block_on(host.read_chat_room_user_states(&product()))
+				.expect("read")
+				.rooms,
+			[
+				ChatRoomUserState {
+					room_id: "kept".to_string(),
+					muted_until: None,
+					archived: true
+				},
+				ChatRoomUserState {
+					room_id: "support".to_string(),
+					muted_until: Some(u64::MAX),
+					archived: false,
+				},
+			]
+		);
+		host.set_user_state("support", None, false).expect("the room exists");
+		assert_eq!(host.user_states().len(), 1);
+		assert!(host.set_user_state("gone", None, true).is_err());
+	}
+
+	// D30: a repeat registration keeps the persona and replaces its name.
+	#[test]
+	fn a_repeat_registration_replaces_the_persona() {
+		let host = CliChatHost::new(None);
+		let register = |name: &str| {
+			futures::executor::block_on(host.register_chat_bot(
+				&product(),
+				HostChatRegisterBotRequest {
+					bot_id: "helper".to_string(),
+					name: name.to_string(),
+					icon: String::new(),
+				},
+			))
+			.expect("registered")
+			.status
+		};
+
+		assert_eq!(register("Helper"), ChatBotRegistrationStatus::New);
+		assert_eq!(register("Helper 2"), ChatBotRegistrationStatus::Exists);
+		assert_eq!(
+			futures::executor::block_on(host.read_chat_bots(&product()))
+				.expect("read")
+				.bot_ids,
+			["helper"]
+		);
+		assert_eq!(
+			host.observe().0.bots,
+			[json!({ "botId": "helper", "name": "Helper 2", "icon": "" })]
+		);
 	}
 }

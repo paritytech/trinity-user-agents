@@ -96,15 +96,17 @@ pub mod latest {
 		ActionTrigger, AllocatableResource, AllocationOutcome, Arrangement, Background,
 		BlendingMode, BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier,
 		ChatAction, ChatActionHandler, ChatActionLayout, ChatActions, ChatActivity,
-		ChatBotRegistrationStatus, ChatBuiltInMessageAction, ChatCommand, ChatCommandSpec,
-		ChatCustomMessage, ChatEvent, ChatFeedUpdate, ChatFile, ChatInputConfig, ChatInputPayment,
-		ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageContent,
-		ChatMessageMenu, ChatMessageOrigin, ChatMessageStatus, ChatPageAnchor, ChatParticipant,
-		ChatParticipantEntry, ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction,
-		ChatReaction, ChatReactionDetail, ChatReactionSummary, ChatResource, ChatRichText,
-		ChatRoom, ChatRoomBadge, ChatRoomConfig, ChatRoomMetadata, ChatRoomOrder,
-		ChatRoomParticipation, ChatRoomPreview, ChatRoomPreviewText, ChatRoomRegistrationStatus,
-		ChatSuggestion, ChatToolbarAction, ChatUserAction, CodeFormat, ColorToken, ColumnProps,
+		ChatBotRegistrationStatus, ChatBranchPosition, ChatBuiltInMessageAction, ChatCommand,
+		ChatCommandSpec, ChatCustomMessage, ChatEvent, ChatFeedUpdate, ChatFile, ChatInputConfig,
+		ChatInputPayment, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody,
+		ChatMessageContent, ChatMessageMenu, ChatMessageMeta, ChatMessageOrigin, ChatMessageStatus,
+		ChatPageAnchor, ChatParticipant, ChatParticipantEntry, ChatParticipantMenu,
+		ChatParticipantsQuery, ChatProductAction, ChatReaction, ChatReactionDetail,
+		ChatReactionSummary, ChatReasoning, ChatResource, ChatRichText, ChatRoom, ChatRoomBadge,
+		ChatRoomCall, ChatRoomCalls, ChatRoomConfig, ChatRoomEvent, ChatRoomFeatures,
+		ChatRoomMetadata, ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview,
+		ChatRoomPreviewText, ChatRoomRegistrationStatus, ChatSuggestion, ChatThreadParent,
+		ChatThreadSummary, ChatToolbarAction, ChatUserAction, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
 		Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
 		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
@@ -284,6 +286,24 @@ pub mod latest {
 	/// Product-to-host menu of a chat participant.
 	pub type ProductChatParticipantActionsQueryItem =
 		LatestOf<versioned::chat::ProductChatParticipantActionsQueryItem>;
+	/// The Chat features a host serves, and its attachment bounds.
+	pub type HostChatCapabilitiesResponse = LatestOf<versioned::chat::HostChatCapabilitiesResponse>;
+	/// Request to declare the optional features of a native chat room.
+	pub type HostChatSetRoomFeaturesRequest =
+		LatestOf<versioned::chat::HostChatSetRoomFeaturesRequest>;
+	/// Request to replace the meta of one message of a native chat room.
+	pub type HostChatSetMessageMetaRequest =
+		LatestOf<versioned::chat::HostChatSetMessageMetaRequest>;
+	/// Request to show, change or remove the call of a native chat room.
+	pub type HostChatSetRoomCallRequest = LatestOf<versioned::chat::HostChatSetRoomCallRequest>;
+	/// What the user did with the optional features of a native chat room.
+	pub type HostChatRoomEventsSubscribeItem =
+		LatestOf<versioned::chat::HostChatRoomEventsSubscribeItem>;
+	/// Host-to-product question for the messages of a room that match a search.
+	pub type ProductChatSearchQueryRequest =
+		LatestOf<versioned::chat::ProductChatSearchQueryRequest>;
+	/// Product-to-host page of the messages that match a search.
+	pub type ProductChatSearchQueryItem = LatestOf<versioned::chat::ProductChatSearchQueryItem>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
 	/// Native chat message posting request.
@@ -869,6 +889,10 @@ pub use runtime::statement_allowance;
 pub use runtime::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit,
+};
+#[cfg(feature = "runtime")]
+pub use runtime::{
+	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_WAKE_HOLD_MS, ChatWakeOutcome, ChatWakeReason,
 };
 
 #[cfg(feature = "runtime")]

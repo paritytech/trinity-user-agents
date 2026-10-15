@@ -46,6 +46,7 @@ const ALIASES: Record<string, string> = {
   chat_bots: "getChatBots",
   posted_chat_messages: "getChatMessageLog",
   chat_room_declarations: "room",
+  set_chat_room_user_state: "setRoomUserState",
   product_storage: "getProductStorage",
 };
 
@@ -77,6 +78,7 @@ const JS_ONLY: Record<string, string> = {
   feed: "the messages of a room after the feed updates; Rust keeps the updates",
   preview: "the chat list row with the host defaults, which Rust does not draw",
   events: "the chat events the JS chat user sent; Rust has no chat user",
+  roomEvents: "the room events the JS chat user sent; Rust has no chat user",
   chatUser:
     "plays the user against the product through the JS host runtime queries",
   payment: "unimplemented by every host; the mock refuses and explains",

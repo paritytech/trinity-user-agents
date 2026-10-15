@@ -34,6 +34,27 @@ export interface WorkerProductRuntime extends WasmChatQueryCore {
    */
   publishChatEvent(event: Uint8Array): void;
   /**
+   * Publish one SCALE-encoded `HostChatRoomEventsSubscribeItem`. Throws when
+   * the connection may not reach Chat, or the core refuses the event.
+   */
+  publishChatRoomEvent(item: Uint8Array): void;
+  /**
+   * Hold the worker of the product for a wake. No room: the product started.
+   * A room alone: a message is on its way to the room. A room and a watch: a
+   * notification arrived. Gives the end of the hold in milliseconds since the
+   * epoch, or `undefined` when the product used its notification wakes.
+   */
+  wakeProduct(roomId?: string, watchId?: string): number | undefined;
+  /**
+   * Store a user attachment as a preimage that the product pays for, and
+   * give its key. The core does not stage attachments yet, so it rejects.
+   */
+  stageChatAttachment(
+    roomId: string,
+    mimeType: string,
+    bytes: Uint8Array,
+  ): Promise<Uint8Array>;
+  /**
    * Publish one action triggered inside a product-rendered body, as a
    * SCALE-encoded `HostRendererActionSubscribeItem`. Throws when the
    * connection may not reach the product's renderer.

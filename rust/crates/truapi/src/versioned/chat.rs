@@ -106,6 +106,20 @@ truapi_macros::versioned_type! {
 	pub enum ProductChatParticipantActionsQueryItem {
 		V1 => v01::ProductChatParticipantActionsQueryItem,
 	}
+	pub enum HostChatCapabilitiesRequest { V1 }
+	pub enum HostChatCapabilitiesResponse { V1 => v01::HostChatCapabilitiesResponse }
+	pub enum HostChatCapabilitiesError { V1 => v01::GenericError }
+	pub enum HostChatSetRoomFeaturesRequest { V1 => v01::HostChatSetRoomFeaturesRequest }
+	pub enum HostChatSetRoomFeaturesResponse { V1 }
+	pub enum HostChatSetMessageMetaRequest { V1 => v01::HostChatSetMessageMetaRequest }
+	pub enum HostChatSetMessageMetaResponse { V1 }
+	pub enum HostChatSetRoomCallRequest { V1 => v01::HostChatSetRoomCallRequest }
+	pub enum HostChatSetRoomCallResponse { V1 }
+	pub enum HostChatRoomEventsSubscribeRequest { V1 }
+	pub enum HostChatRoomEventsSubscribeItem { V1 => v01::HostChatRoomEventsSubscribeItem }
+	pub enum HostChatRoomEventsSubscribeError { V1 => v01::GenericError }
+	pub enum ProductChatSearchQueryRequest { V1 => v01::ProductChatSearchQueryRequest }
+	pub enum ProductChatSearchQueryItem { V1 => v01::ProductChatSearchQueryItem }
 }
 
 /// Answer `latest` as `Self::V1` for a v0.1 peer and as `Self::V2` otherwise,

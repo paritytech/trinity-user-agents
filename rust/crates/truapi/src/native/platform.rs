@@ -729,6 +729,71 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 			.await
 			.map_err(v01::GenericError::from)
 	}
+
+	async fn chat_capabilities(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::ChatFeatureNames, v01::GenericError> {
+		let names = self.chat.capabilities().await.map_err(v01::GenericError::from)?;
+		Ok(crate::platform::ChatFeatureNames { names })
+	}
+
+	async fn read_chat_room_features(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<truapi::latest::ChatRoomFeatures, v01::GenericError> {
+		self.chat.room_features(room_id).await.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_features(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomFeaturesRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_features(request.room_id, request.features)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_message_meta(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetMessageMetaRequest,
+	) -> Result<(), truapi::latest::HostChatUpdateFeedError> {
+		self.chat
+			.set_message_meta(request.room_id, request.message_id, request.meta)
+			.await
+			.map_err(truapi::latest::HostChatUpdateFeedError::from)
+	}
+
+	async fn set_chat_room_call(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomCallRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_call(request.room_id, request.call)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn read_chat_room_user_states(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::ChatRoomUserStates, v01::GenericError> {
+		let rooms = self.chat.room_user_states().await.map_err(v01::GenericError::from)?;
+		Ok(crate::platform::ChatRoomUserStates { rooms })
+	}
+
+	async fn read_chat_bots(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::ChatBotIds, v01::GenericError> {
+		let bot_ids = self.chat.bots().await.map_err(v01::GenericError::from)?;
+		Ok(crate::platform::ChatBotIds { bot_ids })
+	}
 }
 
 /// The `data:` URL of an inline avatar, the form a native `create_room` icon
