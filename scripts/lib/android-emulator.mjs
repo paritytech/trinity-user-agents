@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { waitFor } from "./process.mjs";
 
@@ -478,4 +483,142 @@ export function waitForProcess(
       message: () => `${packageName} has no process after ${timeoutMs}ms`,
     },
   );
+}
+
+/** True when an emulator or device is online, before the launcher boots one. */
+export function isDeviceOnline(serial) {
+  return onlineDevice(serial) !== undefined;
+}
+
+/** Stop an emulator that the launcher booted. */
+export function killEmulator(serial) {
+  return adb(["emu", "kill"], { serial });
+}
+
+/**
+ * The package name of an APK, from `aapt2` of the newest installed build
+ * tools, or undefined when no `aapt2` is installed.
+ */
+export function apkPackageName(apk) {
+  const buildTools = resolve(androidSdkRoot(), "build-tools");
+  if (!existsSync(buildTools)) {
+    return undefined;
+  }
+  const versions = readdirSync(buildTools)
+    .filter((name) => existsSync(resolve(buildTools, name, "aapt2")))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const latest = versions.at(-1);
+  if (!latest) {
+    return undefined;
+  }
+  const result = spawnSync(
+    resolve(buildTools, latest, "aapt2"),
+    ["dump", "packagename", apk],
+    { encoding: "utf8", timeout: DEFAULT_ADB_TIMEOUT_MS },
+  );
+  const name = result.status === 0 ? result.stdout.trim() : "";
+  return /^[A-Za-z0-9_.]+$/.test(name) ? name : undefined;
+}
+
+/** Run a shell command on the device; the parts are quoted for the shell. */
+export function shell(serial, parts, options = {}) {
+  const result = adbShell(serial, parts, options);
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/** Run a shell command on the device as root, through `su`. */
+export function rootShell(serial, command) {
+  return shell(serial, ["su", "0", "sh", "-c", command]);
+}
+
+/** The rows of a query against an app database, as objects. */
+export function runAsSqliteJson(serial, packageName, database, sql) {
+  const result = adbShell(serial, [
+    "run-as",
+    packageName,
+    "sqlite3",
+    "-json",
+    database,
+    sql,
+  ]);
+  const output = `${result.stdout}${result.stderr}`;
+  if (result.status !== 0 || /run-as:|Error:|not debuggable|unknown package/i.test(output)) {
+    throw new Error(
+      `run-as ${packageName} sqlite3 ${database} failed:\n${output.trim()}`,
+    );
+  }
+  const text = result.stdout.trim();
+  return text ? JSON.parse(text) : [];
+}
+
+/** The UI hierarchy of the screen, as the XML that `uiautomator dump` writes. */
+export function uiDump(serial) {
+  const result = adb(["exec-out", "uiautomator", "dump", "/dev/tty"], {
+    serial,
+  });
+  const text = result.stdout ?? "";
+  const end = text.lastIndexOf("</hierarchy>");
+  return end < 0 ? "" : text.slice(text.indexOf("<?xml"), end + "</hierarchy>".length);
+}
+
+export function inputTap(serial, x, y) {
+  return adbShell(serial, ["input", "tap", String(Math.round(x)), String(Math.round(y))]);
+}
+
+export function inputLongPress(serial, x, y, durationMs = 900) {
+  const [px, py] = [String(Math.round(x)), String(Math.round(y))];
+  return adbShell(serial, ["input", "swipe", px, py, px, py, String(durationMs)]);
+}
+
+export function inputSwipe(serial, from, to, durationMs = 300) {
+  return adbShell(serial, [
+    "input",
+    "swipe",
+    ...[from.x, from.y, to.x, to.y].map((value) => String(Math.round(value))),
+    String(durationMs),
+  ]);
+}
+
+export function inputKeyEvent(serial, ...keyCodes) {
+  return adbShell(serial, ["input", "keyevent", ...keyCodes.map(String)]);
+}
+
+export function inputKeyCombination(serial, ...keyCodes) {
+  return adbShell(serial, ["input", "keycombination", ...keyCodes.map(String)]);
+}
+
+/**
+ * Write the whole logcat of the device to `destination` from now on, and
+ * keep its lines in memory. `stop` ends the stream.
+ */
+export function streamLogcat(serial, destination) {
+  const child = spawn(adbPath(), ["-s", serial, "logcat", "-v", "threadtime"], {
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const file = createWriteStream(destination);
+  const lines = [];
+  let partial = "";
+  child.stdout.on("data", (chunk) => {
+    file.write(chunk);
+    const text = partial + chunk.toString("utf8");
+    const parts = text.split(/\r?\n/);
+    partial = parts.pop() ?? "";
+    lines.push(...parts);
+  });
+  return {
+    lines,
+    stop() {
+      child.kill();
+      file.end();
+    },
+  };
+}
+
+/** Forward a host TCP port to a local abstract socket of the device. */
+export function forwardAbstractSocket(serial, port, socket) {
+  return adbOrThrow(["forward", `tcp:${port}`, `localabstract:${socket}`], { serial });
+}
+
+export function removeForward(serial, port) {
+  return adb(["forward", "--remove", `tcp:${port}`], { serial });
 }
