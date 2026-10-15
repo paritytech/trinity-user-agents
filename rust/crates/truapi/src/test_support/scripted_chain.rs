@@ -35,13 +35,12 @@ pub struct ScriptedProvider {
 	/// Every request frame the core sent, in order.
 	pub sent: Arc<Mutex<Vec<String>>>,
 	/// First connection's response sender; dropping it ends that connection's
-	/// responses. Later connections get their own, reachable via
-	/// [`notification_sender_nth`].
+	/// responses. Later connections each get their own.
 	pub sender: SenderSlot,
 	receiver: Arc<Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>>,
 	/// Every connection's sender slot, in connect order. Slot 0 is `sender`
 	/// itself, so taking that still ends the first connection's stream.
-	pub senders: Arc<Mutex<Vec<SenderSlot>>>,
+	senders: Arc<Mutex<Vec<SenderSlot>>>,
 	/// How many times the core asked for a connection.
 	pub connect_calls: Arc<AtomicUsize>,
 }

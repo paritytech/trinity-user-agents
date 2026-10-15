@@ -279,6 +279,11 @@ pub struct ChainRuntime {
 	connections: Arc<Mutex<HashMap<String, Arc<ChainConnection>>>>,
 	connection_setups: Arc<Mutex<HashMap<String, ConnectionSetup>>>,
 	follow_starts: FollowStartRegistry,
+	/// Scope prefixes that have been released. A connect already in flight when
+	/// its scope ended must not insert its result: `core_instance` never repeats,
+	/// so a resurrected entry is never asked for again and never evicted. Grows
+	/// by one short string per product runtime the session ever opened.
+	released_scopes: Arc<Mutex<HashSet<String>>>,
 	/// Synchronously registered follow intents, keyed by scope and genesis hash.
 	/// Alias cardinality includes setup tasks that have not yet been polled.
 	follow_intents: Arc<Mutex<HashMap<String, HashSet<String>>>>,
@@ -322,6 +327,7 @@ impl ChainRuntime {
 			connection_setups: Arc::new(Mutex::new(HashMap::new())),
 			follow_starts: Arc::new(ParkingMutex::new(HashMap::new())),
 			follow_intents: Arc::new(Mutex::new(HashMap::new())),
+			released_scopes: Arc::new(Mutex::new(HashSet::new())),
 			transaction_operations: Arc::new(Mutex::new(BTreeMap::new())),
 			next_transaction_operation_id: Arc::new(AtomicU64::new(1)),
 		}
@@ -339,23 +345,44 @@ impl ChainRuntime {
 		format!("{}:{}", self.scope.key_prefix(), encode_hex(genesis_hash))
 	}
 
-	/// Drop everything this scope holds, on every chain.
+	/// Drop everything this scope holds, on every chain, and tear it down.
 	///
-	/// A scope's connections are its own, so nothing outside it can want them
-	/// once it ends. Removing the map's handle lets the `ChainConnection` drop
-	/// when its last in-flight caller finishes, which releases both
-	/// `HostRpcClient` handles and closes the host's socket. Without this the
-	/// cache grows for the life of the process: `core_instance` never repeats,
-	/// so a departed scope's key is never asked for again and `connection_for`
-	/// never reaches its eviction path.
+	/// Removing the map's handle is not enough on its own. Each live follow
+	/// runs a pump holding a strong handle to the connection, so until those
+	/// are aborted the connection cannot drop, both `HostRpcClient` handles
+	/// stay alive, and the host's socket is never closed. Removing the entry
+	/// first would also destroy the route `cleanup_follow` uses to find the
+	/// connection, so a later teardown could no longer abort anything.
+	///
+	/// The scope is latched as released before the sweep, so a connect still
+	/// in flight does not insert its result afterwards.
 	pub fn release_scope(&self) {
 		let prefix = format!("{}:", self.scope.key_prefix());
-		self.connections.lock().unwrap().retain(|key, _| !key.starts_with(&prefix));
+		self.released_scopes.lock().unwrap().insert(prefix.clone());
+
+		let dropped: Vec<Arc<ChainConnection>> = {
+			let mut connections = self.connections.lock().unwrap();
+			let keys: Vec<String> =
+				connections.keys().filter(|key| key.starts_with(&prefix)).cloned().collect();
+			keys.iter().filter_map(|key| connections.remove(key)).collect()
+		};
 		self.connection_setups
 			.lock()
 			.unwrap()
 			.retain(|key, _| !key.starts_with(&prefix));
 		self.follow_intents.lock().unwrap().retain(|key, _| !key.starts_with(&prefix));
+		// `follow_starts` is keyed by follow id, and a product's ids carry its
+		// own `c{instance}:` namespace.
+		if let ConnectionScope::Product(instance) = self.scope {
+			let follow_prefix = format!("c{instance}:");
+			self.follow_starts
+				.lock()
+				.retain(|(_, follow_id), _| !follow_id.starts_with(&follow_prefix));
+		}
+
+		for connection in dropped {
+			connection.abort_all_follows();
+		}
 	}
 
 	/// Start (or attach to an existing) `chainHead_v1_follow` subscription.
@@ -798,10 +825,20 @@ impl ChainRuntime {
 				let setups_map = self.connection_setups.clone();
 				let setup_key = key.clone();
 				let genesis_hash = genesis_hash.to_owned();
+				let released = self.released_scopes.clone();
+				let released_prefix = format!("{}:", self.scope.key_prefix());
 				let setup: ConnectionSetup = async move {
 					let result = provider.connect(genesis_hash.clone()).await.map(|rpc| {
 						let connection = ChainConnection::new(rpc, spawner, genesis_hash);
-						connections.lock().unwrap().insert(setup_key.clone(), connection.clone());
+						// The scope can end while this connect is in flight. Caching
+						// the result then would reinstate an entry nothing asks for
+						// again, which is the growth `release_scope` exists to stop.
+						if !released.lock().unwrap().contains(&released_prefix) {
+							connections
+								.lock()
+								.unwrap()
+								.insert(setup_key.clone(), connection.clone());
+						}
 						connection
 					});
 					setups_map.lock().unwrap().remove(&setup_key);
@@ -1368,6 +1405,17 @@ impl ChainConnection {
 		follow.remote_subscription_id = Some(remote_follow_id);
 		follow.abort = Some(abort);
 		true
+	}
+
+	/// Abort every follow pump on this connection.
+	///
+	/// A pump holds a strong handle to the connection, so while one runs the
+	/// connection cannot drop and the host's socket stays open.
+	fn abort_all_follows(&self) {
+		let ids: Vec<String> = self.follows.lock().unwrap().keys().cloned().collect();
+		for id in ids {
+			self.remove_follow(&id);
+		}
 	}
 
 	fn remove_follow(&self, local_follow_id: &str) {
@@ -2655,11 +2703,70 @@ mod tests {
 		product.release_scope();
 
 		let remaining: Vec<String> = core.connections.lock().unwrap().keys().cloned().collect();
-		println!("FINDING: connections left after the product ended = {remaining:?}");
 		assert_eq!(remaining.len(), 1, "the product's connections outlived it");
 		assert!(
 			remaining[0].starts_with("core:"),
 			"releasing a product took the core's connection with it: {remaining:?}",
+		);
+	}
+
+	/// Releasing a scope with a live follow must close the host's socket, not
+	/// just forget the connection. The follow pump holds a strong handle, so
+	/// without aborting it the connection stays alive and the socket stays
+	/// open, which is worse than leaving the entry cached.
+	#[test]
+	fn releasing_a_scope_with_a_live_follow_closes_the_socket() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			request
+				.contains("chainHead_v1_follow")
+				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+		}));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let product = core.for_product(1);
+
+		// Hold the stream, so nothing tears the follow down on our behalf.
+		let _follow = product.remote_chain_head_follow(
+			"c1:follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0xab; 32], with_runtime: false },
+		);
+		wait_for_sent(&provider, |sent| {
+			sent.iter().any(|request| request.contains("chainHead_v1_follow"))
+		});
+		assert!(provider.sender.lock().unwrap().is_some(), "socket closed too early");
+
+		product.release_scope();
+
+		// The socket closes once the aborted pump drops the last handle.
+		let mut closed = false;
+		for _ in 0..200 {
+			if provider.sender.lock().unwrap().is_none() {
+				closed = true;
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(10));
+		}
+		assert!(closed, "the host socket stayed open after the scope was released");
+	}
+
+	/// A connect still in flight when its scope ends must not reinstate it.
+	/// `core_instance` never repeats, so a resurrected entry is asked for
+	/// never again and evicted never.
+	#[test]
+	fn a_connect_in_flight_cannot_resurrect_a_released_scope() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+		let product = core.for_product(1);
+
+		// Latch the scope as released before the connect is allowed to land.
+		product.release_scope();
+		let _ = futures::executor::block_on(product.connection_for("resurrect_test", &genesis));
+
+		let remaining: Vec<String> = core.connections.lock().unwrap().keys().cloned().collect();
+		assert!(
+			remaining.is_empty(),
+			"a connect after release reinstated the scope: {remaining:?}",
 		);
 	}
 
