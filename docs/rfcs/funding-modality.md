@@ -310,6 +310,9 @@ scope for now.
   `Lapsed` past `expires_at`. A user who declined or was refused may ask again. On `CancelAccepted` the provider returns
   the user's payment and ends the session with `Failed`. An outbound session is refunded only once refunds of a released
   withdrawal exist, so until then its provider can only refuse.
+- **A payout that lands after an accepted cancel wins.** The withdrawal ends as paid out, and the session keeps
+  the terms the user accepted as `cancel: Overtaken { fee, refund }`, so its status reads `PaidOutAfterCancel` and
+  the host can say the cancel came too late without remembering it itself.
 - **Inbound after its credit started:** too late. `cancel_funding` answers `TooLate`, the host tells the user, and the
   provider is not asked.
 
