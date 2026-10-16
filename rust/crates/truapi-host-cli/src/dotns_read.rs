@@ -17,6 +17,8 @@ use truapi::{
 	platform::async_trait,
 };
 
+use crate::network::NetworkConfig;
+
 /// Env var overriding the `DotnsPopController` H160 (hex), skipping on-chain
 /// discovery.
 ///
@@ -24,8 +26,8 @@ use truapi::{
 /// dispatcher or the controller itself, and resolves whichever it is; the
 /// override is for networks where that fails. The
 /// controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2
-/// and previewnet; `DEPLOYMENTS.md` in paritytech/dotns is the authority per
-/// network.
+/// and previewnet; the polkadot preset carries its own from its deployment
+/// manifest. `DEPLOYMENTS.md` in paritytech/dotns is the authority per network.
 pub const DOTNS_POP_CONTROLLER_ENV: &str = "HOST_CLI_DOTNS_POP_CONTROLLER";
 
 /// One Asset Hub RPC connection for a batch of dotNS reads.
@@ -33,6 +35,8 @@ pub struct AssetHubReader {
 	rpc: RpcClient,
 	/// `DotnsPopController` once resolved; it does not change within a run.
 	pop_controller: Option<[u8; 20]>,
+	/// The preset's controller, used only when discovery finds none.
+	pop_controller_fallback: Option<[u8; 20]>,
 }
 
 impl AssetHubReader {
@@ -41,7 +45,15 @@ impl AssetHubReader {
 		let rpc = RpcClient::from_insecure_url(asset_hub_ws)
 			.await
 			.with_context(|| format!("connect {asset_hub_ws}"))?;
-		Ok(Self { rpc, pop_controller: None })
+		Ok(Self { rpc, pop_controller: None, pop_controller_fallback: None })
+	}
+
+	/// Connects to the preset's Asset Hub, falling back to its known
+	/// `DotnsPopController` when the chain does not name one.
+	pub async fn for_network(network: &NetworkConfig) -> Result<Self> {
+		let mut reader = Self::connect(network.asset_hub_ws).await?;
+		reader.pop_controller_fallback = network.dotns_pop_controller;
+		Ok(reader)
 	}
 
 	/// Asset Hub chain time in Unix seconds. `Timestamp.Now` itself is
@@ -87,7 +99,8 @@ impl AssetHubReader {
 	}
 
 	/// `DotnsPopController` address, resolved once per reader. The env override
-	/// wins, otherwise on-chain discovery from `DotnsGateway.DispatcherAddress`.
+	/// wins, then on-chain discovery from `DotnsGateway.DispatcherAddress`, then
+	/// the preset's own controller.
 	async fn pop_controller(&mut self) -> Result<[u8; 20]> {
 		if let Some(controller) = self.pop_controller {
 			return Ok(controller);
@@ -114,6 +127,7 @@ impl AssetHubReader {
 		discover_pop_controller(self)
 			.await
 			.map_err(anyhow::Error::msg)?
+			.or(self.pop_controller_fallback)
 			.with_context(|| {
 				format!(
 					"dotNS gateway has no reachable controller; set \
