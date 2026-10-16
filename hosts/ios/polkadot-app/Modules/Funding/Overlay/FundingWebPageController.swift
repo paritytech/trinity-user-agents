@@ -22,7 +22,6 @@ final class FundingWebPageController: UIViewController {
     private let webView: WKWebView
     private let origin = FundingWebPageOrigin()
     private var completion: ((FundingFrameOutcome) -> Void)?
-    private var urlObservation: NSKeyValueObservation?
     private var secureObservation: NSKeyValueObservation?
 
     init(url: URL, returnURL: URL?, completion: @escaping (FundingFrameOutcome) -> Void) {
@@ -74,13 +73,6 @@ final class FundingWebPageController: UIViewController {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         origin.host = FundingReturnURL.displayOrigin(of: url)
-        urlObservation = webView.observe(\.url, options: [.new]) { [weak self] webView, _ in
-            MainActor.assumeIsolated {
-                guard let self, let current = webView.url else { return }
-                self.origin.host = FundingReturnURL.displayOrigin(of: current)
-                self.refreshSecurity()
-            }
-        }
         secureObservation = webView.observe(\.hasOnlySecureContent, options: [.new]) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.refreshSecurity() }
         }
@@ -92,6 +84,15 @@ final class FundingWebPageController: UIViewController {
         if isBeingDismissed || presentingViewController == nil {
             finish(.dismissed)
         }
+    }
+
+    /// The bar shows the page on screen: it follows a navigation once the page
+    /// commits, never while a slower one is still loading over the old page.
+    private func showCommittedPage() {
+        if let committed = webView.url {
+            origin.host = FundingReturnURL.displayOrigin(of: committed)
+        }
+        refreshSecurity()
     }
 
     private func refreshSecurity() {
@@ -130,6 +131,18 @@ extension FundingWebPageController: WKNavigationDelegate {
         }
 
         decisionHandler(FundingReturnURL.allowsNavigation(to: target, mainFrame: isMainFrame) ? .allow : .cancel)
+    }
+
+    func webView(_: WKWebView, didCommit _: WKNavigation!) {
+        showCommittedPage()
+    }
+
+    func webView(_: WKWebView, didFailProvisionalNavigation _: WKNavigation!, withError _: Error) {
+        showCommittedPage()
+    }
+
+    func webView(_: WKWebView, didFail _: WKNavigation!, withError _: Error) {
+        showCommittedPage()
     }
 }
 

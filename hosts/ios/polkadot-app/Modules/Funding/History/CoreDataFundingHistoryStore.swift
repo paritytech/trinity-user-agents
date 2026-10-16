@@ -53,15 +53,17 @@ final class FundingRecordMapper {
 
 extension FundingRecordMapper: CoreDataMapperProtocol {
     func transform(entity: CDFundingRecord) throws -> FundingRecord {
-        guard
-            let identifier = entity.identifier,
-            let direction = entity.direction.flatMap(FundingDirection.init(storageValue:)),
-            let outcome = entity.outcome.flatMap({ FundingRecord.Outcome(storageValue: $0, entity: entity) }),
-            let openedAt = entity.openedAt,
-            let settledAt = entity.settledAt
-        else {
-            throw CoreDataMapperError.missingRequiredData(keyPath: #keyPath(CDFundingRecord.identifier))
-        }
+        let identifier = try required(entity.identifier, #keyPath(CDFundingRecord.identifier))
+        let direction = try required(
+            entity.direction.flatMap(FundingDirection.init(storageValue:)),
+            #keyPath(CDFundingRecord.direction)
+        )
+        let outcome = try required(
+            entity.outcome.flatMap { FundingRecord.Outcome(storageValue: $0, entity: entity) },
+            #keyPath(CDFundingRecord.outcome)
+        )
+        let openedAt = try required(entity.openedAt, #keyPath(CDFundingRecord.openedAt))
+        let settledAt = try required(entity.settledAt, #keyPath(CDFundingRecord.settledAt))
 
         return FundingRecord(
             intent: identifier,
@@ -108,6 +110,11 @@ extension FundingRecordMapper: CoreDataMapperProtocol {
         entity.openedAt = model.openedAt
         entity.settledAt = model.settledAt
     }
+}
+
+private func required<Value>(_ value: Value?, _ keyPath: String) throws -> Value {
+    guard let value else { throw CoreDataMapperError.missingRequiredData(keyPath: keyPath) }
+    return value
 }
 
 private extension FundingDirection {

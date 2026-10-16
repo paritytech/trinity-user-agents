@@ -7,9 +7,10 @@ import UIKit
 @MainActor
 protocol FundingOverlayEnvironment: AnyObject {
     var cash: FundingCash { get }
-    /// What a payment can spend now, for the withdraw screen's balance
-    /// check; `nil` when the balance cannot be read.
-    func spendable() async -> Decimal?
+    /// Calls `onChange` with what a payment can spend, for the withdraw
+    /// screen's balance check, now and on every balance change, until the
+    /// calling task is cancelled.
+    func followSpendable(_ onChange: @escaping @MainActor (Decimal) -> Void) async
     var branding: FundingProviderBranding { get }
 
     /// Presents over whatever is on screen; false when nothing is.
@@ -181,15 +182,19 @@ final class FundingOverlayCoordinator {
 
         let rail = flows[intent]?.rail ?? runtime?.fundingSession(intent: intent)?.choice?.rail ?? .card
 
+        let presented = Presented<FundingProviderFrameController>()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 let frame = FundingProviderFrameController(
                     page: page,
                     showsSentFunds: rail == .bank
                 ) { [weak self] outcome in
-                    self?.frames[intent] = nil
+                    if let self, frames[intent] === presented.controller {
+                        frames[intent] = nil
+                    }
                     continuation.resume(returning: outcome)
                 }
+                presented.controller = frame
                 frames[intent] = frame
 
                 if !environment.present(frame) {
@@ -197,7 +202,7 @@ final class FundingOverlayCoordinator {
                 }
             }
         } onCancel: {
-            Task { @MainActor [weak self] in self?.frames[intent]?.finish(.dismissed) }
+            Task { @MainActor in presented.controller?.finish(.dismissed) }
         }
     }
 
@@ -207,7 +212,7 @@ final class FundingOverlayCoordinator {
     func presentPage(url: String, returnUrl: String?) async -> FundingFrameOutcome {
         guard !Task.isCancelled, let pageURL = URL(string: url) else { return .dismissed }
 
-        let presented = PresentedPage()
+        let presented = Presented<FundingWebPageController>()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 let page = FundingWebPageController(
@@ -254,9 +259,8 @@ private extension FundingOverlayCoordinator {
             branding: environment.branding
         )
         if direction == .out {
-            Task { [environment, weak model] in
-                let spendable = await environment.spendable()
-                model?.spendable = spendable
+            model.balanceTask = Task { [environment, weak model] in
+                await environment.followSpendable { model?.spendable = $0 }
             }
         }
         return model
@@ -415,6 +419,8 @@ private extension UIViewController {
 /// The page a ``FundingOverlayCoordinator/presentPage(url:returnUrl:)`` call
 /// shows, for its cancellation to take down.
 @MainActor
-private final class PresentedPage {
-    weak var controller: FundingWebPageController?
+/// The frame or page one call presented, so ending that call ends only its
+/// own screen.
+private final class Presented<Controller: AnyObject> {
+    weak var controller: Controller?
 }

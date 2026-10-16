@@ -107,13 +107,16 @@ private extension FundingActivityCenter {
         progress?.status.isInFlight ?? session.stage.isOpen
     }
 
+    /// Writes each ended session to history, then acknowledges it. A session
+    /// whose write or acknowledgement fails stays unacknowledged, so the core
+    /// hands it over again.
     func settle(_ ended: [FundingRecord], runtime: FundingRuntime) async {
         for record in ended {
             do {
                 try await store.save(record)
                 _ = try await runtime.acknowledgeFundingSession(intent: record.intent)
             } catch {
-                continue
+                Logger.shared.error("[funding] \(record.intent): keeping the ended session failed: \(error)")
             }
         }
     }

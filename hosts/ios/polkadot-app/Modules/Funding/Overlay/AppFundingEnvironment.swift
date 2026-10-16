@@ -32,23 +32,24 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         .current
     }
 
-    /// What a payment can spend: private value plus value still gaining
-    /// privacy, as the payment path checks it.
-    func spendable() async -> Decimal? {
+    /// What a payment can spend, as the payment path checks it, on every
+    /// balance change.
+    func followSpendable(_ onChange: @escaping @MainActor (Decimal) -> Void) async {
         guard let dependencies: TruApiDependenciesLocator = RootDependencyLocator.getDependency(),
               let support: PaymentsSupport = dependencies.getDependency(),
               let balanceService = try? await support.coinageService.coinageBalanceService()
-        else { return nil }
+        else { return }
 
         do {
-            for try await balance in balanceService.balanceStream.prefix(1) {
-                let planks = balance.availablePrivate + balance.gainingPrivacy.amount
-                return balanceService.denominationContext.decimal(fromPlanks: planks)
+            for try await balance in balanceService.balanceStream {
+                let spendable = balanceService.denominationContext.decimal(fromPlanks: balance.spendableByPayment)
+                await onChange(spendable)
             }
         } catch {
-            Logger.shared.error("[funding] reading the spendable balance failed: \(error)")
+            if !Task.isCancelled {
+                Logger.shared.error("[funding] following the spendable balance failed: \(error)")
+            }
         }
-        return nil
     }
 
     func present(_ controller: UIViewController) -> Bool {
