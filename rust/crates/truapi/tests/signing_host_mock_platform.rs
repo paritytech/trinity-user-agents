@@ -42,10 +42,9 @@ use truapi::{
 	v01,
 };
 
-// Shared harness; this binary uses only the spawner.
-#[allow(dead_code)]
-mod common;
-use common::test_spawner;
+#[path = "common/spawner.rs"]
+mod spawner;
+use spawner::test_spawner;
 
 /// BIP-39 entropy the local session is activated from.
 const ENTROPY: [u8; 32] = [0xab; 32];

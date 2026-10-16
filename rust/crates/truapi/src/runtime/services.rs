@@ -17,7 +17,11 @@ use crate::store::{Db, DbError};
 use crate::{
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	host_logic::worker::WorkerLedger,
-	platform::{HostInfo, JsonRpcConnection, PermissionStatusHost, Platform},
+	platform::{
+		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
+		PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform,
+		TopUpPlatform,
+	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
@@ -43,26 +47,33 @@ pub struct RuntimeServices {
 	pub host_info: HostInfo,
 	/// Host chat adapter, when the host serves the Chat capability. `None`
 	/// makes every product chat call resolve as `Unsupported`.
-	pub chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
+	pub chat_platform: Option<Arc<dyn ChatPlatform>>,
 	/// Host adapter reporting live OS permission state, installed once at
 	/// startup by a host that can read it. Unset leaves device grants
 	/// resolving from stored state alone.
 	permission_status: OnceLock<Arc<dyn PermissionStatusHost>>,
 	/// Host Pocket adapter, installed once at startup by a host with a Pocket
 	/// surface. Unset leaves every product Pocket call `Unsupported`.
-	pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
+	pocket_platform: OnceLock<Arc<dyn PocketPlatform>>,
+	/// Host top-up engine, installed once at startup by a host that claims
+	/// funds into the balance. Unset leaves every top-up `Unsupported`.
+	top_up_platform: OnceLock<Arc<dyn TopUpPlatform>>,
+	/// The host's payment engine, once installed.
+	payment_platform: OnceLock<Arc<dyn PaymentPlatform>>,
+	/// The host's balance view, once installed.
+	balance_platform: OnceLock<Arc<dyn BalancePlatform>>,
 	/// Host contacts adapter, installed once at startup by a host with a
 	/// contact picker. Unset leaves every product contacts call `Unsupported`.
-	contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
+	contacts_platform: OnceLock<Arc<dyn ContactsPlatform>>,
 	/// Contact handles already resolved, shared by every product runtime of
 	/// this host and emptied when the host says its contacts changed.
 	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
-	game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
+	game_platform: OnceLock<Arc<dyn GamePlatform>>,
 	/// Host scanner, installed once at startup by a host that can draw a
 	/// viewfinder. Unset leaves every product scan `Unsupported`.
-	scanner_platform: OnceLock<Arc<dyn crate::platform::ScannerPlatform>>,
+	scanner_platform: OnceLock<Arc<dyn ScannerPlatform>>,
 	/// Whether a scan is open. Shared by every product runtime of this host,
 	/// because the device has one viewfinder.
 	scan_open: AtomicBool,
@@ -143,6 +154,9 @@ impl RuntimeServices {
 			chat_platform: None,
 			permission_status: OnceLock::new(),
 			pocket_platform: OnceLock::new(),
+			top_up_platform: OnceLock::new(),
+			payment_platform: OnceLock::new(),
+			balance_platform: OnceLock::new(),
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
 			game_platform: OnceLock::new(),
@@ -179,7 +193,7 @@ impl RuntimeServices {
 		bulletin_chain_genesis_hash: [u8; 32],
 		asset_hub_chain_genesis_hash: [u8; 32],
 		spawner: Spawner,
-		chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
+		chat_platform: Option<Arc<dyn ChatPlatform>>,
 	) -> Arc<Self> {
 		let services = Self::new(
 			platform,
@@ -232,15 +246,45 @@ impl RuntimeServices {
 	/// Set-once, like every optional capability, so the card collection cannot
 	/// change hands under a running product. Returns whether this call
 	/// installed it.
-	pub fn install_pocket_platform(
-		&self,
-		platform: Arc<dyn crate::platform::PocketPlatform>,
-	) -> bool {
+	pub fn install_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
 		self.pocket_platform.set(platform).is_ok()
 	}
 
+	/// Install the host's top-up engine. Set-once; returns whether this call
+	/// installed it.
+	pub fn install_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
+		self.top_up_platform.set(platform).is_ok()
+	}
+
+	/// The host's top-up engine, when one is installed.
+	pub fn top_up_platform(&self) -> Option<Arc<dyn TopUpPlatform>> {
+		self.top_up_platform.get().cloned()
+	}
+
+	/// Install the host's payment engine. Set-once; returns whether this
+	/// call installed it.
+	pub fn install_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
+		self.payment_platform.set(platform).is_ok()
+	}
+
+	/// The host's payment engine, when one is installed.
+	pub fn payment_platform(&self) -> Option<Arc<dyn PaymentPlatform>> {
+		self.payment_platform.get().cloned()
+	}
+
+	/// Install the host's balance view. Set-once; returns whether this call
+	/// installed it.
+	pub fn install_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
+		self.balance_platform.set(platform).is_ok()
+	}
+
+	/// The host's balance view, when one is installed.
+	pub fn balance_platform(&self) -> Option<Arc<dyn BalancePlatform>> {
+		self.balance_platform.get().cloned()
+	}
+
 	/// The host's Pocket adapter, when one is installed.
-	pub fn pocket_platform(&self) -> Option<Arc<dyn crate::platform::PocketPlatform>> {
+	pub fn pocket_platform(&self) -> Option<Arc<dyn PocketPlatform>> {
 		self.pocket_platform.get().cloned()
 	}
 
@@ -248,40 +292,34 @@ impl RuntimeServices {
 	///
 	/// Set-once, like every optional capability, so reminders cannot change
 	/// hands under a running product. Returns whether this call installed it.
-	pub fn install_game_platform(&self, platform: Arc<dyn crate::platform::GamePlatform>) -> bool {
+	pub fn install_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
 		self.game_platform.set(platform).is_ok()
 	}
 
 	/// The host's Game adapter, when one is installed.
-	pub fn game_platform(&self) -> Option<Arc<dyn crate::platform::GamePlatform>> {
+	pub fn game_platform(&self) -> Option<Arc<dyn GamePlatform>> {
 		self.game_platform.get().cloned()
 	}
 
 	/// Install the host's contacts adapter. Answers whether this call was the
 	/// one that installed it.
-	pub fn install_contacts_platform(
-		&self,
-		platform: Arc<dyn crate::platform::ContactsPlatform>,
-	) -> bool {
+	pub fn install_contacts_platform(&self, platform: Arc<dyn ContactsPlatform>) -> bool {
 		self.contacts_platform.set(platform).is_ok()
 	}
 
 	/// The host's contacts adapter, when one is installed.
-	pub fn contacts_platform(&self) -> Option<Arc<dyn crate::platform::ContactsPlatform>> {
+	pub fn contacts_platform(&self) -> Option<Arc<dyn ContactsPlatform>> {
 		self.contacts_platform.get().cloned()
 	}
 
 	/// Install the host's scanner. Answers whether this call was the one that
 	/// installed it.
-	pub fn install_scanner_platform(
-		&self,
-		platform: Arc<dyn crate::platform::ScannerPlatform>,
-	) -> bool {
+	pub fn install_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
 		self.scanner_platform.set(platform).is_ok()
 	}
 
 	/// The host's scanner, when one is installed.
-	pub fn scanner_platform(&self) -> Option<Arc<dyn crate::platform::ScannerPlatform>> {
+	pub fn scanner_platform(&self) -> Option<Arc<dyn ScannerPlatform>> {
 		self.scanner_platform.get().cloned()
 	}
 

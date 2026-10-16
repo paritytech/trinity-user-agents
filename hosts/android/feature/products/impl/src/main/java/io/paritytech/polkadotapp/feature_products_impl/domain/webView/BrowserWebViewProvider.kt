@@ -125,6 +125,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
                     DotNsServingHostResolver { host -> servingHostResolver.servingHostFor(host, servedExecutable) },
                     navigationPolicy,
                     frameEmbeddingResponseHeaders(allowIframes),
+                    firstPartyOrigin,
                 )
             webViewClient = InternalWebViewClient(innerClient)
             webChromeClient = chromeClient
