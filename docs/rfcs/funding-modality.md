@@ -301,13 +301,15 @@ scope for now.
 - **Before money moved:** the provider gets `Cancel` and stops with `Failed { Cancelled }`. Asked again, the session
   ends as `Failed { Cancelled }` and the worker is let go, so a provider that went silent cannot hold it.
 - **After money moved:** a cancel is a request and never ends the session. The provider answers `CancelRefused
-  { reason }`, and the session carries on, or `CancelOffer { fee, refund, expires_at }`, amounts in the user's balance
-  units. The host shows the offer from the session's `cancel` and answers it with `confirm_funding_cancel`, which the
-  provider hears as `CancelAccepted` or `CancelDeclined`. An offer past `expires_at` is declined. A user who declined or
-  was refused may ask again. On `CancelAccepted` the provider settles:
-  - an outbound session is refunded with a top-up the provider names in `Refunding { top_up_id, amount }`, at most the
-    debit, and ends as cancelled with what was refunded;
-  - an inbound session before any credit ends with `Failed { Refunded }` once the provider returned the user's payment.
+  { reason }`, and the session carries on, or, on an inbound session whose credit has not started, `CancelOffer { fee,
+  refund, expires_at }`: amounts in the user's balance units, `fee + refund` at most the session amount. The host shows
+  the offer from the session's `cancel` and answers it with `confirm_funding_cancel(intent, terms)`, passing the fee and
+  refund it showed to accept or `None` to decline. The provider hears `CancelAccepted` or `CancelDeclined`; while an
+  offer is open it is not sent `Cancel` again. The answer is `Changed` when the provider replaced the offer since the
+  host showed it, and nothing is accepted; `TooLate` when the credit started meanwhile, and the offer is declined; and
+  `Lapsed` past `expires_at`. A user who declined or was refused may ask again. On `CancelAccepted` the provider returns
+  the user's payment and ends the session with `Failed`. An outbound session is refunded only once refunds of a released
+  withdrawal exist, so until then its provider can only refuse.
 - **Inbound after its credit started:** too late. `cancel_funding` answers `TooLate`, the host tells the user, and the
   provider is not asked.
 

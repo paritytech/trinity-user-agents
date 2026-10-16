@@ -20,7 +20,8 @@ pub struct FundingProviderEntry {
 	/// The provider's product id.
 	pub product_id: String,
 	/// The Worker manifest JSON the host shipped for it, used until the core
-	/// has read the live one. `None` waits for that read.
+	/// has read the live one. `None` waits for that read: until dotNS answers,
+	/// the provider is neither asked for quotes nor offered for a session.
 	pub worker_manifest: Option<String>,
 	/// Where the provider's Worker manifest comes from.
 	pub origin: FundingProviderOrigin,
@@ -343,6 +344,11 @@ pub fn amount_limits(
 				support.country.as_deref() == scope.country &&
 				support.is_fresh(now_ms)
 		});
+		// A provider that refused the scope outright cannot fund it, so it
+		// does not widen the range.
+		if record.is_some_and(|support| !support.supported) {
+			continue;
+		}
 		mins.push(record.and_then(|support| LearnedLimit::fresh(support.min, now_ms)));
 		maxes.push(record.and_then(|support| LearnedLimit::fresh(support.max, now_ms)));
 	}

@@ -35,7 +35,6 @@ class SomeModuleWireframe: SomeModuleWireframeProtocol {
 ### Deep Links
 Defined in `AppConfig/AppConfig.swift`:
 - Chat, tattoo, game, players
-- Chat, fiat onramp
 - URL scheme-based deep linking
 - `URLHandling` module handles incoming URLs
 

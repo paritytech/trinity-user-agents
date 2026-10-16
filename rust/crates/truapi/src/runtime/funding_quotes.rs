@@ -495,11 +495,28 @@ fn best_quote(
 		FundingQuoteState::Quoted { quote } if selectable(&row.provider_id) => Some((row, quote)),
 		_ => None,
 	});
+	// Amounts in the asset are compared at each quote's own decimals.
 	let best = match direction {
-		FundingDirection::In => quoted.min_by_key(|(_, quote)| quote.send_amount),
-		FundingDirection::Out => quoted.rev().max_by_key(|(_, quote)| quote.receive_amount),
+		FundingDirection::In => {
+			quoted.min_by_key(|(_, quote)| scaled(quote.send_amount, quote.asset_decimals))
+		},
+		FundingDirection::Out => quoted
+			.rev()
+			.max_by_key(|(_, quote)| scaled(quote.receive_amount, quote.asset_decimals)),
 	};
 	best.map(|(row, _)| row.provider_id.clone())
+}
+
+/// `amount` in an asset with `decimals`, at 18 decimals, so amounts quoted at
+/// different decimals compare by value.
+fn scaled(amount: u128, decimals: u8) -> u128 {
+	const SCALE: u32 = 18;
+	let decimals = u32::from(decimals);
+	if decimals <= SCALE {
+		amount.saturating_mul(10u128.pow(SCALE - decimals))
+	} else {
+		amount / 10u128.saturating_pow(decimals - SCALE)
+	}
 }
 
 /// `raw` as an ISO 3166-1 alpha-2 code, uppercased, when it is one.

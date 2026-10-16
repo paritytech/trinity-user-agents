@@ -139,8 +139,9 @@ What an iOS device backup carries, and what the app does about it:
 - `RestoredBackupGuard` runs first in the serial launch chain built by `RootPresenterFactory`: when the
   installation key id is present but `hasRootEntropy()` is false — a backup restored onto another
   device — it calls `LocalStateEraser.eraseUserState()`, which removes only the previous wallet's identity
-  (`username`, `usernameClaimed`, `isPerson`) and progress (`backendSessionId`, `nextSyncUpdateId`, the fiat
-  onramp ids, `voucherInUseDismissed`) from the standard suite. Nothing
+  (`username`, `usernameClaimed`), its progress (`backendSessionId`, `nextSyncUpdateId`) and the on-ramp ids
+  left by the removed Meld integration (`fiatOnrampSessionIds`, `fiatOnrampTrackedTransactionIds`) from the
+  standard suite. Nothing
   else is touched: the wallet gate already routes such a launch to onboarding or iCloud recovery, wallet
   creation writes a new key id, the CoreData directory was never in the backup, `deviceEncryptId` and the
   product resource store id index Keychain items that self-heal, and preferences belong to the device. A
