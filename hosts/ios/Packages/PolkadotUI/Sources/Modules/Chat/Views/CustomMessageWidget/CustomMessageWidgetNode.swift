@@ -124,7 +124,7 @@ public extension CustomMessageWidgetNode {
         case archive(path: String)
     }
 
-    enum ImageFit {
+    enum ImageFit: Sendable {
         case none
         case fill
         case cover
