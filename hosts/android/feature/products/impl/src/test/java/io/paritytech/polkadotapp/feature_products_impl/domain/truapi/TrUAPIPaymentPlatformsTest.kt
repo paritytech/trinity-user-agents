@@ -25,9 +25,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUp
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpStatus
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -38,7 +40,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.DerivationIndex
@@ -49,6 +50,7 @@ import uniffi.truapi.HostPaymentStatusSubscribeItem
 import uniffi.truapi.HostPaymentTopUpException
 import uniffi.truapi.HostPaymentTopUpRequest
 import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
+import uniffi.truapi.HostRejection
 import uniffi.truapi.PaymentTopUpSource as NativeTopUpSource
 
 /**
@@ -172,13 +174,30 @@ class TrUAPIPaymentPlatformsTest {
     }
 
     @Test
-    fun `an engine failure reaches the core as the failure it was`() {
-        val failure = IllegalStateException("engine down")
-        every { topUpService.status(product, topUpId) } returns flow { throw failure }
+    fun `an engine failure reaches the core with a fixed reason, not the engine's words`() {
+        every { topUpService.status(product, topUpId) } returns flow { throw IllegalStateException("engine down at node 7") }
 
         val error = runCatching { platforms.topUpStatus(product.value, rawId) }.exceptionOrNull()
 
-        assertSame(failure, error)
+        assertEquals("status is unavailable", (error as HostRejection.Rejected).reason)
+    }
+
+    /** The core was told detecting; once the engine says the top-up is unknown, the next ask must say so. */
+    @Test
+    fun `a top-up found unknown after the wait answers null on the next ask`() = runBlocking<Unit> {
+        val engineAnswers = CompletableDeferred<Unit>()
+        every { topUpService.status(product, topUpId) } returns flow {
+            engineAnswers.await()
+            throw TopUpError.NotFound(topUpId)
+        }
+
+        assertEquals(HostPaymentTopUpStatusSubscribeItem.Detecting, platforms.topUpStatus(product.value, rawId))
+
+        engineAnswers.complete(Unit)
+        withTimeout(5_000) {
+            while (platforms.topUpStatus(product.value, rawId) != null) delay(20)
+        }
+        assertTrue(pushedTopUps.value.isEmpty())
     }
 
     @Test

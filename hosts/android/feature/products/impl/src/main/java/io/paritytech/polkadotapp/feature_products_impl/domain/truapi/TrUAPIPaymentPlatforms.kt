@@ -47,6 +47,7 @@ import uniffi.truapi.HostPaymentStatusSubscribeItem
 import uniffi.truapi.HostPaymentTopUpException
 import uniffi.truapi.HostPaymentTopUpRequest
 import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
+import uniffi.truapi.HostRejection
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -100,7 +101,11 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         isTerminal = { it !is PaymentStatus.Processing },
         isNotFound = { it is PaymentRequestError.NotFound },
         unknownYet = PaymentStatus.Processing,
-        notify = { productId, id, status -> sink?.paymentStatus(productId, id, status.toNative()) },
+        notify = { productId, id, status ->
+            // Logged here, once per status the engine reports, rather than on every ask that reads a kept one.
+            if (status is PaymentStatus.Failed) Timber.tag(PAYMENTS_LOG_TAG).w("Payment failed: %s", status.reason)
+            sink?.paymentStatus(productId, id, status.toNative())
+        },
     )
 
     private val balanceForwarding = AtomicBoolean(false)
@@ -230,7 +235,9 @@ class TrUAPIPaymentPlatforms @Inject constructor(
  *
  * The ask runs on the core's thread, so it waits on the engine only briefly.
  * An operation the engine has not answered for by then reads as [unknownYet],
- * and its real status is pushed once the engine has it.
+ * and its real status is pushed once the engine has it. One that turns out
+ * unknown or failed after that keeps nothing, so the next ask reads the engine
+ * again and answers `null` or the failure.
  */
 internal class StatusForwarder<S : Any>(
     private val scope: CoroutineScope,
@@ -274,7 +281,8 @@ internal class StatusForwarder<S : Any>(
         return when (latest) {
             is Latest.Known<*> -> latest.status as S
             Latest.NotFound -> null
-            is Latest.Failed -> throw latest.error
+            // The run logged the engine's error; the core passes this reason on to the product.
+            is Latest.Failed -> throw HostRejection.Rejected(STATUS_UNAVAILABLE)
             Latest.Pending -> unknownYet
         }
     }
@@ -328,6 +336,7 @@ private const val PAYMENTS_LOG_TAG = "truapi.payments"
 private const val TOP_UP_FAILED = "top-up could not be registered"
 private const val PAYMENT_FAILED = "payment could not be started"
 private const val PAYMENT_DID_NOT_COMPLETE = "payment did not complete"
+private const val STATUS_UNAVAILABLE = "status is unavailable"
 
 private fun NativeTopUpSource.toDomain(): Result<PaymentTopUpSource> = when (this) {
     is NativeTopUpSource.ProductAccount -> derivationIndex.toDomain().map { PaymentTopUpSource.ProductAccount(it) }
@@ -348,10 +357,7 @@ private fun PaymentStatus.toNative(): HostPaymentStatusSubscribeItem = when (thi
     PaymentStatus.Processing -> HostPaymentStatusSubscribeItem.Processing
     PaymentStatus.Completed -> HostPaymentStatusSubscribeItem.Completed
     is PaymentStatus.PartiallyClaimed -> HostPaymentStatusSubscribeItem.ClaimedPartially(actualClaimed = claimed.value.toString())
-    is PaymentStatus.Failed -> {
-        Timber.tag(PAYMENTS_LOG_TAG).w("Payment failed: %s", reason)
-        HostPaymentStatusSubscribeItem.Failed(reason = PAYMENT_DID_NOT_COMPLETE)
-    }
+    is PaymentStatus.Failed -> HostPaymentStatusSubscribeItem.Failed(reason = PAYMENT_DID_NOT_COMPLETE)
 }
 
 private fun Throwable.asTopUpException(): HostPaymentTopUpException = when (this) {
