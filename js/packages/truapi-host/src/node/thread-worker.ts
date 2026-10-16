@@ -26,6 +26,41 @@ export class ThreadWorker extends EventTarget {
     });
   }
 
+  // A browser reports an exception thrown by a listener and carries on; Node's
+  // EventTarget rethrows it as uncaught and ends the process. Behave as a
+  // browser does, so one failing callback cannot take the host down.
+  readonly #wrapped = new WeakMap<object, EventListener>();
+
+  override addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: AddEventListenerOptions | boolean,
+  ): void {
+    if (!listener) return;
+    let wrapped = this.#wrapped.get(listener);
+    if (!wrapped) {
+      wrapped = (event) => {
+        try {
+          if (typeof listener === "function") listener.call(this, event);
+          else listener.handleEvent(event);
+        } catch (error) {
+          console.error(error);
+        }
+      };
+      this.#wrapped.set(listener, wrapped);
+    }
+    super.addEventListener(type, wrapped, options);
+  }
+
+  override removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: EventListenerOptions | boolean,
+  ): void {
+    const wrapped = listener && this.#wrapped.get(listener);
+    if (wrapped) super.removeEventListener(type, wrapped, options);
+  }
+
   #fail(message: string): void {
     this.dispatchEvent(Object.assign(new Event("error"), { message }));
   }
