@@ -14,6 +14,7 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     private let startupWindow: Duration
     private let entered = AsyncStream<Void>.makeStream()
     private let gate = AsyncStream<Void>.makeStream()
+    private let lookups = AsyncStream<Void>.makeStream()
     private let deliveredSignal: AsyncStream<Void>.Continuation
     private var deliveredSignals: AsyncStream<Void>.AsyncIterator
 
@@ -37,6 +38,9 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     var holdsTheAsk = false
 
     var asks: AsyncStream<Void> { entered.stream }
+
+    /// One element per `currentExecution(of:)` call, so a test can wait until a caller has looked for a worker.
+    var executionLookups: AsyncStream<Void> { lookups.stream }
 
     func openTheAsk() {
         gate.continuation.finish()
@@ -97,7 +101,9 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     }
 
     func currentExecution(of productId: ProductId) -> TrUAPIProductExecutionProtocol? {
-        subject.value[productId]
+        let execution = subject.value[productId]
+        lookups.continuation.yield(())
+        return execution
     }
 
     func shutdown() async {}
