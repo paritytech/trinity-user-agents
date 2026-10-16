@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
+import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteAsk
@@ -70,8 +71,8 @@ class FundingFlowInteractor @Inject constructor(
 
     suspend fun cancel(intent: String): Result<CancelOutcome> = runtime.cancel(intent)
 
-    suspend fun confirmCancel(intent: String, accept: Boolean): Result<CancelConfirmation> =
-        runtime.confirmCancel(intent, accept)
+    suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation> =
+        runtime.confirmCancel(intent, terms)
 
     /** The provider's screen has done its part once the payment is seen or the session is over. */
     suspend fun paymentMoved(intent: String): Boolean = runtime.paymentMoved(intent)

@@ -40,7 +40,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
+import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCancel
+import uniffi.truapi.FundingPayout
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
@@ -342,7 +344,13 @@ class FundingViewModel @Inject constructor(
         if (failure != start.value.failure) start.update { it.copy(failure = failure) }
 
         val ended = stage?.isOpen == false
-        if (start.value.started && ended && failure == null) closeSheet()
+        if (start.value.started && ended && failure == null) {
+            // The user accepted a cancel, but the payout had already gone through, so the withdrawal stands.
+            if (session?.cancel is FundingCancel.Accepted && progress.value?.payout == FundingPayout.PaidOut) {
+                showMessage(RCommon.string.funding_cancel_came_too_late)
+            }
+            closeSheet()
+        }
     }
 
     /** A session the user left running, shown on its deposit screen as the sheet had it once it started. */
@@ -368,9 +376,20 @@ class FundingViewModel @Inject constructor(
         if (start.value.isCancelling) return@launchUnit
         start.update { it.copy(isCancelling = true) }
 
-        interactor.confirmCancel(intent, accept)
+        // Accepting names the terms on screen, so the core refuses them if the provider changed its offer since.
+        val shown = start.value.cancel as? FundingCancel.Offered
+        val terms = if (accept) shown?.let { CancelTerms(fee = it.fee, refund = it.refund) } else null
+
+        interactor.confirmCancel(intent, terms)
             .logFailure("Funding cancel answer failed")
-            .onSuccess { leaveCancelOffer(it.message()) }
+            .onSuccess { confirmation ->
+                if (confirmation == CancelConfirmation.CHANGED) {
+                    // Stay on the offer, which now shows the provider's new terms, and let the user answer again.
+                    showMessage(RCommon.string.funding_cancel_offer_changed)
+                } else {
+                    leaveCancelOffer(confirmation.message())
+                }
+            }
             .onFailure { leaveCancelOffer(RCommon.string.funding_error_cancel_failed) }
 
         start.update { it.copy(isCancelling = false) }
@@ -382,6 +401,8 @@ class FundingViewModel @Inject constructor(
         CancelConfirmation.DECLINED -> null
         CancelConfirmation.LAPSED -> RCommon.string.funding_cancel_offer_lapsed
         CancelConfirmation.NO_OFFER -> RCommon.string.funding_cancel_offer_gone
+        CancelConfirmation.CHANGED -> RCommon.string.funding_cancel_offer_changed
+        CancelConfirmation.TOO_LATE -> RCommon.string.funding_cancel_too_late
     }
 
     private fun leaveCancelOffer(message: Int?) {

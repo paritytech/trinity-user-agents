@@ -151,6 +151,22 @@ class FundingActivityCenterTest {
         assertEquals(listOf(FundingActivityStatus.Cancelled(45.intoBalance())), activity.history.map { it.status })
     }
 
+    /** The payout went through before the provider could act on the accepted cancel, so the withdrawal stands. */
+    @Test
+    fun `a withdrawal paid out after the user accepted a cancel is kept as sent`() = runBlocking {
+        val paidOut = session(
+            "out",
+            FundingDirection.OUT,
+            FundingStage.Released("50", settledAtMs = 1uL),
+            cancel = FundingCancel.Accepted(fee = "5", refund = "45"),
+        )
+        serve(paidOut to progress(FundingStatus.Sent, payout = FundingPayout.PaidOut))
+
+        center.observe().first()
+
+        assertEquals(listOf(FundingRecordOutcome.Released), saved.map { it.outcome })
+    }
+
     // No status change announces a session turning slow, so the list wakes itself at the time the core gave.
     @Test
     fun `the list is read again once a session turns taking longer`() = runBlocking {

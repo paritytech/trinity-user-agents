@@ -37,6 +37,7 @@ import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
+import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingStage
@@ -175,7 +176,8 @@ class FundingCancelViewModelTest {
 
     @Test
     fun `the provider's offer opens natively with its fee and refund, and accepting answers the core`() = runCancelTest {
-        coEvery { interactor.confirmCancel("intent", true) } returns Result.success(CancelConfirmation.ACCEPTED)
+        coEvery { interactor.confirmCancel("intent", CancelTerms(fee = "2500000", refund = "1000250000")) } returns
+            Result.success(CancelConfirmation.ACCEPTED)
         val model = resumed()
 
         cancel = FundingCancel.Offered(fee = "2500000", refund = "1000250000", expiresAt = null)
@@ -191,7 +193,7 @@ class FundingCancelViewModelTest {
         model.onAcceptCancelOffer()
         runCurrent()
 
-        coVerify { interactor.confirmCancel("intent", true) }
+        coVerify { interactor.confirmCancel("intent", CancelTerms(fee = "2500000", refund = "1000250000")) }
         assertEquals(FundingScreen.DEPOSIT, screen(model))
         assertEquals(FundingCancelUiState.Cancelling, deposit(model).cancel)
         assertEquals(listOf(RCommon.string.funding_cancel_accepted), messages)
@@ -200,7 +202,7 @@ class FundingCancelViewModelTest {
 
     @Test
     fun `declining the offer keeps the session going with no message`() = runCancelTest {
-        coEvery { interactor.confirmCancel("intent", false) } returns Result.success(CancelConfirmation.DECLINED)
+        coEvery { interactor.confirmCancel("intent", null) } returns Result.success(CancelConfirmation.DECLINED)
         cancel = FundingCancel.Offered(fee = "1000000", refund = "9000000", expiresAt = null)
         val model = resumed()
         assertEquals(FundingScreen.CANCEL_OFFER, screen(model))
@@ -222,9 +224,10 @@ class FundingCancelViewModelTest {
         val cases = mapOf(
             CancelConfirmation.LAPSED to RCommon.string.funding_cancel_offer_lapsed,
             CancelConfirmation.NO_OFFER to RCommon.string.funding_cancel_offer_gone,
+            CancelConfirmation.TOO_LATE to RCommon.string.funding_cancel_too_late,
         )
         for ((answer, message) in cases) {
-            coEvery { interactor.confirmCancel("intent", true) } returns Result.success(answer)
+            coEvery { interactor.confirmCancel("intent", any()) } returns Result.success(answer)
             cancel = FundingCancel.Offered(fee = "1000000", refund = "9000000", expiresAt = null)
             val model = resumed()
 
@@ -235,6 +238,25 @@ class FundingCancelViewModelTest {
             assertEquals(listOf(message), messages)
             stop(model)
         }
+    }
+
+    /** The provider changed its terms after the screen showed them, so accepting the old ones must not go through. */
+    @Test
+    fun `accepting terms the provider has since changed keeps the offer up with the new terms`() = runCancelTest {
+        coEvery { interactor.confirmCancel("intent", CancelTerms(fee = "1000000", refund = "9000000")) } returns
+            Result.success(CancelConfirmation.CHANGED)
+        cancel = FundingCancel.Offered(fee = "1000000", refund = "9000000", expiresAt = null)
+        val model = resumed()
+
+        val messages = messages(model)
+        cancel = FundingCancel.Offered(fee = "4000000", refund = "6000000", expiresAt = null)
+        model.onAcceptCancelOffer()
+        runCurrent()
+
+        assertEquals(FundingScreen.CANCEL_OFFER, screen(model))
+        assertEquals(FundingCancelUiState.Offered(fee = "$4 CASH", refund = "$6 CASH"), deposit(model).cancel)
+        assertEquals(listOf(RCommon.string.funding_cancel_offer_changed), messages)
+        stop(model)
     }
 
     @Test

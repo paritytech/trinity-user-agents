@@ -107,6 +107,7 @@ import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
 import uniffi.truapi.HostFundingStatusSubscribeItem
 import uniffi.truapi.CancelConfirmation
+import uniffi.truapi.CancelTerms
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.NativeFundingCallbacks
 import uniffi.truapi.U128
@@ -971,10 +972,13 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     @Throws(HostRejection::class)
     suspend fun cancelFunding(intent: String): CancelOutcome = inner.cancelFunding(intent)
 
-    /** Answer the provider's cancel offer on session [intent], as the user chose on the host's native screen. */
+    /**
+     * Answer the provider's cancel offer on session [intent]: the [terms] the host showed to accept them, `null` to
+     * decline. Terms that no longer match the open offer answer `CHANGED`.
+     */
     @Throws(HostRejection::class)
-    suspend fun confirmFundingCancel(intent: String, accept: Boolean): CancelConfirmation =
-        inner.confirmFundingCancel(intent, accept)
+    suspend fun confirmFundingCancel(intent: String, terms: CancelTerms?): CancelConfirmation =
+        inner.confirmFundingCancel(intent, terms)
 
     /** Record that the host wrote ended session [intent] into its own history. */
     @Throws(HostRejection::class)

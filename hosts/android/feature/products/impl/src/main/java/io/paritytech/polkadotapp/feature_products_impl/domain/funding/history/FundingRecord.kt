@@ -39,7 +39,12 @@ data class FundingRecord(
                 FundingStage.Open -> return null
                 is FundingStage.Delivered -> Triple(FundingRecordOutcome.Delivered, stage.credited, stage.settledAtMs)
                 is FundingStage.Released -> Triple(
-                    if (session.cancel is FundingCancel.Accepted) FundingRecordOutcome.Cancelled else FundingRecordOutcome.Released,
+                    // A cancel the user accepted stands unless the payout went through first; then it was sent.
+                    if (session.cancel is FundingCancel.Accepted && progress?.payout != FundingPayout.PaidOut) {
+                        FundingRecordOutcome.Cancelled
+                    } else {
+                        FundingRecordOutcome.Released
+                    },
                     stage.debited,
                     stage.settledAtMs,
                 )
