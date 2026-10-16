@@ -1137,7 +1137,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       break;
     case "refreshPermissionAuthorization":
       void handleRefreshPermissionAuthorization(
-        runtime,
+        host?.runtime ?? null,
         postToMain,
         msg.productId,
         msg.requestId,
