@@ -1,12 +1,19 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
-import androidx.compose.foundation.background
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -23,11 +30,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
-import io.paritytech.polkadotapp.design.components.image.NovaAsyncImage
+import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
+import coil.request.ImageRequest
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.components.text.NovaTextField
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -37,10 +56,12 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsEffect
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
+import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsVerticalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import coil.size.Size as CoilSize
 
 /**
  * CompositionLocal for event dispatcher, allowing nested widgets to dispatch events.
@@ -97,13 +118,40 @@ private fun JsImageRenderer(
     if (model == null) {
         Spacer(modifier = imageModifier)
     } else {
-        NovaAsyncImage(
+        val density = LocalDensity.current.density
+        val sizedSides = listOf(widget.modifiers.hasWidth(), widget.modifiers.hasHeight()).count { it }
+        // A picture drawn at its natural size is loaded whole, not at the size of the space around it.
+        val drawsNaturalSize = widget.fit == JsImageFit.NONE || sizedSides == 0
+        AsyncImage(
             modifier = imageModifier,
-            model = model,
+            model = if (drawsNaturalSize) {
+                ImageRequest.Builder(LocalContext.current).data(model).size(CoilSize.ORIGINAL).build()
+            } else {
+                model
+            },
             contentDescription = null,
-            contentScale = widget.fit.toContentScale(),
+            contentScale = when {
+                sizedSides == 0 -> ContentScale.Inside
+                sizedSides == 1 && widget.fit != JsImageFit.NONE -> ContentScale.Fit
+                else -> widget.fit.toContentScale()
+            },
+            transform = { state ->
+                if (state is AsyncImagePainter.State.Success) {
+                    state.copy(painter = DpPainter(state.painter, density))
+                } else {
+                    state
+                }
+            },
         )
     }
+}
+
+/** One picture pixel to a dp, as iOS draws one to a point. */
+private class DpPainter(private val picture: Painter, private val density: Float) : Painter() {
+    override val intrinsicSize: Size
+        get() = picture.intrinsicSize.let { if (it.isSpecified) it * density else it }
+
+    override fun DrawScope.onDraw() = with(picture) { draw(size) }
 }
 
 @Composable
@@ -111,6 +159,12 @@ private fun JsEffectRenderer(
     widget: JsWidget.Effect,
     modifier: Modifier = Modifier,
 ) {
+    val sweep by rememberInfiniteTransition(label = "effect").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(EFFECT_SWEEP_MILLIS, easing = LinearEasing), RepeatMode.Reverse),
+        label = "effectSweep",
+    )
     Box(modifier = modifier) {
         widget.children.forEach { child ->
             JsWidgetContent(widget = child)
@@ -118,16 +172,29 @@ private fun JsEffectRenderer(
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .background(widget.effect.toBrush(), alpha = EFFECT_ALPHA),
+                .drawWithCache {
+                    val sweepWidth = Size(size.width * 2, size.height)
+                    val brush = widget.effect.toBrush(Offset.Zero, Offset(sweepWidth.width, sweepWidth.height))
+                    onDrawBehind {
+                        clipRect {
+                            translate(left = size.width * (sweep - 1)) {
+                                drawRect(brush, size = sweepWidth, alpha = EFFECT_ALPHA)
+                            }
+                        }
+                    }
+                },
         )
     }
 }
 
 private const val EFFECT_ALPHA = 0.3f
+private const val EFFECT_SWEEP_MILLIS = 3000
 
-private fun JsEffect.toBrush(): Brush = when (this) {
+private fun JsEffect.toBrush(start: Offset, end: Offset): Brush = when (this) {
     JsEffect.RAINBOW -> Brush.linearGradient(
-        listOf(
+        start = start,
+        end = end,
+        colors = listOf(
             Color(0xFFFF5E5E),
             Color(0xFFFFD35E),
             Color(0xFF5EFF8A),
@@ -172,7 +239,8 @@ private fun JsColumnRenderer(
         verticalArrangement = widget.verticalArrangement?.toComposeVerticalArrangement() ?: Arrangement.Top,
     ) {
         widget.children.forEach { child ->
-            JsWidgetContent(widget = child)
+            val flexible = child is JsWidget.Spacer && !child.modifiers.fixedHeight()
+            JsWidgetContent(widget = child, modifier = if (flexible) Modifier.weight(1f) else Modifier)
         }
     }
 }
@@ -183,15 +251,46 @@ private fun JsRowRenderer(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier.then(widget.modifiers.toComposeModifier()),
+        modifier = modifier
+            .then(widget.modifiers.toComposeModifier())
+            // Only when a child fills the height: intrinsic heights can come out short for text that wraps.
+            .then(
+                if (widget.modifiers.hasHeight() || widget.children.none { it.fillsHeight() }) {
+                    Modifier
+                } else {
+                    Modifier.height(IntrinsicSize.Max)
+                },
+            ),
         verticalAlignment = widget.verticalAlignment?.toComposeVerticalAlignment() ?: Alignment.Top,
         horizontalArrangement = widget.horizontalArrangement?.toComposeHorizontalArrangement() ?: Arrangement.Start,
     ) {
         widget.children.forEach { child ->
-            JsWidgetContent(widget = child)
+            val flexible = child is JsWidget.Spacer && !child.modifiers.fixedWidth()
+            JsWidgetContent(widget = child, modifier = if (flexible) Modifier.weight(1f) else Modifier)
         }
     }
 }
+
+private fun List<JsModifier>.fixedWidth() = any { it is JsModifier.Size && it.width != null }
+
+private fun List<JsModifier>.fixedHeight() = any { it is JsModifier.Size && it.height != null }
+
+/** A fixed or filled width, which a minimum alone is not. */
+private fun List<JsModifier>.hasWidth() = fixedWidth() || any { it is JsModifier.FillMaxWidth }
+
+private fun List<JsModifier>.hasHeight() = fixedHeight() || any { it is JsModifier.FillMaxHeight }
+
+private fun JsWidget.fillsHeight(): Boolean = when (this) {
+    is JsWidget.Box -> modifiers
+    is JsWidget.Column -> modifiers
+    is JsWidget.Row -> modifiers
+    is JsWidget.Spacer -> modifiers
+    is JsWidget.Text -> modifiers
+    is JsWidget.Button -> modifiers
+    is JsWidget.TextField -> modifiers
+    is JsWidget.Image -> modifiers
+    is JsWidget.Effect -> emptyList()
+}.any { it is JsModifier.FillMaxHeight }
 
 @Composable
 private fun JsSpacerRenderer(
