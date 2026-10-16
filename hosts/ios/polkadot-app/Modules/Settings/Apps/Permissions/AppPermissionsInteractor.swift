@@ -7,6 +7,7 @@ final class AppPermissionsInteractor {
     private let productId: ProductId
     private let providerFactory: ProductPermissionDataProviderMaking
     private let repository: ProductPermissionRepositoryProtocol
+    private let permissionResetter: ProductPermissionResetting?
     private let notificationScheduler: ProductNotificationScheduling
     private let logger: LoggerProtocol
 
@@ -16,12 +17,14 @@ final class AppPermissionsInteractor {
         productId: ProductId,
         providerFactory: ProductPermissionDataProviderMaking,
         repository: ProductPermissionRepositoryProtocol,
+        permissionResetter: ProductPermissionResetting?,
         notificationScheduler: ProductNotificationScheduling = ProductNotificationScheduler.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productId = productId
         self.providerFactory = providerFactory
         self.repository = repository
+        self.permissionResetter = permissionResetter
         self.notificationScheduler = notificationScheduler
         self.logger = logger
     }
@@ -58,7 +61,7 @@ extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
 
         let revokesNotifications = permissions.contains(.deviceCapability(.notifications))
 
-        Task { [repository, notificationScheduler, productId, logger] in
+        Task { [repository, permissionResetter, notificationScheduler, productId, logger] in
             do {
                 try await repository.revoke(productId: productId, permissions: permissions)
 
@@ -67,6 +70,12 @@ extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
                 }
             } catch {
                 logger.error("Failed to revoke product permissions: \(error)")
+            }
+
+            do {
+                try permissionResetter?.reset(productId: productId, permissions: permissions)
+            } catch {
+                logger.error("Failed to reset product permissions in the core: \(error)")
             }
         }
     }
