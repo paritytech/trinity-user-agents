@@ -24,7 +24,7 @@ struct PocketFaceConformanceTests {
         // Drawn to pixels, not just mapped: these faces build their surface out
         // of nodes sized only by their own modifiers, which map to a full tree
         // and can still reach the screen as one flat fill.
-        let share = try WidgetNodeRaster.largestShare(of: drawn, in: cardSize)
+        let share = try WidgetNodeRaster.largestShare(of: drawn, in: PocketCardSize.testFrame)
 
         #expect(share < 0.9)
     }
@@ -37,10 +37,6 @@ struct PocketFaceConformanceTests {
         let bytes = try faceData("candidate").count
 
         #expect(bytes < PocketPreviewLoader.maxBytes / 2)
-    }
-
-    private var cardSize: CGSize {
-        CGSize(width: 345, height: PocketCardSize.height)
     }
 
     private func faceData(_ name: String) throws -> Data {
