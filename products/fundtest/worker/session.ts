@@ -118,6 +118,15 @@ const CANCEL_FEE_MIN = ONE_CASH / 2n;
 export const MAX_RESTARTS = 6;
 
 /** A failure the session ends on rather than retries. */
+/** `value`, which the session's phase guarantees is saved. A missing one
+ *  means the saved state does not match its phase, so the session stops
+ *  rather than act on a guess. */
+function required<T>(value: T | undefined, what: string): T {
+  if (value === undefined)
+    throw new Error(`fundtest: ${what} is missing from the saved state`);
+  return value;
+}
+
 class SessionFailure extends Error {
   constructor(readonly reason: FundingFailure) {
     super(describe(reason));
@@ -185,6 +194,18 @@ export class Session {
     this.saved = readSaved(assignment.saved);
     const amount = this.saved.amount ?? assignment.amount?.toString();
     if (amount !== undefined) this.saved.amount = amount;
+  }
+
+  /** The inbound part of the saved state. Every inbound session saves it
+   *  when it starts, so its absence means the saved state was corrupted. */
+  private inboundState(): NonNullable<Saved["inbound"]> {
+    return required(this.saved.inbound, "the inbound state");
+  }
+
+  /** The outbound part of the saved state, saved when an outbound session
+   *  starts, like {@link inboundState}. */
+  private outboundState(): NonNullable<Saved["outbound"]> {
+    return required(this.saved.outbound, "the outbound state");
   }
 
   private get amount(): bigint | undefined {
@@ -364,9 +385,9 @@ export class Session {
    *  refund from the reserve account, under an id fixed by the session. */
   private async settleCancel(): Promise<void> {
     this.abort = new AbortController();
-    const offer = this.saved.cancel!;
+    const offer = required(this.saved.cancel, "the cancel offer");
     if (this.terms.direction === "In") return this.end({ tag: "Refunded" });
-    const state = this.saved.outbound!;
+    const state = this.outboundState();
     state.refund ??= { id: refundIdFor(this.intent), amount: offer.refund };
     state.phase = "refunding";
     await this.save();
@@ -716,7 +737,7 @@ export class Session {
 
   /** Card and bank: the provider's screen, until the user pays or leaves. */
   private async awaitFiatPayment(): Promise<void> {
-    const state = this.saved.inbound!;
+    const state = this.inboundState();
     const isBank = this.terms.rail === "Bank";
     const bank = { ...BANK_DETAILS, reference: this.reference };
     const price = () => {
@@ -771,7 +792,7 @@ export class Session {
 
   /** Crypto: the deposit address, until enough has arrived. */
   private async awaitCryptoDeposit(): Promise<void> {
-    const state = this.saved.inbound!;
+    const state = this.inboundState();
     const amount = this.requireAmount();
     const asset = this.terms.asset as CryptoSymbol;
     const account = await this.sessionAccount();
@@ -793,7 +814,9 @@ export class Session {
               amount: owed,
               decimals: token.decimals,
               exact: false,
-              expiresAt: BigInt(state.depositExpiresAt!),
+              expiresAt: BigInt(
+                required(state.depositExpiresAt, "the deposit deadline"),
+              ),
             },
           },
         },
@@ -829,7 +852,7 @@ export class Session {
     await this.poll("deposit read", async () => {
       if (this.demoFailure) throw this.demoFailure;
       // A demo deposit can switch the plan to PAS, so read it every time.
-      const current = state.plan!;
+      const current = required(state.plan, "the conversion plan");
       const held = await withChains((chains) =>
         depositBalance(
           chains.assetHub,
@@ -843,7 +866,10 @@ export class Session {
         if (this.demoFailure) throw this.demoFailure;
         return true;
       }
-      if (held === 0n && Date.now() > state.depositExpiresAt!) {
+      if (
+        held === 0n &&
+        Date.now() > required(state.depositExpiresAt, "the deposit deadline")
+      ) {
         throw new SessionFailure({ tag: "Expired" });
       }
       if (held !== lastSeen && held > 0n) {
@@ -863,7 +889,7 @@ export class Session {
   /** Records that the user's payment reached the provider, before the host
    *  hears of it, so a restarted worker treats a cancel as a request. */
   private async markPaymentSeen(): Promise<void> {
-    const state = this.saved.inbound!;
+    const state = this.inboundState();
     if (state.paymentSeen) return;
     state.paymentSeen = true;
     await this.save();
@@ -871,7 +897,7 @@ export class Session {
 
   /** The conversion plan, sized once and kept. */
   private async plan(asset: CryptoSymbol | undefined) {
-    const state = this.saved.inbound!;
+    const state = this.inboundState();
     if (state.plan) return state.plan;
     const amount = this.requireAmount();
     const account = await this.sessionAccount();
@@ -888,9 +914,9 @@ export class Session {
    *  has started to arrive. A session that asked for another asset switches to
    *  the PAS route first, since the faucet gives only PAS. */
   private async makeDemoDeposit(): Promise<void> {
-    const state = this.saved.inbound!;
+    const state = this.inboundState();
     const account = await this.sessionAccount();
-    const asked = state.plan!;
+    const asked = required(state.plan, "the conversion plan");
     if (asked.depositSymbol !== TOKENS.PAS.symbol) {
       const held = await this.retrying("deposit read", () =>
         withChains((chains) =>
@@ -937,8 +963,8 @@ export class Session {
    *  need to the reserve account, so the conversion spends only the deposit.
    *  Does not ask again once a drip was asked for. */
   private async fundFromFaucet(): Promise<void> {
-    const state = this.saved.inbound!;
-    const deposit = BigInt(state.plan!.deposit);
+    const state = this.inboundState();
+    const deposit = BigInt(required(state.plan, "the conversion plan").deposit);
     const account = await this.sessionAccount();
     if (!onTestnet()) {
       throw new SessionFailure(
@@ -1003,7 +1029,7 @@ export class Session {
   }
 
   private async awaitFinalDeposit(): Promise<void> {
-    const plan = this.saved.inbound!.plan!;
+    const plan = required(this.inboundState().plan, "the conversion plan");
     const token = depositToken(plan);
     const deposit = BigInt(plan.deposit);
     const account = await this.sessionAccount();
@@ -1018,8 +1044,8 @@ export class Session {
   /** getcash's pipeline, one tick at a time, until the CASH is final on
    *  People. */
   private async convert(): Promise<void> {
-    const state = this.saved.inbound!;
-    const plan = state.plan!;
+    const state = this.inboundState();
+    const plan = required(state.plan, "the conversion plan");
     const account = await this.sessionAccount();
     const amount = this.requireAmount();
     for (;;) {
@@ -1048,7 +1074,7 @@ export class Session {
    *  three top-ups: another when the host claimed less than asked, and a
    *  deliberate second one for the `retry` trigger. */
   private async credit(): Promise<void> {
-    const state = this.saved.inbound!;
+    const state = this.inboundState();
     const account = await this.sessionAccount();
     const client = await truapi();
     for (let attempt = 0; attempt < MAX_TOP_UPS; attempt += 1) {
@@ -1169,7 +1195,7 @@ export class Session {
     }
     if (state.phase === "requesting") {
       const amount = this.requireAmount();
-      const id = state.paymentId!;
+      const id = required(state.paymentId, "the payment id");
       const destination = toHex((await reserveAccount()).publicKey);
       try {
         await unwrap(
@@ -1199,7 +1225,7 @@ export class Session {
       await this.killAt(2);
     }
     if (state.phase === "collecting") {
-      const id = state.paymentId!;
+      const id = required(state.paymentId, "the payment id");
       const amount = this.requireAmount();
       const debited = await this.retrying("payment status", () =>
         firstOf(
@@ -1242,7 +1268,7 @@ export class Session {
       }
     }
     if (state.phase === "refunding") {
-      await this.refund(state.refund!);
+      await this.refund(required(state.refund, "the refund"));
       state.phase = "done";
     }
     await forgetSession(this.intent);

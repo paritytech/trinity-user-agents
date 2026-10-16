@@ -99,9 +99,10 @@ export function formatUnits(amount: string | bigint, decimals: number): string {
 /** A decimal string as CASH base units, or `undefined` when it is not one. */
 export function parseCash(text: string): string | undefined {
   const match = /^\s*(\d+)(?:[.,](\d{1,6}))?\s*$/.exec(text);
-  if (!match) return undefined;
-  const fraction = (match[2] ?? "").padEnd(6, "0");
-  return (BigInt(match[1]!) * 1_000_000n + BigInt(fraction)).toString();
+  const whole = match?.[1];
+  if (whole === undefined) return undefined;
+  const fraction = (match?.[2] ?? "").padEnd(6, "0");
+  return (BigInt(whole) * 1_000_000n + BigInt(fraction)).toString();
 }
 
 /** Loads the session for `route` and hands it to `render`, or explains why
