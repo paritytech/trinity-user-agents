@@ -34,7 +34,7 @@ struct PocketAddCardView: View {
                 refusal(message)
             }
         }
-        .padding(24)
+        .padding(PocketCardSize.sideMargin)
         .frame(maxWidth: .infinity, minHeight: Self.sheetHeight, alignment: .top)
         .background(Color(.bgSurfaceMain))
         .task { await viewModel.load() }

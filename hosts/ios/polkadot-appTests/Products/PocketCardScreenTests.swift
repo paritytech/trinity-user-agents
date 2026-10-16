@@ -235,15 +235,24 @@ struct PocketCardScreenTests {
         #expect(face?.safeAreaRegions == [])
     }
 
-    /// The same 16 pt Android leaves, so a product page lines up under the
-    /// card on both.
+    /// Drawn 16 pt from either edge, as on Android, and where the open and
+    /// close flight takes the card from.
     @Test
-    func leavesTheCardSixteenPointsFromEitherEdge() {
+    func drawsTheCardSixteenPointsFromEitherEdgeWhereItsFlightTakesIt() throws {
         let screen = laidOutScreen(product: StubSPAView())
+        let size = CGSize(width: screenSize.width, height: PocketOpenedCardView.height)
+        let pixels = try WidgetNodeRaster.pixels(
+            of: PocketOpenedCardView(card: loyaltyCard),
+            in: size,
+            under: .berlinNight
+        )
 
+        let middleRow = Int(size.height) / 2 * Int(size.width) * 4
+        let painted = (0 ..< Int(size.width)).filter { pixels[middleRow + $0 * 4] > 0 }
         let card = screen.cardFrame(in: screen.view)
 
-        #expect([card.minX, screenSize.width - card.maxX] == [16, 16])
+        #expect([painted.first, painted.last.map { $0 + 1 }] == [16, Int(size.width) - 16])
+        #expect([card.minX, card.maxX] == [16, size.width - 16])
     }
 }
 
