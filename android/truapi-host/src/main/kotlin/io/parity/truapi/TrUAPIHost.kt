@@ -32,6 +32,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -46,6 +47,9 @@ import uniffi.truapi.ChatRoomUserState
 import uniffi.truapi.ChatWakeOutcome
 import uniffi.truapi.ChatWakeReason
 import uniffi.truapi.NativeChatStageRejection
+import uniffi.truapi.NativeWasmWorkerEnd
+import uniffi.truapi.NativeWasmWorkerObserver
+import uniffi.truapi.WorkerKeepAlive
 import uniffi.truapi.ProductChatSearchQueryItem
 import uniffi.truapi.ProductChatSearchQueryRequest
 import uniffi.truapi.ChatCommandSpec
@@ -1142,6 +1146,26 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 
     /**
+     * Tell the core if the app is in the foreground. While it is, the core
+     * holds the worker of each product that declares
+     * [WorkerKeepAlive.FOREGROUND]. The core starts in the background, so
+     * the host reports the state when it builds the runtime and at each
+     * change.
+     */
+    fun setAppForeground(foreground: Boolean) {
+        inner.setAppForeground(foreground)
+    }
+
+    /**
+     * Tell the core when the worker of a product runs, from the `keepAlive`
+     * field of its Worker executable manifest. The host sets
+     * [WorkerKeepAlive.ON_DEMAND] again when the product goes.
+     */
+    fun setWorkerKeepAlive(productId: String, keepAlive: WorkerKeepAlive) {
+        inner.setWorkerKeepAlive(productId, keepAlive)
+    }
+
+    /**
      * Send one event about a room to the product: the user muted or archived
      * the room, pressed a call button, answered a call, or selected another
      * alternative of a message. The core keeps the newest events of a product
@@ -1414,6 +1438,16 @@ sealed class ChatQueryException(message: String) : Exception(message) {
  * The first result of one chat query: the answer of the product or its
  * refusal. Later results have no effect.
  */
+/** Gives the one end of a wasm worker to [end]. */
+internal class WasmWorkerEndObserver(
+    private val end: CompletableDeferred<NativeWasmWorkerEnd>,
+) : NativeWasmWorkerObserver {
+    // The core declares the callback infallible, so a throw here aborts the process.
+    override fun onEnd(end: NativeWasmWorkerEnd) {
+        runCatching { this.end.complete(end) }
+    }
+}
+
 internal class ChatQueryOutcome : NativeChatQueryObserver {
     val answer = CompletableDeferred<NativeChatQueryAnswer>()
 
@@ -1489,6 +1523,20 @@ class TrUAPIProductExecution internal constructor(
     /** Revoke this execution's bridge registration while leaving it reusable. */
     fun stopWsBridge() {
         inner.stopWsBridge()
+    }
+
+    /**
+     * Run [wasm], a product worker compiled to wasm, in the core in place of
+     * the bridge. The worker gets the chat, renderer and permissions of this
+     * execution, and answers its render and chat queries. The result
+     * completes one time, with the end of the worker. [stopWsBridge] and
+     * [close] stop the worker.
+     */
+    @Throws(ProductRuntimeException::class)
+    fun startWasmWorker(wasm: ByteArray): Deferred<NativeWasmWorkerEnd> {
+        val end = CompletableDeferred<NativeWasmWorkerEnd>()
+        inner.startWasmWorker(wasm, WasmWorkerEndObserver(end))
+        return end
     }
 
     /**
