@@ -398,8 +398,11 @@ impl FundingRegistry {
 		Ok(confirmation)
 	}
 
-	/// Watch one session, receiving its current stage immediately. A terminal
-	/// session yields that one item and then ends.
+	/// Watch one session: its current stage at once, then one item per change,
+	/// in commit order and never repeated. The stream ends after a terminal
+	/// stage, so a session that has already ended yields that one item. It
+	/// never errors; dropping it stops watching. `None` when no such session is
+	/// held.
 	pub fn subscribe(
 		&self,
 		intent: &str,
@@ -513,9 +516,8 @@ impl FundingRegistry {
 		edit: impl FnOnce(&mut HashMap<String, FundingSession>) -> (R, Vec<String>),
 	) -> Result<R, FundingSessionError> {
 		let mut loaded = self.writes.lock().await;
-		let before = self.lock_sessions().clone();
 		let presenting_before = self.lock_presenting().clone();
-		let mut working = before.clone();
+		let mut working = self.lock_sessions().clone();
 		let mut changed = Vec::new();
 		if !*loaded {
 			for session in load_sessions(storage).await? {
@@ -544,17 +546,18 @@ impl FundingRegistry {
 				}));
 			}
 		}
-		if !*loaded || announces || working != before {
+		// The write lock keeps the in-memory map unchanged until this commit
+		// replaces it, so it still holds the sessions as they were before `edit`.
+		if !*loaded || announces || working != *self.lock_sessions() {
 			let kept = retained(working.into_values());
 			// An assigned session is stored even while its overlay is up, as
 			// its provider's reports are stored before they are answered.
-			let started: Vec<_> = {
+			let started: Vec<&FundingSession> = {
 				let presenting = self.lock_presenting();
 				kept.iter()
 					.filter(|session| {
 						!presenting.contains(&session.intent) || session.provider_id.is_some()
 					})
-					.cloned()
 					.collect()
 			};
 			if let Err(error) = store_sessions(storage, &started).await {
