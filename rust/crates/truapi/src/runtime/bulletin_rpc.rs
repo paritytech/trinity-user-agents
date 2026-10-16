@@ -164,6 +164,21 @@ pub enum BulletinSubmitError {
 	Cancelled,
 }
 
+impl<Error> From<Error> for BulletinSubmitError
+where
+	subxt::Error: From<Error>,
+{
+	fn from(error: Error) -> Self {
+		Self::Subxt(Box::new(error.into()))
+	}
+}
+
+impl From<RuntimeFailure> for BulletinSubmitError {
+	fn from(error: RuntimeFailure) -> Self {
+		Self::Host(error)
+	}
+}
+
 /// Which stage rejected the allowance account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub enum AllowanceRejectionPhase {
@@ -335,19 +350,9 @@ impl BulletinRpc {
 		let key = preimage_key(value);
 
 		self.enter_phase(SubmissionPhase::Connect);
-		let client = self
-			.chain
-			.online_client(&self.genesis_hash)
-			.await
-			.map_err(BulletinSubmitError::Host)?;
-		let finalized = client
-			.at_current_block()
-			.await
-			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-		let mut best_blocks = client
-			.stream_best_blocks()
-			.await
-			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		let client = self.chain.online_client(&self.genesis_hash).await?;
+		let finalized = client.at_current_block().await?;
+		let mut best_blocks = client.stream_best_blocks().await?;
 		let head = initial_best_block(&mut best_blocks).await?;
 
 		self.enter_phase(SubmissionPhase::Build);
@@ -423,19 +428,12 @@ impl BulletinRpc {
 		let mut allowance_rejection_started = None;
 		loop {
 			self.enter_phase(SubmissionPhase::Build);
-			let at_block = block
-				.at()
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-			let signed = build_signed_store_transaction(&at_block, finalized, signer, value)
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+			let at_block = block.at().await?;
+			let signed =
+				build_signed_store_transaction(&at_block, finalized, signer, value).await?;
 
 			self.enter_phase(SubmissionPhase::DryRun);
-			let validity = signed
-				.validate()
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+			let validity = signed.validate().await?;
 			match Self::classify_dry_run_validity(validity)? {
 				DryRunStatus::Valid => return Ok(signed),
 				DryRunStatus::AllowanceRejected => {
@@ -568,12 +566,9 @@ async fn next_best_block(
 async fn watch_until_included(
 	signed: &SignedStore,
 ) -> Result<TransactionInBlock<SubstrateConfig, BulletinAtBlock>, BulletinSubmitError> {
-	let mut progress = signed
-		.submit_and_watch()
-		.await
-		.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+	let mut progress = signed.submit_and_watch().await?;
 	while let Some(status) = progress.next().await {
-		let status = status.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		let status = status?;
 		match status {
 			TransactionStatus::InBestBlock(block) | TransactionStatus::InFinalizedBlock(block) => {
 				return Ok(block);
@@ -688,7 +683,7 @@ fn dispatch_outcome_from_events(
 	metadata: ArcMetadata,
 ) -> Result<(), BulletinSubmitError> {
 	for event in events.iter() {
-		let event = event.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		let event = event?;
 		if event.pallet_name() == "System" && event.event_name() == "ExtrinsicFailed" {
 			let dispatch_error = DispatchError::decode_from(event.field_bytes(), metadata.clone())
 				.map_err(|error| {
@@ -704,7 +699,7 @@ fn dispatch_outcome_from_events(
 		}
 	}
 	for event in events.iter() {
-		let event = event.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		let event = event?;
 		if event.pallet_name() == "System" && event.event_name() == "ExtrinsicSuccess" {
 			return Ok(());
 		}
@@ -721,8 +716,7 @@ async fn require_dispatch_success(
 	match in_block.wait_for_success().await {
 		Ok(events) => {
 			for event in events.iter() {
-				let event =
-					event.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+				let event = event?;
 				if event.pallet_name() == "System" && event.event_name() == "ExtrinsicSuccess" {
 					return Ok(());
 				}
@@ -776,9 +770,8 @@ mod tests {
 
 	#[test]
 	fn classifies_post_broadcast_errors() {
-		let invalid = BulletinSubmitError::Subxt(Box::new(
-			TransactionStatusError::Invalid("bad nonce".to_string()).into(),
-		));
+		let invalid =
+			BulletinSubmitError::from(TransactionStatusError::Invalid("bad nonce".to_string()));
 		assert!(invalid.is_node_rejection());
 		assert!(invalid.is_invalid_verdict());
 		assert!(!invalid.is_broadcast_outcome_unknown(SubmissionPhase::Watch));

@@ -52,19 +52,27 @@ pub struct RootManifest {
 	pub trusted_products: BTreeMap<String, Vec<Granted>>,
 }
 
+/// A manifest that cannot be decoded or uses an unsupported schema.
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+pub enum ManifestParseError {
+	/// The manifest is not valid JSON for the expected schema.
+	#[display("manifest is not valid JSON: {_0}")]
+	#[from]
+	Json(serde_json::Error),
+	/// The manifest names a schema this core cannot read.
+	#[display("manifest schema version {_0} is not supported")]
+	UnsupportedSchemaVersion(#[error(not(source))] u32),
+}
+
 impl RootManifest {
 	/// Parses a manifest, rejecting a schema version this core cannot read.
 	///
 	/// An unrecognised grant value is not a parse failure: it is dropped from
 	/// the entry it appears in and the recognised values around it still apply.
-	pub fn parse(json: &str) -> Result<Self, String> {
-		let manifest: Self = serde_json::from_str(json)
-			.map_err(|err| format!("manifest is not valid JSON: {err}"))?;
+	pub fn parse(json: &str) -> Result<Self, ManifestParseError> {
+		let manifest: Self = serde_json::from_str(json)?;
 		if manifest.schema_version != SUPPORTED_SCHEMA_VERSION {
-			return Err(format!(
-				"manifest schema version {} is not supported",
-				manifest.schema_version
-			));
+			return Err(ManifestParseError::UnsupportedSchemaVersion(manifest.schema_version));
 		}
 		Ok(manifest)
 	}

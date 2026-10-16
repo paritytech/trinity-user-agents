@@ -1865,10 +1865,7 @@ impl PairingHost {
 		session: &SessionInfo,
 		handle: &latest::ProductAccountId,
 	) -> Result<Option<Zeroizing<[u8; 32]>>, RingVrfError> {
-		let Some(auto_signing) = self
-			.auto_signing_key(session, &handle.dot_ns_identifier)
-			.await
-			.map_err(RingVrfError::from)?
+		let Some(auto_signing) = self.auto_signing_key(session, &handle.dot_ns_identifier).await?
 		else {
 			return Ok(None);
 		};
@@ -2220,10 +2217,8 @@ impl PairingHost {
 				.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?,
 			derivation_index: request.payload.index.clone(),
 		};
-		if let Some(auto_signing) = self
-			.auto_signing_key(&private_session, &request.calling_product_id)
-			.await
-			.map_err(RingVrfError::from)?
+		if let Some(auto_signing) =
+			self.auto_signing_key(&private_session, &request.calling_product_id).await?
 		{
 			self.ring_resolver.validate(&request.payload.ring).await?;
 			let vrf = vrf::load().await?;

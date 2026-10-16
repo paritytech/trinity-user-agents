@@ -37,7 +37,10 @@ use futures::{
 use js_sys::{Array, Function, Reflect, Uint8Array};
 use parity_scale_codec::{Decode, Encode};
 use send_wrapper::SendWrapper;
-use truapi::{latest::HostPlatform, v01};
+use truapi::{
+	latest::{GenericError, HostPlatform},
+	v01,
+};
 use wasm_bindgen::{JsCast, prelude::*};
 
 #[cfg(feature = "wasm-signing-host")]
@@ -218,7 +221,7 @@ where
 	let (tx, rx) = mpsc::unbounded::<Result<T, v01::GenericError>>();
 	let item_tx = tx.clone();
 	let send_item = Closure::wrap(Box::new(move |value: JsValue| {
-		let item = parse_item(value).map_err(generic);
+		let item = parse_item(value).map_err(Into::into);
 		let _ = item_tx.unbounded_send(item);
 	}) as Box<dyn FnMut(JsValue)>);
 	let send_error = Closure::wrap(Box::new(move |value: JsValue| {
@@ -245,15 +248,14 @@ where
 			Ok(dispose) => Some(SendWrapper::new(dispose)),
 			Err(_) => {
 				return stream::once(async {
-					Err(generic(
-						"subscription callback must return a dispose function, null, or undefined"
-							.to_string(),
-					))
+					Err("subscription callback must return a dispose function, null, or undefined"
+						.to_string()
+						.into())
 				})
 				.boxed();
 			},
 		},
-		Err(err) => return stream::once(async { Err(generic(js_to_string(err))) }).boxed(),
+		Err(err) => return stream::once(async { Err(js_to_string(err).into()) }).boxed(),
 	};
 
 	Box::pin(JsSubscriptionStream {
@@ -312,24 +314,20 @@ impl Drop for JsCallbackJsonRpcConnection {
 	}
 }
 
-fn generic(reason: String) -> v01::GenericError {
-	v01::GenericError { reason }
-}
-
 fn host_error(reason: String) -> ProviderError {
 	ProviderError::Host { reason }
 }
 
 fn parse_generic_error(value: JsValue) -> v01::GenericError {
 	if let Some(reason) = value.as_string() {
-		return generic(reason);
+		return reason.into();
 	}
 	if let Ok(reason) = Reflect::get(&value, &JsValue::from_str("reason")) &&
 		let Some(reason) = reason.as_string()
 	{
-		return generic(reason);
+		return reason.into();
 	}
-	generic(js_to_string(value))
+	js_to_string(value).into()
 }
 
 /// Await the JS callback's return value if it's a Promise; pass other
@@ -788,8 +786,10 @@ fn permission_authorization_status_from_js(
 	}
 }
 
-fn generic_error_to_js(err: v01::GenericError) -> JsValue {
-	JsValue::from_str(&err.reason)
+impl From<GenericError> for JsValue {
+	fn from(error: GenericError) -> Self {
+		JsValue::from_str(&error.reason)
+	}
 }
 
 struct WasmCoreInner {
@@ -990,11 +990,7 @@ impl WasmPairingHostRuntime {
 	/// it on first read.
 	#[wasm_bindgen(js_name = deviceEncryptionKey)]
 	pub async fn device_encryption_key(&self) -> Result<Vec<u8>, JsValue> {
-		self.runtime
-			.device_encryption_key()
-			.await
-			.map(|key| key.to_vec())
-			.map_err(generic_error_to_js)
+		Ok(self.runtime.device_encryption_key().await?.to_vec())
 	}
 
 	/// Resolve a product's hard-subtree public key from the cache, the
@@ -1006,24 +1002,26 @@ impl WasmPairingHostRuntime {
 		product_id: String,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Vec<u8>>, JsValue> {
-		self.runtime
+		Ok(self
+			.runtime
 			.product_subtree_public_key(&product_id, timeout_ms)
-			.await
-			.map(|key| key.map(|key| key.to_vec()))
-			.map_err(generic_error_to_js)
+			.await?
+			.map(|key| key.to_vec()))
 	}
 
 	/// Activate an externally persisted canonical session without writing it
 	/// to core storage; resolves only after product frames may use it.
 	#[wasm_bindgen(js_name = activateExternalSession)]
 	pub async fn activate_external_session(&self, blob: Vec<u8>) -> Result<(), JsValue> {
-		self.runtime.activate_external_session(&blob).await.map_err(generic_error_to_js)
+		self.runtime.activate_external_session(&blob).await?;
+		Ok(())
 	}
 
 	/// Restore the persisted auth session and resolve only after it is active.
 	#[wasm_bindgen(js_name = activateStoredSession)]
 	pub async fn activate_stored_session(&self) -> Result<(), JsValue> {
-		self.runtime.activate_stored_session().await.map_err(generic_error_to_js)
+		self.runtime.activate_stored_session().await?;
+		Ok(())
 	}
 
 	/// Notify the runtime that the auth session slot may have changed.
@@ -1051,11 +1049,7 @@ impl WasmPairingHostRuntime {
 		payload: Vec<u8>,
 	) -> Result<JsValue, JsValue> {
 		let request = decode_permission_authorization_request(&payload)?;
-		let status = self
-			.runtime
-			.permission_authorization_status(&product_id, request)
-			.await
-			.map_err(generic_error_to_js)?;
+		let status = self.runtime.permission_authorization_status(&product_id, request).await?;
 		Ok(permission_authorization_status_to_js(status))
 	}
 
@@ -1071,11 +1065,8 @@ impl WasmPairingHostRuntime {
 		payloads: Array,
 	) -> Result<Array, JsValue> {
 		let requests = decode_permission_authorization_requests(&payloads)?;
-		let statuses = self
-			.runtime
-			.permission_authorization_statuses(&product_id, requests)
-			.await
-			.map_err(generic_error_to_js)?;
+		let statuses =
+			self.runtime.permission_authorization_statuses(&product_id, requests).await?;
 		let values = Array::new();
 		for status in statuses {
 			values.push(&permission_authorization_status_to_js(status));
@@ -1095,14 +1086,15 @@ impl WasmPairingHostRuntime {
 		let status = permission_authorization_status_from_js(&status)?;
 		self.runtime
 			.set_permission_authorization_status(&product_id, request, status)
-			.await
-			.map_err(generic_error_to_js)
+			.await?;
+		Ok(())
 	}
 
 	/// Clear one product's durable and in-memory capability state.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
+		self.runtime.clear_product_state(&product_id).await?;
+		Ok(())
 	}
 
 	/// Clear canonical paired-session state without notifying the peer.
@@ -1193,7 +1185,7 @@ impl WasmSigningHostRuntime {
 		self.runtime
 			.product_subtree_public_key(&product_id)
 			.map(|key| key.map(|key| key.to_vec()))
-			.map_err(generic_error_to_js)
+			.map_err(Into::into)
 	}
 
 	/// Answer these resource tags as refused, replacing any earlier set.
@@ -1289,7 +1281,8 @@ impl WasmSigningHostRuntime {
 	/// Activate a wallet-local session from raw BIP-39 entropy.
 	#[wasm_bindgen(js_name = activateLocalSession)]
 	pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), JsValue> {
-		self.runtime.activate_local_session(secret).await.map_err(generic_error_to_js)
+		self.runtime.activate_local_session(secret).await?;
+		Ok(())
 	}
 
 	/// Activate a wallet-local session and attach known identity metadata.
@@ -1299,10 +1292,8 @@ impl WasmSigningHostRuntime {
 		secret: Vec<u8>,
 		lite_username: Option<String>,
 	) -> Result<(), JsValue> {
-		self.runtime
-			.activate_local_session_with_identity(secret, lite_username)
-			.await
-			.map_err(generic_error_to_js)
+		self.runtime.activate_local_session_with_identity(secret, lite_username).await?;
+		Ok(())
 	}
 
 	/// Notify the runtime that the host's contacts changed, so cached contact
@@ -1315,7 +1306,8 @@ impl WasmSigningHostRuntime {
 	/// Revoke one product's grants from the current local activation.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
+		self.runtime.clear_product_state(&product_id).await?;
+		Ok(())
 	}
 
 	/// Read a permission authorization status for a product.
@@ -1330,11 +1322,7 @@ impl WasmSigningHostRuntime {
 		payload: Vec<u8>,
 	) -> Result<JsValue, JsValue> {
 		let request = decode_permission_authorization_request(&payload)?;
-		let status = self
-			.runtime
-			.permission_authorization_status(&product_id, request)
-			.await
-			.map_err(generic_error_to_js)?;
+		let status = self.runtime.permission_authorization_status(&product_id, request).await?;
 		Ok(permission_authorization_status_to_js(status))
 	}
 
@@ -1350,11 +1338,8 @@ impl WasmSigningHostRuntime {
 		payloads: Array,
 	) -> Result<Array, JsValue> {
 		let requests = decode_permission_authorization_requests(&payloads)?;
-		let statuses = self
-			.runtime
-			.permission_authorization_statuses(&product_id, requests)
-			.await
-			.map_err(generic_error_to_js)?;
+		let statuses =
+			self.runtime.permission_authorization_statuses(&product_id, requests).await?;
 		let values = Array::new();
 		for status in statuses {
 			values.push(&permission_authorization_status_to_js(status));
@@ -1375,7 +1360,7 @@ impl WasmSigningHostRuntime {
 		self.runtime
 			.set_permission_authorization_status(&product_id, request, status)
 			.await
-			.map_err(generic_error_to_js)
+			.map_err(Into::into)
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
@@ -1575,12 +1560,7 @@ impl WasmProductRuntime {
 		payload: Vec<u8>,
 	) -> Result<JsValue, JsValue> {
 		let request = decode_permission_authorization_request(&payload)?;
-		let status = self
-			.inner
-			.core
-			.permission_authorization_status(request)
-			.await
-			.map_err(generic_error_to_js)?;
+		let status = self.inner.core.permission_authorization_status(request).await?;
 		Ok(permission_authorization_status_to_js(status))
 	}
 
@@ -1598,12 +1578,7 @@ impl WasmProductRuntime {
 		payloads: Array,
 	) -> Result<Array, JsValue> {
 		let requests = decode_permission_authorization_requests(&payloads)?;
-		let statuses = self
-			.inner
-			.core
-			.permission_authorization_statuses(requests)
-			.await
-			.map_err(generic_error_to_js)?;
+		let statuses = self.inner.core.permission_authorization_statuses(requests).await?;
 		let values = Array::new();
 		for status in statuses {
 			values.push(&permission_authorization_status_to_js(status));
@@ -1622,11 +1597,8 @@ impl WasmProductRuntime {
 	) -> Result<(), JsValue> {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = permission_authorization_status_from_js(&status)?;
-		self.inner
-			.core
-			.set_permission_authorization_status(request, status)
-			.await
-			.map_err(generic_error_to_js)
+		self.inner.core.set_permission_authorization_status(request, status).await?;
+		Ok(())
 	}
 
 	/// Tear down the bridge. Invokes the JS-side `dispose` callback so the

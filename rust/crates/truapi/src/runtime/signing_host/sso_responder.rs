@@ -50,8 +50,8 @@ use crate::{
 		},
 		session::SsoSessionInfo,
 		sso::pairing::{
-			ResponderIdentity, VersionedHandshakeProposal, bootstrap_topic,
-			decode_pairing_deeplink, derive_identity_chat_private_key,
+			PairingDeeplinkDecodeError, ResponderIdentity, VersionedHandshakeProposal,
+			bootstrap_topic, decode_pairing_deeplink, derive_identity_chat_private_key,
 			derive_x25519_keypair_from_entropy, encrypt_v2_handshake_response,
 			establish_responder_session_info, v2, x25519_public_key,
 		},
@@ -202,7 +202,7 @@ struct EstablishedPairing {
 
 impl PairedSsoPeer {
 	/// Extract the public peer material carried by a pairing deeplink.
-	pub fn from_deeplink(deeplink: &str) -> Result<Self, String> {
+	pub fn from_deeplink(deeplink: &str) -> Result<Self, PairingDeeplinkDecodeError> {
 		Ok(PairingProposal::from_deeplink(deeplink)?.peer)
 	}
 }
@@ -213,9 +213,8 @@ pub const MAX_PAIRING_METADATA_CHARS: usize = 512;
 impl PairingProposal {
 	/// Decode a pairing deeplink into the peer it advertises and the metadata
 	/// a host prompts with.
-	pub fn from_deeplink(deeplink: &str) -> Result<Self, String> {
-		let VersionedHandshakeProposal::V2(proposal) =
-			decode_pairing_deeplink(deeplink).map_err(|err| err.to_string())?;
+	pub fn from_deeplink(deeplink: &str) -> Result<Self, PairingDeeplinkDecodeError> {
+		let VersionedHandshakeProposal::V2(proposal) = decode_pairing_deeplink(deeplink)?;
 		let mut metadata = PairingProposalMetadata::default();
 		for v2::MetadataEntry(key, value) in proposal.metadata {
 			let value = sanitize_pairing_metadata(value);
@@ -304,11 +303,11 @@ pub enum AllowanceAllocationError {
 	},
 }
 
-impl AllowanceAllocationError {
-	pub fn into_authority_error(self) -> AuthorityError {
-		match self {
-			Self::Authority(err) => err,
-			other => AuthorityError::Unavailable { reason: other.to_string() },
+impl From<AllowanceAllocationError> for AuthorityError {
+	fn from(error: AllowanceAllocationError) -> Self {
+		match error {
+			AllowanceAllocationError::Authority(err) => err,
+			other => Self::Unavailable { reason: other.to_string() },
 		}
 	}
 }
@@ -339,7 +338,7 @@ async fn establish_pairing_session(
 	signing_host: &SigningHost,
 	deeplink: &str,
 ) -> Result<EstablishedPairing, String> {
-	let peer = PairedSsoPeer::from_deeplink(deeplink)?;
+	let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
 	let entropy = signing_host
 		.root_entropy()
 		.map_err(|err| format!("signing host has no active local session: {err}"))?;
@@ -489,7 +488,7 @@ pub async fn notify_pairing_allowance_allocation(
 	signing_host: Arc<SigningHost>,
 	deeplink: &str,
 ) -> Result<AnnouncedPairing, String> {
-	let peer = PairedSsoPeer::from_deeplink(deeplink)?;
+	let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
 	let entropy = signing_host
 		.root_entropy()
 		.map_err(|err| format!("signing host has no active local session: {err}"))?;

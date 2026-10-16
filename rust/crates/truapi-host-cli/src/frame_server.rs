@@ -39,7 +39,8 @@ use tracing::{debug, warn};
 use crate::bootstrap;
 use truapi::{
 	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
-	ProductRuntimeError, SigningHostRuntime, platform::ProductExecutionKind,
+	ProductRuntimeError, SigningHostRuntime,
+	platform::{ProductExecutionKind, RuntimeConfigValidationError},
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -72,11 +73,18 @@ pub struct ProductSelection {
 	execution_kind: ProductExecutionKind,
 }
 
+/// The requested product does not identify a supported execution context.
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[display("invalid product id")]
+pub struct ProductSelectionError(RuntimeConfigValidationError);
+
 impl ProductSelection {
 	/// Validate and normalize the initial product id.
-	pub fn new(product_id: String, execution_kind: ProductExecutionKind) -> Result<Arc<Self>> {
-		let product = ProductContext::new_with_execution(product_id, execution_kind)
-			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
+	pub fn new(
+		product_id: String,
+		execution_kind: ProductExecutionKind,
+	) -> Result<Arc<Self>, ProductSelectionError> {
+		let product = ProductContext::new_with_execution(product_id, execution_kind)?;
 		let (current, _) = watch::channel(product);
 		Ok(Arc::new(Self { current, execution_kind }))
 	}
@@ -87,9 +95,8 @@ impl ProductSelection {
 	}
 
 	/// Select a validated product, returning whether the selection changed.
-	pub fn select(&self, product_id: String) -> Result<bool> {
-		let product = ProductContext::new_with_execution(product_id, self.execution_kind)
-			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
+	pub fn select(&self, product_id: String) -> Result<bool, ProductSelectionError> {
+		let product = ProductContext::new_with_execution(product_id, self.execution_kind)?;
 		Ok(self.current.send_if_modified(|current| {
 			if current == &product {
 				false

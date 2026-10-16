@@ -375,20 +375,14 @@ impl PairingHostRuntime {
 	/// presents a new deeplink suitable for another signing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
 	pub async fn logout(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.logout_and_reset_pairing()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.pairing_host.logout_and_reset_pairing().await.map_err(Into::into)
 	}
 
 	/// Clear one product's capability state while preserving the active
 	/// session and unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.clear_product_state(product_id)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.pairing_host.clear_product_state(product_id).await.map_err(Into::into)
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -446,10 +440,7 @@ impl PairingHostRuntime {
 	/// sync. Generated and persisted on first read.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_encryption_key"))]
 	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-		self.services
-			.device_encryption_secret()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.services.device_encryption_secret().await.map_err(Into::into)
 	}
 
 	/// Resolve `product_id`'s hard-subtree public key from the cache, the
@@ -497,10 +488,7 @@ impl PairingHostRuntime {
 	/// connected-session installation have completed.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_external_session"))]
 	pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.activate_external_session(blob)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.pairing_host.activate_external_session(blob).await.map_err(Into::into)
 	}
 
 	/// Await restoration of the persisted auth-session blob.
@@ -510,10 +498,7 @@ impl PairingHostRuntime {
 	/// immediately use the restored authority session.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
 	pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.activate_stored_session()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.pairing_host.activate_stored_session().await.map_err(Into::into)
 	}
 
 	/// Notify the pairing runtime that the persisted auth-session blob may
@@ -1044,7 +1029,7 @@ impl SigningHostRuntime {
 	) -> Result<ResponderExit, v01::GenericError> {
 		respond_to_pairing(self.services.clone(), self.signing_host.clone(), deeplink)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Tell a pairing host that allowance allocation is under way, so it leaves
@@ -1063,7 +1048,7 @@ impl SigningHostRuntime {
 			deeplink,
 		)
 		.await
-		.map_err(|reason| v01::GenericError { reason })
+		.map_err(Into::into)
 	}
 
 	/// Tell a pairing host that pairing failed, so it reports `reason` and
@@ -1082,7 +1067,7 @@ impl SigningHostRuntime {
 	) -> Result<(), v01::GenericError> {
 		notify_pairing_failed(self.services.clone(), announced, reason)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Answer a pairing host's handshake without entering its long-lived serve loop.
@@ -1090,7 +1075,7 @@ impl SigningHostRuntime {
 	pub async fn establish_pairing(&self, deeplink: &str) -> Result<(), v01::GenericError> {
 		establish_pairing(self.services.clone(), self.signing_host.clone(), deeplink)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Resume a previously paired host from its persisted public peer keys.
@@ -1104,7 +1089,7 @@ impl SigningHostRuntime {
 	) -> Result<ResponderExit, v01::GenericError> {
 		resume_pairing(self.services.clone(), self.signing_host.clone(), peer)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.
@@ -1115,7 +1100,7 @@ impl SigningHostRuntime {
 	) -> Result<(), v01::GenericError> {
 		disconnect_paired_host(self.services.clone(), self.signing_host.clone(), peer)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Answer one SSO request using this signing host.
@@ -1181,7 +1166,7 @@ impl SigningHostRuntime {
 		self.signing_host
 			.track_statement_renewal_targets(targets)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Every statement account the renewal ledger currently tracks.
@@ -1192,10 +1177,7 @@ impl SigningHostRuntime {
 	pub async fn statement_renewal_targets(
 		&self,
 	) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
-		self.signing_host
-			.statement_renewal_targets()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.signing_host.statement_renewal_targets().await.map_err(Into::into)
 	}
 
 	/// Root public key the active identity records its fixed ledger entries
@@ -1206,9 +1188,7 @@ impl SigningHostRuntime {
 	/// from what it will prune.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.statement_renewal_owner_key"))]
 	pub fn statement_renewal_owner_key(&self) -> Result<truapi::Bytes32, v01::GenericError> {
-		self.signing_host
-			.statement_renewal_owner_key()
-			.map_err(|reason| v01::GenericError { reason })
+		self.signing_host.statement_renewal_owner_key().map_err(Into::into)
 	}
 
 	/// Stop renewing one fixed statement account.
@@ -1220,7 +1200,7 @@ impl SigningHostRuntime {
 		self.signing_host
 			.untrack_statement_renewal_account(account_id)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Run one statement-store renewal pass now and return per-target
@@ -1231,10 +1211,7 @@ impl SigningHostRuntime {
 	pub async fn renew_statement_allowances(
 		&self,
 	) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError> {
-		self.signing_host
-			.renew_statement_allowances()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.signing_host.renew_statement_allowances().await.map_err(Into::into)
 	}
 
 	/// Start the periodic statement-store renewal loop (hourly, plus a tick
@@ -1445,7 +1422,7 @@ impl CoreAdmin for HostAdmin {
 			.services()
 			.device_encryption_secret()
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	async fn get_product_subtree_public_key(

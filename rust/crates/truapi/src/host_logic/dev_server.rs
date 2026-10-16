@@ -47,7 +47,7 @@ pub enum DevServerError {
 	/// The `product_id` query is not an identifier the core runs a product
 	/// under.
 	#[error(transparent)]
-	InvalidProductId(RuntimeConfigValidationError),
+	InvalidProductId(#[from] RuntimeConfigValidationError),
 }
 
 /// Accepts `localhost` and loopback or private IPv4 hosts over `http`, with or
@@ -83,9 +83,7 @@ impl FromStr for DevServerProduct {
 			None => ("localhost".to_string(), format!("{HTTP_PREFIX}{host}")),
 		};
 		let product_id = match parsed.query_pairs().find(|(name, _)| name == PRODUCT_ID_PARAM) {
-			Some((_, named)) => {
-				normalize_product_identifier(&named).map_err(DevServerError::InvalidProductId)?
-			},
+			Some((_, named)) => normalize_product_identifier(&named)?,
 			None => localhost_id,
 		};
 		Ok(Self { product_id, origin, url: parsed.into() })

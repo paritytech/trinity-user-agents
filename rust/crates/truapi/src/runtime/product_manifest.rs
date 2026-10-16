@@ -19,15 +19,15 @@ use truapi::v01;
 
 use crate::{
 	chain_runtime::ChainRuntime,
-	dotns_views::{call_bytes32_string, network_tld, protocol_component, tld_node},
+	dotns_views::{call_bytes32_string, network_tld, protocol_component, read_view, tld_node},
 	host_internal::{
 		permissions::account_access_status,
 		product_manifest::{Granted, RootManifest, bare_product_label},
 		sso_messages::RingVrfError,
 	},
 	host_logic::dotns_gateway::{
-		DotnsTransport, DotnsViewError, call_bytes32, call_no_args, decode_address, decode_string,
-		discover_pop_controller, namehash_under,
+		DotnsCallError, DotnsError, DotnsTransport, DotnsViewError, call_bytes32, call_no_args,
+		decode_address, decode_string, discover_pop_controller, namehash_under,
 	},
 	runtime::{dotns_lookup::DotnsLookup, services::RuntimeServices},
 	unix_time::current_unix_secs,
@@ -53,7 +53,7 @@ pub async fn fetch_root_manifest(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, DotnsError> {
 	let mut lookup = DotnsLookup::pinned_to_best_block(
 		chain,
 		asset_hub_chain_genesis_hash,
@@ -69,30 +69,28 @@ pub async fn fetch_root_manifest(
 	let node = namehash_under(&tld_node(&tld), bare_product_label(product_id));
 
 	let registry = protocol_component(&mut lookup, &protocol_registry, "registry").await?;
-	let resolver_output = lookup
-		.view(&registry, call_bytes32("resolver(bytes32)", &node))
-		.await
-		.map_err(|err| format!("DotnsRegistry.resolver(): {err}"))?;
-	let resolver = decode_address(&resolver_output)
-		.map_err(|err| format!("DotnsRegistry.resolver(): {err}"))?;
+	let resolver =
+		read_view(&mut lookup, &registry, call_bytes32("resolver(bytes32)", &node), decode_address)
+			.await
+			.map_err(DotnsError::Resolver)?;
 	if resolver == [0u8; 20] {
 		return Ok(None);
 	}
 
-	let manifest_output = match lookup
-		.view(&resolver, call_bytes32_string("text(bytes32,string)", &node, MANIFEST_RECORD_KEY))
-		.await
+	let manifest = match read_view(
+		&mut lookup,
+		&resolver,
+		call_bytes32_string("text(bytes32,string)", &node, MANIFEST_RECORD_KEY),
+		decode_string,
+	)
+	.await
 	{
-		Ok(output) => output,
+		Ok(manifest) => manifest,
 		// The dotNS-issued default resolver does not implement `text`, which is
 		// the same outcome as an unpublished manifest.
-		Err(DotnsViewError::Reverted(_)) => return Ok(None),
-		Err(err @ DotnsViewError::Failed(_)) => {
-			return Err(format!("ContentResolver.text(): {err}"));
-		},
+		Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => return Ok(None),
+		Err(error) => return Err(DotnsError::ManifestText(error)),
 	};
-	let manifest =
-		decode_string(&manifest_output).map_err(|err| format!("ContentResolver.text(): {err}"))?;
 	if manifest.is_empty() {
 		return Ok(None);
 	}
@@ -110,17 +108,14 @@ pub async fn fetch_root_manifest(
 /// while username resolution kept working.
 async fn protocol_registry<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
-) -> Result<Option<[u8; 20]>, String> {
+) -> Result<Option<[u8; 20]>, DotnsError> {
 	let Some(controller) = discover_pop_controller(transport).await? else {
 		return Ok(None);
 	};
-	let output = transport
-		.view(&controller, call_no_args("protocolRegistry()"))
+	read_view(transport, &controller, call_no_args("protocolRegistry()"), decode_address)
 		.await
-		.map_err(|err| format!("DotnsPopController.protocolRegistry(): {err}"))?;
-	decode_address(&output)
 		.map(Some)
-		.map_err(|err| format!("DotnsPopController.protocolRegistry(): {err}"))
+		.map_err(DotnsError::ProtocolRegistry)
 }
 
 #[cfg(test)]

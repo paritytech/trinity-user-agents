@@ -10,9 +10,9 @@ use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
 	host_logic::dotns_gateway::{
-		DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, account_alias_key,
-		classify_labels, discover_pop_controller, encode_revive_call, label_available,
-		lite_label_owner_key, resolve_labels, timestamp_now_key, view_output,
+		DotnsError, DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN,
+		account_alias_key, classify_labels, discover_pop_controller, encode_revive_call,
+		label_available, lite_label_owner_key, resolve_labels, timestamp_now_key, view_output,
 	},
 	platform::async_trait,
 };
@@ -182,8 +182,10 @@ fn account_id_value(entry: &str, value: Option<Vec<u8>>) -> Result<Option<[u8; 3
 
 #[async_trait]
 impl DotnsTransport for AssetHubReader {
-	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-		self.raw_storage(&key).await.map_err(|err| format!("{err:#}"))
+	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		self.raw_storage(&key)
+			.await
+			.map_err(|err| DotnsError::Storage(format!("{err:#}")))
 	}
 
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {

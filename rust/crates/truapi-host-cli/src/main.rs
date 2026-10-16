@@ -61,6 +61,7 @@ use truapi::{
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 	},
+	latest::GenericError,
 	platform::{ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind},
 	statement_allowance as alloc,
 	statement_allowance::{PersonhoodSigner, collection::PersonhoodCollection},
@@ -144,8 +145,14 @@ impl LogLevel {
 	}
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[display("invalid log level `{value}`; expected error, warn, info, debug, or trace")]
+struct InvalidLogLevel {
+	value: String,
+}
+
 impl FromStr for LogLevel {
-	type Err = String;
+	type Err = InvalidLogLevel;
 
 	fn from_str(value: &str) -> Result<Self, Self::Err> {
 		match value.trim().to_ascii_lowercase().as_str() {
@@ -154,9 +161,7 @@ impl FromStr for LogLevel {
 			"info" => Ok(Self::Info),
 			"debug" => Ok(Self::Debug),
 			"trace" => Ok(Self::Trace),
-			_ => Err(format!(
-				"invalid log level `{value}`; expected error, warn, info, debug, or trace"
-			)),
+			_ => Err(InvalidLogLevel { value: value.to_string() }),
 		}
 	}
 }
@@ -188,27 +193,26 @@ fn load_log_level(base_path: &Path) -> Result<Option<LogLevel>> {
 		.trim()
 		.parse()
 		.map(Some)
-		.map_err(anyhow::Error::msg)
 		.with_context(|| format!("read saved log level from {}", path.display()))
 }
 
 fn store_log_level(base_path: &Path, level: LogLevel) -> Result<()> {
 	let path = base_path.join(LOG_LEVEL_FILE);
 	platform::atomic_write(&path, format!("{level}\n").as_bytes())
-		.map_err(anyhow::Error::msg)
 		.with_context(|| format!("persist saved log level {}", path.display()))
 }
 
 #[derive(Clone)]
 struct LogController {
-	reload: Arc<dyn Fn(LogLevel) -> Result<(), String> + Send + Sync>,
+	reload: Arc<dyn Fn(LogLevel) -> Result<(), tracing_subscriber::reload::Error> + Send + Sync>,
 	base_path: PathBuf,
 }
 
 impl LogController {
 	fn set(&self, level: LogLevel) -> Result<()> {
 		store_log_level(&self.base_path, level)?;
-		(self.reload)(level).map_err(anyhow::Error::msg)
+		(self.reload)(level)?;
+		Ok(())
 	}
 }
 
@@ -527,9 +531,7 @@ async fn main() -> Result<()> {
 	let (filter, reload) = tracing_subscriber::reload::Layer::new(filter);
 	let log_controller = LogController {
 		reload: Arc::new(move |level| {
-			reload
-				.reload(tracing_subscriber::EnvFilter::new(level.scoped_filter()))
-				.map_err(|error| error.to_string())
+			reload.reload(tracing_subscriber::EnvFilter::new(level.scoped_filter()))
 		}),
 		base_path,
 	};
@@ -1460,6 +1462,22 @@ struct SigningHostSession {
 	pocket: Option<Arc<pocket::CliPocketHost>>,
 }
 
+#[derive(Debug, derive_more::Display, derive_more::Error)]
+enum SessionOperationError {
+	#[display("failed to activate cached session")]
+	CachedActivation(GenericError),
+	#[display("failed to activate local session")]
+	LocalActivation(GenericError),
+	#[display("failed to activate imported session {session_name:?}")]
+	ImportedActivation { session_name: String, source: GenericError },
+	#[display("pairing failed")]
+	Pairing(GenericError),
+	#[display("failed to record pairing allowances")]
+	RecordPairingAllowances(GenericError),
+	#[display("allowance renewal failed")]
+	AllowanceRenewal(GenericError),
+}
+
 #[derive(Default)]
 struct ResponderManager {
 	tasks: HashMap<[u8; 32], tokio::task::JoinHandle<()>>,
@@ -1610,7 +1628,7 @@ async fn start_signing_host(
 		match attestation::registered_lite_username(network, &explicit_signer.entropy).await {
 			Ok(user_id) => explicit_signer.lite_username = Some(user_id),
 			Err(error) => {
-				tracing::warn!(%error, "explicit signer has no resolvable dotNS username")
+				tracing::warn!(error = %format!("{error:#}"), "explicit signer has no resolvable dotNS username")
 			},
 		}
 		signer = Some(explicit_signer);
@@ -1641,9 +1659,7 @@ async fn start_signing_host(
 				cached_signer.lite_username.clone(),
 			)
 			.await
-			.map_err(|error| {
-				anyhow::anyhow!("failed to activate cached session: {}", error.reason)
-			})?;
+			.map_err(SessionOperationError::CachedActivation)?;
 		if let (Some(profile), Some(user_id)) = (&profile, &cached_signer.lite_username) {
 			if let Some(account_name) = &cached_signer.account_name {
 				catalog.store_signer_binding(profile, user_id, account_name)?;
@@ -1779,7 +1795,7 @@ fn validate_signing_args(args: &SigningHostArgs) -> Result<()> {
 		bail!("--session cannot be combined with --account");
 	}
 	if let Some(session) = session {
-		sessions::validate_selectable_name(&session).map_err(anyhow::Error::msg)?;
+		sessions::validate_selectable_name(&session)?;
 	}
 	let reserved = normalized(args.reserved_username.clone());
 	if mnemonic.is_some() && reserved.is_some() {
@@ -2204,7 +2220,7 @@ async fn activate_current_signer(session: &mut SigningHostSession) -> Result<()>
 		.runtime
 		.activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
 		.await
-		.map_err(|err| anyhow::anyhow!("failed to activate local session: {}", err.reason))?;
+		.map_err(SessionOperationError::LocalActivation)?;
 	if let (Some(profile), Some(user_id)) = (&session.profile, &signer.lite_username) {
 		if let Some(account_name) = &signer.account_name {
 			session.catalog.store_signer_binding(profile, user_id, account_name)?;
@@ -2231,7 +2247,7 @@ async fn prepare_own_allowance(session: &mut SigningHostSession) -> bool {
 	use truapi::statement_allowance::renewal::TargetRenewalStatus;
 
 	if let Err(error) = ensure_signer(session).await {
-		tracing::warn!(%error, "no signer to register the wallet allowance under");
+		tracing::warn!(error = %format!("{error:#}"), "no signer to register the wallet allowance under");
 		return false;
 	}
 	if let Err(error) = session
@@ -2396,7 +2412,7 @@ async fn establish_paired_host(
 
 	if let Err(error) = prepare_pairing_response(session, &candidate, &existing).await {
 		if let Some(announced) = &announced {
-			report_pairing_failure(session, announced, error.to_string()).await;
+			report_pairing_failure(session, announced, format!("{error:#}")).await;
 		}
 		discard_new_pairing_candidate(session, &candidate, candidate_is_existing).await;
 		return Err(error);
@@ -2407,13 +2423,13 @@ async fn establish_paired_host(
 			.runtime
 			.establish_pairing(deeplink)
 			.await
-			.map_err(|error| anyhow::anyhow!("pairing failed: {}", error.reason))?;
+			.map_err(SessionOperationError::Pairing)?;
 		persist_paired_host(session, &candidate)
 	}
 	.await;
 	if let Err(error) = result {
 		if let Some(announced) = &announced {
-			report_pairing_failure(session, announced, error.to_string()).await;
+			report_pairing_failure(session, announced, format!("{error:#}")).await;
 		}
 		discard_new_pairing_candidate(session, &candidate, candidate_is_existing).await;
 		return Err(error);
@@ -2440,7 +2456,7 @@ async fn discard_new_pairing_candidate(
 }
 
 fn is_statement_slot_exhaustion(err: &anyhow::Error) -> bool {
-	truapi::reports_exhausted_period(&err.to_string())
+	err.chain().any(|cause| truapi::reports_exhausted_period(&cause.to_string()))
 }
 
 fn signer_identity_may_rotate(auto_managed: bool, paired_host_count: usize) -> bool {
@@ -2481,9 +2497,7 @@ async fn renew_pairing_allowances(
 		.runtime
 		.track_statement_renewal_targets(targets)
 		.await
-		.map_err(|error| {
-			anyhow::anyhow!("failed to record pairing allowances: {}", error.reason)
-		})?;
+		.map_err(SessionOperationError::RecordPairingAllowances)?;
 	let report = match session.runtime.renew_statement_allowances().await {
 		Ok(report) => report,
 		Err(error) => {
@@ -2537,7 +2551,7 @@ async fn run_renew(session: &mut SigningHostSession) -> Result<()> {
 		.runtime
 		.renew_statement_allowances()
 		.await
-		.map_err(|err| anyhow::anyhow!("allowance renewal failed: {}", err.reason))?;
+		.map_err(SessionOperationError::AllowanceRenewal)?;
 
 	let (mut renewed, mut fresh, mut failed, mut skipped) = (0usize, 0usize, 0usize, 0usize);
 	for outcome in &report.outcomes {
@@ -2624,7 +2638,7 @@ async fn respond_to_deeplink(session: &mut SigningHostSession, deeplink: String)
 		.runtime
 		.resume_pairing(paired_sso_peer(&host))
 		.await
-		.map_err(|err| anyhow::anyhow!("pairing failed: {}", err.reason))?;
+		.map_err(SessionOperationError::Pairing)?;
 	if exit == ResponderExit::PeerDisconnected && session.profile.is_some() {
 		remove_paired_host_locally(session, &host.statement_account_id()).await?;
 	}
@@ -2907,7 +2921,7 @@ async fn switch_session(session: &mut SigningHostSession, name: String) -> Resul
 	if session.mnemonic.is_some() {
 		bail!("session switching is unavailable when launched with --mnemonic");
 	}
-	sessions::validate_selectable_name(&name).map_err(anyhow::Error::msg)?;
+	sessions::validate_selectable_name(&name)?;
 	// A name that already provisioned a session was promoted to its Lite
 	// username, so it selects that session rather than creating another.
 	let name = session.catalog.resolve_session_name(&name)?;
@@ -3050,7 +3064,7 @@ async fn import_mnemonic_session(
 		accounts::inspect_imported_signer(session.network, mnemonic.expose_secret()).await?;
 	let username = imported.username().map(str::to_string);
 	let session_name = imported.session_name().to_string();
-	sessions::validate_selectable_name(&session_name).map_err(anyhow::Error::msg)?;
+	sessions::validate_selectable_name(&session_name)?;
 
 	let old_name = session
 		.profile
@@ -3080,11 +3094,9 @@ async fn import_mnemonic_session(
 	runtime
 		.activate_local_session_with_identity(imported.entropy().to_vec(), username.clone())
 		.await
-		.map_err(|error| {
-			anyhow::anyhow!(
-				"failed to activate imported session {session_name:?}: {}",
-				error.reason
-			)
+		.map_err(|source| SessionOperationError::ImportedActivation {
+			session_name: session_name.clone(),
+			source,
 		})?;
 
 	let signer = accounts::persist_imported_signer(
@@ -3161,7 +3173,7 @@ async fn pairing_interactive_loop(
 		let command = match parse_command(&input) {
 			Ok(command) => command,
 			Err(error) => {
-				ui.error(error);
+				ui.error(error.to_string());
 				continue;
 			},
 		};
@@ -3206,7 +3218,7 @@ async fn pairing_interactive_loop(
 						);
 					},
 					Ok(false) => ui.system(product.current()),
-					Err(error) => ui.error(error.to_string()),
+					Err(error) => ui.error(format!("{:#}", anyhow::Error::new(error))),
 				}
 			},
 			ShellCommand::Quit => return Ok(()),
@@ -3341,7 +3353,7 @@ async fn signing_interactive_loop(
 		let command = match parse_command(&input) {
 			Ok(command) => command,
 			Err(error) => {
-				ui.error(error);
+				ui.error(error.to_string());
 				continue;
 			},
 		};
@@ -3395,7 +3407,7 @@ async fn signing_interactive_loop(
 						);
 					},
 					Ok(false) => ui.system(product.current()),
-					Err(error) => ui.error(error.to_string()),
+					Err(error) => ui.error(format!("{:#}", anyhow::Error::new(error))),
 				}
 			},
 			ShellCommand::Session(SessionCommand::Current) => {
