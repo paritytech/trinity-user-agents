@@ -37,9 +37,7 @@ pub trait SubmissionPolicy: Send + Sync {
 /// A policy's answer for one scheduled transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Preparation {
-	/// Signed and ready to submit. Bytes an earlier attempt of the same
-	/// transaction already used are not submitted again in this process: the
-	/// transaction keeps waiting for new ones.
+	/// Signed and ready to submit.
 	Ready(MortalExtrinsic),
 	/// It can never be built. The transaction fails.
 	GiveUp,

@@ -65,27 +65,6 @@ fn a_transaction_the_policy_never_answers_keeps_waiting() {
 	assert_eq!(harness.status(id), DurableTxStatus::PendingSubmission);
 }
 
-/// The policy signs exactly the bytes an earlier attempt of the row already
-/// sent and saw decided. Sending them again cannot change that outcome, so
-/// they are not broadcast and the row waits for different bytes.
-#[test]
-fn bytes_an_earlier_attempt_already_sent_are_not_broadcast_again() {
-	let earlier_attempt = nth_build(0);
-	let sends_the_same_bytes = ScriptedPolicy::answering_with(move |ids| {
-		answer_all_with(ids, Preparation::Ready(earlier_attempt.clone()))
-	});
-	let harness = ScheduledTxHarness::with_policy(sends_the_same_bytes);
-	let first_row = DurableTxId(1);
-	harness.engine().ownership.release(first_row, nth_build(0).extrinsic.hash());
-
-	let id = harness.schedule_one();
-
-	wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
-	assert_eq!(id, first_row);
-	assert_eq!(harness.status(id), DurableTxStatus::PendingSubmission);
-	assert_eq!(harness.broadcast(), vec![]);
-}
-
 /// A transaction handed back to its policy is built again, but only after a
 /// cooldown, so a policy whose builds keep failing cannot spin.
 #[test]
