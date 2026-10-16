@@ -40,14 +40,16 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     let coreStorage: HostCoreStorageBackend
 
     private let dependencies: Dependencies
+    private let cardFace: (any ExpandedCardFaceShowing)?
     private weak var execution: TrUAPIProductExecutionProtocol?
     private let cachedTheme = OSAllocatedUnfairLock(
         uncheckedState: HostThemeSubscribeItem(name: .default, variant: .dark)
     )
     private var themeObservation: Task<Void, Never>?
 
-    init(dependencies: Dependencies) {
+    init(dependencies: Dependencies, cardFace: (any ExpandedCardFaceShowing)? = nil) {
         self.dependencies = dependencies
+        self.cardFace = cardFace
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
     }
@@ -165,6 +167,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     func currentTheme() throws -> HostThemeSubscribeItem {
         cachedTheme.withLock { $0 }
+    }
+
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        guard let cardFace else { return .unsupported }
+
+        return await cardFace.setFaceShown(shown)
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
