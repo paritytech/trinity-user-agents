@@ -24,6 +24,14 @@ final class FundingFlowModel {
         case cancelConfirm
     }
 
+    /// What the core's amount range depends on.
+    struct FundingLimitsKey: Equatable {
+        let rail: FundingRail
+        let asset: String
+        let network: String?
+        let country: String?
+    }
+
     struct Context {
         let intent: String
         let direction: FundingDirection
@@ -36,6 +44,8 @@ final class FundingFlowModel {
     let cash: FundingCash
     /// What a payment can spend now, once the app has read it.
     var spendable: Decimal?
+    /// Keeps ``spendable`` current while the overlay is up.
+    var balanceTask: Task<Void, Never>?
 
     var rail: FundingRail
     var amountText: String
@@ -50,6 +60,10 @@ final class FundingFlowModel {
 
     private(set) var candidates: [FundingCandidate]
     private(set) var rows: [String: FundingQuoteState] = [:]
+    /// The providers of the core's latest quote list, in its order.
+    private(set) var quoteOrder: [String] = []
+    /// The last amount range read from the core, and the choice it was read for.
+    @ObservationIgnored var cachedLimits: (key: FundingLimitsKey, limits: (min: Decimal, max: Decimal?))?
     /// The provider the core marked as quoting best for the user.
     private(set) var bestProviderId: String?
     /// What the core knows about each country on the current rail, by code.
@@ -123,6 +137,7 @@ extension FundingFlowModel {
         network = nil
         asset = nil
         rows = [:]
+        quoteOrder = []
         bestProviderId = nil
         ask = nil
         loadCountrySupport()
@@ -186,6 +201,7 @@ extension FundingFlowModel {
     /// overlay, and only ``requestCancel()`` ends it.
     func close() {
         quoteTask?.cancel()
+        balanceTask?.cancel()
         if !hasStarted {
             runtime.stopFundingQuotes(intent: intent)
             onOutcome?(.dismissed)
@@ -197,6 +213,7 @@ extension FundingFlowModel {
     /// start.
     func startOver() {
         quoteTask?.cancel()
+        balanceTask?.cancel()
         onStartOver?()
     }
 
@@ -234,11 +251,17 @@ extension FundingFlowModel {
         return (fee, refund)
     }
 
-    /// Whether the user can ask to cancel: the session is in flight and no
-    /// cancel is already with the provider. The core says when it is too late.
+    /// Whether the user can cancel: the session is in flight, and either no
+    /// cancel is with the provider or no money moved yet, when a second cancel
+    /// ends the session. The core says when it is too late.
     var canRequestCancel: Bool {
         guard hasStarted, let status = progress?.status, status.isInFlight else { return false }
-        return !FundingCancelPresentation.isUnderway(status)
+        return FundingCancelPresentation.canCancel(status, moneyMoved: session?.moneyMoved ?? false)
+    }
+
+    /// The cancel action's title for the session's status.
+    var cancelTitle: String {
+        progress.map { FundingCancelPresentation.cancelTitle($0.status) } ?? String(localized: .Funding.depositCancel)
     }
 
     /// Answers the provider's cancel offer.
@@ -358,10 +381,15 @@ extension FundingFlowModel {
         progress = runtime.fundingProgress(intent: intent)
     }
 
+    /// Takes the core's quote list unless it answers an earlier ask. Request
+    /// ids only grow, and a list can arrive before `getFundingQuote` returns.
     func receive(quotes: FundingQuoteList) {
-        guard quotes.requestId == quoteRequestId else { return }
+        guard let latest = quoteRequestId, quotes.requestId >= latest else { return }
 
+        quoteRequestId = quotes.requestId
+        cachedLimits = nil
         rows = Dictionary(quotes.rows.map { ($0.providerId, $0.state) }) { _, latest in latest }
+        quoteOrder = quotes.rows.map(\.providerId)
         bestProviderId = quotes.best
         quotesRefreshAt = Date(milliseconds: quotes.refreshAtMs)
         loadCountrySupport()
@@ -377,10 +405,10 @@ extension FundingFlowModel {
 
 private extension FundingFlowModel {
     static func defaultRail(candidates: [FundingCandidate], direction: FundingDirection) -> FundingRail {
-        let served = FundingRail.displayOrder.filter { rail in
+        let routed = FundingRail.displayOrder.filter { rail in
             candidates.contains { $0.serves(rail: rail, direction: direction) }
         }
-        return served.first ?? .crypto
+        return routed.first ?? .card
     }
 
     static func text(for value: Decimal) -> String {
@@ -447,8 +475,10 @@ extension FundingFlowModel {
         ask = newAsk
         quotesRefreshAt = nil
         bestProviderId = nil
-        rows = Dictionary(uniqueKeysWithValues: servingCandidates.map { ($0.providerId, .pending) })
-        quoteRequestId = runtime.getFundingQuote(intent: intent, ask: newAsk)
+        rows = Dictionary(uniqueKeysWithValues: candidates.map { ($0.providerId, .pending) })
+        quoteOrder = []
+        let requestId = runtime.getFundingQuote(intent: intent, ask: newAsk)
+        quoteRequestId = max(quoteRequestId ?? requestId, requestId)
     }
 
     /// What the core has learned about each country for this rail and asset.

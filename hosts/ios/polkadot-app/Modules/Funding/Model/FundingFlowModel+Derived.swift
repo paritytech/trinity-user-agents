@@ -13,14 +13,27 @@ extension FundingFlowModel {
         Decimal(string: amountText, locale: Locale(identifier: "en_US")) ?? 0
     }
 
+    /// Every funding provider is asked on every rail, so card and bank are
+    /// offered whenever one exists and the quotes decide. Crypto also needs a
+    /// network and a token, which only routes list.
     var availableRails: Set<FundingRail> {
-        Set(FundingRail.displayOrder.filter { rail in
-            candidates.contains { $0.serves(rail: rail, direction: direction) }
-        })
+        guard !candidates.isEmpty else { return [] }
+        return Set(FundingRail.displayOrder.filter { $0 != .crypto || !cryptoRoutes.isEmpty })
     }
 
-    var servingCandidates: [FundingCandidate] {
+    /// The providers declaring a route for this rail. Routes are hints: they
+    /// order the list and suggest the asset, they never leave a provider out.
+    var routedCandidates: [FundingCandidate] {
         candidates.filter { $0.serves(rail: rail, direction: direction) }
+    }
+
+    /// The providers the list shows: the core's quote list in its order once it
+    /// arrived, otherwise every provider with the routed ones first.
+    var listedProviderIds: [String] {
+        if !quoteOrder.isEmpty { return quoteOrder }
+        let routed = Set(routedCandidates.map(\.providerId))
+        return candidates.filter { routed.contains($0.providerId) }.map(\.providerId)
+            + candidates.filter { !routed.contains($0.providerId) }.map(\.providerId)
     }
 
     var canContinue: Bool {
@@ -28,16 +41,27 @@ extension FundingFlowModel {
     }
 
     /// The range the core says this rail, asset, network and country take
-    /// across every provider, product floor included.
+    /// across every provider, product floor included. Read once per choice
+    /// and again after each quote list, which can teach the core new limits.
     var amountLimits: (min: Decimal, max: Decimal?) {
-        let limits = runtime.fundingAmountLimits(
-            intent: intent,
+        let key = FundingLimitsKey(
             rail: rail,
             asset: askedAsset ?? "",
             network: rail == .crypto ? network : nil,
             country: country?.code
         )
-        return (cash.decimal(limits.min) ?? 0, cash.decimal(limits.max))
+        if let cached = cachedLimits, cached.key == key { return cached.limits }
+
+        let limits = runtime.fundingAmountLimits(
+            intent: intent,
+            rail: key.rail,
+            asset: key.asset,
+            network: key.network,
+            country: key.country
+        )
+        let range = (min: cash.decimal(limits.min) ?? 0, max: cash.decimal(limits.max))
+        cachedLimits = (key, range)
+        return range
     }
 
     /// The asset an ask on this rail names: the chosen token for crypto,
@@ -87,7 +111,7 @@ extension FundingFlowModel {
     /// The fiat asset a card or bank ask names: the payment country's currency
     /// when a provider takes it, otherwise the first a provider lists.
     var fiatAsset: String {
-        let listed = servingCandidates
+        let listed = routedCandidates
             .flatMap { $0.routes(rail: rail, direction: direction) }
             .flatMap(\.assets)
         if let currency = country?.currencyCode,

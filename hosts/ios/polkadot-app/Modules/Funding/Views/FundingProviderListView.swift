@@ -17,8 +17,8 @@ struct FundingProviderListView: View {
             }
 
             VStack(spacing: DSSpacings.extraSmall) {
-                ForEach(model.servingCandidates, id: \.providerId) { candidate in
-                    row(candidate.providerId)
+                ForEach(model.listedProviderIds, id: \.self) { providerId in
+                    row(providerId)
                 }
             }
 
