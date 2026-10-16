@@ -55,6 +55,12 @@ finds each chain by genesis hash in its bundled catalog, which holds no local ne
 With both set, every command that resolves a network (and `local-network-check`) exits
 with an error naming both variables instead of starting.
 
+It cannot be combined with `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS` or
+`HOST_CLI_BULLETIN_WS` either. Those point a preset at a fork that keeps the preset's
+genesis hashes, so they fit a fork; this file fits a network with its own genesis
+hashes. With both set, the commands exit with an error naming the variables that are
+set.
+
 The routing applies to every chain role the host serves, including the Bulletin node
 the CLI asks for preimages (`bitswap_v1_get`), so the local Bulletin node must expose
 that RPC for preimage lookups to succeed.

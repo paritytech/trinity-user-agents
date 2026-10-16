@@ -991,7 +991,10 @@ gets its own signer identity on the same machine.
 `HOST_CLI_IDENTITY_BACKEND_BASE` swaps
 the identity backend (for a local one), and `HOST_CLI_PEOPLE_WS`,
 `HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap a chain's URL for a fork
-of the preset's network, which keeps its genesis hashes; `HOST_CLI_IDENTITY_BACKEND_TOKEN`
+of the preset's network, which keeps its genesis hashes. For a local network that
+is not a fork, `HOST_CLI_LOCAL_NETWORK_CONFIG` names a file with every chain's URL
+and genesis hash and the backend instead (`docs/local-network.md`); it cannot be
+combined with the chain URL overrides. `HOST_CLI_IDENTITY_BACKEND_TOKEN`
 supplies its bearer token instead of the CLI minting one. For username
 registration, an injected token's subject must match the session's `uid.<tld>`
 candidate account. The automatically minted token uses that identity; and

@@ -671,7 +671,7 @@ async fn dispatch(
 		},
 		Command::Attest { mnemonic, network, username } => {
 			let attested =
-				accounts::attest_mnemonic(network.config(), &mnemonic, &username).await?;
+				accounts::attest_mnemonic(network.cli_config()?, &mnemonic, &username).await?;
 			println!(
 				"{}",
 				serde_json::json!({

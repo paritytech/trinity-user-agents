@@ -33,13 +33,19 @@ struct LocalChain {
 /// An absent opt-in leaves live presets unchanged. An invalid opt-in is an error;
 /// it must never silently fall back to a live chain.
 pub fn resolve(base: NetworkConfig) -> Result<NetworkConfig> {
-	resolve_from(base, std::env::var_os(CONFIG_ENV), std::env::var(LIGHT_CLIENT_ENV).ok())
+	resolve_from(
+		base,
+		std::env::var_os(CONFIG_ENV),
+		std::env::var(LIGHT_CLIENT_ENV).ok(),
+		&crate::network::chain_overrides_set(),
+	)
 }
 
 fn resolve_from(
 	base: NetworkConfig,
 	path: Option<std::ffi::OsString>,
 	light_client: Option<String>,
+	chain_overrides: &[&str],
 ) -> Result<NetworkConfig> {
 	let Some(path) = path else {
 		return Ok(base);
@@ -49,6 +55,15 @@ fn resolve_from(
 		"{CONFIG_ENV} and {LIGHT_CLIENT_ENV}=1 cannot be used together: the light client \
          resolves chains by genesis hash from its bundled catalog, which has no local \
          network; unset one of them"
+	);
+	// The chain URL overrides point a preset at a fork that keeps its genesis; the
+	// local-network file replaces the genesis too. Applying one over the other
+	// would route some roles to one network and some to another.
+	ensure!(
+		chain_overrides.is_empty(),
+		"{CONFIG_ENV} and {} cannot be used together: the file routes every chain \
+         itself; unset one of them",
+		chain_overrides.join(", ")
 	);
 	let json = std::fs::read_to_string(&path)
 		.with_context(|| format!("cannot read {CONFIG_ENV} file {path:?}"))?;
@@ -196,7 +211,12 @@ mod tests {
 		let path = dir.path().join("local-network.json");
 		std::fs::write(&path, config(base.id).to_string()).unwrap();
 		let resolve = |light_client: Option<&str>| {
-			resolve_from(base, Some(path.clone().into_os_string()), light_client.map(str::to_owned))
+			resolve_from(
+				base,
+				Some(path.clone().into_os_string()),
+				light_client.map(str::to_owned),
+				&[],
+			)
 		};
 
 		let error = resolve(Some("1")).expect_err("the light client cannot route a local network");
@@ -208,7 +228,33 @@ mod tests {
 			assert!(resolved.people_ws.starts_with("ws://127.0.0.1:"));
 		}
 		// Without the local config the light client's own preset is untouched.
-		let live = resolve_from(base, None, Some("1".to_owned())).unwrap();
+		let live = resolve_from(base, None, Some("1".to_owned()), &[]).unwrap();
 		assert_eq!(live.people_ws, base.people_ws);
+	}
+
+	#[test]
+	fn chain_url_overrides_are_refused_with_a_local_network() {
+		let base = Network::Previewnet.config();
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("local-network.json");
+		std::fs::write(&path, config(base.id).to_string()).unwrap();
+
+		let error = resolve_from(
+			base,
+			Some(path.into_os_string()),
+			None,
+			&[crate::network::PEOPLE_WS_ENV, crate::network::BULLETIN_WS_ENV],
+		)
+		.expect_err("a fork override and a local network cannot both route the chains");
+		let message = error.to_string();
+		assert!(
+			message.contains(CONFIG_ENV) &&
+				message.contains(crate::network::PEOPLE_WS_ENV) &&
+				message.contains(crate::network::BULLETIN_WS_ENV),
+			"{message}"
+		);
+		// Without the file the overrides are the fork routing, left as they are.
+		let fork = resolve_from(base, None, None, &[crate::network::PEOPLE_WS_ENV]).unwrap();
+		assert_eq!(fork.people_ws, base.people_ws);
 	}
 }

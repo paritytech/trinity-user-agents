@@ -51,8 +51,19 @@ impl ChainOverrides {
 	}
 }
 
+/// The chain URL override vars that carry a value. Blank ones keep the preset,
+/// so they do not count as set.
+pub fn chain_overrides_set() -> Vec<&'static str> {
+	[PEOPLE_WS_ENV, ASSET_HUB_WS_ENV, BULLETIN_WS_ENV]
+		.into_iter()
+		.filter(|name| std::env::var(name).is_ok_and(|value| !value.trim().is_empty()))
+		.collect()
+}
+
 impl Network {
-	/// CLI resolution includes the opt-in disposable local-network configuration.
+	/// CLI resolution: the preset with the env overrides of [`Self::config`], or
+	/// the opt-in disposable local-network configuration, which cannot be
+	/// combined with the chain URL overrides.
 	pub fn cli_config(self) -> anyhow::Result<NetworkConfig> {
 		crate::local_network::resolve(self.config())
 	}
@@ -620,6 +631,25 @@ mod tests {
 			preset.identity_backend_base,
 			"a blank override keeps the preset"
 		);
+	}
+
+	#[test]
+	fn no_chain_override_keeps_the_preset() {
+		for network in Network::value_variants() {
+			let preset = network.preset();
+			let resolved = apply_chain_overrides(
+				preset,
+				ChainOverrides {
+					people_ws: None,
+					asset_hub_ws: Some(String::new()),
+					bulletin_ws: Some("  ".to_string()),
+				},
+			);
+			assert_eq!(resolved.people_ws, preset.people_ws);
+			assert_eq!(resolved.asset_hub_ws, preset.asset_hub_ws);
+			assert_eq!(resolved.bulletin_ws, preset.bulletin_ws);
+			assert!(std::ptr::eq(resolved.live_chain_endpoints, preset.live_chain_endpoints));
+		}
 	}
 
 	#[test]
