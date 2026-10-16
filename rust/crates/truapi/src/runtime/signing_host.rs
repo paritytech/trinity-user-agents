@@ -21,7 +21,6 @@ use truapi::latest::{
 };
 
 pub use crate::runtime::statement_allowance::inspection::WalletAllowanceSnapshot;
-#[cfg(any(test, not(target_arch = "wasm32")))]
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
