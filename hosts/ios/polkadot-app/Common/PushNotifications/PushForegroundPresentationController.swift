@@ -5,7 +5,8 @@ import SubstrateSdk
 enum PushForegroundVisibleScreen: Equatable {
     case chatList
     case chat(accountId: AccountId)
-    case chatExtension(extensionId: ChatExtension.Id)
+    /// A room of a chat extension or of a product. `roomId` is nil for the single room of a chat extension.
+    case chatExtension(extensionId: ChatExtension.Id, roomId: String?)
     case other
 }
 
@@ -20,6 +21,11 @@ protocol PushForegroundPresentationDeciding: AnyObject {
 
 final class PushForegroundPresentationController {
     private var visibleScreen: PushForegroundVisibleScreen = .other
+    private let logger: LoggerProtocol
+
+    init(logger: LoggerProtocol = Logger.shared) {
+        self.logger = logger
+    }
 }
 
 extension PushForegroundPresentationController: PushForegroundVisibilityReporting {
@@ -31,7 +37,7 @@ extension PushForegroundPresentationController: PushForegroundVisibilityReportin
         switch (id, visibleScreen) {
         case let (.person(accountId), .chat(activeChatAccountId)):
             accountId == activeChatAccountId
-        case let (.chatExtension(extensionId, _), .chatExtension(activeExtensionId)):
+        case let (.chatExtension(extensionId, _), .chatExtension(activeExtensionId, _)):
             extensionId == activeExtensionId
         default:
             false
@@ -41,14 +47,21 @@ extension PushForegroundPresentationController: PushForegroundVisibilityReportin
 
 extension PushForegroundPresentationController: PushForegroundPresentationDeciding {
     func presentationOptions(for notification: UNNotification) -> UNNotificationPresentationOptions {
-        guard !notification.request.content.isFromBlockedContact else {
+        presentationOptions(for: notification.request.content)
+    }
+
+    /// The presentation of a notification with `content` while the app is in the foreground.
+    func presentationOptions(for content: UNNotificationContent) -> UNNotificationPresentationOptions {
+        guard !content.isFromBlockedContact else {
             return []
         }
 
         let shouldDisplay =
-            if notification.request.content.isFromChat {
+            if let productRoom = content.productRoomLink {
+                shouldDisplayProductRoomNotification(room: productRoom)
+            } else if content.isFromChat {
                 shouldDisplayChatNotification(
-                    userInfo: notification.request.content.userInfo,
+                    userInfo: content.userInfo,
                     visibleScreen: visibleScreen
                 )
             } else {
@@ -75,7 +88,7 @@ private extension PushForegroundPresentationController {
             }
 
             return accountId != activeAccountId
-        case let .chatExtension(activeExtensionId):
+        case let .chatExtension(activeExtensionId, _):
             guard let extensionId = userInfo[PushNotificationKeys.chatExtensionId] as? ChatExtension.Id else {
                 return true
             }
@@ -83,9 +96,41 @@ private extension PushForegroundPresentationController {
             return extensionId == activeExtensionId
         }
     }
+
+    /// A notification of a product that opens a room of the product shows as a person chat notification does: not
+    /// while the chat list or that room is on screen, else as a banner.
+    func shouldDisplayProductRoomNotification(room: ChatRoomLink) -> Bool {
+        let shouldDisplay =
+            switch visibleScreen {
+            case .chatList:
+                false
+            case let .chatExtension(extensionId, roomId):
+                extensionId != room.productId || roomId != room.roomId
+            case .chat,
+                 .other:
+                true
+            }
+        logger.debug(
+            "Foreground notification of \(room.productId) room \(room.roomId): \(shouldDisplay ? "banner" : "hidden")"
+        )
+        return shouldDisplay
+    }
 }
 
 extension UNNotificationContent {
+    /// The room that a notification of a product opens, when its deeplink is a room link of the same product.
+    var productRoomLink: ChatRoomLink? {
+        guard
+            let productId = userInfo[PushNotificationKeys.productId] as? String,
+            let deeplink = userInfo[PushNotificationKeys.deeplink] as? String,
+            let link = ChatRoomLink(deeplink),
+            link.productId == productId
+        else {
+            return nil
+        }
+        return link
+    }
+
     var isFromBlockedContact: Bool {
         userInfo[PushNotificationKeys.blockedContact] as? Bool == true
     }
