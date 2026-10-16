@@ -27,7 +27,9 @@ func makeChatBridgeDependencies(
         ),
         productStorage: TrUAPILocalStorage.createProductLocalStorage(
             productId: productId,
-            defaults: defaults
+            defaults: defaults,
+            directory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("truapi-product-storage-\(UUID().uuidString)", isDirectory: true)
         ),
         coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults),
         confirmationPresenter: MockConfirmationPresenter(),
