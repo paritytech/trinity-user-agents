@@ -116,13 +116,16 @@ pub struct StartedFunds {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingCancel {
 	/// The user asked to cancel and the provider has not answered.
+	#[codec(index = 0)]
 	Requested,
 	/// The provider will not cancel. The session carries on.
+	#[codec(index = 1)]
 	Refused {
 		/// Why, as the provider put it.
 		reason: String,
 	},
 	/// The provider can cancel on these terms and waits for the user.
+	#[codec(index = 2)]
 	Offered {
 		/// What the provider keeps, in payment balance units.
 		fee: u128,
@@ -132,6 +135,7 @@ pub enum FundingCancel {
 		expires_at: Option<u64>,
 	},
 	/// The user accepted the offer. The provider settles the cancel.
+	#[codec(index = 3)]
 	Accepted {
 		/// What the provider keeps, in payment balance units.
 		fee: u128,
@@ -139,6 +143,7 @@ pub enum FundingCancel {
 		refund: u128,
 	},
 	/// The user declined the offer, or it lapsed. The session carries on.
+	#[codec(index = 4)]
 	Declined,
 }
 
@@ -171,6 +176,22 @@ pub enum CancelConfirmation {
 	Lapsed,
 	/// The session has no offer to answer.
 	NoOffer,
+	/// The offer changed since the user saw it, so nothing was accepted. The
+	/// host shows the current offer and asks again.
+	Changed,
+	/// Too late: the provider started crediting the user, so the offer is
+	/// declined and the session carries on.
+	TooLate,
+}
+
+/// The terms of a cancel offer the user accepts, as the host showed them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct CancelTerms {
+	/// What the provider keeps, in payment balance units.
+	pub fee: u128,
+	/// What the user gets back, in payment balance units.
+	pub refund: u128,
 }
 
 /// What the core follows to decide a session's outcome once funds move.
@@ -302,6 +323,9 @@ impl FundingSession {
 			) {
 				return Err(HostFundingReportError::OutOfOrder);
 			}
+			if let FundingCancel::Offered { fee, refund, .. } = answer {
+				self.check_offer(fee, refund)?;
+			}
 			self.cancel = Some(answer);
 			self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
 			return Ok(());
@@ -327,6 +351,26 @@ impl FundingSession {
 			self.cancel = None;
 		}
 		Ok(())
+	}
+
+	/// Whether the provider may offer to cancel on these terms. An inbound
+	/// session whose credit started can no longer be cancelled, and an offer
+	/// cannot hand back more than the session moves. An outbound offer waits
+	/// for the refund a released withdrawal settles through.
+	fn check_offer(&self, fee: u128, refund: u128) -> Result<(), HostFundingReportError> {
+		if self.direction == FundingDirection::Out ||
+			(self.direction == FundingDirection::In && self.funds_started())
+		{
+			return Err(HostFundingReportError::OutOfOrder);
+		}
+		match self.amount {
+			Some(amount) if fee.saturating_add(refund) > amount => {
+				Err(HostFundingReportError::Unknown {
+					reason: "the offer exceeds the session amount".to_string(),
+				})
+			},
+			_ => Ok(()),
+		}
 	}
 
 	/// Whether `update` may come next. Updates only move forward, a session
@@ -415,7 +459,9 @@ impl FundingSession {
 			return None;
 		}
 		let mut named = self.started.iter().filter(|record| record.named_at_ms.is_some());
-		match self.last_update()? {
+		// The last step, not the last update: an answer to a cancel or a
+		// detail must not hide the outcome the provider handed over.
+		match self.last_step()? {
 			FundingUpdate::Delivered => Some(Settlement::TopUps(named.cloned().collect())),
 			FundingUpdate::Collecting { .. } => named.next().cloned().map(Settlement::Payment),
 			_ => None,
@@ -501,10 +547,16 @@ impl FundingSession {
 		}
 	}
 
-	/// Answer the provider's cancel offer: accept it, so the provider settles
-	/// the cancel, or decline it, so the session carries on. An offer past its
-	/// expiry is declined whatever the answer.
-	pub fn confirm_cancel(&mut self, accept: bool, now_ms: u64) -> CancelConfirmation {
+	/// Answer the provider's cancel offer: accept it on `terms`, the terms
+	/// the host showed, so the provider settles the cancel, or decline it with
+	/// `None`, so the session carries on. An offer past its expiry is declined
+	/// whatever the answer, an offer whose terms changed since is not
+	/// accepted, and an inbound session whose credit started is too late.
+	pub fn confirm_cancel(
+		&mut self,
+		terms: Option<CancelTerms>,
+		now_ms: u64,
+	) -> CancelConfirmation {
 		if self.is_terminal() {
 			return CancelConfirmation::NoOffer;
 		}
@@ -515,13 +567,19 @@ impl FundingSession {
 			self.cancel = Some(FundingCancel::Declined);
 			return CancelConfirmation::Lapsed;
 		}
-		if accept {
-			self.cancel = Some(FundingCancel::Accepted { fee, refund });
-			CancelConfirmation::Accepted
-		} else {
+		let Some(terms) = terms else {
 			self.cancel = Some(FundingCancel::Declined);
-			CancelConfirmation::Declined
+			return CancelConfirmation::Declined;
+		};
+		if self.direction == FundingDirection::In && self.funds_started() {
+			self.cancel = Some(FundingCancel::Declined);
+			return CancelConfirmation::TooLate;
 		}
+		if terms != (CancelTerms { fee, refund }) {
+			return CancelConfirmation::Changed;
+		}
+		self.cancel = Some(FundingCancel::Accepted { fee, refund });
+		CancelConfirmation::Accepted
 	}
 
 	/// Decline the provider's cancel offer once it lapsed. Returns whether it
@@ -557,9 +615,10 @@ impl FundingSession {
 	pub fn pending_cancel_item(&self) -> Option<HostFundingServeSubscribeItem> {
 		let intent = self.intent.clone();
 		match self.cancel.as_ref()? {
-			FundingCancel::Requested | FundingCancel::Offered { .. } => {
-				Some(HostFundingServeSubscribeItem::Cancel { intent })
-			},
+			FundingCancel::Requested => Some(HostFundingServeSubscribeItem::Cancel { intent }),
+			// The provider answered already; asking again would invite a new
+			// offer while the user looks at this one.
+			FundingCancel::Offered { .. } => None,
 			FundingCancel::Accepted { .. } => {
 				Some(HostFundingServeSubscribeItem::CancelAccepted { intent })
 			},
@@ -809,7 +868,6 @@ fn decode_sessions(blob: &[u8]) -> Option<Vec<FundingSession>> {
 	let sessions = Vec::<FundingSession>::decode(input).ok()?;
 	input.is_empty().then_some(sessions)
 }
-
 
 /// Replace the persisted set with `sessions`, clearing the slot when empty.
 pub async fn store_sessions(
@@ -1117,7 +1175,7 @@ mod tests {
 		reported(&mut session, &[offer(5, 95, None)]);
 		let offered = session.cancel.clone();
 
-		let answer = session.confirm_cancel(false, NOW);
+		let answer = session.confirm_cancel(None, NOW);
 
 		assert_eq!(
 			(offered, answer, session.is_terminal(), session.pending_cancel_item()),
@@ -1140,7 +1198,7 @@ mod tests {
 		cancelled(&mut session);
 		reported(&mut session, &[offer(5, 95, None)]);
 
-		let answer = session.confirm_cancel(true, NOW);
+		let answer = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
 		let replayed = session.pending_cancel_item();
 		let settled =
 			report(&mut session, FundingUpdate::Failed { reason: FundingFailure::Cancelled });
@@ -1181,8 +1239,8 @@ mod tests {
 				early,
 				due,
 				lapsing.cancel.clone(),
-				lapsing.confirm_cancel(true, NOW + 11),
-				late.confirm_cancel(true, NOW + 10),
+				lapsing.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW + 11),
+				late.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW + 10),
 				late.cancel,
 			),
 			(
@@ -1241,6 +1299,101 @@ mod tests {
 		);
 	}
 
+	// A provider may replace its offer while the user looks at the first
+	// one. Accepting the terms the user saw must not accept the new ones,
+	// and the provider is not asked again while an offer is open.
+	#[test]
+	fn an_offer_that_changed_since_the_user_saw_it_is_not_accepted() {
+		let mut session = served(FundingDirection::In);
+		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
+		cancelled(&mut session);
+		reported(&mut session, &[offer(5, 95, None), offer(20, 80, None)]);
+
+		let stale = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
+		let replayed = session.pending_cancel_item();
+		let current = session.confirm_cancel(Some(CancelTerms { fee: 20, refund: 80 }), NOW);
+
+		assert_eq!(
+			(stale, replayed, current, session.cancel),
+			(
+				CancelConfirmation::Changed,
+				None,
+				CancelConfirmation::Accepted,
+				Some(FundingCancel::Accepted { fee: 20, refund: 80 }),
+			)
+		);
+	}
+
+	// An inbound offer accepted after the provider started crediting comes
+	// too late: the provider could not honour it, so it is declined.
+	#[test]
+	fn accepting_an_inbound_offer_after_the_credit_started_is_too_late() {
+		let mut session = served(FundingDirection::In);
+		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
+		cancelled(&mut session);
+		reported(&mut session, &[offer(5, 95, None)]);
+		session.record_start([1; 32], 100);
+
+		let answer = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
+
+		assert_eq!(
+			(answer, session.cancel.clone(), session.pending_cancel_item()),
+			(
+				CancelConfirmation::TooLate,
+				Some(FundingCancel::Declined),
+				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: "fs_1".into() }),
+			)
+		);
+	}
+
+	// An offer cannot hand back more than the session moves, an inbound
+	// session whose credit started cannot be offered, and an outbound offer
+	// waits for the refund path of a released withdrawal.
+	#[test]
+	fn an_offer_must_fit_the_session() {
+		let mut over = served(FundingDirection::In);
+		reported(&mut over, &[FundingUpdate::PaymentReceived { finalized: true }]);
+		cancelled(&mut over);
+		let mut crediting = over.clone();
+		crediting.record_start([1; 32], 100);
+		let mut outbound = served(FundingDirection::Out);
+		cancelled(&mut outbound);
+
+		assert_eq!(
+			(
+				report(&mut over, offer(5, 100, None)),
+				report(&mut crediting, offer(5, 95, None)),
+				report(&mut outbound, offer(5, 95, None)),
+			),
+			(
+				Err(HostFundingReportError::Unknown {
+					reason: "the offer exceeds the session amount".into(),
+				}),
+				Err(HostFundingReportError::OutOfOrder),
+				Err(HostFundingReportError::OutOfOrder),
+			)
+		);
+	}
+
+	// A refusal reported after the payment was named is the latest update,
+	// not the latest step: the payment still settles the session, before and
+	// after a restart.
+	#[test]
+	fn a_cancel_answer_after_collecting_does_not_hide_the_settlement() {
+		let mut session = served(FundingDirection::Out);
+		reported(&mut session, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 40 }]);
+		cancelled(&mut session);
+		reported(&mut session, &[FundingUpdate::CancelRefused { reason: "paid out".into() }]);
+		let restarted =
+			FundingSession::decode(&mut &session.encode()[..]).expect("stored session decodes");
+
+		let due = |session: &FundingSession| match session.settlement_due() {
+			Some(Settlement::Payment(funds)) => Some(funds.amount),
+			_ => None,
+		};
+		assert_eq!((due(&session), due(&restarted)), (Some(40), Some(40)));
+	}
+
 	// A provider answers only a cancel the user asked for, and an accepted
 	// offer is not taken back: it is the provider's to settle.
 	#[test]
@@ -1250,7 +1403,7 @@ mod tests {
 		let unasked = report(&mut session, offer(5, 95, None));
 		cancelled(&mut session);
 		reported(&mut session, &[offer(5, 95, None), offer(2, 98, None)]);
-		session.confirm_cancel(true, NOW);
+		session.confirm_cancel(Some(CancelTerms { fee: 2, refund: 98 }), NOW);
 
 		assert_eq!(
 			(

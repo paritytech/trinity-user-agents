@@ -809,15 +809,16 @@ impl SigningHostRuntime {
 	}
 
 	/// Answer the provider's cancel offer on funding session `intent`:
-	/// accept it, so the provider refunds the user and ends the session, or
-	/// decline it, so the session carries on.
+	/// accept it on `terms`, the fee and refund the host showed, so the
+	/// provider settles the cancel, or decline it with `None`, so the session
+	/// carries on. An offer whose terms changed answers `Changed`.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.confirm_funding_cancel"))]
 	pub async fn confirm_funding_cancel(
 		&self,
 		intent: &str,
-		accept: bool,
+		terms: Option<crate::host_logic::funding::CancelTerms>,
 	) -> Result<crate::host_logic::funding::CancelConfirmation, v01::GenericError> {
-		Ok(self.services.confirm_funding_cancel(intent, accept).await?)
+		Ok(self.services.confirm_funding_cancel(intent, terms).await?)
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose,

@@ -35,7 +35,7 @@ use std::{
 use futures::stream::{self, BoxStream, StreamExt};
 use truapi::{
 	SigningHostRuntime, current_unix_millis,
-	host_logic::funding::{FundingCancel, FundingSession, FundingStage},
+	host_logic::funding::{CancelTerms, FundingCancel, FundingSession, FundingStage},
 	latest::{
 		FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget, GenericError,
 		HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
@@ -202,7 +202,15 @@ async fn cancel_once_moved(
 	let Some(runtime) = runtime.upgrade() else {
 		return;
 	};
-	match runtime.confirm_funding_cancel(intent, true).await {
+	// Accept the terms the session shows, as a host shows them to the user.
+	let terms = match runtime.funding_session(intent).and_then(|session| session.cancel) {
+		Some(FundingCancel::Offered { fee, refund, .. }) => Some(CancelTerms { fee, refund }),
+		_ => None,
+	};
+	if terms.is_none() {
+		return;
+	}
+	match runtime.confirm_funding_cancel(intent, terms).await {
 		Ok(answer) => transcript.record(serde_json::json!({
 			"kind": "cancel-confirm",
 			"intent": intent,
