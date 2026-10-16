@@ -1006,7 +1006,7 @@ fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<Approval
 	anyhow::ensure!(
 		network.disposable_identities,
 		"{} holds real identities, so every confirmation must be approved by hand; \
-         automatic approval, which `dev` always uses, is only available on test network presets",
+		 automatic approval, which `dev` always uses, is only available on test network presets",
 		network.id
 	);
 	Ok(ApprovalPolicy::AutoAccept)

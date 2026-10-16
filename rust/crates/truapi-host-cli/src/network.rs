@@ -23,9 +23,6 @@ pub enum Network {
 	Previewnet,
 	/// Polkadot mainnet (People, Bulletin, Asset Hub). Identities are real:
 	/// pass the signer with --mnemonic; no stored accounts, no auto-accept
-	// It never sets `NetworkConfig::disposable_identities` and ships no
-	// identity backend; commands that need one read
-	// `IDENTITY_BACKEND_BASE_ENV`.
 	#[value(name = "polkadot")]
 	Polkadot,
 }
@@ -697,9 +694,7 @@ mod tests {
 	/// store or auto-accept.
 	#[test]
 	fn polkadot_holds_real_identities() {
-		let config = Network::Polkadot.preset();
-		assert!(!config.disposable_identities);
-		assert!(config.ensure_disposable_identities().is_err());
+		assert!(Network::Polkadot.preset().ensure_disposable_identities().is_err());
 	}
 
 	#[test]

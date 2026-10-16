@@ -26,9 +26,8 @@ use crate::network::NetworkConfig;
 /// dispatcher or the controller itself, and resolves whichever it is; the
 /// override is for networks where that fails. The
 /// controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2
-/// and previewnet and `0xA06d1CB1e3FedFF7b5dFa779b4Cc61703F8A46A1` on polkadot,
-/// which the polkadot preset falls back to while its dispatcher is unset;
-/// `DEPLOYMENTS.md` in paritytech/dotns is the authority per network.
+/// and previewnet; the polkadot preset carries its own from its deployment
+/// manifest. `DEPLOYMENTS.md` in paritytech/dotns is the authority per network.
 pub const DOTNS_POP_CONTROLLER_ENV: &str = "HOST_CLI_DOTNS_POP_CONTROLLER";
 
 /// One Asset Hub RPC connection for a batch of dotNS reads.

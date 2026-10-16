@@ -81,7 +81,7 @@ function expectProduct(expected: string): void {
   }
 }
 
-/// The People Lite ring on the People chain this host serves.
+// The People Lite ring on the People chain this host serves.
 async function peopleLiteRing() {
   const info = await truapi.chain.getChainInfo({ chain: "People" });
   if (!info.isOk()) {

@@ -1612,13 +1612,14 @@ core, product, and current selection files.
 `--network` selects one of three presets. `paseo-next-v2` is the default.
 `paseo-next-v2` and `previewnet` are test networks whose identities are
 disposable, so the account store may keep their BIP-39 entropy. `polkadot` is
-mainnet, and its identities are real. A preset whose identities are real never writes to
-the account store: it signs only with `--mnemonic` or
-`HOST_CLI_SIGNER_MNEMONIC`, and refuses auto accounts, stored accounts and
-mnemonic imports. It also refuses automatic approval (`--auto-accept`,
-`/approval automatic` and `dev`), so a local page cannot get a real identity's
-signature without a prompt, and refuses `--product-config`, whose seeded grants
-are never prompted for and persist in the core database.
+mainnet, and its identities are real.
+
+A preset whose identities are real never writes to the account store: it signs
+only with `--mnemonic` or `HOST_CLI_SIGNER_MNEMONIC`, and refuses auto accounts,
+stored accounts and mnemonic imports. It refuses automatic approval
+(`--auto-accept`, `/approval automatic` and `dev`), so a local page cannot get a
+real identity's signature without a prompt. It also refuses `--product-config`,
+whose seeded grants are never prompted for and persist in the core database.
 
 Auto-account onboarding (§12.3) needs an identity backend that records the
 lite username on the dotNS gateway. Each test preset points at its matching
@@ -1657,9 +1658,8 @@ on-chain testing.
 
 #### `polkadot`
 
-Polkadot mainnet. Identities here are real, so this preset never writes the
-account store and never auto-approves (above). Reserved identities derive under
-`.dot`.
+Polkadot mainnet. Its identities are real (above). Reserved identities derive
+under `.dot`.
 
 | Purpose | Value |
 | --- | --- |
@@ -2204,7 +2204,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check` and `pgas-check` when `--mnemonic` is omitted. |
 | `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Chain endpoints stay on the preset. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
-| `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet and `0xA06d1CB1e3FedFF7b5dFa779b4Cc61703F8A46A1` on polkadot, where discovery falls back to it while the dispatcher is unset (§14.1); `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
+| `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet; the polkadot preset carries its own (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
 | `HOME` | Fallback default state parent. |
 | `VISUAL` | Preferred script editor. |
