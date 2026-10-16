@@ -176,7 +176,8 @@ impl Payment for ProductRuntimeHost {
 		{
 			return Subscription::interrupted(from_latest_error(error, version));
 		}
-		versioned_subscription(platform.subscribe_balance(&self.product, purse), version)
+		let balances = platform.subscribe_balance(&self.product, purse);
+		versioned_subscription(self.while_balance_access_holds(balances), version)
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.request"))]
@@ -256,6 +257,60 @@ impl ProductRuntimeHost {
 			Some(_) => Ok(()),
 			None => Err(CallError::Denied),
 		}
+	}
+
+	/// Pass `balances` through while the product still holds balance access,
+	/// checked again before each one. A host pushes a purse's balance to every
+	/// product following it, so a grant revoked mid-stream ends the stream
+	/// with `PermissionDenied` instead of letting later balances through.
+	fn while_balance_access_holds(
+		&self,
+		balances: BoxStream<
+			'static,
+			Result<
+				latest::HostPaymentBalanceSubscribeItem,
+				latest::HostPaymentBalanceSubscribeError,
+			>,
+		>,
+	) -> BoxStream<
+		'static,
+		Result<latest::HostPaymentBalanceSubscribeItem, latest::HostPaymentBalanceSubscribeError>,
+	> {
+		let platform = self.platform.clone();
+		let status = self.permission_status.clone();
+		let temporary = self.temporary_permissions.clone();
+		let product = self.product.clone();
+		balances
+			.then(move |balance| {
+				let (platform, status, temporary, product) =
+					(platform.clone(), status.clone(), temporary.clone(), product.clone());
+				async move {
+					let held = crate::host_internal::permissions::PermissionsService::new(
+						platform.as_ref(),
+						platform.as_ref(),
+						&product,
+					)
+					.with_status_host(status.as_deref())
+					.with_temporary_permissions(temporary)
+					.peek_remote(&latest::RemotePermissionRequest {
+						permission: latest::RemotePermission::BalanceAccess,
+					})
+					.await;
+					match held {
+						Ok(crate::platform::PermissionAuthorizationStatus::Authorized) => balance,
+						_ => Err(latest::HostPaymentBalanceSubscribeError::PermissionDenied),
+					}
+				}
+			})
+			.scan(false, |denied, balance| {
+				let next = (!*denied).then_some(balance);
+				*denied = matches!(
+					next,
+					Some(Err(latest::HostPaymentBalanceSubscribeError::PermissionDenied))
+				);
+				futures::future::ready(next)
+			})
+			.boxed()
 	}
 
 	/// Whether the product already holds balance access, without asking.
