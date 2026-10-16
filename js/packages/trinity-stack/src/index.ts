@@ -11,8 +11,10 @@ export type Descriptor = {
   name: string;
   network: string;
   tld: string;
-  expiresAt?: string;
-  validUntil?: string;
+  /** Unix seconds. */
+  expiresAt?: number;
+  /** Unix seconds. */
+  validUntil?: number;
   fork?: Fork;
   chains: Chain[];
   services: Service[];
@@ -38,7 +40,8 @@ export type Service = { kind: string; urls: string[]; chainId?: number };
 
 export type Asset = { role: string; chain: string; pallet: string; id: number };
 
-export type Fork = { of: Pointer; at: string };
+/** `at` is Unix seconds. */
+export type Fork = { of: Pointer; at: number };
 
 /** Where a descriptor lives, and the key that signs it when it is signed. */
 export type Pointer = { url: string; key?: string };
