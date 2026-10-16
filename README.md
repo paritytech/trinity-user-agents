@@ -485,14 +485,14 @@ the device slice, which is enough for Simulator but not for an archive.
 
 Because the app builds against the core in this tree, a core change that breaks
 it fails here rather than at the next version bump. Every push to main runs the
-jobs below, and so does a pull request touching the app, or the crates its
-bindings come from, once it is labelled `ios-simulator-build`. They are macOS
-jobs, so a pull request without the label runs none of them. CI's
-`iOS package (Swift + WebKit)` job still compiles the TrUAPIHost package against
-the core on a pull request touching `ios/` or the core crates, but the app itself
-is compiled before merge only with the label. The first time a pull request
-touches the iOS or Android app, `build-label-hint.yml` comments with the labels
-that build it: `ios-simulator-build`, `ios-device-build` and `android-device-build`.
+jobs below. A pull request touching the app, or the crates its bindings come
+from, always runs `test`; `build` and `preview` are macOS time no test needs, so
+they run once it is labelled `ios-simulator-build`. CI's
+`iOS package (Swift + WebKit)` job also compiles the TrUAPIHost package against
+the core on a pull request touching `ios/` or the core crates. The first time a
+pull request touches the iOS or Android app, `build-label-hint.yml` comments with
+the labels that build it: `ios-simulator-build`, `ios-device-build` and
+`android-device-build`.
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
