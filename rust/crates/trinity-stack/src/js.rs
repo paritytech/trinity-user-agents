@@ -16,9 +16,7 @@ fn throw(error: Error) -> JsValue {
 }
 
 fn secret_key(secret: &[u8]) -> Result<[u8; 32], JsValue> {
-	secret
-		.try_into()
-		.map_err(|_| throw(Error::InvalidHex { field: "secret key", bytes: 32 }))
+	secret.try_into().map_err(|_| throw(Error::SecretKeyLength(secret.len())))
 }
 
 fn json(value: serde_json::Value) -> String {
@@ -124,6 +122,13 @@ pub fn same_stack(
 	let pointer = Pointer::new(url, key.as_deref()).map_err(throw)?;
 	let other = Pointer::new(other_url, other_key.as_deref()).map_err(throw)?;
 	Ok(pointer.same_stack(&other))
+}
+
+/// The 0x-prefixed content hash of a plain descriptor: everything but `sequence`.
+#[wasm_bindgen(js_name = contentHash)]
+pub fn content_hash(descriptor: &[u8]) -> Result<String, JsValue> {
+	let document = Document::parse(descriptor).map_err(throw)?;
+	Ok(format::to_hex(&document.descriptor().content_hash()))
 }
 
 /// What identifies a pointer's stack; readers key what they store by it.
