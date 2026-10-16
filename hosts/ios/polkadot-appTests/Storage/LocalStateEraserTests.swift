@@ -26,4 +26,17 @@ struct LocalStateEraserTests {
         #expect(settings.string(for: SettingsKey.selectedCurrencyCode.rawValue) == "USD")
         #expect(settings.bool(for: SettingsKey.playerTooltipShown.rawValue) == true)
     }
+
+    @Test("the retired on-ramp ids go too")
+    func erasesRetiredOnrampIds() {
+        for key in LocalStateEraser.retiredWalletKeys {
+            settings.set(value: ["id"], for: key)
+        }
+
+        LocalStateEraser(settingsManager: settings, logger: StubLogger()).eraseUserState()
+
+        for key in LocalStateEraser.retiredWalletKeys {
+            #expect(settings.anyValue(for: key) == nil, "\(key) should be erased")
+        }
+    }
 }
