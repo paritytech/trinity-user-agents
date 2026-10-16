@@ -49,7 +49,7 @@
   "id": "previewnet",
   "name": "Previewnet",
   "network": "paseo",
-  "sequence": 9007199254740992,
+  "sequence": 4294967296,
   "services": [
     {
       "kind": "dub",

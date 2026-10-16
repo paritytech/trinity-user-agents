@@ -2,29 +2,34 @@ use crate::{
 	Error,
 	format::{self, Schemes},
 };
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// The only format version this crate reads and writes.
 pub const VERSION: u64 = 1;
 
-/// The largest `sequence` a descriptor may carry, 2^53 - 1, so every JSON reader holds it exactly.
-pub const MAX_SEQUENCE: u64 = (1 << 53) - 1;
+/// The largest integer every JSON reader holds exactly, 2^53 - 1. `sequence` is a `u32`.
+const MAX_EXACT: u64 = (1 << 53) - 1;
 
 /// The service kinds `$v: 1` defines. Readers drop entries of any other kind before validating.
 pub const SERVICE_KINDS: &[&str] =
 	&["dub", "turn", "stun", "ipfs-gateway", "hop", "eth-rpc", "storage-provider", "faucet"];
 
 /// A validated `$v: 1` descriptor, with unknown fields and service kinds already dropped.
+///
+/// Deserialising one applies the same rules as [`Descriptor::from_json`], so no path skips them.
+/// The I-JSON checks need the bytes as served: read those with [`Document::parse`].
+///
+/// [`Document::parse`]: crate::Document::parse
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(remote = "Self", rename_all = "camelCase")]
 pub struct Descriptor {
 	/// Format version; always [`VERSION`].
 	#[serde(rename = "$v")]
 	pub version: u64,
 	/// Raised on every publish.
-	pub sequence: u64,
+	pub sequence: u32,
 	/// Opaque; changes whenever the stack restarts its chains.
 	pub generation: String,
 	/// The stack's name. Never decides trust and is not unique.
@@ -172,8 +177,13 @@ impl Descriptor {
 				service.get("kind").and_then(|kind| kind.as_str()).is_none_or(is_known_kind)
 			});
 		}
-		let descriptor: Self = serde_json::from_value(document)
-			.map_err(|error| Error::Malformed(error.to_string()))?;
+		if let Some(sequence) = document.get("sequence").and_then(|value| value.as_u64()) &&
+			sequence > u64::from(u32::MAX)
+		{
+			return Err(Error::SequenceOutOfRange(sequence));
+		}
+		let descriptor =
+			Self::deserialize(document).map_err(|error| Error::Malformed(error.to_string()))?;
 		descriptor.validate()?;
 		Ok(descriptor)
 	}
@@ -194,9 +204,6 @@ impl Descriptor {
 
 	/// Checks the RFC's format rules on known fields.
 	fn validate(&self) -> Result<(), Error> {
-		if self.sequence > MAX_SEQUENCE {
-			return Err(Error::SequenceOutOfRange(self.sequence));
-		}
 		if self.generation.is_empty() {
 			return Err(Error::Empty("generation"));
 		}
@@ -228,7 +235,7 @@ impl Descriptor {
 			)
 			.chain(self.coinage.iter().map(|coinage| ("coinage.instance", coinage.instance)));
 		for (field, number) in numbers {
-			if number > MAX_SEQUENCE {
+			if number > MAX_EXACT {
 				return Err(Error::NumberOutOfRange(field));
 			}
 		}
@@ -338,6 +345,20 @@ impl Descriptor {
 	}
 }
 
+impl Serialize for Descriptor {
+	fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+		Descriptor::serialize(self, serializer)
+	}
+}
+
+impl<'de> Deserialize<'de> for Descriptor {
+	fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+		let document = serde_json::Value::deserialize(deserializer)?;
+		Self::from_json(document)
+			.map_err(|error| de::Error::custom(format!("{}: {error}", error.code())))
+	}
+}
+
 /// The `$v` member of a document.
 pub fn version_of(document: &serde_json::Value) -> Result<u64, Error> {
 	document
@@ -388,5 +409,18 @@ mod tests {
 		assert_eq!(one.content_hash(), reordered.content_hash());
 		let renamed = Descriptor { name: "B".into(), ..one.clone() };
 		assert_ne!(one.content_hash(), renamed.content_hash());
+	}
+
+	#[test]
+	fn deserialising_directly_applies_the_same_rules() {
+		let broken = format!(
+			r#"{{"$v":1,"sequence":1,"generation":"g","id":"a","name":"A","network":"n","tld":".dot","services":[],"chains":{RELAY}}}"#
+		);
+		let error = serde_json::from_str::<Descriptor>(&broken).unwrap_err();
+		assert!(error.to_string().starts_with("invalid-tld:"), "{error}");
+		let valid: Descriptor = serde_json::from_str(&broken.replace(".dot", "dot")).unwrap();
+		let round_trip: Descriptor =
+			serde_json::from_str(&serde_json::to_string(&valid).unwrap()).unwrap();
+		assert_eq!(round_trip, valid);
 	}
 }

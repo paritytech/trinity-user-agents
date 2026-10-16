@@ -2,6 +2,7 @@
 
 use crate::Error;
 use std::net::{Ipv4Addr, Ipv6Addr};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use url::{Host, Url};
 
 /// Decodes lowercase 0x-prefixed hex of exactly `N` bytes.
@@ -21,54 +22,15 @@ pub fn to_hex(bytes: &[u8]) -> String {
 	format!("0x{}", hex::encode(bytes))
 }
 
-/// Seconds since the Unix epoch of an RFC 3339 time in UTC ending in `Z`.
+/// Seconds since the Unix epoch of an RFC 3339 time in UTC ending in `Z`. RFC 3339 also allows a
+/// lowercase `t` or `z` and other offsets; the RFC narrows it to one spelling per instant.
 pub fn unix_seconds(value: &str) -> Result<i64, Error> {
 	let invalid = || Error::InvalidTime(value.to_owned());
-	let (date_time, rest) = value.split_at_checked(19).ok_or_else(invalid)?;
-	let fraction = rest.strip_suffix('Z').ok_or_else(invalid)?;
-	let fraction_valid = match fraction.strip_prefix('.') {
-		Some(digits) => !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()),
-		None => fraction.is_empty(),
-	};
-	if !fraction_valid {
+	if value.as_bytes().get(10) != Some(&b'T') || !value.ends_with('Z') {
 		return Err(invalid());
 	}
-	let bytes = date_time.as_bytes();
-	let separators = [(4, b'-'), (7, b'-'), (10, b'T'), (13, b':'), (16, b':')];
-	if separators.iter().any(|&(index, separator)| bytes[index] != separator) {
-		return Err(invalid());
-	}
-	let number = |range: core::ops::Range<usize>| -> Result<i64, Error> {
-		let digits = &date_time[range];
-		if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-			return Err(invalid());
-		}
-		digits.parse().map_err(|_| invalid())
-	};
-	let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
-	let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
-	let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-	let days_in_month = match month {
-		2 if leap => 29,
-		2 => 28,
-		4 | 6 | 9 | 11 => 30,
-		1..=12 => 31,
-		_ => return Err(invalid()),
-	};
-	if day < 1 || day > days_in_month || hour > 23 || minute > 59 || second > 60 {
-		return Err(invalid());
-	}
-	Ok(days_from_civil(year, month, day) * 86_400 + hour * 3_600 + minute * 60 + second)
-}
-
-/// Days since 1970-01-01 of a proleptic Gregorian date.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-	let year = if month <= 2 { year - 1 } else { year };
-	let era = year.div_euclid(400);
-	let year_of_era = year - era * 400;
-	let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
-	let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-	era * 146_097 + day_of_era - 719_468
+	let parsed = OffsetDateTime::parse(value, &Rfc3339).map_err(|_| invalid())?;
+	Ok(parsed.unix_timestamp())
 }
 
 /// Which schemes a URL may use where it appears.
@@ -154,7 +116,14 @@ mod tests {
 		assert_eq!(unix_seconds("1970-01-01T00:00:00Z"), Ok(0));
 		assert_eq!(unix_seconds("2026-09-17T16:15:00Z"), Ok(1_789_661_700));
 		assert_eq!(unix_seconds("2024-02-29T00:00:00.5Z"), Ok(1_709_164_800));
+		assert_eq!(
+			unix_seconds("2016-12-31T23:59:60Z"),
+			Ok(1_483_228_799),
+			"a leap second reads as the second before it"
+		);
 		for invalid in [
+			"2026-09-17t16:15:00Z",
+			"2026-09-17T16:15:00z",
 			"2026-09-17T16:15:00+00:00",
 			"2026-09-17 16:15:00Z",
 			"2026-02-29T00:00:00Z",

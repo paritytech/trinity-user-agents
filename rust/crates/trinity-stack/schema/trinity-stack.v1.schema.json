@@ -7,7 +7,7 @@
   "required": ["$v", "sequence", "generation", "id", "name", "network", "tld", "chains", "services"],
   "properties": {
     "$v": { "const": 1 },
-    "sequence": { "$ref": "#/$defs/integer" },
+    "sequence": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
     "generation": { "type": "string", "minLength": 1 },
     "id": { "type": "string" },
     "name": { "type": "string" },
