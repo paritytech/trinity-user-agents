@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Reference funding provider for Paseo Next v2: a simulated fiat leg in front of the real on-chain route to CASH",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "postinstall": "bash scripts/fetch-getcash.sh",
     "build": "npm run build:app && npm run build:worker",
