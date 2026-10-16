@@ -54,7 +54,10 @@ TRUAPI_IOS_E2E_DEVICE=<udid> TRUAPI_IOS_E2E_APP=<path>/polkadot-app.app node scr
    `confirm`, `toolbar`, `participants`, `participant`, `reactions`, `suggestion`, `type`, `attach`, `button`,
    `footer-action`, `older`, `jump`, `retry`, `retry-room`, `back`, `bottom`, and for P10 `room-mute <1h|8h|1w|always>`,
    `room-unmute`, `room-archive`, `room-unarchive` (the entries of the header menu), `search-open`, `chip`, `branch`,
-   `reasoning`, `delete <message>`, the call actions `call-button <audio|video>`, `call-answer <accept|decline>`,
+   `reasoning`, `delete <message>`, the message menu actions `reply <text> <message>`, `edit <text> <message>` and
+   `react <emoji> <message>` (a second `react` with the same emoji removes it), `dump` (the marker `dump` gives the
+   window as one JSON array: id, author, the name of the author, time, status, text, `replyTo` and the reaction
+   emoji), the call actions `call-button <audio|video>`, `call-answer <accept|decline>`,
    `call-open`, `call-end` and `call-timer`, and the staging actions `notice <accept|cancel>`, `notice-reset` and
    `outbox-clear`). The search
    screen of a room takes `search <text>`, `search-more` and `search-select <first|last|product id>`. The chat list
