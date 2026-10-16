@@ -14,7 +14,6 @@ dependencies {
     api(project(":feature:people:api"))
     api(project(":feature:members:api"))
     api(project(":feature:transactions:api"))
-    api(project(":feature:prices:api"))
 
     api(project(":bindings:bandersnatch-crypto"))
 

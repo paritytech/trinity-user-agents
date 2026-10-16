@@ -2,41 +2,29 @@ package io.paritytech.polkadotapp.feature_coinage_impl.domain.deposit
 
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.allAssets
-import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAsset
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.util.amountFromPlanks
-import io.paritytech.polkadotapp.chains.util.fullId
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
-import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.coerceToUnit
 import io.paritytech.polkadotapp.common.utils.filterResultSuccessNotNull
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.getDepositAccount
 import io.paritytech.polkadotapp.feature_balances_api.domain.model.TokenBalance
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.OnboardingUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.AutoConvertDepositService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.model.AutoConvertDeposit
-import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.model.DepositTerms
-import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.model.DepositTerms.ConversionRate
+import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.OnboardingUseCase
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.BalanceChangeTracker
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.FundsConverter
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.model.ConversionProgress
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.model.PossibleFundConversion
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.model.depositedAmount
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.model.expectedConvertedAmount
-import io.paritytech.polkadotapp.feature_prices_api.domain.GetPriceUseCase
-import io.paritytech.polkadotapp.feature_prices_api.domain.model.FiatAmount
-import io.paritytech.polkadotapp.feature_prices_api.domain.model.priceOf
-import io.paritytech.polkadotapp.feature_prices_api.domain.model.sumOfOrThrow
 import io.paritytech.polkadotapp.feature_swap_api.domain.model.SwapExecutionEstimate
-import io.paritytech.polkadotapp.feature_swap_api.domain.model.SwapFee
-import io.paritytech.polkadotapp.feature_swap_api.domain.model.swapRate
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transactions.api.domain.model.asSignerSource
-import io.paritytech.polkadotapp.feature_transactions.api.domain.model.decimalAmount
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filter
@@ -47,7 +35,6 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -59,11 +46,9 @@ internal class RealAutoConvertDepositService @Inject constructor(
     private val accountRepository: AccountRepository,
     private val chainRegistry: ChainRegistry,
     @param:DigitalDollarChainAssetProvider private val assetProvider: ChainAssetProvider,
-    private val coroutineDispatchers: CoroutineDispatchers,
-    private val getPriceUseCase: GetPriceUseCase,
     private val onboardingUseCase: OnboardingUseCase
 ) : AutoConvertDepositService {
-    override val currentDeposit = MutableStateFlow<AutoConvertDeposit?>(null)
+    private val currentDeposit = MutableStateFlow<AutoConvertDeposit?>(null)
 
     context(scope: ComputationalScope)
     override suspend fun startObserveAndConvert() {
@@ -129,51 +114,11 @@ internal class RealAutoConvertDepositService @Inject constructor(
         }
     }
 
-    context(scope: ComputationalScope)
-    override fun initiateDepositTermsWarmUp() {
-        fundsConverter.initiateConversionTermsWarmUp()
-    }
-
     private fun TokenBalance.stateSnapshot(): String {
         return buildString {
             append(token.chainId).append(":")
             append(token.id).append("")
             append(transferable)
-        }
-    }
-
-    context(scope: ComputationalScope)
-    override suspend fun depositTerms(chainAsset: Chain.Asset): Result<DepositTerms> {
-        val destinationAsset = assetProvider.asset()
-        val destinationChain = assetProvider.chain()
-
-        val depositAccount = accountRepository.getDepositAccount()
-        val walletAccountId = accountRepository.getDepositAccount().accountIdIn(destinationChain)
-
-        return fundsConverter.getConversionTerms(chainAsset, destinationAsset, depositAccount, walletAccountId)
-            .mapCatching {
-                DepositTerms(
-                    minDeposit = it.minDepositAmount,
-                    conversionRate = ConversionRate(
-                        from = chainAsset,
-                        to = destinationAsset,
-                        rate = it.midSizeDepositQuote.swapRate()
-                    ),
-                    estimatedFee = convertFeeToFiat(it.fee)
-                )
-            }
-    }
-
-    private suspend fun convertFeeToFiat(fee: SwapFee): FiatAmount {
-        return withContext(coroutineDispatchers.io) {
-            val basicFees = fee.feeComponents()
-            val chainAssets = basicFees.map { it.asset }
-            val priceLookup = getPriceUseCase.getPrices(chainAssets)
-
-            basicFees.sumOfOrThrow { basicFee ->
-                val price = priceLookup[basicFee.asset.fullId]
-                price.priceOf(basicFee.decimalAmount())
-            }
         }
     }
 
