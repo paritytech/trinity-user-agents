@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSess
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.SpaBrowserInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -51,7 +52,7 @@ class SpaBrowserViewModel @Inject constructor(
 ) : BaseViewModel(), SpaBrowserContract {
     val webView: StateFlow<WebView?> = productSessionController.webView
 
-    private val outdatedTabId = MutableStateFlow<Long?>(null)
+    private val newBuildPrompt = MutableStateFlow<NewBuildPrompt?>(null)
     private var outdatedTabCheck: Job? = null
 
     private val activeTabId: Flow<Long?> = productSessionController.openTabs
@@ -87,9 +88,9 @@ class SpaBrowserViewModel @Inject constructor(
     override val state: StateFlow<SpaBrowserUiState> = combine(
         productSessionController.activeTab,
         pageLoad,
-        outdatedTabId,
+        newBuildPrompt,
         activeTabId,
-    ) { info, load, outdatedTabId, activeTabId ->
+    ) { info, load, newBuildPrompt, activeTabId ->
         SpaBrowserUiState(
             title = info?.title,
             subtitle = info?.host,
@@ -97,7 +98,7 @@ class SpaBrowserViewModel @Inject constructor(
             pageState = load.toPageState(),
             isDevServer = info?.isDevServer == true,
             // A check answers for the tab it started on, which may no longer be the one on screen.
-            isNewBuildPromptShown = outdatedTabId != null && outdatedTabId == activeTabId,
+            newBuildPromptProduct = newBuildPrompt?.takeIf { it.tabId == activeTabId }?.productId?.value,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, SpaBrowserUiState())
 
@@ -143,20 +144,28 @@ class SpaBrowserViewModel @Inject constructor(
 
         outdatedTabCheck?.cancel()
         outdatedTabCheck = launch {
-            productSessionController.isTabOutdated(tabId)
+            productSessionController.productWithNewBuild(tabId)
                 .logFailure("failed to check tab $tabId for a new build")
-                .onSuccess { isOutdated -> outdatedTabId.value = tabId.takeIf { isOutdated } }
+                .onSuccess { productId ->
+                    newBuildPrompt.value = productId?.takeIf { asksBeforeNewBuild(it) }?.let { NewBuildPrompt(tabId, it) }
+                }
         }
     }
 
     override fun onReloadForNewBuildConfirmed() {
-        val tabId = outdatedTabId.value ?: return
-        outdatedTabId.value = null
-        productSessionController.reloadTab(tabId)
+        val prompt = newBuildPrompt.value ?: return
+        newBuildPrompt.value = null
+        productSessionController.reloadTab(prompt.tabId)
     }
 
     override fun onReloadForNewBuildDismissed() {
-        outdatedTabId.value = null
+        newBuildPrompt.value = null
+    }
+
+    // A built-in product updates like the app itself: on its next start, without asking.
+    private suspend fun asksBeforeNewBuild(productId: ProductId): Boolean {
+        val tld = dotNsTldProvider.getTld().getOrNull() ?: return false
+        return productId !in ReservedProductIds.all(tld)
     }
 
     private fun quitOnLastTabClosed() {
@@ -178,6 +187,8 @@ private sealed interface PageLoad {
     data class Serving(val resolved: ResolvedProduct, val progress: DotNsLoadProgress) : PageLoad
     data class Failed(val error: ProductResolutionError) : PageLoad
 }
+
+private data class NewBuildPrompt(val tabId: Long, val productId: ProductId)
 
 private fun PageLoad.toProgress(): DotNsLoadProgress = when (this) {
     PageLoad.NotAProduct -> DotNsLoadProgress.Idle

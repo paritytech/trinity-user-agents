@@ -49,10 +49,10 @@ interface ProductSessionController {
     fun ensureActiveLive()
 
     /**
-     * Whether the product in the tab with [id] has published a build other than the one its page shows. A sleeping
-     * tab is never outdated: it loads the latest build when it wakes up.
+     * The product in the tab with [id] when it has published a build other than the one its page shows, else null.
+     * A sleeping tab never has one: it loads the latest build when it wakes up.
      */
-    suspend fun isTabOutdated(id: Long): Result<Boolean>
+    suspend fun productWithNewBuild(id: Long): Result<ProductId?>
 
     /** Reload the page of the tab with [id], which picks up the product's latest build. */
     fun reloadTab(id: Long)

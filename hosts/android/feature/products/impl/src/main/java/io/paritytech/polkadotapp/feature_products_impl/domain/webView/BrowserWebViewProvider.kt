@@ -147,7 +147,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     }
 
     suspend fun reload() {
-        contentLoader.pickUpLatestOnNextDocument()
+        contentLoader.pickUpLatest()
         accessWebView { it.reload() }
     }
 

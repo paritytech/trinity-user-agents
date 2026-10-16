@@ -58,8 +58,10 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
         onRefresh = viewModel::onRefresh,
     )
 
-    if (state.isNewBuildPromptShown) {
+    val newBuildProduct = state.newBuildPromptProduct
+    if (newBuildProduct != null) {
         NewBuildDialog(
+            product = newBuildProduct,
             onReload = viewModel::onReloadForNewBuildConfirmed,
             onDismiss = viewModel::onReloadForNewBuildDismissed,
         )
@@ -68,12 +70,13 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
 
 @Composable
 private fun NewBuildDialog(
+    product: String,
     onReload: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     NovaAlertDialog(
-        title = stringResource(RCommon.string.spa_browser_new_build_title),
-        text = stringResource(RCommon.string.spa_browser_new_build_message),
+        title = stringResource(RCommon.string.spa_browser_new_build_title, product),
+        text = stringResource(RCommon.string.spa_browser_new_build_message, product),
         positiveButtonTitle = stringResource(RCommon.string.spa_browser_new_build_reload),
         onPositiveButtonClick = onReload,
         negativeButtonTitle = stringResource(RCommon.string.spa_browser_new_build_later),

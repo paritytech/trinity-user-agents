@@ -22,7 +22,3 @@ interface DotNsResolver {
 suspend fun DotNsResolver.resolveToLocalFile(dotNsName: String): Result<File> {
     return resolveToLocalUri(dotNsName).map { File(it.path!!) }
 }
-
-suspend fun DotNsResolver.resolveLatestToLocalFile(dotNsName: String): Result<File> {
-    return resolveLatestToLocalUri(dotNsName).map { File(it.path!!) }
-}
