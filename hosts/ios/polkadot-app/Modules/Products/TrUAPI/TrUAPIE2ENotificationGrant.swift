@@ -12,6 +12,16 @@ enum TrUAPIE2ENotificationGrant {
             false
         #endif
     }()
+
+    /// The harness also gave the app the OS permission (`TRUAPI_IOS_E2E_OS_NOTIFICATIONS=1`, A1), so a notification
+    /// goes to the OS and shows. Off outside a simulator build.
+    static let osPermissionGranted: Bool = {
+        #if targetEnvironment(simulator)
+            ProcessInfo.processInfo.environment["TRUAPI_IOS_E2E_OS_NOTIFICATIONS"] == "1"
+        #else
+            false
+        #endif
+    }()
 }
 
 extension HostDevicePermissionRequest {

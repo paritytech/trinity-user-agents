@@ -33,6 +33,11 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
     @discardableResult
     func wake(_ productId: ProductId, reason: ChatWakeReason) async -> ChatWakeOutcome?
 
+    /// Gives a wake push of the push relay to the core, which wakes each product that watches its topic. For each
+    /// product that the core holds, a UIKit background task keeps the app active until the end of the hold
+    /// (VERBOSITY-WASM-PRODUCT A1). It throws when the core refuses the push.
+    func receiveWakePush(payload: String) async throws -> [PushWakeDelivery]
+
     /// Declares that the worker of the product runs while the app is in the foreground (VERBOSITY-WASM-PRODUCT I5).
     /// The core holds the worker while the host reports the app in the foreground. Pair each call with one
     /// ``withdrawForegroundWorker(for:)``.
@@ -192,6 +197,23 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         await backgroundTasks.hold(productId: productId, until: deadline)
         logger.debug("[truapi] \(productId) woken for \(reason.logName) until \(untilMs)")
         return outcome
+    }
+
+    nonisolated func receiveWakePush(payload: String) async throws -> [PushWakeDelivery] {
+        let deliveries = try await references().handleWakePush(payload: payload)
+        for delivery in deliveries {
+            let productId = delivery.productId
+            guard case let .held(untilMs) = delivery.outcome else {
+                logger.info("[truapi] wake push for \(productId) on watch \(delivery.watchId): \(delivery.outcome)")
+                continue
+            }
+
+            await restartIfFaulted(productId)
+            let deadline = Date(timeIntervalSince1970: TimeInterval(untilMs) / 1_000)
+            await backgroundTasks.hold(productId: productId, until: deadline)
+            logger.info("[truapi] \(productId) woken by a push on watch \(delivery.watchId) until \(untilMs)")
+        }
+        return deliveries
     }
 
     nonisolated func declareForegroundWorker(for productId: ProductId) {

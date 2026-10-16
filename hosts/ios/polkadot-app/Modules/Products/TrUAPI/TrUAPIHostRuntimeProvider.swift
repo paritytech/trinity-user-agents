@@ -190,6 +190,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             }
         )
         try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
+        installWakeRelay(on: runtime)
 
         cachedRuntime = runtime
         // The core starts in the background. The report runs on its own queue after this lock.
@@ -262,5 +263,23 @@ extension TrUAPIHostRuntimeProvider {
         values.isExcludedFromBackup = true
         try directory.setResourceValues(values)
         return directory.path
+    }
+}
+
+private extension TrUAPIHostRuntimeProvider {
+    /// Gives the core the push relay client, where this build has a relay (VERBOSITY-WASM-PRODUCT A1). The core then
+    /// registers the stored wake topics of every product.
+    func installWakeRelay(on runtime: TrUAPIHostRuntime) {
+        guard let relay = TrUAPIWakeRelayClient.configured() else { return }
+
+        let logger = logger
+        Task {
+            do {
+                try await runtime.setWakeRelay(relay)
+                logger.info("[truapi] wake relay installed")
+            } catch {
+                logger.warning("[truapi] the wake relay refused the stored topics: \(error)")
+            }
+        }
     }
 }
