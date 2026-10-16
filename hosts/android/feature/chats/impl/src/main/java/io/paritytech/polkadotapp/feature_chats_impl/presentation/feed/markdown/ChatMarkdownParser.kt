@@ -3,7 +3,8 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.markdown
 /**
  * The Markdown subset of product rich text (02-DESIGN §6.1): paragraphs, bold, italic, inline code, fenced
  * code, ordered and unordered lists, block quotes and `https` links. A heading shows as a bold paragraph.
- * Raw HTML, images, tables and other links show as their text only.
+ * Raw HTML, images, tables and other links show as their text only. A line ending inside a paragraph shows as a
+ * line break, as in a chat message.
  */
 internal sealed interface MarkdownBlock {
     data class Paragraph(val inlines: List<MarkdownInline>) : MarkdownBlock
@@ -129,7 +130,10 @@ internal object ChatMarkdownParser {
         return "$number."
     }
 
-    /** The lines of one block. A line that ends with two spaces or a backslash breaks the line. */
+    /**
+     * The lines of one block. Each line ending breaks the line: CommonMark lets a soft line break show as a line
+     * break, and a chat message keeps the lines that its writer typed.
+     */
     private fun parseInlines(lines: List<String>): List<MarkdownInline> {
         val result = mutableListOf<MarkdownInline>()
 
@@ -141,7 +145,7 @@ internal object ChatMarkdownParser {
             result += InlineParser(htmlTagRegex.replace(line, "")).parse()
 
             if (!isLast) {
-                result += if (hardBreak) MarkdownInline.LineBreak else MarkdownInline.Text(" ")
+                result += MarkdownInline.LineBreak
             }
         }
 

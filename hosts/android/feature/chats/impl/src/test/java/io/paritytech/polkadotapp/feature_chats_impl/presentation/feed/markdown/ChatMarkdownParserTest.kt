@@ -27,9 +27,12 @@ class ChatMarkdownParserTest {
     }
 
     @Test
-    fun `a blank line separates paragraphs and a single line break is a space`() {
+    fun `a blank line separates paragraphs and a single line break breaks the line`() {
         assertEquals(
-            listOf(Paragraph(listOf(Text("one two"))), Paragraph(listOf(Text("three")))),
+            listOf(
+                Paragraph(listOf(Text("one"), MarkdownInline.LineBreak, Text("two"))),
+                Paragraph(listOf(Text("three"))),
+            ),
             parse("one\ntwo\n\nthree"),
         )
     }
@@ -134,7 +137,10 @@ class ChatMarkdownParserTest {
 
     @Test
     fun `a block quote holds blocks`() {
-        assertEquals(listOf(Quote(listOf(Paragraph(listOf(Text("quoted text")))))), parse("> quoted\n> text"))
+        assertEquals(
+            listOf(Quote(listOf(Paragraph(listOf(Text("quoted"), MarkdownInline.LineBreak, Text("text")))))),
+            parse("> quoted\n> text"),
+        )
     }
 
     @Test
