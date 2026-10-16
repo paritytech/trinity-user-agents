@@ -10,6 +10,8 @@ enum PushNotificationKeys {
     static let chatExtensionId = "chatExtensionId"
     static let deeplink = "deeplink"
     static let blockedContact = "blockedContact"
+    /// The product that sent a product notification.
+    static let productId = "productId"
 }
 
 enum PushNotificationSource: Int, Equatable {

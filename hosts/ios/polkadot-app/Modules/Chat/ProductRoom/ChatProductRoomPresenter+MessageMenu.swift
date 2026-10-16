@@ -12,6 +12,13 @@ extension ChatProductRoomPresenter {
         policy?.productQueries.contains(.messageActions) == true
     }
 
+    /// True when the host keeps the earlier versions of an edited message, so the host entry "View edit history" can
+    /// show them. The host keeps no message of a product-source room, so that room has no such entry: its product can
+    /// add an entry of its own.
+    var offersHostEditHistory: Bool {
+        policy?.messageStore != .product
+    }
+
     /// The menu that the product answers for a message, or nil for the host default: the room does not ask, the
     /// product refuses, or the answer does not come in the lookup time.
     func messageMenu(for messageId: Chat.MessageId) async -> Chat.ProductMessageMenu? {

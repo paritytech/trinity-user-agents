@@ -450,8 +450,11 @@ extension ChatInteractor {
         switch chatId {
         case let .person(accountId):
             foregroundVisibilityReporter.updateVisibleScreen(.chat(accountId: accountId))
-        case let .chatExtension(chatExtensionId, _):
-            foregroundVisibilityReporter.updateVisibleScreen(.chatExtension(extensionId: chatExtensionId))
+        case let .chatExtension(chatExtensionId, roomId):
+            foregroundVisibilityReporter.updateVisibleScreen(.chatExtension(
+                extensionId: chatExtensionId,
+                roomId: roomId
+            ))
         }
     }
 }

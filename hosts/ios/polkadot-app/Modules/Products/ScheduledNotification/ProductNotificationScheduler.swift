@@ -1,3 +1,4 @@
+import CoreData
 import Foundation
 import Operation_iOS
 import Products
@@ -23,6 +24,7 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
     private let notificationCenter: UNUserNotificationCenter
     private let mapper: AnyCoreDataMapper<ScheduledNotificationEntry, CDScheduledNotification>
     private let userStates: ChatRoomUserStateReading
+    private let roomNames: ChatRoomNameReading
     private let notificationAdding: (UNNotificationRequest) async throws -> Void
     private let logger: LoggerProtocol
 
@@ -30,6 +32,7 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
         notificationCenter: UNUserNotificationCenter = .current(),
         userStates: ChatRoomUserStateReading? = nil,
+        roomNames: ChatRoomNameReading? = nil,
         notificationAdding: ((UNNotificationRequest) async throws -> Void)? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -37,6 +40,7 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
         self.notificationCenter = notificationCenter
         mapper = AnyCoreDataMapper(ScheduledNotificationMapper())
         self.userStates = userStates ?? ChatRoomUserStateReader(storageFacade: storageFacade)
+        self.roomNames = roomNames ?? ChatRoomNameReader(storageFacade: storageFacade)
         self.notificationAdding = notificationAdding ?? Self.systemAdding(notificationCenter, logger: logger)
         self.logger = logger
     }
@@ -65,12 +69,13 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
         )
 
         let content = UNMutableNotificationContent()
-        content.title = productId
+        content.title = await title(productId: productId, request: request)
         content.body = request.text
         content.sound = .default
 
         var userInfo: [String: Any] = [
-            PushNotificationKeys.pushSource: PushNotificationSource.products.rawValue
+            PushNotificationKeys.pushSource: PushNotificationSource.products.rawValue,
+            PushNotificationKeys.productId: productId
         ]
 
         if let deeplink = request.deeplink {
@@ -163,6 +168,28 @@ private extension ProductNotificationScheduler {
         }
     }
 
+    /// The name of the room that the notification opens, as a person chat notification shows the name of the
+    /// person. A notification that opens no known room of the product shows the product id.
+    func title(productId: ProductId, request: ScheduledNotificationRequest) async -> String {
+        guard
+            let deeplink = request.deeplink,
+            let link = ChatRoomLink(deeplink),
+            link.productId == productId
+        else {
+            return productId
+        }
+
+        do {
+            guard let name = try await roomNames.name(of: link.chatId), !name.isEmpty else {
+                return productId
+            }
+            return name
+        } catch {
+            logger.warning("Notification of \(productId) shows the product id: the room name is not readable: \(error)")
+            return productId
+        }
+    }
+
     func createRepository() -> AnyDataProviderRepository<ScheduledNotificationEntry> {
         AnyDataProviderRepository(
             storageFacade.createRepository(
@@ -247,5 +274,28 @@ private extension ProductNotificationScheduler {
 
         let deltaSeconds = TimeInterval(scheduledAtMs - nowMs).seconds
         return UNTimeIntervalNotificationTrigger(timeInterval: deltaSeconds, repeats: false)
+    }
+}
+
+/// Reads the name that a product gave its room.
+protocol ChatRoomNameReading: Sendable {
+    /// The name of the room, or nil when the app does not store the room or the room has no name.
+    func name(of chatId: Chat.Id) async throws -> String?
+}
+
+/// Reads the room name from `CDChatRoomMetadata`.
+struct ChatRoomNameReader: ChatRoomNameReading {
+    let storageFacade: StorageFacadeProtocol
+
+    func name(of chatId: Chat.Id) async throws -> String? {
+        let predicate = NSPredicate.chat(for: chatId.rawRepresentation)
+
+        return try await storageFacade.databaseService.performRead { context in
+            let request: NSFetchRequest<CDChat> = CDChat.fetchRequest()
+            request.predicate = predicate
+            request.fetchLimit = 1
+
+            return try context.fetch(request).first?.roomMetadata?.name
+        }
     }
 }

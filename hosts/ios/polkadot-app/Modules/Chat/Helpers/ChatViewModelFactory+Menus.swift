@@ -53,7 +53,11 @@ extension ChatViewModelFactory {
             case .edit: UIAction.chatEdit { actions.edit(messageId) }
             case .copy: UIAction.chatCopy { actions.copy(content.text) }
             case .reaction: nil
-            case .edited: UIAction.chatEditHistory { actions.showEditHistory(messageId) }
+            case .edited:
+                // A product-source room has no host copy of the earlier versions.
+                productRoom?.offersHostEditHistory == false
+                    ? nil
+                    : UIAction.chatEditHistory { actions.showEditHistory(messageId) }
             case .retry: UIAction.chatRetry { actions.retry(messageId) }
             case .delete: UIAction.chatDelete { actions.delete(messageId) }
             case .product: nil
