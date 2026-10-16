@@ -211,6 +211,13 @@ extension ChatProductRoomPresenter {
                     if message.hasMarkdownText {
                         row["markdown"] = true
                     }
+                    // The media of the message: the type and the size of each inline item, so that the harness
+                    // sees a preview change into the file.
+                    if case let .productBody(.richText(richText)) = message.content, !richText.media.isEmpty {
+                        row["media"] = richText.media.map { source in
+                            InlineDataURL(source).map { "\($0.mimeType) \($0.data.count)" } ?? "ref"
+                        }
+                    }
                     return row
                 }
             let data = (try? JSONSerialization.data(withJSONObject: rows, options: [.sortedKeys])) ?? Data()
