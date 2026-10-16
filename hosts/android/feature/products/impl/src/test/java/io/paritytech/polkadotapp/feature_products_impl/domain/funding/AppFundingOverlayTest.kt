@@ -103,6 +103,7 @@ class AppFundingOverlayTest {
         refunded = null,
         status = FundingStatus.WaitingForPayment,
         longerAtMs = null,
+        moneyMoved = false,
     )
 
     private fun session(rail: FundingRail, stage: FundingStage) = FundingSession(

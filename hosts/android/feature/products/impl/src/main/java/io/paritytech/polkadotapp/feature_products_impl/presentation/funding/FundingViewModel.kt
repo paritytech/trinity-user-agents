@@ -20,7 +20,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingPro
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.applying
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.failure
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.moneyMoved
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
@@ -61,8 +60,6 @@ data class FundingStartState(
     val isCancelling: Boolean = false,
     /** The user's cancel as the core holds it, once money has moved and the provider decides it. */
     val cancel: FundingCancel? = null,
-    /** Money moved for the session, so only the provider can end it; before, a second cancel ends it. */
-    val moneyMoved: Boolean = false,
 )
 
 @HiltViewModel
@@ -337,8 +334,6 @@ class FundingViewModel @Inject constructor(
         progress.value = interactor.progress(intent)
         val session = interactor.session(intent)
         followCancel(session?.cancel)
-        val moneyMoved = session?.moneyMoved == true
-        if (moneyMoved != start.value.moneyMoved) start.update { it.copy(moneyMoved = moneyMoved) }
         val stage = session?.stage
         val failure = stage?.failure?.toReason()
         if (failure != start.value.failure) start.update { it.copy(failure = failure) }

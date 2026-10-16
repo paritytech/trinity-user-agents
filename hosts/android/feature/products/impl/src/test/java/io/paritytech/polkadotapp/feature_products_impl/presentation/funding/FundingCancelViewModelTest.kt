@@ -41,7 +41,8 @@ import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingStage
-import uniffi.truapi.StartedFunds
+import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingStatus
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /** A started session the user cancels from its deposit screen, whatever the core and the provider then answer. */
@@ -69,7 +70,7 @@ class FundingCancelViewModelTest {
         coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
         coEvery { amountLimits("intent", any(), any(), any(), any(), any()) } returns FundingLimits(null, null)
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg(), null) }
-        coEvery { progress("intent") } returns null
+        coEvery { progress("intent") } answers { progress() }
         coEvery { session("intent") } answers { session() }
     }
 
@@ -281,11 +282,22 @@ class FundingCancelViewModelTest {
         every { choice } returns null
         every { providerId } returns null
         every { cancel } answers { this@FundingCancelViewModelTest.cancel }
-        every { updates } returns emptyList()
-        every { started } answers {
-            if (moneyMoved) listOf(mockk<StartedFunds>(relaxed = true)) else emptyList()
-        }
     }
+
+    private fun progress() = FundingProgress(
+        steps = emptyList(),
+        failedAtMs = null,
+        transactionId = null,
+        reference = null,
+        deposit = null,
+        mismatch = null,
+        retrying = false,
+        payout = null,
+        refunded = null,
+        status = FundingStatus.WaitingForPayment,
+        longerAtMs = null,
+        moneyMoved = moneyMoved,
+    )
 
     private fun TestScope.resumed(): FundingViewModel {
         val model = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true))

@@ -200,6 +200,7 @@ class FundingActivityCenterTest {
         refunded = refunded,
         status = status,
         longerAtMs = longerAtMs,
+        moneyMoved = false,
     )
 
     private fun session(

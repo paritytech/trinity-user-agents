@@ -234,6 +234,7 @@ data class FundingDepositUiState(
     val failed: Boolean,
     val isCancelling: Boolean,
     val cancel: FundingCancelUiState?,
+    /** The core's `FundingProgress.moneyMoved`: only the provider can end the session; before, a second cancel ends it. */
     val moneyMoved: Boolean,
     val content: FundingDepositContent,
 ) {
