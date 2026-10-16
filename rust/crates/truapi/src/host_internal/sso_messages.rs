@@ -579,6 +579,8 @@ pub enum SsoSessionStatement {
 /// A response with a readable foreign correlation id is ignored before its
 /// payload is decoded. Authentication and statement acknowledgements remain
 /// independent of message correlation; `None` decodes every message.
+/// A correlated waiter ignores unreadable unrelated messages but retains errors
+/// from matching replies in wire order.
 pub fn decode_sso_session_statement(
     session: &SsoSessionInfo,
     statement: &[u8],
@@ -644,23 +646,34 @@ fn decode_session_remote_message(
     message: &[u8],
     expected_remote_message_id: Option<&str>,
 ) -> Result<Option<v1::RemoteMessage>, String> {
-    let mut input = message;
-    // The outer id identifies this message, not the request it answers.
-    decode_correlation_id(&mut input)?;
-    if let (Some(expected), [0, index, response @ ..]) = (expected_remote_message_id, input)
-        && v1::RemoteMessage::is_response_index(*index)
-    {
-        let mut header = response;
-        if decode_correlation_id(&mut header)? != expected {
-            return Ok(None);
+    let mut correlated = false;
+    let decoded = (|| {
+        let mut input = message;
+        // The outer id identifies this message, not the request it answers.
+        decode_correlation_id(&mut input)?;
+        if let (Some(expected), [0, index, response @ ..]) = (expected_remote_message_id, input)
+            && v1::RemoteMessage::is_response_index(*index)
+        {
+            let mut header = response;
+            if decode_correlation_id(&mut header)? != expected {
+                return Ok(None);
+            }
+            correlated = true;
         }
+        let RemoteMessageData::V1(decoded) = RemoteMessageData::decode(&mut input)
+            .map_err(|error| format!("invalid SSO remote message: {error}"))?;
+        if !input.is_empty() {
+            return Err("invalid SSO remote message: trailing bytes".to_string());
+        }
+        Ok(Some(decoded))
+    })();
+    match decoded {
+        Err(error) if expected_remote_message_id.is_some() && !correlated => {
+            tracing::debug!(%error, "skipping uncorrelated undecodable SSO remote message");
+            Ok(None)
+        }
+        result => result,
     }
-    let RemoteMessageData::V1(decoded) = RemoteMessageData::decode(&mut input)
-        .map_err(|error| format!("invalid SSO remote message: {error}"))?;
-    if !input.is_empty() {
-        return Err("invalid SSO remote message: trailing bytes".to_string());
-    }
-    Ok(Some(decoded))
 }
 
 fn classify_response_ack(
