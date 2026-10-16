@@ -130,6 +130,9 @@ impl FundingQuotes {
 impl RuntimeServices {
 	/// Ask every funding provider to price `ask` for session `intent`. Each
 	/// provider's row is first `Pending`, then `Quoted` or `Unavailable`. The
+	/// stream ends once every provider has answered or run out of time, and
+	/// never errors. Dropping it withdraws the asks still open and lets the
+	/// providers' workers go. The
 	/// ask's direction is the session's. Empty for a session the core does
 	/// not know or that ended.
 	pub fn get_funding_quote(
