@@ -21,12 +21,10 @@ struct PocketFaceConformanceTests {
         let face = try parseRendererNodeJson(json: faceText(name))
         let drawn = try #require(face.toWidgetNode(resolver: WidgetDesignTokenResolver()))
 
-        // Drawn to pixels, not just mapped: these faces build their surface out
-        // of nodes sized only by their own modifiers, which map to a full tree
-        // and can still reach the screen unpainted, leaving the backdrop, or as
-        // one flat fill. The surface is bars that touch, so it is most of the
-        // card, with the face's details on top.
-        let colours = try WidgetNodeRaster.colours(of: drawn, in: cardSize)
+        // Drawn to pixels, not just mapped: a tree can map in full and still
+        // reach the screen unpainted or as one flat fill. The surface is bars
+        // that touch, so it covers most of the card.
+        let colours = try WidgetNodeRaster.colours(of: drawn, in: PocketCardSize.testFrame)
         let largest = try #require(colours.max { $0.value < $1.value })
         let share = Double(largest.value) / Double(colours.values.reduce(0, +))
 
@@ -42,10 +40,6 @@ struct PocketFaceConformanceTests {
         let bytes = try faceData("candidate").count
 
         #expect(bytes < PocketPreviewLoader.maxBytes / 2)
-    }
-
-    private var cardSize: CGSize {
-        CGSize(width: 345, height: PocketCardSize.height)
     }
 
     private func faceData(_ name: String) throws -> Data {

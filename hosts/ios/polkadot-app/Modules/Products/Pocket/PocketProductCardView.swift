@@ -1,3 +1,4 @@
+import DesignSystem
 import PolkadotUI
 import SwiftUI
 
@@ -51,5 +52,10 @@ struct PocketProductCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: PocketCardSize.cornerRadius))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
+        // The Pocket RFC promises products Berlin Night whatever theme the
+        // user picked. It is a dark theme, and text fields and spinners follow
+        // dark mode rather than the theme.
+        .environment(\.appTheme, .berlinNight)
+        .environment(\.colorScheme, .dark)
     }
 }
