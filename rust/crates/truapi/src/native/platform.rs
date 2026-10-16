@@ -182,27 +182,6 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
             .await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
-}
-
-/// [`crate::platform::ScannerPlatform`] served by host-provided
-/// [`NativeScannerCallbacks`]; constructed only when the host passed one.
-pub struct ScannerCallbackPlatform {
-	/// Host viewfinder.
-	pub scanner: Arc<dyn NativeScannerCallbacks>,
-}
-
-#[async_trait]
-impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
-	async fn scan_code(
-		&self,
-		product: &ProductContext,
-		request: &truapi::latest::HostScannerScanRequest,
-	) -> Result<crate::platform::HostScan, v01::GenericError> {
-		self.scanner
-			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
-			.await
-			.map_err(|error| v01::GenericError { reason: error.to_string() })
-    }
 
     async fn pick_contacts(
         &self,
@@ -226,6 +205,27 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
             .place_contact_labels(product.product_id.clone(), placed)
             .await
             .map(|()| true)
+    }
+}
+
+/// [`crate::platform::ScannerPlatform`] served by host-provided
+/// [`NativeScannerCallbacks`]; constructed only when the host passed one.
+pub struct ScannerCallbackPlatform {
+	/// Host viewfinder.
+	pub scanner: Arc<dyn NativeScannerCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
+	async fn scan_code(
+		&self,
+		product: &ProductContext,
+		request: &truapi::latest::HostScannerScanRequest,
+	) -> Result<crate::platform::HostScan, v01::GenericError> {
+		self.scanner
+			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
     }
 }
 
