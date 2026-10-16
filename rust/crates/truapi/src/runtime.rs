@@ -362,6 +362,14 @@ impl ProductConnection {
 		self.renderer.published_within(USER_TAP_WINDOW_SECS)
 	}
 
+	/// Whether the user pressed something the host drew for the product
+	/// within the last [`USER_TAP_WINDOW_SECS`]: a renderer action, or a
+	/// button, menu entry, quick reply or command of one of its rooms. A
+	/// Worker may open the share sheet only shortly after one.
+	pub fn recently_pressed(&self) -> bool {
+		self.recently_tapped() || self.chat.pressed_within(USER_TAP_WINDOW_SECS)
+	}
+
 	/// Role-neutral services shared with the owning host runtime.
 	pub fn services(&self) -> &Arc<RuntimeServices> {
 		&self.services

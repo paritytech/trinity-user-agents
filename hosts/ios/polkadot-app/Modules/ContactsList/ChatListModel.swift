@@ -25,8 +25,9 @@ enum ChatListScope: Equatable {
 }
 
 /// What the search field of the chat list found (07-LATER §8.2, D29): the chats whose name holds the text, and
-/// the newest stored messages that hold it. A product-source room matches by its name only, so the search never
-/// asks a product and never starts a worker.
+/// the newest messages that hold it. The host store gives the messages of the rooms that it stores. A product-source
+/// room that declares `search` gives its hits when its worker runs now, so the search never starts a worker
+/// (VERBOSITY-WASM-PRODUCT C11).
 struct ChatListSearchResults {
     let query: String
     let chats: [ChatWithPeerMetadata]

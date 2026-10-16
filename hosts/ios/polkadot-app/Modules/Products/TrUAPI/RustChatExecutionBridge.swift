@@ -9,6 +9,7 @@ import TrUAPIHost
 final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge, @unchecked Sendable {
     private let chatMessaging: any ProductChatMessaging
     private let feedListeners: ProductFeedListeners
+    private let pageCache: ProductMessageCaching
     private let preparingMessages: ChatPreparingMessageTracking
     // The base class keeps `dependencies` private; hold on to what this bridge reads here.
     private let productId: ProductId
@@ -18,10 +19,12 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         dependencies: Dependencies,
         chatMessaging: any ProductChatMessaging,
         feedListeners: ProductFeedListeners = .shared,
+        pageCache: ProductMessageCaching = ProductMessageCache.shared,
         preparingMessages: ChatPreparingMessageTracking = ChatPreparingMessageStore.shared
     ) {
         self.chatMessaging = chatMessaging
         self.feedListeners = feedListeners
+        self.pageCache = pageCache
         self.preparingMessages = preparingMessages
         productId = dependencies.productId
         logger = dependencies.logger
@@ -137,8 +140,9 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     }
 
     /// The core reads the configuration of the room and sets `persist` for a room that the host stores. For a
-    /// room that the product keeps, only an open room screen takes the update. The bridge also records which
-    /// messages are `Preparing`, for the reasoning rows.
+    /// room that the product keeps, an open room screen takes the update. When no screen shows the room, the update
+    /// changes the cached page, so the next open shows the change before the newest page arrives (02-DESIGN §5.3).
+    /// The bridge also records which messages are `Preparing`, for the reasoning rows.
     func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
         guard let roomId = roomId.nilIfEmpty else {
             throw NativeChatFeedRejection.Rejected(reason: "a chat room needs an id")
@@ -150,7 +154,8 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         guard persist else {
             preparingMessages.record(localUpdate, isPreparing: update.isNewAndPreparing, chatId: chatId)
             if await !feedListeners.deliver(update, roomId: roomId, to: chatId) {
-                logger.debug("[truapi:chat-bridge] updateFeed \(roomId): no open room takes it")
+                await pageCache.apply(update, productId: productId, roomId: roomId)
+                logger.debug("[truapi:chat-bridge] updateFeed \(roomId): no open room, the cached page takes it")
             }
             return
         }

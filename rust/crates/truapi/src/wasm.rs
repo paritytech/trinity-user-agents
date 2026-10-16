@@ -1895,6 +1895,31 @@ impl WasmProductRuntime {
 		Ok(observe_chat_query(query, on_answer, on_complete, on_error))
 	}
 
+	/// Give the product the payload of a room link the user opened. `request` is a
+	/// SCALE-encoded `ProductChatOpenLinkRequest`. Exactly one callback follows: `onAnswer`
+	/// with the SCALE-encoded item, `onError` with the SCALE-encoded `CallError` of the query,
+	/// or `onComplete` when the product ended the query without an answer.
+	#[wasm_bindgen(js_name = chatOpenLink)]
+	pub fn chat_open_link(
+		&self,
+		request: Vec<u8>,
+		on_answer: Function,
+		on_complete: Function,
+		on_error: Function,
+	) -> Result<WasmChatQuery, JsValue> {
+		let request = truapi::latest::ProductChatOpenLinkRequest::decode(&mut request.as_slice())
+			.map_err(|err| {
+			JsValue::from_str(&format!("chatOpenLink request did not decode: {err}"))
+		})?;
+		let query = self
+			.inner
+			.core
+			.control()
+			.chat_open_link(request)
+			.map_err(|err| JsValue::from_str(&err.to_string()))?;
+		Ok(observe_chat_query(query, on_answer, on_complete, on_error))
+	}
+
 	/// Send one event about a room to the product, or keep it until the product subscribes to
 	/// `roomEventsSubscribe`. Takes a SCALE-encoded `HostChatRoomEventsSubscribeItem`.
 	#[wasm_bindgen(js_name = publishChatRoomEvent)]

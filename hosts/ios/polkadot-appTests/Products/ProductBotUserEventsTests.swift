@@ -26,6 +26,18 @@ struct ProductBotUserEventsTests {
         #expect(runtime.triggers == [.init(roomId: "lobby", messageId: "msg-1", actionId: "yes")])
     }
 
+    /// A product-source room keeps no message in the store: the press names the room of the screen.
+    @Test func aButtonPressOfAProductSourceRoomGoesWithTheRoomOfTheScreen() async {
+        let bot = makeBot()
+
+        await bot.process(
+            action: .productButton(messageId: "n1", actionId: "mark-verified"),
+            context: ScreenContext(chatId: .chatExtension("dim2.paseo", roomId: "dm-2"))
+        )
+
+        #expect(runtime.triggers == [.init(roomId: "dm-2", messageId: "n1", actionId: "mark-verified")])
+    }
+
     @Test func aDeclaredCommandGoesToTheRuntime() async {
         let bot = makeBot(commands: ["help"])
         runtime.takesCommands = true
@@ -69,6 +81,14 @@ struct ProductBotUserEventsTests {
             resolveImage: WidgetImageResolver { _ in nil },
             rooms: StubProductRooms(declarations: declarations)
         )
+    }
+}
+
+private struct ScreenContext: ChatExtensionActionContextProtocol {
+    let chatId: Chat.Id?
+
+    func getMessage(messageId _: Chat.MessageId) async throws -> Chat.LocalMessage? {
+        nil
     }
 }
 

@@ -200,6 +200,24 @@ extension ProductBot: ProductChatSearching {
     }
 }
 
+extension ProductBot: ProductChatListSearching {
+    func searchPageIfRunning(_ request: ProductChatSearchQueryRequest) async throws -> ProductChatSearchQueryItem? {
+        guard let searching = runtime as? ProductChatListSearching else {
+            return nil
+        }
+        return try await searching.searchPageIfRunning(request)
+    }
+}
+
+extension ProductBot: ProductChatLinkTaking {
+    func openLink(_ request: ProductChatOpenLinkRequest) async throws -> ProductChatOpenLinkItem {
+        guard let taking = runtime as? ProductChatLinkTaking else {
+            throw ChatQueryError.refused(.notAvailable)
+        }
+        return try await taking.openLink(request)
+    }
+}
+
 extension ProductBot: ChatRoomLifecycle {
     /// A runtime without room lifecycle, the native one, holds its worker for the whole session.
     func open(roomId: String) async throws {
@@ -372,9 +390,10 @@ extension ProductBot: ChatExtensionBotProtocol {
                 payload: payload as? String
             )
         case let .productButton(messageId, actionId):
+            // A message of a product-source room is not in the store: the room of the screen names it.
             let message = await (try? context.getMessage(messageId: messageId))
             await runtime.dispatchActionTrigger(
-                roomId: message?.chatId.roomId,
+                roomId: message?.chatId.roomId ?? context.chatId?.roomId,
                 messageId: messageId,
                 actionId: actionId
             )

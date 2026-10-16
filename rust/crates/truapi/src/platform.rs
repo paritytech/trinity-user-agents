@@ -55,14 +55,14 @@ use truapi::{
 		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
 		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
 		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
-		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
+		HostShareRequest, HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest,
+		HostSignRawRequest, HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		ProductAccountId, ProductAccountTxPayload, ProductChatMessagesQueryItem,
-		ProductChatMessagesQueryRequest, ProductChatParticipantsQueryItem,
-		ProductChatParticipantsQueryRequest, ProductChatReactionsQueryItem,
-		ProductChatSearchQueryItem, ProductChatSearchQueryRequest, ProductProofContext,
-		RemotePermission, RemotePermissionRequest, RingLocation,
+		ProductChatMessagesQueryRequest, ProductChatOpenLinkItem, ProductChatOpenLinkRequest,
+		ProductChatParticipantsQueryItem, ProductChatParticipantsQueryRequest,
+		ProductChatReactionsQueryItem, ProductChatSearchQueryItem, ProductChatSearchQueryRequest,
+		ProductProofContext, RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -885,7 +885,7 @@ pub const CHAT_PERSONA_PREFIX: &str = "bot:";
 /// The Chat feature names of the Chat Extension v2 additions RFC, in the
 /// order the core lists them. A host lists a name only when it serves that
 /// feature from end to end.
-pub const CHAT_FEATURE_NAMES: [&str; 25] = [
+pub const CHAT_FEATURE_NAMES: [&str; 26] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -911,6 +911,7 @@ pub const CHAT_FEATURE_NAMES: [&str; 25] = [
 	"wake",
 	"call_buttons",
 	"room_calls",
+	"room_link_payloads",
 ];
 
 /// The bot id of a persona participant id `bot:<bot_id>`, or `None` for
@@ -1072,6 +1073,41 @@ pub fn validate_chat_search_answer(
 	Ok(ProductChatSearchQueryItem {
 		hits: answer.hits.into_iter().map(validate_chat_message).collect::<Result<_, _>>()?,
 		next: answer.next.map(|next| validate_chat_cursor("next", next)).transpose()?,
+	})
+}
+
+/// Largest accepted payload of a room link, in bytes of UTF-8.
+pub const CHAT_LINK_PAYLOAD_MAX_BYTES: usize = 8 * 1024;
+
+/// Validate the payload of a room link a host gives a product. The core
+/// checks only its size: the payload is the product's own data.
+pub fn validate_chat_open_link(
+	request: ProductChatOpenLinkRequest,
+) -> Result<ProductChatOpenLinkRequest, ChatFieldError> {
+	if request.payload.is_empty() {
+		return Err(ChatFieldError::Empty { field: "payload" });
+	}
+	if request.payload.len() > CHAT_LINK_PAYLOAD_MAX_BYTES {
+		return Err(ChatFieldError::TooLong {
+			field: "payload",
+			limit: CHAT_LINK_PAYLOAD_MAX_BYTES,
+		});
+	}
+	Ok(ProductChatOpenLinkRequest {
+		room_id: normalize_chat_identifier("roomId", &request.room_id)?,
+		payload: request.payload,
+	})
+}
+
+/// Validate the answer of a product to an opened room link.
+pub fn validate_chat_open_link_answer(
+	answer: ProductChatOpenLinkItem,
+) -> Result<ProductChatOpenLinkItem, ChatFieldError> {
+	Ok(ProductChatOpenLinkItem {
+		room_id: answer
+			.room_id
+			.map(|room_id| normalize_chat_identifier("roomId", &room_id))
+			.transpose()?,
 	})
 }
 
@@ -5192,6 +5228,38 @@ pub trait ScannerPlatform: Send + Sync {
 		product: &ProductContext,
 		request: &HostScannerScanRequest,
 	) -> Result<HostScan, GenericError>;
+}
+
+/// How the host's share sheet ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostShare {
+	/// The user sent the text somewhere.
+	Shared,
+	/// The user closed the sheet without sharing.
+	Dismissed,
+	/// The requesting App or Widget is not the screen the user sees, so the
+	/// host opened nothing. A Worker's request was already checked by the core
+	/// and is never answered this way.
+	NotVisible,
+}
+
+/// Host-owned share sheet. Optional; a host without one leaves every product
+/// share `Unsupported`. The Swift and Kotlin bridges follow the same rules.
+///
+/// - Show the sheet over what is on screen, with the text as the only item. Never send the text
+///   anywhere by yourself.
+/// - Answer [`HostShare::NotVisible`] for an App or Widget that is not on screen. A Worker reaching
+///   the host already passed the core's tap check.
+/// - Close the sheet when the core drops the future.
+#[async_trait]
+pub trait SharePlatform: Send + Sync {
+	/// Open the share sheet on behalf of `product` and wait for the user.
+	async fn share_text(
+		&self,
+		product: &ProductContext,
+		request: &HostShareRequest,
+	) -> Result<HostShare, GenericError>;
 }
 
 /// Combined platform interface. A host must provide every capability trait

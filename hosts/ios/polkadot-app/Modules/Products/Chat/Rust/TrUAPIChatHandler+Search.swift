@@ -7,3 +7,13 @@ extension TrUAPIChatHandler: ProductChatSearching {
         try await withWorker { try await $0.chatSearchQuery(request, timeout: ChatQueryTimeout.search) }
     }
 }
+
+/// The search of the chat list asks the worker only while it runs.
+extension TrUAPIChatHandler: ProductChatListSearching {
+    func searchPageIfRunning(_ request: ProductChatSearchQueryRequest) async throws -> ProductChatSearchQueryItem? {
+        guard workers.currentExecution(of: productId) != nil else {
+            return nil
+        }
+        return try await searchPage(request)
+    }
+}

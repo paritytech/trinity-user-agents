@@ -67,6 +67,12 @@ extension RegistryProductRoom: ProductChatSearching {
     }
 }
 
+extension RegistryProductRoom: ProductChatListSearching {
+    func searchPageIfRunning(_ request: ProductChatSearchQueryRequest) async throws -> ProductChatSearchQueryItem? {
+        try await bot?.searchPageIfRunning(request)
+    }
+}
+
 extension RegistryProductRoom: ProductChatQuerying, ChatRoomLifecycle {
     func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryItem {
         guard let bot else { throw UnservedProductRoom.NotServed() }

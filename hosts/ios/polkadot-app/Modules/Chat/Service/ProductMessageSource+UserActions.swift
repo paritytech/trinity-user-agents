@@ -208,6 +208,9 @@ extension ProductMessageSource {
 
         let reported = reportedSeenMessageId.flatMap { messages[$0] }
         if isNewer(newest, than: reportedSeenMessageId, timestamp: reported?.timestamp, in: ids) {
+            if seenToReport != newest.messageId {
+                failedSeenAttempts = 0
+            }
             seenToReport = newest.messageId
             reportSeenIfNeeded()
         }
@@ -247,6 +250,8 @@ extension ProductMessageSource {
                 ))
             } catch {
                 self?.logger.warning("Seen of room \(roomId) failed: \(error)")
+                await self?.didFailToReportSeen(messageId)
+                return
             }
 
             await self?.didReportSeen(messageId)
@@ -256,7 +261,29 @@ extension ProductMessageSource {
     func didReportSeen(_ messageId: String) async {
         reportedSeenMessageId = messageId
         isReportingSeen = false
+        failedSeenAttempts = 0
         reportSeenIfNeeded()
         await storeCache()
+    }
+
+    /// The product did not take the `Seen`, for example because its engine starts. The product keeps the old
+    /// unread count until it gets a `Seen`, so the source sends it again after `seenRetryDelay`, at most
+    /// `seenAttempts` times. The next message that the user sees, or the next open of the room, sends it again too.
+    func didFailToReportSeen(_ messageId: String) async {
+        isReportingSeen = false
+        failedSeenAttempts += 1
+
+        if seenToReport == nil {
+            seenToReport = messageId
+        }
+
+        guard failedSeenAttempts < settings.seenAttempts else {
+            seenToReport = nil
+            failedSeenAttempts = 0
+            return
+        }
+
+        try? await Task.sleep(for: settings.seenRetryDelay)
+        reportSeenIfNeeded()
     }
 }

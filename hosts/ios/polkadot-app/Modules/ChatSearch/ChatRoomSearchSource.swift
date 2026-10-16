@@ -79,8 +79,14 @@ struct ProductChatRoomSearch: ChatRoomSearching {
             throw ChatRoomSearchError.unavailable
         }
 
+        let hits = Self.hits(of: answer, chatId: chatId, limit: Int(Self.pageSize))
+        return ChatRoomSearchPage(hits: hits, next: answer.next.map(ChatRoomSearchCursor.product))
+    }
+
+    /// The hits of an answer of the product, at most `limit`, in the order of the answer.
+    static func hits(of answer: ProductChatSearchQueryItem, chatId: Chat.Id, limit: Int) -> [ChatSearchHit] {
         let extensionId = chatId.extensionId ?? ""
-        let hits = answer.hits.prefix(Int(Self.pageSize)).map { message in
+        return answer.hits.prefix(limit).map { message in
             let local = message.localMessage(chatId: chatId, extensionId: extensionId, isUnread: false)
             return ChatSearchHit(
                 chatId: chatId,
@@ -91,6 +97,5 @@ struct ProductChatRoomSearch: ChatRoomSearching {
                 authorParticipantId: local.authorParticipantId
             )
         }
-        return ChatRoomSearchPage(hits: hits, next: answer.next.map(ChatRoomSearchCursor.product))
     }
 }

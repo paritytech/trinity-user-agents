@@ -31,18 +31,10 @@ import UIKit
                 let tabBar = UIApplication.shared.mainTabBarController
                 tabBar?.select(tab: .chat)
                 (tabBar?.view(for: .chat) as? UINavigationController)?.popToRootViewController(animated: false)
-            case "release-worker":
-                // S6: the harness gives back its hold, so the worker stops when no room screen holds it.
-                TrUAPIE2EWorkerHolds.release(productId: productId)
-            case "hold-worker":
-                TrUAPIE2EWorkerHolds.hold(productId: productId)
-            case "wake":
-                // B9: a notification wake of the room, as the receiving layer will start it (07-LATER §10.2). The
-                // receiving layer is not on this branch yet (O28), so the harness stands in for it.
-                TrUAPIE2EWorkerHolds.wake(
-                    productId: productId,
-                    reason: .notification(roomId: room, watchId: argument ?? "dev")
-                )
+            case "release-worker",
+                 "hold-worker",
+                 "wake":
+                runWorkerAction(productId: productId)
             case "permission":
                 // The answer of the user to the permission prompt on the screen: `always`, `once` or `deny`.
                 TrUAPIE2EPendingPermission.answer(argument)
@@ -50,6 +42,10 @@ import UIKit
                 // The core keeps a refusal of `PreimageSubmit` for good. The harness clears it after S58, so that
                 // the next run asks again.
                 resetPreimageSubmit(productId: productId)
+            case "share-open",
+                 "share-send",
+                 "dismiss":
+                TrUAPIE2EShareActions.run(action: action, argument: argument, room: room, productId: productId)
             case "staging-fault":
                 // S59: the next stage fails as a failed submit.
                 TrUAPIE2EStagingFault.set(.submitFailed(reason: "E2E fault"))
@@ -60,6 +56,24 @@ import UIKit
     }
 
     extension TrUAPIE2EHostAction {
+        @MainActor
+        private func runWorkerAction(productId: String) {
+            switch action {
+            case "release-worker":
+                // S6: the harness gives back its hold, so the worker stops when no room screen holds it.
+                TrUAPIE2EWorkerHolds.release(productId: productId)
+            case "hold-worker":
+                TrUAPIE2EWorkerHolds.hold(productId: productId)
+            default:
+                // B9: a notification wake of the room, as the receiving layer will start it (07-LATER §10.2). The
+                // receiving layer is not on this branch yet (O28), so the harness stands in for it.
+                TrUAPIE2EWorkerHolds.wake(
+                    productId: productId,
+                    reason: .notification(roomId: room, watchId: argument ?? "dev")
+                )
+            }
+        }
+
         private func resetPreimageSubmit(productId: String) {
             let execution = ProductPocketService.current?.workers?.currentExecution(of: productId)
             do {

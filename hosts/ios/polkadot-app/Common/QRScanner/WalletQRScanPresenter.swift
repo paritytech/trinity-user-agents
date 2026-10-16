@@ -63,6 +63,12 @@ final class WalletQRScanPresenter: QRScannerPresenter {
             return
         }
 
+        // A room link of a product, also in its web form, gives the product the payload of the code.
+        if ChatRoomLink(code) != nil, let url = URL(string: code) {
+            delegate?.walletQRScanDidReceiveURL(url)
+            return
+        }
+
         if let url = URL(string: code),
            let scheme = url.scheme?.lowercased(),
            isAcceptedScheme(scheme) {

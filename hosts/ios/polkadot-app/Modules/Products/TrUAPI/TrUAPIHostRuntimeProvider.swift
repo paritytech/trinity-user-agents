@@ -179,6 +179,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             routerFacade: confirmationRouterFacade
         )
         runtime.setContacts(contactsBridge)
+        runtime.setShare(AppShareHostBridge(routerFacade: confirmationRouterFacade))
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,

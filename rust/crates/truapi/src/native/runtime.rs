@@ -42,7 +42,7 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
-		NativeTopUpCallbacks, NativeWakeRelayCallbacks,
+		NativeShareCallbacks, NativeTopUpCallbacks, NativeWakeRelayCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -54,7 +54,8 @@ use super::{
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
 		GameCallbackPlatform, PaymentCallbackPlatform, PocketCallbackPlatform,
-		ScannerCallbackPlatform, TopUpCallbackPlatform, WakeRelayCallbackPlatform,
+		ScannerCallbackPlatform, ShareCallbackPlatform, TopUpCallbackPlatform,
+		WakeRelayCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -362,6 +363,13 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
 		self.runtime
 			.set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
+	}
+
+	/// Install the host's share sheet before opening any product execution.
+	/// Set-once: answers whether this call installed it.
+	pub fn set_share_callbacks(&self, callbacks: Arc<dyn NativeShareCallbacks>) -> bool {
+		self.runtime
+			.set_share_platform(Arc::new(ShareCallbackPlatform { share: callbacks }))
 	}
 
 	/// Tell the core the host's contacts changed. Call it whenever a contact
@@ -1234,6 +1242,24 @@ impl NativeProductExecution {
 			observer.into(),
 			self.spawner.clone(),
 			|page| NativeChatQueryAnswer::Search { page },
+			|error| NativeChatQueryRefusal::Query { error },
+		))
+	}
+
+	/// Give the product the payload of a room link the user opened, and
+	/// deliver its answer to `observer`. The core answers `NotAvailable`
+	/// itself for a room the product does not have.
+	pub fn chat_open_link(
+		&self,
+		request: v01::ProductChatOpenLinkRequest,
+		observer: Box<dyn NativeChatQueryObserver>,
+	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
+		let query = self.chat_control()?.chat_open_link(request)?;
+		Ok(observe_chat_query(
+			query,
+			observer.into(),
+			self.spawner.clone(),
+			|answer| NativeChatQueryAnswer::OpenLink { answer },
 			|error| NativeChatQueryRefusal::Query { error },
 		))
 	}

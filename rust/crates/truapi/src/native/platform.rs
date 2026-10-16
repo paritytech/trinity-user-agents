@@ -22,7 +22,8 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
-		NativeScannerCallbacks, NativeTopUpCallbacks, NativeWakeRelayCallbacks,
+		NativeScannerCallbacks, NativeShareCallbacks, NativeTopUpCallbacks,
+		NativeWakeRelayCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -74,6 +75,27 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 	) -> Result<crate::platform::HostScan, v01::GenericError> {
 		self.scanner
 			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::platform::SharePlatform`] served by host-provided
+/// [`NativeShareCallbacks`]; constructed only when the host passed one.
+pub struct ShareCallbackPlatform {
+	/// Host share sheet.
+	pub share: Arc<dyn NativeShareCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::SharePlatform for ShareCallbackPlatform {
+	async fn share_text(
+		&self,
+		product: &ProductContext,
+		request: &truapi::latest::HostShareRequest,
+	) -> Result<crate::platform::HostShare, v01::GenericError> {
+		self.share
+			.share_text(product.product_id.clone(), product.execution_kind, request.clone())
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}

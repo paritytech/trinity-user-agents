@@ -63,7 +63,7 @@ pub use truapi::{
 		notifications::guest as notifications, payment::guest as payment,
 		permissions::guest as permissions, pocket::guest as pocket, preimage::guest as preimage,
 		renderer::guest as renderer, resource_allocation::guest as resource_allocation,
-		scanner::guest as scanner, signing::guest as signing,
+		scanner::guest as scanner, share::guest as share, signing::guest as signing,
 		statement_store::guest as statement_store, system::guest as system, theme::guest as theme,
 		worker::guest as worker,
 	},
