@@ -11,8 +11,6 @@ enum SettingsKey: String {
     case playerTooltipShown
     case swipeTooltipShown
     case selectedCurrencyCode
-    case fiatOnrampSessionIds
-    case fiatOnrampTrackedTransactionIds
     case productGameReminders
     // Balance restored notification
     case deviceEncryptId = "deviceEncryptId.v3"

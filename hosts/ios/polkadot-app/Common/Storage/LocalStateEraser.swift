@@ -17,10 +17,12 @@ final class LocalStateEraser: LocalStateErasing {
     /// Progress bound to the old wallet that would misreport for a new one.
     static let walletProgressKeys: [SettingsKey] = [
         .backendSessionId,
-        .nextSyncUpdateId,
-        .fiatOnrampSessionIds,
-        .fiatOnrampTrackedTransactionIds
+        .nextSyncUpdateId
     ]
+
+    /// Keys whose `SettingsKey` cases were removed with the Meld on-ramp. Installs that used it still hold
+    /// that wallet's on-ramp session and transaction ids under these raw names.
+    static let retiredWalletKeys = ["fiatOnrampSessionIds", "fiatOnrampTrackedTransactionIds"]
 
     private let settingsManager: SettingsManagerProtocol
     private let logger: LoggerProtocol
@@ -32,6 +34,9 @@ final class LocalStateEraser: LocalStateErasing {
 
     func eraseUserState() {
         for key in Self.identityKeys + Self.walletProgressKeys {
+            settingsManager.removeValue(for: key)
+        }
+        for key in Self.retiredWalletKeys {
             settingsManager.removeValue(for: key)
         }
         logger.info("Erased the previous wallet's identity and progress settings")

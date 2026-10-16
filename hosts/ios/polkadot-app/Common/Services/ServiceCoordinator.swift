@@ -21,9 +21,6 @@ import DesignSystem
 
 protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
     var depositService: DepositServiceProtocol { get }
-    var fiatOnrampService: FiatOnrampServicing { get }
-    var fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol { get }
-    var fiatOnrampStorage: FiatOnrampStoring { get }
     var polkadotHandshakeService: PolkadotHandshakeServicing { get }
     var chatExtensionsRegistry: ChatExtensionsRegistering { get }
     var signInHostCoordinator: MessageExchangeSignInHostCoordinating { get }
@@ -45,9 +42,6 @@ protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
 final class ServiceCoordinator {
     let chatCoordinator: MessageExchangeChatCoordinating
     let depositService: DepositServiceProtocol
-    let fiatOnrampService: FiatOnrampServicing
-    let fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol
-    let fiatOnrampStorage: FiatOnrampStoring
     let polkadotHandshakeService: PolkadotHandshakeServicing
     let signInHostCoordinator: MessageExchangeSignInHostCoordinating
     let chatExtensionsRegistry: ChatExtensionsRegistering
@@ -89,9 +83,6 @@ final class ServiceCoordinator {
     init(
         chatCoordinator: MessageExchangeChatCoordinating,
         depositService: DepositServiceProtocol,
-        fiatOnrampService: FiatOnrampServicing,
-        fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol,
-        fiatOnrampStorage: FiatOnrampStoring,
         polkadotHandshakeService: PolkadotHandshakeServicing,
         signInHostCoordinator: MessageExchangeSignInHostCoordinating,
         chatExtensionsRegistry: ChatExtensionsRegistering,
@@ -122,9 +113,6 @@ final class ServiceCoordinator {
     ) {
         self.chatCoordinator = chatCoordinator
         self.depositService = depositService
-        self.fiatOnrampService = fiatOnrampService
-        self.fiatOnrampTrackingService = fiatOnrampTrackingService
-        self.fiatOnrampStorage = fiatOnrampStorage
         self.polkadotHandshakeService = polkadotHandshakeService
         self.signInHostCoordinator = signInHostCoordinator
         self.chatExtensionsRegistry = chatExtensionsRegistry
@@ -164,7 +152,6 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
         productWorkerFacade.setup()
         chatExtensionsRegistry.discover()
         chatRequestCoordinator.setup()
-        fiatOnrampTrackingService.setup()
         attachmentUploadService.setup()
         attachmentDownloadService.setup()
         notificationBadgeSyncService.setup()
@@ -205,7 +192,6 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
     func throttle() {
         chatCoordinator.throttle()
         chatRequestCoordinator.throttle()
-        fiatOnrampTrackingService.throttle()
         attachmentUploadService.throttle()
         attachmentDownloadService.throttle()
         notificationBadgeSyncService.throttle()
@@ -398,16 +384,6 @@ extension ServiceCoordinator {
         // same facade.
         RootDependencyLocator.setDependency(productWorkerFacade)
 
-        let fiatOnrampConfiguration = MeldFiatOnrampConfiguration.prod
-        let fiatOnrampStorage = FiatOnrampStorage()
-        let fiatOnrampService = MeldFiatOnrampService(configuration: fiatOnrampConfiguration)
-        let fiatOnrampTrackingService = FiatOnrampTrackingServicing(
-            depositService: depositService,
-            fiatOnrampService: fiatOnrampService,
-            fiatOnrampStorage: fiatOnrampStorage,
-            clock: ContinuousClock()
-        )
-
         let callCoordinator = RealCallCoordinator(
             presentationManager: ChatChatCallPresentationManager(logger: logger),
             outboxService: chatCoordinator.outboxService,
@@ -462,9 +438,6 @@ extension ServiceCoordinator {
         return ServiceCoordinator(
             chatCoordinator: chatCoordinator,
             depositService: depositService,
-            fiatOnrampService: fiatOnrampService,
-            fiatOnrampTrackingService: fiatOnrampTrackingService,
-            fiatOnrampStorage: fiatOnrampStorage,
             polkadotHandshakeService: PolkadotHandshakeService(
                 rootWallet: DynamicDerivedWallet(derivationPath: nil),
                 identityWallet: mainWallet,
