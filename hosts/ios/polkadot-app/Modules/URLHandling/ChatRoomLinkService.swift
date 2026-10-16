@@ -131,7 +131,10 @@ extension ChatRoomLinkService: URLHandlingServiceProtocol {
                 productOpener(link.productId)
             }
 
-            if link.payload != nil {
+            if let payload = link.payload {
+                Logger.shared.debug(
+                    "Room link of \(link.productId)/\(link.roomId): payload of \(payload.utf8.count) bytes"
+                )
                 await linkOpener?.open(link)
             }
         }
