@@ -233,8 +233,9 @@ export async function publish(
     now?: Date;
   },
 ): Promise<Published> {
-  // The crate hashes the parsed descriptor, so the key order a generator emits does not matter
-  // and `truapi-host stack publish` agrees on the same state.
+  // The crate hashes and renders the canonical form, unknown members included: equal hashes
+  // mean equal published bytes, whatever key order the model has, and `truapi-host stack
+  // publish` keeps the same state.
   const contentHash = wasm.contentHash(
     encode(render(model, 1, { sequence: 0, generation: options.generation })),
   );
@@ -247,8 +248,7 @@ export async function publish(
     sequence,
     generation: options.generation,
   });
-  const plain = encode(descriptor);
-  parse(plain);
+  const plain = wasm.canonical(encode(descriptor));
   const document = options.secret ? sign(plain, options.secret) : plain;
   return { document, descriptor, state: { sequence, contentHash } };
 }
@@ -304,14 +304,19 @@ export const DEFAULT_TIMEOUT_MS = 10_000;
  * redirect, a non-2xx status or the timeout. Redirects are refused because the URL rules hold
  * for the URL the pointer names, and a redirect could lead anywhere, plain http included.
  *
- * fetch reports a network failure as a `TypeError`, so a custom `fetch` that throws one reads as
- * unreachable too. Any other error is rethrown, and so is a `url` that is not a URL.
+ * A body over `MAX_DESCRIPTOR_BYTES` is unreachable too, so a hostile URL cannot stream into
+ * memory until the timeout.
+ *
+ * The global fetch reports network failures differently across runtimes (a `TypeError` in Node
+ * and current Bun, a plain `Error` in older Bun), so any error from it reads as unreachable. A
+ * custom `fetch` reads as unreachable only on a `TypeError` or an abort; anything else is its
+ * bug and is rethrown. A `url` the RFC's URL rules refuse is rethrown too.
  */
 export async function fetchDescriptor(
   url: string,
   options: { fetch?: Fetch; timeoutMs?: number } = {},
 ): Promise<Uint8Array | undefined> {
-  new URL(url);
+  wasm.stackId(url, undefined);
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -323,18 +328,46 @@ export async function fetchDescriptor(
       redirect: "error",
       signal: controller.signal,
     });
-    return response.ok
-      ? new Uint8Array(await response.arrayBuffer())
-      : undefined;
+    return response.ok ? await readCapped(response, controller) : undefined;
   } catch (error) {
     const aborted =
       error instanceof DOMException &&
       (error.name === "AbortError" || error.name === "TimeoutError");
-    if (error instanceof TypeError || aborted) return undefined;
+    if (!options.fetch || error instanceof TypeError || aborted)
+      return undefined;
     throw error;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The largest descriptor `fetchDescriptor` reads. A descriptor is a few kilobytes. */
+export const MAX_DESCRIPTOR_BYTES = 1024 * 1024;
+
+async function readCapped(
+  response: Response,
+  controller: AbortController,
+): Promise<Uint8Array | undefined> {
+  if (Number(response.headers.get("content-length")) > MAX_DESCRIPTOR_BYTES)
+    return undefined;
+  if (!response.body) return new Uint8Array(await response.arrayBuffer());
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+    length += chunk.length;
+    if (length > MAX_DESCRIPTOR_BYTES) {
+      controller.abort();
+      return undefined;
+    }
+    chunks.push(chunk);
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
 }
 
 function encode(descriptor: Descriptor): Uint8Array {

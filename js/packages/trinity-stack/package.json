@@ -32,7 +32,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.3"
   },
   "scripts": {
     "build": "npm run build:wasm && tsc -b",
