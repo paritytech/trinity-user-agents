@@ -1,22 +1,12 @@
-// `preimage.submit` under a `PreimageSubmit` grant, against a real
-// signing-host CLI. The end-to-end check for paritytech/platform-bugs#54.
-//
-// The permission is the only gate on an upload: an "Allow always" grant
-// covers every upload that follows, with no per-upload confirmation. Before
-// the fix the host asked the user to approve each upload as well, so a
-// background backup prompted on every run.
-//
-// `scripts/preimage-submit-prompt-e2e.sh` runs the host with `--auto-accept`
-// and `TRUAPI_APPROVALS_LOG`, so every prompt the host raised is a line in that
-// file by the time the call that raised it resolves.
-//
-// Reading the result: the transcript holds the one permission prompt and
-// nothing else. Before the fix it also held one `submit preimage` line per
-// upload.
+// `preimage.submit` under a `PreimageSubmit` grant against a real signing-host CLI.
+// The remote permission authorizes the capability; each upload still requires a
+// size review. The runner uses `--auto-accept` and `TRUAPI_APPROVALS_LOG` so the
+// transcript contains one permission prompt followed by one review per upload.
 import { existsSync, readFileSync } from "node:fs";
 
 const UPLOADS = 3;
 const PERMISSION_PROMPT = "approved remote permission";
+const UPLOAD_PROMPT = "approved submit preimage";
 
 const log = process.env.TRUAPI_APPROVALS_LOG;
 assert(
@@ -51,9 +41,11 @@ for (let upload = 1; upload <= UPLOADS; upload++) {
 
 const prompts = transcript();
 assert(
-  prompts.length === 1 && prompts[0] === PERMISSION_PROMPT,
-  `expected only the permission prompt across ${UPLOADS} uploads, got: ${JSON.stringify(prompts)}`,
+  prompts.length === UPLOADS + 1 &&
+    prompts[0] === PERMISSION_PROMPT &&
+    prompts.slice(1).every((prompt) => prompt === UPLOAD_PROMPT),
+  `expected one permission prompt and ${UPLOADS} upload reviews, got: ${JSON.stringify(prompts)}`,
 );
 console.log(
-  `${UPLOADS} uploads after one permission prompt, no per-upload confirmation`,
+  `${UPLOADS} uploads after one permission prompt and ${UPLOADS} upload reviews`,
 );

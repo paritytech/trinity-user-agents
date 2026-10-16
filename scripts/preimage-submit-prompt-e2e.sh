@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # `preimage.submit` under a `PreimageSubmit` grant against a real signing-host
-# CLI, driven through the `@parity/truapi` client. The end-to-end check for
-# paritytech/platform-bugs#54.
+# CLI, driven through the `@parity/truapi` client.
 #
 # The product is granted `PreimageSubmit` once and uploads three preimages to
-# Bulletin. The host's approvals transcript must hold that one permission prompt
-# and no per-upload confirmation; before the fix it held one per upload.
+# Bulletin. The approvals transcript must contain the permission prompt and
+# one size review for each upload.
 #
 # This builds `truapi-host` from the checkout, so it always tests the code in
 # front of it rather than whatever binary is installed. The uploads are real
