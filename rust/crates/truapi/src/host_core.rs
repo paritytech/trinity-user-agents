@@ -1078,7 +1078,6 @@ impl SigningHostRuntime {
             .calling_permission_authorization_request()
             .await
     }
-
     /// Read a stored permission authorization status without prompting.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
     pub async fn permission_authorization_status(
