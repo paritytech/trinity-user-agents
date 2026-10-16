@@ -388,8 +388,10 @@ worker need not run.
   available. A product-source room without `search` shows no search action.
 - The core asks `search_query` only for a product-source room that declares `search`; it answers `NotAvailable` itself
   otherwise, without starting the worker.
-- **List search.** A search over the chat list matches product-source rooms by name only and never asks a product, so
-  it never starts a worker.
+- **List search.** A search over the chat list shows the stored hits first. Then it asks `search_query` of the
+  product-source rooms that declare `search`, newest rooms first, at most 8 rooms with a page of 10, and only of a
+  product whose worker runs now, so a search never starts a worker. The hits that arrive within 4 s join the stored hits,
+  newest first; a room that fails or answers late gives none.
 - On a host without `search` the product's handler is never called.
 
 ### Threads, branches, reasoning rows and read aloud
@@ -514,8 +516,9 @@ How long the host waits:
 - **One public preimage per attachment.** Chunked uploads with a manifest, peer-to-peer handoff tickets and host-side
   encryption were dropped for now: each needs a new body field or a new transport, and the one-time notice states that
   the file is public.
-- **Search stays in the open room.** Asking every product while the user types in the list search would start every
-  worker on a keystroke. Product-source rooms match the list search by name only.
+- **List search asks only running workers.** Asking every product while the user types in the list search would start
+  every worker on a keystroke. The list asks only the products whose worker runs, after the typing pause, with a limit
+  and a deadline; a product-source room of a stopped product matches by its name only.
 - **Calls before media.** Splitting `call_buttons` from `room_calls` lets the buttons, ringing and call bar ship
   before the Media service is accepted. Waiting for the Media service, or letting a product place picture rectangles
   in a chat screen, were dropped. Native call screens for a closed app are left out.
