@@ -1,8 +1,4 @@
-//! Reads, verifies and signs Trinity stack descriptors, as
-//! [RFC: Trinity stack descriptor](../../../docs/rfcs/trinity-stack-descriptor.md) defines them.
-//!
-//! The crate has no I/O: callers fetch, store and keep time, so the same rules run in the host
-//! core and in tools.
+#![doc = include_str!("../README.md")]
 
 mod descriptor;
 mod envelope;
@@ -14,8 +10,8 @@ mod reader;
 mod spec;
 
 pub use descriptor::{
-	Asset, Block, Chain, Coinage, Descriptor, Fork, ForkSource, MAX_SEQUENCE, SERVICE_KINDS,
-	Service, SpecFile, VERSION,
+	Asset, Block, Chain, Coinage, Descriptor, Fork, ForkSource, SERVICE_KINDS, Service, SpecFile,
+	VERSION,
 };
 pub use envelope::{Document, Verified, open, public_key, sign};
 pub use error::Error;
