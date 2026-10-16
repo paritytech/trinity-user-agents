@@ -158,7 +158,7 @@ pub enum CancelOutcome {
 	Requested,
 	/// A cancel is already with the provider, or accepted and being settled.
 	Pending,
-	/// Too late: the user's balance was already credited.
+	/// Too late: the provider already started crediting the user's balance.
 	TooLate,
 	/// Not cancellable here: the session ended, or its overlay is still up.
 	Refused,
