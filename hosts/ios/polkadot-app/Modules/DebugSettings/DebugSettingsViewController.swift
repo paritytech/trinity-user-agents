@@ -110,6 +110,12 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
         )
 
         #if DEBUG
+            rootView.openDevServerButton.addTarget(
+                self,
+                action: #selector(actionOpenDevServer),
+                for: .touchUpInside
+            )
+
             rootView.openTrUAPIPlaygroundButton.addTarget(
                 self,
                 action: #selector(actionOpenTrUAPIPlayground),
@@ -182,6 +188,12 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
     @objc func actionToggleHostPlacement() {
         presenter.toggleHostPlacement()
     }
+
+    #if DEBUG
+        @objc func actionOpenDevServer() {
+            presenter.openDevServer()
+        }
+    #endif
 
     @objc func actionOpenTrUAPIPlayground() {
         presenter.openTrUAPIPlayground()

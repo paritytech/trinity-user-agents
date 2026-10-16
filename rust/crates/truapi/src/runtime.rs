@@ -324,6 +324,10 @@ pub struct ProductRuntimeHost {
 	/// Stable per-product-runtime id used to scope long-lived chain follow
 	/// operation ids within one shared host runtime.
 	core_instance: u64,
+	/// This product runtime's own view of the chain. A node budgets follows and
+	/// concurrent operations per connection, so a connection shared with another
+	/// product makes those budgets collide.
+	chain: crate::chain_runtime::ChainRuntime,
 	chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
 	renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
 	pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
@@ -339,6 +343,8 @@ pub const USER_TAP_WINDOW_SECS: u64 = 5;
 
 impl Drop for ProductRuntimeHost {
 	fn drop(&mut self) {
+		// This runtime owns its chain connections outright, so they go with it.
+		self.chain.release_scope();
 		self.release_open_operations();
 	}
 }
@@ -353,6 +359,7 @@ impl ProductRuntimeHost {
 		product: ProductContext,
 	) -> Self {
 		let core_instance = services.next_core_instance();
+		let chain = services.chain.for_product(core_instance);
 		Self {
 			services,
 			platform: adapters.platform,
@@ -362,6 +369,7 @@ impl ProductRuntimeHost {
 			authority,
 			product,
 			core_instance,
+			chain,
 			chat: adapters.chat,
 			renderer: adapters.renderer,
 			pocket_platform: adapters.pocket_platform,
@@ -479,6 +487,7 @@ impl ProductRuntimeHost {
 		);
 		let pairing_host = PairingHost::new(services.clone(), host_config);
 		let core_instance = services.next_core_instance();
+		let chain = services.chain.for_product(core_instance);
 		let chat = Arc::new(ActionChannel::chat());
 		let renderer = Arc::new(ActionChannel::renderer());
 		let host = Self {
@@ -490,6 +499,7 @@ impl ProductRuntimeHost {
 			authority: pairing_host.clone(),
 			product,
 			core_instance,
+			chain,
 			chat,
 			renderer,
 			pocket_platform: None,
