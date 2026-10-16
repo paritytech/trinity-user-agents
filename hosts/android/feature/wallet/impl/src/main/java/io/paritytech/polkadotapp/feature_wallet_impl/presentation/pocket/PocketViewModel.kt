@@ -5,6 +5,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.withLoading
@@ -20,6 +21,7 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.Token
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
@@ -54,11 +56,13 @@ class PocketViewModel @Inject constructor(
     private val tokenAmountMapper: TokenAmountMapper,
     private val tokenAmountFormatter: TokenAmountFormatter,
     private val router: PocketRouter,
+    private val collectiblesUrlResolver: CollectiblesUrlResolver,
     private val dispatchers: CoroutineDispatchers,
     private val cardOpenRequests: PocketCardOpenRequests,
     spaHost: SpaHost,
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
+    private val collectiblesShown = MutableStateFlow(false)
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
     private var openingFaceLookup: Job? = null
@@ -113,22 +117,31 @@ class PocketViewModel @Inject constructor(
             initialValue = persistentListOf()
         )
 
+    private val collectiblesUrl = flowOf { collectiblesUrlResolver.resolveUrl() }
+        .flowOn(dispatchers.computation)
+        .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
+
     val state: StateFlow<PocketScreenState> = combine(
         cards,
         selectedCardId,
+        collectiblesShown,
+        collectiblesUrl,
         removalCandidate
-    ) { cards, selectedId, candidate ->
+    ) { cards, selectedId, collectiblesShown, collectiblesUrl, candidate ->
         val selectedCard = cards.firstOrNull { it.id == selectedId }
-        if (selectedCard != null) {
-            PocketScreenState.CardDetails(selectedCard = selectedCard)
-        } else {
-            PocketScreenState.List(removalCandidate = candidate)
+        when {
+            selectedCard != null -> PocketScreenState.CardDetails(selectedCard = selectedCard)
+            collectiblesShown -> PocketScreenState.Collectibles
+            else -> PocketScreenState.List(
+                collectiblesAvailable = collectiblesUrl != null,
+                removalCandidate = candidate
+            )
         }
     }
         .stateIn(
             scope = this,
             started = SharingStarted.Eagerly,
-            initialValue = PocketScreenState.List(removalCandidate = null)
+            initialValue = PocketScreenState.List(collectiblesAvailable = false, removalCandidate = null)
         )
 
     private class CardBinding(val scope: CoroutineScope, val bindings: ProductFaceBindings)
@@ -217,6 +230,7 @@ class PocketViewModel @Inject constructor(
         if (selectedCardId.value == card.id) return
 
         if (selectedCardId.value != null) dismissCard()
+        collectiblesShown.value = false
         removalCandidate.value = null
         selectCard(card)
     }
@@ -263,6 +277,18 @@ class PocketViewModel @Inject constructor(
         expandedProduct.close()
         forgetOpeningFace()
         selectedCardId.value = null
+    }
+
+    fun showCollectiblesSketchbook() {
+        collectiblesShown.value = true
+    }
+
+    fun hideCollectiblesSketchbook() {
+        collectiblesShown.value = false
+    }
+
+    fun openCollectibles() {
+        collectiblesUrl.value?.let { router.openSpaSheet(it.toString()) }
     }
 
     /**

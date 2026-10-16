@@ -36,24 +36,24 @@ struct DotnsGatewayTests {
         #expect(record.username == nil)
     }
 
-    @Test("full chat key is preferred when both entries carry one")
-    func fullChatKeyPreferred() {
+    @Test("lite chat key is used even when the full entry carries one")
+    func liteChatKeyUsedOverFull() {
         let record = DotnsGatewayPallet.AccountNameRecord(
             lite: .init(label: Self.liteLabel, chat: BytesCodable(wrappedValue: Self.liteChatKey)),
             full: .init(label: Self.fullLabel, chat: BytesCodable(wrappedValue: Self.fullChatKey))
         )
 
-        #expect(record.chatKey == Self.fullChatKey)
+        #expect(record.chatKey == Self.liteChatKey)
     }
 
-    @Test("full chat key falls back to lite entry when full carries none")
-    func fullWithoutChatFallsToLite() {
+    @Test("chat key is nil when only the full entry carries one")
+    func chatKeyNilWhenOnlyFullCarriesOne() {
         let record = DotnsGatewayPallet.AccountNameRecord(
-            lite: .init(label: Self.liteLabel, chat: BytesCodable(wrappedValue: Self.liteChatKey)),
-            full: .init(label: Self.fullLabel, chat: nil)
+            lite: .init(label: Self.liteLabel, chat: nil),
+            full: .init(label: Self.fullLabel, chat: BytesCodable(wrappedValue: Self.fullChatKey))
         )
 
-        #expect(record.chatKey == Self.liteChatKey)
+        #expect(record.chatKey == nil)
     }
 
     @Test("chat key is nil when neither entry carries one")
