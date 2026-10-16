@@ -50,8 +50,9 @@ The crate has no I/O. Fetching, storage and clocks belong to the caller, which k
 in tests.
 
 - **Parsing.** `Document::parse` reads I-JSON first: serde_json keeps the last of two equal keys and skips ignored
-  fields unread, so a separate pass walks every object and refuses a repeated member. It then drops service entries of
-  unknown kinds and lets serde ignore unknown fields, and only then checks the format rules on what remains.
+  fields unread, so the one pass that builds the document refuses a repeated member or a noncharacter wherever it
+  appears. It then drops service entries of unknown kinds and lets serde ignore unknown fields, and only then checks the
+  format rules on what remains.
 - **Pointers.** `open(bytes, pointer)` applies the pointer's rules: a keyed pointer accepts only an envelope that
   verifies, and an unkeyed one reads an envelope as unsigned.
 - **Signatures.** Strict RFC 8032: canonical `A` and `R`, neither of small order, `S` below the group order, then

@@ -59,7 +59,7 @@ pub enum Error {
 	#[error("service URL {0:?} must end in /")]
 	ServiceUrlNotBase(String),
 	/// `chainId` is missing on `eth-rpc` or present on another kind.
-	#[error("chainId is required on eth-rpc and absent on every other kind")]
+	#[error("chainId is required on eth-rpc, up to 2^53 - 1, and absent on every other kind")]
 	ChainId,
 	/// `forkedAt` is missing on a chain of a fork, or set when the stack is no fork.
 	#[error("forkedAt must be set on every chain exactly when fork is set")]
