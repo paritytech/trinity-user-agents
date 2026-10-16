@@ -1,5 +1,5 @@
 import { Reader, bytes, compact, concat, readBytes, u64 } from "./codec.js";
-import { sr25519Verify } from "./crypto.js";
+import { blake2b256, sr25519Verify } from "./crypto.js";
 
 /**
  * Statement-store statements as the Polkadot app writes them: a compact field
@@ -125,6 +125,14 @@ export function decodeStatement(encoded: Uint8Array): SignedStatement {
     throw new Error("the statement skips a topic");
   return { ...proof, expiry, channel, topics, data };
 }
+
+/**
+ * BLAKE2b-256 of a statement's encoded bytes, as the statement store hashes
+ * it. It names one exact encoding: two statements with any byte different,
+ * including the proof, hash differently.
+ */
+export const statementHash = (encoded: Uint8Array): Uint8Array =>
+  blake2b256(encoded);
 
 /** Whether the statement's proof signs its fields. */
 export const verifyStatement = (statement: SignedStatement): boolean =>

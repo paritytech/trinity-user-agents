@@ -14,8 +14,10 @@ import {
 } from "playwright-core";
 import { type RunningHost, startHost } from "./fixtures.js";
 import type { ChatEventBody } from "../src/chat/diagnostics.js";
+import type { ScenarioValues } from "./chat-transport-scenario.js";
 
 const STEP_MS = 60_000;
+const TEST_MS = 120_000;
 const PAGE = "/__chat-diagnostics-view.html";
 const KEY = `0x${"ab".repeat(32)}`;
 const INBOX = `0x${"5e".repeat(16)}${"a1".repeat(16)}`;
@@ -140,6 +142,12 @@ const VIEW_PAGE = `<!doctype html>
         },
         clear: () => diagnostics.clear(),
         count: () => diagnostics.list().length,
+        async run() {
+          const { runScenario } = await import(
+            "/browser/chat-transport-scenario.ts"
+          );
+          return runScenario(diagnostics);
+        },
       };
     </script>
   </body>
@@ -150,6 +158,7 @@ interface DiagWindow {
     record(events: ChatEventBody[], stepMs: number): void;
     clear(): void;
     count(): number;
+    run(): Promise<ScenarioValues>;
   };
 }
 
@@ -467,5 +476,287 @@ describe("chat diagnostics view", () => {
       }
     },
     STEP_MS,
+  );
+});
+
+describe("chat diagnostics transport layers", () => {
+  async function scenarioPage(level: "off" | "wire" | "decrypted") {
+    const context = await browser.newContext({ timezoneId: "UTC" });
+    context.setDefaultTimeout(STEP_MS);
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const page = await openView(context, host.origin);
+    await page.selectOption(".cdv-capture", level);
+    const values = await page.evaluate(() =>
+      (window as unknown as DiagWindow).__diag.run(),
+    );
+    return { context, page, values };
+  }
+  const layer = (page: Page, name: "Raw" | "Decrypted" | "Decoded") =>
+    page.locator(".cdv-layer-tabs [data-layer]", { hasText: name }).click();
+  const panel = (page: Page) => page.locator(".cdv-layer");
+  const clipboard = (page: Page) =>
+    page.evaluate(() => navigator.clipboard.readText());
+  const copyIn = (page: Page, title: string) =>
+    panel(page)
+      .locator(".cdv-block", { hasText: title })
+      .locator("[data-copy-layer]")
+      .click();
+
+  test(
+    "shows a received session request raw, decrypted and decoded, with its values",
+    async () => {
+      const { context, page, values } = await scenarioPage("decrypted");
+      try {
+        await row(page, "push token (1), device added (17)").first().click();
+
+        await layer(page, "Raw");
+        const raw = await panel(page).innerText();
+        expect(raw).toContain("Public:");
+        expect(raw).toContain("JSON-RPC #");
+        expect(raw).toContain("◀ received · statement_statement");
+        expect(raw).toContain(`"statements":["${values.control}"`);
+        expect(raw).toContain(
+          `exact bytes the engine received, from the frame's hex`,
+        );
+        const statementCopy = panel(page)
+          .locator(".cdv-block", { hasText: "Encoded signed statement" })
+          .locator("[data-copy-layer]");
+        await statementCopy.click();
+        expect(await clipboard(page)).toBe(values.control);
+
+        await layer(page, "Decrypted");
+        expect(await panel(page).innerText()).toContain("Sensitive:");
+        await panel(page).locator("[data-copy-layer]").click();
+        expect(await clipboard(page)).toBe(values.controlPlaintext);
+
+        await layer(page, "Decoded");
+        const decodedText = await panel(page).innerText();
+        expect(decodedText).toContain("Protocol fields");
+        expect(decodedText).toContain("Inspector annotations");
+        await copyIn(page, "Protocol fields");
+        const protocol = JSON.parse(await clipboard(page));
+        await copyIn(page, "Inspector annotations");
+        const annotations = JSON.parse(await clipboard(page));
+        // Each part copies alone: no annotation is mixed into the protocol fields.
+        expect(JSON.stringify(protocol)).not.toContain('"name"');
+        expect(JSON.stringify(protocol)).not.toContain("iso");
+        expect(protocol.plaintext.messages.items).toMatchObject([
+          {
+            message: {
+              versioned: {
+                content: {
+                  index: 1,
+                  token: { bytes: values.token },
+                  platform: 1,
+                },
+              },
+            },
+          },
+          {
+            message: {
+              versioned: {
+                content: {
+                  index: 17,
+                  statementAccountId: {
+                    length: 32,
+                    bytes: values.deviceAccount,
+                  },
+                  encryptionPublicKey: { length: 32, bytes: values.deviceKey },
+                },
+              },
+            },
+          },
+        ]);
+        expect(annotations.plaintext).toMatchObject({
+          "$.messages.items[0].message.versioned.content.index": {
+            name: "Token",
+          },
+          "$.messages.items[0].message.versioned.content.platform": {
+            name: "IOS",
+          },
+          "$.messages.items[1].message.versioned.content.index": {
+            name: "DeviceAdded",
+          },
+        });
+        expect(annotations.statement.$.hash).toMatch(/^0x[0-9a-f]{64}$/);
+        await panel(page).getByText("copy both").click();
+        expect(JSON.parse(await clipboard(page))).toEqual({
+          protocol,
+          annotations,
+        });
+
+        // The chosen layer stays chosen for the next event.
+        await row(page, "subscribe requests").first().click();
+        await row(page, "push token (1), device added (17)").first().click();
+        expect(
+          await page
+            .locator('.cdv-layer-tabs [aria-selected="true"]')
+            .innerText(),
+        ).toBe("Decoded");
+      } finally {
+        await context.close();
+      }
+    },
+    STEP_MS,
+  );
+
+  test(
+    "an acknowledgement shows the frame that sent it, the store's answer and the response it sealed",
+    async () => {
+      const { context, page } = await scenarioPage("decrypted");
+      try {
+        await row(page, "ack to").last().click();
+        await layer(page, "Raw");
+        const raw = await panel(page).innerText();
+        expect(raw).toContain("▶ sent · statement_submit");
+        expect(raw).toContain("◀ received · answer");
+        expect(raw).toContain('"result":{"status":"new"}');
+        expect(raw).toContain("exact bytes the engine submitted");
+        await layer(page, "Decoded");
+        await panel(page).getByText("copy both").click();
+        const decoded = JSON.parse(await clipboard(page));
+        expect(decoded.protocol.plaintext).toEqual({
+          index: 1,
+          requestId: expect.any(Object),
+          responseCode: 0,
+        });
+        expect(decoded.annotations.plaintext["$.responseCode"]).toEqual({
+          name: "acknowledged",
+        });
+      } finally {
+        await context.close();
+      }
+    },
+    STEP_MS,
+  );
+
+  test(
+    "a statement that does not decrypt keeps its bytes and says why; a replay is a repeat",
+    async () => {
+      const { context, page, values } = await scenarioPage("decrypted");
+      try {
+        await page.fill(".ins-filter", values.garbledHash);
+        const garbled = row(page, "set aside");
+        expect(await garbled.count()).toBe(2);
+        expect(
+          await garbled.last().locator(".cdv-badge-repeat").textContent(),
+        ).toBe("repeat ×2");
+        await garbled.first().click();
+        await layer(page, "Decrypted");
+        expect(await panel(page).innerText()).toContain(
+          "No decrypted bytes: could not decrypt",
+        );
+        await layer(page, "Raw");
+        expect(await panel(page).innerText()).toContain(values.garbled);
+      } finally {
+        await context.close();
+      }
+    },
+    STEP_MS,
+  );
+
+  test(
+    "the wire level shows what travelled and keeps no plaintext",
+    async () => {
+      const { context, page, values } = await scenarioPage("wire");
+      try {
+        await row(page, "push token (1), device added (17)").first().click();
+        await layer(page, "Raw");
+        expect(await panel(page).innerText()).toContain(values.control);
+        await layer(page, "Decrypted");
+        expect(await panel(page).innerText()).toContain(
+          "No decrypted bytes: decrypted capture is off",
+        );
+        await layer(page, "Decoded");
+        await panel(page).getByText("copy both").click();
+        expect(JSON.parse(await clipboard(page))).toMatchObject({
+          protocol: { plaintext: null },
+          annotations: { plaintext: null },
+        });
+        expect(
+          await page.locator(".chat-diagnostics").innerText(),
+        ).not.toContain(values.token);
+      } finally {
+        await context.close();
+      }
+    },
+    STEP_MS,
+  );
+
+  test(
+    "with capture off an event names its statement and holds no bytes",
+    async () => {
+      const { context, page, values } = await scenarioPage("off");
+      try {
+        await row(page, "push token (1), device added (17)").first().click();
+        expect(await detail(page).innerText()).toContain(
+          "Payload capture is off.",
+        );
+        expect(await detail(page).locator(".cdv-layer-tabs").count()).toBe(0);
+        expect(
+          await page.locator(".chat-diagnostics").innerText(),
+        ).not.toContain(values.control.slice(2, 60));
+      } finally {
+        await context.close();
+      }
+    },
+    STEP_MS,
+  );
+
+  test(
+    "turning capture on later cannot show what travelled before",
+    async () => {
+      const { context, page } = await scenarioPage("off");
+      try {
+        await page.evaluate(() => new Promise((done) => setTimeout(done, 5)));
+        await page.selectOption(".cdv-capture", "decrypted");
+        await row(page, "push token (1), device added (17)").first().click();
+        expect(await detail(page).innerText()).toContain(
+          "travelled before capture was turned on",
+        );
+      } finally {
+        await context.close();
+      }
+    },
+    STEP_MS,
+  );
+
+  test(
+    "no key or secret appears in any layer, and a session change drops everything",
+    async () => {
+      const { context, page, values } = await scenarioPage("decrypted");
+      try {
+        const seen: string[] = [];
+        const count = await rows(page).count();
+        for (let index = 0; index < count; index++) {
+          await rows(page).nth(index).click();
+          for (const name of ["Raw", "Decrypted", "Decoded"] as const)
+            if ((await page.locator(".cdv-layer-tabs").count()) > 0) {
+              await layer(page, name);
+              seen.push(await panel(page).innerText());
+            }
+          seen.push(await detail(page).innerText());
+        }
+        const all = seen.join("\n").toLowerCase();
+        expect(all).toContain(values.token.slice(2));
+        for (const secret of values.secrets) expect(all).not.toContain(secret);
+
+        expect(await page.locator(".ins-status").innerText()).toContain(
+          "capturing wire + decrypted",
+        );
+        await page.evaluate(() =>
+          (window as unknown as DiagWindow).__diag.clear(),
+        );
+        expect(await page.locator(".cdv-capture").inputValue()).toBe("off");
+        expect(await rows(page).count()).toBe(0);
+        expect(await detail(page).count()).toBe(0);
+        expect(await page.locator(".ins-status").innerText()).toContain(
+          "metadata only",
+        );
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
   );
 });

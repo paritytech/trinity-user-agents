@@ -140,10 +140,15 @@ function readRichText(reader: Reader): {
   return { text: body, attachments: attachments !== null };
 }
 
-/** A token: a push token and its platform byte. Read only to be skipped. */
-function skipToken(reader: Reader): void {
-  readBytes(reader);
-  reader.u8();
+/** A push token and the platform byte that names where it is delivered. */
+export interface PushToken {
+  token: Uint8Array;
+  platform: number;
+}
+
+function readPushToken(reader: Reader): PushToken {
+  const token = readBytes(reader);
+  return { token, platform: reader.u8() };
 }
 
 export function encodeRequestMessage(request: ChatRequest): Uint8Array {
@@ -158,25 +163,34 @@ export function encodeRequestMessage(request: ChatRequest): Uint8Array {
   );
 }
 
-function readRequestMessage(reader: Reader): ChatRequest {
+function readRequestMessage(reader: Reader): {
+  request: ChatRequest;
+  pushToken: PushToken | null;
+} {
   const id = reader.text();
   const timestampMs = reader.u64();
   const version = reader.u8();
   if (version === 0) {
-    readOption(reader, skipToken);
+    const pushToken = readOption(reader, readPushToken);
     const welcome = readOption(reader, readRichText)?.text ?? null;
-    return { id, timestampMs, content: { version: 1, welcome } };
+    return {
+      request: { id, timestampMs, content: { version: 1, welcome } },
+      pushToken,
+    };
   }
   if (version === 1) {
     const identity = reader.take(32).slice();
     const identityProof = reader.take(32).slice();
     const deviceKey = reader.take(32).slice();
-    readOption(reader, skipToken);
+    const pushToken = readOption(reader, readPushToken);
     const welcome = readOption(reader, readRichText)?.text ?? null;
     return {
-      id,
-      timestampMs,
-      content: { version: 2, identity, identityProof, deviceKey, welcome },
+      request: {
+        id,
+        timestampMs,
+        content: { version: 2, identity, identityProof, deviceKey, welcome },
+      },
+      pushToken,
     };
   }
   throw new Error(`the request is version tag ${version}`);
@@ -187,20 +201,30 @@ const requestSigningPayload = (message: Uint8Array, acceptor: Uint8Array) =>
   concat(message, bytes(acceptor));
 
 /**
- * Seal a version 1 request to `acceptorChatKey` with a fresh ephemeral key:
- * `Vec<u8> ephemeral || Vec<u8> sealed(message || 0x00 || signature || signer)`.
+ * A version 1 request's plaintext, signed for `acceptor`:
+ * `message || 0x00 || signature || signer`.
  */
-export function sealRequest(
+export function requestPlaintext(
   request: ChatRequest,
   acceptor: Uint8Array,
-  acceptorChatKey: Uint8Array,
   signer: Uint8Array,
   sign: (payload: Uint8Array) => Uint8Array,
-  random: RandomBytes,
 ): Uint8Array {
   const message = encodeRequestMessage(request);
   const signature = sign(requestSigningPayload(message, acceptor));
-  const plaintext = concat(message, Uint8Array.of(0), signature, signer);
+  return concat(message, Uint8Array.of(0), signature, signer);
+}
+
+/**
+ * Seal a request's plaintext to `acceptorChatKey` with a fresh ephemeral key:
+ * `Vec<u8> ephemeral || Vec<u8> sealed(plaintext)`. The ephemeral secret is
+ * dropped here.
+ */
+export function sealRequestPlaintext(
+  plaintext: Uint8Array,
+  acceptorChatKey: Uint8Array,
+  random: RandomBytes,
+): Uint8Array {
   const ephemeral = random(32);
   const key = aeadKey(x25519Agree(ephemeral, acceptorChatKey));
   return concat(
@@ -209,23 +233,46 @@ export function sealRequest(
   );
 }
 
-/**
- * Open a request sent to `acceptor` and check its signature. The identity
- * proof of a version 2 request needs the peer's chat key, so it is checked
- * apart, with {@link checkIdentityProof}.
- */
-export function openRequest(
-  data: Uint8Array,
+/** Seal a version 1 request to `acceptorChatKey`; see {@link requestPlaintext}. */
+export const sealRequest = (
+  request: ChatRequest,
   acceptor: Uint8Array,
+  acceptorChatKey: Uint8Array,
+  signer: Uint8Array,
+  sign: (payload: Uint8Array) => Uint8Array,
+  random: RandomBytes,
+): Uint8Array =>
+  sealRequestPlaintext(
+    requestPlaintext(request, acceptor, signer, sign),
+    acceptorChatKey,
+    random,
+  );
+
+/** Decrypt a request's data to its plaintext, with the key agreed with its ephemeral key. */
+export function unsealRequest(
+  data: Uint8Array,
   agree: (ephemeral: Uint8Array) => Uint8Array,
-): OpenedRequest {
+): Uint8Array {
   const outer = new Reader(data);
   const ephemeral = key32(readBytes(outer), "the ephemeral key");
   const sealed = readBytes(outer);
   outer.finish();
-  const plaintext = unseal(aeadKey(agree(ephemeral)), sealed);
+  return unseal(aeadKey(agree(ephemeral)), sealed);
+}
+
+/** A request's plaintext, read and not verified. */
+export interface RequestPlaintext {
+  request: ChatRequest;
+  pushToken: PushToken | null;
+  /** The signed message: the plaintext before its proof. */
+  message: Uint8Array;
+  signature: Uint8Array;
+  signer: Uint8Array;
+}
+
+export function readRequestPlaintext(plaintext: Uint8Array): RequestPlaintext {
   const reader = new Reader(plaintext);
-  const request = readRequestMessage(reader);
+  const { request, pushToken } = readRequestMessage(reader);
   const messageEnd = plaintext.length - 97;
   const proofKind = reader.u8();
   if (proofKind !== 0)
@@ -233,7 +280,26 @@ export function openRequest(
   const signature = reader.take(64).slice();
   const signer = reader.take(32).slice();
   reader.finish();
-  const message = plaintext.subarray(0, messageEnd);
+  return {
+    request,
+    pushToken,
+    message: plaintext.subarray(0, messageEnd),
+    signature,
+    signer,
+  };
+}
+
+/**
+ * Read a request's plaintext and check its signature for `acceptor`. The
+ * identity proof of a version 2 request needs the peer's chat key, so it is
+ * checked apart, with {@link checkIdentityProof}.
+ */
+export function openRequestPlaintext(
+  plaintext: Uint8Array,
+  acceptor: Uint8Array,
+): OpenedRequest {
+  const { request, message, signature, signer } =
+    readRequestPlaintext(plaintext);
   if (
     !sr25519Verify(requestSigningPayload(message, acceptor), signature, signer)
   )
@@ -242,6 +308,13 @@ export function openRequest(
     request.content.version === 2 ? request.content.identity : signer;
   return { ...request, signer, peer };
 }
+
+/** Open a request sent to `acceptor`; see {@link openRequestPlaintext}. */
+export const openRequest = (
+  data: Uint8Array,
+  acceptor: Uint8Array,
+  agree: (ephemeral: Uint8Array) => Uint8Array,
+): OpenedRequest => openRequestPlaintext(unsealRequest(data, agree), acceptor);
 
 /**
  * Check a version 2 request's identity proof:
@@ -269,7 +342,7 @@ export function checkIdentityProof(
  * none of them in a chat.
  */
 export type ControlContent =
-  | { control: "token" }
+  | ({ control: "token" } & PushToken)
   | {
       control: "device-added";
       statementAccount: Uint8Array;
@@ -308,9 +381,6 @@ export const CONTROL_TAGS: readonly number[] = [
   CONTENT_TAG.deviceRemoved,
 ];
 
-/** The push platforms a token names: Android, iOS, iOS VoIP. */
-const TOKEN_PLATFORMS = 3;
-
 const readKey = (reader: Reader, what: string): Uint8Array =>
   key32(readBytes(reader), what);
 
@@ -342,14 +412,44 @@ export function encodeMessage(message: ChatMessage): Uint8Array {
   }
 }
 
+/** The push platforms a token's byte names, in order. */
+export const TOKEN_PLATFORM_NAMES: readonly string[] = [
+  "Android",
+  "iOS",
+  "iOS VoIP",
+];
+
+/** The head every message starts with, and where its content begins. */
+export interface MessageHead {
+  id: string;
+  timestampMs: bigint;
+  version: number;
+  kind: number;
+  /** The length of the head: content bytes start here. */
+  contentStart: number;
+}
+
+/** Read a message's head. Throws when it is short. */
+export function readMessageHead(encoded: Uint8Array): MessageHead {
+  const reader = new Reader(encoded);
+  const id = reader.text();
+  const timestampMs = reader.u64();
+  const version = reader.u8();
+  const kind = reader.u8();
+  return {
+    id,
+    timestampMs,
+    version,
+    kind,
+    contentStart: text(id).length + 10,
+  };
+}
+
 /** The content kind of an encoded message, or null when its head cannot be read. */
 export function messageKind(encoded: Uint8Array): number | null {
   try {
-    const reader = new Reader(encoded);
-    reader.text();
-    reader.u64();
-    if (reader.u8() !== 0) return null;
-    return reader.u8();
+    const head = readMessageHead(encoded);
+    return head.version === 0 ? head.kind : null;
   } catch {
     return null;
   }
@@ -389,11 +489,10 @@ function readContent(tag: number, reader: Reader): MessageContent {
       case CONTENT_TAG.chatAccepted:
         return { kind: "accepted", requestId: reader.text() };
       case CONTENT_TAG.token: {
-        readBytes(reader);
-        const platform = reader.u8();
-        if (platform >= TOKEN_PLATFORMS)
-          throw new Error(`the token names platform ${platform}`);
-        return { kind: "control", control: "token" };
+        const token = readPushToken(reader);
+        if (token.platform >= TOKEN_PLATFORM_NAMES.length)
+          throw new Error(`the token names platform ${token.platform}`);
+        return { kind: "control", control: "token", ...token };
       }
       case CONTENT_TAG.deviceAdded:
         return {
@@ -465,17 +564,30 @@ export function decodeSessionData(encoded: Uint8Array): SessionData {
   return data;
 }
 
+/** Seal encoded session data under the pair's agreed secret. */
+export const sealSessionPlaintext = (
+  secret: Uint8Array,
+  plaintext: Uint8Array,
+  random: RandomBytes,
+) => seal(aeadKey(secret), plaintext, random);
+
+/** Decrypt a session statement's data to the encoded session data. */
+export const unsealSession = (
+  secret: Uint8Array,
+  sealed: Uint8Array,
+): Uint8Array => unseal(aeadKey(secret), sealed);
+
 /** Seal session data under the pair's agreed secret. */
 export const sealSession = (
   secret: Uint8Array,
   data: SessionData,
   random: RandomBytes,
-) => seal(aeadKey(secret), encodeSessionData(data), random);
+) => sealSessionPlaintext(secret, encodeSessionData(data), random);
 
 export const openSession = (
   secret: Uint8Array,
   sealed: Uint8Array,
-): SessionData => decodeSessionData(unseal(aeadKey(secret), sealed));
+): SessionData => decodeSessionData(unsealSession(secret, sealed));
 
 /** The response code that acknowledges a request. */
 export const ACKNOWLEDGED = 0;

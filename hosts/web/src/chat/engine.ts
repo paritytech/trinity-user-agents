@@ -1,5 +1,6 @@
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type { HexString } from "@parity/truapi/scale";
+import type { CaptureStream, PayloadSink } from "./capture.js";
 import { equalBytes } from "./codec.js";
 import { cryptoRandom, type RandomBytes } from "./crypto.js";
 import {
@@ -20,19 +21,24 @@ import {
   ACKNOWLEDGED,
   checkIdentityProof,
   decodeMessage,
+  decodeSessionData,
   encodeMessage,
+  encodeSessionData,
   messageKind,
-  openRequest,
-  openSession,
+  openRequestPlaintext,
   requestChannel,
   requestDayTopic,
+  requestPlaintext,
   requestSessionTopic,
   requestTopic,
   responseChannel,
-  sealRequest,
-  sealSession,
+  sealRequestPlaintext,
+  sealSessionPlaintext,
   sessionTopic,
+  unsealRequest,
+  unsealSession,
   type ChatMessage,
+  type OpenedRequest,
   type SessionData,
 } from "./protocol.js";
 import {
@@ -41,6 +47,7 @@ import {
   expiryAt,
   nextExpiry,
   requestDay,
+  statementHash,
   verifyStatement,
   type Statement,
 } from "./statement.js";
@@ -98,6 +105,18 @@ export interface ChatEngineDeps {
   retryDelayMs?: number;
   /** Where to report what the engine does, as metadata only. */
   diagnostics?: ChatEventSink;
+  /**
+   * Where to hand the statements it receives and sends, and their data in
+   * the clear. Only statement bytes and plaintext go here, never a key.
+   */
+  payloads?: PayloadSink;
+}
+
+/** What a submission carries, for {@link ChatEngineDeps.payloads}. */
+interface SubmitPayload {
+  stream: CaptureStream;
+  /** The statement's data before it was sealed. */
+  plaintext: Uint8Array;
 }
 
 /** Why a submission was made, for diagnostics. */
@@ -371,15 +390,41 @@ export class ChatEngine {
     this.skipped = [reason, ...this.skipped].slice(0, SKIPPED_LIMIT);
   }
 
+  /** Hand a received statement to the payload sink, and name it by its hash. */
+  private received(stream: CaptureStream, encoded: Uint8Array): string {
+    this.deps.payloads?.statement("in", stream, encoded);
+    return bytesToHex(statementHash(encoded));
+  }
+
+  /** Decrypt with `open`, handing the plaintext, or why there is none, to the payload sink. */
+  private decrypt(statement: string, open: () => Uint8Array): Uint8Array {
+    let plaintext: Uint8Array;
+    try {
+      plaintext = open();
+    } catch (error) {
+      this.deps.payloads?.gap(
+        statement,
+        sanitizeReason(`could not decrypt: ${errorText(error)}`),
+      );
+      throw error;
+    }
+    this.deps.payloads?.plaintext(statement, plaintext);
+    return plaintext;
+  }
+
   private async receiveRequests(statements: Uint8Array[]): Promise<void> {
     for (const encoded of statements) {
+      const hash = this.received("requests", encoded);
       try {
         const statement = decodeStatement(encoded);
         if (!verifyStatement(statement))
           throw new Error("its proof does not verify");
-        const request = openRequest(statement.data, this.me, (ephemeral) =>
-          this.deps.keys.agree(ephemeral),
+        const plaintext = this.decrypt(hash, () =>
+          unsealRequest(statement.data, (ephemeral) =>
+            this.deps.keys.agree(ephemeral),
+          ),
         );
+        const request = openRequestPlaintext(plaintext, this.me);
         const peer = bytesToHex(request.peer);
         const seen = (
           outcome: Extract<ChatEventBody, { type: "request" }>["outcome"],
@@ -392,6 +437,7 @@ export class ChatEngine {
             version: request.content.version,
             outcome,
             ...(problem ? { problem: sanitizeReason(problem) } : {}),
+            statement: hash,
           });
         const known = this.record.requests.findIndex(
           (candidate) => candidate.id === request.id,
@@ -432,6 +478,7 @@ export class ChatEngine {
           type: "set-aside",
           stream: "requests",
           reason: sanitizeReason(errorText(error)),
+          statement: hash,
         });
       }
     }
@@ -439,7 +486,7 @@ export class ChatEngine {
   }
 
   private async describeRequest(
-    request: ReturnType<typeof openRequest>,
+    request: OpenedRequest,
     peer: HexString,
   ): Promise<IncomingRequest> {
     const described: IncomingRequest = {
@@ -551,6 +598,7 @@ export class ChatEngine {
 
   private async receiveSessions(statements: Uint8Array[]): Promise<void> {
     for (const encoded of statements) {
+      const hash = this.received("sessions", encoded);
       try {
         const statement = decodeStatement(encoded);
         if (!verifyStatement(statement))
@@ -562,21 +610,33 @@ export class ChatEngine {
             equalBytes(this.incomingTopic(candidate), topic),
         );
         if (contact === undefined) {
+          this.deps.payloads?.gap(
+            hash,
+            "no contact's session topic matches, so there is no key to decrypt with",
+          );
           this.emit({
             type: "set-aside",
             stream: "sessions",
             reason: "no contact's session topic matches",
+            statement: hash,
           });
           continue;
         }
-        const data = openSession(this.secretWith(contact), statement.data);
-        await this.receiveSessionData(contact, data);
+        const plaintext = this.decrypt(hash, () =>
+          unsealSession(this.secretWith(contact), statement.data),
+        );
+        await this.receiveSessionData(
+          contact,
+          decodeSessionData(plaintext),
+          hash,
+        );
       } catch (error) {
         this.skip(`A session statement could not be read: ${errorText(error)}`);
         this.emit({
           type: "set-aside",
           stream: "sessions",
           reason: sanitizeReason(errorText(error)),
+          statement: hash,
         });
       }
     }
@@ -586,11 +646,12 @@ export class ChatEngine {
   private async receiveSessionData(
     contact: Contact,
     data: SessionData,
+    statement: string,
   ): Promise<void> {
     const peer = shortHex(contact.account);
     switch (data.kind) {
       case "multi-device":
-        this.emit({ type: "session", peer, data: "multi-device" });
+        this.emit({ type: "session", peer, data: "multi-device", statement });
         this.skip(
           `${contact.name ?? contact.account} sent a multi-device envelope, which this host does not open.`,
         );
@@ -604,6 +665,7 @@ export class ChatEngine {
           requestId: shortId(data.requestId),
           code: data.code,
           matched,
+          statement,
         });
         if (
           data.code === ACKNOWLEDGED &&
@@ -631,6 +693,7 @@ export class ChatEngine {
           requestId: shortId(data.requestId),
           kinds: data.messages.map(messageKind),
           duplicates,
+          statement,
         });
         await this.acknowledge(contact, data.requestId);
       }
@@ -710,8 +773,10 @@ export class ChatEngine {
   private async submit(
     statement: Statement,
     context: SubmitContext,
+    payload: SubmitPayload,
   ): Promise<void> {
     let reported = false;
+    let hash: string | undefined;
     const report = (
       result: "stored" | "refused" | "error",
       details: { status?: string; reason?: string },
@@ -725,6 +790,7 @@ export class ChatEngine {
           : {}),
         result,
         ...details,
+        ...(hash !== undefined ? { statement: hash } : {}),
       });
     };
     try {
@@ -733,7 +799,11 @@ export class ChatEngine {
       const store = this.store;
       if (store === null)
         throw new Error("Chat is not connected to the People chain.");
-      const result = await store.submit(this.sign(statement));
+      const encoded = this.sign(statement);
+      hash = bytesToHex(statementHash(encoded));
+      this.deps.payloads?.statement("out", payload.stream, encoded);
+      this.deps.payloads?.plaintext(hash, payload.plaintext);
+      const result = await store.submit(encoded);
       if (!isStored(result)) {
         report("refused", {
           status: sanitizeReason(result.status),
@@ -783,15 +853,20 @@ export class ChatEngine {
       this.lastExpiry(contact.expiry.request),
       this.now(),
     );
+    const plaintext = encodeSessionData({
+      kind: "request",
+      requestId,
+      messages: encoded,
+    });
     try {
       await this.submit(
         {
           expiry,
           channel: requestChannel(topic),
           topics: [topic],
-          data: sealSession(
+          data: sealSessionPlaintext(
             this.secretWith(contact),
-            { kind: "request", requestId, messages: encoded },
+            plaintext,
             this.random,
           ),
         },
@@ -803,6 +878,7 @@ export class ChatEngine {
           requestId,
           messages: messages.length,
         },
+        { stream: "sessions", plaintext },
       );
       contact.expiry.request = expiry.toString();
       contact.outbound = {
@@ -840,19 +916,25 @@ export class ChatEngine {
       this.lastExpiry(contact.expiry.response),
       this.now(),
     );
+    const plaintext = encodeSessionData({
+      kind: "response",
+      requestId,
+      code: ACKNOWLEDGED,
+    });
     try {
       await this.submit(
         {
           expiry,
           channel: responseChannel(topic),
           topics: [topic],
-          data: sealSession(
+          data: sealSessionPlaintext(
             this.secretWith(contact),
-            { kind: "response", requestId, code: ACKNOWLEDGED },
+            plaintext,
             this.random,
           ),
         },
         { purpose: "ack", peer: shortHex(contact.account), requestId },
+        { stream: "sessions", plaintext },
       );
       contact.expiry.response = expiry.toString();
       contact.acknowledged = requestId;
@@ -950,6 +1032,9 @@ export class ChatEngine {
         },
       };
       const secret = this.deps.keys.agree(chatKey);
+      const plaintext = requestPlaintext(request, account, this.me, (payload) =>
+        this.deps.keys.sign(payload),
+      );
       await this.submit(
         {
           expiry: expiryAt(this.now()),
@@ -959,20 +1044,14 @@ export class ChatEngine {
             requestTopic(account),
             requestSessionTopic(secret, this.me, account),
           ],
-          data: sealRequest(
-            request,
-            account,
-            chatKey,
-            this.me,
-            (payload) => this.deps.keys.sign(payload),
-            this.random,
-          ),
+          data: sealRequestPlaintext(plaintext, chatKey, this.random),
         },
         {
           purpose: "chat request",
           peer: shortHex(peer),
           requestId: request.id,
         },
+        { stream: "requests", plaintext },
       );
       this.record.contacts.push({
         account: peer,

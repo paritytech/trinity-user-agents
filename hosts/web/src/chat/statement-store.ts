@@ -54,6 +54,12 @@ export function statementsOf(result: unknown): Uint8Array[] {
     .map(hexToBytes);
 }
 
+/**
+ * Sees every JSON-RPC text this store sends and receives, exactly as it goes
+ * to and comes from the connection, before it is parsed.
+ */
+export type RpcTap = (direction: "in" | "out", text: string) => void;
+
 export class StatementStore {
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
@@ -68,13 +74,17 @@ export class StatementStore {
     this.markClosed = resolve;
   });
 
-  constructor(private readonly connection: JsonRpcConnection) {
+  constructor(
+    private readonly connection: JsonRpcConnection,
+    private readonly tap?: RpcTap,
+  ) {
     void this.pump().finally(() => this.markClosed());
   }
 
   private async pump(): Promise<void> {
     try {
       for await (const raw of this.connection.responses()) {
+        this.tap?.("in", raw);
         const message = JSON.parse(raw) as RpcMessage;
         if (message.id !== undefined) {
           const waiting = this.pending.get(message.id);
@@ -111,9 +121,9 @@ export class StatementStore {
     const answer = new Promise<unknown>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
     });
-    this.connection.send(
-      JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-    );
+    const request = JSON.stringify({ jsonrpc: "2.0", id, method, params });
+    this.tap?.("out", request);
+    this.connection.send(request);
     return answer;
   }
 
