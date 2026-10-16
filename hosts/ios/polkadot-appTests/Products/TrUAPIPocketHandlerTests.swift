@@ -1,6 +1,7 @@
 import Foundation
 import AsyncExtensions
 import Products
+import StructuredConcurrency
 import Testing
 import TrUAPIHost
 @testable import polkadot_app
@@ -21,14 +22,16 @@ struct TrUAPIPocketHandlerTests {
         let streams = makeStreams(workers: workers)
 
         let drawing = Task { for try await _ in streams.renderFaces(for: loyalty) {} }
-        try await settle()
 
         workers.publish(["game.paseo": execution])
-        try await settle()
+        try await withTimeout(.seconds(5)) { await execution.awaitRenderRequest() }
         workers.publish(["game.paseo": execution, "shop.paseo": MockProductExecution()])
-        try await settle()
         workers.publish(["game.paseo": execution])
-        try await settle()
+
+        let replacement = MockProductExecution()
+        replacement.keepsRenderStreamOpen = true
+        workers.publish(["game.paseo": replacement])
+        try await withTimeout(.seconds(5)) { await replacement.awaitRenderRequest() }
         drawing.cancel()
 
         #expect(execution.renderRequests.count == 1)
@@ -38,15 +41,6 @@ struct TrUAPIPocketHandlerTests {
 // MARK: - Fixtures
 
 private let loyalty = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
-
-/// The handler hands its work to tasks, so the assertions wait for them rather
-/// than for a fixed time.
-private func settle() async throws {
-    for _ in 0 ..< 20 {
-        await Task.yield()
-    }
-    try await Task.sleep(for: .milliseconds(20))
-}
 
 private func makeStreams(workers: StubWorkerManager) -> TrUAPIPocketHandler {
     TrUAPIPocketHandler(productId: "game.paseo", workers: workers)
