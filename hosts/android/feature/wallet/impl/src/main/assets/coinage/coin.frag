@@ -30,7 +30,10 @@ uniform vec3 uLightTurn;        // studio turned with the phone: an axis scaled 
 uniform float uExposure, uLuster, uRimLuster, uLusterMinPx, uStudioRadius, uStudioScale;
 uniform float uBasin, uRollGloss, uRollReliefHaze, uEnvSharpen, uHaze, uPolish, uTone, uGrime;
 uniform float uEngraveDark, uFrost, uWallRough, uAaVariance, uAaThreshold, uReliefBias;
-uniform vec3 uBackdrop;
+uniform float uReliefGain;      // how much harder than the atlas the struck relief slopes
+uniform float uRoomLift;        // light added to the whole studio: its grey walls painted lighter
+uniform vec4 uPanels[6];        // three softboxes of our own, two vec4 each: unit direction + cos(half
+                                // angle), gain + pad
 uniform int uDebug;
 uniform vec4 uMetals[12];       // six metals, two vec4 each: f0 + roughness, tone + pad
 
@@ -58,19 +61,25 @@ vec3 toWorld(vec3 v) { return vAxisX * v.x + vAxisY * v.y + vAxisZ * v.z; }
 // and all but invisible at strip size.
 const float MARK_INNER = 0.30;   // clear of the struck figure, which has to stay readable
 const float MARK_OUTER = 0.45;   // out to the rim
-const float PIT_RADIUS = 0.10;   // a pit is large on purpose: you can count them
+const float PIT_RADIUS = 0.115;  // a pit is large on purpose: you can count them
 const float PIT_DEPTH = 2.6;
-const float PIT_FLOOR = 0.51;    // how dark the bottom of a pit goes; 1.0 would not darken at all
+const float PIT_FLOOR = 0.42;    // how dark the bottom of a pit goes; 1.0 would not darken at all
 const float STREAK_DEPTH = 1.65;
 const int PIT_MAX = 8;
 const int STREAK_MAX = 12;
 
-// How much harder than the reference a coin wears. Its own figure is tuned for a coin filling a
-// desktop window; here the largest is sixty points tall, and the four things wear does — toning the
-// metal toward its own darker cast, hazing the field while the relief rubs shiny, killing the mint
-// luster, and collecting grime in the cut figure — all have to read at that size. Saturates early
-// rather than reaching further: a fully worn coin looked right, everything between did not.
-const float WEAR_GAIN = 1.5;
+// How a coin wears, from the recycler's own ladder: a coin nobody can follow is dull, dark and
+// matte, and a coin hidden among hundreds is the only bright one. Every step of the ladder is meant
+// to be told from the next at sixty points, and from the side, where a strip shows only walls.
+//
+// All linear in wear, so no two levels collapse into one: the metal goes to its own dark cast, then
+// darker still below the room's average; the surface goes from a light haze, which even a clean
+// coin carries so no face is a bare mirror, to fully matte; the mint luster dies; grime collects
+// in the cut figure.
+const float WEAR_TONE = 1.0;     // how far toward the dark cast a fully worn coin goes
+const float WEAR_DARKEN = 0.45;  // and how much of its reflectance it loses past that
+const float FRESH_HAZE = 0.12;   // roughness every coin carries; the metals start near 0.15
+const float WEAR_HAZE = 0.75;    // roughness a fully worn coin gains on top, to fully matte
 
 vec2 markHash(float seed) {
   return fract(sin(vec2(seed * 12.9898, seed * 78.233 + 1.7)) * vec2(43758.5453, 22578.1459));
@@ -159,6 +168,19 @@ vec3 srgbEncode(vec3 c) {
   return mix(hi, lo, vec3(lessThanEqual(c, vec3(0.0031308))));
 }
 
+// A softbox added over the studio: a disc of light about its direction, with an edge that softens
+// as the blur level rises, which is what prefiltering would have done to a panel in the export.
+float panels(vec3 dir, float lod) {
+  float softness = 0.04 + 0.25 * lod / max(uEnvMaxLod, 1.0);
+  float total = 0.0;
+  for (int i = 0; i < 3; ++i) {
+    vec4 at = uPanels[i * 2];
+    float gain = uPanels[i * 2 + 1].x;
+    total += gain * smoothstep(at.w - softness, at.w + softness, dot(dir, at.xyz));
+  }
+  return total;
+}
+
 vec3 envAt(vec3 p, float pp, vec3 Rw, float r) {
   vec3 R = tiltDir(Rw, uLightTurn);
   float b = dot(p, R);
@@ -187,7 +209,7 @@ void main() {
   float nrLen = max(length(nr), 1e-3);
   float height = texel.a * 2.0 - 1.0;
   float mask = vSurf.w * (1.0 - smoothstep(RELIEF_RADIUS - 0.015, RELIEF_RADIUS + 0.01, length(lp.xy)));
-  vec2 slope = vec2(nr.x * side, nr.y) / max(nr.z, 0.2);
+  vec2 slope = vec2(nr.x * side, nr.y) / max(nr.z, 0.2) * uReliefGain;
   float rr = length(lp.xy);
   float k = PI_F / 2.0 / RELIEF_RADIUS;
   float basinSlope = uBasin * k * sin(rr * 2.0 * k) * (rr < RELIEF_RADIUS ? 1.0 : 0.0);
@@ -229,14 +251,17 @@ void main() {
   int metalIndex = int(isCore ? vLookI.z : vLookI.y);
   vec4 m0 = uMetals[metalIndex * 2];
   vec4 m1 = uMetals[metalIndex * 2 + 1];
-  float wear = min(clamp(vLookI.x, 0.0, 1.0) * WEAR_GAIN, 1.0);
-  float toning = wear * uTone * mix(0.55, 1.0, cut);
-  vec3 baseColor = m0.xyz * mix(vec3(1.0), m1.xyz, toning);
+  float wear = clamp(vLookI.x, 0.0, 1.0);
+  float toning = wear * uTone * WEAR_TONE * mix(0.9, 1.0, cut);
+  vec3 baseColor = m0.xyz * mix(vec3(1.0), m1.xyz, toning) * (1.0 - WEAR_DARKEN * wear);
   float inRoll = 1.0 - clamp(vFxI.y, 0.0, 1.0);
-  float rough = clamp(m0.w - inRoll * uRollGloss + vSurf.z * uWallRough + cut * uFrost
-                      + wear * uHaze * (1.0 - high) - wear * uPolish * high + markRough, 0.05, 1.0);
+  // The haze goes on walls and fields alike, and the high relief only rubs slightly shinier: a coin
+  // nobody can follow is as matte on its edge as on its face, which is what reads side-on.
+  float rough = clamp(m0.w + FRESH_HAZE - inRoll * uRollGloss + vSurf.z * uWallRough + cut * uFrost
+                      + wear * WEAR_HAZE * (1.0 - 0.3 * high) - wear * uPolish * high + markRough, 0.05, 1.0);
   float hub = smoothstep(0.02, 0.1, length(lp.xy));
-  float lusterOn = clamp(vFxI.y, 0.0, 1.0) * smoothstep(uLusterMinPx * 0.7, uLusterMinPx, px);
+  // Off below the minimum size and fading in above it, so a crowded grid takes the single lookup.
+  float lusterOn = clamp(vFxI.y, 0.0, 1.0) * smoothstep(uLusterMinPx, uLusterMinPx * 1.4, px);
   float lusterSlope = (uLuster * vSurf.w * hub + uRimLuster * rimTop)
       * (1.0 - wear) * (1.0 - high * wear) * (1.0 - cut) * lusterOn;
   vec3 across = normalize(vec3(-lp.y, lp.x, 0.0) + vec3(1e-5, 0.0, 0.0));
@@ -271,10 +296,18 @@ void main() {
   } else {
     prefiltered = envAt(p, pp, reflect(-v, nW), roughness);
   }
+  // Broad, so once per pixel about its own mirror direction rather than once per luster tap.
+  {
+    vec3 mirror = tiltDir(reflect(-v, nW), uLightTurn);
+    float envLod = clamp(roughness * uEnvSharpen, 0.0, 1.0) * uEnvMaxLod;
+    prefiltered += uRoomLift + panels(mirror, envLod);
+  }
   vec3 metal = prefiltered * envBRDFApprox(baseColor, roughness, ndv) * occlusion;
   vec3 grimeColor = vec3(0.05, 0.043, 0.034) * mix(0.5, 1.0, nW.y * 0.5 + 0.5);
   vec3 color = mix(metal, grimeColor, grime) * uExposure;
-  color = mix(color, uBackdrop, clamp(vFxI.z, 0.0, 1.0) * 0.72);
+  // A receded coin fades toward whatever is behind the surface rather than toward a fixed backdrop:
+  // the card is light in one theme and dark in the other.
+  float alpha = 1.0 - clamp(vFxI.z, 0.0, 1.0) * 0.72;
 
   if (uDebug == 1) color = baseColor;
   if (uDebug == 2) color = pow(nW * 0.5 + 0.5, vec3(2.2));
@@ -285,5 +318,5 @@ void main() {
 
   vec3 encoded = srgbEncode(neutralShoulder(color));
   float noise = (fract(sin(dot(vWorldXY, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
-  fragColor = vec4(encoded + noise, 1.0);
+  fragColor = vec4((encoded + noise) * alpha, alpha);
 }

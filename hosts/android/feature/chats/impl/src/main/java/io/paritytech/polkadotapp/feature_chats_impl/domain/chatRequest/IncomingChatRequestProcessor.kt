@@ -294,7 +294,8 @@ class RealIncomingChatRequestProcessor @Inject constructor(
             welcomeMessageId = incomingData.chatRequestId,
             timestamp = incomingData.request.message.timestamp.toLong(),
             direction = ChatRequest.Direction.INCOMING,
-            status = ChatRequest.Status.PENDING
+            status = ChatRequest.Status.PENDING,
+            delivery = ChatRequest.Delivery.Delivered,
         )
     }
 
@@ -306,7 +307,7 @@ class RealIncomingChatRequestProcessor @Inject constructor(
     ): IncomingRequestProcessingResult {
         val peerAccountId = data.request.peerIdentityAccountId()
         val consumerInfo = resourcesRepository
-            .requireConsumerInfo(chainRegistry.getChain(knownChains.people), peerAccountId)
+            .requireConsumerInfo(chainRegistry.getChain(knownChains.assetHub), peerAccountId)
             .getOrThrow()
 
         return createNewIncomingRequestChat(data, consumerInfo.username, (consumerInfo.identifierKey.x25519OrNull() ?: error("Peer account uses an unsupported chat encryption key type")))
@@ -323,7 +324,8 @@ class RealIncomingChatRequestProcessor @Inject constructor(
             welcomeMessageId = data.request.message.messageId,
             timestamp = data.request.message.timestamp.toLong(),
             direction = ChatRequest.Direction.INCOMING,
-            status = ChatRequest.Status.PENDING
+            status = ChatRequest.Status.PENDING,
+            delivery = ChatRequest.Delivery.Delivered,
         )
         chatRequestRepository.save(request)
 

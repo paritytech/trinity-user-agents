@@ -1,17 +1,19 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.HostCallException
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ModalityApiSlot
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WeakModalityApiSlot
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 
 private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
 
@@ -21,7 +23,7 @@ private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
 class BindableProductsBotApi(
     hostApiInteractor: HostApiInteractor,
     callingProductIdProvider: CallingProductIdProvider,
-) : BaseProductsBotApi(hostApiInteractor, callingProductIdProvider) {
+) : BaseProductsBotApi(hostApiInteractor, callingProductIdProvider), ProductChatMessaging {
     val chatSlot: ModalityApiSlot<ProductChatMessaging> = WeakModalityApiSlot()
 
     override suspend fun createRoom(request: CreateProductRoomRequest): Result<CreateProductRoomResult> {
@@ -41,8 +43,16 @@ class BindableProductsBotApi(
         )
     }
 
+    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
+        return chatSlot.tryUse().fold(
+            onSuccess = { it.setRoomFooter(chatIdParameter, showsTextInput) },
+            onFailure = { messagingNotSupported() },
+        )
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     override fun subscribeChatRooms(): Flow<List<ProductChatRoom>> {
-        return chatSlot.tryUse().getOrNull()?.subscribeChatRooms() ?: emptyFlow()
+        return chatSlot.bound.flatMapLatest { it?.subscribeChatRooms() ?: flowOf(emptyList()) }
     }
 
     private fun <T> messagingNotSupported(): Result<T> = Result.failure(

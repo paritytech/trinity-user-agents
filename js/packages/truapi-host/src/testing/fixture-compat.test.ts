@@ -194,7 +194,9 @@ describe("reading a stored value back the way the old package spelled it", () =>
   // result inside a `page.waitForFunction` predicate. All three matter: a
   // promise, or a node-only member, fails such a predicate rather than the
   // assertion under it.
-  const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+  const suite = wasmIsBuilt("testing/truapi_server.js")
+    ? describe
+    : describe.skip;
 
   suite("against the real core", () => {
     it("decodes what the product wrote, matching on the product's own key", async () => {
@@ -355,7 +357,11 @@ describe("where the loopback statement store attaches", () => {
   });
 
   it("refuses several chains with no People among them, rather than silently serving nothing", () => {
-    const second = { ...SAMPLE_CHAIN, id: "paseo-bulletin", genesisHash: "0xb" };
+    const second = {
+      ...SAMPLE_CHAIN,
+      id: "paseo-bulletin",
+      genesisHash: "0xb",
+    };
     expect(() => fromNetworks([SAMPLE_CHAIN, second], true)).toThrow(
       /needs a People chain/,
     );
@@ -366,7 +372,11 @@ describe("where the loopback statement store attaches", () => {
     // refusal above must not reach one that never named it: it would attach
     // nowhere, and the whole fixture would fail over an option the suite does
     // not use.
-    const second = { ...SAMPLE_CHAIN, id: "paseo-bulletin", genesisHash: "0xb" };
+    const second = {
+      ...SAMPLE_CHAIN,
+      id: "paseo-bulletin",
+      genesisHash: "0xb",
+    };
     const { mock } = fromNetworks([SAMPLE_CHAIN, second], "default");
     expect(mock.chainProxies).toEqual([
       { genesisHash: SAMPLE_CHAIN.genesisHash, rpcUrl: SAMPLE_CHAIN.rpcUrl },
@@ -378,7 +388,11 @@ describe("where the loopback statement store attaches", () => {
     // The default-on store is derived from `allowances`, which itself defaults
     // to "granted", so this is what a suite declaring a relay and a hub writes
     // without naming statements at all.
-    const second = { ...SAMPLE_CHAIN, id: "paseo-bulletin", genesisHash: "0xb" };
+    const second = {
+      ...SAMPLE_CHAIN,
+      id: "paseo-bulletin",
+      genesisHash: "0xb",
+    };
     expect(() =>
       createTestHostFixture({
         productUrl: "http://localhost:5200",
@@ -395,7 +409,9 @@ describe("where the loopback statement store attaches", () => {
 });
 
 describe("the permission policy the old package's name asks for", () => {
-  const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+  const suite = wasmIsBuilt("testing/truapi_server.js")
+    ? describe
+    : describe.skip;
 
   suite("against the real core", () => {
     it("takes `reject-all` without complaint", async () => {
@@ -427,7 +443,9 @@ describe("the permission policy the old package's name asks for", () => {
 });
 
 describe("changing an answer the core has already settled", () => {
-  const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+  const suite = wasmIsBuilt("testing/truapi_server.js")
+    ? describe
+    : describe.skip;
 
   suite("against the real core", () => {
     it("asks once, then answers from the core's own record", async () => {
@@ -456,7 +474,8 @@ describe("changing an answer the core has already settled", () => {
         expect(host.getPermissionLog()).toHaveLength(1);
 
         host.revokePermission("Camera");
-        const second = await client.permissions.requestDevicePermission("Camera");
+        const second =
+          await client.permissions.requestDevicePermission("Camera");
 
         expect(host.getPermissionLog()).toHaveLength(2);
         expect(host.getPermissionLog().at(-1)?.approved).toBe(false);

@@ -60,8 +60,8 @@ final class ChatTransferAmountView: UIView {
         let font = UIFont.app(typography)
         amountLabel.font = font
         amountLabel.text = amountText
-        unitLabel.font = unitFont(for: font)
-        unitLabel.text = unit
+        unitLabel.attributedText = CashLogo.unit(unit, fallback: unitFont(for: font))
+        unitLabel.accessibilityLabel = unit
 
         invalidateIntrinsicContentSize()
         setNeedsLayout()
@@ -80,7 +80,7 @@ private extension ChatTransferAmountView {
 
     func fits(amountText: String, unit: String, typography: TypographyStyle) -> Bool {
         let font = UIFont.app(typography)
-        let total = width(of: amountText, font: font) + width(of: unit, font: unitFont(for: font))
+        let total = width(of: amountText, font: font) + CashLogo.unit(unit, fallback: unitFont(for: font)).size().width
 
         return total <= Constants.maxWidth
     }
