@@ -3,6 +3,9 @@ use crate::{
 	format::{self, Schemes},
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+// `unwrap_or_skip` reads a field that may be left out but, when present, holds a value: `null`
+// is not absent.
+use serde_with::{rust::unwrap_or_skip, skip_serializing_none};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
@@ -22,6 +25,7 @@ pub const SERVICE_KINDS: &[&str] =
 /// The I-JSON checks need the bytes as served: read those with [`Document::parse`].
 ///
 /// [`Document::parse`]: crate::Document::parse
+#[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(remote = "Self", rename_all = "camelCase")]
 pub struct Descriptor {
@@ -40,31 +44,32 @@ pub struct Descriptor {
 	pub network: String,
 	/// dotNS TLD without the leading dot.
 	pub tld: String,
-	/// When the stack itself shuts down.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
-	pub expires_at: Option<String>,
-	/// When this copy goes stale and must be fetched again.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
-	pub valid_until: Option<String>,
+	/// When the stack itself shuts down, in Unix seconds.
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
+	pub expires_at: Option<u32>,
+	/// When this copy goes stale and must be fetched again, in Unix seconds.
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
+	pub valid_until: Option<u32>,
 	/// Set when the stack is a fork of another. Explains; never decides trust.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub fork: Option<Fork>,
 	/// The stack's chains.
 	pub chains: Vec<Chain>,
 	/// The stack's off-chain services of known kinds.
 	pub services: Vec<Service>,
 	/// Assets readers treat specially.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub assets: Option<Vec<Asset>>,
 	/// Asset Hub contracts readers need that the chains do not point to, by name.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub contracts: Option<BTreeMap<String, String>>,
 	/// Chain role and instance of the Coinage pallet.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub coinage: Option<Coinage>,
 }
 
 /// One chain of a stack.
+#[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Chain {
@@ -73,21 +78,21 @@ pub struct Chain {
 	/// 0x-prefixed genesis hash.
 	pub genesis_hash: String,
 	/// Required on every chain but the relay.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub para_id: Option<u32>,
 	/// WebSocket endpoints, most preferred first.
 	pub rpc: Vec<String>,
 	/// The chain's nodes serve the statement store.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub statement_store: Option<bool>,
 	/// Light-client chain spec.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub light_spec: Option<SpecFile>,
 	/// Full chain spec with the whole genesis storage.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub full_spec: Option<SpecFile>,
 	/// The source's block this chain was forked at.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub forked_at: Option<Block>,
 }
 
@@ -110,6 +115,7 @@ pub struct Block {
 }
 
 /// An off-chain service.
+#[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Service {
@@ -118,7 +124,7 @@ pub struct Service {
 	/// Endpoints, most preferred first.
 	pub urls: Vec<String>,
 	/// The EVM chain id; set on `eth-rpc` only.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub chain_id: Option<u64>,
 }
 
@@ -149,17 +155,18 @@ pub struct Coinage {
 pub struct Fork {
 	/// The source stack's pointer.
 	pub of: ForkSource,
-	/// When it was forked.
-	pub at: String,
+	/// When it was forked, in Unix seconds.
+	pub at: u32,
 }
 
 /// The pointer of a fork's source stack.
+#[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForkSource {
 	/// The source descriptor's URL.
 	pub url: String,
 	/// The source's public key, when it is signed.
-	#[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub key: Option<String>,
 }
 
@@ -209,9 +216,6 @@ impl Descriptor {
 		}
 		if !is_label(&self.tld) {
 			return Err(Error::InvalidTld(self.tld.clone()));
-		}
-		for time in [&self.expires_at, &self.valid_until].into_iter().flatten() {
-			format::unix_seconds(time)?;
 		}
 		self.validate_numbers()?;
 		self.validate_chains()?;
@@ -328,7 +332,6 @@ impl Descriptor {
 			return Err(Error::ForkedAt);
 		}
 		if let Some(fork) = &self.fork {
-			format::unix_seconds(&fork.at)?;
 			format::url(&fork.of.url, Schemes::Web)?;
 			if let Some(key) = &fork.of.key {
 				format::hex_bytes::<32>("fork.of.key", key)?;
@@ -379,13 +382,6 @@ fn is_label(name: &str) -> bool {
 
 fn is_known_kind(kind: &str) -> bool {
 	SERVICE_KINDS.contains(&kind)
-}
-
-/// Reads a field that may be left out but, when present, holds a value: `null` is not absent.
-fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
-	deserializer: D,
-) -> Result<Option<T>, D::Error> {
-	T::deserialize(deserializer).map(Some)
 }
 
 #[cfg(test)]

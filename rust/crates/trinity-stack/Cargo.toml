@@ -31,10 +31,10 @@ js-sys = { workspace = true, optional = true }
 qrcode = { workspace = true, features = ["svg"], optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+serde_with.workspace = true
 sha2.workspace = true
 strum.workspace = true
 thiserror.workspace = true
-time.workspace = true
 url.workspace = true
 wasm-bindgen = { workspace = true, optional = true }
 

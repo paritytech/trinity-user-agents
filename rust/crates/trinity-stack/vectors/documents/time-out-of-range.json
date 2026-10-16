@@ -45,6 +45,7 @@
   "contracts": {
     "accountDataStore": "0x2222222222222222222222222222222222222222"
   },
+  "expiresAt": 4294967296,
   "generation": "2026-09-17T16:15:00Z",
   "id": "previewnet",
   "name": "Previewnet",
@@ -77,6 +78,5 @@
       ]
     }
   ],
-  "tld": "testnet",
-  "validUntil": "2026-10-14T00:00:00+00:00"
+  "tld": "testnet"
 }

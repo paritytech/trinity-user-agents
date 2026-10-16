@@ -64,7 +64,7 @@ describe("conformance vectors", () => {
           pointerOf(vector.pointer),
           stored,
           fetched,
-          new Date(vector.now),
+          new Date(vector.now * 1000),
         );
         const keeps =
           stored && Buffer.from(accepted.document).equals(Buffer.from(stored))

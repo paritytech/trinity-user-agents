@@ -352,9 +352,18 @@
       }
     },
     {
-      "expect": "invalid-time",
-      "file": "documents/time-with-offset.json",
-      "name": "time-with-offset",
+      "expect": "malformed",
+      "file": "documents/time-as-string.json",
+      "name": "time-as-string",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "malformed",
+      "file": "documents/time-out-of-range.json",
+      "name": "time-out-of-range",
       "pointer": {
         "key": null,
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -660,7 +669,7 @@
       },
       "fetched": "reader/first-fetch.fetched.json",
       "name": "first-fetch",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -677,7 +686,7 @@
       },
       "fetched": "reader/higher-sequence.fetched.json",
       "name": "higher-sequence",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -694,7 +703,7 @@
       },
       "fetched": "reader/new-generation.fetched.json",
       "name": "new-generation",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -711,7 +720,7 @@
       },
       "fetched": "reader/same-content.fetched.json",
       "name": "same-content",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -728,7 +737,7 @@
       },
       "fetched": "reader/same-sequence-different-content.fetched.json",
       "name": "same-sequence-different-content",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -745,7 +754,7 @@
       },
       "fetched": "reader/lower-sequence-signed.fetched.json",
       "name": "lower-sequence-signed",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -762,7 +771,7 @@
       },
       "fetched": "reader/lower-sequence-unsigned.fetched.json",
       "name": "lower-sequence-unsigned",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": null,
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -779,7 +788,7 @@
       },
       "fetched": null,
       "name": "unreachable-with-stored",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -792,7 +801,7 @@
       },
       "fetched": null,
       "name": "unreachable-without-stored",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -810,7 +819,7 @@
       },
       "fetched": "reader/refused-with-stored.fetched.json",
       "name": "refused-with-stored",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -823,7 +832,7 @@
       },
       "fetched": "reader/refused-without-stored.fetched.json",
       "name": "refused-without-stored",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -840,7 +849,7 @@
       },
       "fetched": "reader/stale.fetched.json",
       "name": "stale",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -857,7 +866,7 @@
       },
       "fetched": "reader/expired.fetched.json",
       "name": "expired",
-      "now": "2026-10-15T12:00:00Z",
+      "now": 1792065600,
       "pointer": {
         "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"

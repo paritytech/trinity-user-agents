@@ -143,8 +143,8 @@ type Descriptor = {
   name: string; // Display name. Shown to people; never used to identify the stack.
   network: string; // The ecosystem get_chain_info (RFC 0026) reports to dapps, e.g. "paseo" for previewnet and paseo-next-v2.
   tld: string; // dotNS TLD without the leading dot, e.g. "testnet". Hosts check it against the chain's NetworkSuffix before deriving keys.
-  expiresAt?: string; // When the stack itself is shut down, e.g. a two-hour fork. Reaches readers that already imported it.
-  validUntil?: string; // When this copy goes stale and must be fetched again. The stack keeps running.
+  expiresAt?: number; // When the stack itself is shut down, e.g. a two-hour fork. Reaches readers that already imported it.
+  validUntil?: number; // When this copy goes stale and must be fetched again. The stack keeps running.
   fork?: Fork; // Set when the stack is a fork of another. See Forks below.
   chains: Chain[];
   services: Service[];
@@ -166,7 +166,7 @@ type Chain = {
 
 type Fork = {
   of: { url: string; key?: string }; // Pointer of the stack this one was forked from; key only when the source is signed.
-  at: string; // When it was forked.
+  at: number; // When it was forked.
 };
 
 type SpecFile = {
@@ -201,8 +201,9 @@ schemes.
 - Each chain `role`, each service `kind` and each `Asset.role` MUST appear at most once. A descriptor MUST have exactly
   one `Relay` chain, and `paraId` values MUST be unique. `Asset.chain` and `coinage.chain` MUST name a role present in
   `chains`. Chain roles are those of [RFC 0026](0026-supported-chains.md), plus others such as `Web3Storage`.
-- `sequence` MUST be an integer from 0 to 2^32 - 1, which holds a publish time in seconds until 2106. Times are RFC 3339
-  in UTC, ending in `Z`.
+- `sequence` MUST be an integer from 0 to 2^32 - 1, which holds a publish time in seconds until 2106. Times
+  (`expiresAt`, `validUntil`, `fork.at`) are Unix seconds in the same range. An integer has one spelling, where a date
+  string has several that readers' date parsers accept differently.
 - Hex values MUST be 0x-prefixed and lowercase. Genesis hashes, block hashes, SHA-256 digests and keys are 32 bytes,
   signatures 64 bytes, and `contracts` addresses are 20-byte Asset Hub contract addresses.
 - When `fork` is set, every chain MUST have `forkedAt`, and no chain may have it otherwise. `fork.of` follows the same
@@ -280,7 +281,7 @@ previewnet-engine ([#38](https://github.com/paritytech/previewnet-engine/pull/38
   "name": "Previewnet",
   "network": "paseo",
   "tld": "testnet",
-  "validUntil": "2026-10-14T00:00:00Z",
+  "validUntil": 1791936000,
   "chains": [
     {
       "role": "Relay",

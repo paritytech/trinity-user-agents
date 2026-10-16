@@ -1,8 +1,7 @@
-//! The value formats the RFC fixes: hex, times and URLs.
+//! The value formats the RFC fixes: hex and URLs.
 
 use crate::Error;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use url::{Host, Url};
 
 /// Decodes lowercase 0x-prefixed hex of exactly `N` bytes.
@@ -20,17 +19,6 @@ pub fn hex_bytes<const N: usize>(field: &'static str, value: &str) -> Result<[u8
 /// Encodes bytes as lowercase 0x-prefixed hex.
 pub fn to_hex(bytes: &[u8]) -> String {
 	format!("0x{}", hex::encode(bytes))
-}
-
-/// Seconds since the Unix epoch of an RFC 3339 time in UTC ending in `Z`. RFC 3339 also allows a
-/// lowercase `t` or `z` and other offsets; the RFC narrows it to one spelling per instant.
-pub fn unix_seconds(value: &str) -> Result<i64, Error> {
-	let invalid = || Error::InvalidTime(value.to_owned());
-	if value.as_bytes().get(10) != Some(&b'T') || !value.ends_with('Z') {
-		return Err(invalid());
-	}
-	let parsed = OffsetDateTime::parse(value, &Rfc3339).map_err(|_| invalid())?;
-	Ok(parsed.unix_timestamp())
 }
 
 /// Which schemes a URL may use where it appears.
@@ -110,30 +98,6 @@ fn is_private_v6(address: Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	#[test]
-	fn times_are_utc_rfc3339() {
-		assert_eq!(unix_seconds("1970-01-01T00:00:00Z"), Ok(0));
-		assert_eq!(unix_seconds("2026-09-17T16:15:00Z"), Ok(1_789_661_700));
-		assert_eq!(unix_seconds("2024-02-29T00:00:00.5Z"), Ok(1_709_164_800));
-		assert_eq!(
-			unix_seconds("2016-12-31T23:59:60Z"),
-			Ok(1_483_228_799),
-			"a leap second reads as the second before it"
-		);
-		for invalid in [
-			"2026-09-17t16:15:00Z",
-			"2026-09-17T16:15:00z",
-			"2026-09-17T16:15:00+00:00",
-			"2026-09-17 16:15:00Z",
-			"2026-02-29T00:00:00Z",
-			"2026-09-17T16:15:00.Z",
-			"2026-09-17T24:00:00Z",
-			"2026-9-17T16:15:00Z",
-		] {
-			assert_eq!(unix_seconds(invalid), Err(Error::InvalidTime(invalid.into())), "{invalid}");
-		}
-	}
 
 	#[test]
 	fn plain_http_only_on_private_literal_addresses() {
