@@ -2,7 +2,6 @@ import Foundation
 import Foundation_iOS
 import ChainRegistry
 import SubstrateSdkExt
-import Products
 
 @MainActor
 final class SearchAccountPresenter {
@@ -15,7 +14,7 @@ final class SearchAccountPresenter {
     private var addressInputViewModel = InputViewModel.createAccountInputViewModel(for: "")
     private let recipientViewModelFactory: RecipientViewModelFactoryProtocol
     private var currentSearch = CurrentSearch(query: "", latestResult: nil, didReceiveWaiting: false)
-    private var showsSelfTransfer = true
+    private var showsSelfTransfer = FundingAvailability.isAvailable
     private var lastContent: SearchAccountViewModel.Content = .empty
 
     init(
@@ -90,7 +89,7 @@ extension SearchAccountPresenter: SearchAccountPresenterProtocol {
     func searchAccount(_ account: String?) {
         let query = account?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         currentSearch = CurrentSearch(query: query, latestResult: nil, didReceiveWaiting: false)
-        showsSelfTransfer = query.isEmpty
+        showsSelfTransfer = FundingAvailability.isAvailable && query.isEmpty
         refreshSelfTransferVisibility()
         interactor.searchAccount(for: account)
     }
@@ -114,7 +113,7 @@ extension SearchAccountPresenter: SearchAccountPresenterProtocol {
     func selectSelfTransfer() {
         view?.didReceive(selfTransferLoading: true)
 
-        interactor.openWithdrawProduct()
+        interactor.openWithdrawal()
     }
 
     func didEndEditingInput(_ input: String?) {
@@ -172,17 +171,18 @@ extension SearchAccountPresenter: SearchAccountInteractorOutputProtocol {
         )
     }
 
-    func didResolveWithdrawProduct(_ result: Result<ProductPage, Error>) {
+    func didOpenWithdrawal(_ result: Result<String?, Error>) {
         view?.didReceive(selfTransferLoading: false)
 
         switch result {
-        case let .success(page):
-            wireframe.showProduct(page: page)
+        case .success(.some):
             wireframe.close(from: view)
+        case .success(.none):
+            break
         case let .failure(error):
             guard !(error is CancellationError) else { return }
 
-            wireframe.present(error: RampAction.withdraw.errorContent(for: error), from: view)
+            wireframe.present(error: error, from: view)
         }
     }
 }

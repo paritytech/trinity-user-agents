@@ -1,0 +1,73 @@
+import Foundation
+import TrUAPIHost
+
+/// What the funding overlay UI implements: the screen a session is started
+/// from, the frame a provider's own screens are shown in, and the updates
+/// those screens and the in-flight pill draw from.
+///
+/// The core keeps the session live while `presentFunding` waits, so the UI
+/// quotes it and selects a provider through the runtime before it answers
+/// `.started`.
+protocol FundingOverlayPresenting: AnyObject, Sendable {
+    func presentFunding(
+        productId: String?,
+        intent: String,
+        direction: FundingDirection,
+        amount: U128?
+    ) async -> FundingPresentOutcome
+
+    func presentProviderFrame(providerId: String, intent: String, target: FundingFrameTarget) async
+        -> FundingFrameOutcome
+
+    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
+
+    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
+
+    /// Shows session `intent` again after the user left it running.
+    func reopen(intent: String)
+
+    /// Shows an ended session's detail screen, from what the core still
+    /// holds of it or else from the host's record.
+    func showEnded(_ record: FundingRecord)
+}
+
+/// The runtime's funding overlay. Installed once, before any product
+/// execution opens, and forwards to whatever draws the overlay.
+final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
+    private let overlay: FundingOverlayPresenting
+
+    init(overlay: FundingOverlayPresenting) {
+        self.overlay = overlay
+    }
+
+    func presentFunding(
+        productId: String?,
+        intent: String,
+        direction: FundingDirection,
+        amount: U128?
+    ) async throws -> FundingPresentOutcome {
+        await overlay.presentFunding(productId: productId, intent: intent, direction: direction, amount: amount)
+    }
+
+    func presentProviderFrame(
+        providerId: String,
+        intent: String,
+        target: FundingFrameTarget
+    ) async throws -> FundingFrameOutcome {
+        await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target)
+    }
+
+    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {
+        overlay.fundingSessionChanged(intent: intent, status: status)
+    }
+
+    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
+        overlay.fundingQuotesChanged(intent: intent, quotes: quotes)
+    }
+
+    /// The device's region. The app holds no location permission, and iOS no
+    /// longer tells apps the SIM's country, so the region is all it has.
+    func detectedCountry() async -> String? {
+        FundingCountries.localeRegion()
+    }
+}

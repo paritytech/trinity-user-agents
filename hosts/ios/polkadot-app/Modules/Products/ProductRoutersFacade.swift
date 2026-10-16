@@ -40,9 +40,16 @@ final class ProductRoutersFacade: ProductRoutersFacadeProtocol {
 
 extension ProductRoutersFacade {
     /// Worker context: navigation opens the target product page in the main tab
-    /// bar (or an external URL), mirroring the SPA context.
-    static func worker() -> ProductRoutersFacade {
-        make(navigationRouter: ProductsNavigationRouter())
+    /// bar (or an external URL), mirroring the SPA context. A worker runs with
+    /// no screen of its own unless a chat attaches one, so its prompts present
+    /// from `fallback` until then rather than being refused unseen.
+    static func worker(
+        fallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)? = nil
+    ) -> ProductRoutersFacade {
+        ProductRoutersFacade(
+            productsRouter: ProductsRouter(fallback: fallback),
+            navigationRouter: ProductsNavigationRouter()
+        )
     }
 
     /// SSO context: prompts anchor to the view the sign-in host receives via

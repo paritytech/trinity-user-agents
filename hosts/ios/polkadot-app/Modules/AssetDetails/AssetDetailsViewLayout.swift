@@ -53,6 +53,7 @@ struct AssetDetailsView: View {
             } else {
                 actions()
             }
+            FundingActivityView(cash: .current)
             if let breakdown = viewModel.coinageBreakdown,
                viewModel.balanceCardModel != nil {
                 CoinageBalanceBreakdownView(breakdown: breakdown)
@@ -93,73 +94,69 @@ struct AssetDetailsView: View {
 
     private func actions() -> some View {
         HStack(spacing: DSSpacings.small) {
-            getButton()
-            sendButton()
-        }
-    }
-
-    private func getButton() -> some View {
-        Button {
-            viewModel.onTopUp?()
-        } label: {
-            Group {
-                if viewModel.isTopUpInProgress {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(.fgPrimaryInverted)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    actionLabel(
-                        icon: .iconArrowUp24,
-                        rotation: .zero,
-                        title: .actionGet,
-                        subtitle: .actionGetSubtitle
-                    )
+            if FundingAvailability.isAvailable {
+                actionCard(
+                    title: String(localized: .Funding.cardGet),
+                    subtitle: String(localized: .Funding.cardGetSubtitle(symbol: FundingCash.current.symbol)),
+                    arrowRotation: .zero,
+                    isLoading: viewModel.isTopUpInProgress
+                ) {
+                    viewModel.onTopUp?()
                 }
+                .accessibilityId(AccessibilityID.Wallet.addFundsButton)
             }
+
+            actionCard(
+                title: String(localized: .Funding.cardSend),
+                subtitle: String(localized: .Funding.cardSendSubtitle(symbol: FundingCash.current.symbol)),
+                arrowRotation: .degrees(180),
+                isLoading: false
+            ) {
+                viewModel.onSendMoney?()
+            }
+            .accessibilityId(AccessibilityID.Wallet.sendPaymentButton)
         }
-        .buttonStyle(.ds(style: .primary, shape: .rounded, size: .large))
-        .disabled(viewModel.isTopUpInProgress)
-        .accessibilityId(AccessibilityID.Wallet.addFundsButton)
     }
 
-    private func sendButton() -> some View {
-        Button {
-            viewModel.onSendMoney?()
-        } label: {
-            actionLabel(
-                icon: .iconArrowUp24,
-                rotation: .degrees(180),
-                title: .actionSendCash,
-                subtitle: .actionSendSubtitle
-            )
-        }
-        .buttonStyle(.ds(style: .primary, shape: .rounded, size: .large))
-        .accessibilityId(AccessibilityID.Wallet.sendPaymentButton)
-    }
-
-    /// Two rows: icon + title, then subtitle. `maxHeight: .infinity` lets the shorter
-    /// button match the taller one so the pair reads as one row.
-    private func actionLabel(
-        icon: ImageResource,
-        rotation: Angle,
-        title: LocalizedStringResource,
-        subtitle: LocalizedStringResource
+    private func actionCard(
+        title: String,
+        subtitle: String,
+        arrowRotation: Angle,
+        isLoading: Bool,
+        action: @escaping () -> Void
     ) -> some View {
-        VStack(spacing: DSSpacings.tiny) {
-            HStack(spacing: DSSpacings.extraSmall) {
-                Image(icon)
-                    .renderingMode(.template)
-                    .rotationEffect(rotation)
-                Text(title)
-                    .typography(.titleLarge)
+        Button(action: action) {
+            VStack(spacing: DSSpacings.small) {
+                HStack(spacing: DSSpacings.small) {
+                    if isLoading {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(.fgPrimaryInverted)
+                    } else {
+                        Image(.iconArrowUp16)
+                            .renderingMode(.template)
+                            .resizable()
+                            .frame(width: 18, height: 18)
+                            .rotationEffect(arrowRotation)
+                    }
+                    Text(title)
+                        .typography(.titleLarge)
+                }
+                .foregroundStyle(Color.fgPrimaryInverted)
+
+                Text(subtitle)
+                    .typography(.bodySmall)
+                    .foregroundStyle(Color.fgSecondaryInverted)
+                    .multilineTextAlignment(.center)
             }
-            Text(subtitle)
-                .typography(.bodySmall)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, DSSpacings.medium)
+            .padding(.vertical, DSSpacings.smallIncreased)
+            .frame(maxWidth: .infinity)
+            .frame(height: 96)
+            .background(Color.bgActionPrimary, in: RoundedRectangle(cornerRadius: DSRadii.mediumIncreased))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .buttonStyle(.plain)
+        .disabled(isLoading)
     }
 
     #if TESTNET_FEATURE

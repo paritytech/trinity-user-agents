@@ -8,28 +8,14 @@ import Products
 final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
     let context: WalletFlowContextProtocol
 
-    private let moduleNavigator: ModuleNavigating
-    private let fundingDomainProvider: FundingDomainProviding
-
-    init(
-        context: WalletFlowContextProtocol,
-        fundingDomainProvider: FundingDomainProviding,
-        moduleNavigator: ModuleNavigating = ModuleNavigator()
-    ) {
+    init(context: WalletFlowContextProtocol) {
         self.context = context
-        self.fundingDomainProvider = fundingDomainProvider
-        self.moduleNavigator = moduleNavigator
-    }
-
-    func showProduct(page: ProductPage) {
-        moduleNavigator.openProduct(page: page)
     }
 
     func showTransfer(from view: ControllerBackedProtocol?, chainAsset: ChainAsset) {
         guard let searchView = SearchAccountViewFactory.createView(
             for: chainAsset,
-            coinageServicing: context.coinageService,
-            fundingDomainProvider: fundingDomainProvider
+            coinageServicing: context.coinageService
         ) else {
             return
         }

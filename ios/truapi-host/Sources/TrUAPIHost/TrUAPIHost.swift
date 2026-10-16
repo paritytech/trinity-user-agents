@@ -326,6 +326,112 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     func pickContact(productId: String) async throws -> HostContactPick
 }
 
+/// Host-implemented funding overlay: the native screen a funding session is
+/// started from, and the frame a provider's own screens are shown in.
+///
+/// Installed once on the runtime with ``TrUAPIHostRuntime/setFunding(_:)``,
+/// because a session can be opened by any product or by the host's own
+/// Balance card, and every one reaches the same overlay. A runtime without one
+/// answers Funding calls with `Unsupported`.
+///
+/// The core owns the sessions. While `presentFunding` is waiting, the session
+/// is live: quote it with ``TrUAPIHostRuntime/getFundingQuote(intent:ask:)``
+/// and hand it to a provider with
+/// ``TrUAPIHostRuntime/selectFundingProvider(intent:providerId:quoteId:)``
+/// before answering `.started`.
+public protocol FundingHostBridge: AnyObject, Sendable {
+    /// Show the overlay for session `intent`, opened by `productId` or by the
+    /// host itself when `nil`, on the screen `direction` names, and report
+    /// whether the user started or dismissed it. `amount` is a decimal string
+    /// of CASH units, `nil` when the opener named none.
+    func presentFunding(
+        productId: String?,
+        intent: String,
+        direction: FundingDirection,
+        amount: U128?
+    ) async throws -> FundingPresentOutcome
+
+    /// Show `target` for provider `providerId`'s session `intent` in a frame
+    /// the host owns, and report how it closed. A page is a checked https
+    /// URL: show its origin, and answer `.returned` when it reaches its
+    /// return URL.
+    func presentProviderFrame(
+        providerId: String,
+        intent: String,
+        target: FundingFrameTarget
+    ) async throws -> FundingFrameOutcome
+
+    /// Session `intent`'s status changed, for host UI such as the in-flight
+    /// pill. Called inline, so hand it off rather than drawing here.
+    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
+
+    /// The quote list requested with
+    /// ``TrUAPIHostRuntime/getFundingQuote(intent:ask:)``: again whenever a
+    /// provider answers, and each time the core asks every provider again
+    /// at `refreshAtMs`. Called inline.
+    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
+
+    /// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
+    /// coarse location when already permitted, then the SIM or network
+    /// country, then the locale's region. Never asks for a permission.
+    func detectedCountry() async -> String?
+}
+
+/// Host-implemented top-up engine: claims a source's funds into the user's
+/// balance.
+///
+/// Installed once on the runtime with ``TrUAPIHostRuntime/setTopUp(_:)``.
+/// The core has already checked the session and the source keys; a
+/// `productAccount` source arrives as its derivation index for the host to
+/// derive. The host owns claiming, retries, partial claims, persistence and
+/// scoping ids to the product. A runtime without one answers `topUp` and
+/// `topUpStatusSubscribe` with `Unsupported`.
+public protocol TopUpHostBridge: AnyObject, Sendable {
+    /// Start `request` for `productId`, returning once the host has accepted
+    /// it. Throw a `HostPaymentTopUpError` to answer with its code; anything
+    /// else reaches the product as `Unknown`.
+    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws
+
+    /// The current status of `productId`'s top-up `id`, or `nil` when the
+    /// host holds none. Report every later status with
+    /// ``TrUAPIHostRuntime/notifyTopUpStatus(productId:id:status:)``.
+    func topUpStatus(productId: String, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem?
+}
+
+/// Host-implemented payment engine: pays from the user's balance to an
+/// account once the user approves.
+///
+/// Installed once on the runtime with ``TrUAPIHostRuntime/setPayments(_:)``.
+/// Answer `InsufficientBalance` whenever the balance is short: the core turns
+/// it into `Rejected` for a product without balance access. A runtime without
+/// one answers `request` and `statusSubscribe` with `Unsupported`.
+public protocol PaymentHostBridge: AnyObject, Sendable {
+    /// Ask the user to approve `request` for `productId`, returning once the
+    /// user authorized it and the host took it on. Throw a `HostPaymentError`
+    /// to answer with its code; anything else reaches the product as
+    /// `Unknown`.
+    func requestPayment(productId: String, request: HostPaymentRequest) async throws
+
+    /// The current status of `productId`'s payment `id`, or `nil` when the
+    /// host holds none. Report every later status with
+    /// ``TrUAPIHostRuntime/notifyPaymentStatus(productId:id:status:)``.
+    func paymentStatus(productId: String, id: Data) throws -> HostPaymentStatusSubscribeItem?
+}
+
+/// Host-implemented balance view: what a payment request can spend right now.
+///
+/// Installed once on the runtime with ``TrUAPIHostRuntime/setBalance(_:)``.
+/// The core checks the product's balance access itself, so never prompt for
+/// it here. A runtime without one answers `balanceSubscribe` with
+/// `Unsupported`.
+public protocol BalanceHostBridge: AnyObject, Sendable {
+    /// The current balance of `purse` (`nil` for the main purse), a decimal
+    /// string of CASH units. The balance is the user's, the same for every
+    /// product; `productId` only names who is asking. Report every change with
+    /// ``TrUAPIHostRuntime/notifyBalance(purse:available:)``.
+    func balance(productId: String, purse: UInt32?) async throws -> U128
+}
+
 /// Draws the viewfinder for `scanner.scan`, following the rules on the core's
 /// `ScannerPlatform`. Closes it when the task is cancelled.
 public protocol ScannerHostBridge: AnyObject, Sendable {
@@ -514,6 +620,144 @@ private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked S
     ) async throws -> HostScan {
         try await withHostRejection {
             try await bridge.scanCode(productId: productId, executionKind: executionKind, request: request)
+        }
+    }
+}
+
+/// Adapter that bridges the public `FundingHostBridge` to the generated
+/// UniFFI `NativeFundingCallbacks` protocol.
+private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked Sendable {
+    private let bridge: FundingHostBridge
+
+    init(bridge: FundingHostBridge) {
+        self.bridge = bridge
+    }
+
+    func presentFunding(
+        productId: String?,
+        intent: String,
+        direction: FundingDirection,
+        amount: U128?
+    ) async throws -> FundingPresentOutcome {
+        try await withHostRejection {
+            try await bridge.presentFunding(
+                productId: productId,
+                intent: intent,
+                direction: direction,
+                amount: amount
+            )
+        }
+    }
+
+    func presentProviderFrame(
+        providerId: String,
+        intent: String,
+        target: FundingFrameTarget
+    ) async throws -> FundingFrameOutcome {
+        try await withHostRejection {
+            try await bridge.presentProviderFrame(providerId: providerId, intent: intent, target: target)
+        }
+    }
+
+    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {
+        bridge.fundingSessionChanged(intent: intent, status: status)
+    }
+
+    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
+        bridge.fundingQuotesChanged(intent: intent, quotes: quotes)
+    }
+
+    func detectedCountry() async -> String? {
+        await bridge.detectedCountry()
+    }
+
+    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
+        do {
+            return try await operation()
+        } catch let error as HostRejection {
+            throw error
+        } catch {
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+}
+
+/// Adapter that bridges the public `TopUpHostBridge` to the generated UniFFI
+/// `NativeTopUpCallbacks` protocol.
+private final class TopUpCallbackAdapter: NativeTopUpCallbacks, @unchecked Sendable {
+    private let bridge: TopUpHostBridge
+
+    init(bridge: TopUpHostBridge) {
+        self.bridge = bridge
+    }
+
+    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws {
+        do {
+            try await bridge.topUp(productId: productId, request: request)
+        } catch let error as HostPaymentTopUpError {
+            throw error
+        } catch {
+            throw HostPaymentTopUpError.Unknown(reason: hostRejectionReason(error))
+        }
+    }
+
+    func topUpStatus(productId: String, id: Bytes32) throws -> HostPaymentTopUpStatusSubscribeItem? {
+        do {
+            return try bridge.topUpStatus(productId: productId, id: id)
+        } catch let error as HostRejection {
+            throw error
+        } catch {
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+}
+
+/// Adapter that bridges the public `PaymentHostBridge` to the generated UniFFI
+/// `NativePaymentCallbacks` protocol.
+private final class PaymentCallbackAdapter: NativePaymentCallbacks, @unchecked Sendable {
+    private let bridge: PaymentHostBridge
+
+    init(bridge: PaymentHostBridge) {
+        self.bridge = bridge
+    }
+
+    func requestPayment(productId: String, request: HostPaymentRequest) async throws {
+        do {
+            try await bridge.requestPayment(productId: productId, request: request)
+        } catch let error as HostPaymentError {
+            throw error
+        } catch {
+            throw HostPaymentError.Unknown(reason: hostRejectionReason(error))
+        }
+    }
+
+    func paymentStatus(productId: String, id: Bytes32) throws -> HostPaymentStatusSubscribeItem? {
+        do {
+            return try bridge.paymentStatus(productId: productId, id: id)
+        } catch let error as HostRejection {
+            throw error
+        } catch {
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+}
+
+/// Adapter that bridges the public `BalanceHostBridge` to the generated UniFFI
+/// `NativeBalanceCallbacks` protocol.
+private final class BalanceCallbackAdapter: NativeBalanceCallbacks, @unchecked Sendable {
+    private let bridge: BalanceHostBridge
+
+    init(bridge: BalanceHostBridge) {
+        self.bridge = bridge
+    }
+
+    func balance(productId: String, purse: UInt32?) async throws -> U128 {
+        do {
+            return try await bridge.balance(productId: productId, purse: purse)
+        } catch let error as HostPaymentBalanceSubscribeError {
+            throw error
+        } catch {
+            throw HostPaymentBalanceSubscribeError.Unknown(reason: hostRejectionReason(error))
         }
     }
 }
@@ -751,6 +995,10 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let notificationCenter: NotificationCenter
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
+    private var fundingRetainer: NativeFundingCallbacks?
+    private var topUpRetainer: NativeTopUpCallbacks?
+    private var paymentsRetainer: NativePaymentCallbacks?
+    private var balanceRetainer: NativeBalanceCallbacks?
     private var scannerRetainer: NativeScannerCallbacks?
 
     public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
@@ -814,6 +1062,184 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// resolving.
     public func notifyContactsChanged() {
         inner.notifyContactsChanged()
+    }
+
+    /// Install the host's funding overlay, which every funding session is
+    /// started from, whoever opened it.
+    ///
+    /// Set-once. Answers whether this call installed it. Call it before
+    /// opening any product execution.
+    @discardableResult
+    public func setFunding(_ funding: FundingHostBridge) -> Bool {
+        let adapter = FundingCallbackAdapter(bridge: funding)
+        fundingRetainer = adapter
+        return inner.setFundingCallbacks(callbacks: adapter)
+    }
+
+    /// Open a funding session on the host's own behalf, as the Balance card
+    /// does, and show the overlay. `amount` is a decimal string of CASH units.
+    /// Answers the session id, or `nil` when the user dismissed it.
+    public func openFunding(direction: FundingDirection, amount: U128? = nil) async throws -> String? {
+        try await inner.openFunding(direction: direction, amount: amount)
+    }
+
+    /// Session `intent` as the core holds it.
+    public func fundingSession(intent: String) -> FundingSession? {
+        inner.fundingSession(intent: intent)
+    }
+
+    /// Session `intent`'s progress: the steps for its direction and rail with
+    /// when each was reached, and the provider's references.
+    public func fundingProgress(intent: String) -> FundingProgress? {
+        inner.fundingProgress(intent: intent)
+    }
+
+    /// Whether a provider still works on any funding session, read from
+    /// storage if funding has not resumed yet. A host that remembers it
+    /// starts funding at its next launch, and asks again on each
+    /// ``FundingHostBridge/fundingSessionChanged(intent:status:)``.
+    public func fundingInProgress() async throws -> Bool {
+        try await inner.fundingInProgress()
+    }
+
+    /// Every session the core keeps: in flight first, then ended ones the
+    /// host has not acknowledged, each newest first.
+    public func fundingSessions() -> [FundingSession] {
+        inner.fundingSessions()
+    }
+
+    /// Cancel session `intent` at the user's request. Before money moved the
+    /// provider is asked to stop, and asking again ends the session; after,
+    /// the provider answers with an offer the user confirms, or a refusal.
+    @discardableResult
+    public func cancelFunding(intent: String) async throws -> CancelOutcome {
+        try await inner.cancelFunding(intent: intent)
+    }
+
+    /// Answer the provider's cancel offer on session `intent`: the terms the
+    /// user accepted, as they were shown, or `nil` to decline. Terms that no
+    /// longer match the offer accept nothing and answer `.changed`.
+    @discardableResult
+    public func confirmFundingCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation {
+        try await inner.confirmFundingCancel(intent: intent, terms: terms)
+    }
+
+    /// Record that the host wrote ended session `intent` into its own
+    /// history. Until then the core hands it over again on each resume.
+    @discardableResult
+    public func acknowledgeFundingSession(intent: String) async throws -> Bool {
+        try await inner.acknowledgeFundingSession(intent: intent)
+    }
+
+    /// Replace the funding providers this host ships, each with its Worker
+    /// manifest JSON.
+    public func setFundingProviders(_ providers: [FundingProviderEntry]) throws {
+        try inner.setFundingProviders(providers: providers)
+    }
+
+    /// The providers session `intent` can be handed to.
+    public func fundingCandidates(intent: String) -> [FundingCandidate] {
+        inner.fundingCandidates(intent: intent)
+    }
+
+    /// Ask every provider to price `ask` for session `intent`. The list
+    /// arrives through ``FundingHostBridge/fundingQuotesChanged(intent:quotes:)``
+    /// and is asked for again every minute until a provider is chosen, the
+    /// session ends, another ask replaces it, or
+    /// ``stopFundingQuotes(intent:)``. Returns the request id every list
+    /// of this request carries; show only the latest request's lists.
+    @discardableResult
+    public func getFundingQuote(intent: String, ask: FundingQuoteAsk) -> UInt64 {
+        inner.getFundingQuote(intent: intent, ask: ask)
+    }
+
+    /// Stop asking again for session `intent`'s quotes, as when the user
+    /// leaves the provider list.
+    public func stopFundingQuotes(intent: String) {
+        inner.stopFundingQuotes(intent: intent)
+    }
+
+    /// What the core knows about each country for session `intent` on
+    /// `rail` and `asset`. Countries it knows nothing about are left out.
+    public func fundingCountries(intent: String, rail: FundingRail, asset: String) -> [FundingCountry] {
+        inner.fundingCountries(intent: intent, rail: rail, asset: asset)
+    }
+
+    /// The amounts session `intent` can take on `rail`, `asset`, `network`
+    /// and `country` across every provider. The minimum is never below the
+    /// product floor.
+    public func fundingAmountLimits(
+        intent: String,
+        rail: FundingRail,
+        asset: String,
+        network: String?,
+        country: String?
+    ) -> FundingAmountLimits {
+        inner.fundingAmountLimits(intent: intent, rail: rail, asset: asset, network: network, country: country)
+    }
+
+    /// The country quotes go by until the user picks one.
+    public func detectedFundingCountry() async -> String? {
+        await inner.detectedFundingCountry()
+    }
+
+    /// Hand open session `intent` to the provider the user chose, on the
+    /// quote it was chosen by.
+    @discardableResult
+    public func selectFundingProvider(
+        intent: String,
+        providerId: String,
+        quoteId: String?
+    ) async throws -> Bool {
+        try await inner.selectFundingProvider(intent: intent, providerId: providerId, quoteId: quoteId)
+    }
+
+    /// Install the host's top-up engine. Set-once; answers whether this call
+    /// installed it. Call it before opening any product execution.
+    @discardableResult
+    public func setTopUp(_ topUp: TopUpHostBridge) -> Bool {
+        let adapter = TopUpCallbackAdapter(bridge: topUp)
+        guard inner.setTopUpCallbacks(callbacks: adapter) else { return false }
+        topUpRetainer = adapter
+        return true
+    }
+
+    /// Report a later status of `productId`'s top-up `id` to the products
+    /// following it. A terminal status ends their streams.
+    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) {
+        inner.notifyTopUpStatus(productId: productId, id: id, status: status)
+    }
+
+    /// Install the host's payment engine. Set-once; answers whether this call
+    /// installed it. Call it before opening any product execution.
+    @discardableResult
+    public func setPayments(_ payments: PaymentHostBridge) -> Bool {
+        let adapter = PaymentCallbackAdapter(bridge: payments)
+        guard inner.setPaymentCallbacks(callbacks: adapter) else { return false }
+        paymentsRetainer = adapter
+        return true
+    }
+
+    /// Report a later status of `productId`'s payment `id` to the products
+    /// following it. A terminal status ends their streams.
+    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) {
+        inner.notifyPaymentStatus(productId: productId, id: id, status: status)
+    }
+
+    /// Install the host's balance view. Set-once; answers whether this call
+    /// installed it. Call it before opening any product execution.
+    @discardableResult
+    public func setBalance(_ balance: BalanceHostBridge) -> Bool {
+        let adapter = BalanceCallbackAdapter(bridge: balance)
+        guard inner.setBalanceCallbacks(callbacks: adapter) else { return false }
+        balanceRetainer = adapter
+        return true
+    }
+
+    /// Report the new balance of `purse` (`nil` for the main purse), a decimal
+    /// string of CASH units, to the products following it.
+    public func notifyBalance(purse: UInt32?, available: U128) {
+        inner.notifyBalance(purse: purse, available: available)
     }
 
     /// Open one executable connection with a host-assigned immutable context.
