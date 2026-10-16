@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fundtest</title>
+  </head>
+  <body>
+    <main>
+      <h1>Fundtest</h1>
+      <p class="note">
+        A reference funding provider for the Paseo Next v2 testnet.
+      </p>
+      <p>
+        Fundtest pretends to take card and bank payments, then moves real
+        testnet funds into your CASH balance through Asset Hub and People. Use
+        it from the CASH card's Add funds or Withdraw, and pick Fundtest as the
+        provider.
+      </p>
+      <p class="note">
+        Amounts ending in .13 are refunded, .23 credit in two parts, and .33
+        arrive late. Nothing here touches real money.
+      </p>
+      <p id="status"></p>
+    </main>
+    <script type="module" src="./src/index.ts"></script>
+  </body>
+</html>
