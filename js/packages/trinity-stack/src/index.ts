@@ -107,7 +107,7 @@ export function accept(
     pointer.key,
     stored,
     fetched,
-    Math.floor(now.getTime() / 1000),
+    unixSeconds(now),
   );
   try {
     return {
@@ -230,12 +230,12 @@ export async function publish(
     now?: Date;
   },
 ): Promise<Published> {
-  const contentHash = await sha256Hex(
-    JSON.stringify(
-      render(model, 1, { sequence: 0, generation: options.generation }),
-    ),
+  // The crate hashes the parsed descriptor, so the key order a generator emits does not matter
+  // and `truapi-host stack publish` agrees on the same state.
+  const contentHash = wasm.contentHash(
+    encode(render(model, 1, { sequence: 0, generation: options.generation })),
   );
-  const seconds = Math.floor((options.now ?? new Date()).getTime() / 1000);
+  const seconds = unixSeconds(options.now ?? new Date());
   const sequence =
     options.state?.contentHash === contentHash
       ? options.state.sequence
@@ -244,9 +244,7 @@ export async function publish(
     sequence,
     generation: options.generation,
   });
-  const plain = new TextEncoder().encode(
-    JSON.stringify(descriptor, null, 2) + "\n",
-  );
+  const plain = encode(descriptor);
   parse(plain);
   const document = options.secret ? sign(plain, options.secret) : plain;
   return { document, descriptor, state: { sequence, contentHash } };
@@ -301,13 +299,16 @@ export const DEFAULT_TIMEOUT_MS = 10_000;
 /**
  * The bytes a descriptor URL serves, or undefined when it is unreachable: a failed request, a
  * redirect, a non-2xx status or the timeout. Redirects are refused because the URL rules hold
- * for the URL the pointer names, and a redirect could lead anywhere, plain http included. Any
- * other error is a bug in the caller's `fetch` and is rethrown.
+ * for the URL the pointer names, and a redirect could lead anywhere, plain http included.
+ *
+ * fetch reports a network failure as a `TypeError`, so a custom `fetch` that throws one reads as
+ * unreachable too. Any other error is rethrown, and so is a `url` that is not a URL.
  */
 export async function fetchDescriptor(
   url: string,
   options: { fetch?: Fetch; timeoutMs?: number } = {},
 ): Promise<Uint8Array | undefined> {
+  new URL(url);
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -323,21 +324,24 @@ export async function fetchDescriptor(
       ? new Uint8Array(await response.arrayBuffer())
       : undefined;
   } catch (error) {
-    // fetch reports network failures as TypeError and an abort as a DOMException.
-    if (error instanceof TypeError || error instanceof DOMException)
-      return undefined;
+    const aborted =
+      error instanceof DOMException &&
+      (error.name === "AbortError" || error.name === "TimeoutError");
+    if (error instanceof TypeError || aborted) return undefined;
     throw error;
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function sha256Hex(text: string): Promise<string> {
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
-  );
-  return (
-    "0x" +
-    Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")
-  );
+function encode(descriptor: Descriptor): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(descriptor, null, 2) + "\n");
+}
+
+/** Seconds since the epoch; an invalid `Date` would otherwise turn off staleness and expiry. */
+function unixSeconds(date: Date): number {
+  const milliseconds = date.getTime();
+  if (Number.isNaN(milliseconds))
+    throw new RangeError("now is an invalid Date");
+  return Math.floor(milliseconds / 1000);
 }

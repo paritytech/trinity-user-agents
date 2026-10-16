@@ -3,6 +3,7 @@ use crate::{
 	format::{self, Schemes},
 };
 use serde::{Deserialize, Deserializer, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// The only format version this crate reads and writes.
@@ -175,6 +176,15 @@ impl Descriptor {
 			.map_err(|error| Error::Malformed(error.to_string()))?;
 		descriptor.validate()?;
 		Ok(descriptor)
+	}
+
+	/// SHA-256 of everything but `sequence`, in this crate's field order. Two publishes compare it
+	/// to keep `sequence` while nothing changed; it does not depend on how the source JSON ordered
+	/// its keys, so every publisher built on this crate agrees on it.
+	pub fn content_hash(&self) -> [u8; 32] {
+		let unsequenced = Self { sequence: 0, ..self.clone() };
+		let bytes = serde_json::to_vec(&unsequenced).expect("a descriptor always serialises");
+		Sha256::digest(bytes).into()
 	}
 
 	/// The chain with this role.
@@ -355,4 +365,28 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
 	deserializer: D,
 ) -> Result<Option<T>, D::Error> {
 	T::deserialize(deserializer).map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn parse(text: &str) -> Descriptor {
+		Descriptor::from_json(serde_json::from_str(text).unwrap()).unwrap()
+	}
+
+	const RELAY: &str = r#"[{"role":"Relay","genesisHash":"0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92","rpc":["ws://127.0.0.1:9944"]}]"#;
+
+	#[test]
+	fn content_hash_ignores_sequence_and_key_order_but_not_content() {
+		let one = parse(&format!(
+			r#"{{"$v":1,"sequence":1,"generation":"g","id":"a","name":"A","network":"n","tld":"t","services":[],"chains":{RELAY}}}"#
+		));
+		let reordered = parse(&format!(
+			r#"{{"chains":{RELAY},"services":[],"tld":"t","network":"n","name":"A","id":"a","generation":"g","sequence":9,"$v":1}}"#
+		));
+		assert_eq!(one.content_hash(), reordered.content_hash());
+		let renamed = Descriptor { name: "B".into(), ..one.clone() };
+		assert_ne!(one.content_hash(), renamed.content_hash());
+	}
 }

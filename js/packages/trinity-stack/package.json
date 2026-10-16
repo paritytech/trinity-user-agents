@@ -1,7 +1,7 @@
 {
   "name": "@parity/trinity-stack",
   "version": "0.0.0",
-  "description": "Read, verify, sign and publish Trinity stack descriptors, with a CLI; the rules run in the trinity-stack Rust crate compiled to WebAssembly",
+  "description": "Read, verify, sign and publish Trinity stack descriptors; the rules run in the trinity-stack Rust crate compiled to WebAssembly",
   "license": "MIT",
   "author": "Parity Technologies <admin@parity.io>",
   "repository": {

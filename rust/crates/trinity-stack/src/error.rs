@@ -122,6 +122,9 @@ pub enum Error {
 	/// The text does not fit in a QR code.
 	#[error("cannot draw a QR code: {0}")]
 	QrCode(String),
+	/// A secret key is not 32 bytes.
+	#[error("a secret key is 32 bytes, got {0}")]
+	SecretKeyLength(usize),
 }
 
 impl Error {
@@ -164,6 +167,7 @@ impl Error {
 			Self::SpecGenesis(_) => "spec-genesis",
 			Self::MalformedSpec(_) => "malformed-spec",
 			Self::QrCode(_) => "qr-code",
+			Self::SecretKeyLength(_) => "secret-key-length",
 		}
 	}
 }
