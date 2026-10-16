@@ -360,11 +360,7 @@ async fn write_last_processed_pairing_statement(
 }
 
 fn pairing_statement_fingerprint(statement: &[u8]) -> Vec<u8> {
-    blake2b_simd::Params::new()
-        .hash_length(32)
-        .hash(statement)
-        .as_bytes()
-        .to_vec()
+	blake2b_simd::Params::new().hash_length(32).hash(statement).as_bytes().to_vec()
 }
 
 #[instrument(skip_all, fields(runtime.method = "sso.auth_session.clear"))]

@@ -710,10 +710,7 @@ mod tests {
     fn an_explicit_increase_chooses_an_additional_slot_instead_of_reusing_quota() {
         let mut slots = [None; SLOTS];
         slots[0] = Some([0x22; 32]);
-        assert_eq!(
-            scripted_find(&slots, true),
-            SlotSelection::AlreadyAllocated(0)
-        );
+		assert_eq!(scripted_find(&slots, true), SlotSelection::AlreadyAllocated(0));
         assert_eq!(scripted_find(&slots, false), SlotSelection::Free(1));
     }
 
@@ -740,10 +737,7 @@ mod tests {
         let mut slots = [None; SLOTS];
         slots[2] = Some([0x22; 32]);
 
-        assert_eq!(
-            scripted_find(&slots, true),
-            SlotSelection::AlreadyAllocated(2)
-        );
+		assert_eq!(scripted_find(&slots, true), SlotSelection::AlreadyAllocated(2));
     }
 
     /// The whole row is read in one round trip. One request per slot, one after

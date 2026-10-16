@@ -176,7 +176,7 @@ class RealProductPermissionRepository @Inject constructor(
         val result = linkedMapOf<ProductPermission, ProductPermissionStatus>()
         legacy.filter { it.permission.canonicalRequest() == null }.forEach { result[it.permission] = it }
         canonical.forEach { entry ->
-            val permission = entry.request.legacyPermission()
+            val permission = entry.request.legacyPermission() ?: return@forEach
             result[permission] = ProductPermissionStatus(permission, entry.status == PermissionAuthorizationStatus.AUTHORIZED)
         }
         return result.values.toList()
@@ -202,9 +202,9 @@ class RealProductPermissionRepository @Inject constructor(
     private fun effectiveStatuses(
         productId: ProductId,
         entries: List<PermissionAuthorizationEntry>,
-    ): Map<GrantKey, PermissionAuthorizationStatus> = entries.associate { entry ->
-        key(productId, entry.request.legacyPermission()) to entry.status
-    }
+    ): Map<GrantKey, PermissionAuthorizationStatus> = entries.mapNotNull { entry ->
+        entry.request.legacyPermission()?.let { key(productId, it) to entry.status }
+    }.toMap()
 
     override fun observeAllByProduct(productId: ProductId): Flow<List<ProductPermissionStatus>> =
         combine(dao.observeAllByProduct(productId.value), changes.observe(id(productId))) { _, _ -> getAllByProduct(productId) }

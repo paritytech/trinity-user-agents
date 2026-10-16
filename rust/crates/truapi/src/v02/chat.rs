@@ -1,4 +1,5 @@
 use crate::v01::ChatMessageContent;
+use alloc::string::String;
 use parity_scale_codec::{Decode, Encode};
 
 /// Request to post a message to a chat room.

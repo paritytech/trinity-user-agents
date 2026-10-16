@@ -52,61 +52,61 @@ pub use worker::Worker;
 
 /// The unified TrUAPI contract.
 pub trait TrUApi:
-    Account
-    + Chain
-    + Chat
-    + CoinPayment
-    + Contacts
-    + Entropy
-    + ExpandedCard
-    + Game
-    + LocalStorage
-    + Locale
-    + Notifications
-    + Payment
-    + Permissions
-    + Pocket
-    + Preimage
-    + Profile
-    + Renderer
-    + ResourceAllocation
-    + Scanner
-    + Signing
-    + StatementStore
-    + System
-    + Theme
-    + Worker
-    + Send
-    + Sync
+	Account
+	+ Chain
+	+ Chat
+	+ CoinPayment
+	+ Contacts
+	+ Entropy
+	+ ExpandedCard
+	+ Game
+	+ LocalStorage
+	+ Locale
+	+ Notifications
+	+ Payment
+	+ Permissions
+	+ Pocket
+	+ Preimage
+	+ Profile
+	+ Renderer
+	+ ResourceAllocation
+	+ Scanner
+	+ Signing
+	+ StatementStore
+	+ System
+	+ Theme
+	+ Worker
+	+ Send
+	+ Sync
 {
 }
 
 impl<T> TrUApi for T where
-    T: Account
-        + Chain
-        + Chat
-        + CoinPayment
-        + Contacts
-        + Entropy
-        + ExpandedCard
-        + Game
-        + LocalStorage
-        + Locale
-        + Notifications
-        + Payment
-        + Permissions
-        + Pocket
-        + Preimage
-        + Profile
-        + Renderer
-        + ResourceAllocation
-        + Scanner
-        + Signing
-        + StatementStore
-        + System
-        + Theme
-        + Worker
-        + Send
-        + Sync
+	T: Account
+		+ Chain
+		+ Chat
+		+ CoinPayment
+		+ Contacts
+		+ Entropy
+		+ ExpandedCard
+		+ Game
+		+ LocalStorage
+		+ Locale
+		+ Notifications
+		+ Payment
+		+ Permissions
+		+ Pocket
+		+ Preimage
+		+ Profile
+		+ Renderer
+		+ ResourceAllocation
+		+ Scanner
+		+ Signing
+		+ StatementStore
+		+ System
+		+ Theme
+		+ Worker
+		+ Send
+		+ Sync
 {
 }
