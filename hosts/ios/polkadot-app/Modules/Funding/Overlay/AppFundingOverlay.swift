@@ -418,9 +418,9 @@ private extension UIViewController {
 
 /// The page a ``FundingOverlayCoordinator/presentPage(url:returnUrl:)`` call
 /// shows, for its cancellation to take down.
-@MainActor
 /// The frame or page one call presented, so ending that call ends only its
 /// own screen.
+@MainActor
 private final class Presented<Controller: AnyObject> {
     weak var controller: Controller?
 }

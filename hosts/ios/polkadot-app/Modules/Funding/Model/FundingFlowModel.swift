@@ -24,14 +24,6 @@ final class FundingFlowModel {
         case cancelConfirm
     }
 
-    /// What the core's amount range depends on.
-    struct FundingLimitsKey: Equatable {
-        let rail: FundingRail
-        let asset: String
-        let network: String?
-        let country: String?
-    }
-
     struct Context {
         let intent: String
         let direction: FundingDirection
@@ -494,28 +486,5 @@ extension FundingFlowModel {
                 $0.support
             ) }
         ) { _, latest in latest }
-    }
-
-    func currentAsk() -> FundingQuoteAsk? {
-        guard amount > 0 else { return nil }
-
-        let askedAsset: String
-        switch rail {
-        case .crypto:
-            guard let asset else { return nil }
-            askedAsset = asset
-        case .card,
-             .bank:
-            askedAsset = fiatAsset
-        }
-
-        return FundingQuoteAsk(
-            direction: direction,
-            rail: rail,
-            asset: askedAsset,
-            network: rail == .crypto ? network : nil,
-            amount: cash.units(amount),
-            country: country?.code
-        )
     }
 }

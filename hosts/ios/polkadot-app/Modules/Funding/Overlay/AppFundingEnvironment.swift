@@ -43,7 +43,7 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         do {
             for try await balance in balanceService.balanceStream {
                 let spendable = balanceService.denominationContext.decimal(fromPlanks: balance.spendableByPayment)
-                await onChange(spendable)
+                onChange(spendable)
             }
         } catch {
             if !Task.isCancelled {

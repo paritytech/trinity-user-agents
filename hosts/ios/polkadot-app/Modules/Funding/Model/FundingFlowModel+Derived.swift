@@ -9,6 +9,37 @@ enum FundingAmountIssue: Equatable {
 }
 
 extension FundingFlowModel {
+    /// What the core's amount range depends on.
+    struct FundingLimitsKey: Equatable {
+        let rail: FundingRail
+        let asset: String
+        let network: String?
+        let country: String?
+    }
+
+    func currentAsk() -> FundingQuoteAsk? {
+        guard amount > 0 else { return nil }
+
+        let askedAsset: String
+        switch rail {
+        case .crypto:
+            guard let asset else { return nil }
+            askedAsset = asset
+        case .card,
+             .bank:
+            askedAsset = fiatAsset
+        }
+
+        return FundingQuoteAsk(
+            direction: direction,
+            rail: rail,
+            asset: askedAsset,
+            network: rail == .crypto ? network : nil,
+            amount: cash.units(amount),
+            country: country?.code
+        )
+    }
+
     var amount: Decimal {
         Decimal(string: amountText, locale: Locale(identifier: "en_US")) ?? 0
     }
