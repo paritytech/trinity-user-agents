@@ -419,11 +419,19 @@ mod tests {
     const GENESIS: [u8; 32] = [2; 32];
     const REFERENCE: &str = "seity-contacts:v1:aa";
 
-    struct Host {
-        context: NativeChatContext,
-        platform: Arc<StubPlatform>,
-        identity: [u8; 32],
-    }
+	#[test]
+	fn persisted_peer_keys_keep_their_slot_after_receiving_and_upload_policies() {
+		let owner = ProfileOwner { root_public_key: [1; 32], genesis_hash: GENESIS };
+		// Receiving and automatic-upload policies already occupy slots 20 and 21.
+		let stored_key = (22u8, owner.root_public_key, owner.genesis_hash).encode();
+		assert_eq!(key(owner).encode(), stored_key);
+	}
+
+	struct Host {
+		context: NativeChatContext,
+		platform: Arc<StubPlatform>,
+		identity: [u8; 32],
+	}
 
 	/// A wallet with no RPC: the builder and the page handler need none.
 	fn host(seed: u8) -> Host {
