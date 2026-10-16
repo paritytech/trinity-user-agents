@@ -21,6 +21,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.ProductAccountIdPro
 import io.paritytech.polkadotapp.feature_products_api.domain.ProductRequestAccountResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.AccountsProtocol
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.MembersRingLocator
+import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlay
@@ -72,6 +73,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.external.Produ
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.ProductChatMenuInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.RealProductChatMenuInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.DevServers
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProductSessionController
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.AssetBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductFiles
@@ -179,6 +181,9 @@ internal interface ProductsModule {
     @Binds
     @Singleton
     fun bindProductSessionController(impl: RealProductSessionController): ProductSessionController
+
+    @Binds
+    fun bindDevServerAddresses(impl: DevServers): DevServerAddresses
 
     @Binds
     @Singleton
