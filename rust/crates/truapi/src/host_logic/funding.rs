@@ -249,6 +249,9 @@ pub enum FundingStatus {
 		/// are final.
 		refunded: Option<u128>,
 	},
+	/// Outbound, ended: the user accepted a cancel, but the payout landed
+	/// first, so the money reached its destination.
+	PaidOutAfterCancel,
 }
 
 /// One step of a session's progress.
@@ -353,6 +356,15 @@ pub enum FundingCancel {
 	/// The user declined the offer, or it lapsed. The session carries on.
 	#[codec(index = 4)]
 	Declined,
+	/// The user accepted the offer, but the payout landed first: the
+	/// withdrawal ended as paid out, on none of these terms.
+	#[codec(index = 5)]
+	Overtaken {
+		/// The fee the user accepted.
+		fee: u128,
+		/// The refund the user accepted.
+		refund: u128,
+	},
 }
 
 /// What a user's cancel did.
@@ -640,6 +652,11 @@ impl FundingSession {
 				};
 			},
 			FundingStage::Released { .. } => match self.payout() {
+				Some(FundingPayout::PaidOut)
+					if matches!(self.cancel, Some(FundingCancel::Overtaken { .. })) =>
+				{
+					return FundingStatus::PaidOutAfterCancel;
+				},
 				Some(FundingPayout::PaidOut) => return FundingStatus::Sent,
 				Some(FundingPayout::Failed { .. }) => {
 					return FundingStatus::PayoutFailed {
@@ -659,7 +676,12 @@ impl FundingSession {
 				return FundingStatus::CancelRefused { reason: reason.clone() };
 			},
 			Some(FundingCancel::Accepted { .. }) => return FundingStatus::Cancelling,
-			Some(FundingCancel::Refused { .. } | FundingCancel::Declined) | None => {},
+			Some(
+				FundingCancel::Refused { .. } |
+				FundingCancel::Declined |
+				FundingCancel::Overtaken { .. },
+			) |
+			None => {},
 		}
 		if self.progress_retrying() {
 			return FundingStatus::Retrying;
@@ -868,8 +890,15 @@ impl FundingSession {
 			{
 				return Err(HostFundingReportError::OutOfOrder);
 			}
+			// The payout won over an accepted cancel: keep what the user
+			// accepted, so the ended session says so.
 			if matches!(update, FundingUpdate::Payout { outcome: FundingPayout::PaidOut }) {
-				self.cancel = None;
+				self.cancel = match self.cancel.take() {
+					Some(FundingCancel::Accepted { fee, refund }) => {
+						Some(FundingCancel::Overtaken { fee, refund })
+					},
+					_ => None,
+				};
 			}
 		}
 		self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
@@ -1154,6 +1183,7 @@ impl FundingSession {
 				FundingCancel::Offered { .. } |
 				FundingCancel::Accepted { .. },
 			) => CancelOutcome::Pending,
+			Some(FundingCancel::Overtaken { .. }) => CancelOutcome::TooLate,
 			Some(FundingCancel::Refused { .. } | FundingCancel::Declined) | None => {
 				self.cancel = Some(FundingCancel::Requested);
 				CancelOutcome::Requested
@@ -1239,7 +1269,7 @@ impl FundingSession {
 			FundingCancel::Declined => {
 				Some(HostFundingServeSubscribeItem::CancelDeclined { intent })
 			},
-			FundingCancel::Refused { .. } => None,
+			FundingCancel::Refused { .. } | FundingCancel::Overtaken { .. } => None,
 		}
 	}
 
@@ -2130,16 +2160,38 @@ mod tests {
 			NOW + 3,
 		);
 
+		let stored = FundingSession::decode(&mut &released.encode()[..]).expect("decodes");
+
 		assert_eq!(
 			(
 				landed,
 				released.cancel.clone(),
+				released.status(NOW + 3),
+				stored.status(NOW + 3),
 				released.awaits_provider(),
 				failed_payout,
 				failed.awaits_refund(),
 			),
-			(Ok(()), None, false, Ok(()), true)
+			(
+				Ok(()),
+				Some(FundingCancel::Overtaken { fee: 5, refund: 95 }),
+				FundingStatus::PaidOutAfterCancel,
+				FundingStatus::PaidOutAfterCancel,
+				false,
+				Ok(()),
+				true
+			)
 		);
+	}
+
+	#[test]
+	fn a_cancel_after_the_payout_overtook_it_is_too_late() {
+		let mut released = served(FundingDirection::Out);
+		reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
+		assert!(released.settle(100, NOW + 1));
+		released.cancel = Some(FundingCancel::Overtaken { fee: 5, refund: 95 });
+
+		assert_eq!(released.pending_cancel_item(), None);
 	}
 
 	// A refund after a failed payout is owed in full, so the user cannot be
