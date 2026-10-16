@@ -5,7 +5,6 @@
 //! <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/B-inter-host.md?plain=1#L24-L103>
 
 use parity_scale_codec::{Decode, Encode};
-use zeroize::Zeroize;
 
 /// Handshake proposal sent by the host.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -90,11 +89,4 @@ pub struct Success {
     /// Wallet-derived source for deterministic product entropy, never the raw root secret.
 	#[debug("\"<redacted>\"")]
     pub root_entropy_source: [u8; 32],
-}
-
-impl Drop for Success {
-    fn drop(&mut self) {
-        self.identity_chat_private_key.zeroize();
-        self.root_entropy_source.zeroize();
-    }
 }
