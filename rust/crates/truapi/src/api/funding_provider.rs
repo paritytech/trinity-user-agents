@@ -3,9 +3,11 @@
 use crate::{
 	CallContext, CallError, Subscription,
 	versioned::funding_provider::{
+		HostFundingAnswerQuoteError, HostFundingAnswerQuoteRequest, HostFundingAnswerQuoteResponse,
 		HostFundingPresentFrameError, HostFundingPresentFrameRequest,
 		HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
-		HostFundingReportResponse, HostFundingServeSubscribeError, HostFundingServeSubscribeItem,
+		HostFundingReportResponse, HostFundingSaveError, HostFundingSaveRequest,
+		HostFundingSaveResponse, HostFundingServeSubscribeError, HostFundingServeSubscribeItem,
 		HostFundingServeSubscribeRequest,
 	},
 	wire, wire_trait,
@@ -80,6 +82,47 @@ pub trait FundingProvider: Send + Sync {
 		_cx: &CallContext,
 		_request: HostFundingPresentFrameRequest,
 	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Answer a `Quote` the host sent on `serveSubscribe`, with the
+	/// provider's price or why it will not give one. The worker prices it
+	/// from its own API.
+	///
+	/// ```ts
+	/// const result = await truapi.fundingProvider.answerQuote({
+	///   askId: "qa_example",
+	///   answer: { tag: "Refused", value: { reason: { tag: "Unavailable", value: undefined } } },
+	/// });
+	/// console.log("quote answered:", result);
+	/// ```
+	#[wire(id = 3)]
+	async fn answer_quote(
+		&self,
+		_cx: &CallContext,
+		_request: HostFundingAnswerQuoteRequest,
+	) -> Result<HostFundingAnswerQuoteResponse, CallError<HostFundingAnswerQuoteError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Save the provider's own state for a session it serves, such as its
+	/// order id, so a restarted worker can carry on. The host keeps it with
+	/// the session, hands it back in `Assigned`, and drops it once the
+	/// session ends.
+	///
+	/// ```ts
+	/// const result = await truapi.fundingProvider.save({
+	///   intent: "fs_example",
+	///   state: "0x6f5f31",
+	/// });
+	/// console.log("state saved:", result);
+	/// ```
+	#[wire(id = 4)]
+	async fn save(
+		&self,
+		_cx: &CallContext,
+		_request: HostFundingSaveRequest,
+	) -> Result<HostFundingSaveResponse, CallError<HostFundingSaveError>> {
 		Err(CallError::unavailable())
 	}
 }

@@ -34,7 +34,6 @@ flowchart LR
     overlay["Overlay UI<br/>list · summary · frame"]
     pocket["Pocket<br/>balance card · history"]
   end
-  adapter["Onramp adapter<br/>key manager · optional"]
   subgraph core["Rust core · funding modality"]
     discovery["Discovery + quotes"]
     sessions["Sessions + report store<br/>validates, persists, maps status"]
@@ -51,20 +50,18 @@ flowchart LR
   product --> sessions
   overlay <-->|quotes · select| discovery
   sessions -->|balance · history| pocket
-  host <-->|connects| adapter
   discovery -->|quote| provider
   sessions -->|Assigned / Cancel| provider
   provider -->|report| sessions
   provider -->|payment.topUp| payments
-  provider -->|backend.request via host| adapter
-  adapter -->|key attached| onramp
-  provider -.->|direct| onramp
+  provider -->|signs in · quotes · orders| onramp
+  provider -->|keeps its auth token| host
   provider --- ephemeral
   ephemeral --> chain
 ```
 
-The onramp adapter holds the provider's API keys and is only needed when the provider's API requires one. Otherwise the
-worker calls the provider directly. Keys never reach the core or the worker.
+A provider signs in to its own API itself and keeps its tokens with the host; the Worker manifest names no backend.
+The worker prices quotes and runs sessions against that API.
 
 ## The `FundingProvider` trait
 
@@ -117,8 +114,8 @@ moved, a worker answers `Cancel` by reporting `Failed { Cancelled }` if it can s
 
 ### `answer_quote`
 
-The core sends every ask to every funding provider, whatever its manifest declares. The worker prices it through its
-own API, directly or through the onramp adapter, and answers by `ask_id`.
+The core sends every ask to every funding provider, whatever its manifest declares. The worker prices it from its own
+API and answers by `ask_id`.
 
 ```rust
 struct FundingQuoteAsk {
@@ -148,7 +145,14 @@ struct FundingQuote {
 ```
 
 An ask unanswered after 10 seconds shows as timed out. An answer is reused for 30 seconds. What answers show about a
-provider, served or refused for a country, is kept for 12 hours and folded into its manifest's routes.
+provider, served or refused for a country the ask named, is kept for 12 hours and folded into its manifest's routes
+while that manifest serves Funding. Quotes are asked of, and a session can be handed to, exactly the providers whose
+manifest serves Funding, whatever routes it declares: one still waiting for its manifest, or whose manifest is withdrawn
+or stops serving Funding, is neither asked nor chosen.
+
+The user picks a provider by one of its quotes for the session. When the session has an amount, the quote must price
+it: `receive_amount` inbound, `send_amount` outbound, both in balance units. A session opened without an amount takes
+the quote's.
 
 ### `report`
 
@@ -262,9 +266,10 @@ comes back in `Assigned.saved` and is dropped when the session ends.
 ## Trade-offs
 
 - **Every provider is asked for every quote.** Manifests lag behind what a provider serves, so routes only narrow the
-  list; the cost is one ask per provider per quote.
+  list the host draws before quotes arrive, never which provider can be chosen; the cost is one ask per provider per
+  quote.
 - **The worker holds the provider's flow.** Ephemeral accounts, conversion and payout live in the worker
   (`deriveEntropy` under the provider's product), so the core needs no XCM, swap or provider-specific code, and signs
   no funding transaction.
-- **No provider keys in the worker.** A provider whose API needs a key depends on an onramp adapter the host connects
-  to.
+- **No backend in the manifest.** A provider signs in to its own API and keeps its tokens with the host, so the
+  manifest only says what the provider moves.

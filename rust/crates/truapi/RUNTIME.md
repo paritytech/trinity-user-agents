@@ -423,8 +423,9 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   overlay is installed.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
-  `funding_session`, `funding_sessions`, `funding_session_pack`,
-  `select_funding_provider`,
+  `funding_session`, `funding_progress`, `funding_sessions`, `funding_session_pack`,
+  `set_funding_providers`,
+  `funding_candidates`, `get_funding_quote`, `select_funding_provider`,
   `cancel_funding`, `confirm_funding_cancel` and `acknowledge_funding_session`. Amounts cross the FFI as decimal
   strings.
   The host owns the funding history. A session is stored only once the user
@@ -439,11 +440,58 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   first, and a product watching a compacted session still gets its terminal
   item. The core keeps at most the 200 newest unrecorded sessions. Products see a
   session in flight as `InProgress`.
-  `select_funding_provider` hands a session to the provider the user chose.
+  The host lists its providers with `set_funding_providers`, each with the
+  Worker manifest it ships for it. `funding_candidates(intent)` answers the
+  providers serving that session's direction, with their routes, from what the
+  `includes.funding` configuration of each provider's Worker manifest declares:
+  dotNS's answer once the core has read it (cached for a day, re-checked in the
+  background on every query), the shipped snapshot until then, so the list
+  renders with no chain read. A provider whose manifest no longer serves
+  Funding drops out.
+  `get_funding_quote(intent, ask)` prices an ask (rail, asset, amount,
+  country) with every funding provider, whatever its manifest says it serves,
+  since a provider can serve more or less than it last published: core sends
+  each provider's worker a `Quote` item on `serveSubscribe`, holding the worker
+  while it waits, and the worker answers with `answerQuote`, priced from its
+  own API. The manifest names no backend: a provider signs in to its own API
+  itself and keeps its tokens with the host.
+  Each provider's row is `Pending`, then `Quoted` or `Unavailable`, and a
+  provider that does not answer within 10 seconds is unavailable. A provider's
+  answer is reused for the same ask for 30 seconds. What an answer shows (a
+  quote or an out-of-range amount: served; a refused country: not served
+  there, only for an ask that named the country) is stored under
+  `FundingSupport` and folded into `funding_candidates` for 12 hours, as
+  routes the manifest did not declare and as `unsupported` entries the host
+  can filter by the user's country, while the provider's current manifest
+  serves Funding. Natively the rows arrive
+  through `funding_quote_changed`.
+  `select_funding_provider` hands a session to the provider the user chose,
+  which must be one of those candidates, on the quote it was chosen by, which
+  must be one core offered for the session, not yet expired and, when the
+  session has an amount, pricing that amount in balance units (what it
+  credits inbound, what it debits outbound); a session opened without an
+  amount takes the quote's. The provider receives it in `Assigned`, and the
+  session keeps it with the rail and asset it priced. A session's offered
+  quotes are dropped once it is assigned or ends.
+  `funding_progress(intent)` gives the steps the host draws for a session's
+  direction and rail, each with when it was reached: in, `Started`,
+  `Payment`, `Approved` (bank and crypto, once the payment can no longer be
+  reversed), `Conversion`, `Added`; out, `Started`, `Payment`, `Sent`. A step
+  the provider skipped takes the time of the first later one. It also carries
+  when the session failed, the latest transaction id and reference the
+  provider reported with `Details`, the latest `Deposit` instructions for the
+  host to draw (a crypto address with network, asset, amount, whether it is
+  exact, an optional payment URI for the QR code and expiry, or bank details
+  with the reference), and what arrived when a `PaymentReceived` reports a
+  short or wrong-asset payment. `Deposit` is inbound only and allowed until
+  funds move, so a provider can ask for the rest of a short payment.
   That provider's worker runs it through the `FundingProvider` trait:
   `serveSubscribe` replays its sessions in flight and then streams new ones
   and cancel requests, `report` stores each update on the session (only from
-  the assigned provider, only forward), and `presentFrame` asks the host to
+  the assigned provider, only forward; `Details` may come at any point while
+  the session is open), `save` keeps up to 4 KiB of the provider's own state
+  with the session, handed back in `Assigned` and dropped once the session
+  ends, and `presentFrame` asks the host to
   show one of its screens through `present_provider_frame`. The core holds the
   provider's worker while a session is assigned and open, and stores an
   assigned session from then on, even while its overlay is up. It records each

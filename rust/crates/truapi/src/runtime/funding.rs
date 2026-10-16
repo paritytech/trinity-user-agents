@@ -26,18 +26,18 @@ use futures::{
 	stream::{self, BoxStream, StreamExt},
 };
 use truapi::latest::{
-	FundingDirection, FundingUpdate, GenericError, HostFundingReportError,
-	HostFundingServeSubscribeItem, HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
-	HostPaymentStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError,
-	HostPaymentTopUpStatusSubscribeItem,
+	FundingDirection, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate, GenericError,
+	HostFundingReportError, HostFundingServeSubscribeItem, HostFundingStatusSubscribeItem,
+	HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
+	HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem,
 };
 
 use super::services::RuntimeServices;
 use crate::{
 	host_logic::funding::{
-		CancelConfirmation, CancelOutcome, CancelTerms, FundingSession, FundingSessionError,
-		FundingSessionSummary, Settlement, StartedFunds, load_pack, load_sessions, named_funds,
-		pack_blob, retained, store_pack, store_sessions,
+		CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
+		FundingSessionError, FundingSessionSummary, SaveRefusal, Settlement, StartedFunds,
+		load_pack, load_sessions, named_funds, pack_blob, retained, store_pack, store_sessions,
 	},
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
@@ -61,6 +61,13 @@ const UNKNOWN_FUNDS_GRACE_MS: u64 = 60 * 60 * 1_000;
 
 type Subscribers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingStatusSubscribeItem>>>;
 type Servers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingServeSubscribeItem>>>;
+
+/// A quote ask sent to a provider and not yet answered.
+struct PendingAsk {
+	provider_id: String,
+	ask: FundingQuoteAsk,
+	answer: futures::channel::oneshot::Sender<FundingQuoteAnswer>,
+}
 
 /// Session changes the host has not been told of yet, in commit order.
 #[derive(Default)]
@@ -96,6 +103,8 @@ pub struct FundingRegistry {
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
 	/// Each provider's open `serve_subscribe` streams, by product id.
 	servers: Mutex<Servers>,
+	/// Quote asks waiting for their provider's answer, by ask id.
+	asks: Mutex<HashMap<String, PendingAsk>>,
 	/// Sessions holding a reference on their provider's worker, with that
 	/// provider.
 	holding: Mutex<HashMap<String, String>>,
@@ -131,13 +140,14 @@ impl FundingRegistry {
 		now_ms: u64,
 		intent: &str,
 		provider_id: &str,
+		choice: Option<FundingChoice>,
 	) -> Result<bool, FundingSessionError> {
 		let intent = intent.to_string();
 		let provider = provider_id.to_string();
 		let assigned = self
 			.commit(storage, now_ms, move |sessions| {
 				let assigned = sessions.get_mut(&intent).and_then(|session| {
-					session.assign(&provider, now_ms).then(|| session.assignment())
+					session.assign(&provider, choice, now_ms).then(|| session.assignment())
 				});
 				let changed = assigned.iter().map(|session| session.intent.clone()).collect();
 				(assigned, changed)
@@ -146,14 +156,18 @@ impl FundingRegistry {
 		let Some(session) = assigned else {
 			return Ok(false);
 		};
-		self.serve_item(provider_id, HostFundingServeSubscribeItem::Assigned { session });
+		self.serve_item(
+			provider_id,
+			HostFundingServeSubscribeItem::Assigned { session: Box::new(session) },
+		);
 		Ok(true)
 	}
 
 	/// The sessions assigned to `provider_id` and what the user asked of
 	/// them. Opening the stream replays every session still in flight, oldest
-	/// first, each followed by its pending cancel request or answer; later
-	/// items follow in the order they happen. An item can repeat, as each
+	/// first, each followed by its pending cancel request or answer, then
+	/// every quote ask still unanswered; later items follow in the order they
+	/// happen. An item can repeat, as each
 	/// open replays, so a worker treats them as idempotent. The stream never
 	/// errors and never ends on its own; dropping it stops serving.
 	pub fn serve(&self, provider_id: &str) -> BoxStream<'static, HostFundingServeSubscribeItem> {
@@ -171,19 +185,72 @@ impl FundingRegistry {
 				.into_iter()
 				.flat_map(|session| {
 					core::iter::once(HostFundingServeSubscribeItem::Assigned {
-						session: session.assignment(),
+						session: Box::new(session.assignment()),
 					})
 					.chain(session.pending_cancel_item())
 				})
 				.collect()
 		};
+		let asks = self
+			.lock_asks()
+			.iter()
+			.filter(|(_, pending)| pending.provider_id == provider_id)
+			.map(|(ask_id, pending)| HostFundingServeSubscribeItem::Quote {
+				ask_id: ask_id.clone(),
+				ask: pending.ask.clone(),
+			})
+			.collect::<Vec<_>>();
 		let (sender, receiver) = mpsc::unbounded();
 		let senders = servers.entry(provider_id.to_string()).or_default();
 		// A worker that restarts opens a new stream, so the ones it left are
 		// dropped here rather than kept until the next item is sent.
 		senders.retain(|sender| !sender.is_closed());
 		senders.push(sender);
-		stream::iter(replay).chain(receiver).boxed()
+		stream::iter(replay.into_iter().chain(asks)).chain(receiver).boxed()
+	}
+
+	/// Ask `provider_id` to price `ask`. The ask reaches the provider's open
+	/// streams now and any it opens while it is pending, so a worker that is
+	/// still starting receives it; the receiver yields the provider's answer.
+	pub fn ask_quote(
+		&self,
+		provider_id: &str,
+		ask: FundingQuoteAsk,
+	) -> (String, futures::channel::oneshot::Receiver<FundingQuoteAnswer>) {
+		let ask_id = format!("qa_{}", nanoid::nanoid!(10));
+		let (answer, answered) = futures::channel::oneshot::channel();
+		// Held across both steps so a stream `serve` opens in between neither
+		// misses the ask nor receives it twice, from its replay and here.
+		let mut servers = self.lock_servers();
+		self.lock_asks().insert(
+			ask_id.clone(),
+			PendingAsk { provider_id: provider_id.to_string(), ask: ask.clone(), answer },
+		);
+		if let Some(senders) = servers.get_mut(provider_id) {
+			let item = HostFundingServeSubscribeItem::Quote { ask_id: ask_id.clone(), ask };
+			senders.retain(|sender| sender.unbounded_send(item.clone()).is_ok());
+		}
+		(ask_id, answered)
+	}
+
+	/// Deliver `provider_id`'s answer to ask `ask_id`. Returns whether the
+	/// ask was pending and sent to that provider.
+	pub fn answer_quote(
+		&self,
+		provider_id: &str,
+		ask_id: &str,
+		answer: FundingQuoteAnswer,
+	) -> bool {
+		let mut asks = self.lock_asks();
+		if asks.get(ask_id).is_none_or(|pending| pending.provider_id != provider_id) {
+			return false;
+		}
+		asks.remove(ask_id).is_some_and(|pending| pending.answer.send(answer).is_ok())
+	}
+
+	/// Drop ask `ask_id` without an answer, as when it timed out.
+	pub fn withdraw_ask(&self, ask_id: &str) {
+		self.lock_asks().remove(ask_id);
 	}
 
 	/// Store `update` from `provider` on session `intent`. Funds a
@@ -273,6 +340,27 @@ impl FundingRegistry {
 				session.forget_start(&host_id);
 			}
 			((), Vec::new())
+		})
+		.await
+	}
+
+	/// Keep `state` as `provider_id`'s own state for session `intent`.
+	pub async fn save(
+		&self,
+		storage: &(impl CoreStorage + ?Sized),
+		now_ms: u64,
+		provider_id: &str,
+		intent: &str,
+		state: Vec<u8>,
+	) -> Result<Result<(), SaveRefusal>, FundingSessionError> {
+		let intent = intent.to_string();
+		let provider = provider_id.to_string();
+		self.commit(storage, now_ms, move |sessions| {
+			let saved = match sessions.get_mut(&intent) {
+				Some(session) => session.save(&provider, state),
+				None => Err(SaveRefusal::NotFound),
+			};
+			(saved, Vec::new())
 		})
 		.await
 	}
@@ -589,6 +677,9 @@ impl FundingRegistry {
 					)
 				}));
 			}
+			if session.is_terminal() {
+				session.saved = None;
+			}
 		}
 		// The write lock keeps the in-memory map unchanged until this commit
 		// replaces it, so it still holds the sessions as they were before `edit`.
@@ -659,8 +750,13 @@ impl FundingRegistry {
 		};
 		// Only what the loops below need, so no copy of the whole session map
 		// is taken and it stays unlocked while the ledger and followers run.
-		let (assigned, due) = {
+		let (assigned, quoting, due) = {
 			let sessions = self.lock_sessions();
+			let quoting: HashSet<String> = sessions
+				.values()
+				.filter(|session| !session.is_terminal() && session.provider_id.is_none())
+				.map(|session| session.intent.clone())
+				.collect();
 			let assigned: HashMap<String, String> = sessions
 				.values()
 				.filter(|session| !session.is_terminal())
@@ -673,7 +769,7 @@ impl FundingRegistry {
 					Some((session.intent.clone(), session.provider_id.clone()?, settlement))
 				})
 				.collect();
-			(assigned, due)
+			(assigned, quoting, due)
 		};
 		let (acquire, release) = {
 			let mut holding = self.lock_holding();
@@ -699,6 +795,7 @@ impl FundingRegistry {
 		for provider in &release {
 			services.worker_ledger.release(provider);
 		}
+		services.funding_quotes().retain_sessions(|intent| quoting.contains(intent));
 		for (intent, provider, settlement) in due {
 			if self.lock_following().insert(intent.clone()) {
 				services.clone().follow_settlement(intent, provider, settlement);
@@ -871,7 +968,7 @@ impl FundingRegistry {
 	}
 
 	fn lock_announcements(&self) -> MutexGuard<'_, Announcements> {
-		self.announcements.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.announcements)
 	}
 
 	fn lock_sweep_alarm(&self) -> MutexGuard<'_, Option<(u64, mpsc::UnboundedSender<()>)>> {
@@ -879,32 +976,42 @@ impl FundingRegistry {
 	}
 
 	fn lock_pack(&self) -> MutexGuard<'_, HashMap<String, FundingSessionSummary>> {
-		self.pack.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.pack)
 	}
 
 	fn lock_presenting(&self) -> MutexGuard<'_, HashSet<String>> {
-		self.presenting.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.presenting)
 	}
 
 	fn lock_sessions(&self) -> MutexGuard<'_, HashMap<String, FundingSession>> {
-		self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.sessions)
+	}
+
+	fn lock_asks(&self) -> MutexGuard<'_, HashMap<String, PendingAsk>> {
+		lock(&self.asks)
 	}
 
 	fn lock_subscribers(&self) -> MutexGuard<'_, Subscribers> {
-		self.subscribers.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.subscribers)
 	}
 
 	fn lock_servers(&self) -> MutexGuard<'_, Servers> {
-		self.servers.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.servers)
 	}
 
 	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, String>> {
-		self.holding.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.holding)
 	}
 
 	fn lock_following(&self) -> MutexGuard<'_, HashSet<String>> {
-		self.following.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.following)
 	}
+}
+
+/// Lock `mutex`, recovering its value if a holder panicked: every value the
+/// funding modules guard stays valid between statements.
+pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+	mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Why a session could not be opened.
@@ -1045,24 +1152,59 @@ impl RuntimeServices {
 			.await
 	}
 
-	/// Hand open session `intent` to the provider the user chose. Returns
-	/// whether it was open and not yet assigned.
+	/// Hand open session `intent` to the provider the user chose, which must
+	/// be one of the host's providers serving its direction, on the quote the
+	/// user chose it by, which must be one the core offered for this session,
+	/// not yet expired and, when the session has an amount, pricing that
+	/// amount. Returns whether it was open and not yet assigned.
 	pub async fn select_funding_provider(
 		self: &Arc<Self>,
 		intent: &str,
 		provider_id: &str,
+		quote_id: Option<&str>,
 	) -> Result<bool, FundingSessionError> {
 		let provider = ProductContext::new_with_execution(
 			provider_id.to_string(),
 			ProductExecutionKind::Worker,
 		)
 		.map_err(|error| FundingSessionError::InvalidProvider { reason: error.to_string() })?;
-		self.funding()
+		let registry = self.funding();
+		if registry.get(intent).is_some() &&
+			!self.funding_providers().is_quote_target(&provider.product_id)
+		{
+			return Err(FundingSessionError::InvalidProvider {
+				reason: format!("{} is not a funding provider", provider.product_id),
+			});
+		}
+		let choice = match quote_id {
+			None => None,
+			Some(quote_id) => Some(
+				self.funding_quotes()
+					.offered(intent, &provider.product_id, quote_id, current_unix_millis())
+					.ok_or_else(|| FundingSessionError::UnknownQuote {
+						quote_id: quote_id.to_string(),
+					})?,
+			),
+		};
+		if let (Some(choice), Some(session)) = (&choice, self.funding().get(intent)) &&
+			let Some(amount) = session.amount
+		{
+			let priced = choice.balance_amount(session.direction);
+			if priced != amount {
+				return Err(FundingSessionError::QuoteAmountMismatch {
+					quote_id: choice.quote.quote_id.clone(),
+					priced,
+					amount,
+				});
+			}
+		}
+		registry
 			.select_provider(
 				self.platform.as_ref(),
 				current_unix_millis(),
 				intent,
 				&provider.product_id,
+				choice,
 			)
 			.await
 	}
@@ -1466,7 +1608,7 @@ mod tests {
 				Some(amount),
 				NOW,
 			);
-			assert!(session.assign("ramp.dot", NOW));
+			assert!(session.assign("ramp.dot", None, NOW));
 			insert(&registry, storage.as_ref(), session);
 		}
 		let record = |id: u8, amount: u128| {
@@ -1504,7 +1646,7 @@ mod tests {
 		let registry = FundingRegistry::default();
 		let served = |intent: &str, provider: &str| {
 			let mut session = session(intent, NOW);
-			assert!(session.assign(provider, NOW));
+			assert!(session.assign(provider, None, NOW));
 			session
 		};
 		for session in

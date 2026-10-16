@@ -199,6 +199,23 @@ impl PairingHostRuntime {
 		self.pairing_host.set_submit_preimages_locally(local);
 	}
 
+	/// `product_id`'s Worker manifest from dotNS, cached for a day like the
+	/// root manifest. `Ok(None)` when the product publishes no Worker, or one
+	/// this core cannot use; `Err` when dotNS could not be read.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.worker_manifest"))]
+	pub async fn worker_manifest(
+		&self,
+		product_id: &str,
+	) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, v01::GenericError> {
+		crate::runtime::product_manifest::worker_manifest(
+			&self.services,
+			self.services.platform.as_ref(),
+			product_id,
+		)
+		.await
+		.map_err(|reason| v01::GenericError { reason })
+	}
+
 	/// Build a long-lived pairing-host runtime around a platform implementation.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.new"))]
 	pub fn new<P>(platform: Arc<P>, config: PairingHostConfig, spawner: Spawner) -> Self
@@ -630,6 +647,23 @@ pub struct SigningHostRuntime {
 }
 
 impl SigningHostRuntime {
+	/// `product_id`'s Worker manifest from dotNS, cached for a day like the
+	/// root manifest. `Ok(None)` when the product publishes no Worker, or one
+	/// this core cannot use; `Err` when dotNS could not be read.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.worker_manifest"))]
+	pub async fn worker_manifest(
+		&self,
+		product_id: &str,
+	) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, v01::GenericError> {
+		crate::runtime::product_manifest::worker_manifest(
+			&self.services,
+			self.services.platform.as_ref(),
+			product_id,
+		)
+		.await
+		.map_err(|reason| v01::GenericError { reason })
+	}
+
 	/// Answer resource allocation as granted without performing it.
 	///
 	/// For test hosts only, with the `test-host` feature enabled.
@@ -779,6 +813,16 @@ impl SigningHostRuntime {
 		self.services.install_funding_platform(platform)
 	}
 
+	/// Session `intent`'s progress as the host draws it: the steps for its
+	/// direction and rail with when each was reached, and the provider's
+	/// references.
+	pub fn funding_progress(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingProgress> {
+		self.services.funding().get(intent).map(|session| session.progress())
+	}
+
 	/// Every funding session the core keeps, in flight first, then ended,
 	/// each newest first.
 	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
@@ -815,6 +859,63 @@ impl SigningHostRuntime {
 		Ok(self.services.cancel_funding(intent).await?)
 	}
 
+	/// Replace the funding providers this host offers, each with the Worker
+	/// manifest it ships for it. The core re-reads each one from dotNS in the
+	/// background, and that answer wins once it has one.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_providers"))]
+	pub fn set_funding_providers(
+		&self,
+		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), v01::GenericError> {
+		self.services
+			.set_funding_providers(providers)
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	}
+
+	/// The providers funding session `intent` can be handed to, with the
+	/// routes that serve its direction, in the host's order. Empty for a
+	/// session the core does not know.
+	pub fn funding_candidates(
+		&self,
+		intent: &str,
+	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+		self.services
+			.funding()
+			.get(intent)
+			.map(|session| self.services.funding_candidates(session.direction))
+			.unwrap_or_default()
+	}
+
+	/// Live quotes for funding session `intent`: one row per funding
+	/// provider, whatever routes its manifest declares, `Pending` and then
+	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
+	/// The stream ends once every provider has, and never errors; dropping it
+	/// withdraws the asks still open.
+	pub fn get_funding_quote(
+		&self,
+		intent: &str,
+		ask: v01::FundingQuoteAsk,
+	) -> futures::stream::BoxStream<'static, crate::platform::FundingQuoteRow> {
+		self.services.get_funding_quote(intent, ask)
+	}
+
+	/// [`Self::get_funding_quote`] for hosts that take each row through
+	/// [`FundingPlatform::funding_quote_changed`] instead of a stream.
+	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) {
+		let rows = self.services.get_funding_quote(intent, ask);
+		let platform = self.services.funding().platform();
+		let intent = intent.to_string();
+		(self.services.spawner)(Box::pin(async move {
+			let Some(platform) = platform else {
+				return;
+			};
+			futures::pin_mut!(rows);
+			while let Some(row) = futures::StreamExt::next(&mut rows).await {
+				platform.funding_quote_changed(intent.clone(), row);
+			}
+		}));
+	}
+
 	/// Answer the provider's cancel offer on funding session `intent`:
 	/// accept it on `terms`, the fee and refund the host showed, so the
 	/// provider settles the cancel, or decline it with `None`, so the session
@@ -829,15 +930,17 @@ impl SigningHostRuntime {
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose,
-	/// by product id. Returns whether it was open and not yet assigned.
+	/// by product id, on the quote they chose it by, when it was quoted.
+	/// Returns whether it was open and not yet assigned.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.select_funding_provider"))]
 	pub async fn select_funding_provider(
 		&self,
 		intent: &str,
 		provider_id: &str,
+		quote_id: Option<&str>,
 	) -> Result<bool, v01::GenericError> {
 		self.services
-			.select_funding_provider(intent, provider_id)
+			.select_funding_provider(intent, provider_id, quote_id)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
