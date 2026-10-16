@@ -17,6 +17,9 @@ rustix = { workspace = true, features = ["process"] }
 missing_docs = "warn"
 unsafe_code = "forbid"
 
+[features]
+# A scripted funding host and the core's test hooks, for the funding battery.
+test-host = ["truapi/test-host"]
 [lints.clippy]
 complexity = "warn"
 correctness = "warn"

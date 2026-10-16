@@ -37,8 +37,8 @@ use super::parse_pairing_deeplink;
 use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
-		NativeTopUpCallbacks,
+		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+		NativeScannerCallbacks, NativeTopUpCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -49,8 +49,8 @@ use super::{
 	executor::shared_native_executor,
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
-		GameCallbackPlatform, PaymentCallbackPlatform, PocketCallbackPlatform,
-		ScannerCallbackPlatform, TopUpCallbackPlatform,
+		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
+		PocketCallbackPlatform, ScannerCallbackPlatform, TopUpCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -264,6 +264,56 @@ pub struct NativeAnnouncedPairing {
 
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
+	/// Install the host's funding overlay. Set-once; answers whether this
+	/// call installed it. Call it before opening any product execution.
+	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
+		self.runtime
+			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+	}
+
+	/// Open a funding session on the host's own behalf, as the Balance
+	/// card does, and show the overlay. Answers the session id, or `None`
+	/// when the user dismissed it.
+	pub async fn open_funding(
+		&self,
+		direction: v01::FundingDirection,
+		amount: Option<u128>,
+	) -> Result<Option<String>, HostRejection> {
+		Ok(self.runtime.open_funding(direction, amount).await?)
+	}
+
+	/// Session `intent` as the core holds it, for the host's status and
+	/// history views.
+	pub fn funding_session(
+		&self,
+		intent: String,
+	) -> Option<crate::host_logic::funding::FundingSession> {
+		self.runtime.funding_session(&intent)
+	}
+
+	/// Every funding session the core keeps, in flight first, then ended,
+	/// each newest first.
+	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+		self.runtime.funding_sessions()
+	}
+
+	/// Recorded funding sessions compacted out of the full record, newest
+	/// first, for the host's history.
+	pub fn funding_session_pack(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
+		self.runtime.funding_session_pack()
+	}
+
+	/// Record that the host wrote ended session `intent` into its own
+	/// history; until then it is handed over again on each resume.
+	pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
+		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
+	}
+
+	/// Cancel open funding session `intent`.
+	pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
+		Ok(self.runtime.cancel_funding(&intent).await?)
+	}
+
 	/// Install the host's top-up engine. Set-once; answers whether this call
 	/// installed it. Report each later status with
 	/// [`Self::notify_top_up_status`].

@@ -19,6 +19,7 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+mod funding;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
@@ -90,10 +91,10 @@ pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
-	api::{Chat, Contacts, Pocket, Renderer},
+	api::{Chat, Contacts, Funding, Pocket, Renderer},
 	latest, v01,
 	versioned::{
-		IntoLatest,
+		FromLatest, IntoLatest, Versioned,
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
 			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
@@ -104,6 +105,11 @@ use truapi::{
 			HostChatSetRoomFooterResponse,
 		},
 		contacts::{HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse},
+		funding::{
+			HostFundingError, HostFundingRequest, HostFundingResponse,
+			HostFundingStatusSubscribeError, HostFundingStatusSubscribeItem,
+			HostFundingStatusSubscribeRequest,
+		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
 			HostPocketListSubscribeRequest, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
@@ -1474,6 +1480,83 @@ impl Renderer for ProductRuntimeHost {
 			return Subscription::interrupted(CallError::Denied);
 		}
 		self.renderer.subscribe()
+	}
+}
+
+#[truapi::async_trait]
+impl Funding for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "funding.request"))]
+	async fn request(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingRequest,
+	) -> Result<HostFundingResponse, CallError<HostFundingError>> {
+		let version = request.version();
+		let latest::HostFundingRequest { direction, amount } = request.into_latest();
+		let domain = |error| CallError::Domain(HostFundingError::from_latest(error, version));
+		// A capability the host does not serve is a framework answer; a
+		// missing session is one the product handles.
+		if self.services.funding().platform().is_none() {
+			return Err(CallError::Unsupported);
+		}
+		if self.authority.current_session().is_none() {
+			return Err(domain(latest::HostFundingError::NotConnected));
+		}
+		let session = self
+			.services
+			.open_funding(Some(&self.product), direction, amount)
+			.await
+			.map_err(|error| match error {
+				funding::OpenFundingError::Unsupported => CallError::Unsupported,
+				funding::OpenFundingError::Dismissed => domain(latest::HostFundingError::Rejected),
+				funding::OpenFundingError::InvalidAmount => {
+					domain(latest::HostFundingError::InvalidAmount)
+				},
+				funding::OpenFundingError::Present(error) => {
+					CallError::HostFailure { reason: error.reason }
+				},
+				funding::OpenFundingError::Session(error) => {
+					CallError::HostFailure { reason: error.to_string() }
+				},
+			})?;
+		Ok(HostFundingResponse::from_latest(
+			latest::HostFundingResponse { intent: session.intent },
+			version,
+		))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding.status_subscribe"))]
+	async fn status_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingStatusSubscribeRequest,
+	) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>> {
+		let version = request.version();
+		let latest::HostFundingStatusSubscribeRequest { intent } = request.into_latest();
+		let registry = self.services.funding();
+		if registry.platform().is_none() {
+			return Subscription::interrupted(CallError::Unsupported);
+		}
+		if let Err(error) = registry.load(&self.services).await {
+			return Subscription::interrupted(CallError::HostFailure { reason: error.to_string() });
+		}
+		// Another product's session reads as absent, so ids reveal nothing.
+		let owned = registry
+			.owner(&intent)
+			.is_some_and(|owner| owner.as_deref() == Some(self.product.product_id.as_str()));
+		match owned.then(|| registry.subscribe(&intent)).flatten() {
+			Some(stream) => {
+				Subscription::new(Box::pin(stream.map(move |item| {
+					Ok(HostFundingStatusSubscribeItem::from_latest(item, version))
+				})))
+			},
+			None => Subscription::interrupted(CallError::Domain(
+				HostFundingStatusSubscribeError::from_latest(
+					latest::HostFundingStatusSubscribeError::NotFound,
+					version,
+				),
+			)),
+		}
 	}
 }
 
