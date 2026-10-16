@@ -35,7 +35,7 @@ struct DebugPocketFacePreviewView: View {
 
             Spacer()
         }
-        .padding(16)
+        .padding(PocketCardSize.sideMargin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(.bgSurfaceMain))
         .navigationTitle("Pocket face preview")

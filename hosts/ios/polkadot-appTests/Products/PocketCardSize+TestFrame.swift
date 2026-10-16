@@ -3,5 +3,5 @@ import CoreGraphics
 
 extension PocketCardSize {
     /// A card frame at a typical phone width, for drawing faces in tests.
-    static let testFrame = CGSize(width: 345, height: height)
+    static let testFrame = CGSize(width: 393 - sideMargin * 2, height: height)
 }

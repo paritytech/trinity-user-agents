@@ -150,7 +150,7 @@ extension PocketCardScreenViewController {
     /// Without the margins the screen draws around the card.
     func cardFrame(in view: UIView) -> CGRect {
         let card = face.view.bounds.insetBy(
-            dx: PocketOpenedCardView.horizontalInset,
+            dx: PocketCardSize.sideMargin,
             dy: PocketOpenedCardView.verticalInset
         )
         return face.view.convert(card, to: view)
@@ -326,7 +326,6 @@ private extension PocketCardScreenViewController {
 /// The card as an opened screen draws it: the frame the collection gives it,
 /// with the same margins the collection leaves around it.
 struct PocketOpenedCardView: View {
-    static let horizontalInset: CGFloat = 24
     static let verticalInset: CGFloat = 16
 
     static var height: CGFloat { PocketCardSize.height + verticalInset * 2 }
@@ -335,7 +334,7 @@ struct PocketOpenedCardView: View {
 
     var body: some View {
         PocketCollectionCardView(card: card)
-            .padding(.horizontal, Self.horizontalInset)
+            .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.vertical, Self.verticalInset)
     }
 }

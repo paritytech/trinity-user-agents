@@ -234,6 +234,29 @@ struct PocketCardScreenTests {
 
         #expect(face?.safeAreaRegions == [])
     }
+
+    /// 16 pt from either edge, as on Android. The open and close flight only
+    /// moves the card, so it must start from where the card is drawn.
+    @Test
+    func drawsTheCardSixteenPointsInWhereItsFlightStarts() throws {
+        let screen = laidOutScreen(product: StubSPAView())
+        let size = CGSize(width: screenSize.width, height: PocketOpenedCardView.height)
+        let pixels = try WidgetNodeRaster.pixels(
+            of: PocketOpenedCardView(card: loyaltyCard),
+            in: size,
+            under: .berlinNight
+        )
+
+        let rowStart = Int(size.height / 2) * Int(size.width) * 4
+        let paintedColumns = (0 ..< Int(size.width)).filter { column in
+            pixels[rowStart + column * 4 ..< rowStart + column * 4 + 3].contains { $0 > 0 }
+        }
+        let drawn = try CGFloat(#require(paintedColumns.first)) ... CGFloat(#require(paintedColumns.last) + 1)
+        let card = screen.cardFrame(in: screen.view)
+
+        #expect(drawn == card.minX ... card.maxX)
+        #expect(card.minX == 16)
+    }
 }
 
 // MARK: - Fixtures
