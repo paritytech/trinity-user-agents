@@ -58,8 +58,8 @@ pub trait TrUApi:
 	+ CoinPayment
 	+ Contacts
 	+ Entropy
-	+ Funding
 	+ ExpandedCard
+	+ Funding
 	+ Game
 	+ LocalStorage
 	+ Locale
@@ -88,8 +88,8 @@ impl<T> TrUApi for T where
 		+ CoinPayment
 		+ Contacts
 		+ Entropy
-		+ Funding
 		+ ExpandedCard
+		+ Funding
 		+ Game
 		+ LocalStorage
 		+ Locale
