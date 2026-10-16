@@ -270,7 +270,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 			if argument.is_empty() {
 				return Ok(ShellCommand::Product(ProductCommand::Current));
 			}
-			let product_id = ProductId::parse(argument).map_err(|error| error.to_string())?;
+			let product_id = argument.parse::<ProductId>().map_err(|error| error.to_string())?;
 			Ok(ShellCommand::Product(ProductCommand::Switch(product_id)))
 		},
 		"/session" => {
@@ -923,9 +923,7 @@ mod tests {
 		assert_eq!(parse_command("/product"), Ok(ShellCommand::Product(ProductCommand::Current)));
 		assert_eq!(
 			parse_command("/product Dotli.DOT"),
-			Ok(ShellCommand::Product(ProductCommand::Switch(
-				ProductId::parse("dotli.dot").expect("valid product id")
-			)))
+			Ok(ShellCommand::Product(ProductCommand::Switch(ProductId::for_test("dotli.dot"))))
 		);
 		assert_eq!(parse_command("/copy"), Ok(ShellCommand::Copy));
 		assert_eq!(parse_command("/renew"), Ok(ShellCommand::Renew));

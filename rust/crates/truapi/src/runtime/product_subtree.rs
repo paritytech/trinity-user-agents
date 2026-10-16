@@ -76,7 +76,7 @@ mod tests {
 
 	use parity_scale_codec::Encode;
 
-	use crate::test_support::{sso_session_info, test_product_id};
+	use crate::test_support::sso_session_info;
 
 	#[derive(Default)]
 	struct MemStorage {
@@ -113,30 +113,30 @@ mod tests {
 		let session = sso_session_info();
 
 		futures::executor::block_on(async {
-			write_product_subtree(&storage, &session, &test_product_id("one.dot"), [1; 32])
+			write_product_subtree(&storage, &session, &ProductId::for_test("one.dot"), [1; 32])
 				.await
 				.unwrap();
-			write_product_subtree(&storage, &session, &test_product_id("two.dot"), [2; 32])
+			write_product_subtree(&storage, &session, &ProductId::for_test("two.dot"), [2; 32])
 				.await
 				.unwrap();
-			write_product_subtree(&storage, &session, &test_product_id("one.dot"), [3; 32])
+			write_product_subtree(&storage, &session, &ProductId::for_test("one.dot"), [3; 32])
 				.await
 				.unwrap();
 
 			assert_eq!(
-				read_product_subtree(&storage, &session, &test_product_id("one.dot"))
+				read_product_subtree(&storage, &session, &ProductId::for_test("one.dot"))
 					.await
 					.unwrap(),
 				Some([3; 32])
 			);
 			assert_eq!(
-				read_product_subtree(&storage, &session, &test_product_id("two.dot"))
+				read_product_subtree(&storage, &session, &ProductId::for_test("two.dot"))
 					.await
 					.unwrap(),
 				Some([2; 32])
 			);
 			assert_eq!(
-				read_product_subtree(&storage, &session, &test_product_id("absent.dot"))
+				read_product_subtree(&storage, &session, &ProductId::for_test("absent.dot"))
 					.await
 					.unwrap(),
 				None
@@ -150,7 +150,7 @@ mod tests {
 		let session = sso_session_info();
 
 		futures::executor::block_on(async {
-			write_product_subtree(&storage, &session, &test_product_id("one.dot"), [7; 32])
+			write_product_subtree(&storage, &session, &ProductId::for_test("one.dot"), [7; 32])
 				.await
 				.unwrap();
 
@@ -158,7 +158,7 @@ mod tests {
 			// stay 32 unframed bytes rather than anything this module encodes.
 			let raw = storage
 				.read_core_storage(
-					product_subtree_key(&session, &test_product_id("one.dot")).unwrap(),
+					product_subtree_key(&session, &ProductId::for_test("one.dot")).unwrap(),
 				)
 				.await
 				.unwrap();
@@ -172,26 +172,26 @@ mod tests {
 		let session = sso_session_info();
 
 		futures::executor::block_on(async {
-			write_product_subtree(&storage, &session, &test_product_id("one.dot"), [1; 32])
+			write_product_subtree(&storage, &session, &ProductId::for_test("one.dot"), [1; 32])
 				.await
 				.unwrap();
-			write_product_subtree(&storage, &session, &test_product_id("two.dot"), [2; 32])
+			write_product_subtree(&storage, &session, &ProductId::for_test("two.dot"), [2; 32])
 				.await
 				.unwrap();
 
 			// Backs the rollback in `persist_product_subtree_if_current`.
-			remove_product_subtree(&storage, &session, &test_product_id("one.dot"))
+			remove_product_subtree(&storage, &session, &ProductId::for_test("one.dot"))
 				.await
 				.unwrap();
 
 			assert_eq!(
-				read_product_subtree(&storage, &session, &test_product_id("one.dot"))
+				read_product_subtree(&storage, &session, &ProductId::for_test("one.dot"))
 					.await
 					.unwrap(),
 				None
 			);
 			assert_eq!(
-				read_product_subtree(&storage, &session, &test_product_id("two.dot"))
+				read_product_subtree(&storage, &session, &ProductId::for_test("two.dot"))
 					.await
 					.unwrap(),
 				Some([2; 32])
@@ -207,14 +207,14 @@ mod tests {
 		futures::executor::block_on(async {
 			storage
 				.write_core_storage(
-					product_subtree_key(&session, &test_product_id("one.dot")).unwrap(),
+					product_subtree_key(&session, &ProductId::for_test("one.dot")).unwrap(),
 					vec![0xff; 31],
 				)
 				.await
 				.unwrap();
 
 			assert_eq!(
-				read_product_subtree(&storage, &session, &test_product_id("one.dot"))
+				read_product_subtree(&storage, &session, &ProductId::for_test("one.dot"))
 					.await
 					.unwrap(),
 				None

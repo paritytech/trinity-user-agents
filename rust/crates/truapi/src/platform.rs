@@ -273,7 +273,7 @@ impl ProductContext {
 		product_id: String,
 		execution_kind: ProductExecutionKind,
 	) -> Result<Self, RuntimeConfigValidationError> {
-		Ok(Self::from_parts(ProductId::parse(&product_id)?, execution_kind))
+		Ok(Self::from_parts(product_id.parse::<ProductId>()?, execution_kind))
 	}
 
 	/// Build a product context from an id that is already parsed.
@@ -859,7 +859,7 @@ impl ProductStorageKey {
 		let key = scoped
 			.get(product_length + 1..)
 			.ok_or_else(|| "product storage key splits a UTF-8 character".to_string())?;
-		let product_id = ProductId::parse(product_id).map_err(|error| error.to_string())?;
+		let product_id = product_id.parse::<ProductId>().map_err(|error| error.to_string())?;
 		Ok(Self::new(product_id, key))
 	}
 
@@ -1493,7 +1493,6 @@ fn canonical_remote_request(request: &RemotePermissionRequest) -> RemotePermissi
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::test_support::test_product_id;
 
 	fn signing_host_config(
 		network_suffix: &str,
@@ -2368,11 +2367,11 @@ mod tests {
 	fn review_discriminants_do_not_move() {
 		let discriminants = [
 			UserConfirmationReview::AccountAccess(AccountAccessReview {
-				requesting_product_id: test_product_id("caller.dot"),
-				target_product_id: test_product_id("target.dot"),
+				requesting_product_id: ProductId::for_test("caller.dot"),
+				target_product_id: ProductId::for_test("target.dot"),
 			}),
 			UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
-				product_id: test_product_id("caller.dot"),
+				product_id: ProductId::for_test("caller.dot"),
 			}),
 		]
 		.map(|review| review.encode()[0]);

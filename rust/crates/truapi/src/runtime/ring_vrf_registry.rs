@@ -316,7 +316,10 @@ fn decode_snapshot(blob: &[u8]) -> Result<RegistrySnapshot, RingVrfError> {
 fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
 	let mut handles = HashSet::new();
 	for entry in &snapshot.entries {
-		let owner = ProductId::parse(&entry.handle.dot_ns_identifier)
+		let owner = entry
+			.handle
+			.dot_ns_identifier
+			.parse::<ProductId>()
 			.map_err(|error| invalid_registry(error.to_string()))?;
 		if owner.as_str() != entry.handle.dot_ns_identifier {
 			return Err(invalid_registry("non-canonical key owner"));
@@ -337,8 +340,9 @@ fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
 	}
 	let mut owners = HashSet::new();
 	for owner in &snapshot.complete_owners {
-		let canonical =
-			ProductId::parse(owner).map_err(|error| invalid_registry(error.to_string()))?;
+		let canonical = owner
+			.parse::<ProductId>()
+			.map_err(|error| invalid_registry(error.to_string()))?;
 		if canonical.as_str() != owner || !owners.insert(owner) {
 			return Err(invalid_registry("invalid complete owner"));
 		}
@@ -416,7 +420,7 @@ fn invalid_registry_listing(reason: impl Into<String>) -> RingVrfError {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::test_support::{StubPlatform, test_product_id};
+	use crate::test_support::StubPlatform;
 
 	fn handle(owner: &str, index: u32) -> ProductAccountId {
 		ProductAccountId {
@@ -525,7 +529,7 @@ mod tests {
 
 		let reconciled = futures::executor::block_on(store.reconcile_owner(
 			root,
-			&test_product_id("owner.dot"),
+			&ProductId::for_test("owner.dot"),
 			vec![remote.clone()],
 		))
 		.unwrap();
@@ -543,7 +547,7 @@ mod tests {
 		);
 		assert_eq!(
 			futures::executor::block_on(
-				store.complete_owner_entries(root, &test_product_id("owner.dot"))
+				store.complete_owner_entries(root, &ProductId::for_test("owner.dot"))
 			)
 			.unwrap(),
 			Some(reconciled)
@@ -559,7 +563,7 @@ mod tests {
 
 		let error = futures::executor::block_on(store.reconcile_owner(
 			root,
-			&test_product_id("owner.dot"),
+			&ProductId::for_test("owner.dot"),
 			vec![RegisteredRingVrfKey {
 				handle: key.clone(),
 				rings: vec![ring(1)],
@@ -600,7 +604,7 @@ mod tests {
 
 	#[test]
 	fn owner_listing_rejects_foreign_and_duplicate_entries() {
-		let owner = test_product_id("owner.dot");
+		let owner = ProductId::for_test("owner.dot");
 		let entry = RegisteredRingVrfKey {
 			handle: handle(owner.as_str(), 0),
 			rings: vec![ring(1)],

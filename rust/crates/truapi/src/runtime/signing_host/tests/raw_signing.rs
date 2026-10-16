@@ -22,7 +22,7 @@ fn raw_signing_review_matches_the_signed_bytes() {
 	let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
 	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
 	let product =
-		derive_product_keypair(&root, &test_product_id("myapp.dot"), index_bytes(0)).unwrap();
+		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let runtime = product_runtime(services, activation);
 	let cx = CallContext::default();
 	for (legacy, watermarked) in [(false, false), (true, false), (false, true), (true, true)] {
@@ -91,7 +91,7 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
 			let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
 			let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
 			let product =
-				derive_product_keypair(&root, &test_product_id("myapp.dot"), index_bytes(0))
+				derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
 					.unwrap();
 			let payload = v01::RawPayload::Bytes { bytes: vec![0x11; 32] };
 			let message = if legacy && watermarked {

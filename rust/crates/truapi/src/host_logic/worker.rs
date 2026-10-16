@@ -185,7 +185,8 @@ impl WorkerLedger {
 }
 
 fn host_product_id(product_id: &str) -> Option<ProductId> {
-	ProductId::parse(product_id)
+	product_id
+		.parse::<ProductId>()
 		.inspect_err(
 			|error| tracing::warn!(%error, "worker reference for an id that is not a product id"),
 		)
@@ -219,7 +220,6 @@ mod tests {
 	use std::sync::Weak;
 
 	use super::*;
-	use crate::test_support::test_product_id;
 
 	/// Observer recording every transition in delivery order.
 	#[derive(Default)]
@@ -252,11 +252,11 @@ mod tests {
 	#[test]
 	fn first_reference_starts_and_last_release_stops() {
 		let (ledger, recorder) = observed();
-		ledger.acquire(&test_product_id("a.dot"));
-		ledger.acquire(&test_product_id("a.dot"));
-		ledger.release(&test_product_id("a.dot"));
-		ledger.release(&test_product_id("a.dot"));
-		ledger.acquire(&test_product_id("a.dot"));
+		ledger.acquire(&ProductId::for_test("a.dot"));
+		ledger.acquire(&ProductId::for_test("a.dot"));
+		ledger.release(&ProductId::for_test("a.dot"));
+		ledger.release(&ProductId::for_test("a.dot"));
+		ledger.acquire(&ProductId::for_test("a.dot"));
 		assert_eq!(
 			recorder.seen(),
 			vec![
@@ -270,11 +270,11 @@ mod tests {
 	#[test]
 	fn releasing_without_a_reference_is_a_no_op() {
 		let (ledger, recorder) = observed();
-		ledger.release(&test_product_id("a.dot"));
+		ledger.release(&ProductId::for_test("a.dot"));
 		assert!(recorder.seen().is_empty());
-		ledger.acquire(&test_product_id("a.dot"));
-		ledger.release(&test_product_id("a.dot"));
-		ledger.release(&test_product_id("a.dot"));
+		ledger.acquire(&ProductId::for_test("a.dot"));
+		ledger.release(&ProductId::for_test("a.dot"));
+		ledger.release(&ProductId::for_test("a.dot"));
 		assert_eq!(
 			recorder.seen(),
 			vec![
@@ -282,7 +282,7 @@ mod tests {
 				("a.dot".to_string(), WorkerTransition::Stop),
 			]
 		);
-		assert_eq!(ledger.count(&test_product_id("a.dot")), 0);
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
 	}
 
 	#[test]
@@ -307,10 +307,10 @@ mod tests {
 	#[test]
 	fn products_are_counted_separately() {
 		let (ledger, recorder) = observed();
-		ledger.acquire(&test_product_id("a.dot"));
-		ledger.acquire(&test_product_id("b.dot"));
-		ledger.release(&test_product_id("a.dot"));
-		ledger.release(&test_product_id("b.dot"));
+		ledger.acquire(&ProductId::for_test("a.dot"));
+		ledger.acquire(&ProductId::for_test("b.dot"));
+		ledger.release(&ProductId::for_test("a.dot"));
+		ledger.release(&ProductId::for_test("b.dot"));
 		assert_eq!(
 			recorder.seen(),
 			vec![
@@ -359,8 +359,8 @@ mod tests {
 		});
 		assert!(ledger.install_demand_observer(observer.clone()));
 
-		ledger.acquire(&test_product_id("a.dot"));
-		ledger.release(&test_product_id("a.dot"));
+		ledger.acquire(&ProductId::for_test("a.dot"));
+		ledger.release(&ProductId::for_test("a.dot"));
 
 		// The nested pair runs while the outer `Stop` is still on the stack, so
 		// its own `Start`/`Stop` are delivered after it, by the outer drain.
@@ -373,7 +373,7 @@ mod tests {
 				WorkerTransition::Stop,
 			]
 		);
-		assert_eq!(ledger.count(&test_product_id("a.dot")), 0);
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
 	}
 
 	/// Observer that reports what it was given and then blocks in its first
@@ -411,7 +411,7 @@ mod tests {
 
 		let starting = std::thread::spawn({
 			let ledger = ledger.clone();
-			move || ledger.acquire(&test_product_id("a.dot"))
+			move || ledger.acquire(&ProductId::for_test("a.dot"))
 		});
 		entered_rx.recv().expect("observer never ran");
 
@@ -420,14 +420,14 @@ mod tests {
 		// instead of overtaking on this thread.
 		std::thread::spawn({
 			let ledger = ledger.clone();
-			move || ledger.release(&test_product_id("a.dot"))
+			move || ledger.release(&ProductId::for_test("a.dot"))
 		})
 		.join()
 		.expect("stop thread panicked");
 		assert_eq!(seen(), vec![WorkerTransition::Start]);
-		assert_eq!(ledger.count(&test_product_id("a.dot")), 0);
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
 
-		ledger.acquire(&test_product_id("a.dot"));
+		ledger.acquire(&ProductId::for_test("a.dot"));
 		assert_eq!(seen(), vec![WorkerTransition::Start]);
 
 		gate_tx.send(()).expect("observer gone");
@@ -462,13 +462,13 @@ mod tests {
 		// A host that counts before it listens still owns the reference, so
 		// the transition has to survive the wait rather than be dropped: the
 		// count never crosses zero again to produce a second one.
-		ledger.acquire(&test_product_id("a.dot"));
+		ledger.acquire(&ProductId::for_test("a.dot"));
 
 		let recorder = Arc::new(Recorder::default());
 		assert!(ledger.install_demand_observer(recorder.clone()));
 		assert_eq!(recorder.seen(), vec![("a.dot".to_string(), WorkerTransition::Start)]);
 
-		ledger.release(&test_product_id("a.dot"));
+		ledger.release(&ProductId::for_test("a.dot"));
 		assert_eq!(
 			recorder.seen(),
 			vec![
@@ -510,7 +510,7 @@ mod tests {
 				std::thread::spawn(move || {
 					// One product per thread, so each round owes exactly one
 					// `Start` and one `Stop` per thread whatever the order.
-					let product_id = test_product_id(&format!("product-{index}.dot"));
+					let product_id = ProductId::for_test(&format!("product-{index}.dot"));
 					for _ in 0..ROUNDS {
 						start.wait();
 						ledger.acquire(&product_id);
@@ -563,17 +563,17 @@ mod tests {
 		assert!(ledger.install_demand_observer(observer.clone()));
 
 		let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-			ledger.acquire(&test_product_id("a.dot"));
+			ledger.acquire(&ProductId::for_test("a.dot"));
 		}));
 		assert!(unwound.is_err(), "the panic should propagate to acquire");
 
 		// A later transition still reaches the observer: the drain flag was
 		// reset despite the earlier delivery unwinding.
-		ledger.release(&test_product_id("a.dot"));
+		ledger.release(&ProductId::for_test("a.dot"));
 		assert_eq!(
 			*observer.seen.lock().expect("recorder mutex poisoned"),
 			vec![WorkerTransition::Stop]
 		);
-		assert_eq!(ledger.count(&test_product_id("a.dot")), 0);
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
 	}
 }

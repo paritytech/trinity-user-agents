@@ -700,10 +700,10 @@ impl<T: Clone + Send + 'static> StatusRelay<T> {
 
 	/// Deliver a later `status` of `product_id`'s `id` to everyone following
 	/// it; a terminal one ends their streams.
-	fn notify(&self, product_id: &ProductId, id: crate::Bytes32, status: T) {
+	fn notify(&self, product_id: ProductId, id: crate::Bytes32, status: T) {
 		let terminal = (self.rank)(&status) == TERMINAL_RANK;
 		let mut followers = self.lock_followers();
-		let key = (product_id.clone(), id);
+		let key = (product_id, id);
 		followers.send(&key, &status);
 		if terminal {
 			followers.end(&key);
@@ -773,7 +773,7 @@ impl TopUpCallbackPlatform {
 	/// following it; a terminal one ends their streams.
 	pub fn notify_status(
 		&self,
-		product_id: &ProductId,
+		product_id: ProductId,
 		id: crate::Bytes32,
 		status: v01::HostPaymentTopUpStatusSubscribeItem,
 	) {
@@ -842,7 +842,7 @@ impl PaymentCallbackPlatform {
 	/// following it; a terminal one ends their streams.
 	pub fn notify_status(
 		&self,
-		product_id: &ProductId,
+		product_id: ProductId,
 		id: crate::Bytes32,
 		status: v01::HostPaymentStatusSubscribeItem,
 	) {
@@ -954,7 +954,7 @@ mod status_relay_tests {
 
 	use futures::executor::block_on;
 
-	use crate::{platform::TopUpPlatform, test_support::test_product_id};
+	use crate::platform::TopUpPlatform;
 
 	/// A top-up engine holding one status per id, and nothing else.
 	struct Engine(
@@ -998,12 +998,12 @@ mod status_relay_tests {
 		let missing = platform.subscribe_top_up_status(&product(), [2; 32]);
 
 		platform.notify_status(
-			&test_product_id("fund.dot"),
+			ProductId::for_test("fund.dot"),
 			[1; 32],
 			v01::HostPaymentTopUpStatusSubscribeItem::Claiming,
 		);
 		platform.notify_status(
-			&test_product_id("fund.dot"),
+			ProductId::for_test("fund.dot"),
 			[1; 32],
 			v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
 		);
@@ -1044,7 +1044,7 @@ mod status_relay_tests {
 			.insert([1; 32], v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true });
 		let core_pass = platform.subscribe_top_up_status(&product(), [1; 32]);
 		let verdict = v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true };
-		platform.notify_status(&test_product_id("fund.dot"), [1; 32], verdict.clone());
+		platform.notify_status(ProductId::for_test("fund.dot"), [1; 32], verdict.clone());
 
 		assert_eq!(
 			(block_on(core_pass.collect::<Vec<_>>()), block_on(product_stream.collect::<Vec<_>>()),),
@@ -1073,7 +1073,7 @@ mod status_relay_tests {
 			v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
 			v01::HostPaymentTopUpStatusSubscribeItem::NotClaimed,
 		] {
-			platform.notify_status(&test_product_id("fund.dot"), [1; 32], status);
+			platform.notify_status(ProductId::for_test("fund.dot"), [1; 32], status);
 		}
 		let _ = platform.subscribe_top_up_status(&product(), [2; 32]);
 
@@ -1128,7 +1128,7 @@ mod status_relay_tests {
 		let followed = platform.subscribe_payment_status(&product(), [1; 32]);
 		let missing = platform.subscribe_payment_status(&product(), [2; 32]);
 		platform.notify_status(
-			&test_product_id("fund.dot"),
+			ProductId::for_test("fund.dot"),
 			[1; 32],
 			v01::HostPaymentStatusSubscribeItem::Completed,
 		);

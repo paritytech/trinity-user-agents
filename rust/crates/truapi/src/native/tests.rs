@@ -2547,7 +2547,7 @@ fn native_permission_confirmation_preserves_consent_lifetime() {
 			};
 			let review = UserConfirmationReview::IdentityDisclosure(
 				crate::platform::IdentityDisclosureReview {
-					product_id: crate::test_support::test_product_id("product.dot"),
+					product_id: crate::platform::ProductId::for_test("product.dot"),
 				},
 			);
 			assert_eq!(

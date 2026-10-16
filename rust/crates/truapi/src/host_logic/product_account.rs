@@ -323,7 +323,6 @@ fn normalize_chain_code(encoded: Vec<u8>) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::test_support::test_product_id;
 
 	fn fixture_root() -> Keypair {
 		derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap()
@@ -332,8 +331,10 @@ mod tests {
 	#[test]
 	fn product_subtrees_are_hard_firewalls() {
 		let root = fixture_root();
-		let first = derive_product_subtree_keypair(&root, &test_product_id("myapp.dot")).unwrap();
-		let second = derive_product_subtree_keypair(&root, &test_product_id("other.dot")).unwrap();
+		let first =
+			derive_product_subtree_keypair(&root, &ProductId::for_test("myapp.dot")).unwrap();
+		let second =
+			derive_product_subtree_keypair(&root, &ProductId::for_test("other.dot")).unwrap();
 
 		assert_ne!(first.public, root.public);
 		assert_ne!(first.public, second.public);
@@ -348,7 +349,7 @@ mod tests {
 			("localhost:3000", index_bytes(7)),
 			("myapp.dot", [0xEE; 32]),
 		] {
-			let product_id = test_product_id(product_id);
+			let product_id = ProductId::for_test(product_id);
 			let subtree = derive_product_subtree_keypair(&root, &product_id).unwrap();
 			let keypair = derive_product_keypair(&root, &product_id, index).unwrap();
 			let public = derive_product_public_key(subtree.public.to_bytes(), index).unwrap();
@@ -368,7 +369,8 @@ mod tests {
 	fn root_public_key_cannot_substitute_for_product_subtree() {
 		let root = fixture_root();
 		let actual =
-			derive_product_keypair(&root, &test_product_id("myapp.dot"), index_bytes(0)).unwrap();
+			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
+				.unwrap();
 		let unsafe_soft_only =
 			derive_product_public_key(root.public.to_bytes(), index_bytes(0)).unwrap();
 
@@ -378,7 +380,7 @@ mod tests {
 	#[test]
 	fn long_product_id_derives_stably() {
 		let root = fixture_root();
-		let product_id = test_product_id(
+		let product_id = ProductId::for_test(
 			"w-credentialless-staticblitz-com.local-credentialless.webcontainer-api.dot",
 		);
 		let subtree = derive_product_subtree_keypair(&root, &product_id).unwrap();
@@ -392,10 +394,11 @@ mod tests {
 	#[test]
 	fn ss58_address_round_trips_to_public_key() {
 		let root = fixture_root();
-		let derived = derive_product_keypair(&root, &test_product_id("myapp.dot"), index_bytes(0))
-			.unwrap()
-			.public
-			.to_bytes();
+		let derived =
+			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
+				.unwrap()
+				.public
+				.to_bytes();
 		let address = product_public_key_to_address(derived);
 
 		assert_eq!(public_key_from_address(&address), Some(derived));
@@ -433,7 +436,8 @@ mod tests {
 		// so hosts never build the 32-byte chain code. Pin that composition
 		// against the same vector the internal `index_bytes` path produces.
 		let root = derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-		let subtree = derive_product_subtree_keypair(&root, &test_product_id("myapp.dot")).unwrap();
+		let subtree =
+			derive_product_subtree_keypair(&root, &ProductId::for_test("myapp.dot")).unwrap();
 		let derived = derive_product_public_key(
 			subtree.public.to_bytes(),
 			derivation_index_bytes(&DerivationIndex::Index(0)),
@@ -499,7 +503,7 @@ mod tests {
 			);
 			// The reserved keys are exactly what a `peopl.<suffix>` product
 			// registers through RFC-0024 at indexes 0 and 1: no special case.
-			let product_id = test_product_id(&personhood_product_id(suffix));
+			let product_id = ProductId::for_test(&personhood_product_id(suffix));
 			for (index, expected) in [(0u32, full), (1, lite)] {
 				assert_eq!(
 					hex::encode(
@@ -521,15 +525,17 @@ mod tests {
 		use truapi::v01::DerivationIndex;
 
 		let root_entropy: Vec<u8> = (1..=32).collect();
-		let domain =
-			derive_ring_vrf_domain_entropy(&root_entropy, &test_product_id("people-provider.dot"))
-				.unwrap();
+		let domain = derive_ring_vrf_domain_entropy(
+			&root_entropy,
+			&ProductId::for_test("people-provider.dot"),
+		)
+		.unwrap();
 		for index in [DerivationIndex::Index(7), DerivationIndex::Raw([0xEE; 32])] {
 			assert_eq!(
 				derive_ring_vrf_entropy_from_domain(&domain, &index),
 				derive_ring_vrf_entropy(
 					&root_entropy,
-					&test_product_id("people-provider.dot"),
+					&ProductId::for_test("people-provider.dot"),
 					&index
 				)
 				.unwrap()
@@ -580,7 +586,7 @@ mod tests {
 			);
 			let subtree = derive_product_subtree_keypair(
 				&derive_root_keypair_from_entropy(&entropy).unwrap(),
-				&test_product_id(&identity_product_id(suffix)),
+				&ProductId::for_test(&identity_product_id(suffix)),
 			)
 			.unwrap();
 			assert_eq!(
@@ -596,7 +602,8 @@ mod tests {
 		// A raw all-zero index must not collide with plain index 0: the magic
 		// keeps the two spaces separate.
 		let subtree =
-			derive_product_subtree_keypair(&fixture_root(), &test_product_id("myapp.dot")).unwrap();
+			derive_product_subtree_keypair(&fixture_root(), &ProductId::for_test("myapp.dot"))
+				.unwrap();
 		let indexed = derive_product_public_key(subtree.public.to_bytes(), index_bytes(0)).unwrap();
 		let raw = derive_product_public_key(subtree.public.to_bytes(), [0u8; 32]).unwrap();
 		assert_ne!(indexed, raw);
@@ -624,7 +631,8 @@ mod tests {
 	fn product_secret_signs_verifiably() {
 		let root = derive_root_keypair_from_entropy(&[0xABu8; 16]).unwrap();
 		let keypair =
-			derive_product_keypair(&root, &test_product_id("myapp.dot"), index_bytes(0)).unwrap();
+			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
+				.unwrap();
 		let message = b"<Bytes>hello</Bytes>";
 		let signature = keypair.secret.sign_simple(b"substrate", message, &keypair.public);
 		assert!(keypair.public.verify_simple(b"substrate", message, &signature).is_ok());

@@ -282,8 +282,8 @@ impl NativeTrUApiHostRuntime {
 		status: v01::HostPaymentTopUpStatusSubscribeItem,
 	) {
 		if let Some(platform) = self.top_up.get() {
-			match ProductId::parse(&product_id) {
-				Ok(product_id) => platform.notify_status(&product_id, id, status),
+			match product_id.parse::<ProductId>() {
+				Ok(product_id) => platform.notify_status(product_id, id, status),
 				Err(error) => {
 					tracing::warn!(%error, "top-up status for an id that is not a product id")
 				},
@@ -309,8 +309,8 @@ impl NativeTrUApiHostRuntime {
 		status: v01::HostPaymentStatusSubscribeItem,
 	) {
 		if let Some(platform) = self.payments.get() {
-			match ProductId::parse(&product_id) {
-				Ok(product_id) => platform.notify_status(&product_id, id, status),
+			match product_id.parse::<ProductId>() {
+				Ok(product_id) => platform.notify_status(product_id, id, status),
 				Err(error) => {
 					tracing::warn!(%error, "payment status for an id that is not a product id")
 				},
@@ -879,7 +879,8 @@ impl NativeProductExecution {
 		product_id: String,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Bytes32>, HostRejection> {
-		let product_id = ProductId::parse(&product_id)
+		let product_id = product_id
+			.parse::<ProductId>()
 			.map_err(|error| v01::GenericError { reason: error.to_string() })?;
 		Ok(futures::executor::block_on(
 			self.admin().get_product_subtree_public_key(&product_id, timeout_ms),

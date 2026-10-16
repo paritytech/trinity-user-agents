@@ -46,8 +46,9 @@ use truapi::latest;
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError,
-	ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
+	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
+	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	async_trait,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -128,7 +129,7 @@ pub enum PermissionKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenOperation {
 	/// Product that began it.
-	pub product_id: String,
+	pub product_id: ProductId,
 	/// Id the mock handed back, unique among this product's open operations.
 	pub id: u32,
 	/// Label the product gave, empty when it gave none.
@@ -1165,7 +1166,7 @@ impl ProductOperations for MockPlatform {
 		self.open_operations
 			.lock()
 			.expect("open operations poisoned")
-			.push(OpenOperation { product_id: product.product_id.to_string(), id, label });
+			.push(OpenOperation { product_id: product.product_id.clone(), id, label });
 		Ok(latest::HostWorkerBeginOperationResponse { id })
 	}
 
@@ -1178,7 +1179,7 @@ impl ProductOperations for MockPlatform {
 		self.open_operations
 			.lock()
 			.expect("open operations poisoned")
-			.retain(|open| open.id != id || open.product_id != product.product_id.as_str());
+			.retain(|open| open.id != id || open.product_id != product.product_id);
 		Ok(())
 	}
 }
@@ -1331,7 +1332,7 @@ mod tests {
 
 	fn resource_review() -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: crate::test_support::test_product_id("mock.dot"),
+			calling_product_id: crate::platform::ProductId::for_test("mock.dot"),
 			resources: vec![],
 		})
 	}
@@ -1547,7 +1548,7 @@ mod tests {
 		assert_eq!(
 			p.open_operations(),
 			vec![OpenOperation {
-				product_id: "mock.dot".to_string(),
+				product_id: crate::platform::ProductId::for_test("mock.dot"),
 				id,
 				label: "sync".to_string(),
 			}]
@@ -1704,7 +1705,7 @@ mod tests {
 
 	fn allocation_review(product: &str) -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: crate::test_support::test_product_id(product),
+			calling_product_id: crate::platform::ProductId::for_test(product),
 			resources: vec![],
 		})
 	}
@@ -1747,8 +1748,8 @@ mod tests {
 		assert_eq!(
 			products,
 			vec![
-				crate::test_support::test_product_id("first.dot"),
-				crate::test_support::test_product_id("second.dot")
+				crate::platform::ProductId::for_test("first.dot"),
+				crate::platform::ProductId::for_test("second.dot")
 			]
 		);
 	}

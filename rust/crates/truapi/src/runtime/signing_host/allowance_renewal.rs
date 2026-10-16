@@ -61,7 +61,7 @@ impl StatementRenewalTarget {
 	fn normalized(self) -> Result<Self, String> {
 		match self {
 			Self::ProductStatementAllowance { product_id } => {
-				let normalized = ProductId::parse(&product_id).map_err(|_| {
+				let normalized = product_id.parse::<ProductId>().map_err(|_| {
 					format!("product_id {product_id} is not a valid product identifier")
 				})?;
 				Ok(Self::ProductStatementAllowance { product_id: normalized.into() })

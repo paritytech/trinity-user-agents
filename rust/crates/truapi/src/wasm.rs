@@ -795,7 +795,9 @@ fn generic_error_to_js(err: v01::GenericError) -> JsValue {
 /// Parse a product id the host passed, rejecting with the reason the way the
 /// runtime's own errors do.
 fn product_id_from_js(product_id: &str) -> Result<ProductId, JsValue> {
-	ProductId::parse(product_id).map_err(|error| JsValue::from_str(&error.to_string()))
+	product_id
+		.parse::<ProductId>()
+		.map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 struct WasmCoreInner {
@@ -1418,7 +1420,8 @@ pub fn derive_product_subtree_public_key(
 ) -> Result<Vec<u8>, JsValue> {
 	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&root_entropy)
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
-	let product_id = crate::platform::ProductId::parse(&product_id)
+	let product_id = product_id
+		.parse::<crate::platform::ProductId>()
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
 	crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
 		.map(|keypair| keypair.public.to_bytes().to_vec())

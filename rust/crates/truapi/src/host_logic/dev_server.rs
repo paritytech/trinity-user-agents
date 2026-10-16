@@ -86,7 +86,8 @@ impl FromStr for DevServerProduct {
 			Some((_, named)) => named.into_owned(),
 			None => localhost_id,
 		};
-		let product_id = ProductId::parse(&product_id).map_err(DevServerError::InvalidProductId)?;
+		let product_id =
+			product_id.parse::<ProductId>().map_err(DevServerError::InvalidProductId)?;
 		Ok(Self { product_id, origin, url: parsed.into() })
 	}
 }
@@ -98,7 +99,6 @@ fn is_dev_address(address: Ipv4Addr) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::test_support::test_product_id;
 
 	fn product(
 		product_id: &str,
@@ -106,7 +106,7 @@ mod tests {
 		url: &str,
 	) -> Result<DevServerProduct, DevServerError> {
 		Ok(DevServerProduct {
-			product_id: test_product_id(product_id),
+			product_id: ProductId::for_test(product_id),
 			origin: origin.to_string(),
 			url: url.to_string(),
 		})

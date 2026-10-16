@@ -124,11 +124,10 @@ async fn protocol_registry<T: DotnsTransport + ?Sized>(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::test_support::test_product_id;
 
 	/// The node a product id resolves to on a network serving `tld`.
 	fn node_on(tld: &str, product_id: &str) -> [u8; 32] {
-		namehash_under(&tld_node(tld), test_product_id(product_id).bare_label())
+		namehash_under(&tld_node(tld), ProductId::for_test(product_id).bare_label())
 	}
 
 	#[test]
@@ -288,7 +287,7 @@ pub async fn scope_grant(
 	let Ok(manifest) = RootManifest::parse(&json) else {
 		return Err(RefusedBecause::ManifestMalformed);
 	};
-	if !manifest.grants(caller_id.bare_label(), scope) {
+	if !manifest.grants(caller_id, scope) {
 		return Err(RefusedBecause::NotGranted);
 	}
 	if scope == Granted::Context && !caller_id.has_trusted_remote_permissions() {
@@ -409,7 +408,7 @@ pub async fn require_context_access(
 	// refuse a grantee for spelling its own context `DIM2.paseo`, the hazard
 	// the gate exists to remove, one layer down. A context that names no
 	// product has no manifest to consent with, so it fails closed.
-	let Ok(context_id) = ProductId::parse(&context.product_id) else {
+	let Ok(context_id) = context.product_id.parse::<ProductId>() else {
 		return Err(RingVrfError::NotAllowlisted);
 	};
 	// A product is all its executables, so `app.dim2.dot` is `dim2.dot`'s context
@@ -478,7 +477,7 @@ pub async fn ring_vrf_key_access_granted(
 	// granted nothing rather than an error carrying the string back: on the wire
 	// path this field is peer-supplied, and one refusal for every reason is the
 	// whole design of this seam.
-	let Ok(caller) = ProductId::parse(calling_product_id) else {
+	let Ok(caller) = calling_product_id.parse::<ProductId>() else {
 		return Err(RingVrfError::NotAllowlisted);
 	};
 	// The handle is normalized here, not only at the frontend. The frontend
@@ -490,7 +489,7 @@ pub async fn ring_vrf_key_access_granted(
 	// A handle that does not normalize names no product, so it owns no key and
 	// no manifest can grant it: it takes the same refusal as a product that
 	// granted nothing, rather than a distinguishable error.
-	let Ok(owner) = ProductId::parse(&handle.dot_ns_identifier) else {
+	let Ok(owner) = handle.dot_ns_identifier.parse::<ProductId>() else {
 		return Err(RingVrfError::NotAllowlisted);
 	};
 	if caller == owner {

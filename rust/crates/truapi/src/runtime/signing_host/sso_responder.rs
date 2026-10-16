@@ -1279,7 +1279,7 @@ mod tests {
 			sso_wire::ResponseOutcome,
 		},
 		host_logic::product_account::derive_ring_vrf_domain_entropy,
-		test_support::test_product_id,
+		platform::ProductId,
 	};
 
 	/// The key a host advertises on chain must be the one it serves over
@@ -1952,7 +1952,7 @@ mod tests {
 			.lock()
 			.expect("resource allocation review list mutex poisoned");
 		assert_eq!(reviews.len(), 1);
-		assert_eq!(reviews[0].calling_product_id, test_product_id("myapp.dot"));
+		assert_eq!(reviews[0].calling_product_id, ProductId::for_test("myapp.dot"));
 	}
 
 	#[test]
@@ -1993,10 +1993,10 @@ mod tests {
 		});
 		let (_, signing_host) = signing_fixture(platform);
 		let expected_secret = signing_host
-			.product_subtree_secret(&test_product_id("myapp.dot"))
+			.product_subtree_secret(&ProductId::for_test("myapp.dot"))
 			.expect("product subtree secret derives");
 		let expected_ring_vrf_domain_entropy =
-			derive_ring_vrf_domain_entropy(&ENTROPY, &test_product_id("myapp.dot"))
+			derive_ring_vrf_domain_entropy(&ENTROPY, &ProductId::for_test("myapp.dot"))
 				.expect("ring-VRF domain entropy derives");
 
 		let response = answer(
@@ -2282,7 +2282,7 @@ mod tests {
 			derive_root_keypair_from_entropy(&ENTROPY).expect("fixture entropy derives root");
 		let expected = crate::host_logic::product_account::derive_product_subtree_keypair(
 			&root,
-			&test_product_id("browse.dot"),
+			&ProductId::for_test("browse.dot"),
 		)
 		.expect("fixture derives subtree")
 		.public

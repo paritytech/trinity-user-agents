@@ -25,7 +25,8 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};
 	futures::executor::block_on(
-		platform.write_core_storage(test_product_id(owner).manifest_cache_key(), entry.encode()),
+		platform
+			.write_core_storage(ProductId::for_test(owner).manifest_cache_key(), entry.encode()),
 	)
 	.expect("stub core storage accepts the entry");
 }
@@ -67,7 +68,7 @@ fn a_context_grant_signs_with_the_granting_products_account() {
 	// The account that signed is the one the grant was published for, not the
 	// caller's own: a product acting for another does not sign as itself.
 	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root derives");
-	let owner = derive_product_keypair(&root, &test_product_id("dim2.paseo"), index_bytes(0))
+	let owner = derive_product_keypair(&root, &ProductId::for_test("dim2.paseo"), index_bytes(0))
 		.expect("owner key derives");
 	let preimage = crate::host_internal::transaction::extrinsic_payload_preimage(
 		&crate::test_support::sign_payload_data(),

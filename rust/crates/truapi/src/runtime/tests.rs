@@ -103,7 +103,7 @@ fn test_product_subtree(product_id: &str) -> [u8; 32] {
 		.expect("test entropy derives a root");
 	crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
-		&test_product_id(product_id),
+		&ProductId::for_test(product_id),
 	)
 	.expect("test product id derives a subtree")
 	.public
@@ -130,7 +130,7 @@ fn install_pairing_session(host: &ProductRuntimeHost, session: SessionInfo) {
 fn cache_test_product_subtree(host: &ProductRuntimeHost, session: &SessionInfo, product_id: &str) {
 	host.test_cache_product_subtree(
 		session,
-		&test_product_id(product_id),
+		&ProductId::for_test(product_id),
 		test_product_subtree(product_id),
 	);
 }
@@ -308,7 +308,7 @@ fn a_storage_key_is_namespaced_under_its_owner() {
 	// The owner is an argument, not `self`: keying off the caller would hand a
 	// granted foreign read the caller's own values under the target's name.
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	let key = host.product_storage_key(&test_product_id("wallet.dot"), "k".to_string());
+	let key = host.product_storage_key(&ProductId::for_test("wallet.dot"), "k".to_string());
 	let decoded = ProductStorageKey::decode(&key).expect("the key round-trips");
 	assert_eq!(decoded.product_id().as_str(), "wallet.dot");
 	assert_ne!(decoded.product_id(), host.product_id());
@@ -376,7 +376,7 @@ fn granted_value(host: &ProductRuntimeHost, owner: &str) -> Option<Vec<u8>> {
 /// Seeds `owner`'s storage with a value only a granted read can reach.
 fn seed_owner_value(platform: &StubPlatform, owner: &str) {
 	platform.local_storage.lock().expect("mutex").insert(
-		ProductStorageKey::new(test_product_id(owner), "k").encode(),
+		ProductStorageKey::new(ProductId::for_test(owner), "k").encode(),
 		b"wallet's own value".to_vec(),
 	);
 }
@@ -395,7 +395,8 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 	);
 	let entry = CachedManifest { fetched_at_secs, json: Some(json) };
 	futures::executor::block_on(
-		platform.write_core_storage(test_product_id(owner).manifest_cache_key(), entry.encode()),
+		platform
+			.write_core_storage(ProductId::for_test(owner).manifest_cache_key(), entry.encode()),
 	)
 	.expect("stub core storage accepts the entry");
 }
@@ -405,7 +406,8 @@ fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<Strin
 	let entry =
 		CachedManifest { fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
 	futures::executor::block_on(
-		platform.write_core_storage(test_product_id(owner).manifest_cache_key(), entry.encode()),
+		platform
+			.write_core_storage(ProductId::for_test(owner).manifest_cache_key(), entry.encode()),
 	)
 	.expect("stub core storage accepts the entry");
 }
@@ -446,7 +448,7 @@ fn a_grant_to_another_product_does_not_admit_this_caller() {
 /// manifest names the bare label `unknown`.
 fn may_use_account_of(host: &ProductRuntimeHost, owner: &str) -> bool {
 	futures::executor::block_on(
-		host.may_use_product_account(&test_product_id(owner), &CallContext::default()),
+		host.may_use_product_account(&ProductId::for_test(owner), &CallContext::default()),
 	)
 }
 
@@ -2822,7 +2824,7 @@ fn bare_localhost_product_allows_dev_product_accounts() {
 		ProductRuntimeHost::new(stub_platform(), runtime_config("localhost"), test_spawner());
 
 	assert!(futures::executor::block_on(
-		host.may_use_product_account(&test_product_id("myapp.dot"), &CallContext::default())
+		host.may_use_product_account(&ProductId::for_test("myapp.dot"), &CallContext::default())
 	));
 }
 
@@ -3631,8 +3633,8 @@ fn get_account_other_product_rejects_when_user_declines() {
 			.expect("account access review list mutex poisoned")
 			.as_slice(),
 		&[AccountAccessReview {
-			requesting_product_id: test_product_id("myapp.dot"),
-			target_product_id: test_product_id("other.dot"),
+			requesting_product_id: ProductId::for_test("myapp.dot"),
+			target_product_id: ProductId::for_test("other.dot"),
 		}]
 	);
 }
@@ -4722,7 +4724,7 @@ fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
 	assert_eq!(futures::executor::block_on(subscription.next()), Some(storage_item(None)));
 
 	platform.fail_storage_subscriptions(
-		&host.product_storage_key(&test_product_id("myapp.dot"), "progress".to_string()),
+		&host.product_storage_key(&ProductId::for_test("myapp.dot"), "progress".to_string()),
 		"store unavailable",
 	);
 
@@ -4763,8 +4765,8 @@ fn worker_operations_reach_the_platform_scoped_to_the_calling_product() {
 	assert_eq!(
 		*platform.begun_operations.lock().expect("begun operations mutex poisoned"),
 		vec![
-			("myapp.dot".to_string(), "funding".to_string()),
-			("myapp.dot".to_string(), String::new()),
+			(ProductId::for_test("myapp.dot"), "funding".to_string()),
+			(ProductId::for_test("myapp.dot"), String::new()),
 		],
 		"begin reaches the platform under the calling product; a missing label is empty"
 	);
@@ -4773,7 +4775,7 @@ fn worker_operations_reach_the_platform_scoped_to_the_calling_product() {
 	end(99);
 	assert_eq!(
 		*platform.ended_operations.lock().expect("ended operations mutex poisoned"),
-		vec![("myapp.dot".to_string(), 1), ("myapp.dot".to_string(), 99)],
+		vec![(ProductId::for_test("myapp.dot"), 1), (ProductId::for_test("myapp.dot"), 99)],
 		"end reaches the platform under the calling product, unknown ids included"
 	);
 }
@@ -4796,7 +4798,7 @@ fn an_open_operation_holds_worker_demand_until_it_ends() {
 		.expect("begin operation");
 
 	assert_eq!(
-		ledger.count(&test_product_id("myapp.dot")),
+		ledger.count(&ProductId::for_test("myapp.dot")),
 		1,
 		"an open operation is demand on the worker, so the host is told to run it"
 	);
@@ -4808,7 +4810,7 @@ fn an_open_operation_holds_worker_demand_until_it_ends() {
 	.expect("end operation");
 
 	assert_eq!(
-		ledger.count(&test_product_id("myapp.dot")),
+		ledger.count(&ProductId::for_test("myapp.dot")),
 		0,
 		"ending the last operation drops the demand it held"
 	);
@@ -4842,13 +4844,13 @@ fn ending_an_operation_twice_releases_only_the_demand_it_held() {
 
 	let first = begin();
 	begin();
-	assert_eq!(ledger.count(&test_product_id("myapp.dot")), 2);
+	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 2);
 
 	end(first);
 	end(first);
 
 	assert_eq!(
-		ledger.count(&test_product_id("myapp.dot")),
+		ledger.count(&ProductId::for_test("myapp.dot")),
 		1,
 		"a repeated end is idempotent, so it cannot drop the demand the other operation holds"
 	);
@@ -4953,7 +4955,7 @@ fn a_cancelled_begin_ends_the_operation_the_host_started() {
 			.lock()
 			.expect("ended operations mutex poisoned")
 			.clone();
-		if ended == vec![("myapp.dot".to_string(), 1)] {
+		if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
 			break;
 		}
 		assert!(
@@ -4962,7 +4964,7 @@ fn a_cancelled_begin_ends_the_operation_the_host_started() {
 		);
 		std::thread::yield_now();
 	}
-	assert_eq!(host.services().worker_ledger.count(&test_product_id("myapp.dot")), 0);
+	assert_eq!(host.services().worker_ledger.count(&ProductId::for_test("myapp.dot")), 0);
 }
 
 #[test]
@@ -4984,7 +4986,7 @@ fn a_failed_end_still_drops_the_demand_the_operation_held() {
 			}),
 		))
 		.expect("begin operation");
-	assert_eq!(ledger.count(&test_product_id("myapp.dot")), 1);
+	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 1);
 
 	let ended = futures::executor::block_on(host.end_operation(
 		&cx,
@@ -4993,7 +4995,7 @@ fn a_failed_end_still_drops_the_demand_the_operation_held() {
 	assert!(ended.is_err(), "the host's failure still reaches the product");
 
 	assert_eq!(
-		ledger.count(&test_product_id("myapp.dot")),
+		ledger.count(&ProductId::for_test("myapp.dot")),
 		0,
 		"the product declared the operation over, so the core stops counting it \
          whatever the host made of the call"
@@ -5013,12 +5015,12 @@ fn dropping_a_connection_releases_the_demand_its_open_operations_held() {
 		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
 	))
 	.expect("begin operation");
-	assert_eq!(services.worker_ledger.count(&test_product_id("myapp.dot")), 1);
+	assert_eq!(services.worker_ledger.count(&ProductId::for_test("myapp.dot")), 1);
 
 	drop(host);
 
 	assert_eq!(
-		services.worker_ledger.count(&test_product_id("myapp.dot")),
+		services.worker_ledger.count(&ProductId::for_test("myapp.dot")),
 		0,
 		"a product that goes away without ending its operations leaves no demand behind"
 	);
@@ -5466,7 +5468,7 @@ fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<St
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
 	Arc::new(StubPlatform {
@@ -5487,7 +5489,7 @@ fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<St
                                     ring_vrf_domain_entropy:
                                         crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
                                             &[0xAB; 16],
-                                            &test_product_id("myapp.dot"),
+                                            &ProductId::for_test("myapp.dot"),
                                         )
                                         .unwrap(),
                                 },
@@ -5541,7 +5543,7 @@ fn granted_keypair() -> schnorrkel::Keypair {
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	crate::host_logic::product_account::derive_product_keypair(
 		&root,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 		index_bytes(0),
 	)
 	.unwrap()
@@ -5910,7 +5912,7 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
 	let product_root_private_key = subtree.secret.to_bytes();
@@ -5930,7 +5932,7 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
                                     ring_vrf_domain_entropy:
                                         crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
                                             &[0xAB; 16],
-                                            &test_product_id("myapp.dot"),
+                                            &ProductId::for_test("myapp.dot"),
                                         )
                                         .unwrap(),
                                 },
@@ -5979,7 +5981,7 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 
 	let keypair = crate::host_logic::product_account::derive_product_keypair(
 		&root,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 		index_bytes(0),
 	)
 	.unwrap();
@@ -6034,12 +6036,12 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
 	let domain = crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
 		&[0xAB; 16],
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
 	futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
@@ -6224,7 +6226,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
 
@@ -6244,7 +6246,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 			&session,
 			stale_epoch,
-			&test_product_id("myapp.dot"),
+			&ProductId::for_test("myapp.dot"),
 			subtree.secret.to_bytes().to_vec(),
 		));
 	let Err(statement_store_error) = statement_store_result else {
@@ -6253,7 +6255,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 	let bulletin_result = futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		stale_epoch,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	));
 	let Err(bulletin_error) = bulletin_result else {
@@ -6302,17 +6304,17 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let first = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
 	let other = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
-		&test_product_id("other.dot"),
+		&ProductId::for_test("other.dot"),
 	)
 	.unwrap();
 
 	for (product_id, subtree) in
-		[(test_product_id("myapp.dot"), &first), (test_product_id("other.dot"), &other)]
+		[(ProductId::for_test("myapp.dot"), &first), (ProductId::for_test("other.dot"), &other)]
 	{
 		futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 			&session,
@@ -6339,8 +6341,10 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		.unwrap();
 	}
 
-	futures::executor::block_on(pairing_host.clear_product_state(&test_product_id("myapp.dot")))
-		.unwrap();
+	futures::executor::block_on(
+		pairing_host.clear_product_state(&ProductId::for_test("myapp.dot")),
+	)
+	.unwrap();
 	let current_epoch = pairing_host.current_session_lifecycle_epoch();
 	assert_ne!(current_epoch, stale_epoch);
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (1, 1, 1, 1));
@@ -6360,7 +6364,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_statement_store_allowance_key(
 			&session,
 			current_epoch,
-			&test_product_id("myapp.dot"),
+			&ProductId::for_test("myapp.dot"),
 		))
 		.unwrap()
 		.is_none()
@@ -6369,7 +6373,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_statement_store_allowance_key(
 			&session,
 			current_epoch,
-			&test_product_id("other.dot"),
+			&ProductId::for_test("other.dot"),
 		))
 		.unwrap()
 		.is_some()
@@ -6378,7 +6382,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_bulletin_allowance_key(
 			&session,
 			current_epoch,
-			&test_product_id("myapp.dot"),
+			&ProductId::for_test("myapp.dot"),
 		))
 		.unwrap()
 		.is_none()
@@ -6387,7 +6391,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_bulletin_allowance_key(
 			&session,
 			current_epoch,
-			&test_product_id("other.dot"),
+			&ProductId::for_test("other.dot"),
 		))
 		.unwrap()
 		.is_some()
@@ -6408,7 +6412,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 			&session,
 			stale_epoch,
-			&test_product_id("myapp.dot"),
+			&ProductId::for_test("myapp.dot"),
 			first.secret.to_bytes().to_vec(),
 		)),
 		Err(AuthorityError::Disconnected)
@@ -6438,7 +6442,7 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
 	futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
@@ -6453,14 +6457,14 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 	futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 		&session,
 		lifecycle_epoch,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
@@ -6495,20 +6499,20 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
 	futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 		&session,
 		lifecycle_epoch,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
@@ -6583,7 +6587,7 @@ fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
 	let platform = Arc::new(StubPlatform::default());
@@ -7773,7 +7777,7 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
-		&test_product_id("myapp.dot"),
+		&ProductId::for_test("myapp.dot"),
 		[0x42; 64].to_vec(),
 	))
 	.expect("the wallet's allowance is cached");

@@ -167,7 +167,7 @@ fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root keypair derives");
 	let keypair = derive_product_keypair(
 		&root,
-		&ProductId::parse(PRODUCT_ID).expect("the product id is valid"),
+		&ProductId::for_test(PRODUCT_ID),
 		derivation_index_bytes(&v01::DerivationIndex::Index(0)),
 	)
 	.expect("product keypair derives");

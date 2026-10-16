@@ -70,7 +70,7 @@ fn a_granted_product_signs_raw_without_a_prompt() {
 	);
 	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
 	let keypair =
-		derive_product_keypair(&root, &test_product_id("myapp.dot"), index_bytes(0)).unwrap();
+		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let signature =
 		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
 	assert!(

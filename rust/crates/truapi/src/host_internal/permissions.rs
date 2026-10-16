@@ -415,7 +415,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			},
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
 				// An id that names no product owns no account, so nothing was approved for it.
-				let approved = ProductId::parse(target_product_id).is_ok_and(|target| {
+				let approved = target_product_id.parse::<ProductId>().is_ok_and(|target| {
 					self.temporary_permissions.authorize(
 						&cross_product_signature_key(&self.product.product_id, &target, *kind),
 						false,
@@ -484,7 +484,8 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			// Held in memory for the execution only, so nothing is stored. A
 			// denial is not kept either, like a refusal at the prompt.
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
-				let target = ProductId::parse(target_product_id)
+				let target = target_product_id
+					.parse::<ProductId>()
 					.map_err(|err| GenericError { reason: err.to_string() })?;
 				let key = cross_product_signature_key(&self.product.product_id, &target, *kind);
 				if status == PermissionAuthorizationStatus::Authorized {
@@ -2727,7 +2728,7 @@ mod tests {
 		};
 		let checked_by_runtime = cross_product_signature_key(
 			&PRODUCT.product_id,
-			&crate::test_support::test_product_id("dim2.dot"),
+			&crate::platform::ProductId::for_test("dim2.dot"),
 			CrossProductSignatureKind::Payload,
 		);
 

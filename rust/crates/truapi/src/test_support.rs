@@ -36,7 +36,6 @@ use crate::platform::{
 	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
 	UserConfirmationReview,
 };
-
 use futures::{
 	Stream,
 	stream::{self, BoxStream, StreamExt},
@@ -55,11 +54,6 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 mod scripted_chain;
 
 pub use scripted_chain::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
-
-/// Parse a product id for a test, panicking if it is invalid.
-pub fn test_product_id(product_id: &str) -> ProductId {
-	ProductId::parse(product_id).expect("test product identifier is valid")
-}
 
 /// Block until `condition` holds, failing with `message` after two seconds.
 /// Background runtime tasks run on their own threads, so a test that observes
@@ -237,9 +231,9 @@ pub struct StubPlatform {
 	pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
 	/// Every `begin_operation` as `(product_id, label)`, in order. The
 	/// returned id is the call's 1-based position.
-	pub begun_operations: Arc<Mutex<Vec<(String, String)>>>,
+	pub begun_operations: Arc<Mutex<Vec<(ProductId, String)>>>,
 	/// Every `end_operation` as `(product_id, id)`, in order.
-	pub ended_operations: Arc<Mutex<Vec<(String, u32)>>>,
+	pub ended_operations: Arc<Mutex<Vec<(ProductId, u32)>>>,
 	/// Held open by a test so `begin_operation` is still in flight while the
 	/// dispatch awaiting it goes away.
 	pub begin_operation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
@@ -1010,7 +1004,7 @@ impl PlatformProductOperations for StubPlatform {
 		// call and hands back its position as the id.
 		let id = {
 			let mut begun = self.begun_operations.lock().expect("begun operations mutex poisoned");
-			begun.push((product.product_id.to_string(), label));
+			begun.push((product.product_id.clone(), label));
 			begun.len() as u32
 		};
 		// The operation exists host-side from here on, so a test holding the
@@ -1034,7 +1028,7 @@ impl PlatformProductOperations for StubPlatform {
 		self.ended_operations
 			.lock()
 			.expect("ended operations mutex poisoned")
-			.push((product.product_id.to_string(), id));
+			.push((product.product_id.clone(), id));
 		match self.end_operation_error {
 			Some(reason) => {
 				Err(v01::HostWorkerOperationError::Unknown { reason: reason.to_string() })

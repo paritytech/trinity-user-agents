@@ -2003,7 +2003,7 @@ mod tests {
 			},
 			worker::WorkerTransition,
 		},
-		test_support::{StubPlatform, runtime_config, test_product_id, test_spawner, wait_until},
+		test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
 	};
 	use parity_scale_codec::Encode;
 	use std::sync::atomic::Ordering;
@@ -2080,7 +2080,7 @@ mod tests {
 			let platform = Arc::new(StubPlatform::default());
 			let (config, _) = runtime_config("fetch.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context(&test_product_id("fetch.dot")));
+			let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 			let cx = CallContext::default();
 			let request = network_permission(&["api.example.com"]);
 			let granted = admin
@@ -2201,7 +2201,7 @@ mod tests {
 				Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
 			let (config, _) = runtime_config("fetch.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context(&test_product_id("fetch.dot")));
+			let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 			let cx = CallContext::default();
 			admin
 				.set_permission_authorization_status(
@@ -2244,7 +2244,7 @@ mod tests {
 						.unwrap(),
 				);
 			}
-			let other = runtime.product_admin(product_context(&test_product_id("other.dot")));
+			let other = runtime.product_admin(product_context(&ProductId::for_test("other.dot")));
 			for _ in 0..2 {
 				decisions.push(
 					other
@@ -2284,7 +2284,7 @@ mod tests {
 			let platform = Arc::new(StubPlatform::default());
 			let (config, _) = runtime_config("peopl.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context(&test_product_id("peopl.dot")));
+			let admin = runtime.product_admin(product_context(&ProductId::for_test("peopl.dot")));
 			let cx = CallContext::default();
 			let request = network_permission(&["api.example.com"]);
 			let allowed = admin
@@ -2335,12 +2335,12 @@ mod tests {
 		install_session_after_boot(&runtime, &platform, session.clone());
 		runtime.pairing_host.cache_product_subtree_for_test(
 			&session,
-			&crate::test_support::test_product_id("myapp.dot"),
+			&crate::platform::ProductId::for_test("myapp.dot"),
 			[9; 32],
 		);
 
 		let key = futures::executor::block_on(
-			runtime.product_subtree_public_key(&test_product_id("myapp.dot"), Some(1)),
+			runtime.product_subtree_public_key(&ProductId::for_test("myapp.dot"), Some(1)),
 		)
 		.expect("a cached subtree resolves");
 		assert_eq!(key, Some([9; 32]));
@@ -2363,7 +2363,7 @@ mod tests {
 		// the timeout cancelling that token the call never returns, so this
 		// test would hang rather than fail.
 		let error = futures::executor::block_on(
-			runtime.product_subtree_public_key(&test_product_id("myapp.dot"), Some(1)),
+			runtime.product_subtree_public_key(&ProductId::for_test("myapp.dot"), Some(1)),
 		)
 		.expect_err("an unanswered wallet request ends at its deadline");
 		assert!(error.reason.contains("timed out"), "expected a timeout, got {}", error.reason);
@@ -2897,7 +2897,7 @@ mod tests {
 			services.worker_ledger.install_demand_observer(demand.clone()),
 			"the observer installs once"
 		);
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 
 		let render = runtime
 			.control()
@@ -2906,10 +2906,10 @@ mod tests {
 				payload: vec![],
 			})
 			.expect("a Worker connection may render");
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		drop(render);
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		assert_eq!(
 			demand.transitions.lock().expect("transition mutex poisoned").as_slice(),
 			[
@@ -2998,7 +2998,7 @@ mod tests {
 		let (runtime, sink) = render_runtime();
 		let services = runtime.admin.product_runtime().services().clone();
 		let mut render = start_render(&runtime, "loyalty");
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		let request_id = render_request_id(&sink, 0);
 		deliver_render_frame(
@@ -3010,12 +3010,12 @@ mod tests {
 		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
 
 		assert_eq!(
-			services.worker_ledger.count(&test_product_id("worker.dot")),
+			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
 			0,
 			"an ended stream holds no reference, whether or not the handle lives on"
 		);
 		drop(render);
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3042,12 +3042,12 @@ mod tests {
 		));
 
 		assert_eq!(
-			services.worker_ledger.count(&test_product_id("worker.dot")),
+			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
 			0,
 			"an interrupt ends the stream, so the reference goes with it"
 		);
 		drop(render);
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3063,9 +3063,9 @@ mod tests {
 			core::task::Poll::Ready(Some(Err(truapi::CallError::MalformedFrame { .. })))
 		));
 
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		drop(render);
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3073,14 +3073,14 @@ mod tests {
 		let (runtime, _sink) = render_runtime();
 		let services = runtime.admin.product_runtime().services().clone();
 		let mut render = start_render(&runtime, "loyalty");
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		runtime.dispose();
 		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
 
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		drop(render);
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3089,7 +3089,7 @@ mod tests {
 		let services = runtime.admin.product_runtime().services().clone();
 		let mut first = start_render(&runtime, "loyalty");
 		let second = start_render(&runtime, "rewards");
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 2);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 2);
 
 		let request_id = render_request_id(&sink, 0);
 		deliver_render_frame(
@@ -3099,17 +3099,17 @@ mod tests {
 			crate::frame::encode_clean_interrupt(),
 		);
 		assert!(matches!(poll_render(&mut first), core::task::Poll::Ready(None)));
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		drop(first);
 		assert_eq!(
-			services.worker_ledger.count(&test_product_id("worker.dot")),
+			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
 			1,
 			"dropping a stream that already released must not release again"
 		);
 
 		drop(second);
-		assert_eq!(services.worker_ledger.count(&test_product_id("worker.dot")), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3377,12 +3377,12 @@ mod tests {
 			),
 		))
 		.expect("begin operation");
-		assert_eq!(host.services().worker_ledger.count(&test_product_id("myapp.dot")), 1);
+		assert_eq!(host.services().worker_ledger.count(&ProductId::for_test("myapp.dot")), 1);
 
 		runtime.dispose();
 
 		assert_eq!(
-			host.services().worker_ledger.count(&test_product_id("myapp.dot")),
+			host.services().worker_ledger.count(&ProductId::for_test("myapp.dot")),
 			0,
 			"disposing a connection drops the demand its open operations held"
 		);
@@ -3420,7 +3420,7 @@ mod tests {
 				.lock()
 				.expect("ended operations mutex poisoned")
 				.clone();
-			if ended == vec![("myapp.dot".to_string(), 1)] {
+			if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
 				break;
 			}
 			assert!(

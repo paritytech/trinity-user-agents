@@ -251,10 +251,6 @@ fn bun_command(entrypoint: &Path, caller_directory: &Path) -> Result<Command> {
 mod tests {
 	use super::*;
 
-	fn example_product() -> ProductId {
-		ProductId::parse("example.dot").expect("valid product id")
-	}
-
 	#[tokio::test]
 	#[ignore = "requires Bun; run with --include-ignored"]
 	async fn caller_configuration_cannot_execute_before_the_sandbox() -> Result<()> {
@@ -431,7 +427,7 @@ console.log(JSON.stringify({
 		let runner = runner_path().canonicalize()?;
 		let command = command(
 			"ws://127.0.0.1:1234",
-			&example_product(),
+			&ProductId::for_test("example.dot"),
 			&script,
 			ScriptHostRole::SigningHost,
 		)?;
@@ -463,7 +459,7 @@ console.log(JSON.stringify({
 		if let Some(script) = std::env::var_os("TRUAPI_TEST_SCRIPT") {
 			let command = command(
 				"ws://127.0.0.1:1234",
-				&example_product(),
+				&ProductId::for_test("example.dot"),
 				Path::new(&script),
 				ScriptHostRole::PairingHost,
 			)?;
@@ -500,7 +496,7 @@ console.log(JSON.stringify({
 
 		let command = command(
 			"ws://127.0.0.1:1234",
-			&example_product(),
+			&ProductId::for_test("example.dot"),
 			&script,
 			ScriptHostRole::SigningHost,
 		)?;

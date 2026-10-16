@@ -204,7 +204,7 @@ mod tests {
 	use super::*;
 	use std::{collections::HashMap, sync::Mutex};
 
-	use crate::test_support::{sso_session_info, test_product_id};
+	use crate::test_support::sso_session_info;
 
 	#[derive(Default)]
 	struct MemStorage {
@@ -255,7 +255,7 @@ mod tests {
 			write_allowance_key(
 				&storage,
 				&session,
-				&test_product_id("dotli.dot"),
+				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::Bulletin,
 				vec![1; 64],
 			)
@@ -264,7 +264,7 @@ mod tests {
 			write_allowance_key(
 				&storage,
 				&session,
-				&test_product_id("dotli.dot"),
+				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::StatementStore,
 				vec![2; 64],
 			)
@@ -275,7 +275,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					&test_product_id("dotli.dot"),
+					&ProductId::for_test("dotli.dot"),
 					AllowanceResource::Bulletin
 				)
 				.await
@@ -286,7 +286,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					&test_product_id("dotli.dot"),
+					&ProductId::for_test("dotli.dot"),
 					AllowanceResource::StatementStore
 				)
 				.await
@@ -297,7 +297,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					&test_product_id("other.dot"),
+					&ProductId::for_test("other.dot"),
 					AllowanceResource::Bulletin
 				)
 				.await
@@ -316,7 +316,7 @@ mod tests {
 			write_allowance_key(
 				&storage,
 				&session,
-				&test_product_id("dotli.dot"),
+				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::Bulletin,
 				vec![1; 64],
 			)
@@ -327,7 +327,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					&test_product_id("dotli.dot"),
+					&ProductId::for_test("dotli.dot"),
 					AllowanceResource::Bulletin
 				)
 				.await

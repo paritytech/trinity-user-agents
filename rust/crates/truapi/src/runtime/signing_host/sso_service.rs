@@ -283,7 +283,7 @@ impl SigningHostSsoService {
 			},
 			api::AllocatableResource::AutoSigning => {
 				let root_entropy = signing_host.root_entropy()?;
-				let product_id = ProductId::parse(calling_product_id).map_err(|err| {
+				let product_id = calling_product_id.parse::<ProductId>().map_err(|err| {
 					AllowanceAllocationError::Authority(AuthorityError::Unavailable {
 						reason: err.to_string(),
 					})
@@ -402,7 +402,7 @@ impl SigningHostSsoService {
 		let mut failures = Vec::new();
 		let payload = async {
 			let calling_product_id =
-				ProductId::parse(&request.calling_product_id).map_err(|err| err.to_string())?;
+				request.calling_product_id.parse::<ProductId>().map_err(|err| err.to_string())?;
 			let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
 				calling_product_id,
 				resources: request.resources.clone(),
@@ -511,7 +511,9 @@ impl SigningHostSsoService {
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountSignVrfRequest>,
 	) -> SignVrfResponse {
-		let calling_product_id = ProductId::parse(&request.calling_product_id)
+		let calling_product_id = request
+			.calling_product_id
+			.parse::<ProductId>()
 			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })?;
 		self.signing_host
 			.sign_vrf_request(&cx.call, &cx.session, &calling_product_id, request.payload, false)
@@ -525,7 +527,7 @@ impl SigningHostSsoService {
 		cx: &SsoRequestContext,
 		request: ProductSubtreeRequest,
 	) -> ProductSubtreeResponse {
-		let product_id = ProductId::parse(&request.product_id).map_err(|err| err.to_string())?;
+		let product_id = request.product_id.parse::<ProductId>().map_err(|err| err.to_string())?;
 		self.signing_host
 			.product_subtree_public_key(&cx.call, &cx.session, &product_id)
 			.await

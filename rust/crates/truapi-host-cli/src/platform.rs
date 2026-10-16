@@ -1033,7 +1033,7 @@ fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, 
 			return None;
 		},
 	};
-	let normalized = match ProductId::parse(&document.product_id) {
+	let normalized = match document.product_id.parse::<ProductId>() {
 		Ok(product_id) => product_id,
 		Err(error) => {
 			tracing::warn!(
@@ -1508,10 +1508,7 @@ mod tests {
 		// writes a session before it knows the username. Product KV is the state
 		// the comment there promises stays with its own user, so that is what
 		// isolation is asserted on.
-		let alice_key = ProductStorageKey::new(
-			ProductId::parse("demo-product.dot").expect("product storage key"),
-			"secret",
-		);
+		let alice_key = ProductStorageKey::new(ProductId::for_test("demo-product.dot"), "secret");
 		platform
 			.write(alice_key.encode(), b"alice-only".to_vec())
 			.await
@@ -1672,10 +1669,7 @@ mod tests {
 			ApprovalPolicy::AutoAccept,
 			None,
 		);
-		let product_key = ProductStorageKey::new(
-			ProductId::parse("product.dot").expect("product storage key"),
-			"theme",
-		);
+		let product_key = ProductStorageKey::new(ProductId::for_test("product.dot"), "theme");
 
 		platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 		futures::executor::block_on(platform.write(product_key.encode(), b"dark".to_vec()))
@@ -1770,13 +1764,10 @@ mod tests {
 	fn product_storage_written_before_the_username_carries_into_the_resolved_user() {
 		let temporary = tempdir().expect("create pairing storage root");
 		let network_dir = temporary.path().join("testnet");
-		let product_key = ProductStorageKey::new(
-			ProductId::parse("product.dot").expect("product storage key"),
-			"theme",
-		);
+		let product_key = ProductStorageKey::new(ProductId::for_test("product.dot"), "theme");
 		save_product_storage(
 			&network_dir.join("pairing-host/storage"),
-			&ProductId::parse("product.dot").expect("valid product id"),
+			&ProductId::for_test("product.dot"),
 			&HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 		)
 		.expect("write bootstrap pairing product storage");
@@ -1800,7 +1791,7 @@ mod tests {
 		assert_eq!(
 			load_product_storage(&network_dir.join("alice.dot_pairing_host/storage")),
 			HashMap::from([(
-				ProductId::parse("product.dot").expect("valid product id"),
+				ProductId::for_test("product.dot"),
 				HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 			)])
 		);
@@ -1812,9 +1803,7 @@ mod tests {
 	fn statement_proof_approval_names_both_products_without_dumping_payload() {
 		let review = UserConfirmationReview::StatementStoreProductSign(
 			truapi::platform::StatementStoreProductSignReview {
-				calling_product_id: Some(
-					ProductId::parse("dim2next.paseo").expect("valid product id"),
-				),
+				calling_product_id: Some(ProductId::for_test("dim2next.paseo")),
 				account: api::ProductAccountId {
 					dot_ns_identifier: "dim2.paseo".to_string(),
 					derivation_index: api::DerivationIndex::Index(0),
@@ -1837,7 +1826,7 @@ mod tests {
 	#[test]
 	fn vrf_approval_names_both_products_without_dumping_transcript_values() {
 		let review = UserConfirmationReview::SignVrf(truapi::platform::SignVrfReview {
-			calling_product_id: ProductId::parse("caller.dot").expect("valid product id"),
+			calling_product_id: ProductId::for_test("caller.dot"),
 			request: truapi::v01::HostAccountSignVrfRequest {
 				account: truapi::v01::ProductAccountId {
 					dot_ns_identifier: "target.dot".to_string(),
@@ -1892,14 +1881,8 @@ mod tests {
 	#[test]
 	fn product_storage_uses_safe_per_product_files() {
 		let temporary = tempdir().expect("create product storage root");
-		let first = ProductStorageKey::new(
-			ProductId::parse("first.dot").expect("first product key"),
-			"theme",
-		);
-		let localhost = ProductStorageKey::new(
-			ProductId::parse("localhost:3000").expect("localhost product key"),
-			"theme",
-		);
+		let first = ProductStorageKey::new(ProductId::for_test("first.dot"), "theme");
+		let localhost = ProductStorageKey::new(ProductId::for_test("localhost:3000"), "theme");
 		let platform = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "test")),
@@ -1953,7 +1936,7 @@ mod tests {
 	#[test]
 	fn product_storage_is_isolated_by_session_then_product() {
 		let temporary = tempdir().expect("create session storage root");
-		let same_product = ProductId::parse("same.dot").expect("product key");
+		let same_product = ProductId::for_test("same.dot");
 		let key = ProductStorageKey::new(same_product.clone(), "value");
 		let first = CliPlatform::new(
 			test_network(),

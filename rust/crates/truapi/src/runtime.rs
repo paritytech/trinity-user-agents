@@ -577,7 +577,7 @@ impl ProductRuntimeHost {
 	fn normalize_product_account_id(
 		account: &mut latest::ProductAccountId,
 	) -> Result<ProductId, ()> {
-		let owner = ProductId::parse(&account.dot_ns_identifier).map_err(|_| ())?;
+		let owner = account.dot_ns_identifier.parse::<ProductId>().map_err(|_| ())?;
 		account.dot_ns_identifier = owner.to_string();
 		Ok(owner)
 	}

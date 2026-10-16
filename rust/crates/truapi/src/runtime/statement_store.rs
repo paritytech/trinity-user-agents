@@ -468,7 +468,7 @@ mod tests {
 		test_support::{
 			StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
 			sso_session_info, sso_success_response_script, statement, stub_platform,
-			submitted_remote_message, subscribe_ack_frame, test_product_id, test_spawner,
+			submitted_remote_message, subscribe_ack_frame, test_spawner,
 		},
 	};
 	use futures::StreamExt;
@@ -503,7 +503,7 @@ mod tests {
 		};
 		futures::executor::block_on(crate::platform::CoreStorage::write_core_storage(
 			platform,
-			test_product_id(owner).manifest_cache_key(),
+			ProductId::for_test(owner).manifest_cache_key(),
 			entry.encode(),
 		))
 		.expect("stub core storage accepts the entry");
@@ -550,7 +550,7 @@ mod tests {
 		let session = sso_session_info();
 		host.test_cache_product_subtree(
 			&session,
-			&test_product_id("myapp.dot"),
+			&ProductId::for_test("myapp.dot"),
 			session.public_key,
 		);
 		host.test_session_state().set_session(session);
@@ -580,7 +580,8 @@ mod tests {
 		let payload = statement_payload(statement.clone());
 		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
 		let product_keypair =
-			derive_product_keypair(&root, &test_product_id("myapp.dot"), index_bytes(0)).unwrap();
+			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
+				.unwrap();
 		let expected_signer = product_keypair.public.to_bytes();
 		let cx = CallContext::default();
 		let request = RemoteStatementStoreCreateProofRequest::V1(
@@ -614,7 +615,8 @@ mod tests {
 		let payload = statement_payload(statement.clone());
 		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
 		let owner =
-			derive_product_keypair(&root, &test_product_id("dim2.paseo"), index_bytes(0)).unwrap();
+			derive_product_keypair(&root, &ProductId::for_test("dim2.paseo"), index_bytes(0))
+				.unwrap();
 		let request = RemoteStatementStoreCreateProofRequest::V1(
 			latest::RemoteStatementStoreCreateProofRequest {
 				product_account_id: account_id("dim2.paseo", 0),
@@ -643,7 +645,7 @@ mod tests {
 		assert_eq!(reviews.len(), 1, "the user saw the signature");
 		assert_eq!(
 			reviews[0].calling_product_id,
-			Some(test_product_id("dim2next.paseo")),
+			Some(ProductId::for_test("dim2next.paseo")),
 			"and saw which product asked",
 		);
 	}

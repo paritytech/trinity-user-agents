@@ -170,11 +170,10 @@ impl Account for ProductRuntimeHost {
 				return Err(CallError::Domain(latest::HostAccountCreateProofError::Rejected));
 			};
 
-			let calling_product_id = self.product_id().to_string();
 			let cx = remote_authority_context(cx);
 			if !self.holds_cross_product_scope_within(&owner, Granted::Context, &cx).await {
 				tracing::info!(
-					caller = %calling_product_id,
+					caller = %self.product_id(),
 					owner = %request.key_handle.dot_ns_identifier,
 					"cross-product ring-VRF access refused at the runtime frontend"
 				);
@@ -185,7 +184,10 @@ impl Account for ProductRuntimeHost {
 				self.authority.create_proof(
 					&cx,
 					&session,
-					ProductRequest { calling_product_id, payload: request },
+					ProductRequest {
+						calling_product_id: self.product_id().to_string(),
+						payload: request,
+					},
 				),
 			)
 			.await
@@ -247,7 +249,9 @@ impl Account for ProductRuntimeHost {
 					latest::HostAccountListRingVrfKeysError::NotConnected,
 				));
 			};
-			request.owner = ProductId::parse(&request.owner)
+			request.owner = request
+				.owner
+				.parse::<ProductId>()
 				.map_err(|err| {
 					CallError::Domain(latest::HostAccountListRingVrfKeysError::Unknown {
 						reason: err.to_string(),
@@ -291,11 +295,10 @@ impl Account for ProductRuntimeHost {
 			let Some(session) = self.authority.current_session() else {
 				return Err(CallError::Domain(latest::HostAccountRingVrfSignError::NotConnected));
 			};
-			let calling_product_id = self.product_id().to_string();
 			let cx = remote_authority_context(cx);
 			if !self.holds_cross_product_scope_within(&owner, Granted::Context, &cx).await {
 				tracing::info!(
-					caller = %calling_product_id,
+					caller = %self.product_id(),
 					owner = %request.key_handle.dot_ns_identifier,
 					"cross-product ring-VRF access refused at the runtime frontend"
 				);
@@ -306,7 +309,10 @@ impl Account for ProductRuntimeHost {
 				self.authority.ring_vrf_sign(
 					&cx,
 					&session,
-					ProductRequest { calling_product_id, payload: request },
+					ProductRequest {
+						calling_product_id: self.product_id().to_string(),
+						payload: request,
+					},
 				),
 			)
 			.await

@@ -914,7 +914,7 @@ impl PairingHost {
 		session: &SessionInfo,
 		product_id: &str,
 	) -> Result<bool, AuthorityError> {
-		self.auto_signing_key(session, &crate::test_support::test_product_id(product_id))
+		self.auto_signing_key(session, &crate::platform::ProductId::for_test(product_id))
 			.await
 			.map(|key| key.is_some())
 	}
@@ -932,7 +932,7 @@ impl PairingHost {
 		self.remember_auto_signing_key(
 			session,
 			lifecycle_epoch,
-			&crate::test_support::test_product_id(product_id),
+			&crate::platform::ProductId::for_test(product_id),
 			expected_product_subtree_public_key,
 			secret,
 			ring_vrf_domain_entropy,
@@ -1868,7 +1868,9 @@ impl PairingHost {
 		// The registry entry below is keyed by the handle as written, so only a
 		// handle already in canonical form is served here. Any other spelling
 		// is left to the remote signing host.
-		let Some(owner) = ProductId::parse(&handle.dot_ns_identifier)
+		let Some(owner) = handle
+			.dot_ns_identifier
+			.parse::<ProductId>()
 			.ok()
 			.filter(|owner| owner.as_str() == handle.dot_ns_identifier)
 		else {
@@ -2225,7 +2227,9 @@ impl PairingHost {
 		request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
 	) -> Result<[u8; 32], RingVrfError> {
 		let private_session = self.current_private_session(session)?;
-		let calling_product_id = ProductId::parse(&request.calling_product_id)
+		let calling_product_id = request
+			.calling_product_id
+			.parse::<ProductId>()
 			.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?;
 		let handle = latest::ProductAccountId {
 			dot_ns_identifier: calling_product_id.to_string(),
@@ -2272,7 +2276,10 @@ impl PairingHost {
 		request: ProductRequest<HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<latest::RegisteredRingVrfKey>, RingVrfError> {
 		let private_session = self.current_private_session(session)?;
-		let owner = ProductId::parse(&request.payload.owner)
+		let owner = request
+			.payload
+			.owner
+			.parse::<ProductId>()
 			.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?;
 		if request.calling_product_id == owner.as_str() &&
 			let Some(mut entries) = self

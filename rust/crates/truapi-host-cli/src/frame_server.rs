@@ -1063,18 +1063,14 @@ mod tests {
 		Ok(())
 	}
 
-	fn product_id(product_id: &str) -> ProductId {
-		ProductId::parse(product_id).expect("valid product id")
-	}
-
 	#[test]
 	fn product_selection_validates_and_normalizes_ids() -> Result<()> {
 		let product = ProductSelection::new(" Dotli.DOT ".to_string(), ProductExecutionKind::App)?;
 
 		assert_eq!(product.current().as_str(), "dotli.dot");
-		assert!(product.select(product_id("localhost:3000")));
+		assert!(product.select(ProductId::for_test("localhost:3000")));
 		assert_eq!(product.current().as_str(), "localhost:3000");
-		assert!(!product.select(product_id("LOCALHOST:3000")));
+		assert!(!product.select(ProductId::for_test("LOCALHOST:3000")));
 		assert!(
 			ProductSelection::new("example.com".to_string(), ProductExecutionKind::App).is_err()
 		);
@@ -1086,10 +1082,10 @@ mod tests {
 		let product = ProductSelection::new("first.dot".to_string(), ProductExecutionKind::App)?;
 		let mut connection = product.subscribe();
 
-		assert!(product.select(product_id("second.dot")));
+		assert!(product.select(ProductId::for_test("second.dot")));
 		connection.changed().await?;
 		assert_eq!(connection.borrow().product_id.as_str(), "second.dot");
-		assert!(!product.select(product_id("SECOND.DOT")));
+		assert!(!product.select(ProductId::for_test("SECOND.DOT")));
 		assert!(!connection.has_changed()?);
 		Ok(())
 	}
