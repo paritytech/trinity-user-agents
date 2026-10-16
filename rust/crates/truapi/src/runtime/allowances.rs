@@ -1,19 +1,10 @@
-//! Persistent allowance-key repository for pairing-host SSO sessions.
-//!
-//! Implements the host-side allowance cache described in
-//! `docs/rfcs/0010-allowance.md`.
-//!
-//! This mirrors host-papp's allowance repository shape: keys are grouped by
-//! SSO session and then indexed by `(product_id, resource)`. The runtime keeps
-//! a short-lived memory cache in `PairingHost`; this module owns the durable
-//! CoreStorage encoding.
+//! Retained allowance scopes and paired-session storage encoding.
 
 use crate::platform::{CoreStorage, CoreStorageKey};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::GenericError;
 
-use super::authority::AuthorityError;
-use super::sso_remote::SsoSessionKey;
+use super::{authority::AuthorityError, sso_remote::SsoSessionKey};
 use crate::host_logic::session::{SessionInfo, SsoSessionInfo};
 
 /// Chain resource an allowance key grants access to.
@@ -40,11 +31,7 @@ impl AllowanceCacheKey {
         product_id: &str,
         resource: AllowanceResource,
     ) -> Result<Self, AuthorityError> {
-        Ok(Self {
-            session: sso_cache_key(session)?,
-            product_id: product_id.to_string(),
-            resource,
-        })
+		Ok(Self { session: sso_cache_key(session)?, product_id: product_id.to_string(), resource })
     }
 
     /// Whether this key belongs to the given SSO session.
@@ -129,18 +116,14 @@ pub async fn clear_product_allowance_keys(
     product_id: &str,
 ) -> Result<(), AuthorityError> {
     let key = storage_key(session)?;
-    let Some(blob) = storage
-        .read_core_storage(key.clone())
-        .await
-        .map_err(storage_error)?
-    else {
+	let Some(blob) = storage.read_core_storage(key.clone()).await.map_err(storage_error)? else {
         return Ok(());
     };
     let mut entries = match decode_entries(&blob) {
         Ok(entries) => entries,
         Err(_) => {
             return storage.clear_core_storage(key).await.map_err(storage_error);
-        }
+		},
     };
     let before = entries.len();
     entries.retain(|entry| entry.product_id != product_id);
@@ -162,20 +145,15 @@ pub async fn clear_session_allowance_keys(
     storage: &(impl CoreStorage + ?Sized),
     session: &SessionInfo,
 ) -> Result<(), AuthorityError> {
-    storage
-        .clear_core_storage(storage_key(session)?)
-        .await
-        .map_err(storage_error)
+	storage.clear_core_storage(storage_key(session)?).await.map_err(storage_error)
 }
 
 async fn read_entries(
     storage: &(impl CoreStorage + ?Sized),
     session: &SessionInfo,
 ) -> Result<Vec<StoredAllowanceEntry>, AuthorityError> {
-    let Some(blob) = storage
-        .read_core_storage(storage_key(session)?)
-        .await
-        .map_err(storage_error)?
+	let Some(blob) =
+		storage.read_core_storage(storage_key(session)?).await.map_err(storage_error)?
     else {
         return Ok(Vec::new());
     };
@@ -188,9 +166,8 @@ fn encode_entries(entries: Vec<StoredAllowanceEntry>) -> Vec<u8> {
 
 fn decode_entries(blob: &[u8]) -> Result<Vec<StoredAllowanceEntry>, AuthorityError> {
     let mut input = blob;
-    let entries =
-        Vec::<StoredAllowanceEntry>::decode(&mut input).map_err(|err| AuthorityError::Unknown {
-            reason: format!("invalid persisted allowance keys: {err}"),
+	let entries = Vec::<StoredAllowanceEntry>::decode(&mut input).map_err(|err| {
+		AuthorityError::Unknown { reason: format!("invalid persisted allowance keys: {err}") }
         })?;
     if !input.is_empty() {
         return Err(AuthorityError::Unknown {
@@ -219,16 +196,13 @@ pub fn session_storage_id(session: &SsoSessionInfo) -> String {
 }
 
 fn storage_error(err: GenericError) -> AuthorityError {
-    AuthorityError::Unknown {
-        reason: format!("allowance storage failed: {}", err.reason),
-    }
+	AuthorityError::Unknown { reason: format!("allowance storage failed: {}", err.reason) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+	use std::{collections::HashMap, sync::Mutex};
 
     use crate::test_support::sso_session_info;
 
@@ -244,12 +218,7 @@ mod tests {
             &self,
             key: CoreStorageKey,
         ) -> Result<Option<Vec<u8>>, GenericError> {
-            Ok(self
-                .inner
-                .lock()
-                .expect("storage mutex poisoned")
-                .get(&key.encode())
-                .cloned())
+			Ok(self.inner.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
         }
 
         async fn write_core_storage(
@@ -257,18 +226,12 @@ mod tests {
             key: CoreStorageKey,
             value: Vec<u8>,
         ) -> Result<(), GenericError> {
-            self.inner
-                .lock()
-                .expect("storage mutex poisoned")
-                .insert(key.encode(), value);
+			self.inner.lock().expect("storage mutex poisoned").insert(key.encode(), value);
             Ok(())
         }
 
         async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
-            self.inner
-                .lock()
-                .expect("storage mutex poisoned")
-                .remove(&key.encode());
+			self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
             Ok(())
         }
 
@@ -369,9 +332,7 @@ mod tests {
             )
             .await
             .unwrap();
-            clear_session_allowance_keys(&storage, &session)
-                .await
-                .unwrap();
+			clear_session_allowance_keys(&storage, &session).await.unwrap();
             assert_eq!(
                 read_allowance_key(
                     &storage,

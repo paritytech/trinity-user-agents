@@ -15,7 +15,11 @@ enum UserStorageVersion: String, CaseIterable {
     case version50 = "UserDataModel50"
     case version51 = "UserDataModel51"
     case version52 = "UserDataModel52"
+    // Keep both previously shipped version-53 schemas unchanged so Core Data
+    // can identify their stores before migrating to the combined schema.
     case version53 = "UserDataModel53"
+    case version53Chat = "UserDataModel53Chat"
+    case version54 = "UserDataModel54"
 
     // swiftlint:disable:next cyclomatic_complexity
     func nextVersion() -> UserStorageVersion? {
@@ -39,14 +43,16 @@ enum UserStorageVersion: String, CaseIterable {
         case .version49:
             .version50
         case .version49Chat:
-            .version53
+            .version53Chat
         case .version50:
             .version51
         case .version51:
             .version52
         case .version52:
             .version53
-        case .version53:
+        case .version53, .version53Chat:
+            .version54
+        case .version54:
             nil
         }
     }

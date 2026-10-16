@@ -72,14 +72,7 @@ impl Vrf {
         context: &[u8],
         message: &[u8],
     ) -> Result<(Vec<u8>, [u8; 32]), RingVrfError> {
-        answer(&module::prove(
-            entropy,
-            domain,
-            member,
-            &members.concat(),
-            context,
-            message,
-        ))
+		answer(&module::prove(entropy, domain, member, &members.concat(), context, message))
     }
 }
 
@@ -101,8 +94,7 @@ mod module {
     use send_wrapper::SendWrapper;
     use sha2::{Digest, Sha256};
     use std::sync::OnceLock;
-    use wasm_bindgen::JsCast;
-    use wasm_bindgen::prelude::*;
+	use wasm_bindgen::{JsCast, prelude::*};
     use wasm_bindgen_futures::JsFuture;
 
     use crate::host_internal::sso_messages::RingVrfError;
@@ -186,9 +178,7 @@ export const prove = (...args) => module.prove(...args);
         if hex::encode(Sha256::digest(wasm.to_vec())) != pinned {
             return Err("truapi-verifiable is not the build this core pins".to_owned());
         }
-        JsFuture::from(start(&wasm))
-            .await
-            .map_err(|error| format!("{error:?}"))?;
+		JsFuture::from(start(&wasm)).await.map_err(|error| format!("{error:?}"))?;
         Ok(())
     }
 }
@@ -200,17 +190,8 @@ mod tests {
 
     #[test]
     fn domain_sizes_are_the_ones_verifiable_accepts() {
-        assert_eq!(
-            RingDomainSize::try_from(DOMAIN_2E11),
-            Ok(RingDomainSize::Domain11)
-        );
-        assert_eq!(
-            RingDomainSize::try_from(DOMAIN_2E12),
-            Ok(RingDomainSize::Domain12)
-        );
-        assert_eq!(
-            RingDomainSize::try_from(DOMAIN_2E16),
-            Ok(RingDomainSize::Domain16)
-        );
+		assert_eq!(RingDomainSize::try_from(DOMAIN_2E11), Ok(RingDomainSize::Domain11));
+		assert_eq!(RingDomainSize::try_from(DOMAIN_2E12), Ok(RingDomainSize::Domain12));
+		assert_eq!(RingDomainSize::try_from(DOMAIN_2E16), Ok(RingDomainSize::Domain16));
     }
 }

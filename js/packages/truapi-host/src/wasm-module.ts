@@ -58,13 +58,14 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   disconnectSession(): Promise<void>;
   notifyContactsChanged(): void;
   sessionChatIdentityKey(): Uint8Array | undefined;
-  deviceStatementKey(): Uint8Array | undefined;
   deviceEncryptionKey(): Promise<Uint8Array>;
   productSubtreePublicKey(
     productId: string,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   clearProductState(productId: string): Promise<void>;
+  /** Only on a core built with `test-host`. */
+  setSubmitPreimagesLocally?(local: boolean): void;
   /**
    * Take one reference on the product's worker. The first one reports
    * `"Start"` through the runtime's `workerDemandChanged` callback.
@@ -82,6 +83,7 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
   getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
+  deviceStatementKey(): Uint8Array | undefined;
   activateStoredSession(): Promise<void>;
   activateExternalSession(blob: Uint8Array): Promise<void>;
   resetSessionState(): Promise<void>;
@@ -92,11 +94,16 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
  *
  * A signing host owns the user's keys and establishes sessions from local
  * entropy rather than by pairing with a wallet. It is present only in a core
- * built with `wasm-signing-host` (including `web` built with `--signing-host`),
- * which is why the constructor is optional on {@link WasmModuleShape}.
+ * built with `wasm-signing-host`: the testing bundle or a production `web`
+ * bundle built with `--signing-host`. The constructor is otherwise absent.
  */
 export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
+
   activateLocalSession(secret: Uint8Array): Promise<void>;
+  /** Only on a core built with the non-production `test-host` feature. */
+  setGrantAllowancesUnchecked?(granted: boolean): void;
+  /** Only on a core built with the non-production `test-host` feature. */
+  setWithheldResources?(tags: string[]): void;
   /**
    * Activate and give the session a display name, which is what
    * `account.get_user_id` answers with.
@@ -105,8 +112,6 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
     secret: Uint8Array,
     liteUsername?: string,
   ): Promise<void>;
-  /** Only on a core built with the non-production `test-host` feature. */
-  setGrantAllowancesUnchecked?(granted: boolean): void;
   localIdentityContext(): { activationId: string; identityAccountId: string };
   localIdentityAuthProof(
     activationId: string,
@@ -123,8 +128,6 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
     productIds: string[],
   ): Promise<WalletAllowanceSnapshot>;
   getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
-  /** Only on a core built with `wasm-signing-host`. */
-  setWithheldResources?(tags: string[]): void;
 }
 
 /** Module surface the wasm-pack glue exports. */
@@ -134,7 +137,7 @@ export interface WasmModuleShape {
     callbacks: unknown,
     hostConfig: unknown,
   ) => WorkerPairingHostRuntime;
-  /** Only in bundles built with `wasm-signing-host`. */
+  /** Only with `wasm-signing-host`; see {@link WorkerSigningHostRuntime}. */
   WasmSigningHostRuntime?: new (
     callbacks: unknown,
     hostConfig: unknown,

@@ -23,6 +23,7 @@ import uniffi.truapi.RemotePermission
 @RunWith(AndroidJUnit4::class)
 class LocaleFormattingTest {
     private val bridge = object : HostBridge {
+        override fun permissionAuthorizationsChanged(productId: String) = Unit
         override val storage: HostStorage get() = error("Formatting must not access storage")
         override val coreStorage: HostCoreStorage get() = error("Formatting must not access core storage")
         override suspend fun navigateTo(url: String) = Unit

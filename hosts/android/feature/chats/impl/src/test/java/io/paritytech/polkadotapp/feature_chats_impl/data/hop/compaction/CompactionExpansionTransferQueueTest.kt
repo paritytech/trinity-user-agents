@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.HopTicket
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.TerminalTransferException
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.CompactionExpansionRepository
+import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessagePlacement
 import io.paritytech.polkadotapp.feature_chats_impl.domain.compaction.CompactionExpansion
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.HopTransferRetryState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.IncomingChatMessageProcessor
@@ -47,7 +48,7 @@ class CompactionExpansionTransferQueueTest {
 
         queue.process(expansion())
 
-        verify(processor).processRaw(eq(contactAccountId), eq(rawMessages))
+        verify(processor).processRaw(eq(contactAccountId), eq(rawMessages), eq(ChatMessagePlacement.SameAs(commitId)))
         verify(repository).markContentExpanded(commitId)
     }
 

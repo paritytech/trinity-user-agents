@@ -5,7 +5,6 @@ import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
-@Suite
 struct RustChatExecutionBridgeTests {
     private func makeBridge(api: any ProductChatMessaging) async -> RustChatExecutionBridge {
         await RustChatExecutionBridge(
@@ -38,31 +37,56 @@ struct RustChatExecutionBridgeTests {
         #expect(api.createdRooms.last?.icon == "icon")
     }
 
+    /// A room the product drives through actions alone asks for an empty footer,
+    /// and can ask for the text input back.
+    @Test func setRoomFooterForwardsTheFooter() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+        try await bridge.setRoomFooter(roomId: "r", footer: .empty)
+        try await bridge.setRoomFooter(roomId: "r", footer: .textInput)
+
+        #expect(api.roomFooters.map(\.footer) == [.empty, .textInput])
+        #expect(api.roomFooters.map(\.roomId) == ["r", "r"])
+    }
+
+    @Test func setRoomFooterRejectsAnEmptyRoom() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.setRoomFooter(roomId: "", footer: .empty)
+        }
+        #expect(api.roomFooters.isEmpty)
+    }
+
     @Test func postMessageForwardsTextAndCustomOnly() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
 
-        let messageId = try await bridge.postMessage(roomId: "r", content: .text(text: "hi"))
+        let messageId = try await bridge.postMessage(roomId: "r", content: .text(text: "hi"), alt: nil)
         #expect(api.sentMessages.count == 1)
         #expect(api.sentRoomIds == ["r"])
         #expect(messageId == "msg-1")
 
         _ = try await bridge.postMessage(
             roomId: "r",
-            content: .custom(ChatCustomMessage(messageType: "t", payload: Data([1])))
+            content: .custom(ChatCustomMessage(messageType: "t", payload: Data([1]))),
+            alt: "Week 12 results"
         )
         #expect(api.sentMessages.count == 2)
-        if case let .custom(messageType, data) = api.sentMessages.last {
+        if case let .custom(messageType, data, alt) = api.sentMessages.last {
             #expect(messageType == "t")
             #expect(data == Data([1]))
+            #expect(alt == "Week 12 results")
         } else {
-            Issue.record("a custom message must keep its type and payload")
+            Issue.record("a custom message must keep its type, payload and alt")
         }
 
         await #expect(throws: HostRejection.self) {
             try await bridge.postMessage(
                 roomId: "r",
-                content: .reaction(ChatReaction(messageId: "m", emoji: "x"))
+                content: .reaction(ChatReaction(messageId: "m", emoji: "x")),
+                alt: nil
             )
         }
         #expect(api.sentMessages.count == 2)
@@ -75,7 +99,7 @@ struct RustChatExecutionBridgeTests {
         let bridge = await makeBridge(api: api)
 
         await #expect(throws: ProductNativeApiError.self) {
-            try await bridge.postMessage(roomId: "r", content: .text(text: "hi"))
+            try await bridge.postMessage(roomId: "r", content: .text(text: "hi"), alt: nil)
         }
     }
 
@@ -87,7 +111,7 @@ struct RustChatExecutionBridgeTests {
         let bridge = await makeBridge(api: api)
 
         await #expect(throws: HostRejection.self) {
-            try await bridge.postMessage(roomId: "", content: .text(text: "hi"))
+            try await bridge.postMessage(roomId: "", content: .text(text: "hi"), alt: nil)
         }
         #expect(api.sentMessages.isEmpty)
     }

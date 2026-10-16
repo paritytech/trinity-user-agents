@@ -26,14 +26,16 @@ final class AppPermissionsViewController: UIHostingController<AppPermissionsView
 
         presenter.setup()
     }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        presenter.viewWillDisappear()
-    }
 }
 
 extension AppPermissionsViewController: AppPermissionsViewProtocol {
+    func setRevoking(_ revoking: Bool) {
+        isModalInPresentation = revoking
+        navigationItem.setHidesBackButton(revoking, animated: false)
+        navigationController?.interactivePopGestureRecognizer?.isEnabled = !revoking
+        rootView.viewModel.isRevoking = revoking
+    }
+
     func didReceive(items: [AppPermissionsViewLayout.Item]) {
         rootView.viewModel.items = items
     }

@@ -20,7 +20,7 @@ android {
         versionCode = computeVersionCode()
         versionName = computeVersionName()
 
-        testInstrumentationRunner = "io.paritytech.polkadotapp.app.HiltTestRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         manifestPlaceholders["appName"] = localProperties.readSecretOrThrow("APPLICATION_NAME")
         manifestPlaceholders["sentryDsn"] = localProperties.readSecretOrNull("SENTRY_DSN") ?: ""
@@ -139,17 +139,14 @@ dependencies {
     implementation(project(":feature:wallet:impl"))
     implementation(project(":feature:tokens:impl"))
     implementation(project(":feature:splash:impl"))
-    implementation(project(":feature:wallet:impl"))
     implementation(project(":feature:prices:impl"))
     implementation(project(":feature:account:impl"))
-    implementation(project(":feature:vouchers:impl"))
     implementation(project(":feature:settings:impl"))
     implementation(project(":feature:balances:impl"))
     implementation(project(":feature:transfers:impl"))
     implementation(project(":feature:usernames:impl"))
     implementation(project(":feature:videogame:impl"))
     implementation(project(":feature:transactions:impl"))
-    implementation(project(":feature:become-citizen:impl"))
     implementation(project(":feature:statement-store:impl"))
     implementation(project(":feature:transaction-storage:impl"))
     implementation(project(":feature:pgas:impl"))
@@ -157,10 +154,8 @@ dependencies {
     implementation(project(":feature:cross-chain-transfers:impl"))
     implementation(project(":feature:sso:impl"))
     implementation(project(":feature:scan:impl"))
-    implementation(project(":feature:mobrules:api"))
-    implementation(project(":feature:mobrules:impl"))
     implementation(project(":feature:products:impl"))
-    implementation(project(":feature:upgrade-username:impl"))
+    implementation(project(":bindings:truapi-host"))
     implementation(project(":feature:calls:api"))
     implementation(project(":feature:calls:impl"))
     implementation(project(":feature:coinage:impl"))
@@ -209,7 +204,6 @@ dependencies {
         exclude(group = "org.junit.jupiter")
         exclude(group = "org.junit.platform")
     }
-    kspAndroidTest(libs.hilt.android.compiler)
 }
 
 sentry {

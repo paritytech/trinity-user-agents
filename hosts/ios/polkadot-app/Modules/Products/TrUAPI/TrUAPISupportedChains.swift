@@ -32,6 +32,8 @@ enum TrUAPISupportedChains {
     private static var network: String {
         #if UNSTABLE
             "polkadot"
+        #elseif SAFETYNET
+            "polkadot"
         #elseif NIGHTLY
             "paseo"
         #else

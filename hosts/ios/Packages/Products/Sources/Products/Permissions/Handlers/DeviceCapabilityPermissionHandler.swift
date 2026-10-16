@@ -66,21 +66,24 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
         }
     }
 
-    public func requestDecision(productId: String, capability: DeviceCapabilityType) async throws -> PermissionDecision {
+    public func requestDecision(
+        productId: String,
+        capability: DeviceCapabilityType
+    ) async throws -> PermissionDecision {
         let osPermission = await osAsker.checkPermission(for: capability)
         guard !osPermission.isDenied else { throw DevicePermissionRequestError.osDenied }
         let permission = ProductPermission.deviceCapability(capability)
         let state = try await repository.getPermissionState(productId: productId, permission: permission)
-        let decision: PermissionDecision
-        switch state {
-        case .allowedAlways:
-            decision = .allowAlways
-        case .denied:
-            decision = .deny
-        case .allowedOnce,
-             .notDetermined:
-            decision = await requester.prompt(productId: productId, permission: permission)
-        }
+        let decision: PermissionDecision =
+            switch state {
+            case .allowedAlways:
+                .allowAlways
+            case .denied:
+                .deny
+            case .allowedOnce,
+                 .notDetermined:
+                await requester.prompt(productId: productId, permission: permission)
+            }
         guard decision != .deny else { return .deny }
         guard try await promptOsPermissionIfNeeded(currentStatus: osPermission, capability: capability) else {
             throw DevicePermissionRequestError.osDenied
@@ -91,19 +94,9 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
 
 private extension DeviceCapabilityPermissionHandler {
     func promptAppLevelPermission(productId: String, permission: ProductPermission) async throws -> Bool {
-        let decision = await requester.prompt(productId: productId, permission: permission)
-
-        switch decision {
-        case .allowAlways:
-            try await repository.grant(productId: productId, permission: permission)
-            return true
-        case .allowOnce:
-            repository.grantOneTime(productId: productId, permission: permission)
-            return true
-        case .deny:
-            try await repository.deny(productId: productId, permission: permission)
-            return false
-        }
+        try await repository.promptPermission(
+            productId: productId, permission: permission, requester: requester
+        )
     }
 
     func promptOsPermissionIfNeeded(

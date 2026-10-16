@@ -7,7 +7,7 @@ import EventCenter
 
 @testable import polkadot_app
 
-@Suite("ChainSyncService Tests")
+@Suite("ChainSyncService Tests", .timeLimit(.minutes(1)))
 struct ChainSyncServiceTests {
     // MARK: - SUTModel
 
@@ -22,48 +22,16 @@ struct ChainSyncServiceTests {
             try await repository.fetchAllOperation(with: .init()).asyncExecute()
         }
 
-        func awaitSyncComplete(
-            timeout: TimeInterval = 5
-        ) async throws -> ChainSyncDidComplete {
-            try await withCheckedThrowingContinuation { continuation in
-                let guard_ = CheckedContinuationGuard(continuation)
+        func awaitSyncComplete() async throws -> ChainSyncDidComplete {
+            let event = await eventCenter.waitForEvent { $0 is ChainSyncDidComplete }
 
-                let timeoutTask = Task {
-                    try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                    guard_.resume(throwing: TimeoutError())
-                }
-
-                eventCenter.onEvent = { event in
-                    if let complete = event as? ChainSyncDidComplete {
-                        timeoutTask.cancel()
-                        guard_.resume(returning: complete)
-                    }
-                }
-            }
+            return try #require(event as? ChainSyncDidComplete)
         }
 
-        func awaitSyncEvent(
-            timeout: TimeInterval = 5
-        ) async throws -> EventProtocol {
-            try await withCheckedThrowingContinuation { continuation in
-                let guard_ = CheckedContinuationGuard(continuation)
-
-                let timeoutTask = Task {
-                    try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                    guard_.resume(throwing: TimeoutError())
-                }
-
-                eventCenter.onEvent = { event in
-                    if event is ChainSyncDidComplete || event is ChainSyncDidFail {
-                        timeoutTask.cancel()
-                        guard_.resume(returning: event)
-                    }
-                }
-            }
+        func awaitSyncEvent() async -> EventProtocol {
+            await eventCenter.waitForEvent { $0 is ChainSyncDidComplete || $0 is ChainSyncDidFail }
         }
     }
-
-    struct TimeoutError: Error {}
 
     // MARK: - Helpers
 
@@ -115,9 +83,8 @@ struct ChainSyncServiceTests {
 
         let sut = try await makeSUT(remoteChains: [remote1, remote2])
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        let result = try await resultTask.value
+        let result = try await sut.awaitSyncComplete()
 
         #expect(result.newOrUpdatedChains.count == 2)
 
@@ -137,9 +104,8 @@ struct ChainSyncServiceTests {
             remoteChains: [remote1, remote2]
         )
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        let result = try await resultTask.value
+        let result = try await sut.awaitSyncComplete()
 
         #expect(result.newOrUpdatedChains.contains { $0.chainId == remote2.chainId })
 
@@ -161,9 +127,8 @@ struct ChainSyncServiceTests {
             remoteChains: [updatedRemote]
         )
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        let result = try await resultTask.value
+        let result = try await sut.awaitSyncComplete()
 
         #expect(result.newOrUpdatedChains.count == 1)
         #expect(result.newOrUpdatedChains.first?.name == "Polkadot Updated")
@@ -182,9 +147,8 @@ struct ChainSyncServiceTests {
             remoteChains: [remote]
         )
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        let result = try await resultTask.value
+        let result = try await sut.awaitSyncComplete()
 
         #expect(result.newOrUpdatedChains.isEmpty)
     }
@@ -204,9 +168,8 @@ struct ChainSyncServiceTests {
             remoteChains: [remoteKept]
         )
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        let result = try await resultTask.value
+        let result = try await sut.awaitSyncComplete()
 
         #expect(result.removedChains.count == 1)
         #expect(result.removedChains.first?.chainId == remoteRemoved.chainId)
@@ -229,9 +192,8 @@ struct ChainSyncServiceTests {
             remoteChains: []
         )
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        let result = try await resultTask.value
+        let result = try await sut.awaitSyncComplete()
 
         #expect(result.removedChains.count == 2)
 
@@ -249,9 +211,8 @@ struct ChainSyncServiceTests {
             remoteChains: [remote]
         )
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        let result = try await resultTask.value
+        let result = try await sut.awaitSyncComplete()
 
         #expect(result.removedChains.isEmpty)
     }
@@ -275,9 +236,8 @@ struct ChainSyncServiceTests {
             remoteChains: [updatedRemoteExisting, remoteNew]
         )
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        let result = try await resultTask.value
+        let result = try await sut.awaitSyncComplete()
 
         #expect(result.newOrUpdatedChains.count == 2)
         #expect(result.removedChains.count == 1)
@@ -295,9 +255,8 @@ struct ChainSyncServiceTests {
     func emptySync() async throws {
         let sut = try await makeSUT()
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        let result = try await resultTask.value
+        let result = try await sut.awaitSyncComplete()
 
         #expect(result.newOrUpdatedChains.isEmpty)
         #expect(result.removedChains.isEmpty)
@@ -316,9 +275,8 @@ struct ChainSyncServiceTests {
 
         let sut = try await makeSUT(remoteChains: [remote1, remote2, remote3])
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        _ = try await resultTask.value
+        _ = try await sut.awaitSyncComplete()
 
         let stored = try await sut.fetchAll().sorted { $0.order < $1.order }
         #expect(stored.count == 3)
@@ -336,9 +294,8 @@ struct ChainSyncServiceTests {
     func firesCompleteEvent() async throws {
         let sut = try await makeSUT()
 
-        let resultTask = Task { try await sut.awaitSyncEvent() }
         sut.service.syncUpChains()
-        let event = try await resultTask.value
+        let event = await sut.awaitSyncEvent()
 
         #expect(event is ChainSyncDidComplete)
     }
@@ -358,9 +315,8 @@ struct ChainSyncServiceTests {
             remoteError: NSError(domain: "test", code: -1)
         )
 
-        let resultTask = Task { try await sut.awaitSyncComplete() }
         sut.service.syncUpChains()
-        let result = try await resultTask.value
+        let result = try await sut.awaitSyncComplete()
 
         // When remote fails, mapping falls back to localModels as newOrUpdated
         #expect(result.newOrUpdatedChains.count == 2)

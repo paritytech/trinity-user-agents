@@ -23,7 +23,6 @@ If you experience problems with any product or service that was built on or depl
 ## Features
 
 - **Identity** — On-chain username with an allowance for free transactions, verified by Proof-of-Unique-Device.
-- **Personhood** — Upgrade your username to a higher allowance via Proof-of-Personhood by playing the DIM2 videocall gesture game. Game rewards and collectibles can be surfaced through dApps (behind a feature flag).
 - **Chat** — End-to-end p2p encrypted text messaging with media (images/video) and encrypted video/audio calls.
 - **Payments** — Send and receive payments by username or QR code, and directly in chat.
 - **Auto-conversion** — Top up your wallet and auto-convert it into the tokens you want.
@@ -111,11 +110,15 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 ### What it does
 
 1. **Keeps your keys on your device.** Your account is generated locally and protected by the device's secure enclave and Keychain. You choose how to back it up: an encrypted backup in your own iCloud or Google Drive, or no backup at all — keys stored only on the device.
-2. **Gives you an on-chain name.** You register a username on Polkadot's [People Chain](https://wiki.polkadot.com/learn/learn-system-chains/). Your phone proves it's a unique device, which earns you an allowance for free transactions — no tokens needed to start. Prove personhood by playing the DIM2 videocall gesture game to raise that allowance.
+2. **Gives you an on-chain name.** You register a username on Polkadot's [People Chain](https://wiki.polkadot.com/learn/learn-system-chains/). Your phone proves it's a unique device, which earns you an allowance for free transactions — no tokens needed to start.
 3. **Lets you chat without a messaging server.** Messages are end-to-end encrypted and delivered through the People Chain statement store, so there is no company inbox holding your conversations. Voice and video calls are encrypted and go directly peer-to-peer over WebRTC.
 4. **Sends money to names, not addresses.** Pick a username (or scan a QR code, or pay right inside a chat) — the app resolves it to an account on-chain and sends the payment. Swaps and auto-conversion run on [Asset Hub](https://wiki.polkadot.com/learn/learn-assets/)'s liquidity pools.
 5. **Runs Polkadot apps inside the app.** Type a `.dot` name and the app fetches the dApp's content (published on the Bulletin Chain and addressed via DotNS) and runs it in a sandbox. Each dApp gets its own permissions — network, camera, signing, storage — that you grant and revoke per app.
 6. **Works as one account across devices.** Pair with Polkadot Desktop or Polkadot Web by scanning a QR code: your phone becomes the signer that approves their transactions, and contacts and chats sync between devices over the same encrypted channels.
+
+App permission settings use the shared Rust runtime's canonical authorization records. Chat identity authority and Statement Store allowance are separate permissions, not statement-submission or trusted-network grants. Allowance settings retain the exact legacy account (`None`), product index, or raw 32-byte product selector; each can be displayed and revoked independently. Legacy permission rows never override a core denial or revocation, and settings keep a grant visible until the runtime acknowledges its removal. This revision's native selector contract is `Index`/`Raw`, not a chain-genesis selector.
+
+Consent prompts and app settings share permission descriptions and icon metadata, including the exact Statement Store allowance selector. Canonical authorization conversion separates remote permissions from device, identity, Chat and allowance permissions; raw allowance selectors still require exactly 32 bytes. The permission-presentation refactor received Linux Swift syntax parsing and structural mapping checks only. The macOS app build, unit tests and unchanged warning ratchet must pass in CI before this revision is considered iOS-qualified.
 
 ### What it doesn't do
 
@@ -134,6 +137,8 @@ documented in [docs/PUBLISHING.md](./docs/PUBLISHING.md). A fork must supply its
 own secrets, signing repo, and runners before the pipeline runs green.
 
 Architecture conventions, module layout, and coding standards are documented in [CLAUDE.md](./CLAUDE.md).
+Working on a Pocket card, through the face-preview loop and the live-card loop, is documented in
+[docs/pocket-card-dev-loop.md](./docs/pocket-card-dev-loop.md).
 
 ## Contributing
 

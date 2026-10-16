@@ -3,8 +3,11 @@
 use proc_macro::TokenStream;
 use proc_macro2::Literal;
 use quote::quote;
-use syn::parse::{Parse, ParseStream};
-use syn::{Attribute, Ident, Token, Type, Visibility, braced, parse_macro_input};
+use syn::{
+	Attribute, Ident, Token, Type, Visibility, braced,
+	parse::{Parse, ParseStream},
+	parse_macro_input,
+};
 
 /// One sequence of versioned envelope declarations passed to `versioned_type!`.
 struct VersionedInput {
@@ -48,12 +51,7 @@ impl Parse for VersionedEnum {
             }
         }
 
-        Ok(Self {
-            attrs,
-            vis,
-            name,
-            variants,
-        })
+		Ok(Self { attrs, vis, name, variants })
     }
 }
 
@@ -87,10 +85,7 @@ fn has_doc(attrs: &[Attribute]) -> bool {
 fn variant_version(ident: &Ident) -> syn::Result<u8> {
     let name = ident.to_string();
     let err = || syn::Error::new(ident.span(), "variant must be named `Vn` where n is a u8");
-    name.strip_prefix('V')
-        .ok_or_else(err)?
-        .parse::<u8>()
-        .map_err(|_| err())
+	name.strip_prefix('V').ok_or_else(err)?.parse::<u8>().map_err(|_| err())
 }
 
 /// Parse the macro input and emit generated code or a compiler diagnostic.
@@ -111,18 +106,10 @@ fn expand_versioned(input: &VersionedInput) -> syn::Result<proc_macro2::TokenStr
 }
 
 fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenStream> {
-    let VersionedEnum {
-        attrs,
-        vis,
-        name,
-        variants,
-    } = def;
+	let VersionedEnum { attrs, vis, name, variants } = def;
 
     if variants.is_empty() {
-        return Err(syn::Error::new(
-            name.span(),
-            "versioned enum needs at least one variant",
-        ));
+		return Err(syn::Error::new(name.span(), "versioned enum needs at least one variant"));
     }
 
     let mut variant_defs = Vec::new();
@@ -161,12 +148,12 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
                     quote! { #(#vattrs)* #default_doc #[codec(index = #index)] #vident(#ty) },
                 );
                 version_arms.push(quote! { Self::#vident(..) => #version_lit });
-            }
+			},
             None => {
                 variant_defs
                     .push(quote! { #(#vattrs)* #default_doc #[codec(index = #index)] #vident });
                 version_arms.push(quote! { Self::#vident => #version_lit });
-            }
+			},
         }
     }
 

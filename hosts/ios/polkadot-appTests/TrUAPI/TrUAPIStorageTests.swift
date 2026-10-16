@@ -18,6 +18,18 @@ final class TrUAPIStorageTests {
         defaults.removePersistentDomain(forName: suiteName)
     }
 
+    @Test func coreEnumerationFindsExistingNamespaceKeysOnly() throws {
+        // Seed the actual persisted namespace, not a newly-maintained catalog.
+        defaults.set(Data([1]), forKey: "io.polkadotapp.truapi.core.\(Data([1, 2]).toHex())")
+        defaults.set(Data([2]), forKey: "io.polkadotapp.truapi.core.\(Data([3]).toHex())")
+        defaults.set(Data([3]), forKey: "io.polkadotapp.truapi.core-other.0x04")
+        defaults.set(Data([4]), forKey: "io.polkadotapp.truapi.product.store.demo.0x05")
+        let backend = CoreStorageBackend(storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults))
+        #expect(Set(try backend.keys()) == Set([Data([1, 2]), Data([3])]))
+        try backend.clear(key: Data([3]))
+        #expect(try backend.keys() == [Data([1, 2])])
+    }
+
     @Test func productStorageRoundTrip() throws {
         let storage = TrUAPILocalStorage.createProductLocalStorage(
             productId: "test.product",

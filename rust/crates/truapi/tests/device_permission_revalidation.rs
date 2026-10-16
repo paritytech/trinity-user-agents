@@ -16,14 +16,16 @@ use std::sync::{Arc, Mutex};
 
 use parity_scale_codec::{Decode, Encode};
 
-use truapi::frame::{Payload, ProtocolMessage, request_ids};
-use truapi::platform::{DevicePermissionStatus, PermissionStatusHost};
-use truapi::platform::{PermissionAuthorizationRequest, PermissionAuthorizationStatus};
-use truapi::v01;
-use truapi::{FrameSink, PairingHostRuntime};
+use truapi::{
+	FrameSink, PairingHostRuntime,
+	frame::{Payload, ProtocolMessage, request_ids},
+	platform::{
+		DevicePermissionStatus, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+		PermissionStatusHost,
+	},
+	v01,
+};
 
-// Shared harness; this binary uses only part of it.
-#[allow(dead_code)]
 mod common;
 use common::{WireShapePlatform, test_runtime_config, test_spawner};
 
@@ -97,29 +99,21 @@ fn request_camera(status: Option<Arc<dyn PermissionStatusHost>>) -> bool {
         })
         .expect("dispatcher emitted a device-permission response");
 
-    assert_eq!(
-        response.payload.message_type,
-        truapi::frame::MESSAGE_TYPE_RESPONSE
-    );
+	assert_eq!(response.payload.message_type, truapi::frame::MESSAGE_TYPE_RESPONSE);
     // Assert the whole thing against each possible answer rather than
     // splicing bytes out by index.
     for granted in [true, false] {
         let expected: Result<
             truapi::versioned::permissions::HostDevicePermissionResponse,
             truapi::CallError<truapi::versioned::permissions::HostDevicePermissionError>,
-        > = Ok(
-            truapi::versioned::permissions::HostDevicePermissionResponse::V1(
+		> = Ok(truapi::versioned::permissions::HostDevicePermissionResponse::V1(
                 v01::HostDevicePermissionResponse { granted },
-            ),
-        );
+		));
         if response.payload.value == expected.encode() {
             return granted;
         }
     }
-    panic!(
-        "unexpected device-permission payload {:?}",
-        response.payload.value
-    )
+	panic!("unexpected device-permission payload {:?}", response.payload.value)
 }
 
 #[test]
@@ -132,18 +126,14 @@ fn a_prompt_that_grants_is_reported_as_granted() {
 
 #[test]
 fn an_os_refusal_reaches_the_product_as_a_denial() {
-    assert!(!request_camera(Some(Arc::new(FixedStatus(
-        DevicePermissionStatus::Denied
-    )))));
+	assert!(!request_camera(Some(Arc::new(FixedStatus(DevicePermissionStatus::Denied)))));
 }
 
 #[test]
 fn an_os_status_of_not_applicable_leaves_the_prompt_deciding() {
     // A host that serves the capability but has no OS gate for it must not
     // have its grants suppressed.
-    assert!(request_camera(Some(Arc::new(FixedStatus(
-        DevicePermissionStatus::NotApplicable
-    )))));
+	assert!(request_camera(Some(Arc::new(FixedStatus(DevicePermissionStatus::NotApplicable)))));
 }
 
 /// A host settings screen reads through `HostAdmin`. It must resolve the same

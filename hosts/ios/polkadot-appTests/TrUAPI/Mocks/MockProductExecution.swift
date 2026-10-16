@@ -9,11 +9,16 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     private(set) var closeCallCount = 0
     private(set) var chainResponses: [(UInt32, String)] = []
     private(set) var chainClosed: [UInt32] = []
+    private(set) var themeChanges: [HostThemeSubscribeItem] = []
 
     /// Status returned by `permissionAuthorizationStatus`; defaults to
     /// `.notDetermined` so existing tests are unaffected.
     var permissionStatus: PermissionAuthorizationStatus = .notDetermined
     private(set) var permissionRequests: [PermissionAuthorizationRequest] = []
+
+    /// Card lists pushed to the product, in order, so a test can assert the
+    /// worker was told what it holds rather than only that it started.
+    private(set) var pocketCardNotifications: [[PocketCard]] = []
 
     private(set) var publishedChatActions: [HostChatActionSubscribeItem] = []
     private(set) var publishedRendererActions: [HostRendererActionSubscribeItem] = []
@@ -25,6 +30,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     var renderErrors: [Error] = []
     /// Nodes the render stream yields before finishing.
     var renderNodes: [RendererNode] = []
+    /// Keeps the render stream open after those nodes, the way a live worker
+    /// does. A stream that finishes is reopened after a wall-clock backoff, so
+    /// a test counting `render` calls has to hold it open to be deterministic.
+    var keepsRenderStreamOpen = false
 
     func startWsBridge(bindPort _: UInt16) throws -> WsBridgeEndpoint {
         startWsBridgeCallCount += 1
@@ -34,6 +43,8 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     func stopWsBridge() {
         stopWsBridgeCallCount += 1
     }
+
+    func isClosed() -> Bool { closeCallCount > 0 }
 
     func close() {
         closeCallCount += 1
@@ -50,9 +61,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         }
 
         let nodes = renderNodes
+        let staysOpen = keepsRenderStreamOpen
         return AsyncThrowingStream { continuation in
             nodes.forEach { continuation.yield($0) }
-            continuation.finish()
+            if !staysOpen { continuation.finish() }
         }
     }
 
@@ -72,7 +84,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         status _: PermissionAuthorizationStatus
     ) async throws {}
 
-    func notifyThemeChanged(theme _: HostThemeSubscribeItem) {}
+    func notifyThemeChanged(theme: HostThemeSubscribeItem) {
+        themeChanges.append(theme)
+    }
+
     func notifyLocaleChanged(locale _: HostLocaleSubscribeItem) {}
     func notifyStorageChanged(key _: String, value _: Data?) {}
     func notifyPreimageChanged(key _: Data, value _: Data?) {}
@@ -91,5 +106,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         nil
     }
 
-    func notifyPocketCardsChanged(cards _: [PocketCard]) {}
+    func notifyPocketCardsChanged(cards: [PocketCard]) {
+        pocketCardNotifications.append(cards)
+    }
 }

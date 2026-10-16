@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.product
 
+import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationScheduler
@@ -16,7 +17,8 @@ import org.mockito.Mockito.verify
 class UninstallProductUseCaseTest {
     private val productRepository: ProductRepository = mock()
     private val scheduler: ProductNotificationScheduler = mock()
-    private val useCase = UninstallProductUseCase(productRepository, scheduler)
+    private val productGameReminder: ProductGameReminder = mock()
+    private val useCase = UninstallProductUseCase(productRepository, scheduler, productGameReminder)
 
     private val productId = ProductId.fromStoredValue("acme.dot")
 
@@ -28,6 +30,17 @@ class UninstallProductUseCaseTest {
 
         assertTrue(result.isSuccess)
         assertProductDeletedAfterAlarmsCancelled()
+    }
+
+    @Test
+    fun `cancels the game reminder before deleting product`() = runBlocking<Unit> {
+        givenSchedulerCancelsSuccessfully()
+
+        uninstallProduct()
+
+        val order = inOrder(productGameReminder, productRepository)
+        order.verify(productGameReminder).cancel(productId)
+        order.verify(productRepository).deleteProduct(productId)
     }
 
     @Test

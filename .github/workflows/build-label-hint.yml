@@ -29,7 +29,9 @@ jobs:
   hint:
     name: Say which label builds the app
     # A fork's token cannot comment, and a fork cannot reach the signing and
-    # configuration secrets either build needs. Release branches build neither.
+    # configuration secrets either build needs. Release branches build neither,
+    # app and package ones alike, so this stays the broad prefix rather than the
+    # app-only one the distribution and lifecycle workflows use.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
       && !startsWith(github.head_ref, 'release/')

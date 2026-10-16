@@ -19,11 +19,16 @@ import io.paritytech.polkadotapp.feature_coinage_impl.domain.common.RealCoinAmou
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.TransferPlanner
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.exceptions.InsufficientBalanceException
 import io.paritytech.polkadotapp.feature_members_api.data.model.RingIndex
+import io.paritytech.polkadotapp.test_shared.any
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
+import org.mockito.Mockito.spy
+import org.mockito.Mockito.verify
 import java.math.BigDecimal
 import java.math.BigInteger
 
@@ -216,6 +221,51 @@ class TransferPlannerTest {
         planner.plan(10.10.centsToDollar(), coins, emptyList()).getOrThrow()
     }
 
+    @Test(timeout = PLAN_TIMEOUT_MS)
+    fun `should fail with insufficient balance when the amount is far above the wallet`() = runBlocking<Unit> {
+        val coins = listOf(createCoin(exponent = 0), createCoin(exponent = 2))
+        val vouchers = listOf(createVoucher(exponent = 1, isReady = true))
+
+        val result = planner.plan(THIRTY_DIGIT_AMOUNT, coins, vouchers)
+
+        assertFailsWith<InsufficientBalanceException>(result)
+    }
+
+    @Test(timeout = PLAN_TIMEOUT_MS)
+    fun `should not break down the amount when it is far above the wallet`() = runBlocking<Unit> {
+        val breakdown = withEveryBreakdownEmpty()
+        val plannerWithSpiedBreakdown = TransferPlanner(testConversionContext, breakdown, 16)
+
+        val result = plannerWithSpiedBreakdown.plan(THIRTY_DIGIT_AMOUNT, listOf(createCoin(exponent = 0), createCoin(exponent = 2)), emptyList())
+
+        assertFailsWith<InsufficientBalanceException>(result)
+        verifyNeverBrokenDown(breakdown)
+    }
+
+    @Test(timeout = PLAN_TIMEOUT_MS)
+    fun `should reject an unrepresentable amount when it is far above the wallet`() = runBlocking<Unit> {
+        val amount = THIRTY_DIGIT_AMOUNT + BigDecimal("0.001")
+
+        val result = planner.plan(amount, listOf(createCoin(exponent = 2)), emptyList())
+
+        assertFailsWith<IllegalArgumentException>(result)
+    }
+
+    private inline fun <reified T : Throwable> assertFailsWith(result: Result<*>) {
+        val error = result.exceptionOrNull()
+        assertTrue("Expected ${T::class.simpleName}, got $error", error is T)
+    }
+
+    private fun withEveryBreakdownEmpty(): CoinAmountBreakdown {
+        val breakdown = spy(realBreakdown)
+        doReturn(emptyList<ValueExponent>()).`when`(breakdown).breakdown(any())
+        return breakdown
+    }
+
+    private fun verifyNeverBrokenDown(breakdown: CoinAmountBreakdown) {
+        verify(breakdown, never()).breakdown(any())
+    }
+
     private fun assertCoinExponents(expected: List<Int>, coins: List<Coin>) =
         assertEquals(expected, coins.map { it.valueExponent.value })
 
@@ -262,5 +312,9 @@ class TransferPlannerTest {
 
     private companion object {
         const val FULL_RING = 767
+
+        const val PLAN_TIMEOUT_MS = 5_000L
+
+        val THIRTY_DIGIT_AMOUNT = BigDecimal("123456789012345678901234567890")
     }
 }

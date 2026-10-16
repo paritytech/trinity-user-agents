@@ -8,8 +8,7 @@
 use thiserror::Error;
 
 use super::StatementAllowanceError;
-use crate::host_internal::sso_messages::RingVrfError;
-use crate::runtime::vrf;
+use crate::{host_internal::sso_messages::RingVrfError, runtime::vrf};
 
 /// A single-context ring-VRF signature is exactly 785 bytes.
 pub const RING_VRF_PROOF_LEN: usize = 785;
@@ -54,7 +53,7 @@ pub async fn member_key(entropy: [u8; 32]) -> Result<[u8; 32], StatementAllowanc
     Ok(vrf.member(&entropy).map_err(vrf_error)?)
 }
 
-/// [`member_key`], blocking on the load.
+/// The ring member for fixed test entropy.
 #[cfg(test)]
 pub fn member_key_now(entropy: [u8; 32]) -> [u8; 32] {
     futures::executor::block_on(member_key(entropy)).expect("the ring member derives")
@@ -123,13 +122,8 @@ mod tests {
         let entropy = [0x11u8; 32];
         let member = member_key_now(entropy);
         let members = vec![member];
-        let proof = block_on(ring_vrf_proof(
-            vrf::DOMAIN_2E11,
-            entropy,
-            &members,
-            &[0x33; 32],
-            &[0x42; 32],
-        ))
+		let proof =
+			block_on(ring_vrf_proof(vrf::DOMAIN_2E11, entropy, &members, &[0x33; 32], &[0x42; 32]))
         .unwrap();
         assert_eq!(proof.len(), RING_VRF_PROOF_LEN);
     }
@@ -138,17 +132,9 @@ mod tests {
     fn open_fails_when_member_absent_from_ring() {
         let entropy = [0x11u8; 32];
         let other = member_key_now([0x22u8; 32]);
-        let err = block_on(ring_vrf_proof(
-            vrf::DOMAIN_2E11,
-            entropy,
-            &[other],
-            &[0x33; 32],
-            &[0x42; 32],
-        ))
+		let err =
+			block_on(ring_vrf_proof(vrf::DOMAIN_2E11, entropy, &[other], &[0x33; 32], &[0x42; 32]))
         .unwrap_err();
-        assert!(
-            err.to_string().contains("NotInRing"),
-            "unexpected error: {err}"
-        );
+		assert!(err.to_string().contains("NotInRing"), "unexpected error: {err}");
     }
 }

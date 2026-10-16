@@ -1,14 +1,18 @@
 //! Context and reply types shared by SSO handlers and generated dispatch.
 
 use core::fmt::Display;
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Mutex, PoisonError};
+use std::{
+	collections::{HashMap, VecDeque},
+	sync::{Mutex, PoisonError},
+};
 
 use truapi::{CallContext, CancellationToken};
 
 use super::authority::AuthoritySession;
-use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1};
-use crate::host_internal::sso_wire::ResponseOutcome;
+use crate::host_internal::{
+	sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
+	sso_wire::ResponseOutcome,
+};
 
 /// Per-request context handed to every service method.
 ///
@@ -26,10 +30,7 @@ impl SsoRequestContext {
     /// Context for the request sent as `message_id`, which the pairing host
     /// withdraws by firing `cancel`.
     pub fn new(message_id: &str, session: AuthoritySession, cancel: CancellationToken) -> Self {
-        Self {
-            call: CallContext::with_parts(String::from(message_id), cancel),
-            session,
-        }
+		Self { call: CallContext::with_parts(String::from(message_id), cancel), session }
     }
 }
 
@@ -60,11 +61,7 @@ pub struct Withdrawable<'a> {
 impl Drop for Withdrawable<'_> {
     fn drop(&mut self) {
         // A panic here while already unwinding would abort the process.
-        let mut state = self
-            .withdrawals
-            .state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+		let mut state = self.withdrawals.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.running.remove(&self.message_id);
     }
 }
@@ -82,16 +79,8 @@ impl SsoWithdrawals {
             state.early.remove(position);
             return None;
         }
-        let cancel = state
-            .running
-            .entry(message_id.to_string())
-            .or_default()
-            .clone();
-        Some(Withdrawable {
-            withdrawals: self,
-            message_id: message_id.to_string(),
-            cancel,
-        })
+		let cancel = state.running.entry(message_id.to_string()).or_default().clone();
+		Some(Withdrawable { withdrawals: self, message_id: message_id.to_string(), cancel })
     }
 
     /// Withdraw the request sent as `message_id`: fire its token if it is
@@ -106,8 +95,8 @@ impl SsoWithdrawals {
         if state.early.iter().any(|id| id == message_id) {
             return;
         }
-        if state.early.len() == MAX_EARLY_WITHDRAWALS
-            && let Some(forgotten) = state.early.pop_front()
+		if state.early.len() == MAX_EARLY_WITHDRAWALS &&
+			let Some(forgotten) = state.early.pop_front()
         {
             tracing::warn!(
                 message_id = %forgotten,
@@ -150,10 +139,7 @@ pub struct SsoReply<P> {
 
 impl<P> From<P> for SsoReply<P> {
     fn from(payload: P) -> Self {
-        Self {
-            payload,
-            outcome: None,
-        }
+		Self { payload, outcome: None }
     }
 }
 
@@ -172,9 +158,7 @@ impl<T, E: Display> SsoReply<Result<T, E>> {
         message_id: &str,
         wrap: impl FnOnce(Response<Result<T, E>>) -> v1::RemoteMessage,
     ) -> Answer {
-        let outcome = self
-            .outcome
-            .unwrap_or_else(|| ResponseOutcome::from_payload(&self.payload));
+		let outcome = self.outcome.unwrap_or_else(|| ResponseOutcome::from_payload(&self.payload));
         Answer {
             message: RemoteMessage {
                 message_id: format!("{message_id}:response"),
@@ -191,8 +175,10 @@ impl<T, E: Display> SsoReply<Result<T, E>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host_internal::sso_messages::{ProductSubtreeRequest, ProductSubtreeResponse};
-    use crate::host_internal::sso_wire::SsoRequest;
+	use crate::host_internal::{
+		sso_messages::{ProductSubtreeRequest, ProductSubtreeResponse},
+		sso_wire::SsoRequest,
+	};
 
     #[test]
     fn finish_addresses_the_response_to_the_request() {
@@ -219,10 +205,7 @@ mod tests {
 
         let still_withdrawn = |message_id: &str| withdrawals.begin(message_id).is_none();
         assert_eq!(
-            (
-                still_withdrawn("m-0"),
-                still_withdrawn(&format!("m-{MAX_EARLY_WITHDRAWALS}"))
-            ),
+			(still_withdrawn("m-0"), still_withdrawn(&format!("m-{MAX_EARLY_WITHDRAWALS}"))),
             (false, true)
         );
     }

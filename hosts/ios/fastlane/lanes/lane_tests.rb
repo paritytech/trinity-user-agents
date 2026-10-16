@@ -19,6 +19,10 @@ lane :test_build do |options|
     # (DevCI), which disables testability and breaks @testable imports in package tests
     xcargs: "-skipPackagePluginValidation -skipMacroValidation ENABLE_TESTABILITY=YES RUN_IN_CI=#{ENV['RUN_IN_CI']}",
     output_directory: "./fastlane/test_output/",
+    # CI publishes report.junit as a check run, so name it explicitly rather than
+    # relying on scan's default output types.
+    output_types: "junit,html",
+    output_files: "report.junit,report.html",
     result_bundle: true,
     buildlog_path: "./fastlane/build_logs/",
     include_simulator_logs: true,

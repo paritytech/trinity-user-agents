@@ -115,9 +115,10 @@ deadline; pass `requestTimeoutMs` to `createTransport` to override it.
 
 See [`js/packages/truapi/README.md`](js/packages/truapi/README.md) for the full client reference.
 
-`account.deviceChat` is a high-level, Host-owned native Chat actor (`Account::product_device_chat` in Rust). Account
-method 12 initializes a private device, manages authenticated peers, receives/decrypts native traffic, and sends
-ordinary messages or reviewed Coinage payments. Retired method 11 and its raw Open/Seal/proof operations are
+`account.deviceChat` is the Host-owned native Chat cryptographic and custody boundary
+(`Account::product_device_chat` in Rust). Account method 12 initializes a private device, binds authenticated peers,
+opens supplied native ciphertext, and prepares ordinary messages or reviewed Coinage payments. Products own ordinary
+Chat transport, subscriptions and acknowledgments. Retired method 11 and its raw Open/Seal/proof operations are
 unsupported, including over SSO. Guest and Host must upgrade together.
 
 The signing Host owns the device secret, encrypted roster/outbox, payment WAL, and spendable memos. Chat-authority
@@ -148,10 +149,9 @@ keys and asset-instance encoding come from metadata. Instance-scoped runtimes re
 the encrypted wallet binds that selection permanently, so a configuration change cannot retarget pending claims or
 payments.
 
-Once initialized and authorized, a Host-owned subscription receives and reconciles without an open guest. Revocation,
-logout, or session replacement stops the old receiver. This is in-process execution, not OS wake support. The draft
-requires a durable initialized-product index and post-unlock receiver restoration only for products whose Chat and
-transport grants remain valid; embedding Hosts must qualify that cold-restart path separately.
+After unlock, Host-owned recovery resumes accepted wallet commitments independently of an open guest or Chat grants.
+It does not subscribe to ordinary Chat traffic or receive new messages for a closed product. Logout or session replacement
+fences the old recovery work. This is in-process wallet recovery, not OS wake support or a background Chat receiver.
 
 Native push-token announcements are validated as private metadata, including when batched with iOS acceptance controls.
 Their timestamps are checked and their digests bind replay detection; token credentials are discarded rather than
@@ -188,9 +188,9 @@ navigation and requires `Notifications` for push delivery. Hosts preserve the us
 `Deny` choice; Rust owns one-use grants for Rust-backed executions. Android permission prompts belong to one request and
 close when it finishes or is cancelled, including cancellation while the app is backgrounded.
 
-The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`,
-on every supported network) only for device permissions and legacy-account signing.
-All other operations it handles bypass permission prompts and recorded decisions.
+The shared Rust core auto-grants remote permissions to trusted products (`peopl`, `dim2` and `stash`,
+on every supported network) only when no stored decision overrides that default. Recorded denials still apply.
+Device permissions, identity disclosure, account access and Chat authority retain their separate consent checks.
 
 ## Repository layout
 
@@ -244,6 +244,9 @@ Native hosts that need both runtimes link the optional `truapi-polkavm-host`
 composition crate; the base `truapi` remains PolkaVM-free. Browser hosts
 consume `@parity/polkavm-browser-runtime` directly; browser assets are not
 shipped from this repository.
+The native composition pins release `v0.3.2-rc.9` at immutable source revision
+`959ad63f7312a2f4598b9f718ccc2516927cbbff`; `Cargo.toml`, `Cargo.lock`, and
+`truapi-polkavm-host`'s public provenance constants identify the same runtime.
 
 Taking a screenshot opens **Report app issue** wherever the shake-opened Debug menu is, which is every build except the
 store submission: `DEBUG_TOOLS_ENABLED` on Android, false only for the `release` build type, and `TESTNET_FEATURE` on
@@ -295,6 +298,7 @@ for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
 session-record cleanup remain on the wallet side.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
+SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`
 encoding for `with_signed_transaction`.
 
@@ -344,6 +348,19 @@ written; the host owns where the bytes live. The crate stores nothing itself: a 
 storage it already owns, on web and native alike, so it keeps control of quota and of whether the bytes are backed up or
 encrypted.
 
+### Durable transactions
+
+Native signing hosts keep a ledger of signed transactions in the core database,
+so a payment or transfer is followed to a verdict across crashes and restarts.
+A domain in the core registers presigned mortal extrinsics; the core broadcasts
+them once the rows commit, watches each one, and decides whatever it no longer
+watches from the chain. Signed bytes are never stored, so a transaction left
+live by a previous process is decided by recovery rather than sent again.
+
+The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
+run a background task that awaits `runDurableRecovery()`, which returns once
+nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+
 ### Wire debugger
 
 [`@parity/truapi-debugger`](js/packages/truapi-debugger) is the consumer for the
@@ -368,17 +385,10 @@ so `make dev` leaves the board empty with no error.
 
 ## How it works
 
-1. The protocol is defined as Rust traits in [`rust/crates/truapi/`](rust/crates/truapi/), with each trait tagged
-   `#[wire_trait(id = N)]` and each method tagged `#[wire(id = N)]` for a stable byte-level `(trait, method)` dispatch
-   table. Every method's doc comment must carry a ` ```ts ` example, which codegen extracts into the playground's
-   EXAMPLE tab; the build fails if any method is missing one.
-2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in
-   `js/packages/truapi/`, the Rust host dispatcher, and the transport-neutral `no_std` Rust client. The Rust client
-   exports typed method markers plus complete App, Widget, Worker, and Worker-only catalogs from the same wire schema.
-3. Higher-level SDKs wrap the generated client; each runtime provides only its native frame transport. Browser products
-   use `MessagePort` (or `postMessage` in iframe mode), while sandboxed runtimes such as PolkaVM supply explicit host
-   imports.
-4. The host decodes the frame, dispatches to the matching trait method, encodes the response, and ships it back.
+1. The protocol is defined as Rust traits in [`rust/crates/truapi/`](rust/crates/truapi/), with each trait tagged `#[wire_trait(id = N)]` and each method tagged `#[wire(id = N)]` for a stable byte-level `(trait, method)` dispatch table. Every method's doc comment must carry a ` ```ts ` example, which codegen extracts into the playground's EXAMPLE tab; the build fails if any method is missing one.
+2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in `js/packages/truapi/`, the Rust host dispatcher, and the transport-neutral `no_std` Rust client. The Rust client exports typed method markers plus complete App, Widget, Worker, and Worker-only catalogs from the same wire schema.
+3. Higher-level SDKs wrap the generated client; each runtime provides only its native frame transport. Browser products use `MessagePort` (or `postMessage` in iframe mode), while sandboxed runtimes such as PolkaVM supply explicit host imports.
+4. The host decodes the frame and dispatches to the matching trait method. Capability handlers use `latest` payloads internally and convert responses, subscription items, and domain errors to the request version before the host encodes and sends them.
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within
 its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in
@@ -404,6 +414,12 @@ changes are checked together.
 CLI transcript tests share process-wide UI output. Match captured events by
 request identity rather than queue position: other tests may emit unrelated
 logs through the installed UI while the suite runs in parallel.
+
+CI and `make check` enforce Rust formatting, including the runtime module tree, and Prettier formatting for the JS host package. Run `make fmt` and `npm run format --prefix js/packages/truapi-host` to apply the same rules locally. Use `make fmt-check` or `format:check` for the JS package to check without writing. Rust uses the nightly in `nightly-toolchain` and the [Polkadot SDK formatting rules](https://github.com/paritytech/polkadot-sdk/blob/master/.rustfmt.toml) with edition 2024.
+
+Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
+
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
 
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)
@@ -434,7 +450,23 @@ read that transcript, so a pass means the host and the product agree on what hap
 product's word. The report lands at `explorer/diagnosis-reports/pocket/signing-host-cli.md` and feeds the explorer's
 Pocket compatibility matrix.
 
-To run the playground locally in a plain browser tab, against a signing host on your own machine:
+`Game` (`remind_next_game`, `cancel_next_game`) serves only the game product,
+`dim2` on every network, and answers `Unsupported` to any other. The battery
+runs as another product, so it skips the `Game` service, and so does the
+playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
+roles still install an in-memory `CliGameHost` that never rings anything. The
+`truapi` runtime tests cover the product gate, the start-time check, a call
+withdrawn before it reaches the host, the absence of any permission prompt, and
+host failures.
+
+`Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
+"Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
+it from `TRUAPI_SCAN_TEXT`, or with a dismissal when it is unset, so the
+battery runs it. The playground's
+Diagnosis skips it, since dot.li has no viewfinder and answers `Unsupported`.
+
+To run the playground locally in a plain browser tab, against a signing host on
+your own machine:
 
 ```bash
 cd playground
@@ -445,9 +477,9 @@ truapi-host dev -- yarn dev
 the host already live. The product reaches it through a development-only `<script>` tag:
 
 ```jsx
-{
-  process.env.NODE_ENV === "development" && <script src="http://127.0.0.1:9955/bootstrap.js" />;
-}
+{process.env.NODE_ENV === "development" && (
+  <script src="http://127.0.0.1:9955/bootstrap.js" />
+)}
 ```
 
 The host serves that script itself, with no imports or environment variables
@@ -618,10 +650,10 @@ Each announcement links both APKs and lists the pull
 requests the build carries, with breaking changes, the titles carrying `!`,
 listed first and marked `Breaking:`. Both nightlies skip a scheduled night
 when `main` has not moved past what their last successful run built. `android-debug-distribution.yml` runs
-when a pull request merges to `main`, and answers what `main` does right now.
-It builds the merge commit rather than the pull request's merge preview, which
-is computed while the request is open and would otherwise ship a tree missing
-whatever landed first.
+on every push to `main`, and answers what `main` does right now. It builds the
+pushed commit, the one that landed. A push rather than the pull request's merge
+event, because the Firebase identity is bound to `main`, and a pull request
+event's token never matches that binding.
 
 Both authenticate by federation. The run proves its identity with its OIDC token and receives a short lived credential,
 so no long lived key for that project is stored here. Both check the delivery target before building, since an hour is
@@ -640,9 +672,14 @@ Secrets: `GOOGLE_SERVICES_JSON_BASE64`, `CI_GITHUB_KEYSTORE_KEY_FILE`, `CI_KEYST
 `SENTRY_DSN`, `ANDROID_FIREBASE_NIGHTLY_APP_ID`, `ANDROID_FIREBASE_APP_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`,
 `GCP_SERVICE_ACCOUNT`.
 
-Variables: `APPLICATION_ID`, `APPLICATION_NAME`, `CURRENCY_SYMBOL`, `LOG_COLLECTION_EMAIL`, `PRIVACY_POLICY_URL`,
-`TERMS_OF_USE_URL`, `SENTRY_ORG`, `SENTRY_PROJECT`, `GAME_RESULTS_FALLBACK_URL`, `REFERRAL_WEB_HOST`, `CONTACT_EMAIL`,
-`ANDROID_FIREBASE_GROUP`, `ANDROID_FIREBASE_DEBUG_GROUP`.
+Variables: `APPLICATION_ID`, `APPLICATION_NAME`, `CURRENCY_SYMBOL`,
+`LOG_COLLECTION_EMAIL`, `PRIVACY_POLICY_URL`, `TERMS_OF_USE_URL`,
+`SENTRY_ORG`, `SENTRY_PROJECT`, `GAME_RESULTS_FALLBACK_URL`,
+`REFERRAL_WEB_HOST`, `CONTACT_EMAIL`, `ANDROID_FIREBASE_GROUP`,
+`ANDROID_FIREBASE_DEBUG_GROUP`, and optionally `IOS_BUNDLE_ID`, the iOS app's
+bundle id the Android app names as the APNs topic for chat pushes to iOS
+contacts. It defaults to `io.parity.polkadotapp`, matching the iOS nightly;
+debug builds append `.develop` and safetynet `.safety`, as the iOS builds do.
 
 `GOOGLE_PROJECT_ID` carries an `L` suffix. It is interpolated into a Java `long` literal, and a twelve digit project
 number overflows an `int` without one. Everything the app needs at runtime beyond these comes from Firebase Remote
@@ -714,6 +751,29 @@ make ios-chat-host-playground-run
 ```
 
 Run both integrations with one iOS build using `make ios-chat-all`.
+
+The Android twin of that launcher runs the same TrUAPI Playground worker
+against the shared core inside a headless emulator, and writes its report to
+`playground/test-results/android-chat/diagnosis-report.md`:
+
+```bash
+cd hosts/android && ./gradlew :app:assembleVanillaDebug && cd -
+make android-chat-playground-run
+```
+
+Prerequisites:
+
+- an Android SDK on `ANDROID_HOME`, with the `truapi-chat-e2e` AVD created
+- the Rust Android targets (`make android-jni`, which needs `cargo-ndk` and the NDK)
+- a `python` on `PATH`, which the rust-android-gradle linker wrapper shells out to
+- a stub `hosts/android/app/google-services.json`
+- a debug keystore configured in `hosts/android/local.properties`
+- the debug `applicationId` `com.example.polkadot.debug`; a fork that renames it
+  must pass `TRUAPI_ANDROID_E2E_PACKAGE`
+
+The `TRUAPI_ANDROID_E2E_*` environment variables override every default
+(device, APK, product, room, message, username, URL, report path); they
+mirror the iOS `TRUAPI_IOS_E2E_*` ones.
 
 ## Regenerate the TypeScript client
 

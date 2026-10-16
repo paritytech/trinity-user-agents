@@ -6,6 +6,8 @@ pub mod chat;
 pub mod coin_payment;
 pub mod contacts;
 pub mod entropy;
+pub mod expanded_card;
+pub mod game;
 pub mod local_storage;
 pub mod locale;
 pub mod media;
@@ -16,6 +18,7 @@ pub mod pocket;
 pub mod preimage;
 pub mod renderer;
 pub mod resource_allocation;
+pub mod scanner;
 pub mod signing;
 pub mod statement_store;
 pub mod system;
@@ -28,6 +31,8 @@ pub use chat::Chat;
 pub use coin_payment::CoinPayment;
 pub use contacts::Contacts;
 pub use entropy::Entropy;
+pub use expanded_card::ExpandedCard;
+pub use game::Game;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
 pub use media::Media;
@@ -38,6 +43,7 @@ pub use pocket::Pocket;
 pub use preimage::Preimage;
 pub use renderer::Renderer;
 pub use resource_allocation::ResourceAllocation;
+pub use scanner::Scanner;
 pub use signing::Signing;
 pub use statement_store::StatementStore;
 pub use system::System;
@@ -52,6 +58,8 @@ pub trait TrUApi:
     + CoinPayment
     + Contacts
     + Entropy
+	+ ExpandedCard
+	+ Game
     + LocalStorage
     + Locale
     + Media
@@ -62,6 +70,7 @@ pub trait TrUApi:
     + Preimage
     + Renderer
     + ResourceAllocation
+	+ Scanner
     + Signing
     + StatementStore
     + System
@@ -79,6 +88,8 @@ impl<T> TrUApi for T where
         + CoinPayment
         + Contacts
         + Entropy
+		+ ExpandedCard
+		+ Game
         + LocalStorage
         + Locale
         + Media
@@ -89,6 +100,7 @@ impl<T> TrUApi for T where
         + Preimage
         + Renderer
         + ResourceAllocation
+		+ Scanner
         + Signing
         + StatementStore
         + System

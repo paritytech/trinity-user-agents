@@ -24,12 +24,13 @@ public actor ProductResolver: ProductResolving {
     public init(
         dotNsResolver: DotNsResolverProtocol,
         hostProvider: ProductHostProviding,
-        logger: SDKLoggerProtocol
+        logger: SDKLoggerProtocol,
+        screening: PocketCardScreening
     ) {
         self.init(
             dotNsResolver: dotNsResolver,
             hostProvider: hostProvider,
-            parser: ProductManifestParser(logger: logger)
+            parser: ProductManifestParser(logger: logger, screening: screening)
         )
     }
 
@@ -108,10 +109,9 @@ private extension ProductResolver {
         )
     }
 
-    /// Widget manifests parse and model correctly, but nothing on iOS renders one, so reading the
-    /// subname would spend a chain read per product on a value no surface reads. Add `.widget` here
-    /// when a dashboard exists.
-    static let resolvedKinds: [ExecutableKind] = [.app, .worker]
+    /// Every kind a surface on this host runs: an app screen, the widget an
+    /// expanded Pocket card runs, and the product's worker.
+    static let resolvedKinds: [ExecutableKind] = ExecutableKind.allCases
 
     func resolveExecutables(_ baseName: ProductId) async throws -> ProductExecutables {
         try await withThrowingTaskGroup(of: ProductExecutable?.self) { group in

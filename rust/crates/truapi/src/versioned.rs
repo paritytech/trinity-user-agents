@@ -41,6 +41,8 @@ pub mod chat;
 pub mod coin_payment;
 pub mod contacts;
 pub mod entropy;
+pub mod expanded_card;
+pub mod game;
 pub mod local_storage;
 pub mod locale;
 pub mod media;
@@ -51,6 +53,7 @@ pub mod pocket;
 pub mod preimage;
 pub mod renderer;
 pub mod resource_allocation;
+pub mod scanner;
 pub mod signing;
 pub mod statement_store;
 pub mod system;
@@ -88,9 +91,7 @@ mod tests {
         use super::Versioned;
 
         let v1 = MultiVersionProbe::V1(ProbeV1 { a: 7 });
-        let v2 = MultiVersionProbe::V2(ProbeV2 {
-            b: b"hello".to_vec(),
-        });
+		let v2 = MultiVersionProbe::V2(ProbeV2 { b: b"hello".to_vec() });
 
         assert_eq!(v1.encode()[0], 0, "V1 encodes codec index 0");
         assert_eq!(v2.encode()[0], 1, "V2 encodes codec index 1");

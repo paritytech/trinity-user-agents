@@ -1,8 +1,11 @@
 import Foundation
+import os
+import FoundationExt
 import TrUAPIHost
 import Products
 import ChainRegistry
 import SubstrateSdk
+import DesignSystem
 
 /// Production `HostBridge` for one product execution: wires the rust core's
 /// platform callbacks to app services and, once attached, notifies the
@@ -19,6 +22,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let permissionGuard: ProductPermissionGuarding
         let osPermissionAsker: OSPermissionAsking
         let notificationScheduler: ProductNotificationScheduling
+        let gameReminders: ProductGameReminderScheduling?
+        let reminderPermissionAsker: ReminderPermissionAsking
         let navigationRouter: ProductsNavigationRouting
         let chainRegistry: ChainRegistryProtocol
         let chainConnections: TrUAPIChainConnecting
@@ -28,6 +33,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let chatFiles: NativeChatFilesHost
         let preimageCache: TrUAPIPreimageLookuping
         let hostProvider: ProductHostProviding
+        let themeManager: ThemeManagerProtocol
         let logger: LoggerProtocol
     }
 
@@ -37,6 +43,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     private let dependencies: Dependencies
     private weak var execution: TrUAPIProductExecutionProtocol?
+    private let cachedTheme = OSAllocatedUnfairLock(
+        uncheckedState: HostThemeSubscribeItem(name: .default, variant: .dark)
+    )
+    private var themeObservation: Task<Void, Never>?
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
@@ -49,6 +59,17 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     func attach(_ execution: TrUAPIProductExecutionProtocol) {
         self.execution = execution
         dependencies.chainConnections.eventHandler = self
+        observeTheme()
+    }
+
+    deinit {
+        themeObservation?.cancel()
+    }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        NotificationCenter.default.post(
+            name: .productPermissionAuthorizationsChanged, object: productId
+        )
     }
 
     func onCoreLog(marker: String, detail: String) {
@@ -191,7 +212,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func currentTheme() throws -> HostThemeSubscribeItem {
-        HostThemeSubscribeItem(name: .default, variant: .dark)
+        cachedTheme.withLock { $0 }
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
@@ -235,6 +256,23 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 }
 
+// MARK: - Theme
+
+private extension RustProductExecutionBridge {
+    func observeTheme() {
+        themeObservation?.cancel()
+        let themeManager = dependencies.themeManager
+        themeObservation = Task { @MainActor [weak self] in
+            for await theme in themeManager.observeTheme() {
+                guard let self else { return }
+                let item = theme.hostThemeSubscribeItem
+                cachedTheme.withLock { $0 = item }
+                execution?.notifyThemeChanged(theme: item)
+            }
+        }
+    }
+}
+
 // MARK: - Notify-back event handlers
 
 extension RustProductExecutionBridge: TrUAPIChainEventHandling {
@@ -244,6 +282,32 @@ extension RustProductExecutionBridge: TrUAPIChainEventHandling {
 
     func chainDidClose(connectionId: UInt32) {
         execution?.notifyChainClosed(connectionId: connectionId)
+    }
+}
+
+// MARK: - Game reminders
+
+extension RustProductExecutionBridge: GameHostBridge {
+    func scheduleReminder(startsAt: UInt64) async throws {
+        let asker = dependencies.reminderPermissionAsker
+        let ringAlarm: Bool
+        if await asker.askAlarm() {
+            ringAlarm = true
+        } else if await asker.askNotifications() {
+            ringAlarm = false
+        } else {
+            throw HostRejection.Rejected(reason: "alarms and notifications are both turned off")
+        }
+        await dependencies.gameReminders?.schedule(
+            productId: dependencies.productId,
+            startsAt: Date(timeIntervalSince1970: startsAt.millisecondsToSeconds()),
+            ringAlarm: ringAlarm,
+            addCalendarEvent: true
+        )
+    }
+
+    func cancelReminder() async throws {
+        await dependencies.gameReminders?.cancel(productId: dependencies.productId)
     }
 }
 
@@ -293,5 +357,30 @@ extension RemotePermission {
 extension HostPushNotificationRequest {
     func toScheduledNotificationRequest() -> ScheduledNotificationRequest {
         ScheduledNotificationRequest(text: text, deeplink: deeplink, scheduledAtMs: scheduledAt)
+    }
+}
+
+/// Native execution closure is authoritative. Ordinary permission changes must
+/// refresh settings without destroying a still-authorized product's WebView.
+final class ProductExecutionRevocationObserver: @unchecked Sendable {
+    private let token: NSObjectProtocol
+
+    init(
+        execution: TrUAPIProductExecutionProtocol,
+        onClosed: @escaping @Sendable () async -> Void
+    ) {
+        token = NotificationCenter.default.addObserver(
+            forName: .productPermissionAuthorizationsChanged, object: nil, queue: nil
+        ) { [weak execution] _ in
+            guard execution?.isClosed() == true else { return }
+            Task { await onClosed() }
+        }
+        if execution.isClosed() {
+            Task { await onClosed() }
+        }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(token)
     }
 }

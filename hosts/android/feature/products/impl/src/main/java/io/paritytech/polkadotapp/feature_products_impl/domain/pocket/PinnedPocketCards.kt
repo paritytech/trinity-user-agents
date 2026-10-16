@@ -9,11 +9,11 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import uniffi.truapi.RendererNode
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -39,7 +39,6 @@ interface PinnedPocketCards {
 class AssetPinnedPocketCards @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val faceDecoder: PocketFaceJsonDecoder,
 ) : PinnedPocketCards {
     private class Definition(
         val cardId: String,
@@ -53,7 +52,7 @@ class AssetPinnedPocketCards @Inject constructor(
 
     private val loading = Mutex()
     private var loaded: List<CachedPocketCard>? = null
-    private val bundledFaces = ConcurrentHashMap<String, JsWidget>()
+    private val bundledFaces = ConcurrentHashMap<String, RendererNode>()
 
     // The card's product is reserved on the network the app is on, which can take a chain read to
     // learn. Only listing the cards needs it; naming one does not.
@@ -85,9 +84,8 @@ class AssetPinnedPocketCards @Inject constructor(
     )
 
     // Bundled with the app, so a failure here is a build defect rather than product input.
-    private fun bundledFace(cardId: String): JsWidget = bundledFaces.getOrPut(cardId) {
-        faceDecoder
-            .decode(context.assets.open("pocket/$cardId.json").bufferedReader().readText())
+    private fun bundledFace(cardId: String): RendererNode = bundledFaces.getOrPut(cardId) {
+        readPocketFace(context.assets.open("pocket/$cardId.json").bufferedReader().readText())
             .getOrElse { throw IllegalStateException("bundled Pocket face '$cardId' is invalid", it) }
     }
 }

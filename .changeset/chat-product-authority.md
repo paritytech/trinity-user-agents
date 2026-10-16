@@ -6,6 +6,17 @@ Add product-scoped Chat v2 authority with dedicated Chat authorization, separate
 boundary to local and SSO sessions, expose it in the iOS permission flow, and avoid cloning secret-bearing pairing
 results.
 
+Keep one-session Chat consent only in the wallet authority, so retaining a product execution across logout or wallet
+reactivation cannot silently grant Chat in the next session.
+
+Discard failed attachment-selection placeholders so cancelled pickers and unavailable HOP endpoints do not consume
+the incoming rich-message quota. Preserve custody if a storage commit has an uncertain outcome.
+
+Keep mock attachment chunks in separate storage slots by chunk index.
+
+Reuse an implicit Statement Store allowance grant approved while another confirmation is open. Remove the obsolete
+product-renewal registration attempt now that product grants are provisioned on demand rather than renewed globally.
+
 Use the unified runtime's native UniFFI gates and shared clock, dotNS discovery and runtime view-response decoding
 for Chat and Coinage without changing product authorization or payment review policy.
 
@@ -87,3 +98,13 @@ the native product index when actors open; historical unindexed products need on
 against actor commits and session changes, invalidate contact handles on trusted mutations, and reject late worker
 responses. Preserve provider-scoped Contacts UI callbacks without replacing the shared owner directory. Pairing hosts
 remain unsupported; no product wire or SSO directory API is added.
+
+Forward the canonical native permission administration and rc9 runtime into Chat.
+Identity and Chat consent participate in administrative prompt cancellation and
+stale-decision fencing; Chat AllowOnce remains bound to the authority session,
+never a durable or execution-cached grant. Keep upstream worker Chat and generic
+game, card and scanner capabilities separate from product Chat authority.
+
+The test host's `ProductStatementStoreAllowance` resource withholds product-account
+allowances at every derivation index without withholding the separate
+`StatementStoreAllowance` resource.

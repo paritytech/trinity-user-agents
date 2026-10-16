@@ -12,6 +12,15 @@ for artifact in [
     precondition(FileManager.default.fileExists(atPath: coreRoot.appendingPathComponent(artifact).path),
         "Build and stage this checkout's TrUAPIHost SDK before resolving the iOS app: missing \(artifact)")
 }
+let coreIsInTree: Bool = {
+    var root = URL(fileURLWithPath: #filePath)
+    for _ in 0 ..< 5 {
+        root.deleteLastPathComponent()
+    }
+    return FileManager.default.fileExists(
+        atPath: root.appendingPathComponent("rust/crates/truapi").path
+    )
+}()
 
 let dependencyConfigs: [DependencyConfig] = [
     .init(

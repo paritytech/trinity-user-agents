@@ -116,7 +116,24 @@ export interface WorkerPairingHostRuntime {
     secret: Uint8Array,
     liteUsername?: string,
   ): Promise<void>;
+  /**
+   * Answer resource allocation as granted without performing it.
+   *
+   * Test hosts only, on a core built with `test-host`. No allowance is
+   * allocated, so preimage submissions also stay in the core: the Bulletin
+   * allowance was never authorized on chain to submit with.
+   */
   setGrantAllowancesUnchecked(granted: boolean): Promise<void>;
+  /**
+   * Keep preimage submissions in the core instead of the Bulletin chain.
+   *
+   * Test hosts only, on a core built with `test-host`. For a host whose wallet
+   * answers allowances itself: that Bulletin allowance was never authorized on
+   * chain, so a real `store` is refused at dry-run. The product gets the content
+   * key back and reads the value from the core's lookup cache. A refused
+   * Bulletin allowance still refuses the submission.
+   */
+  setSubmitPreimagesLocally(local: boolean): Promise<void>;
   /**
    * Answer these resource tags as refused, replacing any earlier set.
    *
@@ -1813,11 +1830,13 @@ function createWebWorkerHostRuntime(
             pocket: host.pocket !== undefined,
             identityBackend: host.identityBackend !== undefined,
             coinageWallet: callbacks.nativeCoinage !== undefined,
+            game: host.game !== undefined,
             contacts: host.contacts !== undefined,
             media:
               typeof host.media?.mediaBackendCapabilities === "function" &&
               typeof host.media?.mediaBackendEvents === "function" &&
               typeof host.media?.mediaBackendCommand === "function",
+            scanner: host.scanner !== undefined,
           },
           debuggerUrl: debuggerDial,
         } satisfies MainToWorker);
@@ -1964,6 +1983,7 @@ function buildRuntime(
                         "function" &&
                       typeof callbacks.media?.mediaBackendCommand ===
                         "function",
+                    game: callbacks.game !== undefined,
                   },
                 }),
           } satisfies MainToWorker);
@@ -2106,12 +2126,27 @@ function buildRuntime(
         false,
       );
     },
+    setSubmitPreimagesLocally(local: boolean): Promise<void> {
+      return sendSessionActivationRequest(
+        state,
+        (requestId) => ({
+          kind: "setSubmitPreimagesLocally",
+          requestId,
+          local,
+        }),
+        false,
+      );
+    },
     setWithheldResources(tags: string[]): Promise<void> {
-      return sendSessionActivationRequest(state, (requestId) => ({
+      return sendSessionActivationRequest(
+        state,
+        (requestId) => ({
         kind: "setWithheldResources",
         requestId,
         tags,
-      }));
+        }),
+        false,
+      );
     },
     resetSessionState(): Promise<void> {
       return sendSessionActivationRequest(state, (requestId) => ({

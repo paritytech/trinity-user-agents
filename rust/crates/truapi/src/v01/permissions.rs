@@ -15,10 +15,7 @@ use parity_scale_codec::{Decode, Encode};
 /// resolves its own gate when the capability is used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, Display)]
 #[allow(clippy::upper_case_acronyms)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum HostDevicePermissionRequest {
     /// Showing system notifications.
     #[display("notifications")]
@@ -55,10 +52,7 @@ pub enum HostDevicePermissionRequest {
 /// `ChainSubmit`, `PreimageSubmit`, and `StatementSubmit` are also triggered
 /// implicitly by the corresponding business calls when not yet granted.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum RemotePermission {
     /// Outbound HTTP/WebSocket access to a set of domains. External navigation
     /// uses [`HostDevicePermissionRequest::OpenUrl`] instead.
@@ -102,10 +96,7 @@ pub enum RemotePermission {
 /// remote-permission request (RFC 0002).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
 #[display("{permission}")]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Record)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct RemotePermissionRequest {
     /// Permission requested by the product.
     pub permission: RemotePermission,

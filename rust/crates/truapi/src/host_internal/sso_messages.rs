@@ -36,18 +36,22 @@ use crate::host_logic::media_protocol::{
     MAX_PRODUCT_ID_BYTES, MAX_UNSIGNED_ADVERTISEMENT_BYTES,
 };
 
-use crate::host_logic::session::SsoSessionInfo;
 #[cfg(test)]
 use crate::host_logic::sso::pairing::{AEAD_NONCE_LEN, encrypt_session_statement_data_with_nonce};
-use crate::host_logic::sso::pairing::{
+use crate::{
+	host_logic::{
+		session::SsoSessionInfo,
+		sso::pairing::{
     SsoStatementData, decrypt_session_statement_data, encrypt_session_statement_data,
     peer_response_channel,
+		},
+		statement_store::{
+			build_signed_session_request_statement, build_signed_statement,
+			decode_verified_statement_data, statement_expiry_elapsed,
+		},
+	},
+	unix_time::current_unix_secs,
 };
-use crate::host_logic::statement_store::{
-    build_signed_session_request_statement, build_signed_statement, decode_verified_statement_data,
-    statement_expiry_elapsed,
-};
-use crate::unix_time::current_unix_secs;
 
 pub mod v1;
 
@@ -108,25 +112,18 @@ pub struct Response<P> {
     pub payload: P,
 }
 
-/// Outcome of answering one SSO remote message on behalf of a caller that
-/// owns the session transport.
-///
-/// The response is carried SCALE-encoded: the caller forwards it over the
-/// session verbatim and never constructs or inspects it.
+/// Result of answering an SSO message for a caller-owned session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum SsoRequestOutcome {
-    /// Response to post back over the session.
+	/// Encoded response to post on the session.
     Response {
-        /// SCALE-encoded `RemoteMessage` response, ready to submit over the
-        /// session statement store.
+		/// SCALE-encoded `RemoteMessage` response.
         message: Vec<u8>,
     },
-    /// The peer ended the session; the caller tears down its transport and
-    /// records (host entry, device record, device-removed broadcast). The
-    /// core holds no per-peer state to clear.
+	/// The peer ended the session.
     Disconnected,
-    /// Not a request; nothing to post.
+	/// The message did not require a response.
     Ignored,
 }
 
@@ -668,10 +665,7 @@ pub struct SsoRequestDecodeError {
 
 impl SsoRequestDecodeError {
     fn unrecoverable(reason: String) -> Self {
-        Self {
-            request_id: None,
-            reason,
-        }
+		Self { request_id: None, reason }
     }
 }
 
@@ -718,7 +712,7 @@ pub fn decode_incoming_sso_request(
                 expires_at_unix_secs: verified.expiry.map(|expiry| expiry >> 32),
                 messages,
             }))
-        }
+		},
     }
 }
 
@@ -741,10 +735,7 @@ pub fn build_signed_session_response_statement(
 ) -> Result<Vec<u8>, String> {
     let encrypted = encrypt_session_statement_data(
         session,
-        &SsoStatementData::Response {
-            request_id,
-            response_code,
-        },
+		&SsoStatementData::Response { request_id, response_code },
     )?;
     build_signed_statement(
         session,
@@ -811,29 +802,32 @@ fn outgoing_request_data(
 ) -> SsoStatementData {
     SsoStatementData::Request {
         request_id: statement_request_id,
-        data: messages
-            .into_iter()
-            .map(|message| message.encode())
-            .collect(),
+		data: messages.into_iter().map(|message| message.encode()).collect(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host_internal::sso_wire::SsoRequest;
-    use crate::host_logic::sso::pairing::decrypt_session_statement_data;
-    use crate::host_logic::statement_store::{
+    use crate::{
+        host_internal::sso_wire::SsoRequest,
+        host_logic::{
+            sso::pairing::decrypt_session_statement_data,
+            statement_store::{
         StatementField, build_signed_statement, decode_statement_data,
         unsigned_statement_signing_payload,
+            },
+        },
+        test_support::sso_host_and_responder_sessions,
     };
-    use crate::test_support::sso_host_and_responder_sessions;
     use schnorrkel::{ExpansionMode, MiniSecretKey};
-    use truapi::latest::HostSignPayloadData;
-    use truapi::latest::{
-        DerivationIndex, HostAccountSignVrfRequest, ProductAccountId, RingLocation,
+	use truapi::{
+		latest::{
+			DerivationIndex, HostAccountSignVrfRequest, HostSignPayloadData, ProductAccountId,
+			RingLocation,
+		},
+		v01::RingLocationJunction,
     };
-    use truapi::v01::RingLocationJunction;
     use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
     #[test]
@@ -901,9 +895,7 @@ mod tests {
             "m1".to_string(),
             SignRequest::Raw(truapi::latest::HostSignRawRequest {
                 account: account(),
-                payload: RawPayload::Bytes {
-                    bytes: vec![0xde, 0xad],
-                },
+				payload: RawPayload::Bytes { bytes: vec![0xde, 0xad] },
             }),
         );
         let encoded = message.encode();
@@ -916,10 +908,7 @@ mod tests {
 
     #[test]
     fn late_remote_message_variants_match_host_papp_order() {
-        let ring_location = RingLocation {
-            chain_id: [0; 32],
-            junctions: vec![],
-        };
+		let ring_location = RingLocation { chain_id: [0; 32], junctions: vec![] };
         let key_handle = ProductAccountId {
             dot_ns_identifier: "peopl.dot".to_string(),
             derivation_index: DerivationIndex::Index(0),
@@ -1017,13 +1006,7 @@ mod tests {
         assert_eq!(RingVrfError::KeyNotInRing.encode()[0], 3);
         assert_eq!(RingVrfError::NotAllowlisted.encode()[0], 4);
         assert_eq!(RingVrfError::Rejected.encode()[0], 5);
-        assert_eq!(
-            RingVrfError::Unknown {
-                reason: String::new()
-            }
-            .encode()[0],
-            6
-        );
+		assert_eq!(RingVrfError::Unknown { reason: String::new() }.encode()[0], 6);
     }
 
     #[test]
@@ -1130,10 +1113,8 @@ mod tests {
 
     #[test]
     fn ring_vrf_response_messages_match_host_papp_fixtures() {
-        let contextual_alias = HostAccountGetAliasResponse {
-            context: [0x22; 32],
-            alias: vec![0x33, 0x44],
-        };
+		let contextual_alias =
+			HostAccountGetAliasResponse { context: [0x22; 32], alias: vec![0x33, 0x44] };
         let alias_response = RemoteMessage {
             message_id: "r-alias".to_string(),
             data: RemoteMessageData::V1(v1::RemoteMessage::GetAccountAliasResponse(Response {
@@ -1290,9 +1271,7 @@ mod tests {
                 "m-legacy-raw".to_string(),
                 SignRawWithLegacyAccountRequest {
                     account: sequential_bytes(0),
-                    data: RawPayload::Bytes {
-                        bytes: b"Hi".to_vec(),
-                    },
+					data: RawPayload::Bytes { bytes: b"Hi".to_vec() },
                 },
             ),
             "0x306d2d6c65676163792d726177000a000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00084869",
@@ -1302,9 +1281,7 @@ mod tests {
                 "m-legacy-raw-payload".to_string(),
                 SignRawWithLegacyAccountRequest {
                     account: sequential_bytes(0),
-                    data: RawPayload::Payload {
-                        payload: "<Bytes>Hi</Bytes>".to_string(),
-                    },
+					data: RawPayload::Payload { payload: "<Bytes>Hi</Bytes>".to_string() },
                 },
             ),
             "0x506d2d6c65676163792d7261772d7061796c6f6164000a000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01443c42797465733e48693c2f42797465733e",
@@ -1315,14 +1292,9 @@ mod tests {
     fn product_subtree_messages_match_mobile_wire_contract() {
         let request = RemoteMessage::request(
             "request".to_string(),
-            ProductSubtreeRequest {
-                product_id: "browse.dot".to_string(),
-            },
+			ProductSubtreeRequest { product_id: "browse.dot".to_string() },
         );
-        assert_eq!(
-            hex::encode(request.encode()),
-            "1c7265717565737400102862726f7773652e646f74"
-        );
+		assert_eq!(hex::encode(request.encode()), "1c7265717565737400102862726f7773652e646f74");
 
         let response = RemoteMessage {
             message_id: "response".to_string(),
@@ -1333,18 +1305,12 @@ mod tests {
         };
         assert_eq!(
             hex::encode(response.encode()),
-            format!(
-                "20726573706f6e736500111c7265717565737400{}",
-                "ab".repeat(32)
-            )
+			format!("20726573706f6e736500111c7265717565737400{}", "ab".repeat(32))
         );
         let RemoteMessageData::V1(data) = response.data;
         assert_eq!(
             ProductSubtreeRequest::response_from_message(data),
-            Some(Response {
-                responding_to: "request".to_string(),
-                payload: Ok([0xAB; 32]),
-            })
+			Some(Response { responding_to: "request".to_string(), payload: Ok([0xAB; 32]) })
         );
     }
 
@@ -1530,10 +1496,7 @@ mod tests {
         };
         let request = RemoteMessage::request(
             "req".to_string(),
-            ProductRequest {
-                calling_product_id: "browse.dot".to_string(),
-                payload,
-            },
+			ProductRequest { calling_product_id: "browse.dot".to_string(), payload },
         );
         assert_eq!(
             hex::encode(request.encode()),
@@ -1544,29 +1507,19 @@ mod tests {
             message_id: "resp".to_string(),
             data: RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(Response {
                 responding_to: "req".to_string(),
-                payload: Ok(VrfSignature {
-                    pre_output: [0x11; 32],
-                    proof: [0x22; 64],
-                }),
+				payload: Ok(VrfSignature { pre_output: [0x11; 32], proof: [0x22; 64] }),
             })),
         };
         assert_eq!(
             hex::encode(response.encode()),
-            format!(
-                "1072657370000f0c72657100{}{}",
-                "11".repeat(32),
-                "22".repeat(64)
-            )
+			format!("1072657370000f0c72657100{}{}", "11".repeat(32), "22".repeat(64))
         );
         let RemoteMessageData::V1(data) = response.data;
         assert!(matches!(
             ProductRequest::<truapi::latest::HostAccountSignVrfRequest>::response_from_message(
                 data
             ),
-            Some(Response {
-                payload: Ok(VrfSignature { .. }),
-                ..
-            })
+			Some(Response { payload: Ok(VrfSignature { .. }), .. })
         ));
     }
 
@@ -1623,9 +1576,8 @@ mod tests {
             "custom Debug must not alter the SCALE resource layout",
         );
 
-        let bulletin = SsoAllocatedResource::BulletinAllowance {
-            slot_account_key: vec![202, 254, 186, 190],
-        };
+		let bulletin =
+			SsoAllocatedResource::BulletinAllowance { slot_account_key: vec![202, 254, 186, 190] };
         let bulletin_debug = format!("{bulletin:?}");
         assert_eq!(bulletin_debug, "bulletin-allowance");
         assert!(!bulletin_debug.contains("202, 254, 186, 190"));
@@ -1638,12 +1590,10 @@ mod tests {
         let auto_signing_secret = [0xA5; 64];
         let response = Response {
             responding_to: "secret-test".to_string(),
-            payload: Ok(vec![SsoAllocationOutcome::Allocated(
-                SsoAllocatedResource::AutoSigning {
+			payload: Ok(vec![SsoAllocationOutcome::Allocated(SsoAllocatedResource::AutoSigning {
                     product_root_private_key: auto_signing_secret,
                     ring_vrf_domain_entropy: [0x5A; 32],
-                },
-            )]),
+			})]),
         };
         let response_debug = format!("{response:?}");
         assert!(response_debug.contains("auto-signing"));
@@ -1702,10 +1652,7 @@ mod tests {
             ))
             .unwrap();
             assert_eq!(request.encode(), expected);
-            assert_eq!(
-                HostSignPayloadRequest::decode(&mut expected.as_slice()).unwrap(),
-                request
-            );
+			assert_eq!(HostSignPayloadRequest::decode(&mut expected.as_slice()).unwrap(), request);
         }
     }
 
@@ -1716,9 +1663,7 @@ mod tests {
             "remote-1".to_string(),
             SignRequest::Raw(truapi::latest::HostSignRawRequest {
                 account: account(),
-                payload: RawPayload::Payload {
-                    payload: "<Bytes>hello</Bytes>".to_string(),
-                },
+				payload: RawPayload::Payload { payload: "<Bytes>hello</Bytes>".to_string() },
             }),
         );
 
@@ -1738,10 +1683,7 @@ mod tests {
         };
         assert_eq!(request_id, "statement-1");
         assert_eq!(data.len(), 1);
-        assert_eq!(
-            RemoteMessage::decode(&mut data[0].as_slice()).unwrap(),
-            remote_message
-        );
+		assert_eq!(RemoteMessage::decode(&mut data[0].as_slice()).unwrap(), remote_message);
 
         let fields = Vec::<StatementField>::decode(&mut statement.as_slice()).unwrap();
         assert_eq!(fields[1], StatementField::Expiry(99));
@@ -1756,9 +1698,7 @@ mod tests {
             "remote-1".to_string(),
             SignRequest::Raw(truapi::latest::HostSignRawRequest {
                 account: account(),
-                payload: RawPayload::Payload {
-                    payload: "<Bytes>hello</Bytes>".to_string(),
-                },
+				payload: RawPayload::Payload { payload: "<Bytes>hello</Bytes>".to_string() },
             }),
         );
         let statement = build_outgoing_request_statement_with_nonce(
@@ -1785,9 +1725,7 @@ mod tests {
             "remote-1".to_string(),
             SignRequest::Raw(truapi::latest::HostSignRawRequest {
                 account: account(),
-                payload: RawPayload::Payload {
-                    payload: "<Bytes>hello</Bytes>".to_string(),
-                },
+				payload: RawPayload::Payload { payload: "<Bytes>hello</Bytes>".to_string() },
             }),
         );
         let expiry = fresh_expiry();
@@ -1845,15 +1783,15 @@ mod tests {
                 .unwrap();
         assert_eq!(
             decoded,
-            Some(SsoSessionStatement::RemoteMessages(vec![Ok(
-                v1::RemoteMessage::SignResponse(Response {
+			Some(SsoSessionStatement::RemoteMessages(vec![Ok(v1::RemoteMessage::SignResponse(
+				Response {
                     responding_to: "remote-1".to_string(),
                     payload: Ok(HostSignPayloadResponse {
                         signature: vec![9; 64],
                         signed_transaction: None,
                     }),
-                })
-            )]))
+				}
+			))]))
         );
     }
 
@@ -1870,10 +1808,7 @@ mod tests {
             fresh_expiry(),
         )
         .unwrap();
-        assert_eq!(
-            decode_incoming_sso_request(&responder_session, &own_statement).unwrap(),
-            None
-        );
+		assert_eq!(decode_incoming_sso_request(&responder_session, &own_statement).unwrap(), None);
 
         let host_ack = build_signed_session_response_statement(
             &host_session,
@@ -1882,10 +1817,7 @@ mod tests {
             fresh_expiry(),
         )
         .unwrap();
-        assert_eq!(
-            decode_incoming_sso_request(&responder_session, &host_ack).unwrap(),
-            None
-        );
+		assert_eq!(decode_incoming_sso_request(&responder_session, &host_ack).unwrap(), None);
     }
 
     #[test]
@@ -1931,10 +1863,7 @@ mod tests {
     fn response_ack_statement(session: &SsoSessionInfo, expiry: u64) -> Vec<u8> {
         let encrypted = encrypt_session_statement_data_with_nonce(
             session,
-            &SsoStatementData::Response {
-                request_id: "statement-1".to_string(),
-                response_code: 0,
-            },
+			&SsoStatementData::Response { request_id: "statement-1".to_string(), response_code: 0 },
             [9; AEAD_NONCE_LEN],
         )
         .unwrap();

@@ -4,23 +4,30 @@
 //! and signing hosts. Pairing state, signing state, active sessions, and role
 //! controls live on the concrete role objects.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
-
-use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
-use crate::host_logic::worker::WorkerLedger;
-use crate::platform::{
-    CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionAuthorizationRequest,
-    PermissionStatusHost, Platform,
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::{
+	collections::VecDeque,
+	sync::{Arc, Mutex, OnceLock, Weak},
 };
-use crate::runtime::bulletin_rpc::BulletinRpc;
-use crate::runtime::signing_host::DevicePairingObserver;
-use crate::runtime::media::MediaService;
-use crate::runtime::statement_store_rpc::StatementStoreRpc;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
-use crate::subscription::Spawner;
+use crate::{
+	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+	host_logic::worker::WorkerLedger,
+	platform::{
+		CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionAuthorizationRequest,
+		PermissionStatusHost, Platform,
+	},
+	runtime::{
+		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
+		media::MediaService,
+		statement_store_rpc::StatementStoreRpc,
+	},
+	subscription::Spawner,
+};
 use async_trait::async_trait;
 use truapi::latest;
 
@@ -36,6 +43,8 @@ const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 pub struct RuntimeServices {
     /// Host platform backing all syscalls.
     pub platform: Arc<dyn Platform>,
+    /// Permission decisions and prompt cancellation shared by every execution.
+    pub(crate) permissions: Arc<crate::host_internal::permissions::PermissionAuthority>,
     /// Host identity reported to products via `System::host_info`.
     pub host_info: HostInfo,
     /// Host chat adapter, when the host serves the Chat capability. `None`
@@ -59,6 +68,15 @@ pub struct RuntimeServices {
     /// Contact handles already resolved, shared by every product runtime of
     /// this host and emptied when the host says its contacts changed.
     pub contact_handles: Arc<crate::runtime::contacts::ContactHandleCache>,
+    /// Host Game adapter, installed once at startup by a host that can hold
+    /// reminders. Unset leaves every product Game call `Unsupported`.
+    game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
+	/// Host scanner, installed once at startup by a host that can draw a
+	/// viewfinder. Unset leaves every product scan `Unsupported`.
+	scanner_platform: OnceLock<Arc<dyn crate::platform::ScannerPlatform>>,
+	/// Whether a scan is open. Shared by every product runtime of this host,
+	/// because the device has one viewfinder.
+	scan_open: AtomicBool,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -77,6 +95,13 @@ pub struct RuntimeServices {
     media_permission_revision: AtomicU64,
     /// Live product Media services, without retaining product runtimes.
     media: Mutex<Vec<Weak<MediaService>>>,
+	/// Durable transaction engine over the core database, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// Host observer told whether durable work is pending. Unset leaves
+	/// recovery to whoever calls it.
+	#[cfg(not(target_arch = "wasm32"))]
+	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
     /// Asset Hub the dotNS contracts are deployed on. All-zero says this host
     /// has none, which leaves every manifest unresolvable.
     asset_hub_chain_genesis_hash: [u8; 32],
@@ -95,6 +120,11 @@ pub struct RuntimeServices {
     /// Values from confirmed in-core submissions, served to `lookup_subscribe`
     /// until the host's content backend has them. Byte-bounded, oldest-first.
     preimage_cache: Mutex<PreimageCache>,
+    /// Preimages a test host kept instead of submitting. Unbounded, unlike
+    /// `preimage_cache`: nothing else holds them, so evicting one would leave
+    /// its key unresolvable for the rest of the run.
+    #[cfg(feature = "test-host")]
+    local_preimages: Mutex<std::collections::HashMap<[u8; 32], Vec<u8>>>,
     /// Confirmed submissions served to new subscriptions until the remote
     /// Statement Store reports them.
     statement_cache: Mutex<StatementCache>,
@@ -157,6 +187,7 @@ impl RuntimeServices {
         let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
         Arc::new(Self {
             platform,
+            permissions: Arc::default(),
             host_info,
             chat_platform,
             native_wallet,
@@ -165,6 +196,9 @@ impl RuntimeServices {
             identity_backend: OnceLock::new(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
+            game_platform: OnceLock::new(),
+			scanner_platform: OnceLock::new(),
+			scan_open: AtomicBool::new(false),
             device_pairing_observer: OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
@@ -172,6 +206,10 @@ impl RuntimeServices {
             media_permission_gate: futures::lock::Mutex::new(()),
             media_permission_revision: AtomicU64::new(0),
             media: Mutex::new(Vec::new()),
+			#[cfg(not(target_arch = "wasm32"))]
+			durable_engine: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			durable_work_observer: OnceLock::new(),
             asset_hub_chain_genesis_hash,
             worker_ledger: WorkerLedger::default(),
             chain,
@@ -180,6 +218,8 @@ impl RuntimeServices {
             bulletin,
             chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
             preimage_cache: Mutex::new(PreimageCache::default()),
+            #[cfg(feature = "test-host")]
+            local_preimages: Mutex::new(std::collections::HashMap::new()),
             statement_cache: Mutex::new(StatementCache::default()),
             spawner,
             device_encryption_key: futures::lock::Mutex::new(()),
@@ -246,6 +286,19 @@ impl RuntimeServices {
         self.pocket_platform.get().cloned()
     }
 
+    /// Install the host's Game adapter.
+    ///
+    /// Set-once, like every optional capability, so reminders cannot change
+    /// hands under a running product. Returns whether this call installed it.
+	pub fn install_game_platform(&self, platform: Arc<dyn crate::platform::GamePlatform>) -> bool {
+        self.game_platform.set(platform).is_ok()
+    }
+
+    /// The host's Game adapter, when one is installed.
+    pub fn game_platform(&self) -> Option<Arc<dyn crate::platform::GamePlatform>> {
+        self.game_platform.get().cloned()
+    }
+
     /// Install the host's contacts adapter. Answers whether this call was the
     /// one that installed it.
     pub fn install_contacts_platform(
@@ -259,6 +312,29 @@ impl RuntimeServices {
     pub fn contacts_platform(&self) -> Option<Arc<dyn crate::platform::ContactsPlatform>> {
         self.contacts_platform.get().cloned()
     }
+
+	/// Install the host's scanner. Answers whether this call was the one that
+	/// installed it.
+	pub fn install_scanner_platform(
+		&self,
+		platform: Arc<dyn crate::platform::ScannerPlatform>,
+	) -> bool {
+		self.scanner_platform.set(platform).is_ok()
+	}
+
+	/// The host's scanner, when one is installed.
+	pub fn scanner_platform(&self) -> Option<Arc<dyn crate::platform::ScannerPlatform>> {
+		self.scanner_platform.get().cloned()
+	}
+
+	/// Claim the one open scan, or `None` while another holds it. Dropping the
+	/// claim frees it, so a cancelled or failed scan cannot keep it.
+	pub fn claim_scan(&self) -> Option<ScanClaim<'_>> {
+		self.scan_open
+			.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+			.ok()
+			.map(|_| ScanClaim(&self.scan_open))
+	}
 
     /// Install the host's device-pairing observer.
     ///
@@ -351,6 +427,32 @@ impl RuntimeServices {
         }
     }
 
+	/// Install the durable transaction engine. Set-once, like the database it
+	/// runs on. Returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_durable_engine(&self, engine: Arc<DurableTxEngine>) -> bool {
+		self.durable_engine.set(engine).is_ok()
+	}
+
+	/// The durable transaction engine, once the core database is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
+		self.durable_engine.get().cloned()
+	}
+
+	/// Install the host's durable work observer. Returns whether this call
+	/// installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_durable_work_observer(&self, observer: Arc<dyn DurableWorkObserver>) -> bool {
+		self.durable_work_observer.set(observer).is_ok()
+	}
+
+	/// The host's durable work observer, when one is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn durable_work_observer(&self) -> Option<Arc<dyn DurableWorkObserver>> {
+		self.durable_work_observer.get().cloned()
+    }
+
     /// This device's persisted X25519 encryption secret, created on first use.
     ///
     /// The only supported way to reach the key: it bundles the serialization
@@ -378,12 +480,27 @@ impl RuntimeServices {
             .insert(key, value);
     }
 
+    /// Keep a preimage a test host did not submit, for the rest of the run.
+    #[cfg(feature = "test-host")]
+    pub fn keep_local_preimage(&self, key: [u8; 32], value: Vec<u8>) {
+        self.local_preimages
+            .lock()
+            .expect("local preimage store mutex poisoned")
+            .insert(key, value);
+    }
+
     /// Return a cached preimage value for `key`, if present.
     pub fn cached_preimage(&self, key: &[u8; 32]) -> Option<Vec<u8>> {
-        self.preimage_cache
+        #[cfg(feature = "test-host")]
+        if let Some(value) = self
+            .local_preimages
             .lock()
-            .expect("preimage cache mutex poisoned")
+            .expect("local preimage store mutex poisoned")
             .get(key)
+        {
+            return Some(value.clone());
+        }
+		self.preimage_cache.lock().expect("preimage cache mutex poisoned").get(key)
     }
 
     /// Retain a remotely accepted statement for read-after-write consistency.
@@ -427,11 +544,7 @@ impl PreimageCache {
         if value.len() > PREIMAGE_CACHE_MAX_BYTES {
             return;
         }
-        if let Some(index) = self
-            .entries
-            .iter()
-            .position(|(existing, _)| *existing == key)
-        {
+		if let Some(index) = self.entries.iter().position(|(existing, _)| *existing == key) {
             let (_, old) = self.entries.remove(index).expect("index in range");
             self.total_bytes -= old.len();
         }
@@ -461,11 +574,7 @@ struct StatementCache {
 
 impl StatementCache {
     fn insert(&mut self, statement: latest::SignedStatement) {
-        if let Some(index) = self
-            .entries
-            .iter()
-            .position(|existing| existing == &statement)
-        {
+		if let Some(index) = self.entries.iter().position(|existing| existing == &statement) {
             self.entries.remove(index);
         }
         self.entries.push_back(statement);
@@ -484,10 +593,10 @@ impl StatementCache {
             .filter(|statement| match kind {
                 crate::host_logic::statement_store::TopicFilterKind::MatchAll => {
                     topics.iter().all(|topic| statement.topics.contains(topic))
-                }
+				},
                 crate::host_logic::statement_store::TopicFilterKind::MatchAny => {
                     topics.iter().any(|topic| statement.topics.contains(topic))
-                }
+				},
             })
             .cloned()
             .collect()
@@ -517,12 +626,17 @@ impl RuntimeChainProvider for HostChainProvider {
                 format!("genesis_hash must be 32 bytes, got {}", genesis_hash.len()),
             )
         })?;
-        self.platform
-            .connect(genesis_hash)
-            .await
-            .map(Arc::from)
-            .map_err(|err| {
+		self.platform.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
                 RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
             })
     }
+}
+
+/// The open scan. Frees the slot when dropped.
+pub struct ScanClaim<'a>(&'a AtomicBool);
+
+impl Drop for ScanClaim<'_> {
+	fn drop(&mut self) {
+		self.0.store(false, Ordering::Release);
+	}
 }

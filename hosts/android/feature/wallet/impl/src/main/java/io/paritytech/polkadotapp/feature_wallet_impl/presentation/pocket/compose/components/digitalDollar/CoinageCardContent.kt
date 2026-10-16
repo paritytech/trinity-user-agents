@@ -24,7 +24,6 @@ fun CoinageCardContent(
     state: CoinageUiState,
     onAutoFundClick: () -> Unit,
     onDetailsToggled: () -> Unit,
-    onKeyToggled: () -> Unit,
     onShareLogsClick: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased)) {
@@ -32,9 +31,7 @@ fun CoinageCardContent(
             modifier = Modifier.fillMaxWidth(),
             state = state.tokensState,
             detailsVisible = state.detailsVisible,
-            keyVisible = state.keyVisible,
-            onDetailsToggled = onDetailsToggled,
-            onKeyToggled = onKeyToggled
+            onDetailsToggled = onDetailsToggled
         )
 
         if (FeatureOption.COINAGE_DEBUG_FEATURES.isEnabled) {

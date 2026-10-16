@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -51,7 +52,6 @@ import uniffi.truapi.HostLocaleLocalizeTimestampsResponse
 import uniffi.truapi.HostLocaleLocalizedTimestamp
 import uniffi.truapi.PocketCard
 import uniffi.truapi.HostPushNotificationRequest
-import uniffi.truapi.NotificationActivation
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RemotePermission
@@ -70,6 +70,7 @@ import uniffi.truapi.NativeCoinageCallbackResult
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.PermissionAuthorizationRequest
+import uniffi.truapi.PermissionAuthorizationEntry
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.UserConfirmationReview
@@ -78,11 +79,14 @@ import uniffi.truapi.HostCallbacks
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
 import uniffi.truapi.NativeCoreDatabaseException
+import uniffi.truapi.RecoveryException
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketCallbacks
 import uniffi.truapi.NativePocketRemoval
 import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.DevicePermissionStatus
+import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeAnnouncedPairing
@@ -108,6 +112,10 @@ import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
 import uniffi.truapi.SsoRequestOutcome
 import uniffi.truapi.NativeMediaCallbacks
+import uniffi.truapi.HostScan
+import uniffi.truapi.HostScannerScanRequest
+import uniffi.truapi.NativeScannerCallbacks
+import uniffi.truapi.ProductExecutionKind
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -152,6 +160,11 @@ interface HostCoreStorage {
 
     @Throws(HostRejection::class)
     suspend fun clear(key: ByteArray)
+
+    /** Enumerate existing core keys; permission settings must include historical grants. */
+    @Throws(HostRejection::class)
+    suspend fun keys(): List<ByteArray> =
+        throw HostRejection.Rejected("core storage key enumeration is unsupported")
 }
 
 /** Ids handed out by the default [HostBridge.beginOperation], distinct for the life of the process. */
@@ -222,6 +235,9 @@ interface NativeCoinageHost {
  * on the main thread, for example with `withContext(Dispatchers.Main) { ... }`.
  */
 interface HostBridge : NativeChatFilesHost {
+    /** Called on the process bridge after canonical permission decisions change. */
+    fun permissionAuthorizationsChanged(productId: String)
+
     /** Lifecycle logger. Marker is a stable slug, detail is free-form. */
     fun onCoreLog(marker: String, detail: String) {}
 
@@ -241,16 +257,6 @@ interface HostBridge : NativeChatFilesHost {
     /** Cancel a previously scheduled notification id. */
     @Throws(HostRejection::class)
     fun cancelNotification(id: UInt) {}
-
-    /** Non-consuming ordered batch (at most 32) for this verified execution. */
-    @Throws(HostRejection::class)
-    suspend fun activationEvents(): List<NotificationActivation> =
-        throw HostRejection.Rejected("notification activation unsupported")
-
-    /** Idempotently acknowledge one sequence in this execution's scope. */
-    @Throws(HostRejection::class)
-    suspend fun acknowledgeActivation(sequence: ULong): Unit =
-        throw HostRejection.Rejected("notification activation unsupported")
 
     /**
      * Prompt for a device-level permission [product] requested on the main
@@ -282,6 +288,18 @@ interface HostBridge : NativeChatFilesHost {
     suspend fun devicePermissionStatus(
         request: HostDevicePermissionRequest,
     ): DevicePermissionStatus = DevicePermissionStatus.NOT_APPLICABLE
+
+    /**
+     * Show or hide the face above this execution's expanded card. Answers
+     * [ExpandedCardFaceOutcome.NOT_PRESENTED] when the product is not under its
+     * card and [ExpandedCardFaceOutcome.USER_MOVING] while the user drags it,
+     * and returns without waiting for the animation.
+     *
+     * Defaults to [ExpandedCardFaceOutcome.UNSUPPORTED], so an app without cards
+     * says so instead of pretending it moved one.
+     */
+    suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+        ExpandedCardFaceOutcome.UNSUPPORTED
 
     /**
      * Prompt for a remote permission bundle [product] requested on the main
@@ -459,6 +477,16 @@ interface HostBridge : NativeChatFilesHost {
      */
     fun devicePaired(device: PairedSsoPeer) {}
 
+    /**
+     * Whether the core has durable transactions still awaiting a verdict.
+     * While [pending] is true, keep a background task running that awaits
+     * [TrUAPIHostRuntime.runDurableRecovery]; false means nothing needs it.
+     * Reported on change, starting with the state the runtime finds at
+     * launch. Runtime-wide, like [workerDemandChanged], and arrives on a core
+     * thread: marshal the work off rather than blocking.
+     */
+    fun durableWorkChanged(pending: Boolean) {}
+
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
 
@@ -504,9 +532,19 @@ interface ChatHostBridge {
      * must name this message for as long as the host stores it. An id arriving
      * in a `Reaction` or `ReactionRemoved` is product-chosen and untrusted: it
      * may name a message in another room, or none at all.
+     *
+     * `alt` is the product's one-line description of the message, already
+     * trimmed and screened, for places that list it without drawing it.
      */
     @Throws(HostRejection::class)
-    suspend fun postMessage(roomId: String, content: ChatMessageContent): String
+    suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String
+
+    /**
+     * Set what a product's native Chat room shows below its messages, and keep
+     * it until the product sets another.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
 
     /** Return the current product-scoped native Chat rooms. */
     @Throws(HostRejection::class)
@@ -545,6 +583,35 @@ private class NativeCoinageCallbackAdapter(private val bridge: NativeCoinageHost
 }
 
 /**
+ * Native game-reminder surface. Implement and pass to
+ * [TrUAPIHostRuntime.openProductExecution] when the host can hold reminders;
+ * hosts without one pass nothing.
+ *
+ * The host holds one reminder per product: a schedule replaces the reminder
+ * the same product already holds. The core asks for no per-product consent;
+ * the host asks the OS for what it needs, rings an alarm where the OS allows
+ * one and delivers a notification otherwise, may add the game to the
+ * calendar, keeps the reminder across app kill and reboot, and drops it once
+ * the game starts.
+ *
+ * Threading: both calls suspend, so an implementation may switch to its own
+ * dispatcher to answer; implementations must be safe to enter concurrently.
+ */
+interface GameHostBridge {
+    /**
+     * Hold [startsAt] (Unix milliseconds, UTC) as this product's reminder, replacing any it holds.
+     * Any exception, including an OS that allows neither alarms nor notifications, reaches the
+     * product as a host failure carrying its reason.
+     */
+    @Throws(HostRejection::class)
+    suspend fun scheduleReminder(startsAt: ULong)
+
+    /** Drop this product's reminder. Dropping none succeeds. */
+    @Throws(HostRejection::class)
+    suspend fun cancelReminder()
+}
+
+/**
  * Adapter from the public [HostBridge] surface to the generated UniFFI
  * [HostCallbacks] interface. Keeps the public API stable even if uniffi-bindgen
  * renames generated symbols.
@@ -566,9 +633,18 @@ private class HostCallbackAdapter(
         runCatching { bridge.workerDemandChanged(productId, transition) }
     }
 
+    override fun permissionAuthorizationsChanged(productId: String) {
+        runCatching { bridge.permissionAuthorizationsChanged(productId) }
+    }
+
     // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun devicePaired(device: PairedSsoPeer) {
         runCatching { bridge.devicePaired(device) }
+    }
+
+    // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun durableWorkChanged(pending: Boolean) {
+        runCatching { bridge.durableWorkChanged(pending) }
     }
 
     override suspend fun navigateTo(url: String) =
@@ -579,12 +655,6 @@ private class HostCallbackAdapter(
 
     override fun cancelNotification(id: UInt) =
         withHostRejection { bridge.cancelNotification(id) }
-
-    override suspend fun activationEvents(): List<NotificationActivation> =
-        withHostRejection { bridge.activationEvents() }
-
-    override suspend fun acknowledgeActivation(sequence: ULong) =
-        withHostRejection { bridge.acknowledgeActivation(sequence) }
 
     override suspend fun devicePermission(
         product: ProductExecutionConfig,
@@ -597,6 +667,9 @@ private class HostCallbackAdapter(
     override suspend fun devicePermissionStatus(
         request: HostDevicePermissionRequest,
     ): DevicePermissionStatus = withHostRejection { bridge.devicePermissionStatus(request) }
+
+    override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+        withHostRejection { bridge.setExpandedCardFaceShown(shown) }
 
     override suspend fun remotePermission(
         product: ProductExecutionConfig,
@@ -657,6 +730,9 @@ private class HostCallbackAdapter(
             onCoreLog("host.permission_refresh.failed", "Permission refresh failed")
         }
     }
+
+    override suspend fun coreStorageKeys(): List<ByteArray> =
+        withHostRejection { bridge.coreStorage.keys() }
 
     override fun chainConnect(genesisHash: ByteArray): UInt? =
         withHostRejection { bridge.chainConnect(genesisHash) }
@@ -826,8 +902,11 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         icon: String,
     ): ChatBotRegistrationStatus = withHostRejection { bridge.registerBot(botId, name, icon) }
 
-    override suspend fun postMessage(roomId: String, content: ChatMessageContent): String =
-        withHostRejection { bridge.postMessage(roomId, content) }
+    override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String =
+        withHostRejection { bridge.postMessage(roomId, content, alt) }
+
+    override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) =
+        withHostRejection { bridge.setRoomFooter(roomId, footer) }
 
     override suspend fun listRooms(): List<ChatRoom> = withHostRejection { bridge.listRooms() }
 }
@@ -870,13 +949,28 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
         withHostRejection { bridge.contacts(lookup) }
 
     override suspend fun pickContact(productId: String): HostContactPick =
-        try {
-            bridge.pickContact(productId)
-        } catch (error: HostRejection) {
-            throw error
-        } catch (error: Throwable) {
-            throw HostRejection.Rejected(hostRejectionReason(error))
-        }
+        withHostRejection { bridge.pickContact(productId) }
+}
+
+/**
+ * Draws the viewfinder for `scanner.scan`, following the rules on the core's
+ * `ScannerPlatform`. Closes it when the coroutine is cancelled.
+ */
+interface ScannerHostBridge {
+    @Throws(HostRejection::class)
+    suspend fun scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest,
+    ): HostScan
+}
+
+private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : NativeScannerCallbacks {
+    override suspend fun scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest,
+    ): HostScan = withHostRejection { bridge.scanCode(productId, executionKind, request) }
 }
 
 private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {
@@ -884,6 +978,16 @@ private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : Nati
 
     override suspend fun removeCard(cardId: String): NativePocketRemoval =
         withHostRejection { bridge.removeCard(cardId) }
+}
+
+/**
+ * Adapter from the public [GameHostBridge] surface to the generated UniFFI
+ * [NativeGameCallbacks] interface.
+ */
+private class GameCallbackAdapter(private val bridge: GameHostBridge) : NativeGameCallbacks {
+    override suspend fun scheduleReminder(startsAt: ULong) = withHostRejection { bridge.scheduleReminder(startsAt) }
+
+    override suspend fun cancelReminder() = withHostRejection { bridge.cancelReminder() }
 }
 
 /**
@@ -920,6 +1024,48 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
 
+    /** Persisted product permissions, including grants created before this process started. */
+    @Throws(HostRejection::class)
+    suspend fun permissionAuthorizations(productId: String): List<PermissionAuthorizationEntry> =
+        inner.permissionAuthorizations(productId)
+
+    /** Settings edits go through the process authority, not a live product execution. */
+    @Throws(HostRejection::class)
+    suspend fun setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) {
+        inner.setPermissionAuthorizationStatus(productId, request, status)
+        CoreStorageAccess.awaitChanges(storageGroup)
+    }
+
+    /** Import missing legacy decisions only. Existing canonical decisions always win. */
+    @Throws(HostRejection::class)
+    suspend fun importPermissionAuthorizations(
+        productId: String,
+        entries: List<PermissionAuthorizationEntry>,
+    ): List<PermissionAuthorizationEntry> = inner.importPermissionAuthorizations(productId, entries)
+
+    @Throws(HostRejection::class)
+    suspend fun permissionAuthorizationProducts(): List<String> = inner.permissionAuthorizationProducts()
+
+    @Throws(HostRejection::class)
+    fun permissionAuthorizationRevision(productId: String): ULong =
+        inner.permissionAuthorizationRevision(productId)
+
+    @Throws(HostRejection::class)
+    suspend fun setPermissionAuthorizationStatusIfCurrent(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: ULong,
+    ): Boolean {
+        val applied = inner.setPermissionAuthorizationStatusIfCurrent(productId, request, status, revision)
+        if (applied) CoreStorageAccess.awaitChanges(storageGroup)
+        return applied
+    }
+
     /**
      * Install the host's contacts adapter, which owns the contact list and
      * draws the picker.
@@ -934,6 +1080,19 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         return inner.setContactsCallbacks(adapter)
     }
 
+    // Co-owns the scanner adapter for as long as the runtime holds it.
+    private var scannerRetainer: NativeScannerCallbacks? = null
+
+    /**
+     * Install the host's scanner before opening any product execution.
+     * Set-once: returns whether this call installed it.
+     */
+    fun setScanner(scanner: ScannerHostBridge): Boolean {
+        val adapter = ScannerCallbackAdapter(scanner)
+        scannerRetainer = adapter
+        return inner.setScannerCallbacks(adapter)
+    }
+
     /**
      * Tell the core the host's contacts changed. Call it whenever a contact is
      * removed or blocked, so a contact handle the core cached stops resolving.
@@ -946,7 +1105,8 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      * Open one executable connection with a host-assigned immutable context.
      * Pass [chat] to install the host's Chat adapter; hosts without the Chat
      * modality omit it. Pass [pocket] to install the card collection, and omit
-     * that where the host has no Pocket surface.
+     * that where the host has no Pocket surface. Pass [game] to hold game
+     * reminders, and omit it where the host cannot.
      * Pass [media] only for a complete trusted capture/RTC/compositor backend.
      * Its generated typed callbacks are host-only and retained until execution close.
      */
@@ -956,20 +1116,25 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = null,
         pocket: PocketHostBridge? = null,
+        game: GameHostBridge? = null,
         media: NativeMediaCallbacks? = null,
     ): TrUAPIProductExecution {
         val adapter = HostCallbackAdapter(bridge, storageGroup)
         val chatAdapter = chat?.let { ChatCallbackAdapter(it) }
         val pocketAdapter = pocket?.let { PocketCallbackAdapter(it) }
+        val gameAdapter = game?.let { GameCallbackAdapter(it) }
         val execution =
             inner.openProductExecution(
                 adapter,
                 chatAdapter,
                 pocketAdapter,
+                gameAdapter,
                 media,
                 configuration,
             )
-        return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter, media, storageGroup).also {
+        return TrUAPIProductExecution(
+            execution, adapter, chatAdapter, pocketAdapter, gameAdapter, media, storageGroup, inner,
+        ).also {
             CoreStorageAccess.register(it, bridge.coreStorage.storageIdentifier, storageGroup, execution.productContext().productId)
         }
     }
@@ -1074,6 +1239,15 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Report the core database's SQLite version, schema version and file path. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
+
+    /**
+     * Decide durable transactions from the chain until none is live, then
+     * return. Await it from the background task [HostBridge.durableWorkChanged]
+     * asks for; a throw means recovery stopped early and the task should be
+     * retried. Cancelling the coroutine stops it.
+     */
+    @Throws(RecoveryException::class)
+    suspend fun runDurableRecovery() = inner.runDurableRecovery()
 
     /** Activate or replace the process-wide local signing session. */
     @Throws(HostRejection::class)
@@ -1183,8 +1357,10 @@ class TrUAPIProductExecution internal constructor(
     private val callbackRetainer: HostCallbacks,
     private val chatRetainer: NativeChatCallbacks?,
     private val pocketRetainer: NativePocketCallbacks?,
+    private val gameRetainer: NativeGameCallbacks?,
     private val mediaRetainer: NativeMediaCallbacks?,
     private val storageGroup: Any,
+    private val runtimeRetainer: NativeTrUApiHostRuntime,
 ) : AutoCloseable {
     private val shutDown = AtomicBoolean(false)
     internal val isClosed: Boolean get() = shutDown.get()
@@ -1321,11 +1497,12 @@ class TrUAPIProductExecution internal constructor(
      * UI callers may then await [awaitCoreStorageChanges] outside their own locks.
      */
     @Throws(HostRejection::class)
-    fun setPermissionAuthorizationStatus(
+    suspend fun setPermissionAuthorizationStatus(
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
     ) {
-        inner.setPermissionAuthorizationStatus(request, status)
+        runtimeRetainer.setPermissionAuthorizationStatus(inner.productContext().productId, request, status)
+        CoreStorageAccess.awaitChanges(storageGroup)
     }
 
     /** Push a host theme update to active TrUAPI theme subscriptions. */
@@ -1364,6 +1541,9 @@ class TrUAPIProductExecution internal constructor(
     fun notifyChainClosed(connectionId: UInt) {
         inner.notifyChainClosed(connectionId)
     }
+
+    /** The process authority closes executions on revoke/reset, before notifying the shell. */
+    fun isClosed(): Boolean = shutDown.get() || inner.isClosed()
 
     @Synchronized
     override fun close() {

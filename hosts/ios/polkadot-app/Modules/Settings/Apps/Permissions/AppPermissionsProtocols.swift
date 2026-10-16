@@ -6,25 +6,27 @@ import UIKitExt
 protocol AppPermissionsViewProtocol: ControllerBackedProtocol {
     func didReceive(items: [AppPermissionsViewLayout.Item])
     func setTitle(_ title: String)
+    func setRevoking(_ revoking: Bool)
 }
 
 @MainActor
 protocol AppPermissionsPresenterProtocol: AnyObject {
     func setup()
     func toggle(_ item: AppPermissionsViewLayout.Item, isOn: Bool)
-    func viewWillDisappear()
 }
 
 protocol AppPermissionsInteractorInputProtocol: AnyObject {
     func setup()
-    func revokeOnDisappear(permissions: [ProductPermission])
     func setMediaPermission(_ setting: TrUAPIMediaPermissionSetting, allowed: Bool)
+    func revoke(permissions: [ProductPermission])
 }
 
 @MainActor
 protocol AppPermissionsInteractorOutputProtocol: AnyObject {
     func didReceive(grants: [ProductPermissionGrant])
     func didReceive(mediaPermissions: [TrUAPIMediaPermissionSetting])
+    func didFinishRevoking()
+    func didReceive(error: Error)
 }
 
 @MainActor

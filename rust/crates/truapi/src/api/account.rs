@@ -1,6 +1,8 @@
 //! Unified [`Account`] trait.
 
-use crate::versioned::account::{
+use crate::{
+	CallContext, CallError, Subscription,
+	versioned::account::{
     HostAccountConnectionStatusSubscribeError, HostAccountConnectionStatusSubscribeItem,
     HostAccountConnectionStatusSubscribeRequest, HostAccountCreateProofError,
     HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasError,
@@ -15,9 +17,9 @@ use crate::versioned::account::{
     HostGetUserIdRequest, HostGetUserIdResponse, HostProductDeviceChatError,
     HostProductDeviceChatRequest, HostProductDeviceChatResponse, HostRequestLoginError,
     HostRequestLoginRequest, HostRequestLoginResponse,
+    },
+    wire, wire_trait,
 };
-use crate::{CallContext, CallError, Subscription};
-use crate::{wire, wire_trait};
 
 /// Account lookup, aliasing, and proof generation.
 #[wire_trait(id = 2)]
@@ -264,8 +266,7 @@ pub trait Account: Send + Sync {
         &self,
         _cx: &CallContext,
         _request: HostAccountListRingVrfKeysRequest,
-    ) -> Result<HostAccountListRingVrfKeysResponse, CallError<HostAccountListRingVrfKeysError>>
-    {
+	) -> Result<HostAccountListRingVrfKeysResponse, CallError<HostAccountListRingVrfKeysError>> {
         Err(CallError::unavailable())
     }
 

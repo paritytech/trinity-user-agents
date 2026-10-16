@@ -18,16 +18,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetLogoVariant
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.compose.PaymentAssetLogoImage
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDownward
@@ -39,12 +36,14 @@ import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.presentation.common.getMaxMessageWidth
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageGrouping
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageSurfaceStyle
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageAction
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageLayoutInfo
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.components.FlatMessageTimestamp
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.components.PaymentAmounts
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.LocalChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
@@ -122,10 +121,17 @@ private fun PaymentMessageContent(
 
     val differingAmount = message.differingAmount
 
+    val bubbleMaxWidth = minOf(PaymentMessageMaxWidth, getMaxMessageWidth())
+    val boxHorizontalInset = PolkadotTheme.spacings.extraMedium
+    val amountPadding = PolkadotTheme.spacings.mediumIncreased
+    val amountMaxWidthPx = with(LocalDensity.current) {
+        bubbleMaxWidth.roundToPx() - 2 * boxHorizontalInset.roundToPx() - 2 * amountPadding.roundToPx()
+    }
+
     Column(
         modifier = Modifier
             .width(IntrinsicSize.Max)
-            .widthIn(max = 200.dp)
+            .widthIn(max = PaymentMessageMaxWidth)
     ) {
         VerticalSpacer { extraMedium }
 
@@ -142,7 +148,7 @@ private fun PaymentMessageContent(
                 .fillMaxWidth()
                 .padding(
                     vertical = PolkadotTheme.spacings.small,
-                    horizontal = PolkadotTheme.spacings.extraMedium
+                    horizontal = boxHorizontalInset
                 ),
             shape = PolkadotTheme.shapes.medium,
             color = amountBoxColor
@@ -150,25 +156,16 @@ private fun PaymentMessageContent(
             Column(
                 modifier = Modifier
                     .widthIn(min = 154.dp)
-                    .padding(PolkadotTheme.spacings.mediumIncreased),
+                    .padding(amountPadding),
                 horizontalAlignment = Alignment.Start
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)
-                ) {
-                    PaymentAssetLogoImage(
-                        modifier = Modifier.size(PaymentAssetLogoSize),
-                        variant = PaymentAssetLogoVariant.Square
-                    )
-
-                    PaymentAmounts(
-                        amount = message.amount,
-                        differingAmount = differingAmount,
-                        primaryTextColor = primaryTextColor,
-                        secondaryTextColor = secondaryTextColor
-                    )
-                }
+                PaymentAmounts(
+                    amount = message.amount,
+                    differingAmount = differingAmount,
+                    maxWidthPx = amountMaxWidthPx,
+                    primaryTextColor = primaryTextColor,
+                    secondaryTextColor = secondaryTextColor
+                )
             }
         }
 
@@ -198,37 +195,6 @@ private fun PaymentMessageContent(
         }
 
         VerticalSpacer { small }
-    }
-}
-
-@Composable
-private fun PaymentAmounts(
-    amount: TokenAmountModel,
-    differingAmount: TokenAmountModel?,
-    primaryTextColor: Color,
-    secondaryTextColor: Color
-) {
-    val formatter = LocalTokenAmountFormatter.current
-
-    Column(horizontalAlignment = Alignment.Start) {
-        if (differingAmount != null) {
-            NovaText(
-                text = formatter.formatTokenAmount(amount, RoundPrecision.DEFAULT, withSymbol = false),
-                style = PolkadotTheme.typography.body.medium.copy(textDecoration = TextDecoration.LineThrough),
-                color = secondaryTextColor
-            )
-            NovaText(
-                text = formatter.formatTokenAmount(differingAmount, RoundPrecision.DEFAULT, withSymbol = false),
-                style = PolkadotTheme.typography.headline.large,
-                color = primaryTextColor
-            )
-        } else {
-            NovaText(
-                text = formatter.formatTokenAmount(amount, RoundPrecision.DEFAULT, withSymbol = false),
-                style = PolkadotTheme.typography.headline.large,
-                color = primaryTextColor
-            )
-        }
     }
 }
 
@@ -358,6 +324,13 @@ private fun MessagesPreview(direction: ChatMessageUiModel.Direction) {
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                listOf(20, 20_000, 999_999, 2_000_000).forEach { value ->
+                    PaymentMessagePreview(
+                        direction = direction,
+                        amount = TokenAmountModel.mock(value = value),
+                        paymentStatus = ChatMessageUiModel.CoinagePayment.Status.Detected(TokenAmountModel.mock(value = value)),
+                    )
+                }
                 PaymentMessagePreview(
                     direction = direction,
                     paymentStatus = ChatMessageUiModel.CoinagePayment.Status.Detecting,
@@ -404,6 +377,7 @@ private fun MessagesPreview(direction: ChatMessageUiModel.Direction) {
 private fun PaymentMessagePreview(
     direction: ChatMessageUiModel.Direction,
     paymentStatus: ChatMessageUiModel.CoinagePayment.Status,
+    amount: TokenAmountModel = TokenAmountModel.mock,
     deliveryStatus: ChatMessageUiModel.Status = ChatMessageUiModel.Status.SENT
 ) {
     PaymentMessage(
@@ -413,7 +387,7 @@ private fun PaymentMessagePreview(
             direction = direction,
             status = deliveryStatus,
             timestamp = System.currentTimeMillis(),
-            amount = TokenAmountModel.mock,
+            amount = amount,
             paymentStatus = paymentStatus,
             origin = ChatMessageOrigin.User,
             reactions = persistentListOf()
@@ -427,7 +401,7 @@ private fun PaymentMessagePreview(
     )
 }
 
-private val PaymentAssetLogoSize = DpSize(20.dp, 22.dp)
+private val PaymentMessageMaxWidth = 200.dp
 
 /** Tall enough for the whole status gallery; the scroll is for the interactive preview. */
-private const val PREVIEW_HEIGHT = 1400
+private const val PREVIEW_HEIGHT = 2100

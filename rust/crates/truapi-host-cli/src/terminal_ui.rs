@@ -1,42 +1,50 @@
 //! Terminal ownership, rendering, and host-to-transcript event routing.
 
-use std::collections::VecDeque;
-use std::future::Future;
-use std::io::{self, IsTerminal, Write};
-use std::ops::Range;
-use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::{
+	collections::VecDeque,
+	future::Future,
+	io::{self, IsTerminal, Write},
+	ops::Range,
+	path::PathBuf,
+	sync::{Mutex, OnceLock},
+};
 
 use anyhow::{Context, Result};
-use crossterm::cursor::{Hide, Show};
-use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
-    EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
-};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+use crossterm::{
+	cursor::{Hide, Show},
+	event::{
+		DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+		Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
+	},
+	execute,
+	terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::StreamExt;
 use qrcode::{Color as QrColor, QrCode};
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::{
+	Terminal,
+	backend::CrosstermBackend,
+	layout::{Constraint, Layout, Rect},
+	style::{Color, Modifier, Style},
+	text::{Line, Span},
+	widgets::{Block, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap},
+};
 use tokio::sync::{mpsc, oneshot};
-use tracing::Subscriber;
-use tracing::field::{Field, Visit};
+use tracing::{
+	Subscriber,
+	field::{Field, Visit},
+};
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
 use truapi::platform::PermissionDecision;
 use unicode_width::UnicodeWidthChar;
 
-use crate::LogLevel;
-use crate::qr_scanner::RgbaFrame;
-use crate::signing_shell::{
-    CommandEditor, SessionCommand, ShellCommand, contains_mnemonic, mask_mnemonic, parse_approval,
-    parse_command,
+use crate::{
+	LogLevel,
+	qr_scanner::RgbaFrame,
+	signing_shell::{
+		CommandEditor, SessionCommand, ShellCommand, contains_mnemonic, mask_mnemonic,
+		parse_approval, parse_command,
+	},
 };
 
 const TRANSCRIPT_LIMIT: usize = 10_000;
@@ -74,11 +82,7 @@ impl ApprovalKind {
     pub fn parse(self, input: &str) -> Option<PermissionDecision> {
         match self {
             Self::Action => parse_approval(input).map(|approved| {
-                if approved {
-                    PermissionDecision::AllowAlways
-                } else {
-                    PermissionDecision::Deny
-                }
+				if approved { PermissionDecision::AllowAlways } else { PermissionDecision::Deny }
             }),
             Self::Permission => match input.trim().to_ascii_lowercase().as_str() {
                 "o" | "once" => Some(PermissionDecision::AllowOnce),
@@ -165,19 +169,15 @@ impl PairingQr {
         let code = QrCode::new(url.as_bytes())?;
         Ok(Self {
             side: code.width(),
-            modules: code
-                .to_colors()
-                .into_iter()
-                .map(|color| color == QrColor::Dark)
-                .collect(),
+			modules: code.to_colors().into_iter().map(|color| color == QrColor::Dark).collect(),
         })
     }
 
     fn module(&self, row: usize, column: usize) -> bool {
-        if row < QR_QUIET_ZONE
-            || column < QR_QUIET_ZONE
-            || row >= self.side + QR_QUIET_ZONE
-            || column >= self.side + QR_QUIET_ZONE
+		if row < QR_QUIET_ZONE ||
+			column < QR_QUIET_ZONE ||
+			row >= self.side + QR_QUIET_ZONE ||
+			column >= self.side + QR_QUIET_ZONE
         {
             return false;
         }
@@ -456,12 +456,8 @@ pub fn update_activity(
     detail: Option<String>,
     state: ActivityState,
 ) {
-    let _ = send_to_active(UiEvent::Activity {
-        key: key.into(),
-        label: label.into(),
-        detail,
-        state,
-    });
+	let _ =
+		send_to_active(UiEvent::Activity { key: key.into(), label: label.into(), detail, state });
 }
 
 /// A tracing writer that redirects complete events into the active transcript.
@@ -591,11 +587,11 @@ impl SsoSummaryVisitor {
             "statement_request_id" => self.event.statement_request_id = Some(value),
             "remote_message_id" | "responding_to" => {
                 self.event.remote_message_id = Some(value);
-            }
+			},
             "response_message_id" => self.event.response_message_id = Some(value),
             "outcome" => self.event.outcome = Some(value),
             "reason" if !value.is_empty() => self.event.reason = Some(value),
-            _ => {}
+			_ => {},
         }
     }
 }
@@ -644,10 +640,7 @@ impl UiHandle {
 
     /// Update the active session and session-name completions.
     pub fn session(&self, name: impl Into<String>, available: Vec<String>) {
-        let _ = self.sender.send(UiEvent::Session {
-            name: name.into(),
-            available,
-        });
+		let _ = self.sender.send(UiEvent::Session { name: name.into(), available });
     }
 
     /// Ask the terminal owner for a serialized yes/no decision.
@@ -716,9 +709,7 @@ impl TerminalUi {
         log_filter: String,
     ) -> (Self, UiHandle) {
         let (sender, receiver) = mpsc::unbounded_channel();
-        let handle = UiHandle {
-            sender: sender.clone(),
-        };
+		let handle = UiHandle { sender: sender.clone() };
         (
             Self {
                 sender,
@@ -742,9 +733,7 @@ impl TerminalUi {
         log_filter: String,
     ) -> (Self, UiHandle) {
         let (sender, receiver) = mpsc::unbounded_channel();
-        let handle = UiHandle {
-            sender: sender.clone(),
-        };
+		let handle = UiHandle { sender: sender.clone() };
         (
             Self {
                 sender,
@@ -804,9 +793,7 @@ pub struct ActiveTerminalUi {
 impl ActiveTerminalUi {
     /// Return a handle suitable for background host work.
     pub fn handle(&self) -> UiHandle {
-        UiHandle {
-            sender: self.sender.clone(),
-        }
+		UiHandle { sender: self.sender.clone() }
     }
 
     /// Record a submitted slash command in the transcript.
@@ -847,19 +834,10 @@ impl ActiveTerminalUi {
     /// the interactive transcript.
     pub fn error_with_causes(&mut self, error: &anyhow::Error) {
         let mut causes = error.chain();
-        let title = causes
-            .next()
-            .expect("an anyhow error always contains itself")
-            .to_string();
-        let detail = causes
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        self.app.notice(
-            NoticeTone::Error,
-            title,
-            (!detail.is_empty()).then_some(detail),
-        );
+		let title = causes.next().expect("an anyhow error always contains itself").to_string();
+		let detail = causes.map(ToString::to_string).collect::<Vec<_>>().join("\n");
+		self.app
+			.notice(NoticeTone::Error, title, (!detail.is_empty()).then_some(detail));
     }
 
     /// Clear the visible transcript.
@@ -919,17 +897,13 @@ impl ActiveTerminalUi {
 
     /// Finalize activities started by the current command after an error or cancellation.
     pub fn finish_activities_since(&mut self, checkpoint: u64, state: ActivityState, detail: &str) {
-        self.app
-            .finish_running_activities_since(checkpoint, state, detail);
+		self.app.finish_running_activities_since(checkpoint, state, detail);
     }
 
     /// Yield terminal ownership to an external interactive program.
     pub fn suspend(&mut self) -> Result<()> {
         self.events = None;
-        let terminal = self
-            .terminal
-            .take()
-            .context("terminal renderer is unavailable")?;
+		let terminal = self.terminal.take().context("terminal renderer is unavailable")?;
         if let Err(error) = leave_terminal(terminal) {
             if let Ok(terminal) = enter_terminal() {
                 self.terminal = Some(terminal);
@@ -1165,18 +1139,18 @@ fn clipboard_image_error(error: arboard::Error) -> anyhow::Error {
     match error {
         arboard::Error::ContentNotAvailable => {
             anyhow::anyhow!("clipboard does not contain an image")
-        }
+		},
         arboard::Error::ConversionFailure => {
             anyhow::anyhow!("clipboard image could not be converted to RGBA pixels")
-        }
+		},
         error => anyhow::anyhow!("read image from system clipboard: {error}"),
     }
 }
 
 fn is_clipboard_image_paste(key: KeyEvent) -> bool {
-    key.kind == KeyEventKind::Press
-        && key.modifiers.contains(KeyModifiers::CONTROL)
-        && matches!(key.code, KeyCode::Char('v' | 'V'))
+	key.kind == KeyEventKind::Press &&
+		key.modifiers.contains(KeyModifiers::CONTROL) &&
+		matches!(key.code, KeyCode::Char('v' | 'V'))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1194,12 +1168,12 @@ fn pairing_image_request(event: &Event) -> Option<PairingImageRequest> {
         ),
         Event::Key(key) if is_clipboard_image_paste(*key) => Some(PairingImageRequest::Clipboard),
         Event::Key(key)
-            if key.kind == KeyEventKind::Press
-                && key.modifiers.is_empty()
-                && key.code == KeyCode::Enter =>
+			if key.kind == KeyEventKind::Press &&
+				key.modifiers.is_empty() &&
+				key.code == KeyCode::Enter =>
         {
             Some(PairingImageRequest::SubmitPath)
-        }
+		},
         _ => None,
     }
 }
@@ -1209,10 +1183,10 @@ fn pairing_image_path(text: &str) -> Option<PathBuf> {
     if text.is_empty() {
         return None;
     }
-    if let Ok(url) = reqwest::Url::parse(text)
-        && url.scheme() == "file"
-        && let Ok(path) = url.to_file_path()
-        && path.is_file()
+	if let Ok(url) = reqwest::Url::parse(text) &&
+		url.scheme() == "file" &&
+		let Ok(path) = url.to_file_path() &&
+		path.is_file()
     {
         return Some(path);
     }
@@ -1241,10 +1215,8 @@ fn pairing_image_failure(error: &anyhow::Error, pasted_text: bool) -> String {
 impl Drop for ActiveTerminalUi {
     fn drop(&mut self) {
         // Only the UI that installed the active sender may clear it.
-        if let Ok(mut active) = active_ui().lock()
-            && active
-                .as_ref()
-                .is_some_and(|installed| installed.same_channel(&self.sender))
+		if let Ok(mut active) = active_ui().lock() &&
+			active.as_ref().is_some_and(|installed| installed.same_channel(&self.sender))
         {
             *active = None;
         }
@@ -1259,13 +1231,9 @@ impl Drop for ActiveTerminalUi {
 fn enter_terminal() -> Result<Renderer> {
     enable_raw_mode().context("enable terminal raw mode")?;
     let mut stdout = io::stdout();
-    if let Err(error) = execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableBracketedPaste,
-        EnableMouseCapture,
-        Hide
-    ) {
+	if let Err(error) =
+		execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture, Hide)
+	{
         let _ = execute!(
             stdout,
             Show,
@@ -1289,7 +1257,7 @@ fn enter_terminal() -> Result<Renderer> {
             );
             let _ = disable_raw_mode();
             Err(error).context("initialize terminal renderer")
-        }
+		},
     }
 }
 
@@ -1357,14 +1325,7 @@ impl App {
         session_names: Vec<String>,
         log_filter: String,
     ) -> Self {
-        Self::with_role(
-            HostRole::Signing,
-            network,
-            product_id,
-            session,
-            session_names,
-            log_filter,
-        )
+		Self::with_role(HostRole::Signing, network, product_id, session, session_names, log_filter)
     }
 
     fn new_pairing(network: String, product_id: String, log_filter: String) -> Self {
@@ -1422,9 +1383,9 @@ impl App {
     }
 
     fn prune_transcript(&mut self) {
-        while self.entries.len() > TRANSCRIPT_LIMIT
-            || self.retained_lines > TRANSCRIPT_LINE_LIMIT
-            || self.retained_bytes > TRANSCRIPT_BYTE_LIMIT
+		while self.entries.len() > TRANSCRIPT_LIMIT ||
+			self.retained_lines > TRANSCRIPT_LINE_LIMIT ||
+			self.retained_bytes > TRANSCRIPT_BYTE_LIMIT
         {
             let Some(item) = self.entries.pop_front() else {
                 break;
@@ -1439,10 +1400,7 @@ impl App {
         let (lines, bytes) = self.entries.iter().map(feed_item_cost).fold(
             (0_usize, 0_usize),
             |(lines, bytes), (item_lines, item_bytes)| {
-                (
-                    lines.saturating_add(item_lines),
-                    bytes.saturating_add(item_bytes),
-                )
+				(lines.saturating_add(item_lines), bytes.saturating_add(item_bytes))
             },
         );
         self.retained_lines = lines;
@@ -1487,10 +1445,7 @@ impl App {
             self.prune_transcript();
             return;
         }
-        self.push(FeedItem::Stream {
-            kind,
-            lines: vec![text],
-        });
+		self.push(FeedItem::Stream { kind, lines: vec![text] });
     }
 
     fn activity(
@@ -1533,33 +1488,19 @@ impl App {
                 (before, feed_item_cost(entry))
             });
         if let Some(((before_lines, before_bytes), (after_lines, after_bytes))) = updated_cost {
-            self.retained_lines = self
-                .retained_lines
-                .saturating_sub(before_lines)
-                .saturating_add(after_lines);
-            self.retained_bytes = self
-                .retained_bytes
-                .saturating_sub(before_bytes)
-                .saturating_add(after_bytes);
+			self.retained_lines =
+				self.retained_lines.saturating_sub(before_lines).saturating_add(after_lines);
+			self.retained_bytes =
+				self.retained_bytes.saturating_sub(before_bytes).saturating_add(after_bytes);
             self.prune_transcript();
             return;
         }
         let id = self.allocate_item_id();
-        self.push(FeedItem::Activity {
-            id,
-            key,
-            label,
-            detail,
-            state,
-        });
+		self.push(FeedItem::Activity { id, key, label, detail, state });
     }
 
     fn start_activity(&mut self, key: String, label: String, detail: Option<String>) {
-        self.finish_activity(
-            &key,
-            ActivityState::Cancelled,
-            Some("Superseded".to_string()),
-        );
+		self.finish_activity(&key, ActivityState::Cancelled, Some("Superseded".to_string()));
         let id = self.allocate_item_id();
         self.push(FeedItem::Activity {
             id,
@@ -1599,12 +1540,11 @@ impl App {
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                FeedItem::Activity {
-                    id,
-                    key,
-                    state: ActivityState::Running,
-                    ..
-                } if *id >= first_id => Some(key.clone()),
+				FeedItem::Activity { id, key, state: ActivityState::Running, .. }
+					if *id >= first_id =>
+				{
+					Some(key.clone())
+				},
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -1630,19 +1570,12 @@ impl App {
     fn handle_event(&mut self, event: UiEvent) {
         match event {
             UiEvent::Log(text) => self.push(FeedItem::Log(text)),
-            UiEvent::Notice {
-                tone,
-                title,
-                detail,
-            } => self.notice(tone, title, detail),
+			UiEvent::Notice { tone, title, detail } => self.notice(tone, title, detail),
             UiEvent::Stream { kind, text } => self.stream(kind, text),
             UiEvent::System(event) => self.handle_system_event(event),
-            UiEvent::Activity {
-                key,
-                label,
-                detail,
-                state,
-            } => self.activity(key, label, detail, state),
+			UiEvent::Activity { key, label, detail, state } => {
+				self.activity(key, label, detail, state)
+			},
             UiEvent::Sso(event) => self.handle_sso_event(event),
             UiEvent::Connection(state) => self.connection = state,
             UiEvent::Session { name, available } => {
@@ -2103,15 +2036,15 @@ impl App {
                     return None;
                 }
                 self.handle_common_key(key, false)
-            }
+			},
             Event::Mouse(mouse) => {
                 self.handle_mouse_scroll(mouse.kind);
                 None
-            }
+			},
             Event::Paste(text) => {
                 self.insert_paste(&text);
                 None
-            }
+			},
             _ => None,
         }
     }
@@ -2130,17 +2063,16 @@ impl App {
                     self.handle_approval_key(key);
                     return false;
                 }
-                self.handle_common_key(key, true)
-                    .is_some_and(|value| value.is_none())
-            }
+				self.handle_common_key(key, true).is_some_and(|value| value.is_none())
+			},
             Event::Mouse(mouse) => {
                 self.handle_mouse_scroll(mouse.kind);
                 false
-            }
+			},
             Event::Paste(text) => {
                 self.insert_paste(&text);
                 false
-            }
+			},
             _ => false,
         }
     }
@@ -2168,7 +2100,7 @@ impl App {
                 } else {
                     return Some(None);
                 }
-            }
+			},
             (false, KeyCode::Char(character)) => self.editor.insert(character),
             (false, KeyCode::Backspace) => self.editor.backspace(),
             (false, KeyCode::Delete) => self.editor.delete(),
@@ -2179,13 +2111,13 @@ impl App {
                 self.editor.end();
                 self.focus_pairing_qr = false;
                 self.scroll_from_bottom = 0;
-            }
+			},
             (false, KeyCode::Up) => self.editor.up(),
             (false, KeyCode::Down) => self.editor.down(),
             (false, KeyCode::Esc) => self.editor.dismiss_completions(),
             (false, KeyCode::Tab) => {
                 self.editor.accept_completion();
-            }
+			},
             (false, KeyCode::Enter) if busy && !self.editor.text().trim().is_empty() => {
                 self.notice(
                     NoticeTone::Warning,
@@ -2194,20 +2126,19 @@ impl App {
                         "Press Ctrl-C to cancel it before submitting another command.".to_string(),
                     ),
                 );
-            }
+			},
             // Enter on an empty prompt while busy is swallowed: falling through to
             // the submit arm would accept a completion or submit mid-command.
-            (false, KeyCode::Enter) if busy => {}
+			(false, KeyCode::Enter) if busy => {},
             (false, KeyCode::Enter) => {
                 let text = self.editor.text();
                 let completions = self.editor.completions();
-                if let Some(completion) = completions.get(self.editor.completion_index())
-                    && text != completion.value
-                    && !matches!(
+				if let Some(completion) = completions.get(self.editor.completion_index()) &&
+					text != completion.value &&
+					!matches!(
                         parse_command(&text),
                         Ok(ShellCommand::Session(SessionCommand::Switch(_)))
-                    )
-                {
+					) {
                     self.editor.accept_completion();
                     return None;
                 }
@@ -2215,8 +2146,8 @@ impl App {
                 if !command.trim().is_empty() {
                     return Some(Some(command));
                 }
-            }
-            _ => {}
+			},
+			_ => {},
         }
         None
     }
@@ -2295,13 +2226,13 @@ impl App {
                 } else {
                     self.editor.insert(character);
                 }
-            }
+			},
             (false, KeyCode::Enter) => match kind.parse(&self.editor.text()) {
                 Some(answer) => self.answer_approval(answer),
                 None => {
                     self.editor.clear();
                     self.notice(NoticeTone::Error, kind.choices().to_string(), None);
-                }
+				},
             },
             (true, KeyCode::Char('c')) => self.editor.clear(),
             (false, KeyCode::Char(character)) => self.editor.insert(character),
@@ -2314,8 +2245,8 @@ impl App {
                 self.editor.end();
                 self.focus_pairing_qr = false;
                 self.scroll_from_bottom = 0;
-            }
-            _ => {}
+			},
+			_ => {},
         }
     }
 
@@ -2361,16 +2292,14 @@ impl App {
         match kind {
             MouseEventKind::ScrollUp => self.scroll_back(MOUSE_SCROLL_LINES),
             MouseEventKind::ScrollDown => self.scroll_forward(MOUSE_SCROLL_LINES),
-            _ => {}
+			_ => {},
         }
     }
 
     fn scroll_back(&mut self, lines: usize) {
         self.focus_pairing_qr = false;
-        self.scroll_from_bottom = self
-            .scroll_from_bottom
-            .saturating_add(lines)
-            .min(self.max_scroll_from_bottom);
+		self.scroll_from_bottom =
+			self.scroll_from_bottom.saturating_add(lines).min(self.max_scroll_from_bottom);
     }
 
     fn scroll_forward(&mut self, lines: usize) {
@@ -2418,13 +2347,10 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let mut transcript_lines = Vec::new();
     let mut focused_qr = None;
     for item in &app.entries {
-        let item_lines = feed_item_lines(
-            item,
-            usize::from(areas[0].width),
-            usize::from(areas[0].height),
-        );
-        if let FeedItem::PairingQr(qr) = item
-            && item_lines.len() == qr.rendered_height()
+		let item_lines =
+			feed_item_lines(item, usize::from(areas[0].width), usize::from(areas[0].height));
+		if let FeedItem::PairingQr(qr) = item &&
+			item_lines.len() == qr.rendered_height()
         {
             focused_qr = Some((transcript_lines.len(), item_lines.len()));
         }
@@ -2467,17 +2393,11 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         surface_area.height.saturating_sub(u16::from(show_footer)),
     );
     frame.render_widget(Block::default().style(surface_style), input_surface_area);
-    let content_padding = if surface_area.width >= 4 {
-        COMPOSER_HORIZONTAL_PADDING
-    } else {
-        0
-    };
+	let content_padding = if surface_area.width >= 4 { COMPOSER_HORIZONTAL_PADDING } else { 0 };
     let composer_content_area = Rect::new(
         surface_area.x.saturating_add(content_padding),
         surface_area.y,
-        surface_area
-            .width
-            .saturating_sub(content_padding.saturating_mul(2)),
+		surface_area.width.saturating_sub(content_padding.saturating_mul(2)),
         surface_area.height,
     );
 
@@ -2560,19 +2480,12 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         } else {
             (
                 viewport.text,
-                if approval {
-                    Style::default().add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                },
+			if approval { Style::default().add_modifier(Modifier::BOLD) } else { Style::default() },
             )
         };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(
-                "› ",
-                semantic_style(Color::Cyan).add_modifier(Modifier::BOLD),
-            ),
+			Span::styled("› ", semantic_style(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::styled(prompt_text, prompt_style),
         ]))
         .style(surface_style),
@@ -2625,13 +2538,12 @@ fn composer_status_line(
         .iter()
         .map(|span| text_display_width(span.content.as_ref()))
         .sum::<usize>();
-    status.spans.push(Span::raw(
-        " ".repeat(available_width - status_width - hint_width),
-    ));
-    status.spans.push(Span::styled(
-        hint,
-        Style::default().add_modifier(Modifier::DIM),
-    ));
+	status
+		.spans
+		.push(Span::raw(" ".repeat(available_width - status_width - hint_width)));
+	status
+		.spans
+		.push(Span::styled(hint, Style::default().add_modifier(Modifier::DIM)));
     status
 }
 
@@ -2708,11 +2620,7 @@ fn detected_terminal_background() -> Option<(u8, u8, u8)> {
 fn blended_surface((red, green, blue): (u8, u8, u8)) -> (u8, u8, u8) {
     let luminance =
         (u32::from(red) * 2126 + u32::from(green) * 7152 + u32::from(blue) * 722) / 10_000;
-    let (target, percent) = if luminance < 128 {
-        (255_u8, 12_u16)
-    } else {
-        (0_u8, 4_u16)
-    };
+	let (target, percent) = if luminance < 128 { (255_u8, 12_u16) } else { (0_u8, 4_u16) };
     let blend = |value: u8| {
         ((u16::from(value) * (100 - percent) + u16::from(target) * percent) / 100) as u8
     };
@@ -2749,16 +2657,12 @@ fn ansi256_to_rgb(index: u8) -> Option<(u8, u8, u8)> {
         16..=231 => {
             let index = index - 16;
             let component = |value: u8| if value == 0 { 0 } else { 55 + value * 40 };
-            Some((
-                component(index / 36),
-                component((index % 36) / 6),
-                component(index % 6),
-            ))
-        }
+			Some((component(index / 36), component((index % 36) / 6), component(index % 6)))
+		},
         232..=255 => {
             let value = 8 + (index - 232) * 10;
             Some((value, value, value))
-        }
+		},
     }
 }
 
@@ -2772,7 +2676,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
         "failed" => semantic_style(Color::Red),
         "disconnected" | "pairing" | "authenticating" | "connected" => {
             Style::default().add_modifier(Modifier::DIM)
-        }
+		},
         _ => semantic_style(Color::Green),
     };
     let role = match app.role {
@@ -2796,17 +2700,11 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
     if fixed_width < width {
         let product = ellipsize_display_width(&app.product, width - fixed_width);
         return Line::from(vec![
-            Span::styled(
-                title,
-                semantic_style(Color::Cyan).add_modifier(Modifier::BOLD),
-            ),
+			Span::styled(title, semantic_style(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::raw(user_prefix),
             Span::styled(app.connection.clone(), user_style),
             Span::raw(network_prefix),
-            Span::styled(
-                app.network.clone(),
-                Style::default().add_modifier(Modifier::DIM),
-            ),
+			Span::styled(app.network.clone(), Style::default().add_modifier(Modifier::DIM)),
             Span::raw(product_prefix),
             Span::styled(product, semantic_style(Color::Cyan)),
             Span::styled(log_suffix, Style::default().add_modifier(Modifier::DIM)),
@@ -2833,10 +2731,7 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
 
     Line::from(vec![
         Span::raw(" 👤 "),
-        Span::styled(
-            ellipsize_display_width(&app.connection, user_budget),
-            user_style,
-        ),
+		Span::styled(ellipsize_display_width(&app.connection, user_budget), user_style),
         Span::raw(network_prefix),
         Span::styled(
             ellipsize_display_width(&app.network, network_budget),
@@ -2891,10 +2786,7 @@ fn completion_window(total: usize, selected: usize, max_visible: usize) -> Range
     if total <= max_visible {
         return 0..total;
     }
-    let start = selected
-        .saturating_add(1)
-        .saturating_sub(max_visible)
-        .min(total - max_visible);
+	let start = selected.saturating_add(1).saturating_sub(max_visible).min(total - max_visible);
     start..start + max_visible
 }
 
@@ -2918,51 +2810,29 @@ fn feed_item_lines(item: &FeedItem, width: usize, height: usize) -> Vec<Line<'st
                 ))
             })
             .collect(),
-        FeedItem::Notice {
-            tone,
-            title,
-            detail,
-        } => status_lines(*tone, title, detail.as_deref()),
+		FeedItem::Notice { tone, title, detail } => status_lines(*tone, title, detail.as_deref()),
         FeedItem::PairingQr(qr) => pairing_qr_lines(qr, width, height),
         FeedItem::Command(command) => {
-            vec![
-                Line::default(),
-                command_divider_line(command, width),
-                Line::default(),
-            ]
-        }
+			vec![Line::default(), command_divider_line(command, width), Line::default()]
+		},
         FeedItem::Stream { kind, lines } => lines
             .iter()
             .enumerate()
             .map(|(index, line)| match kind {
                 StreamKind::Stdout => Line::from(format!("  {line}")),
                 StreamKind::Stderr => Line::from(vec![
-                    Span::styled(
-                        if index == 0 { "! " } else { "  " },
-                        semantic_style(Color::Red),
-                    ),
+					Span::styled(if index == 0 { "! " } else { "  " }, semantic_style(Color::Red)),
                     Span::raw(line.clone()),
                 ]),
             })
             .collect(),
-        FeedItem::Activity {
-            label,
-            detail,
-            state,
-            ..
-        } => activity_lines(*state, label, detail.as_deref()),
-        FeedItem::Approval {
-            action,
-            detail,
-            kind,
-            outcome,
-            ..
-        } => match outcome {
-            Some(PermissionDecision::AllowOnce) => status_lines(
-                NoticeTone::Success,
-                &format!("Allowed once: {action}"),
-                None,
-            ),
+		FeedItem::Activity { label, detail, state, .. } => {
+			activity_lines(*state, label, detail.as_deref())
+		},
+		FeedItem::Approval { action, detail, kind, outcome, .. } => match outcome {
+			Some(PermissionDecision::AllowOnce) => {
+				status_lines(NoticeTone::Success, &format!("Allowed once: {action}"), None)
+			},
             Some(PermissionDecision::AllowAlways) => status_lines(
                 NoticeTone::Success,
                 &if *kind == ApprovalKind::Permission {
@@ -2974,8 +2844,9 @@ fn feed_item_lines(item: &FeedItem, width: usize, height: usize) -> Vec<Line<'st
             ),
             Some(PermissionDecision::Deny) => {
                 status_lines(NoticeTone::Warning, &format!("Rejected {action}"), None)
-            }
-            None => vec![
+			},
+			None => {
+				vec![
                 Line::default(),
                 Line::from(vec![
                     Span::styled(
@@ -2998,16 +2869,10 @@ fn feed_item_lines(item: &FeedItem, width: usize, height: usize) -> Vec<Line<'st
                     format!("  {}   Esc deny", kind.choices()),
                     semantic_style(Color::Cyan),
                 )),
-            ],
+				]
         },
-        FeedItem::Request {
-            name,
-            state,
-            metadata,
-            elapsed_ms,
-            reason,
-            ..
-        } => {
+		},
+		FeedItem::Request { name, state, metadata, elapsed_ms, reason, .. } => {
             let label =
                 elapsed_ms.map_or_else(|| name.clone(), |elapsed| format!("{name} · {elapsed} ms"));
             let detail = match (reason, metadata) {
@@ -3017,7 +2882,7 @@ fn feed_item_lines(item: &FeedItem, width: usize, height: usize) -> Vec<Line<'st
                 (None, None) => None,
             };
             activity_lines(*state, &label, detail.as_deref())
-        }
+		},
     }
 }
 
@@ -3051,10 +2916,7 @@ fn pairing_qr_lines(qr: &PairingQr, width: usize, height: usize) -> Vec<Line<'st
                     (false, false) => ' ',
                 });
             }
-            Line::from(vec![
-                Span::raw(" ".repeat(QR_INDENT)),
-                Span::styled(row, qr_style),
-            ])
+			Line::from(vec![Span::raw(" ".repeat(QR_INDENT)), Span::styled(row, qr_style)])
         })
         .collect()
 }
@@ -3064,10 +2926,7 @@ fn command_divider_line(command: &str, width: usize) -> Line<'static> {
     if width == 0 {
         return Line::from(vec![
             Span::styled("─ ", divider_style),
-            Span::styled(
-                command.to_string(),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
+			Span::styled(command.to_string(), Style::default().add_modifier(Modifier::BOLD)),
         ]);
     }
     if width <= 3 {
@@ -3078,10 +2937,7 @@ fn command_divider_line(command: &str, width: usize) -> Line<'static> {
     Line::from(vec![
         Span::styled("─ ", divider_style),
         Span::styled(title, Style::default().add_modifier(Modifier::BOLD)),
-        Span::styled(
-            format!(" {}", "─".repeat(width.saturating_sub(used))),
-            divider_style,
-        ),
+		Span::styled(format!(" {}", "─".repeat(width.saturating_sub(used))), divider_style),
     ])
 }
 
@@ -3141,13 +2997,13 @@ fn activity_lines(state: ActivityState, label: &str, detail: Option<&str>) -> Ve
         ActivityState::Cancelled => NoticeTone::Warning,
     };
     let mut lines = status_lines(tone, label, detail);
-    if state == ActivityState::Running
-        && let Some(first) = lines.first_mut()
+	if state == ActivityState::Running &&
+		let Some(first) = lines.first_mut()
     {
         first.spans[0] = Span::styled("◌ ", semantic_style(Color::Cyan));
     }
-    if state == ActivityState::Cancelled
-        && let Some(first) = lines.first_mut()
+	if state == ActivityState::Cancelled &&
+		let Some(first) = lines.first_mut()
     {
         first.spans[0] = Span::styled("– ", semantic_style(Color::Yellow));
     }
@@ -3182,10 +3038,7 @@ fn input_viewport(input: &str, cursor: usize, max_width: u16) -> InputViewport {
     let cursor = cursor.min(characters.len());
     let max_width = usize::from(max_width);
     if max_width == 0 {
-        return InputViewport {
-            text: String::new(),
-            cursor_x: 0,
-        };
+		return InputViewport { text: String::new(), cursor_x: 0 };
     }
 
     let mut start = 0;
@@ -3199,11 +3052,7 @@ fn input_viewport(input: &str, cursor: usize, max_width: u16) -> InputViewport {
     }
 
     let clipped = start > 0;
-    let mut text = if clipped {
-        "…".to_string()
-    } else {
-        String::new()
-    };
+	let mut text = if clipped { "…".to_string() } else { String::new() };
     let mut width = usize::from(clipped);
     let cursor_x = width + display_width(&characters[start..cursor]);
     for character in &characters[start..] {
@@ -3214,10 +3063,7 @@ fn input_viewport(input: &str, cursor: usize, max_width: u16) -> InputViewport {
         text.push(*character);
         width += character_width;
     }
-    InputViewport {
-        text,
-        cursor_x: cursor_x.min(max_width) as u16,
-    }
+	InputViewport { text, cursor_x: cursor_x.min(max_width) as u16 }
 }
 
 fn display_width(characters: &[char]) -> usize {
@@ -3261,7 +3107,7 @@ pub fn sanitize_terminal_text(text: &str) -> String {
                             break;
                         }
                     }
-                }
+				},
                 Some(']') => {
                     characters.next();
                     while let Some(value) = characters.next() {
@@ -3273,8 +3119,8 @@ pub fn sanitize_terminal_text(text: &str) -> String {
                             break;
                         }
                     }
-                }
-                _ => {}
+				},
+				_ => {},
             }
             continue;
         }
@@ -3305,11 +3151,7 @@ fn allowance_name(target: &str) -> &'static str {
 }
 
 fn human_identifier(value: &str) -> String {
-    let value = value
-        .split("::")
-        .last()
-        .unwrap_or(value)
-        .replace(['_', '-'], " ");
+	let value = value.split("::").last().unwrap_or(value).replace(['_', '-'], " ");
     let mut characters = value.chars();
     characters.next().map_or(value.clone(), |first| {
         first.to_uppercase().collect::<String>() + characters.as_str()
@@ -3325,13 +3167,12 @@ fn sso_activity_presentation(
         ("request_received", _) => (name, ActivityState::Running),
         ("response_failed", _) => (format!("{name} failed"), ActivityState::Failed),
         ("response_sent", None | Some("ok")) => (name, ActivityState::Succeeded),
-        ("response_sent", Some("partial")) => (
-            format!("{name} partially completed"),
-            ActivityState::Warning,
-        ),
+		("response_sent", Some("partial")) => {
+			(format!("{name} partially completed"), ActivityState::Warning)
+		},
         ("response_sent", Some("not_available")) => {
             (format!("{name} unavailable"), ActivityState::Warning)
-        }
+		},
         ("response_sent", Some("rejected")) => (format!("{name} rejected"), ActivityState::Failed),
         ("response_sent", Some(_)) => (format!("{name} failed"), ActivityState::Failed),
         _ => (name, ActivityState::Running),
@@ -3345,10 +3186,7 @@ fn abbreviate(value: &str, max_chars: usize) -> String {
     }
     let side = (max_chars - 1) / 2;
     let start = value.chars().take(side).collect::<String>();
-    let end = value
-        .chars()
-        .skip(count.saturating_sub(side))
-        .collect::<String>();
+	let end = value.chars().skip(count.saturating_sub(side)).collect::<String>();
     format!("{start}…{end}")
 }
 
@@ -3374,8 +3212,7 @@ fn sso_metadata(event: &SsoEvent) -> Option<String> {
 mod tests {
     use super::*;
     use crossterm::event::MouseEvent;
-    use ratatui::backend::TestBackend;
-    use ratatui::layout::Position;
+	use ratatui::{backend::TestBackend, layout::Position};
     use tracing_subscriber::layer::SubscriberExt;
 
     /// Serializes the tests that install their own sender into the active UI
@@ -3387,9 +3224,7 @@ mod tests {
     /// while holding the slot poisons the lock; recover so the panic stays
     /// local to that test instead of cascading into the next one.
     fn lock_active_ui() -> std::sync::MutexGuard<'static, ()> {
-        ACTIVE_UI_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+		ACTIVE_UI_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn test_app() -> App {
@@ -3405,36 +3240,12 @@ mod tests {
     #[test]
     fn approval_preserves_the_decision_and_restores_command_draft() {
         for (kind, key, expected) in [
-            (
-                ApprovalKind::Action,
-                KeyCode::Char('y'),
-                PermissionDecision::AllowAlways,
-            ),
-            (
-                ApprovalKind::Permission,
-                KeyCode::Char('o'),
-                PermissionDecision::AllowOnce,
-            ),
-            (
-                ApprovalKind::Permission,
-                KeyCode::Char('a'),
-                PermissionDecision::AllowAlways,
-            ),
-            (
-                ApprovalKind::Permission,
-                KeyCode::Char('n'),
-                PermissionDecision::Deny,
-            ),
-            (
-                ApprovalKind::Permission,
-                KeyCode::Esc,
-                PermissionDecision::Deny,
-            ),
-            (
-                ApprovalKind::Permission,
-                KeyCode::Enter,
-                PermissionDecision::Deny,
-            ),
+			(ApprovalKind::Action, KeyCode::Char('y'), PermissionDecision::AllowAlways),
+			(ApprovalKind::Permission, KeyCode::Char('o'), PermissionDecision::AllowOnce),
+			(ApprovalKind::Permission, KeyCode::Char('a'), PermissionDecision::AllowAlways),
+			(ApprovalKind::Permission, KeyCode::Char('n'), PermissionDecision::Deny),
+			(ApprovalKind::Permission, KeyCode::Esc, PermissionDecision::Deny),
+			(ApprovalKind::Permission, KeyCode::Enter, PermissionDecision::Deny),
         ] {
             let mut app = test_app();
             app.editor.set_text("/script draft.ts");
@@ -3448,11 +3259,7 @@ mod tests {
             assert!(app.transcript_text().contains(kind.choices()));
             app.handle_approval_key(KeyEvent::new(key, KeyModifiers::NONE));
             assert_eq!(
-                (
-                    answer.blocking_recv(),
-                    app.editor.text(),
-                    app.pending_approval.is_none()
-                ),
+				(answer.blocking_recv(), app.editor.text(), app.pending_approval.is_none()),
                 (Ok(expected), "/script draft.ts".to_string(), true)
             );
         }
@@ -3526,15 +3333,9 @@ mod tests {
         let mut app = test_app();
         app.transcript_height = 20;
         app.max_scroll_from_bottom = 100;
-        app.handle_idle_event(Event::Key(KeyEvent::new(
-            KeyCode::Char('u'),
-            KeyModifiers::CONTROL,
-        )));
+		app.handle_idle_event(Event::Key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)));
         assert_eq!(app.scroll_from_bottom, 10);
-        app.handle_idle_event(Event::Key(KeyEvent::new(
-            KeyCode::Char('d'),
-            KeyModifiers::CONTROL,
-        )));
+		app.handle_idle_event(Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)));
         assert_eq!(app.scroll_from_bottom, 0);
     }
 
@@ -3547,29 +3348,26 @@ mod tests {
 
         assert!(footer_text(&app, false, false, 120).contains("PgUp/PgDn scroll"));
 
-        assert!(!app.handle_busy_event(Event::Key(KeyEvent::new(
-            KeyCode::PageUp,
-            KeyModifiers::NONE,
-        ))));
+		assert!(
+			!app.handle_busy_event(Event::Key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE,)))
+		);
         assert_eq!(app.scroll_from_bottom, 20);
 
-        assert!(!app.handle_busy_event(Event::Key(KeyEvent::new(
+		assert!(
+			!app.handle_busy_event(Event::Key(KeyEvent::new(
             KeyCode::PageDown,
             KeyModifiers::NONE,
-        ))));
+			)))
+		);
         assert_eq!(app.scroll_from_bottom, 0);
     }
 
     #[test]
     fn ctrl_v_is_reserved_for_clipboard_images() {
-        assert!(is_clipboard_image_paste(KeyEvent::new(
-            KeyCode::Char('v'),
-            KeyModifiers::CONTROL,
-        )));
-        assert!(!is_clipboard_image_paste(KeyEvent::new(
-            KeyCode::Char('v'),
-            KeyModifiers::NONE,
-        )));
+		assert!(is_clipboard_image_paste(
+			KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL,)
+		));
+		assert!(!is_clipboard_image_paste(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE,)));
     }
 
     #[test]
@@ -3582,10 +3380,7 @@ mod tests {
                     KeyModifiers::NONE,
                 ))),
             ),
-            (
-                Some(PairingImageRequest::Clipboard),
-                Some(PairingImageRequest::SubmitPath),
-            )
+			(Some(PairingImageRequest::Clipboard), Some(PairingImageRequest::SubmitPath),)
         );
     }
 
@@ -3776,11 +3571,7 @@ mod tests {
             None,
             ActivityState::Succeeded,
         );
-        app.start_activity(
-            "pairing".to_string(),
-            "Preparing another pairing".to_string(),
-            None,
-        );
+		app.start_activity("pairing".to_string(), "Preparing another pairing".to_string(), None);
         app.activity(
             "pairing".to_string(),
             "Paired with bob.dot".to_string(),
@@ -3812,13 +3603,9 @@ mod tests {
 
         assert!(app.transcript_text().contains("× Setting up signer"));
         assert!(app.transcript_text().contains("Stopped after an error"));
-        assert!(!app.entries.iter().any(|entry| matches!(
-            entry,
-            FeedItem::Activity {
-                state: ActivityState::Running,
-                ..
-            }
-        )));
+		assert!(!app.entries.iter().any(|entry| {
+			matches!(entry, FeedItem::Activity { state: ActivityState::Running, .. })
+		}));
     }
 
     #[test]
@@ -3870,9 +3657,11 @@ mod tests {
 
         assert!(app.retained_lines <= TRANSCRIPT_LINE_LIMIT);
         assert!(app.retained_bytes <= TRANSCRIPT_BYTE_LIMIT);
-        assert!(app.entries.iter().all(|entry| match entry {
+		assert!(app.entries.iter().all(|entry| {
+			match entry {
             FeedItem::Stream { lines, .. } => lines.len() <= STREAM_CHUNK_LINE_LIMIT,
             _ => true,
+			}
         }));
         assert!(app.transcript_text().contains("line 10499"));
         assert!(!app.transcript_text().contains("line 0\n"));
@@ -3889,16 +3678,8 @@ mod tests {
             MAX_VISIBLE_COMPLETIONS,
         );
         assert!(visible.len() <= MAX_VISIBLE_COMPLETIONS);
-        assert!(
-            completions
-                .iter()
-                .any(|completion| completion.value == "/copy")
-        );
-        assert!(
-            completions
-                .iter()
-                .any(|completion| completion.value == "/renew")
-        );
+		assert!(completions.iter().any(|completion| completion.value == "/copy"));
+		assert!(completions.iter().any(|completion| completion.value == "/renew"));
 
         assert_eq!(completion_window(12, 0, 8), 0..8);
         assert_eq!(completion_window(12, 11, 8), 4..12);
@@ -3925,14 +3706,10 @@ mod tests {
             .context("render renew completion")?;
 
         let column = |line: &str, description: &str| {
-            line.find(description)
-                .map(|index| text_display_width(&line[..index]))
+			line.find(description).map(|index| text_display_width(&line[..index]))
         };
         assert_eq!(column(pair, "paste"), column(script, "edit"));
-        assert_eq!(
-            column(script, "edit"),
-            column(renew, "renew statement-store")
-        );
+		assert_eq!(column(script, "edit"), column(renew, "renew statement-store"));
         Ok(())
     }
 
@@ -3955,10 +3732,8 @@ mod tests {
         app.editor
             .set_session_names(vec!["workbench.42".to_string(), "workbench.73".to_string()]);
         app.editor.set_text("/session workbench");
-        let submitted = app.handle_idle_event(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        )));
+		let submitted =
+			app.handle_idle_event(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
 
         assert_eq!(submitted, Some(Some("/session workbench".to_string())));
     }
@@ -4074,10 +3849,7 @@ mod tests {
     fn dropping_a_foreign_ui_leaves_the_installed_sender_in_place() {
         let _slot = lock_active_ui();
         let (installed, mut receiver) = mpsc::unbounded_channel();
-        let restore = active_ui()
-            .lock()
-            .expect("lock active test UI")
-            .replace(installed);
+		let restore = active_ui().lock().expect("lock active test UI").replace(installed);
 
         {
             let (sender, foreign_receiver) = mpsc::unbounded_channel();
@@ -4110,16 +3882,12 @@ mod tests {
     fn sso_summary_bypasses_the_adjustable_log_filter() {
         let _slot = lock_active_ui();
         let (sender, mut receiver) = mpsc::unbounded_channel();
-        let restore = active_ui()
-            .lock()
-            .expect("lock active test UI")
-            .replace(sender);
+		let restore = active_ui().lock().expect("lock active test UI").replace(sender);
         let filtered_logs = tracing_subscriber::fmt::layer()
             .with_writer(io::sink)
             .with_filter(tracing_subscriber::EnvFilter::new("error"));
-        let subscriber = tracing_subscriber::registry()
-            .with(SsoTranscriptLayer)
-            .with(filtered_logs);
+		let subscriber =
+			tracing_subscriber::registry().with(SsoTranscriptLayer).with(filtered_logs);
 
         tracing::subscriber::with_default(subscriber, || {
             tracing::event!(
@@ -4152,20 +3920,12 @@ mod tests {
 
     #[test]
     fn system_events_share_copy_between_streaming_and_tui_renderers() {
-        let event = SystemEvent::FramesListening {
-            url: "ws://127.0.0.1:9956".to_string(),
-        };
-        assert_eq!(
-            event.human(),
-            "• Listening for product frames\n  ws://127.0.0.1:9956"
-        );
+		let event = SystemEvent::FramesListening { url: "ws://127.0.0.1:9956".to_string() };
+		assert_eq!(event.human(), "• Listening for product frames\n  ws://127.0.0.1:9956");
 
         let mut app = test_app();
         app.handle_system_event(event);
-        assert_eq!(
-            app.transcript_text(),
-            "• Listening for product frames\n  ws://127.0.0.1:9956"
-        );
+		assert_eq!(app.transcript_text(), "• Listening for product frames\n  ws://127.0.0.1:9956");
     }
 
     /// §9 requires both arms of the dial report, and requires them where a
@@ -4201,9 +3961,8 @@ mod tests {
 
     #[test]
     fn streaming_pairing_event_keeps_the_actionable_link() {
-        let event = SystemEvent::PairingDeeplink {
-            url: "polkadotapp://pair?handshake=0123".to_string(),
-        };
+		let event =
+			SystemEvent::PairingDeeplink { url: "polkadotapp://pair?handshake=0123".to_string() };
 
         assert!(event.human().contains("polkadotapp://pair?handshake=0123"));
     }
@@ -4227,10 +3986,7 @@ mod tests {
     #[test]
     fn pairing_deeplink_renders_a_high_contrast_qr_without_copying_it() {
         let mut app = test_app();
-        let url = format!(
-            "polkadotapp://pair?handshake={}",
-            "0123456789abcdef".repeat(13)
-        );
+		let url = format!("polkadotapp://pair?handshake={}", "0123456789abcdef".repeat(13));
 
         app.handle_system_event(SystemEvent::PairingDeeplink { url });
 
@@ -4253,24 +4009,18 @@ mod tests {
             })
             .expect("pairing QR is retained");
         assert_eq!(qr_rows.len(), rendered_side.div_ceil(2));
-        assert!(
-            qr_rows
-                .iter()
-                .all(|row| text_display_width(&row.content) == rendered_side)
-        );
+		assert!(qr_rows.iter().all(|row| text_display_width(&row.content) == rendered_side));
         assert!(qr_rows.iter().any(|row| {
-            row.content
-                .chars()
-                .any(|character| matches!(character, '▀' | '▄' | '█'))
+			row.content.chars().any(|character| matches!(character, '▀' | '▄' | '█'))
         }));
         assert!(!qr_rows.iter().any(|row| {
             row.content
                 .chars()
                 .any(|character| ('\u{2800}'..='\u{28ff}').contains(&character))
         }));
-        assert!(qr_rows.windows(2).all(
-            |rows| text_display_width(&rows[0].content) == text_display_width(&rows[1].content)
-        ));
+		assert!(qr_rows.windows(2).all(|rows| {
+			text_display_width(&rows[0].content) == text_display_width(&rows[1].content)
+		}));
         assert_eq!(
             app.transcript_text(),
             "◌ Pairing link ready\n  Open the dedicated link shown by the pairing host.\n• Pairing link\n  <pairing link>"
@@ -4302,10 +4052,7 @@ mod tests {
 
     #[test]
     fn solid_qr_cells_preserve_every_module() {
-        let url = format!(
-            "polkadotapp://pair?handshake={}",
-            "0123456789abcdef".repeat(13)
-        );
+		let url = format!("polkadotapp://pair?handshake={}", "0123456789abcdef".repeat(13));
         let qr = PairingQr::encode(&url).expect("encode pairing QR");
         let lines = pairing_qr_lines(&qr, 120, 120);
 
@@ -4323,8 +4070,8 @@ mod tests {
                     modules,
                     [
                         qr.module(terminal_row * 2, column),
-                        terminal_row * 2 + 1 < qr.rendered_side()
-                            && qr.module(terminal_row * 2 + 1, column),
+						terminal_row * 2 + 1 < qr.rendered_side() &&
+							qr.module(terminal_row * 2 + 1, column),
                     ]
                 );
             }
@@ -4334,10 +4081,7 @@ mod tests {
     #[test]
     fn narrow_terminal_keeps_the_link_without_rendering_a_wrapped_qr() {
         let mut app = test_app();
-        let url = format!(
-            "polkadotapp://pair?handshake={}",
-            "0123456789abcdef".repeat(13)
-        );
+		let url = format!("polkadotapp://pair?handshake={}", "0123456789abcdef".repeat(13));
 
         app.handle_system_event(SystemEvent::PairingDeeplink { url });
 
@@ -4364,10 +4108,7 @@ mod tests {
     #[test]
     fn solid_pairing_qr_fits_an_eighty_column_forty_row_viewport() {
         let mut app = test_app();
-        let url = format!(
-            "polkadotapp://pair?handshake={}",
-            "0123456789abcdef".repeat(13)
-        );
+		let url = format!("polkadotapp://pair?handshake={}", "0123456789abcdef".repeat(13));
         app.handle_system_event(SystemEvent::PairingDeeplink { url });
 
         let lines = app
@@ -4392,10 +4133,7 @@ mod tests {
 
     #[test]
     fn larger_pairing_qr_reports_the_solid_renderer_dimensions() {
-        let oversized = PairingQr {
-            side: 65,
-            modules: vec![false; 65 * 65],
-        };
+		let oversized = PairingQr { side: 65, modules: vec![false; 65 * 65] };
 
         let lines = pairing_qr_lines(&oversized, 70, 36);
         let rendered = lines
@@ -4416,20 +4154,13 @@ mod tests {
     #[test]
     fn short_terminal_keeps_the_link_without_clipping_the_qr() -> Result<()> {
         let mut app = test_app();
-        let url = format!(
-            "polkadotapp://pair?handshake={}",
-            "0123456789abcdef".repeat(13)
-        );
+		let url = format!("polkadotapp://pair?handshake={}", "0123456789abcdef".repeat(13));
         app.handle_system_event(SystemEvent::PairingDeeplink { url });
 
         let (screen, _) = render_app(&mut app, 120, 12)?;
 
         assert!(screen.contains("QR code needs"));
-        assert!(
-            !screen
-                .chars()
-                .any(|character| matches!(character, '▀' | '▄' | '█'))
-        );
+		assert!(!screen.chars().any(|character| matches!(character, '▀' | '▄' | '█')));
         assert!(app.transcript_text().contains("<pairing link>"));
         Ok(())
     }
@@ -4437,10 +4168,7 @@ mod tests {
     #[test]
     fn pairing_qr_is_focused_completely_and_stays_anchored() -> Result<()> {
         let mut app = test_app();
-        let url = format!(
-            "polkadotapp://pair?handshake={}",
-            "0123456789abcdef".repeat(13)
-        );
+		let url = format!("polkadotapp://pair?handshake={}", "0123456789abcdef".repeat(13));
         app.handle_system_event(SystemEvent::PairingDeeplink { url });
         let expected_qr_rows = app
             .entries
@@ -4467,15 +4195,9 @@ mod tests {
         assert_eq!(visible_qr_rows, expected_qr_rows);
         let transcript_top = app.max_scroll_from_bottom - app.scroll_from_bottom;
 
-        app.stream(
-            StreamKind::Stdout,
-            "new output while reading the QR".to_string(),
-        );
+		app.stream(StreamKind::Stdout, "new output while reading the QR".to_string());
         terminal.draw(|frame| render(frame, &mut app))?;
-        assert_eq!(
-            app.max_scroll_from_bottom - app.scroll_from_bottom,
-            transcript_top
-        );
+		assert_eq!(app.max_scroll_from_bottom - app.scroll_from_bottom, transcript_top);
         let visible_qr_rows = terminal
             .backend()
             .buffer()
@@ -4626,31 +4348,16 @@ mod tests {
 
         let (short, short_cursor) = render_app(&mut app, 80, 4)?;
         assert_eq!(short_cursor.y, 2);
-        assert!(
-            short
-                .lines()
-                .nth(3)
-                .is_some_and(|line| line.contains("TrUAPI"))
-        );
+		assert!(short.lines().nth(3).is_some_and(|line| line.contains("TrUAPI")));
 
         let (medium, medium_cursor) = render_app(&mut app, 80, 5)?;
         assert_eq!(medium_cursor.y, 3);
-        assert!(
-            medium
-                .lines()
-                .nth(4)
-                .is_some_and(|line| line.contains("TrUAPI"))
-        );
+		assert!(medium.lines().nth(4).is_some_and(|line| line.contains("TrUAPI")));
 
         let (normal, normal_cursor) = render_app(&mut app, 80, 7)?;
         assert_eq!(normal_cursor.y, 4);
         assert_eq!(normal.lines().nth(5), Some(""));
-        assert!(
-            normal
-                .lines()
-                .nth(6)
-                .is_some_and(|line| line.contains("TrUAPI"))
-        );
+		assert!(normal.lines().nth(6).is_some_and(|line| line.contains("TrUAPI")));
         Ok(())
     }
 
@@ -4776,10 +4483,7 @@ mod tests {
                 "response_sent",
                 Some("partial")
             ),
-            (
-                "Resource allocation partially completed".to_string(),
-                ActivityState::Warning
-            )
+			("Resource allocation partially completed".to_string(), ActivityState::Warning)
         );
         assert_eq!(
             sso_activity_presentation(
@@ -4787,19 +4491,13 @@ mod tests {
                 "response_sent",
                 Some("not_available")
             ),
-            (
-                "Resource allocation unavailable".to_string(),
-                ActivityState::Warning
-            )
+			("Resource allocation unavailable".to_string(), ActivityState::Warning)
         );
     }
 
     #[test]
     fn child_output_sanitizer_removes_terminal_control_sequences() {
-        assert_eq!(
-            sanitize_terminal_text("\u{1b}[31mred\u{1b}[0m\u{1b}]0;title\u{7}"),
-            "red"
-        );
+		assert_eq!(sanitize_terminal_text("\u{1b}[31mred\u{1b}[0m\u{1b}]0;title\u{7}"), "red");
     }
 
     #[test]
@@ -4843,9 +4541,6 @@ mod tests {
     }
 
     fn line_text(line: Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
+		line.spans.iter().map(|span| span.content.as_ref()).collect()
     }
 }

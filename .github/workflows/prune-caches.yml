@@ -1,0 +1,127 @@
+name: Prune superseded caches
+
+# A Rust cache key ends in two hashes, the toolchain environment and Cargo.lock
+# with the manifests. When either moves, main saves a new entry beside the old
+# one, and GitHub keeps the old one until eviction or its seven-day expiry.
+# Until then it counts against the repository's 10 GB, and eviction takes the
+# least recently used entries, which can be ones every pull request restores.
+#
+# rust-cache restores its exact key, or else the newest entry with the same
+# prefix and environment hash. A family here is the key without either hash, so
+# an older entry of a family is either on a toolchain no main run uses any more
+# or on a lockfile a newer entry of the same toolchain supersedes. This deletes
+# them as soon as a main run has saved the new set, rather than leaving them to
+# push live entries out. A pull request branched before a toolchain change
+# computes the old environment hash, so once its entry is gone it builds cold.
+#
+# Each family has one live entry only while one job on main saves each
+# shared-key or job id, which .github/actions/rust-cache requires.
+
+# workflow_run is safe here: nothing from the triggering run is checked out or
+# executed, and the job only lists and deletes cache entries.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: ["CI", "iOS CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List what would be deleted without deleting it"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prune-caches
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Delete superseded Rust caches on main
+    # A push or a manual run on main is what saves a new set. workflow_run's
+    # branch filter also matches a pull request whose head branch is called
+    # main, which saves nothing there.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || contains(fromJSON('["push", "workflow_dispatch"]'), github.event.workflow_run.event)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Delete every entry a newer one of its family supersedes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run == true && 'true' || 'false' }}
+          EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # Newest is decided by creation time, so a run for a commit main has
+          # since moved past, such as a re-run, could have just saved an entry
+          # for the old lockfile and make it the one kept. Only the tip prunes.
+          if [ "${EVENT}" = "workflow_run" ]; then
+            tip="$(gh api "repos/${GH_REPO}/commits/main" --jq .sha)"
+            if [ "${RUN_SHA}" != "${tip}" ]; then
+              echo "Run was for ${RUN_SHA}, main is at ${tip}; leaving the caches to the run for the tip."
+              exit 0
+            fi
+          fi
+
+          # Only rust-cache's own key shape, so an entry from any other cache
+          # action is never mistaken for a member of a family.
+          gh api --paginate \
+            "repos/${GH_REPO}/actions/caches?ref=refs/heads/main&per_page=100" \
+            --jq '.actions_caches[]
+              | select(.key | test("^v0-rust-.+-[0-9a-f]{8}-[0-9a-f]{8}$"))
+              | [(.key | sub("-[0-9a-f]{8}-[0-9a-f]{8}$"; "")), .created_at, .id, .size_in_bytes, .key]
+              | @tsv' \
+            | sort -t$'\t' -k1,1 -k2,2r > "${RUNNER_TEMP}/caches.tsv"
+
+          # Sorted by family, newest first, so the first row of each family is
+          # the one kept.
+          awk -F'\t' 'seen[$1]++' "${RUNNER_TEMP}/caches.tsv" > "${RUNNER_TEMP}/stale.tsv"
+
+          freed=0
+          count=0
+          failed=0
+          echo "### Superseded Rust caches on main" >> "$GITHUB_STEP_SUMMARY"
+          if [ -s "${RUNNER_TEMP}/stale.tsv" ]; then
+            {
+              echo
+              echo "| Key | Size |"
+              echo "| --- | ---: |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          while IFS=$'\t' read -r _family _created id size key; do
+            echo "| \`${key}\` | $((size / 1000000)) MB |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "would delete ${key}"
+            elif gh api --silent -X DELETE "repos/${GH_REPO}/actions/caches/${id}" 2> "${RUNNER_TEMP}/delete.err"; then
+              echo "deleted ${key}"
+            elif grep -q 'HTTP 404' "${RUNNER_TEMP}/delete.err"; then
+              # Evicted, or deleted by a concurrent run, between the listing
+              # and here, which leaves nothing to do.
+              echo "already gone: ${key}"
+              continue
+            else
+              # Anything else, a 403 above all, means nothing is being pruned,
+              # which should not pass quietly.
+              echo "::error::could not delete ${key}: $(cat "${RUNNER_TEMP}/delete.err")"
+              failed=$((failed + 1))
+              continue
+            fi
+            freed=$((freed + size))
+            count=$((count + 1))
+          done < "${RUNNER_TEMP}/stale.tsv"
+
+          verb="Deleted"
+          [ "${DRY_RUN}" = "true" ] && verb="Would delete"
+          echo "${verb} ${count} entries, $((freed / 1000000)) MB."
+          { echo; echo "${verb} ${count} entries, $((freed / 1000000)) MB."; } >> "$GITHUB_STEP_SUMMARY"
+          [ "${failed}" -eq 0 ]

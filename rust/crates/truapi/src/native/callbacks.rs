@@ -5,15 +5,13 @@ use crate::platform::{
 };
 use truapi::v01;
 
-use crate::PairedSsoPeer;
-use crate::host_logic::worker::WorkerTransition;
+use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
 
-use super::config::ProductExecutionConfig;
-use super::errors::HostRejection;
-#[cfg(doc)]
-use crate::platform::CoreStorageKey;
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
+use super::{config::ProductExecutionConfig, errors::HostRejection};
+#[cfg(doc)]
+use crate::platform::CoreStorageKey;
 
 /// Host-private native Coinage response. It may contain bearer memo material.
 #[derive(Clone, uniffi::Record)]
@@ -42,9 +40,9 @@ pub trait NativeCoinageCallbacks: Send + Sync {
 /// the entire bridge — not just the request being served. Async callbacks
 /// (`navigate_to`, `push_notification`, `device_permission`,
 /// `remote_permission`, `feature_supported`, `confirm_user_action`, `confirm_permission`,
-/// `lookup_preimage`, and the core and local storage callbacks) are awaited by the core. Implementations hop to the
-/// main thread for any UI and may keep the future pending arbitrarily long,
-/// but must suspend rather than block the polling thread (foreign
+/// `lookup_preimage`, and the core and local storage callbacks) are awaited by the core.
+/// Implementations hop to the main thread for any UI and may keep the future pending arbitrarily
+/// long, but must suspend rather than block the polling thread (foreign
 /// implementations bridged through UniFFI suspend naturally; the rule
 /// chiefly binds Rust implementations). Dropping the returned future
 /// cancels the foreign task. The remaining sync callbacks run inline on the
@@ -72,13 +70,6 @@ pub trait HostCallbacks: Send + Sync {
     /// Cancel a notification by id.
     fn cancel_notification(&self, id: u32) -> Result<(), HostRejection>;
 
-    /// Non-consuming, ordered activation batch for this execution's trusted scope.
-    /// Independent of receiving enrollment and OS permission prompts.
-    async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection>;
-
-    /// Acknowledge exactly one sequence in the same trusted execution scope.
-    async fn acknowledge_activation(&self, sequence: u64) -> Result<(), HostRejection>;
-
     /// Prompt the user for a device-level permission (camera, mic, ...)
     /// `product` requested; the host preserves whether approval applies once
     /// or always.
@@ -102,6 +93,17 @@ pub trait HostCallbacks: Send + Sync {
         &self,
         request: v01::HostDevicePermissionRequest,
     ) -> Result<DevicePermissionStatus, HostRejection>;
+
+    /// Show (`true`) or hide (`false`) the face above this execution's
+    /// expanded card.
+    ///
+    /// Answer `NotPresented` when the execution is not under its card and
+    /// `UserMoving` while the user drags it. Return without waiting for the
+    /// animation to finish.
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
 
     /// Prompt the user for a remote permission `product` requested.
     async fn remote_permission(
@@ -151,7 +153,18 @@ pub trait HostCallbacks: Send + Sync {
     /// Queue a deferred stored-policy refresh for all core groups sharing this
     /// store and exact product, including the writer. Return immediately without
     /// waiting for or reentering a core.
+    /// For a permission authorization key, the durable deferred job also emits
+    /// `permission_authorizations_changed` on the process bridge, even when its
+    /// requester has gone away or refreshing a core fails.
     fn core_storage_changed(&self, key: Vec<u8>);
+
+    /// Enumerate encoded keys in the existing core store. Hosts must report
+    /// unavailable enumeration as an error, never as an empty permission list.
+    async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection>;
+
+    /// A canonical decision changed. Refresh permission settings and invalidate
+    /// legacy one-use decisions for this product. Called on the process bridge.
+    fn permission_authorizations_changed(&self, product_id: String);
 
     /// Open a JSON-RPC connection for a chain. Return a host-assigned
     /// connection id, or `None` when unsupported.
@@ -295,6 +308,16 @@ pub trait HostCallbacks: Send + Sync {
     /// inline.
     fn device_paired(&self, device: PairedSsoPeer);
 
+	/// Whether durable transactions are still awaiting a verdict. `true`
+	/// means keep a background task running that awaits
+	/// [`NativeTrUApiHostRuntime::run_durable_recovery`]; `false` that
+	/// nothing needs it any more. Reported on change, starting with the state
+	/// the runtime finds at launch.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with. Arrives on a core thread: hand it off rather than blocking.
+	fn durable_work_changed(&self, pending: bool);
+
     /// Read a value from the host's scoped key-value store.
     async fn local_storage_read(
         &self,
@@ -351,12 +374,26 @@ pub trait NativeChatCallbacks: Send + Sync {
     /// The returned id is [`HostChatPostMessageResponse`]'s `message_id`, which
     /// chat actions carry back for as long as the host stores this message.
     ///
+	/// `alt` is the product's one-line description of the message, for places
+	/// that list it without drawing it, such as a chat list preview.
+	///
     /// [`HostChatPostMessageResponse`]: truapi::latest::HostChatPostMessageResponse
     async fn post_message(
         &self,
         room_id: String,
         content: v01::ChatMessageContent,
+		alt: Option<String>,
     ) -> Result<String, HostRejection>;
+
+	/// Set what a product's native Chat room shows below its messages, and keep
+	/// it until the product sets another. The core has already checked the
+	/// product created the room. A room the product never set a footer on shows
+	/// the text input.
+	async fn set_room_footer(
+		&self,
+		room_id: String,
+		footer: v01::ChatRoomFooter,
+	) -> Result<(), HostRejection>;
 
     /// Return the current product-scoped native Chat room list.
     async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;
@@ -394,6 +431,25 @@ pub enum NativePocketRemoval {
     Privileged,
 }
 
+/// Native game-reminder adapter. Hosts that can hold reminders pass an
+/// implementation to [`NativeTrUApiHostRuntime::open_product_execution`];
+/// hosts without one pass `None`. Both callbacks are async, so a host may hop
+/// to its own thread to answer without blocking the core's dispatch pool.
+///
+/// The execution is bound to one product, so neither call names it. The host
+/// owns the reminder: see [`crate::platform::GamePlatform`] for what it must
+/// do with one.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeGameCallbacks: Send + Sync {
+    /// Hold `starts_at` (Unix milliseconds, UTC) as this product's reminder,
+    /// replacing any it holds.
+    async fn schedule_reminder(&self, starts_at: u64) -> Result<(), HostRejection>;
+
+    /// Drop this product's reminder. Idempotent.
+    async fn cancel_reminder(&self) -> Result<(), HostRejection>;
+}
+
 /// Native contacts adapter. A host with a contact list and a picker passes an
 /// implementation to [`NativeTrUApiHostRuntime::set_contacts_callbacks`]; one
 /// without leaves `contacts.pick` answering `Unsupported`.
@@ -422,4 +478,19 @@ pub trait NativeContactsCallbacks: Send + Sync {
         &self,
         product_id: String,
     ) -> Result<crate::platform::HostContactPick, HostRejection>;
+}
+
+/// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeScannerCallbacks: Send + Sync {
+	/// Open the viewfinder on behalf of `product_id`'s execution of
+	/// `execution_kind` and report how it ended.
+	async fn scan_code(
+		&self,
+		product_id: String,
+		execution_kind: crate::platform::ProductExecutionKind,
+		request: truapi::latest::HostScannerScanRequest,
+	) -> Result<crate::platform::HostScan, HostRejection>;
 }

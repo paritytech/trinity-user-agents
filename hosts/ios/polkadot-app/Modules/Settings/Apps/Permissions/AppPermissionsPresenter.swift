@@ -15,7 +15,7 @@ final class AppPermissionsPresenter {
     private var grantsByItemId: [String: ProductPermissionGrant] = [:]
     private var grants: [ProductPermissionGrant] = []
     private var mediaPermissions: [TrUAPIMediaPermissionSetting] = []
-    private var pendingDeletionIds: Set<String> = []
+    private var revoking = false
 
     init(
         productName: String,
@@ -43,24 +43,11 @@ extension AppPermissionsPresenter: AppPermissionsPresenterProtocol {
             interactor.setMediaPermission(setting, allowed: isOn)
             return
         }
-        guard grantsByItemId[item.id] != nil else {
-            return
-        }
-
-        if isOn {
-            pendingDeletionIds.remove(item.id)
-        } else {
-            pendingDeletionIds.insert(item.id)
-        }
-
-        refreshItems()
-    }
-
-    func viewWillDisappear() {
-        let permissionsToRevoke = pendingDeletionIds.compactMap { grantsByItemId[$0]?.permission }
-        pendingDeletionIds.removeAll()
-
-        interactor.revokeOnDisappear(permissions: permissionsToRevoke)
+        guard !isOn, !revoking, let grant = grantsByItemId[item.id] else { return }
+        revoking = true
+        view?.setRevoking(true)
+        // Keep the switch on until the runtime acknowledges the revoke.
+        interactor.revoke(permissions: [grant.permission])
     }
 }
 
@@ -71,9 +58,6 @@ extension AppPermissionsPresenter: AppPermissionsInteractorOutputProtocol {
             uniqueKeysWithValues: grants.map { ($0.identifier, $0) }
         )
 
-        let validIds = Set(grantsByItemId.keys)
-        pendingDeletionIds = pendingDeletionIds.intersection(validIds)
-
         refreshItems()
     }
 
@@ -81,14 +65,25 @@ extension AppPermissionsPresenter: AppPermissionsInteractorOutputProtocol {
         self.mediaPermissions = mediaPermissions
         refreshItems()
     }
+
+    func didFinishRevoking() {
+        revoking = false
+        view?.setRevoking(false)
+    }
+
+    func didReceive(error: Error) {
+        wireframe.present(
+            message: error.localizedDescription,
+            title: String(localized: .appPermissionsTitleFormat(productName)),
+            closeAction: String(localized: "OK"),
+            from: view
+        )
+    }
 }
 
 private extension AppPermissionsPresenter {
     func refreshItems() {
-        var items = viewModelFactory.createItems(
-            from: grants,
-            pendingDeletionIds: pendingDeletionIds
-        )
+        var items = viewModelFactory.createItems(from: grants)
         items.append(contentsOf: mediaPermissions.map { setting in
             let status: String
             switch setting.status {

@@ -18,8 +18,6 @@ import io.parity.truapi.LocalhostBridgeBootstrap
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
-import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
-import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
@@ -28,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -68,14 +67,20 @@ class MediaPermissionIntegrationTest {
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
         TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig("media.paseo", ProductExecutionKind.APP)).use { execution ->
+            runBlocking {
                 for (capability in listOf(HostDevicePermissionRequest.CAMERA, HostDevicePermissionRequest.MICROPHONE)) {
-                    execution.setPermissionAuthorizationStatus(PermissionAuthorizationRequest.Device(capability), PermissionAuthorizationStatus.AUTHORIZED)
+                    runtime.setPermissionAuthorizationStatus(
+                        "media.paseo", PermissionAuthorizationRequest.Device(capability),
+                        PermissionAuthorizationStatus.AUTHORIZED,
+                    )
                 }
-                execution.setPermissionAuthorizationStatus(
+                runtime.setPermissionAuthorizationStatus(
+                    "media.paseo",
                     PermissionAuthorizationRequest.Remote(RemotePermissionRequest(RemotePermission.WebRtc)),
                     PermissionAuthorizationStatus.AUTHORIZED,
                 )
+            }
+            runtime.openProductExecution(bridge, ProductExecutionConfig("media.paseo", ProductExecutionKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView
                 instrumentation.runOnMainSync {
@@ -118,12 +123,14 @@ class MediaPermissionIntegrationTest {
     }
 
     private class PermissionBridge : HostBridge {
+        override fun permissionAuthorizationsChanged(productId: String) = Unit
         override val storage: HostStorage = unused()
         override val coreStorage = object : HostCoreStorage {
             override val storageIdentifier = "media-isolation-${UUID.randomUUID()}"
             private val values = ConcurrentHashMap<List<Byte>, ByteArray>()
             override suspend fun read(key: ByteArray): ByteArray? = values[key.toList()]?.copyOf()
             override suspend fun write(key: ByteArray, value: ByteArray) { values[key.toList()] = value.copyOf() }
+            override suspend fun keys(): List<ByteArray> = values.keys.map { it.toByteArray() }
             override suspend fun clear(key: ByteArray) { values.remove(key.toList()) }
         }
         override suspend fun navigateTo(url: String) = Unit

@@ -23,12 +23,13 @@ import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import dagger.Lazy
+import io.parity.truapi.ChatHostBridge
+import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.parity.truapi.WebSocketChainProvider
@@ -38,6 +39,7 @@ import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
+import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
@@ -46,10 +48,13 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductThe
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ThemeVariant
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.NotificationId
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.job
@@ -57,21 +62,24 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
+import uniffi.truapi.AuthState
+import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
+import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostPushNotificationRequest
+import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.ThemeName
-import uniffi.truapi.AuthState
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.UserConfirmationReview
-import uniffi.truapi.HostNavigateToException
-import uniffi.truapi.HostRejection
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
-import uniffi.truapi.ThemeVariant as NativeThemeVariant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
+import uniffi.truapi.ThemeVariant as NativeThemeVariant
 
 /**
  * Native platform callbacks ([io.parity.truapi.HostBridge]) for one product
@@ -97,6 +105,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     @param:ApplicationContext private val context: Context,
     private val appLanguageProvider: AppLanguageProvider,
     private val mediaFactory: NativeMediaBackendFactory,
+    private val permissionRepository: Lazy<ProductPermissionRepository>,
+    private val permissionChanges: PermissionAuthorizationChanges,
+    private val productGameReminder: ProductGameReminder,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -128,6 +139,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val cachedLanguageTag = AtomicReference(Locale.getDefault().toLanguageTag())
     private var localeJob: Job? = null
     private var localeReceiver: BroadcastReceiver? = null
+    private var permissionChangesJob: Job? = null
 
     private fun currentLocale() =
         HostLocaleSubscribeItem(cachedLanguageTag.get(), ZoneId.systemDefault().id)
@@ -148,7 +160,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private fun buildBridge(
         callingProductId: ProductId,
         navigation: NavigationPolicy,
+        card: ExpandedCardFace?,
     ) = object : HostBridge {
+        // Core permission writes are reported to the process bridge, not execution bridges.
+        override fun permissionAuthorizationsChanged(productId: String) = Unit
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId.value)
 
@@ -275,6 +290,17 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             chainProvider.send(connectionId, request)
 
         override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
+
+        override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+            card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
+    }
+
+    internal fun gameBridge(callingProductId: ProductId) = object : GameHostBridge {
+        override suspend fun scheduleReminder(startsAt: ULong) =
+            productGameReminder.schedule(callingProductId, startsAt.toLong())
+                .getOrElse { throw HostRejection.Rejected(it.message.orEmpty()) }
+
+        override suspend fun cancelReminder() = productGameReminder.cancel(callingProductId)
     }
 
     /**
@@ -292,6 +318,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
         kind: ProductExecutionKind,
+        chat: ChatHostBridge? = null,
+        card: ExpandedCardFace? = null,
+        onPermissionRevoked: suspend () -> Unit,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
@@ -301,16 +330,19 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // Opening the execution is inside the Result too: it reaches the core and can be refused,
         // and the callers launch this into scopes that have no handler for a throw.
         return runCatching {
+            permissionRepository.get().getAllByProduct(productId)
             cachedChains.set(chains)
             cachedLanguageTag.set(appLanguageProvider.languageTag.first())
             val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
             val media = mediaFactory.create(productId.value)
             mediaBackend = media
             val opened = runtime.openProductExecution(
-                bridge = buildBridge(productId, navigationPolicy),
+                bridge = buildBridge(productId, navigationPolicy, card),
                 configuration = ProductExecutionConfig(productId.value, kind),
+                chat = chat,
                 pocket = pocket,
                 media = media,
+                game = gameBridge(productId),
             )
             execution = opened
             pocketBridge = pocket
@@ -325,6 +357,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             observeAppTheme()
             observeAppLocale()
             observeAppLifecycle()
+            permissionChangesJob = scope.launch(Dispatchers.Main.immediate) {
+                permissionChanges.observe(productId.value).collect {
+                    if (execution === opened && opened.isClosed()) {
+                        onPermissionRevoked()
+                        stop()
+                    }
+                }
+            }
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }
@@ -407,6 +447,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         releaseMedia()
         val opened = execution ?: return
         execution = null
+        permissionChangesJob?.cancel()
+        permissionChangesJob = null
         localeJob?.cancel()
         localeJob = null
         localeReceiver?.let(context::unregisterReceiver)

@@ -16,6 +16,8 @@ func makeChatBridgeDependencies(
         permissionGuard: MockPermissionGuard(),
         osPermissionAsker: MockOSPermissionAsker(),
         notificationScheduler: MockNotificationScheduler(),
+        gameReminders: MockGameReminderScheduler(),
+        reminderPermissionAsker: MockReminderPermissionAsker(),
         navigationRouter: MockNavigationRouter(),
         chainRegistry: MockChainRegistry(),
         chainConnections: TrUAPIChainConnectionPool(
@@ -31,6 +33,7 @@ func makeChatBridgeDependencies(
         chatFiles: UnavailableNativeChatFiles(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),
+        themeManager: MockThemeManager(),
         logger: Logger.shared
     )
 }
@@ -46,5 +49,7 @@ private struct InertHostProvider: ProductHostProviding {
     func page(navigationDestination _: String) -> ProductPage? { nil }
     func resolveHost(label _: String) async throws -> ProductHost? { nil }
     func resolveHost(rawString _: String) async throws -> ProductHost? { nil }
-    func resolvePage(destination _: String) async throws -> ProductPage? { nil }
+    func resolvePage(destination: String) async throws -> ProductPage {
+        throw ProductPageResolutionError.destinationNotOnNetwork(destination: destination, tld: "")
+    }
 }

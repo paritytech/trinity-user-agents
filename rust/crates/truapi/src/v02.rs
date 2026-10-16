@@ -5,9 +5,11 @@
 //! envelope, so this module stays a delta rather than a copy of the protocol.
 
 mod account;
+mod chat;
 mod local_storage;
 mod locale;
 
 pub use account::*;
+pub use chat::*;
 pub use local_storage::*;
 pub use locale::*;

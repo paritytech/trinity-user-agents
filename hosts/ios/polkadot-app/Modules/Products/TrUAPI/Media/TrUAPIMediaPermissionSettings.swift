@@ -77,16 +77,6 @@ struct TrUAPIMediaPermissionSettings: Sendable {
         try await execution.setPermissionAuthorizationStatus(request: setting.request, status: status)
     }
 
-    func revokeAll() async throws {
-        let requests = storedRequests().filter { display($0) != nil }
-        guard !requests.isEmpty else { return }
-        let execution = try openExecution()
-        defer { execution.close() }
-        for request in requests {
-            try await execution.setPermissionAuthorizationStatus(request: request, status: .notDetermined)
-        }
-    }
-
     private func storedRequests() -> [PermissionAuthorizationRequest] {
         TrUAPILocalStorage.createCoreLocalStorage().keys().compactMap { key in
             guard let encoded = try? Data(hexString: key),
@@ -139,5 +129,10 @@ struct TrUAPIMediaPermissionSettings: Sendable {
             request _: RemotePermission
         ) async throws -> TrUAPIPermissionDecision { .deny }
         func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool { false }
+        func permissionAuthorizationsChanged(productId: String) {
+            NotificationCenter.default.post(
+                name: .productPermissionAuthorizationsChanged, object: productId
+            )
+        }
     }
 }

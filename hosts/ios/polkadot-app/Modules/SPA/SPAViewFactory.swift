@@ -9,6 +9,7 @@ import SubstrateStorageQuery
 import ChainRegistry
 import BulletinChain
 import TrUAPIHost
+import DesignSystem
 
 enum SPAViewFactory {
     @MainActor
@@ -178,6 +179,8 @@ extension SPAViewFactory {
             return nil
         }
 
+        let gameReminders: ProductGameReminderScheduling? = RootDependencyLocator.getDependency()
+
         let runtime: TrUAPIHostRuntime
         do {
             runtime = try runtimeProvider.sharedRuntime()
@@ -190,8 +193,10 @@ extension SPAViewFactory {
             runtime: runtime,
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             notificationScheduler: ProductNotificationScheduler.shared,
+            gameReminders: gameReminders,
             ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
             hostProvider: flowState.hostProvider,
+            themeManager: ThemeManager.shared,
             logger: Logger.shared
         )
 

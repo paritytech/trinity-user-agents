@@ -103,6 +103,23 @@ class EncryptedTrUAPIStorageTest {
 
         assertArrayEquals(byteArrayOf(42), EncryptedHostCoreStorage(prefs).read(byteArrayOf(1)))
     }
+
+    @Test
+    fun `enumeration discovers preexisting core keys without a grant catalog`() = runTest {
+        prefs.putEncryptedString("truapi/core/0102", "v1:09")
+        prefs.putEncryptedString("truapi/core/0304", "v1:08")
+        prefs.putEncryptedString("truapi/product/a.dot/key", "v1:07")
+        prefs.putEncryptedString("wallet-secret", "unrelated")
+
+        assertEquals(setOf(listOf<Byte>(1, 2), listOf<Byte>(3, 4)),
+            EncryptedHostCoreStorage(prefs).keys().map { it.toList() }.toSet())
+    }
+
+    @Test
+    fun `malformed persisted core keys surface an enumeration failure`() = runTest {
+        prefs.putEncryptedString("truapi/core/not-hex", "v1:09")
+        assertTrue(runCatching { EncryptedHostCoreStorage(prefs).keys() }.isFailure)
+    }
 }
 
 private class FakeEncryptedPreferences(
@@ -117,6 +134,7 @@ private class FakeEncryptedPreferences(
     }
 
     override fun removeKeyCommitted(field: String) { values.remove(field) }
+    override fun keys(): Set<String> = values.keys
 
     /** Mirrors EncryptionUtil storing "" when it cannot encrypt. */
     fun swallowingWrites() = FakeEncryptedPreferences(dropWrites = true)

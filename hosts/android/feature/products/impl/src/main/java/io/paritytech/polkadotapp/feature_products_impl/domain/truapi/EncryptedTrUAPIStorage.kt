@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import uniffi.truapi.HostRejection
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
 import java.text.Normalizer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -78,6 +78,13 @@ class EncryptedHostCoreStorage(
     } catch (error: Exception) {
         throw HostRejection.Rejected("Private host storage unavailable")
     }
+
+    override suspend fun keys(): List<ByteArray> = preferences.keys()
+        .filter { it.startsWith("$CORE_NAMESPACE/") }
+        .map { key ->
+            decodeOrNull(key.removePrefix("$CORE_NAMESPACE/"))
+                ?: throw HostRejection.Rejected("invalid persisted core storage key")
+        }
 
     private fun qualify(key: ByteArray) = "$CORE_NAMESPACE/${key.toHex()}"
 

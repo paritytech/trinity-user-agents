@@ -18,10 +18,13 @@ use async_trait::async_trait;
 use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::Mutex as AsyncMutex;
-use truapi::latest as api;
-use truapi::platform::{
+use tokio::{
+	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+	sync::Mutex as AsyncMutex,
+};
+use truapi::{
+	latest as api,
+	platform::{
     AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
     DevicePermissionStatus, Features, HopProvider, JsonRpcConnection, LocaleHost,
     NativeChatFileExportRequest, NativeChatFilePickRequest, NativeChatFilesHost,
@@ -29,8 +32,9 @@ use truapi::platform::{
     Permissions, PreimageHost, ProductContext, ProductOperations, ProductStorage,
     ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost,
     UserConfirmation, UserConfirmationReview,
+	},
+	v01,
 };
-use truapi::v01;
 
 use crate::bulletin_lookup::{BitswapRpc, BulletinLookup};
 use crate::chain::CliChainProvider;
@@ -83,11 +87,7 @@ struct PairingStorageScope {
 
 impl CliStoragePaths {
     pub fn new(state_dir: PathBuf, product_storage_dir: PathBuf) -> Self {
-        Self {
-            state_dir,
-            product_storage_dir,
-            pairing_scope: None,
-        }
+		Self { state_dir, product_storage_dir, pairing_scope: None }
     }
 
     /// Resolve the last paired user, falling back to a role-level bootstrap
@@ -101,10 +101,7 @@ impl CliStoragePaths {
         Self {
             product_storage_dir: state_dir.join("storage"),
             state_dir,
-            pairing_scope: Some(PairingStorageScope {
-                network_dir,
-                bootstrap_dir,
-            }),
+			pairing_scope: Some(PairingStorageScope { network_dir, bootstrap_dir }),
         }
     }
 }
@@ -222,18 +219,12 @@ impl CliPlatform {
 
     /// Return the policy used by future confirmation requests.
     pub fn approval_policy(&self) -> ApprovalPolicy {
-        *self
-            .approval
-            .lock()
-            .expect("approval policy mutex poisoned")
+		*self.approval.lock().expect("approval policy mutex poisoned")
     }
 
     /// Change how future confirmation requests are decided.
     pub fn set_approval_policy(&self, approval: ApprovalPolicy) {
-        *self
-            .approval
-            .lock()
-            .expect("approval policy mutex poisoned") = approval;
+		*self.approval.lock().expect("approval policy mutex poisoned") = approval;
     }
 
     fn core_key(key: &CoreStorageKey) -> Vec<u8> {
@@ -388,10 +379,7 @@ impl CliPlatform {
     /// Current identity-owned state directory (or the pairing bootstrap before
     /// a user has connected).
     pub fn state_dir(&self) -> Option<PathBuf> {
-        self.state_dir
-            .lock()
-            .expect("state path mutex poisoned")
-            .clone()
+		self.state_dir.lock().expect("state path mutex poisoned").clone()
     }
 
     fn chat_file_scope(&self) -> Result<PathBuf, api::GenericError> {
@@ -419,11 +407,7 @@ impl CliPlatform {
         let user_id = pairing_storage_name(user_id);
         let user_id = user_id.as_ref();
         let target_state = scope.network_dir.join(format!("{user_id}_pairing_host"));
-        let current_state = self
-            .state_dir
-            .lock()
-            .expect("state path mutex poisoned")
-            .clone();
+		let current_state = self.state_dir.lock().expect("state path mutex poisoned").clone();
         if current_state.as_ref() == Some(&target_state) {
             persist_current_pairing_user(&scope.bootstrap_dir, user_id)?;
             return Ok(());
@@ -483,35 +467,22 @@ impl CliPlatform {
         let mut target_products = load_product_storage(&target_product_dir);
         if migrating_bootstrap {
             target_products.extend(
-                self.product_storage
-                    .lock()
-                    .expect("product storage mutex poisoned")
-                    .clone(),
+				self.product_storage.lock().expect("product storage mutex poisoned").clone(),
             );
             for (product_id, values) in &target_products {
                 save_product_storage(&target_product_dir, product_id, values)?;
             }
         }
         {
-            let mut core_storage_path = self
-                .core_storage_path
-                .lock()
-                .expect("core storage path mutex poisoned");
-            let mut core_storage = self
-                .core_storage
-                .lock()
-                .expect("core storage mutex poisoned");
+			let mut core_storage_path =
+				self.core_storage_path.lock().expect("core storage path mutex poisoned");
+			let mut core_storage = self.core_storage.lock().expect("core storage mutex poisoned");
             *core_storage = target_core;
             *core_storage_path = Some(target_core_path);
         }
-        *self
-            .product_storage
-            .lock()
-            .expect("product storage mutex poisoned") = target_products;
-        *self
-            .product_storage_dir
-            .lock()
-            .expect("product storage path mutex poisoned") = Some(target_product_dir);
+		*self.product_storage.lock().expect("product storage mutex poisoned") = target_products;
+		*self.product_storage_dir.lock().expect("product storage path mutex poisoned") =
+			Some(target_product_dir);
         *self.state_dir.lock().expect("state path mutex poisoned") = Some(target_state);
         persist_current_pairing_user(&scope.bootstrap_dir, user_id)
     }
@@ -550,7 +521,7 @@ impl CliPlatform {
                     );
                 }
                 PermissionDecision::AllowAlways
-            }
+			},
             ApprovalPolicy::Prompt => {
                 let _guard = self.prompt_lock.lock().await;
                 if let Some(ui) = &self.ui {
@@ -558,7 +529,7 @@ impl CliPlatform {
                 } else {
                     prompt_decision(action, &detail, kind).await
                 }
-            }
+			},
         };
         if let Some(path) = &self.approvals_log {
             record_approval(path, decision != PermissionDecision::Deny, action);
@@ -701,7 +672,8 @@ async fn prompt_decision(action: &str, detail: &str, kind: ApprovalKind) -> Perm
     let _ = stdout
         .write_all(
             format!(
-                "\n\u{2500}\u{2500} confirm: {action} \u{2500}\u{2500}\n{detail}\n{} (default: deny) ", kind.choices()
+				"\n\u{2500}\u{2500} confirm: {action} \u{2500}\u{2500}\n{detail}\n{} (default: deny) ",
+				kind.choices()
             )
             .as_bytes(),
         )
@@ -736,10 +708,7 @@ impl ProductStorage for CliPlatform {
     ) -> Result<(), v01::HostLocalStorageReadError> {
         let scoped = ProductStorageKey::decode(&key)
             .map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
-        let mut storage = self
-            .product_storage
-            .lock()
-            .expect("product storage mutex poisoned");
+		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
         let values = storage.entry(scoped.product_id().to_string()).or_default();
         values.insert(scoped.key().to_string(), value);
         self.persist_product_storage(scoped.product_id(), values)
@@ -749,10 +718,7 @@ impl ProductStorage for CliPlatform {
     async fn clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError> {
         let scoped = ProductStorageKey::decode(&key)
             .map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
-        let mut storage = self
-            .product_storage
-            .lock()
-            .expect("product storage mutex poisoned");
+		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
         let values = storage.entry(scoped.product_id().to_string()).or_default();
         values.remove(scoped.key());
         self.persist_product_storage(scoped.product_id(), values)
@@ -773,9 +739,7 @@ impl ProductStorage for CliPlatform {
                 .and_then(|values| values.get(scoped.key()))
                 .cloned()
         });
-        Box::pin(stream::once(async move {
-            Ok(api::HostLocalStorageChangeItem { value })
-        }))
+		Box::pin(stream::once(async move { Ok(api::HostLocalStorageChangeItem { value }) }))
     }
 }
 
@@ -909,16 +873,12 @@ impl Notifications for CliPlatform {
         notification: api::HostPushNotificationRequest,
     ) -> Result<api::HostPushNotificationResponse, api::GenericError> {
         let id = self.next_notification_id.fetch_add(1, Ordering::Relaxed);
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+		let now =
+			SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         if let Some(scheduled_at) = notification.scheduled_at.filter(|at| *at > now) {
             {
-                let mut pending = self
-                    .scheduled_notifications
-                    .lock()
-                    .expect("notification mutex poisoned");
+				let mut pending =
+					self.scheduled_notifications.lock().expect("notification mutex poisoned");
                 if pending.len() >= 64 {
                     return Err(api::GenericError {
                         reason: "the CLI notification schedule is full (64 pending notifications)"
@@ -939,10 +899,7 @@ impl Notifications for CliPlatform {
             let ui = self.ui.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(scheduled_at.saturating_sub(now))).await;
-                let notification = pending
-                    .lock()
-                    .expect("notification mutex poisoned")
-                    .remove(&id);
+				let notification = pending.lock().expect("notification mutex poisoned").remove(&id);
                 if let Some(notification) = notification {
                     emit_notification_event(
                         ui.as_ref(),
@@ -1026,14 +983,14 @@ impl Permissions for CliPlatform {
     ) -> Result<PermissionDecision, api::GenericError> {
         let product_id = &product.product_id;
         let detail = match &request.permission {
-            api::RemotePermission::Remote { .. } => format!(
+			api::RemotePermission::Remote { .. } => {
+				format!(
                 "{product_id} requested {request}. This covers all ports on each host, including local services."
-            ),
+				)
+			},
             _ => format!("{product_id} requested {request}."),
         };
-        Ok(self
-            .decide_with("remote permission", detail, ApprovalKind::Permission)
-            .await)
+		Ok(self.decide_with("remote permission", detail, ApprovalKind::Permission).await)
     }
 }
 
@@ -1059,23 +1016,19 @@ impl Features for CliPlatform {
 
 impl truapi::platform::AuthPresenter for CliPlatform {
     fn auth_state_changed(&self, state: AuthState) {
-        if let AuthState::Connected(info) = &state
-            && let Some(user_id) = storage_user_id(info)
-            && let Err(reason) = self.switch_pairing_user_storage(user_id)
+		if let AuthState::Connected(info) = &state &&
+			let Some(user_id) = storage_user_id(info) &&
+			let Err(reason) = self.switch_pairing_user_storage(user_id)
         {
             tracing::warn!(%reason, %user_id, "could not switch pairing-host user storage");
         }
         let (connection, event) = match &state {
-            AuthState::Pairing { deeplink } => (
-                "pairing".to_string(),
-                SystemEvent::PairingDeeplink {
-                    url: deeplink.clone(),
+			AuthState::Pairing { deeplink } => {
+				("pairing".to_string(), SystemEvent::PairingDeeplink { url: deeplink.clone() })
+			},
+			AuthState::Authenticating => {
+				("authenticating".to_string(), SystemEvent::PairingAuthenticating)
                 },
-            ),
-            AuthState::Authenticating => (
-                "authenticating".to_string(),
-                SystemEvent::PairingAuthenticating,
-            ),
             AuthState::Connected(info) => (
                 connected_user_id(info).unwrap_or("connected").to_string(),
                 SystemEvent::PairingConnected {
@@ -1084,13 +1037,10 @@ impl truapi::platform::AuthPresenter for CliPlatform {
             ),
             AuthState::Disconnected => {
                 ("disconnected".to_string(), SystemEvent::PairingDisconnected)
-            }
-            AuthState::LoginFailed { reason, .. } => (
-                "failed".to_string(),
-                SystemEvent::PairingFailed {
-                    reason: reason.clone(),
                 },
-            ),
+			AuthState::LoginFailed { reason, .. } => {
+				("failed".to_string(), SystemEvent::PairingFailed { reason: reason.clone() })
+			},
         };
         if let Some(ui) = &self.ui {
             ui.connection(connection);
@@ -1105,22 +1055,14 @@ fn connected_user_id(info: &SessionUiInfo) -> Option<&str> {
     info.full_username
         .as_deref()
         .filter(|value| !value.is_empty())
-        .or_else(|| {
-            info.lite_username
-                .as_deref()
-                .filter(|value| !value.is_empty())
-        })
+		.or_else(|| info.lite_username.as_deref().filter(|value| !value.is_empty()))
 }
 
 fn storage_user_id(info: &SessionUiInfo) -> Option<&str> {
     info.lite_username
         .as_deref()
         .filter(|value| !value.is_empty())
-        .or_else(|| {
-            info.full_username
-                .as_deref()
-                .filter(|value| !value.is_empty())
-        })
+		.or_else(|| info.full_username.as_deref().filter(|value| !value.is_empty()))
 }
 
 #[async_trait]
@@ -1130,9 +1072,7 @@ impl UserConfirmation for CliPlatform {
         review: UserConfirmationReview,
     ) -> Result<PermissionDecision, api::GenericError> {
         let (action, detail) = approval_summary(&review);
-        Ok(self
-            .decide_with(action, detail, ApprovalKind::Permission)
-            .await)
+		Ok(self.decide_with(action, detail, ApprovalKind::Permission).await)
     }
 
     async fn confirm_user_action(
@@ -1262,10 +1202,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
         ),
         UserConfirmationReview::PreimageSubmit(review) => (
             "submit preimage",
-            format!(
-                "A product requested submission of a {}-byte preimage.",
-                review.size
-            ),
+            format!("A product requested submission of a {}-byte preimage.", review.size),
         ),
         UserConfirmationReview::AccountAccess(review) => (
             "access another product account",
@@ -1377,7 +1314,7 @@ fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec
                 "could not list per-product CLI storage"
             );
             None
-        }
+		},
     };
     if let Some(entries) = entries {
         for entry in entries.filter_map(Result::ok) {
@@ -1410,7 +1347,7 @@ fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec
         Err(error) => {
             tracing::warn!(path = %path.display(), %error, "could not read product storage");
             return None;
-        }
+		},
     };
     let document = match serde_json::from_str::<ProductStorageDocument>(&text) {
         Ok(document) if document.version == 1 => document,
@@ -1421,11 +1358,11 @@ fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec
                 "unsupported product storage version"
             );
             return None;
-        }
+		},
         Err(error) => {
             tracing::warn!(path = %path.display(), %error, "could not decode product storage");
             return None;
-        }
+		},
     };
     let normalized = match ProductStorageKey::new(&document.product_id, "") {
         Ok(scoped) => scoped.product_id().to_string(),
@@ -1436,7 +1373,7 @@ fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec
                 "product storage contains an invalid product id"
             );
             return None;
-        }
+		},
     };
     let values = document
         .values
@@ -1452,7 +1389,7 @@ fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec
                 "product storage contains an invalid value"
             );
             return None;
-        }
+		},
     };
     Some((normalized, values))
 }
@@ -1463,24 +1400,15 @@ fn save_product_storage(
     values: &HashMap<String, Vec<u8>>,
 ) -> Result<(), String> {
     fs::create_dir_all(directory).map_err(|error| {
-        format!(
-            "create product storage directory {}: {error}",
-            directory.display()
-        )
+		format!("create product storage directory {}: {error}", directory.display())
     })?;
     let document = ProductStorageDocument {
         version: 1,
         product_id: product_id.to_string(),
-        values: values
-            .iter()
-            .map(|(key, value)| (key.clone(), hex::encode(value)))
-            .collect(),
+		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
     };
     let text = serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?;
-    atomic_write(
-        &product_storage_path(directory, product_id),
-        text.as_bytes(),
-    )
+	atomic_write(&product_storage_path(directory, product_id), text.as_bytes())
 }
 
 fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
@@ -1495,9 +1423,7 @@ fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
         })
         .take(48)
         .collect::<String>();
-    slug = slug
-        .trim_matches(|character| matches!(character, '.' | '-'))
-        .to_string();
+	slug = slug.trim_matches(|character| matches!(character, '.' | '-')).to_string();
     if slug.is_empty() {
         slug.push_str("product");
     }
@@ -1505,6 +1431,51 @@ fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
     directory.join(format!("{slug}--{}.json", hex::encode(digest)))
 }
 
+<<<<<<< HEAD
+=======
+/// Extension appended to a storage file that could not be read, so its contents
+/// survive for manual recovery.
+const UNREADABLE_SUFFIX: &str = "unreadable";
+
+/// Load a storage file, treating an unreadable one as empty.
+///
+/// `read_string_map` collects into a `Result`, so one undecodable value fails the
+/// whole file. Returning an empty map on that would be silently destructive: the
+/// caller's next write persists the empty map over the file, taking every intact
+/// entry with it — including keys this run never touched. So the file is first
+/// moved aside to `<name>.unreadable`, which keeps the data recoverable and makes
+/// the warning actionable.
+fn load_string_map(path: &Path) -> HashMap<String, Vec<u8>> {
+    match read_string_map(path) {
+        Ok(values) => values,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
+        Err(err) => {
+            let preserved = path.with_extension(UNREADABLE_SUFFIX);
+            match fs::rename(path, &preserved) {
+				Ok(()) => {
+					tracing::warn!(
+                    path = %path.display(),
+                    preserved = %preserved.display(),
+                    %err,
+                    "could not read CLI storage; moved it aside and started empty"
+					)
+				},
+				Err(rename_err) => {
+					tracing::warn!(
+                    path = %path.display(),
+                    %err,
+                    %rename_err,
+                    "could not read CLI storage, and could not move it aside; \
+                     the next write will overwrite it"
+					)
+				},
+            }
+            HashMap::new()
+		},
+    }
+}
+
+>>>>>>> integrate/host-channel-20261016-709
 fn read_string_map(path: &Path) -> std::io::Result<HashMap<String, Vec<u8>>> {
     let text = fs::read_to_string(path)?;
     let json = serde_json::from_str::<JsonMap>(&text)
@@ -1521,10 +1492,7 @@ fn read_string_map(path: &Path) -> std::io::Result<HashMap<String, Vec<u8>>> {
 
 fn save_string_map(path: &Path, values: &HashMap<String, Vec<u8>>) -> Result<(), String> {
     let json = JsonMap {
-        values: values
-            .iter()
-            .map(|(key, value)| (key.clone(), hex::encode(value)))
-            .collect(),
+		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
     };
     let text = serde_json::to_string_pretty(&json).map_err(|err| err.to_string())?;
     atomic_write(path, text.as_bytes())
@@ -1535,10 +1503,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .parent()
         .ok_or_else(|| format!("storage path has no parent: {}", path.display()))?;
     fs::create_dir_all(parent).map_err(|error| format!("create storage dir: {error}"))?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("storage.json");
+	let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("storage.json");
     let temporary_id = NEXT_STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
     let temporary =
         path.with_file_name(format!(".{name}.{}.{temporary_id}.tmp", std::process::id()));
@@ -1631,20 +1596,16 @@ fn persist_current_pairing_user(bootstrap_dir: &Path, user_id: &str) -> Result<(
     fs::create_dir_all(bootstrap_dir)
         .map_err(|error| format!("create {}: {error}", bootstrap_dir.display()))?;
     let path = bootstrap_dir.join(CURRENT_PAIRING_USER_FILE);
-    let temporary = bootstrap_dir.join(format!(
-        ".{CURRENT_PAIRING_USER_FILE}.{}.tmp",
-        std::process::id()
-    ));
+	let temporary =
+		bootstrap_dir.join(format!(".{CURRENT_PAIRING_USER_FILE}.{}.tmp", std::process::id()));
     fs::write(&temporary, format!("{user_id}\n"))
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     fs::rename(&temporary, &path).map_err(|error| format!("persist {}: {error}", path.display()))
 }
 
 fn save_hex_key_map(path: &Path, values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<(), String> {
-    let keyed: HashMap<String, Vec<u8>> = values
-        .iter()
-        .map(|(key, value)| (hex::encode(key), value.clone()))
-        .collect();
+	let keyed: HashMap<String, Vec<u8>> =
+		values.iter().map(|(key, value)| (hex::encode(key), value.clone())).collect();
     save_string_map(path, &keyed)
 }
 
@@ -1676,9 +1637,7 @@ mod tests {
 
         let supported = |genesis: Vec<u8>| {
             futures::executor::block_on(platform.feature_supported(
-                api::HostFeatureSupportedRequest::Chain {
-                    genesis_hash: genesis,
-                },
+				api::HostFeatureSupportedRequest::Chain { genesis_hash: genesis },
             ))
             .expect("feature_supported is wired")
             .supported
@@ -1711,9 +1670,7 @@ mod tests {
         // A malformed genesis is unsupported, never a panic or a truncated match.
         assert!(!supported(Vec::new()));
         assert!(!supported(config.people_genesis[..31].to_vec()));
-        assert!(!supported(
-            [config.people_genesis.as_slice(), &[0u8]].concat()
-        ));
+		assert!(!supported([config.people_genesis.as_slice(), &[0u8]].concat()));
         assert!(!supported(vec![0u8; 32]));
     }
 
@@ -1732,18 +1689,9 @@ mod tests {
             .collect::<Vec<_>>();
         served.sort_by_key(|(identifier, _)| format!("{identifier:?}"));
         let mut expected = vec![
-            (
-                api::ChainIdentifier::People,
-                hex::encode(config.people_genesis),
-            ),
-            (
-                api::ChainIdentifier::Bulletin,
-                hex::encode(config.bulletin_genesis),
-            ),
-            (
-                api::ChainIdentifier::AssetHub,
-                hex::encode(config.asset_hub_genesis),
-            ),
+			(api::ChainIdentifier::People, hex::encode(config.people_genesis)),
+			(api::ChainIdentifier::Bulletin, hex::encode(config.bulletin_genesis)),
+			(api::ChainIdentifier::AssetHub, hex::encode(config.asset_hub_genesis)),
         ];
         expected.sort_by_key(|(identifier, _)| format!("{identifier:?}"));
         assert_eq!(served, expected);
@@ -1803,9 +1751,7 @@ mod tests {
         );
 
         // First identity: a valid lite username.
-        platform
-            .switch_pairing_user_storage("alice")
-            .expect("switch to alice");
+		platform.switch_pairing_user_storage("alice").expect("switch to alice");
         let alice_dir = platform.state_dir().expect("alice state dir");
         assert!(
             alice_dir.ends_with("alice_pairing_host"),
@@ -1917,8 +1863,13 @@ mod tests {
         std::fs::create_dir_all(&state_dir).expect("state dir");
         let core_path = state_dir.join("core-storage.json");
 
+<<<<<<< HEAD
         let original = r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#;
         std::fs::write(&core_path, original).expect("seed core storage");
+=======
+		std::fs::write(&core_path, r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#)
+        .expect("seed core storage");
+>>>>>>> integrate/host-channel-20261016-709
 
         let platform = CliPlatform::new(
             test_network(),
@@ -1927,18 +1878,37 @@ mod tests {
             None,
         );
 
+<<<<<<< HEAD
         assert!(
             platform
                 .read_core_storage(CoreStorageKey::AuthSession)
                 .await
                 .is_err()
+=======
+        // Nothing loaded: the good entries went with the bad one.
+        assert_eq!(
+			platform.read_core_storage(CoreStorageKey::AuthSession).await.expect("read"),
+            None,
+            "AuthSession should have loaded but the file was discarded"
+>>>>>>> integrate/host-channel-20261016-709
         );
         assert!(
             platform
                 .write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
                 .await
+<<<<<<< HEAD
                 .is_err()
         );
+=======
+            .expect("write");
+
+        let after = std::fs::read_to_string(&core_path).expect("read back");
+		assert!(after.contains("42"), "the new AuthSession value should be persisted: {after}");
+
+        // The unreadable original is preserved beside it, so nothing is lost.
+        let preserved = std::fs::read_to_string(core_path.with_extension(UNREADABLE_SUFFIX))
+            .expect("the unreadable file should have been moved aside");
+>>>>>>> integrate/host-channel-20261016-709
         assert!(
             platform
                 .clear_core_storage(CoreStorageKey::AuthSession)
@@ -2078,24 +2048,18 @@ mod tests {
         let product_key =
             ProductStorageKey::new("product.dot", "theme").expect("product storage key");
 
-        platform
-            .switch_pairing_user_storage("alice.dot")
-            .expect("select alice");
+		platform.switch_pairing_user_storage("alice.dot").expect("select alice");
         futures::executor::block_on(platform.write(product_key.encode(), b"dark".to_vec()))
             .expect("write alice product value");
 
-        platform
-            .switch_pairing_user_storage("bob.dot")
-            .expect("select bob");
+		platform.switch_pairing_user_storage("bob.dot").expect("select bob");
         assert_eq!(
             futures::executor::block_on(platform.read(product_key.encode()))
                 .expect("read bob product value"),
             None
         );
 
-        platform
-            .switch_pairing_user_storage("alice.dot")
-            .expect("restore alice");
+		platform.switch_pairing_user_storage("alice.dot").expect("restore alice");
         assert_eq!(
             futures::executor::block_on(platform.read(product_key.encode()))
                 .expect("read alice product value"),
@@ -2122,9 +2086,7 @@ mod tests {
             None,
         );
 
-        platform
-            .switch_pairing_user_storage("alice.dot")
-            .expect("select alice");
+		platform.switch_pairing_user_storage("alice.dot").expect("select alice");
         futures::executor::block_on(
             platform.write_core_storage(CoreStorageKey::DeviceEncryptionKey, vec![7; 32]),
         )
@@ -2132,9 +2094,7 @@ mod tests {
 
         // Peers address this install by the matching public key, so switching
         // users must not strand them on a regenerated one.
-        platform
-            .switch_pairing_user_storage("bob.dot")
-            .expect("select bob");
+		platform.switch_pairing_user_storage("bob.dot").expect("select bob");
         assert_eq!(
             futures::executor::block_on(
                 platform.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
@@ -2149,9 +2109,7 @@ mod tests {
             platform.write_core_storage(CoreStorageKey::AutoSigningKeys, vec![1, 2, 3]),
         )
         .expect("write bob auto-signing keys");
-        platform
-            .switch_pairing_user_storage("alice.dot")
-            .expect("restore alice");
+		platform.switch_pairing_user_storage("alice.dot").expect("restore alice");
         assert_eq!(
             futures::executor::block_on(
                 platform.read_core_storage(CoreStorageKey::AutoSigningKeys)
@@ -2223,14 +2181,9 @@ mod tests {
             UserConfirmationReview::PreimageSubmit(truapi::platform::PreimageSubmitReview {
                 size: 4_096,
             });
-
         let (action, detail) = approval_summary(&review);
-
         assert_eq!(action, "submit preimage");
-        assert_eq!(
-            detail,
-            "A product requested submission of a 4096-byte preimage."
-        );
+        assert_eq!(detail, "A product requested submission of a 4096-byte preimage.");
         assert!(!detail.contains("["));
     }
 
@@ -2346,9 +2299,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(files.len(), 2);
         assert!(files.iter().all(|path| {
-            path.parent() == Some(directory.as_path())
-                && path.extension().and_then(|extension| extension.to_str()) == Some("json")
-                && !path
+			path.parent() == Some(directory.as_path()) &&
+				path.extension().and_then(|extension| extension.to_str()) == Some("json") &&
+				!path
                     .file_name()
                     .and_then(|name| name.to_str())
                     .is_some_and(|name| name.contains(':'))
@@ -2364,10 +2317,7 @@ mod tests {
         let (first_value, localhost_value) = futures::executor::block_on(async {
             (
                 restored.read(first.encode()).await.expect("read first"),
-                restored
-                    .read(localhost.encode())
-                    .await
-                    .expect("read localhost"),
+				restored.read(localhost.encode()).await.expect("read localhost"),
             )
         });
         assert_eq!(first_value, Some(b"dark".to_vec()));
@@ -2392,14 +2342,8 @@ mod tests {
         );
 
         futures::executor::block_on(async {
-            first
-                .write(key.encode(), b"one".to_vec())
-                .await
-                .expect("write first session");
-            second
-                .write(key.encode(), b"two".to_vec())
-                .await
-                .expect("write second session");
+			first.write(key.encode(), b"one".to_vec()).await.expect("write first session");
+			second.write(key.encode(), b"two".to_vec()).await.expect("write second session");
         });
 
         let first_path =

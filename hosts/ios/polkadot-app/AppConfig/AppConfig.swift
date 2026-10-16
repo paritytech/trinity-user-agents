@@ -11,14 +11,6 @@ enum AppConfig {
 
     static let timestampRefreshInterval: TimeInterval = 60
 
-    #if TESTNET_FEATURE
-        // Debug-only DIM2 game dashboard. Gated by TESTNET_FEATURE
-        // so Release builds never reach this endpoint.
-        static var gameDashboardBaseURL: URL {
-            AppConfigProvider.shared.getRemoteConfig()!.gameDashboardUrl!
-        }
-    #endif
-
     enum Assets {
         #if UNSTABLE
             static let mainAsset: ChainAssetId = SupportedAssets.dDollar
@@ -57,7 +49,7 @@ enum AppConfig {
         static var chatChain: ChainModel.Id {
             #if UNSTABLE
                 KnownChainId.previewNetPeople
-            #elseif NIGHTLY
+            #elseif NIGHTLY || SAFETYNET
                 KnownChainId.paseoPeople
             #else
                 KnownChainId.releasePeople
@@ -67,7 +59,7 @@ enum AppConfig {
         static var usernameChain: ChainModel.Id {
             #if UNSTABLE
                 KnownChainId.previewNetPeople
-            #elseif NIGHTLY
+            #elseif NIGHTLY || SAFETYNET
                 KnownChainId.paseoPeople
             #else
                 KnownChainId.releasePeople
@@ -77,7 +69,7 @@ enum AppConfig {
         static var bulletInChain: ChainModel.Id {
             #if UNSTABLE
                 KnownChainId.previewNetBulletIn
-            #elseif NIGHTLY
+            #elseif NIGHTLY || SAFETYNET
                 KnownChainId.paseoBulletIn
             #else
                 KnownChainId.releaseBulletIn
@@ -87,7 +79,7 @@ enum AppConfig {
         static var fundingChain: ChainModel.Id {
             #if UNSTABLE
                 KnownChainId.previewAH
-            #elseif NIGHTLY
+            #elseif NIGHTLY || SAFETYNET
                 KnownChainId.paseoAH
             #else
                 KnownChainId.releaseAH
@@ -97,7 +89,7 @@ enum AppConfig {
         static var swappingChain: ChainModel.Id {
             #if UNSTABLE
                 KnownChainId.previewAH
-            #elseif NIGHTLY
+            #elseif NIGHTLY || SAFETYNET
                 KnownChainId.paseoAH
             #else
                 KnownChainId.releaseAH
@@ -107,7 +99,7 @@ enum AppConfig {
         static var assethubChain: ChainModel.Id {
             #if UNSTABLE
                 KnownChainId.previewAH
-            #elseif NIGHTLY
+            #elseif NIGHTLY || SAFETYNET
                 KnownChainId.paseoAH
             #else
                 KnownChainId.releaseAH

@@ -8,6 +8,7 @@ func makeExecutionModel(
     RustRuntimeEnvironment.ExecutionModel(
         execution: execution,
         chainConnections: chainConnections,
+        osPermissionAsker: OSPermissionAsker(),
         media: NativeMediaBackend(productId: "test.dot")
     )
 }
