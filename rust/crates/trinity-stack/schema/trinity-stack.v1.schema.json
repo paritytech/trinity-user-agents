@@ -53,7 +53,7 @@
     }
   },
   "$defs": {
-    "integer": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "integer": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
     "hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
     "time": { "description": "Unix seconds", "type": "integer", "minimum": 0, "maximum": 4294967295 },
     "webUrl": { "type": "string", "pattern": "^(https|wss|http|ws)://" },
