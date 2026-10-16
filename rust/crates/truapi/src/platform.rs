@@ -29,18 +29,18 @@ pub mod mock;
 
 use truapi::{
 	latest::{
-		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection,
-		FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatListSubscribeItem,
-		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
-		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
-		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
-		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
-		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
-		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
-		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+		AllocatableResource, AuthToken, ChainIdentifier, ChatAction, ChatActions,
+		ChatCustomMessage, ChatFile, ChatMedia, ChatMessageContent, ChatReaction, ChatRichText,
+		CodeFormat, FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError,
+		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
+		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
+		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
+		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostDevicePermissionRequest,
+		HostFeatureSupportedRequest, HostFeatureSupportedResponse, HostFundingStatusSubscribeItem,
+		HostLocalStorageChangeItem, HostLocaleSubscribeItem, HostNavigateToError,
+		HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem, HostPaymentError,
+		HostPaymentRequest, HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
+		HostPaymentTopUpError, HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
 		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
 		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
 		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
@@ -3434,6 +3434,55 @@ pub trait GamePlatform: Send + Sync {
 
 	/// Drop the product's reminder. Idempotent: dropping none succeeds.
 	async fn cancel_game_reminder(&self, product: &ProductContext) -> Result<(), GenericError>;
+}
+
+/// Host-implemented keeper of the auth tokens products obtain from their own
+/// services. Optional: a host that omits it leaves AuthTokens requests
+/// answered `Unsupported`.
+///
+/// The host keeps each token in the platform's secure storage (Keychain on
+/// iOS, Keystore-backed storage on Android) under the `key` the core hands it,
+/// tagged with the `product_id` and the `account` it belongs to. The core
+/// derives `key` from the signed-in account, the product and the product's
+/// service name, so one product never reaches another's tokens and one user
+/// never reaches another's. `account` is an opaque tag of the signed-in
+/// account, so the host can count one account's tokens without learning the
+/// account. Both are 64 lowercase hex characters and need no escaping. The
+/// host keeps tokens across app restarts. The core clears them whenever a
+/// session ends or the signed-in account changes, and when a product's state
+/// is cleared. The host neither authenticates nor refreshes anything: it
+/// stores what it is given. The core requires a session, checks the service
+/// id, size and count limits in [`crate::host_logic::auth_tokens`] before
+/// calling here, and makes one store call at a time, so a host needs no lock
+/// of its own to keep the count right.
+#[async_trait]
+pub trait AuthTokenPlatform: Send + Sync {
+	/// Keep `token` under `key` for `product_id` and `account`, replacing any
+	/// kept under it.
+	async fn store_auth_token(
+		&self,
+		product_id: &str,
+		account: &str,
+		key: &str,
+		token: AuthToken,
+	) -> Result<(), GenericError>;
+
+	/// The token kept under `key`, or `None`.
+	async fn auth_token(
+		&self,
+		product_id: &str,
+		key: &str,
+	) -> Result<Option<AuthToken>, GenericError>;
+
+	/// Drop the token kept under `key`. Idempotent: dropping none succeeds.
+	async fn remove_auth_token(&self, product_id: &str, key: &str) -> Result<(), GenericError>;
+
+	/// How many tokens are kept for `product_id` under `account`.
+	async fn auth_token_count(&self, product_id: &str, account: &str) -> Result<u32, GenericError>;
+
+	/// Drop every token kept for `product_id`, or every token at all when
+	/// `product_id` is `None`.
+	async fn clear_auth_tokens(&self, product_id: Option<&str>) -> Result<(), GenericError>;
 }
 
 /// What the operating system currently says about a device capability.

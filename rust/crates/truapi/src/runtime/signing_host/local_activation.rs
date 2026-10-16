@@ -57,6 +57,13 @@ impl LocalActivation for SigningHost {
 			full_username: None,
 		};
 		let ui_info = connected_session_ui_info(&session);
+		let switched = self
+			.session_state
+			.current()
+			.is_some_and(|previous| previous.public_key != public_key);
+		if switched {
+			self.services.drop_auth_tokens_after_session().await;
+		}
 		self.install_local_session(secret, session);
 		self.auth_state.connected(&ui_info);
 		Ok(())

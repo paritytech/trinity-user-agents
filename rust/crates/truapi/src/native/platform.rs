@@ -20,9 +20,10 @@ use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTran
 
 use super::{
 	callbacks::{
-		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-		NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+		HostCallbacks, NativeAuthTokenCallbacks, NativeBalanceCallbacks, NativeChatCallbacks,
+		NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks,
+		NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks,
+		NativeTopUpCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -678,6 +679,69 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
 		_product: &ProductContext,
 	) -> Result<(), v01::GenericError> {
 		self.game.cancel_reminder().await.map_err(v01::GenericError::from)
+	}
+}
+
+/// [`crate::platform::AuthTokenPlatform`] served by host-provided
+/// [`NativeAuthTokenCallbacks`].
+pub struct AuthTokenCallbackPlatform {
+	/// Host secure token storage.
+	pub tokens: Arc<dyn NativeAuthTokenCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::AuthTokenPlatform for AuthTokenCallbackPlatform {
+	async fn store_auth_token(
+		&self,
+		product_id: &str,
+		account: &str,
+		key: &str,
+		token: v01::AuthToken,
+	) -> Result<(), v01::GenericError> {
+		self.tokens
+			.store_auth_token(product_id.to_string(), account.to_string(), key.to_string(), token)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn auth_token(
+		&self,
+		product_id: &str,
+		key: &str,
+	) -> Result<Option<v01::AuthToken>, v01::GenericError> {
+		self.tokens
+			.auth_token(product_id.to_string(), key.to_string())
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn remove_auth_token(
+		&self,
+		product_id: &str,
+		key: &str,
+	) -> Result<(), v01::GenericError> {
+		self.tokens
+			.remove_auth_token(product_id.to_string(), key.to_string())
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn auth_token_count(
+		&self,
+		product_id: &str,
+		account: &str,
+	) -> Result<u32, v01::GenericError> {
+		self.tokens
+			.auth_token_count(product_id.to_string(), account.to_string())
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn clear_auth_tokens(&self, product_id: Option<&str>) -> Result<(), v01::GenericError> {
+		self.tokens
+			.clear_auth_tokens(product_id.map(str::to_string))
+			.await
+			.map_err(v01::GenericError::from)
 	}
 }
 

@@ -329,6 +329,50 @@ pub trait NativeGameCallbacks: Send + Sync {
 	async fn cancel_reminder(&self) -> Result<(), HostRejection>;
 }
 
+/// Native auth token keeper. A host with secure storage passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_auth_token_callbacks`]; one
+/// without leaves every AuthTokens call answering `Unsupported`.
+///
+/// The host keeps each token in Keychain or Keystore under the opaque `key`
+/// the core hands it, tagged with `product_id` and the opaque `account` so it
+/// can count one account's tokens for a product and clear one product's. See
+/// [`crate::platform::AuthTokenPlatform`] for the full contract.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeAuthTokenCallbacks: Send + Sync {
+	/// Keep `token` under `key` for `product_id` and `account`, replacing any
+	/// kept under it.
+	async fn store_auth_token(
+		&self,
+		product_id: String,
+		account: String,
+		key: String,
+		token: v01::AuthToken,
+	) -> Result<(), HostRejection>;
+
+	/// The token kept under `key`, or `None`.
+	async fn auth_token(
+		&self,
+		product_id: String,
+		key: String,
+	) -> Result<Option<v01::AuthToken>, HostRejection>;
+
+	/// Drop the token kept under `key`. Idempotent.
+	async fn remove_auth_token(&self, product_id: String, key: String)
+	-> Result<(), HostRejection>;
+
+	/// How many tokens are kept for `product_id` under `account`.
+	async fn auth_token_count(
+		&self,
+		product_id: String,
+		account: String,
+	) -> Result<u32, HostRejection>;
+
+	/// Drop every token kept for `product_id`, or every token when it is
+	/// `None`.
+	async fn clear_auth_tokens(&self, product_id: Option<String>) -> Result<(), HostRejection>;
+}
+
 /// Native contacts adapter. A host with a contact list and a picker passes an
 /// implementation to [`NativeTrUApiHostRuntime::set_contacts_callbacks`]; one
 /// without leaves `contacts.pick` answering `Unsupported`.

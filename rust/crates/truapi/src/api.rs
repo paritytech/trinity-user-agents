@@ -32,8 +32,10 @@
 //! | 23 | reserved: expanded card face |
 //! | 24 | `FundingProvider` |
 //! | 25 | `Scanner` |
+//! | 26 | `AuthTokens` |
 
 pub mod account;
+pub mod auth_tokens;
 pub mod chain;
 pub mod chat;
 pub mod coin_payment;
@@ -60,6 +62,7 @@ pub mod theme;
 pub mod worker;
 
 pub use account::Account;
+pub use auth_tokens::AuthTokens;
 pub use chain::Chain;
 pub use chat::Chat;
 pub use coin_payment::CoinPayment;
@@ -88,6 +91,7 @@ pub use worker::Worker;
 /// The unified TrUAPI contract.
 pub trait TrUApi:
 	Account
+	+ AuthTokens
 	+ Chain
 	+ Chat
 	+ CoinPayment
@@ -119,6 +123,7 @@ pub trait TrUApi:
 
 impl<T> TrUApi for T where
 	T: Account
+		+ AuthTokens
 		+ Chain
 		+ Chat
 		+ CoinPayment

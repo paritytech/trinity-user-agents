@@ -36,9 +36,10 @@ use crate::{
 use super::parse_pairing_deeplink;
 use super::{
 	callbacks::{
-		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		HostCallbacks, NativeAuthTokenCallbacks, NativeBalanceCallbacks, NativeChatCallbacks,
+		NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks,
+		NativePaymentCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
+		NativeTopUpCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -48,9 +49,10 @@ use super::{
 	events::NativeEventBus,
 	executor::shared_native_executor,
 	platform::{
-		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
-		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
-		PocketCallbackPlatform, ScannerCallbackPlatform, TopUpCallbackPlatform,
+		AuthTokenCallbackPlatform, BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform,
+		ContactsCallbackPlatform, FundingCallbackPlatform, GameCallbackPlatform,
+		PaymentCallbackPlatform, PocketCallbackPlatform, ScannerCallbackPlatform,
+		TopUpCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -518,6 +520,18 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_contacts_callbacks(&self, callbacks: Arc<dyn NativeContactsCallbacks>) -> bool {
 		self.runtime
 			.set_contacts_platform(Arc::new(ContactsCallbackPlatform { contacts: callbacks }))
+	}
+
+	/// Install the host's auth token keeper, which holds the tokens products
+	/// obtain from their own services in secure storage.
+	///
+	/// Set-once, so tokens cannot change hands under a running product.
+	/// Answers whether this call installed it. Call it before opening any
+	/// product execution; a runtime without one answers every AuthTokens call
+	/// with `Unsupported`.
+	pub fn set_auth_token_callbacks(&self, callbacks: Arc<dyn NativeAuthTokenCallbacks>) -> bool {
+		self.runtime
+			.set_auth_token_platform(Arc::new(AuthTokenCallbackPlatform { tokens: callbacks }))
 	}
 
 	/// Install the host's scanner before opening any product execution.

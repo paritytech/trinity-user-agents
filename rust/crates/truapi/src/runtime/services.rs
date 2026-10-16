@@ -18,9 +18,9 @@ use crate::{
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	host_logic::worker::WorkerLedger,
 	platform::{
-		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
-		PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform,
-		TopUpPlatform,
+		AuthTokenPlatform, BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo,
+		JsonRpcConnection, PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform,
+		ScannerPlatform, TopUpPlatform,
 	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
@@ -77,6 +77,12 @@ pub struct RuntimeServices {
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn GamePlatform>>,
+	/// Host keeper of product auth tokens, installed once at startup by a host
+	/// with secure storage. Unset leaves every AuthTokens call `Unsupported`.
+	auth_token_platform: OnceLock<Arc<dyn AuthTokenPlatform>>,
+	/// Held across an auth token store's count check and its write, so two
+	/// stores cannot both pass the per-product cap.
+	auth_token_writes: futures::lock::Mutex<()>,
 	/// Host scanner, installed once at startup by a host that can draw a
 	/// viewfinder. Unset leaves every product scan `Unsupported`.
 	scanner_platform: OnceLock<Arc<dyn ScannerPlatform>>,
@@ -192,6 +198,8 @@ impl RuntimeServices {
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
 			game_platform: OnceLock::new(),
+			auth_token_platform: OnceLock::new(),
+			auth_token_writes: futures::lock::Mutex::new(()),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),
 			device_pairing_observer: OnceLock::new(),
@@ -319,6 +327,46 @@ impl RuntimeServices {
 	/// The host's Game adapter, when one is installed.
 	pub fn game_platform(&self) -> Option<Arc<dyn GamePlatform>> {
 		self.game_platform.get().cloned()
+	}
+
+	/// Install the host's auth token keeper.
+	///
+	/// Set-once, like every optional capability, so tokens cannot change hands
+	/// under a running product. Returns whether this call installed it.
+	pub fn install_auth_token_platform(&self, platform: Arc<dyn AuthTokenPlatform>) -> bool {
+		self.auth_token_platform.set(platform).is_ok()
+	}
+
+	/// The host's auth token keeper, when one is installed.
+	pub fn auth_token_platform(&self) -> Option<Arc<dyn AuthTokenPlatform>> {
+		self.auth_token_platform.get().cloned()
+	}
+
+	/// Drop every product's auth tokens once a session has ended or the
+	/// signed-in account changed. The session is already gone, so a failure is
+	/// only logged: the tokens are keyed to the account, and no other account
+	/// can read them either way.
+	pub async fn drop_auth_tokens_after_session(&self) {
+		if let Err(error) = self.clear_auth_tokens(None).await {
+			tracing::warn!(reason = %error.reason, "auth tokens were not dropped when the session ended");
+		}
+	}
+
+	/// The lock an auth token store holds from its count check to its write.
+	pub async fn auth_token_writes(&self) -> futures::lock::MutexGuard<'_, ()> {
+		self.auth_token_writes.lock().await
+	}
+
+	/// Drop the auth tokens the host keeps for `product_id`, or every
+	/// product's when it is `None`. Nothing to drop without a keeper.
+	pub async fn clear_auth_tokens(
+		&self,
+		product_id: Option<&str>,
+	) -> Result<(), latest::GenericError> {
+		match self.auth_token_platform() {
+			Some(platform) => platform.clear_auth_tokens(product_id).await,
+			None => Ok(()),
+		}
 	}
 
 	/// Install the host's contacts adapter. Answers whether this call was the

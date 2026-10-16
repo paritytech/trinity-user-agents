@@ -19,11 +19,11 @@ use std::{
 };
 
 use crate::platform::{
-	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, FundingPlatform,
-	GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ScannerPlatform, SigningHostConfig, TopUpPlatform,
-	normalize_product_identifier,
+	AuthTokenPlatform, BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin,
+	ExpandedCardHost, FundingPlatform, GamePlatform, PairingHostAdmin, PairingHostConfig,
+	PaymentPlatform, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+	PermissionStatusHost, Platform, PocketPlatform, ProductContext, ScannerPlatform,
+	SigningHostConfig, TopUpPlatform, normalize_product_identifier,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -326,6 +326,17 @@ impl PairingHostRuntime {
 		self.services.install_game_platform(platform)
 	}
 
+	/// Install the host's [`AuthTokenPlatform`], which keeps the tokens
+	/// products obtain from their own services.
+	///
+	/// Set-once, so tokens cannot change hands under a running product.
+	/// Returns whether this call installed it. Call it before serving any
+	/// product runtime.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_auth_token_platform"))]
+	pub fn set_auth_token_platform(&self, platform: Arc<dyn AuthTokenPlatform>) -> bool {
+		self.services.install_auth_token_platform(platform)
+	}
+
 	/// Install the host's [`TopUpPlatform`], which claims funds into the
 	/// balance. Set-once. Returns whether this call installed it.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_top_up_platform"))]
@@ -402,32 +413,36 @@ impl PairingHostRuntime {
 		)
 	}
 
-	/// Disconnect the active account-authority session.
+	/// Disconnect the active account-authority session and drop the auth
+	/// tokens products kept for it.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
 		self.pairing_host.disconnect().await;
 	}
 
-	/// Log out and discard the old pairing keypair.
+	/// Log out, drop the auth tokens products kept, and discard the old
+	/// pairing keypair.
 	///
 	/// The next product login request generates a fresh pairing identity and
 	/// presents a new deeplink suitable for another signing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
 	pub async fn logout(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.logout_and_reset_pairing()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		let reset = self.pairing_host.logout_and_reset_pairing().await;
+		let cleared = self.services.clear_auth_tokens(None).await;
+		reset.map_err(|reason| v01::GenericError { reason })?;
+		cleared.map_err(|error| v01::GenericError {
+			reason: format!("logged out, but auth tokens were not dropped: {}", error.reason),
+		})
 	}
 
-	/// Clear one product's capability state while preserving the active
-	/// session and unrelated products.
+	/// Clear one product's capability state, including the auth tokens it
+	/// kept, while preserving the active session and unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.clear_product_state(product_id)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		let cleared = self.pairing_host.clear_product_state(product_id).await;
+		let tokens = clear_product_auth_tokens(&self.services, product_id).await;
+		cleared.map_err(|reason| v01::GenericError { reason })?;
+		tokens
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -502,8 +517,8 @@ impl PairingHostRuntime {
 		product_subtree_public_key(self.pairing_host.as_ref(), product_id, timeout_ms).await
 	}
 
-	/// Clear the canonical paired session and all capability caches/storage
-	/// without sending a peer-disconnect notice.
+	/// Clear the canonical paired session, all capability caches/storage and
+	/// the auth tokens products kept, without sending a peer-disconnect notice.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
 	pub async fn reset_session_state(&self) {
 		self.pairing_host.reset_session_state().await;
@@ -1057,6 +1072,17 @@ impl SigningHostRuntime {
 		self.services.install_game_platform(platform)
 	}
 
+	/// Install the host's [`AuthTokenPlatform`], which keeps the tokens
+	/// products obtain from their own services.
+	///
+	/// Set-once, so tokens cannot change hands under a running product.
+	/// Returns whether this call installed it. Call it before serving any
+	/// product runtime.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_auth_token_platform"))]
+	pub fn set_auth_token_platform(&self, platform: Arc<dyn AuthTokenPlatform>) -> bool {
+		self.services.install_auth_token_platform(platform)
+	}
+
 	/// Install the host's [`TopUpPlatform`], which claims funds into the
 	/// balance. Set-once. Returns whether this call installed it.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_top_up_platform"))]
@@ -1232,19 +1258,21 @@ impl SigningHostRuntime {
 		self.signing_host.session_state().current().is_some()
 	}
 
-	/// Disconnect the active account-authority session.
+	/// Disconnect the active account-authority session and drop the auth
+	/// tokens products kept for it.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
 		self.signing_host.disconnect().await;
 	}
 
-	/// Revoke one product's grants from the current local activation while
-	/// preserving unrelated products.
+	/// Revoke one product's grants from the current local activation, and drop
+	/// the auth tokens it kept, while preserving unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-		self.signing_host
-			.clear_product_state(product_id)
-			.map_err(|error| v01::GenericError { reason: error.to_string() })
+		let cleared = self.signing_host.clear_product_state(product_id);
+		let tokens = clear_product_auth_tokens(&self.services, product_id).await;
+		cleared.map_err(|error| v01::GenericError { reason: error.to_string() })?;
+		tokens
 	}
 
 	/// Read a stored permission authorization status for a product without prompting.
@@ -1444,6 +1472,21 @@ impl SigningHostRuntime {
 			},
 		}
 	}
+}
+
+/// Drop the auth tokens `product_id` kept, for a product whose state is being
+/// cleared.
+async fn clear_product_auth_tokens(
+	services: &RuntimeServices,
+	product_id: &str,
+) -> Result<(), v01::GenericError> {
+	let product = product_context(product_id)?;
+	services
+		.clear_auth_tokens(Some(&product.product_id))
+		.await
+		.map_err(|error| v01::GenericError {
+			reason: format!("auth tokens were not dropped: {}", error.reason),
+		})
 }
 
 /// The durable transaction engine over `db`, reading and submitting through
@@ -2638,6 +2681,102 @@ mod tests {
 				)
 			);
 		});
+	}
+
+	/// A token keeper that only records which clears the core asked for.
+	#[derive(Default)]
+	struct ClearRecorder {
+		clears: Mutex<Vec<Option<String>>>,
+	}
+
+	#[async_trait::async_trait]
+	impl AuthTokenPlatform for ClearRecorder {
+		async fn store_auth_token(
+			&self,
+			_product_id: &str,
+			_account: &str,
+			_key: &str,
+			_token: truapi::latest::AuthToken,
+		) -> Result<(), v01::GenericError> {
+			Ok(())
+		}
+
+		async fn auth_token(
+			&self,
+			_product_id: &str,
+			_key: &str,
+		) -> Result<Option<truapi::latest::AuthToken>, v01::GenericError> {
+			Ok(None)
+		}
+
+		async fn remove_auth_token(
+			&self,
+			_product_id: &str,
+			_key: &str,
+		) -> Result<(), v01::GenericError> {
+			Ok(())
+		}
+
+		async fn auth_token_count(
+			&self,
+			_product_id: &str,
+			_account: &str,
+		) -> Result<u32, v01::GenericError> {
+			Ok(0)
+		}
+
+		async fn clear_auth_tokens(
+			&self,
+			product_id: Option<&str>,
+		) -> Result<(), v01::GenericError> {
+			self.clears
+				.lock()
+				.expect("clears mutex poisoned")
+				.push(product_id.map(str::to_string));
+			Ok(())
+		}
+	}
+
+	// Tokens are credentials of the signed-in user, so every way a session
+	// ends drops all of them, and clearing one product's state drops that
+	// product's alone. The host does not have to remember to wipe them.
+	#[test]
+	fn the_core_drops_auth_tokens_when_a_session_or_product_is_cleared() {
+		let platform = Arc::new(StubPlatform::default());
+		let (host_config, _) = runtime_config("myapp.dot");
+		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
+		let keeper = Arc::new(ClearRecorder::default());
+		assert!(runtime.set_auth_token_platform(keeper.clone()));
+		let clears = || {
+			keeper
+				.clears
+				.lock()
+				.expect("clears mutex poisoned")
+				.drain(..)
+				.collect::<Vec<_>>()
+		};
+
+		futures::executor::block_on(runtime.clear_product_state("myapp.dot"))
+			.expect("product state cleared");
+		assert_eq!(clears(), vec![Some("myapp.dot".to_string())], "clear_product_state");
+
+		futures::executor::block_on(runtime.disconnect_session());
+		assert_eq!(clears(), vec![None], "disconnect_session");
+
+		futures::executor::block_on(runtime.reset_session_state());
+		assert_eq!(clears(), vec![None], "reset_session_state");
+
+		let admin = runtime.product_admin(product_context("myapp.dot").expect("product id"));
+		futures::executor::block_on(admin.disconnect_session());
+		assert_eq!(clears(), vec![None], "HostAdmin::disconnect_session");
+
+		install_session_after_boot(&runtime, &platform, crate::test_support::sso_session_info());
+		futures::executor::block_on(runtime.pairing_host.peer_disconnected_for_test());
+		assert_eq!(clears(), vec![None], "the wallet ending the session");
+
+		// Logout also reports a failed clear, so it clears once more itself.
+		futures::executor::block_on(runtime.logout()).expect("logged out");
+		assert_eq!(clears(), vec![None, None], "logout");
 	}
 
 	#[test]

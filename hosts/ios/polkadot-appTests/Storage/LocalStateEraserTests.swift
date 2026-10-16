@@ -6,9 +6,10 @@ import Testing
 
 struct LocalStateEraserTests {
     private let settings = InMemorySettingsManager()
+    private let authTokens = InMemoryAuthTokenKeychain()
 
-    @Test("the previous wallet's identity and progress go, device preferences stay")
-    func erasesWalletStateOnly() {
+    @Test("the previous wallet's identity, progress and auth tokens go, device preferences stay")
+    func erasesWalletStateOnly() throws {
         settings.set(value: "alice", for: SettingsKey.username.rawValue)
         settings.set(value: true, for: SettingsKey.usernameClaimed.rawValue)
         settings.set(value: "session", for: SettingsKey.backendSessionId.rawValue)
@@ -17,7 +18,9 @@ struct LocalStateEraserTests {
         settings.set(value: "USD", for: SettingsKey.selectedCurrencyCode.rawValue)
         settings.set(value: true, for: SettingsKey.playerTooltipShown.rawValue)
 
-        LocalStateEraser(settingsManager: settings, logger: StubLogger()).eraseUserState()
+        try? authTokens.set(Data("jwt".utf8), key: "k1", productId: "wallet.dot", account: "alice")
+
+        LocalStateEraser(settingsManager: settings, authTokens: authTokens, logger: StubLogger()).eraseUserState()
 
         for key in LocalStateEraser.identityKeys + LocalStateEraser.walletProgressKeys {
             #expect(settings.anyValue(for: key.rawValue) == nil, "\(key) should be erased")
@@ -25,6 +28,7 @@ struct LocalStateEraserTests {
         #expect(settings.string(for: SettingsKey.themeSelected.rawValue) == "dark")
         #expect(settings.string(for: SettingsKey.selectedCurrencyCode.rawValue) == "USD")
         #expect(settings.bool(for: SettingsKey.playerTooltipShown.rawValue) == true)
+        #expect(try authTokens.data(key: "k1") == nil)
     }
 
     @Test("the retired on-ramp ids go too")
