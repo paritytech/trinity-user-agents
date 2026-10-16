@@ -450,6 +450,31 @@ extension ProductPermissionRepositoryTests {
         #expect(try await sut.settingsGrants(legacy: []).contains { $0.permission == .userIdentityAccess })
     }
 
+    @Test("Cross-product signatures do not become legacy permission grants")
+    func crossProductSignaturesHaveNoLegacyProjection() async throws {
+        let request = PermissionAuthorizationRequest.crossProductSignature(
+            targetProductId: "other", kind: .payload
+        )
+        #expect(try ProductPermission.fromAuthorization(request).isEmpty)
+        let authority = PermissionAuthorityFixture()
+        try await authority.setPermissionAuthorizationStatus(
+            productId: "demo.paseo", request: request, status: .authorized
+        )
+        try await authority.setPermissionAuthorizationStatus(
+            productId: "demo.paseo", request: .device(.camera), status: .authorized
+        )
+        let sut = ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), authority: { authority })
+
+        let grants = try await sut.getAllByProduct(productId: "demo.paseo")
+
+        #expect(grants.count == 1)
+        #expect(grants.first?.permission == .deviceCapability(.camera))
+        #expect(grants.first?.granted == true)
+        #expect(try await sut.getPermissionState(
+            productId: "demo.paseo", permission: .accountAccess(targetProductId: "other")
+        ) == .notDetermined)
+    }
+
     @Test("A domain bundle retains its exact native identity")
     func nativeBundleIsNotFlattened() async throws {
         let authority = PermissionAuthorityFixture()
