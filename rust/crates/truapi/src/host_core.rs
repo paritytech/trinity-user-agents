@@ -829,6 +829,13 @@ impl SigningHostRuntime {
 		self.services.funding().sessions()
 	}
 
+	/// Recorded funding sessions compacted out of the full record, newest
+	/// first, for the host's history. They are kept for good; each reads as
+	/// how it ended.
+	pub fn funding_session_pack(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
+		self.services.funding().pack()
+	}
+
 	/// Record that the host wrote ended session `intent` into its own
 	/// history. Until it does, the session is handed over again through
 	/// `funding_session_changed` each time funding resumes; the host reads
