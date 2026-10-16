@@ -68,13 +68,7 @@ impl Registry {
 			.map_err(|_| format!("the registry address {contract} is not hex"))?;
 		let contract = <[u8; 20]>::try_from(bytes)
 			.map_err(|_| format!("the registry address {contract} does not have 20 bytes"))?;
-		let rpc = if let Some(rest) = rpc.strip_prefix("wss://") {
-			format!("https://{rest}")
-		} else if let Some(rest) = rpc.strip_prefix("ws://") {
-			format!("http://{rest}")
-		} else {
-			rpc.to_string()
-		};
+		let rpc = http_url(rpc);
 		let http = reqwest::Client::builder()
 			.timeout(RPC_TIMEOUT)
 			.build()
@@ -140,14 +134,7 @@ impl Registry {
 		let number = header["number"].as_str().ok_or("the header has no number")?;
 		let block = u64::from_str_radix(number.trim_start_matches("0x"), 16)
 			.map_err(|_| format!("the block number {number} is not hex"))?;
-		let args = encode_revive_call(&VIEW_CALL_ORIGIN, &self.contract, &LIST_SELECTOR);
-		let output = self
-			.call("state_call", json!(["ReviveApi_call", format!("0x{}", hex::encode(args)), head]))
-			.await?;
-		let output = output.as_str().ok_or("state_call gave no hex")?;
-		let output = hex::decode(output.trim_start_matches("0x"))
-			.map_err(|_| "state_call gave no hex".to_string())?;
-		let data = decode_revive_call_output(&output).map_err(|error| error.to_string())?;
+		let data = view(&self.http, &self.rpc, &self.contract, &LIST_SELECTOR, Some(&head)).await?;
 		// A call to an address without code succeeds and returns nothing.
 		if data.is_empty() {
 			return Err("the registry address has no contract".into());
@@ -156,23 +143,65 @@ impl Registry {
 	}
 
 	async fn call(&self, method: &str, params: Value) -> Result<Value, String> {
-		let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
-		let reply: Value = self
-			.http
-			.post(&self.rpc)
-			.json(&body)
-			.send()
-			.await
-			.and_then(reqwest::Response::error_for_status)
-			.map_err(|error| format!("{method}: {error}"))?
-			.json()
-			.await
-			.map_err(|error| format!("{method}: {error}"))?;
-		if let Some(error) = reply.get("error") {
-			return Err(format!("{method}: {error}"));
-		}
-		reply.get("result").cloned().ok_or_else(|| format!("{method}: no result"))
+		call(&self.http, &self.rpc, method, params).await
 	}
+}
+
+/// The JSON-RPC URL for `rpc`. A `ws://` or `wss://` URL becomes `http://` or `https://`: the
+/// public Asset Hub nodes answer both on one URL.
+pub fn http_url(rpc: &str) -> String {
+	if let Some(rest) = rpc.strip_prefix("wss://") {
+		format!("https://{rest}")
+	} else if let Some(rest) = rpc.strip_prefix("ws://") {
+		format!("http://{rest}")
+	} else {
+		rpc.to_string()
+	}
+}
+
+/// The result of one JSON-RPC call of `method` with `params` at the HTTP URL `rpc`.
+async fn call(
+	http: &reqwest::Client,
+	rpc: &str,
+	method: &str,
+	params: Value,
+) -> Result<Value, String> {
+	let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+	let reply: Value = http
+		.post(rpc)
+		.json(&body)
+		.send()
+		.await
+		.and_then(reqwest::Response::error_for_status)
+		.map_err(|error| format!("{method}: {error}"))?
+		.json()
+		.await
+		.map_err(|error| format!("{method}: {error}"))?;
+	if let Some(error) = reply.get("error") {
+		return Err(format!("{method}: {error}"));
+	}
+	reply.get("result").cloned().ok_or_else(|| format!("{method}: no result"))
+}
+
+/// The return data of a dry run of the contract call `input` on `contract`, through the runtime
+/// API `ReviveApi_call` at the block `at`, or at the best block without `at`.
+pub async fn view(
+	http: &reqwest::Client,
+	rpc: &str,
+	contract: &[u8; 20],
+	input: &[u8],
+	at: Option<&str>,
+) -> Result<Vec<u8>, String> {
+	let args = format!("0x{}", hex::encode(encode_revive_call(&VIEW_CALL_ORIGIN, contract, input)));
+	let params = match at {
+		Some(at) => json!(["ReviveApi_call", args, at]),
+		None => json!(["ReviveApi_call", args]),
+	};
+	let output = call(http, rpc, "state_call", params).await?;
+	let output = output.as_str().ok_or("state_call gave no hex")?;
+	let output = hex::decode(output.trim_start_matches("0x"))
+		.map_err(|_| "state_call gave no hex".to_string())?;
+	decode_revive_call_output(&output).map_err(|error| error.to_string())
 }
 
 /// The providers that the host uses: active records with the protocol of this host, and an
@@ -235,16 +264,27 @@ impl Abi<'_> {
 			.ok_or_else(|| format!("an offset out of range at byte {at}"))
 	}
 
-	fn string(&self, at: usize) -> Result<String, String> {
+	/// The `bytes` or `string` value at `at`: a length word, then the bytes.
+	fn bytes(&self, at: usize) -> Result<&[u8], String> {
 		let length = self.number(at)?;
 		let start = at + 32;
 		let end = start
 			.checked_add(length)
 			.filter(|end| *end <= self.data.len())
-			.ok_or_else(|| format!("a string longer than the data at byte {at}"))?;
-		String::from_utf8(self.data[start..end].to_vec())
+			.ok_or_else(|| format!("a value longer than the data at byte {at}"))?;
+		Ok(&self.data[start..end])
+	}
+
+	fn string(&self, at: usize) -> Result<String, String> {
+		String::from_utf8(self.bytes(at)?.to_vec())
 			.map_err(|_| format!("a string that is not UTF-8 at byte {at}"))
 	}
+}
+
+/// The value of return data that is one `bytes` value.
+pub fn decode_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
+	let abi = Abi { data };
+	abi.bytes(abi.pointer(0, 0)?).map(<[u8]>::to_vec)
 }
 
 /// The records in the return data of `list()`: `abi.encode(Provider[])`, where `Provider` is

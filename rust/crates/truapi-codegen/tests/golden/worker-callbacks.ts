@@ -36,6 +36,10 @@ export const CALLBACK_NAMES = [
   "readTorrent",
   "cacheAccount",
   "retainPreimage",
+  "cacheProviders",
+  "retentions",
+  "stopRetention",
+  "setCachePayer",
   "beginOperation",
   "endOperation",
   "read",
@@ -301,7 +305,14 @@ function preimageReadRawCallbacks(
 ): Required<
   Pick<
     RawCallbacks,
-    "readPreimage" | "readTorrent" | "cacheAccount" | "retainPreimage"
+    | "readPreimage"
+    | "readTorrent"
+    | "cacheAccount"
+    | "retainPreimage"
+    | "cacheProviders"
+    | "retentions"
+    | "stopRetention"
+    | "setCachePayer"
   >
 > {
   return {
@@ -322,6 +333,22 @@ function preimageReadRawCallbacks(
     retainPreimage: (request) =>
       bridge.callbackRequest("retainPreimage", [request]) as ReturnType<
         Required<RawCallbacks>["retainPreimage"]
+      >,
+    cacheProviders: (request) =>
+      bridge.callbackRequest("cacheProviders", [request]) as ReturnType<
+        Required<RawCallbacks>["cacheProviders"]
+      >,
+    retentions: (request) =>
+      bridge.callbackRequest("retentions", [request]) as ReturnType<
+        Required<RawCallbacks>["retentions"]
+      >,
+    stopRetention: (request) =>
+      bridge.callbackRequest("stopRetention", [request]) as ReturnType<
+        Required<RawCallbacks>["stopRetention"]
+      >,
+    setCachePayer: (seed) =>
+      bridge.callbackRequest("setCachePayer", [seed]) as ReturnType<
+        Required<RawCallbacks>["setCachePayer"]
       >,
   };
 }

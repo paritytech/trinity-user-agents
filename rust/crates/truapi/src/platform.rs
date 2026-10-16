@@ -45,9 +45,12 @@ use truapi::{
 		PreimageReadError, PreimageReadRoute, PreimageRetainError, ProductAccountId,
 		ProductAccountTxPayload, ProductProofContext, RemotePermission, RemotePermissionRequest,
 		RemotePreimageCacheAccountRequest, RemotePreimageCacheAccountResponse,
+		RemotePreimageCacheProvidersRequest, RemotePreimageCacheProvidersResponse,
 		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
 		RemotePreimageReadTorrentResponse, RemotePreimageRetainRequest,
-		RemotePreimageRetainResponse, RingLocation,
+		RemotePreimageRetainResponse, RemotePreimageRetentionsRequest,
+		RemotePreimageRetentionsResponse, RemotePreimageStopRetentionRequest,
+		RemotePreimageStopRetentionResponse, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -3085,14 +3088,43 @@ pub trait PreimageReadHost: Send + Sync {
 		request: RemotePreimageCacheAccountRequest,
 	) -> Result<RemotePreimageCacheAccountResponse, PreimageReadError>;
 
-	/// Keep the preimage of `request.key` on a cache provider for
-	/// `request.period_secs`. The host shows the size, the period and the price
-	/// to the person, pays the provider with a retention authorization of the
-	/// cache payer, and answers what the provider kept.
+	/// Keep each item of `request` on a cache provider. The host resolves a
+	/// DotNS name to the CID of its contenthash, learns each size, picks each
+	/// provider that the request leaves open, shows one confirmation with the
+	/// size, period, provider and price of every item, pays each provider with a
+	/// retention authorization of the cache payer, and answers one outcome for
+	/// each item in its order. In a dry run it shows nothing, pays nothing and
+	/// answers the outcomes as `Quote`.
 	async fn retain_preimage(
 		&self,
 		request: RemotePreimageRetainRequest,
 	) -> Result<RemotePreimageRetainResponse, PreimageRetainError>;
+
+	/// The cache providers of the host, in its order for `request.target`.
+	async fn cache_providers(
+		&self,
+		request: RemotePreimageCacheProvidersRequest,
+	) -> Result<RemotePreimageCacheProvidersResponse, PreimageReadError>;
+
+	/// The retentions of the cache payer of this product, from the ledger and
+	/// from the providers that keep them.
+	async fn retentions(
+		&self,
+		request: RemotePreimageRetentionsRequest,
+	) -> Result<RemotePreimageRetentionsResponse, PreimageReadError>;
+
+	/// Stop the renewal of the retention of `request.cid` on `request.provider`.
+	async fn stop_retention(
+		&self,
+		request: RemotePreimageStopRetentionRequest,
+	) -> Result<RemotePreimageStopRetentionResponse, PreimageRetainError>;
+
+	/// The 32-byte seed of the sr25519 key with which the host pays cache
+	/// providers for this product, or no bytes when no person is signed in. The
+	/// core derives it from the session with a key that no product can ask for,
+	/// and sets it before each cache call of the product. A host can keep its
+	/// own payer.
+	async fn set_cache_payer(&self, seed: Vec<u8>) -> Result<(), PreimageReadError>;
 }
 
 /// Host-implemented adapter through which product Chat calls reach host

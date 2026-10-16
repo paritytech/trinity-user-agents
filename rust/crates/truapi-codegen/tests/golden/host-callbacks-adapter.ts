@@ -30,11 +30,17 @@ import {
   RemotePermissionRequest,
   RemotePreimageCacheAccountRequest,
   RemotePreimageCacheAccountResponse,
+  RemotePreimageCacheProvidersRequest,
+  RemotePreimageCacheProvidersResponse,
   RemotePreimageReadResponse,
   RemotePreimageReadTorrentRequest,
   RemotePreimageReadTorrentResponse,
   RemotePreimageRetainRequest,
   RemotePreimageRetainResponse,
+  RemotePreimageRetentionsRequest,
+  RemotePreimageRetentionsResponse,
+  RemotePreimageStopRetentionRequest,
+  RemotePreimageStopRetentionResponse,
 } from "@parity/truapi";
 import type { GenericError } from "@parity/truapi";
 import {
@@ -125,6 +131,10 @@ export interface RawCallbacks {
   readTorrent?(request: Uint8Array): Promise<Uint8Array>;
   cacheAccount?(request: Uint8Array): Promise<Uint8Array>;
   retainPreimage?(request: Uint8Array): Promise<Uint8Array>;
+  cacheProviders?(request: Uint8Array): Promise<Uint8Array>;
+  retentions?(request: Uint8Array): Promise<Uint8Array>;
+  stopRetention?(request: Uint8Array): Promise<Uint8Array>;
+  setCachePayer?(seed: Uint8Array): Promise<void>;
   beginOperation(product: Uint8Array, label: string): Promise<Uint8Array>;
   endOperation(product: Uint8Array, id: number): Promise<void>;
   read(key: string): Promise<Uint8Array | null | undefined>;
@@ -323,6 +333,25 @@ export function createWasmRawCallbacks(
                 RemotePreimageRetainRequest.dec(request),
               ),
             ),
+          cacheProviders: async (request) =>
+            RemotePreimageCacheProvidersResponse.enc(
+              await preimageRead.cacheProviders(
+                RemotePreimageCacheProvidersRequest.dec(request),
+              ),
+            ),
+          retentions: async (request) =>
+            RemotePreimageRetentionsResponse.enc(
+              await preimageRead.retentions(
+                RemotePreimageRetentionsRequest.dec(request),
+              ),
+            ),
+          stopRetention: async (request) =>
+            RemotePreimageStopRetentionResponse.enc(
+              await preimageRead.stopRetention(
+                RemotePreimageStopRetentionRequest.dec(request),
+              ),
+            ),
+          setCachePayer: async (seed) => await preimageRead.setCachePayer(seed),
         }
       : {}),
     beginOperation: async (product, label) =>

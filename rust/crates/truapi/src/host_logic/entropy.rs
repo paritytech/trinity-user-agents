@@ -47,9 +47,23 @@ pub fn derive_product_entropy_from_source(
 		return Err(ProductEntropyError::InvalidKeyLength(key.len()));
 	}
 
+	Ok(blake2b256_keyed(&per_product_entropy(root_entropy_source, product_id), key))
+}
+
+/// The key of the host-only derivation of the cache payer. It is longer than
+/// 32 bytes, so no product can ask for it through `entropy.derive`.
+const CACHE_PAYER_KEY: &[u8] = b"truapi host-only derivation: cache payer v1";
+
+/// The seed of the sr25519 key with which the host pays cache providers for
+/// `product_id`. The same person and product get the same payer on every host,
+/// and the product cannot derive it, so a product cannot spend it.
+pub fn cache_payer_seed(root_entropy_source: &[u8; 32], product_id: &str) -> [u8; 32] {
+	blake2b256_keyed(&per_product_entropy(root_entropy_source, product_id), CACHE_PAYER_KEY)
+}
+
+fn per_product_entropy(root_entropy_source: &[u8; 32], product_id: &str) -> [u8; 32] {
 	let product_id_hash = blake2b256_keyed(product_id.as_bytes(), &[]);
-	let per_product_entropy = blake2b256_keyed(root_entropy_source, &product_id_hash);
-	Ok(blake2b256_keyed(&per_product_entropy, key))
+	blake2b256_keyed(root_entropy_source, &product_id_hash)
 }
 
 fn blake2b256_keyed(message: &[u8], key: &[u8]) -> [u8; 32] {
@@ -65,6 +79,25 @@ fn blake2b256_keyed(message: &[u8], key: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn the_cache_payer_is_a_key_that_no_product_can_ask_for() {
+		let source = [7u8; 32];
+		let payer = cache_payer_seed(&source, "keepcached.paseo");
+		assert_eq!(
+			hex::encode(payer),
+			hex::encode(blake2b256_keyed(
+				&per_product_entropy(&source, "keepcached.paseo"),
+				CACHE_PAYER_KEY
+			))
+		);
+		assert!(CACHE_PAYER_KEY.len() > 32);
+		assert_ne!(payer, cache_payer_seed(&source, "other.paseo"));
+		assert_eq!(
+			derive_product_entropy_from_source(&source, "keepcached.paseo", CACHE_PAYER_KEY),
+			Err(ProductEntropyError::InvalidKeyLength(CACHE_PAYER_KEY.len()))
+		);
+	}
 
 	fn secret() -> [u8; 32] {
 		let mut secret = [0u8; 32];

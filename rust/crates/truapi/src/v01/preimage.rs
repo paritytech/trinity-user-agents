@@ -393,3 +393,149 @@ pub enum PreimageRetainError {
 		reason: String,
 	},
 }
+
+/// What a product asks a cache provider to keep, or names to order the providers.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum PreimageTarget {
+	/// A preimage key: blake2b-256 of the value. For a chunked file, the key of
+	/// its manifest.
+	Key(Vec<u8>),
+	/// A CID that Bulletin has, as text: for example the storage root of a site
+	/// that `bulletin-deploy` published (dag-pb, sha2-256).
+	Cid(String),
+	/// A DotNS name, such as `site.paseo`. The host resolves it to the CID of its
+	/// contenthash, which is the CID that the host loads for the site.
+	DotNs(String),
+}
+
+/// Request for the cache providers of the host.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageCacheProvidersRequest {
+	/// The content that the order is for. The home providers of the target come
+	/// first. `None` gives the order for reads in general.
+	pub target: Option<PreimageTarget>,
+}
+
+/// Where the host found a cache provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum CacheProviderSource {
+	/// The provider registry, or the provider set of the host.
+	Registry,
+	/// A provider that the person added in the host.
+	User,
+}
+
+/// One cache provider of the host, as a person can pick it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct CacheProviderInfo {
+	/// Endpoint id of the provider.
+	pub id: [u8; 32],
+	/// Display name of the provider.
+	pub name: Option<String>,
+	/// Region of the provider, such as a city.
+	pub region: Option<String>,
+	/// The operator of the provider.
+	pub operator: Option<String>,
+	/// Where the host found the provider.
+	pub source: CacheProviderSource,
+	/// The provider is a home provider of the target.
+	pub home: bool,
+	/// The time that the host measured to the provider, in milliseconds.
+	pub latency_ms: Option<u32>,
+	/// A read from the provider failed a short time ago.
+	pub failed_recently: bool,
+}
+
+/// The cache providers of the host, in its order for the target.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageCacheProvidersResponse {
+	/// The providers, first the one that the host asks first.
+	pub providers: Vec<CacheProviderInfo>,
+}
+
+/// Request for the retentions of the payer of this product.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageRetentionsRequest {
+	/// The cache provider to ask for the ledger. `None` lets the host pick one.
+	pub provider: Option<[u8; 32]>,
+}
+
+/// The state of a retention on its cache provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum RetentionState {
+	/// The provider holds every piece.
+	Kept,
+	/// The provider fetches the pieces.
+	Fetching {
+		/// The pieces that the provider has.
+		pieces: u32,
+		/// All the pieces.
+		total: u32,
+	},
+	/// The retention is paid, and the provider does not hold the content.
+	Lost,
+	/// The retention ended.
+	Ended,
+	/// The provider did not answer.
+	Unknown,
+}
+
+/// One retention of the payer: what the ledger charged and what the provider holds.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct PreimageRetention {
+	/// The CID of the content, as text.
+	pub cid: String,
+	/// Endpoint id of the provider that keeps it.
+	pub provider: [u8; 32],
+	/// Display name of the provider.
+	pub name: Option<String>,
+	/// Region of the provider.
+	pub region: Option<String>,
+	/// The operator of the provider.
+	pub operator: Option<String>,
+	/// The size that the retention pays for.
+	pub size: u64,
+	/// The pieces that the provider keeps: the root and its chunks.
+	pub pieces: u32,
+	/// Unix seconds of the start of the retention.
+	pub from: u64,
+	/// Unix seconds of the end of the retention: the end that the payer chose,
+	/// or for a retention that renews, the end of the paid days.
+	pub until: u64,
+	/// Unix seconds until which the retention is paid.
+	pub paid_until: u64,
+	/// All that the retentions of this content on this provider cost.
+	pub charged: u64,
+	/// The price of one day of a retention that the provider charges one day at
+	/// a time. 0 for a retention paid in advance.
+	pub per_day: u64,
+	/// The provider renews the retention each day until the payer stops it.
+	pub renews: bool,
+	/// The state on the provider.
+	pub state: RetentionState,
+}
+
+/// The retentions of the payer of this product.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageRetentionsResponse {
+	/// The public key (sr25519) of the payer.
+	pub payer: [u8; 32],
+	/// The retentions, the latest end first.
+	pub retentions: Vec<PreimageRetention>,
+}
+
+/// Request to stop the renewal of a retention.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageStopRetentionRequest {
+	/// The CID of the content, as text.
+	pub cid: String,
+	/// Endpoint id of the provider that keeps it.
+	pub provider: [u8; 32],
+}
+
+/// The end of a stopped retention.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageStopRetentionResponse {
+	/// Unix seconds: the provider keeps the content until the end of the paid day.
+	pub until: u64,
+}

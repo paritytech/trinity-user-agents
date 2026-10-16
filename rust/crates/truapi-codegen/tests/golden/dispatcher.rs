@@ -2146,15 +2146,15 @@ where
                 let request: versioned::preimage::RemotePreimageCacheAccountRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
                     Ok(request) => request,
                     Err(err) => {
-                        let error: truapi::CallError<versioned::preimage::RemotePreimageReadError> =
+                        let error: truapi::CallError<versioned::preimage::RemotePreimageCacheAccountError> =
                             truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::preimage::RemotePreimageCacheAccountResponse, truapi::CallError<versioned::preimage::RemotePreimageReadError>> = Err(error);
+                        let result: Result<versioned::preimage::RemotePreimageCacheAccountResponse, truapi::CallError<versioned::preimage::RemotePreimageCacheAccountError>> = Err(error);
                         return result.encode();
                     }
                 };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
-                let result: Result<versioned::preimage::RemotePreimageCacheAccountResponse, truapi::CallError<versioned::preimage::RemotePreimageReadError>> =
+                let result: Result<versioned::preimage::RemotePreimageCacheAccountResponse, truapi::CallError<versioned::preimage::RemotePreimageCacheAccountError>> =
                     match host.cache_account(&cx, request).await {
                         Ok(response) => Ok(<versioned::preimage::RemotePreimageCacheAccountResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
@@ -2167,7 +2167,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::PREIMAGE_RETAIN, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -2185,6 +2185,90 @@ where
                 let result: Result<versioned::preimage::RemotePreimageRetainResponse, truapi::CallError<versioned::preimage::RemotePreimageRetainError>> =
                     match host.retain(&cx, request).await {
                         Ok(response) => Ok(<versioned::preimage::RemotePreimageRetainResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::PREIMAGE_CACHE_PROVIDERS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::preimage::RemotePreimageCacheProvidersRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::preimage::RemotePreimageReadError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::preimage::RemotePreimageCacheProvidersResponse, truapi::CallError<versioned::preimage::RemotePreimageReadError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::preimage::RemotePreimageCacheProvidersResponse, truapi::CallError<versioned::preimage::RemotePreimageReadError>> =
+                    match host.cache_providers(&cx, request).await {
+                        Ok(response) => Ok(<versioned::preimage::RemotePreimageCacheProvidersResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::PREIMAGE_RETENTIONS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::preimage::RemotePreimageRetentionsRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::preimage::RemotePreimageReadError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::preimage::RemotePreimageRetentionsResponse, truapi::CallError<versioned::preimage::RemotePreimageReadError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::preimage::RemotePreimageRetentionsResponse, truapi::CallError<versioned::preimage::RemotePreimageReadError>> =
+                    match host.retentions(&cx, request).await {
+                        Ok(response) => Ok(<versioned::preimage::RemotePreimageRetentionsResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::PREIMAGE_STOP_RETENTION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::preimage::RemotePreimageStopRetentionRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::preimage::RemotePreimageRetainError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::preimage::RemotePreimageStopRetentionResponse, truapi::CallError<versioned::preimage::RemotePreimageRetainError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::preimage::RemotePreimageStopRetentionResponse, truapi::CallError<versioned::preimage::RemotePreimageRetainError>> =
+                    match host.stop_retention(&cx, request).await {
+                        Ok(response) => Ok(<versioned::preimage::RemotePreimageStopRetentionResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),

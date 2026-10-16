@@ -1033,6 +1033,23 @@ with the outcome and time of each. A read is one pass with no polling, so a
 miss answers no value. Without a payer, a route through cache nodes answers
 `NoCacheProviders`.
 
+A product can ask a cache node to keep content for a period with
+`Preimage.retain`, paid by the cache payer. An item names a preimage key, a CID
+(CIDv1, raw or dag-pb, sha2-256 or blake2b-256), or a DotNS name. The host
+resolves a name to the CID in its contenthash, through the Asset Hub of the
+network. For a dag-pb CID, such as the root of a bulletin-deploy site, the node
+keeps every block, and the host pays for the size of all blocks: the root block
+and the `Tsize` of each of its links. A dry run quotes the price and keeps
+nothing. Prices follow the units of the ledger: one price per read or a price
+per MiB, and retention per MiB-hour or per MiB-day.
+
+An item with `renew` is a lease: the payer signs one lease authorization with
+the price of one day as the most it pays for each day, and the node charges
+each day itself until the end of the period, or with a period of 0 until the
+payer stops it. `Preimage.stopRetention` signs a stop request with the cache
+payer and sends it to the provider (`POST /leases/stop`); the node keeps the
+content until the end of the paid day.
+
 ## Manual use (two terminals)
 
 ```bash

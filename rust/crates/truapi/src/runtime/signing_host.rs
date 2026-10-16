@@ -1504,6 +1504,17 @@ impl ProductAuthority for SigningHost {
 			crate::host_logic::entropy::root_entropy_source(&self.root_entropy()?);
 		Ok(crate::runtime::contacts::handle_key_from_root_source(&root_entropy_source))
 	}
+
+	fn cache_payer_seed(
+		&self,
+		session: &AuthoritySession,
+		product_id: &str,
+	) -> Result<[u8; 32], AuthorityError> {
+		self.require_current_session(session)?;
+		let root_entropy_source =
+			crate::host_logic::entropy::root_entropy_source(&self.root_entropy()?);
+		Ok(crate::host_logic::entropy::cache_payer_seed(&root_entropy_source, product_id))
+	}
 }
 
 fn local_session_validation_id(session: &SessionInfo, activation_generation: u64) -> Vec<u8> {

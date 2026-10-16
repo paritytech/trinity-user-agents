@@ -50,6 +50,7 @@ use truapi::{
 		permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
 		preimage::{
 			RemotePreimageCacheAccountRequest, RemotePreimageCacheAccountResponse,
+			RemotePreimageCacheProvidersRequest, RemotePreimageCacheProvidersResponse,
 			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
 			RemotePreimageReadError, RemotePreimageReadRequest, RemotePreimageReadResponse,
 			RemotePreimageReadTorrentRequest, RemotePreimageReadTorrentResponse,
@@ -4572,12 +4573,13 @@ impl crate::platform::PreimageReadHost for FixedPreimageRead {
 		})
 	}
 
-	/// The account of the payer [3; 32] at the provider of the request, or [7; 32].
+	/// The account of the payer [3; 32] at the provider of the request, or [7; 32]. Reads cost
+	/// 2 for each MiB, and retention 1 for each MiB-day.
 	async fn cache_account(
 		&self,
 		request: v01::RemotePreimageCacheAccountRequest,
-	) -> Result<v01::RemotePreimageCacheAccountResponse, v01::PreimageReadError> {
-		Ok(v01::RemotePreimageCacheAccountResponse {
+	) -> Result<v02::RemotePreimageCacheAccountResponse, v01::PreimageReadError> {
+		Ok(v02::RemotePreimageCacheAccountResponse {
 			payer: [3; 32],
 			provider: request.provider.unwrap_or([7; 32]),
 			allowance: 480,
@@ -4586,25 +4588,187 @@ impl crate::platform::PreimageReadHost for FixedPreimageRead {
 			allowance_per_day: 500,
 			retention_allowance_per_day: 48,
 			read_price: 10,
+			read_price_per_mib: 2,
 			retention_price: 1,
+			retention_unit_secs: 86_400,
 		})
 	}
 
-	/// A retention of the request's period from t=1000 on the provider [7; 32], for 3 credits.
+	/// A retention of each item for its period from t=1000 on its provider or [7; 32], for 3
+	/// credits, or a quote of 3 credits in a dry run.
 	async fn retain_preimage(
 		&self,
-		request: v01::RemotePreimageRetainRequest,
-	) -> Result<v01::RemotePreimageRetainResponse, v01::PreimageRetainError> {
-		Ok(v01::RemotePreimageRetainResponse {
-			until: 1000 + request.period_secs,
-			provider: request.provider.unwrap_or([7; 32]),
-			name: Some("A".to_string()),
+		request: v02::RemotePreimageRetainRequest,
+	) -> Result<v02::RemotePreimageRetainResponse, v01::PreimageRetainError> {
+		let items = request
+			.items
+			.into_iter()
+			.map(|item| v02::RetainOutcome {
+				cid: "bafk".to_string(),
+				provider: item.provider.unwrap_or([7; 32]),
+				name: Some("A".to_string()),
+				region: None,
+				operator: None,
+				kind: v02::RetainKind::Raw,
+				size: item.size.unwrap_or(1),
+				pieces: 1,
+				until: 1000 + item.period_secs,
+				price: 3,
+				charged: if request.dry_run { 0 } else { 3 },
+				free: 3,
+				paid: 0,
+				short: 0,
+				renews: item.renew,
+				state: if request.dry_run {
+					v02::RetainState::Quote
+				} else {
+					v02::RetainState::Kept
+				},
+			})
+			.collect();
+		Ok(v02::RemotePreimageRetainResponse { items })
+	}
+
+	/// The providers [7; 32] and [8; 32], the first a home provider of any target.
+	async fn cache_providers(
+		&self,
+		request: v01::RemotePreimageCacheProvidersRequest,
+	) -> Result<v01::RemotePreimageCacheProvidersResponse, v01::PreimageReadError> {
+		let provider = |id: [u8; 32], home: bool| v01::CacheProviderInfo {
+			id,
+			name: None,
 			region: None,
-			size: request.size.unwrap_or(1),
-			chunks: 0,
-			charged: 3,
+			operator: None,
+			source: v01::CacheProviderSource::Registry,
+			home,
+			latency_ms: None,
+			failed_recently: false,
+		};
+		Ok(v01::RemotePreimageCacheProvidersResponse {
+			providers: vec![provider([7; 32], request.target.is_some()), provider([8; 32], false)],
 		})
 	}
+
+	/// No retentions for the payer [3; 32].
+	async fn retentions(
+		&self,
+		_request: v01::RemotePreimageRetentionsRequest,
+	) -> Result<v01::RemotePreimageRetentionsResponse, v01::PreimageReadError> {
+		Ok(v01::RemotePreimageRetentionsResponse { payer: [3; 32], retentions: Vec::new() })
+	}
+
+	/// A stopped retention ends at t=86400.
+	async fn stop_retention(
+		&self,
+		_request: v01::RemotePreimageStopRetentionRequest,
+	) -> Result<v01::RemotePreimageStopRetentionResponse, v01::PreimageRetainError> {
+		Ok(v01::RemotePreimageStopRetentionResponse { until: 86_400 })
+	}
+
+	async fn set_cache_payer(&self, _seed: Vec<u8>) -> Result<(), v01::PreimageReadError> {
+		Ok(())
+	}
+}
+
+/// A read host that records each cache payer that the core sets, and has no cache providers.
+#[derive(Default)]
+struct PayerRecorder(std::sync::Mutex<Vec<Vec<u8>>>);
+
+#[async_trait::async_trait]
+impl crate::platform::PreimageReadHost for PayerRecorder {
+	async fn read_preimage(
+		&self,
+		_key: Vec<u8>,
+		_route: v01::PreimageReadRoute,
+		_skip_host_caches: bool,
+	) -> Result<v01::RemotePreimageReadResponse, v01::PreimageReadError> {
+		Err(v01::PreimageReadError::NoCacheProviders)
+	}
+
+	async fn read_torrent(
+		&self,
+		_request: v01::RemotePreimageReadTorrentRequest,
+	) -> Result<v01::RemotePreimageReadTorrentResponse, v01::PreimageReadError> {
+		Err(v01::PreimageReadError::NoCacheProviders)
+	}
+
+	async fn cache_account(
+		&self,
+		_request: v01::RemotePreimageCacheAccountRequest,
+	) -> Result<v02::RemotePreimageCacheAccountResponse, v01::PreimageReadError> {
+		Err(v01::PreimageReadError::NoCacheProviders)
+	}
+
+	async fn retain_preimage(
+		&self,
+		_request: v02::RemotePreimageRetainRequest,
+	) -> Result<v02::RemotePreimageRetainResponse, v01::PreimageRetainError> {
+		Err(v01::PreimageRetainError::NotAvailable)
+	}
+
+	async fn cache_providers(
+		&self,
+		_request: v01::RemotePreimageCacheProvidersRequest,
+	) -> Result<v01::RemotePreimageCacheProvidersResponse, v01::PreimageReadError> {
+		Err(v01::PreimageReadError::NoCacheProviders)
+	}
+
+	async fn retentions(
+		&self,
+		_request: v01::RemotePreimageRetentionsRequest,
+	) -> Result<v01::RemotePreimageRetentionsResponse, v01::PreimageReadError> {
+		Err(v01::PreimageReadError::NoCacheProviders)
+	}
+
+	async fn stop_retention(
+		&self,
+		_request: v01::RemotePreimageStopRetentionRequest,
+	) -> Result<v01::RemotePreimageStopRetentionResponse, v01::PreimageRetainError> {
+		Err(v01::PreimageRetainError::NotAvailable)
+	}
+
+	async fn set_cache_payer(&self, seed: Vec<u8>) -> Result<(), v01::PreimageReadError> {
+		self.0.lock().unwrap().push(seed);
+		Ok(())
+	}
+}
+
+// The core gives the read host the cache payer of the product before each cache call: none without
+// a session, and with a session the host-only derivation of the session's root entropy for this
+// product.
+#[test]
+fn the_core_sets_the_cache_payer_of_the_product_before_a_cache_call() {
+	let account = |host: &ProductRuntimeHost| {
+		let request =
+			RemotePreimageCacheAccountRequest::V1(v01::RemotePreimageCacheAccountRequest {
+				provider: None,
+			});
+		let _ = futures::executor::block_on(Preimage::cache_account(
+			host,
+			&CallContext::default(),
+			request,
+		));
+	};
+	let recorder = Arc::new(PayerRecorder::default());
+	let host = ProductRuntimeHost::new(
+		stub_platform(),
+		runtime_config("keepcached.paseo"),
+		test_spawner(),
+	);
+	host.services.install_preimage_read_host(recorder.clone());
+	account(&host);
+	let mut session = sso_session_info();
+	session.root_entropy_source = session_info().root_entropy_source;
+	let source = session.root_entropy_source.expect("the test session has a root entropy source");
+	install_pairing_session(&host, session);
+	account(&host);
+	assert_eq!(
+		*recorder.0.lock().unwrap(),
+		vec![
+			Vec::new(),
+			crate::host_logic::entropy::cache_payer_seed(&source, "keepcached.paseo").to_vec()
+		]
+	);
 }
 
 // A retention needs the read host of the platform and the permission PreimageRetain of the person,
@@ -4619,9 +4783,11 @@ fn preimage_retain_needs_the_permission_and_the_read_host() {
 			provider: None,
 		});
 		futures::executor::block_on(Preimage::retain(host, &CallContext::default(), request)).map(
-			|response| {
-				let RemotePreimageRetainResponse::V1(response) = response;
-				(response.until, response.provider, response.charged)
+			|response| match response {
+				RemotePreimageRetainResponse::V1(response) => {
+					(response.until, response.provider, response.charged)
+				},
+				RemotePreimageRetainResponse::V2(_) => panic!("a v0.1 request gets a v0.1 answer"),
 			},
 		)
 	};
@@ -4653,6 +4819,90 @@ fn preimage_retain_needs_the_permission_and_the_read_host() {
 	);
 }
 
+// A dry run of a retention asks for no permission: it keeps and pays nothing. A real retention of
+// a CID asks for the permission, and a v0.2 caller gets every outcome.
+#[test]
+fn preimage_retain_dry_run_needs_no_permission() {
+	let retain = |host: &ProductRuntimeHost, dry_run: bool| {
+		let request = RemotePreimageRetainRequest::V2(v02::RemotePreimageRetainRequest {
+			items: vec![v02::RetainItem {
+				target: v01::PreimageTarget::Cid("bafybeig".to_string()),
+				period_secs: 86_400,
+				size: None,
+				provider: Some([8; 32]),
+				renew: true,
+			}],
+			dry_run,
+		});
+		futures::executor::block_on(Preimage::retain(host, &CallContext::default(), request)).map(
+			|response| match response {
+				RemotePreimageRetainResponse::V2(response) => response
+					.items
+					.into_iter()
+					.map(|item| (item.provider, item.charged, item.renews, item.state))
+					.collect::<Vec<_>>(),
+				RemotePreimageRetainResponse::V1(_) => panic!("a v0.2 request gets a v0.2 answer"),
+			},
+		)
+	};
+	let report = v01::PreimageReadReport { served_by: None, attempts: Vec::new(), host_ms: 0 };
+	let read_host =
+		Arc::new(FixedPreimageRead(v01::RemotePreimageReadResponse { value: None, report }));
+	let denied = Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
+	let host = ProductRuntimeHost::new_compat(denied.clone(), test_spawner());
+	host.services.install_preimage_read_host(read_host);
+	assert_eq!(
+		(retain(&host, true), retain(&host, false)),
+		(
+			Ok(vec![([8; 32], 0, true, v02::RetainState::Quote)]),
+			Err(CallError::Domain(RemotePreimageRetainError::V2(
+				v01::PreimageRetainError::Declined
+			)))
+		)
+	);
+	assert_eq!(
+		denied
+			.remote_permission_requests
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|request| request.permission == v01::RemotePermission::PreimageRetain)
+			.count(),
+		1
+	);
+}
+
+// The cache providers come from the read host of the platform as they are.
+#[test]
+fn preimage_cache_providers_come_from_the_read_host() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+	let providers = |host: &ProductRuntimeHost| {
+		let request =
+			RemotePreimageCacheProvidersRequest::V1(v01::RemotePreimageCacheProvidersRequest {
+				target: Some(v01::PreimageTarget::DotNs("site.paseo".to_string())),
+			});
+		futures::executor::block_on(Preimage::cache_providers(
+			host,
+			&CallContext::default(),
+			request,
+		))
+		.map(|response| {
+			let RemotePreimageCacheProvidersResponse::V1(response) = response;
+			response
+				.providers
+				.into_iter()
+				.map(|provider| (provider.id, provider.home))
+				.collect::<Vec<_>>()
+		})
+	};
+	assert_eq!(providers(&host), Err(CallError::Unsupported));
+	let report = v01::PreimageReadReport { served_by: None, attempts: Vec::new(), host_ms: 0 };
+	host.services.install_preimage_read_host(Arc::new(FixedPreimageRead(
+		v01::RemotePreimageReadResponse { value: None, report },
+	)));
+	assert_eq!(providers(&host), Ok(vec![([7; 32], true), ([8; 32], false)]));
+}
+
 // The cache account comes from the read host of the platform as it is. A host without one does not
 // have the method.
 #[test]
@@ -4660,12 +4910,14 @@ fn preimage_cache_account_comes_from_the_read_host() {
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
 	let account = |host: &ProductRuntimeHost, provider| {
 		let request =
-			RemotePreimageCacheAccountRequest::V1(v01::RemotePreimageCacheAccountRequest {
+			RemotePreimageCacheAccountRequest::V2(v01::RemotePreimageCacheAccountRequest {
 				provider,
 			});
 		futures::executor::block_on(Preimage::cache_account(host, &CallContext::default(), request))
 			.map(|response| {
-				let RemotePreimageCacheAccountResponse::V1(response) = response;
+				let RemotePreimageCacheAccountResponse::V2(response) = response else {
+					panic!("a V2 request gets a V2 answer");
+				};
 				(response.provider, response.allowance, response.read_price)
 			})
 	};
@@ -4677,6 +4929,55 @@ fn preimage_cache_account_comes_from_the_read_host() {
 	assert_eq!(
 		(account(&host, None), account(&host, Some([5; 32]))),
 		(Ok(([7; 32], 480, 10)), Ok(([5; 32], 480, 10)))
+	);
+}
+
+// A caller gets the cache account in the version of its request. A V1 caller does not know the
+// units, so it gets no units. A V2 caller gets the units of the ledger.
+#[test]
+fn preimage_cache_account_answers_in_the_version_of_the_request() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+	let report = v01::PreimageReadReport { served_by: None, attempts: Vec::new(), host_ms: 0 };
+	host.services.install_preimage_read_host(Arc::new(FixedPreimageRead(
+		v01::RemotePreimageReadResponse { value: None, report },
+	)));
+	let request = v01::RemotePreimageCacheAccountRequest { provider: None };
+	let account = |request| {
+		futures::executor::block_on(Preimage::cache_account(
+			&host,
+			&CallContext::default(),
+			request,
+		))
+	};
+	assert_eq!(
+		account(RemotePreimageCacheAccountRequest::V1(request.clone())),
+		Ok(RemotePreimageCacheAccountResponse::V1(v01::RemotePreimageCacheAccountResponse {
+			payer: [3; 32],
+			provider: [7; 32],
+			allowance: 480,
+			allowance_retention: 48,
+			paid: 0,
+			allowance_per_day: 500,
+			retention_allowance_per_day: 48,
+			read_price: 10,
+			retention_price: 1,
+		}))
+	);
+	assert_eq!(
+		account(RemotePreimageCacheAccountRequest::V2(request)),
+		Ok(RemotePreimageCacheAccountResponse::V2(v02::RemotePreimageCacheAccountResponse {
+			payer: [3; 32],
+			provider: [7; 32],
+			allowance: 480,
+			allowance_retention: 48,
+			paid: 0,
+			allowance_per_day: 500,
+			retention_allowance_per_day: 48,
+			read_price: 10,
+			read_price_per_mib: 2,
+			retention_price: 1,
+			retention_unit_secs: 86_400,
+		}))
 	);
 }
 

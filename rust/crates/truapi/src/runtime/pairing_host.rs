@@ -2408,6 +2408,20 @@ impl PairingHost {
 		})?;
 		Ok(crate::runtime::contacts::handle_key_from_root_source(&root_entropy_source))
 	}
+
+	/// The seed of the cache payer of `product_id`, from the wallet-provided
+	/// root entropy source. It needs no live SSO channel either.
+	fn cache_payer_seed(
+		&self,
+		session: &AuthoritySession,
+		product_id: &str,
+	) -> Result<[u8; 32], AuthorityError> {
+		let session = self.current_private_session(session)?;
+		let root_entropy_source = session.root_entropy_source.ok_or_else(|| {
+			AuthorityError::Unavailable { reason: "Session secret missing".to_string() }
+		})?;
+		Ok(crate::host_logic::entropy::cache_payer_seed(&root_entropy_source, product_id))
+	}
 }
 
 fn apply_ring_vrf_disclosure(
@@ -2657,5 +2671,13 @@ impl ProductAuthority for PairingHost {
 
 	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
 		PairingHost::contacts_handle_key(self, session)
+	}
+
+	fn cache_payer_seed(
+		&self,
+		session: &AuthoritySession,
+		product_id: &str,
+	) -> Result<[u8; 32], AuthorityError> {
+		PairingHost::cache_payer_seed(self, session, product_id)
 	}
 }

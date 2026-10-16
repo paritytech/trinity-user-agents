@@ -3,13 +3,16 @@
 use crate::{
 	CallContext, CallError, Subscription,
 	versioned::preimage::{
-		RemotePreimageCacheAccountRequest, RemotePreimageCacheAccountResponse,
-		RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
-		RemotePreimageLookupSubscribeRequest, RemotePreimageReadError, RemotePreimageReadRequest,
-		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
-		RemotePreimageReadTorrentResponse, RemotePreimageRetainError, RemotePreimageRetainRequest,
-		RemotePreimageRetainResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
-		RemotePreimageSubmitResponse,
+		RemotePreimageCacheAccountError, RemotePreimageCacheAccountRequest,
+		RemotePreimageCacheAccountResponse, RemotePreimageCacheProvidersRequest,
+		RemotePreimageCacheProvidersResponse, RemotePreimageLookupSubscribeError,
+		RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
+		RemotePreimageReadError, RemotePreimageReadRequest, RemotePreimageReadResponse,
+		RemotePreimageReadTorrentRequest, RemotePreimageReadTorrentResponse,
+		RemotePreimageRetainError, RemotePreimageRetainRequest, RemotePreimageRetainResponse,
+		RemotePreimageRetentionsRequest, RemotePreimageRetentionsResponse,
+		RemotePreimageStopRetentionRequest, RemotePreimageStopRetentionResponse,
+		RemotePreimageSubmitError, RemotePreimageSubmitRequest, RemotePreimageSubmitResponse,
 	},
 	wire, wire_trait,
 };
@@ -149,27 +152,35 @@ pub trait Preimage: Send + Sync {
 		&self,
 		_cx: &CallContext,
 		_request: RemotePreimageCacheAccountRequest,
-	) -> Result<RemotePreimageCacheAccountResponse, CallError<RemotePreimageReadError>> {
+	) -> Result<RemotePreimageCacheAccountResponse, CallError<RemotePreimageCacheAccountError>> {
 		Err(CallError::unavailable())
 	}
 
-	/// Keep a preimage on a cache provider for a period, paid in advance from
-	/// the cache payer of the product. The host asks the person for the
-	/// permission `PreimageRetain` once, and shows the size, the period and the
-	/// price before it pays. The provider fetches the preimage (for a chunked
-	/// file, the manifest and its chunks), checks it against its key and keeps it
-	/// until `until`. Retention is best effort: Bulletin stays the durable copy.
-	/// A host without cache providers answers `Unsupported`.
+	/// Keep one or more items on cache providers, paid from the cache payer of
+	/// the product. An item is a preimage key, a CID that Bulletin has, or a
+	/// DotNS name, which the host resolves to the CID of its contenthash. The
+	/// host asks the person for the permission `PreimageRetain` once, and shows
+	/// one confirmation with the size, the period, the provider and the price of
+	/// every item before it pays. A provider fetches the content (for a UnixFS
+	/// file, the root and all its pieces), checks it against its CID and keeps it
+	/// until the end. A dry run answers the size, the provider and the price of
+	/// each item, keeps nothing, and asks for nothing. Retention is best effort:
+	/// Bulletin stays the durable copy. A host without cache providers answers
+	/// `Unsupported`.
 	///
 	/// ```ts
-	/// const kept = await truapi.preimage.retain({
-	///   key: "0x…",
-	///   periodSecs: 7n * 24n * 3600n,
-	///   size: undefined,
-	///   provider: undefined,
+	/// const quote = await truapi.preimage.retain({
+	///   items: [{
+	///     target: { tag: "DotNs", value: "site.paseo" },
+	///     periodSecs: 7n * 24n * 3600n,
+	///     size: undefined,
+	///     provider: undefined,
+	///     renew: false,
+	///   }],
+	///   dryRun: true,
 	/// });
-	/// if (kept.isOk()) {
-	///   console.log("kept until", kept.value.until, "for", kept.value.charged);
+	/// if (quote.isOk()) {
+	///   console.log("price", quote.value.items[0].price, "on", quote.value.items[0].region);
 	/// }
 	/// ```
 	#[wire(id = 2)]
@@ -178,6 +189,64 @@ pub trait Preimage: Send + Sync {
 		_cx: &CallContext,
 		_request: RemotePreimageRetainRequest,
 	) -> Result<RemotePreimageRetainResponse, CallError<RemotePreimageRetainError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// The cache providers of the host, in its order for `target`: the home
+	/// providers of the target first, then by the time that the host measured.
+	/// A product shows them so that a person can pick the provider of a
+	/// retention. A host without cache providers answers `Unsupported`.
+	///
+	/// ```ts
+	/// const providers = await truapi.preimage.cacheProviders({ target: undefined });
+	/// if (providers.isOk()) {
+	///   console.log(providers.value.providers.map(provider => provider.region));
+	/// }
+	/// ```
+	#[wire(id = 6)]
+	async fn cache_providers(
+		&self,
+		_cx: &CallContext,
+		_request: RemotePreimageCacheProvidersRequest,
+	) -> Result<RemotePreimageCacheProvidersResponse, CallError<RemotePreimageReadError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// The retentions of the cache payer of this product: what the ledger charged
+	/// for each content and provider, and what each provider holds now. A host
+	/// without cache providers answers `Unsupported`.
+	///
+	/// ```ts
+	/// const kept = await truapi.preimage.retentions({ provider: undefined });
+	/// if (kept.isOk()) {
+	///   console.log(kept.value.retentions.length, "retentions");
+	/// }
+	/// ```
+	#[wire(id = 7)]
+	async fn retentions(
+		&self,
+		_cx: &CallContext,
+		_request: RemotePreimageRetentionsRequest,
+	) -> Result<RemotePreimageRetentionsResponse, CallError<RemotePreimageReadError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Stop the renewal of a retention. The provider keeps the content until the
+	/// end of the day that the payer paid for. Needs the permission
+	/// `PreimageRetain`. A host without cache providers answers `Unsupported`.
+	///
+	/// ```ts
+	/// const stopped = await truapi.preimage.stopRetention({ cid: "bafy…", provider: "0x…" });
+	/// if (stopped.isOk()) {
+	///   console.log("kept until", stopped.value.until);
+	/// }
+	/// ```
+	#[wire(id = 8)]
+	async fn stop_retention(
+		&self,
+		_cx: &CallContext,
+		_request: RemotePreimageStopRetentionRequest,
+	) -> Result<RemotePreimageStopRetentionResponse, CallError<RemotePreimageRetainError>> {
 		Err(CallError::unavailable())
 	}
 }

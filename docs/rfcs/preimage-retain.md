@@ -171,6 +171,78 @@ provider that the authorization names can ask the ledger for the charge: it sign
 The ledger charges each transfer id once, and a transfer id signed again for another window is a conflict, not a free
 retry.
 
+### Version 0.2: several items, CIDs and names, a dry run, and leases
+
+v0.1 keeps one preimage by its key. A person who keeps a site that `bulletin-deploy` published, or several files at
+once, needs more. v0.2 of `retain` (the same wire id) has this request and answer:
+
+```rust
+pub struct RetainItem {
+    /// A preimage key, a CID that Bulletin has, or a DotNS name (`PreimageTarget`, RFC preimage-cache-providers.md).
+    pub target: PreimageTarget,
+    /// How long to keep it. With `renew`, the end of the renewals, and 0 for no end.
+    pub period_secs: u64,
+    pub size: Option<u64>,
+    pub provider: Option<[u8; 32]>,
+    /// The provider charges one day at a time and renews each day until the payer stops it or `period_secs` ends.
+    pub renew: bool,
+}
+
+pub struct RemotePreimageRetainRequest {
+    pub items: Vec<RetainItem>,
+    /// Answer the size, the provider and the price of each item, and keep nothing. Asks for no permission.
+    pub dry_run: bool,
+}
+
+pub struct RetainOutcome {
+    /// The CID of the content. For a DotNS name, the CID of its contenthash.
+    pub cid: String,
+    pub provider: [u8; 32],
+    pub name: Option<String>,
+    pub region: Option<String>,
+    pub operator: Option<String>,
+    /// `Raw` (one block) or `File` (a UnixFS dag-pb root and its pieces).
+    pub kind: RetainKind,
+    pub size: u64,
+    pub pieces: u32,
+    /// The end of the retention. For a renewing item, the end of the paid day.
+    pub until: u64,
+    /// The price of the period, or of one day for a renewing item; and how it splits.
+    pub price: u64,
+    pub charged: u64,
+    pub free: u64,
+    pub paid: u64,
+    pub short: u64,
+    pub renews: bool,
+    /// `Quote` (a dry run), `Kept`, or `Fetching { pin_id }` (the provider fetches the pieces in the background).
+    pub state: RetainState,
+}
+
+pub struct RemotePreimageRetainResponse {
+    pub items: Vec<RetainOutcome>,
+}
+```
+
+A v0.1 request upgrades to one `Key` item without renewal, and a v0.1 caller gets the outcome of its one item.
+
+- **Sites.** A DotNS name resolves to the CID of its contenthash, the CID that the host loads for the site. A
+  `bulletin-deploy` site is one CAR cut into raw sha2-256 chunks under a dag-pb UnixFS file root. The provider keeps
+  every block under its own CID (the dag-pb root under its raw twin, a CID with the raw codec and the same multihash,
+  which Bulletin serves by multihash), so the host can read each block of the site from the provider. The size of the
+  item is the size of all the blocks.
+- **One confirmation.** The host shows every item (target, size, period or "renewed daily until you stop", provider and
+  price) in one confirmation, and the total.
+- **A dry run** answers the provider, the size and the price, and asks for nothing. A product shows the price before
+  the person decides. There is no separate quote method.
+- **Leases.** A `renew` item is signed once as a lease (`cache-receipt/3`: the receipt layout with service 2 and
+  `max_per_day` after `until`; `until` 0 renews until stopped). The provider charges day 0 at the pin and each next day
+  before the paid day ends, at most `max_per_day`, from the free allowance of that day first. If a day cannot be paid,
+  the provider keeps the content one more day, then drops it. `Preimage.stopRetention` (RFC `preimage-retentions.md`)
+  stops it.
+- **Background pins.** A site can take longer to fetch than a call should wait. The host asks the provider to pin in
+  the background, waits a short time, and answers `Fetching { pin_id }` if the provider is not done. The provider
+  charges when it holds every piece.
+
 ## Trade-offs
 
 - A separate method, not an option of `submit`: a product can retain content it did not upload, and extend a retention
@@ -186,5 +258,6 @@ retry.
 
 - How many providers should the host retain on by default, and may a product ask for more?
 - How is the cache allowance funded (Universal Service Allowance, dotUSD), and how does the confirmation show the price?
-- Should the host renew a retention by itself before it ends, like the statement-store allowance renewal?
+  The prototype sells paid credits for PAS through a contract (the cache repository, `contracts/src/CacheCredits.sol`);
+  a host that serves `Payment.request` (RFC 0006) could pay that contract instead.
 - Should a product be told when a provider loses retained content early?

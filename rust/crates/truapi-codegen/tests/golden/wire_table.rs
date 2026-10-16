@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "617e9d9d8b035b6e";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "5ff387d25a08ce5f";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -438,6 +438,24 @@ pub const PREIMAGE_READ_TORRENT: MethodIds = MethodIds {
 pub const PREIMAGE_CACHE_ACCOUNT: MethodIds = MethodIds {
     trait_id: 11,
     method_id: 5,
+};
+
+/// Wire discriminants for `preimage_cache_providers`.
+pub const PREIMAGE_CACHE_PROVIDERS: MethodIds = MethodIds {
+    trait_id: 11,
+    method_id: 6,
+};
+
+/// Wire discriminants for `preimage_retentions`.
+pub const PREIMAGE_RETENTIONS: MethodIds = MethodIds {
+    trait_id: 11,
+    method_id: 7,
+};
+
+/// Wire discriminants for `preimage_stop_retention`.
+pub const PREIMAGE_STOP_RETENTION: MethodIds = MethodIds {
+    trait_id: 11,
+    method_id: 8,
 };
 
 /// Wire discriminants for `resource_allocation_request`.
@@ -863,6 +881,18 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "preimage_cache_account",
         kind: WireKind::Request(PREIMAGE_CACHE_ACCOUNT),
+    },
+    WireEntry {
+        method: "preimage_cache_providers",
+        kind: WireKind::Request(PREIMAGE_CACHE_PROVIDERS),
+    },
+    WireEntry {
+        method: "preimage_retentions",
+        kind: WireKind::Request(PREIMAGE_RETENTIONS),
+    },
+    WireEntry {
+        method: "preimage_stop_retention",
+        kind: WireKind::Request(PREIMAGE_STOP_RETENTION),
     },
     WireEntry {
         method: "resource_allocation_request",

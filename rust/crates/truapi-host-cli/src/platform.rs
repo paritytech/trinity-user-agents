@@ -989,13 +989,45 @@ impl PreimageReadHost for CliPlatform {
 		})
 	}
 
-	/// Keep a preimage on a cache node, paid by the cache payer of this host. The CLI host shows
-	/// no confirmation of its own: the permission `PreimageRetain` covers each retention.
+	/// Keep preimages on cache nodes, paid by the cache payer of this host, or quote them in a dry
+	/// run. The CLI host shows no confirmation of its own: the permission `PreimageRetain` covers
+	/// each retention.
 	async fn retain_preimage(
 		&self,
 		request: api::RemotePreimageRetainRequest,
 	) -> Result<api::RemotePreimageRetainResponse, api::PreimageRetainError> {
 		self.bulletin.source().retain(request).await
+	}
+
+	/// The cache providers in the order of this host for the target.
+	async fn cache_providers(
+		&self,
+		request: api::RemotePreimageCacheProvidersRequest,
+	) -> Result<api::RemotePreimageCacheProvidersResponse, api::PreimageReadError> {
+		self.bulletin.source().cache_providers(request.target.as_ref()).await
+	}
+
+	/// The retentions of the cache payer of this host, from the ledger of the cache, with the state
+	/// of each retention on its provider.
+	async fn retentions(
+		&self,
+		request: api::RemotePreimageRetentionsRequest,
+	) -> Result<api::RemotePreimageRetentionsResponse, api::PreimageReadError> {
+		self.bulletin.source().cache_retentions(request.provider).await
+	}
+
+	/// Stop the renewal of a retention with a stop request that the cache payer of this host signs.
+	async fn stop_retention(
+		&self,
+		request: api::RemotePreimageStopRetentionRequest,
+	) -> Result<api::RemotePreimageStopRetentionResponse, api::PreimageRetainError> {
+		self.bulletin.source().stop_retention(request).await
+	}
+
+	/// The CLI host pays as `//allowance//cache//{product}` of the signed-in account, so it keeps
+	/// its own payer.
+	async fn set_cache_payer(&self, _seed: Vec<u8>) -> Result<(), api::PreimageReadError> {
+		Ok(())
 	}
 
 	/// The account of the cache payer of this host, from the ledger of a cache node.

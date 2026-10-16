@@ -56,6 +56,10 @@ pub struct JsBridge {
     pub read_torrent: Function,
     pub cache_account: Function,
     pub retain_preimage: Function,
+    pub cache_providers: Function,
+    pub retentions: Function,
+    pub stop_retention: Function,
+    pub set_cache_payer: Function,
     pub begin_operation: Function,
     pub end_operation: Function,
     pub read: Function,
@@ -124,6 +128,14 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("cacheAccount")),
             retain_preimage: get_optional_function(callbacks, "retainPreimage")?
                 .unwrap_or_else(|| missing_callback("retainPreimage")),
+            cache_providers: get_optional_function(callbacks, "cacheProviders")?
+                .unwrap_or_else(|| missing_callback("cacheProviders")),
+            retentions: get_optional_function(callbacks, "retentions")?
+                .unwrap_or_else(|| missing_callback("retentions")),
+            stop_retention: get_optional_function(callbacks, "stopRetention")?
+                .unwrap_or_else(|| missing_callback("stopRetention")),
+            set_cache_payer: get_optional_function(callbacks, "setCachePayer")?
+                .unwrap_or_else(|| missing_callback("setCachePayer")),
             begin_operation: get_function(callbacks, "beginOperation")?,
             end_operation: get_function(callbacks, "endOperation")?,
             read: get_function(callbacks, "read")?,
@@ -151,7 +163,11 @@ impl JsBridge {
             preimage_read_present: get_optional_function(callbacks, "readPreimage")?.is_some()
                 && get_optional_function(callbacks, "readTorrent")?.is_some()
                 && get_optional_function(callbacks, "cacheAccount")?.is_some()
-                && get_optional_function(callbacks, "retainPreimage")?.is_some(),
+                && get_optional_function(callbacks, "retainPreimage")?.is_some()
+                && get_optional_function(callbacks, "cacheProviders")?.is_some()
+                && get_optional_function(callbacks, "retentions")?.is_some()
+                && get_optional_function(callbacks, "stopRetention")?.is_some()
+                && get_optional_function(callbacks, "setCachePayer")?.is_some(),
             scanner_present: get_optional_function(callbacks, "scanCode")?.is_some(),
         })
     }
@@ -673,6 +689,66 @@ impl crate::platform::PreimageReadHost for WasmPlatform {
             "retainPreimage response did not decode",
         )
         .map_err(|reason| latest::PreimageRetainError::Unknown { reason })
+    }
+
+    async fn cache_providers(
+        &self,
+        request: latest::RemotePreimageCacheProvidersRequest,
+    ) -> Result<latest::RemotePreimageCacheProvidersResponse, latest::PreimageReadError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.cache_providers,
+            vec![Uint8Array::from(request.encode().as_slice()).into()],
+        )
+        .await
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })?;
+        decode_bytes::<latest::RemotePreimageCacheProvidersResponse>(
+            bytes,
+            "cacheProviders response did not decode",
+        )
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })
+    }
+
+    async fn retentions(
+        &self,
+        request: latest::RemotePreimageRetentionsRequest,
+    ) -> Result<latest::RemotePreimageRetentionsResponse, latest::PreimageReadError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.retentions,
+            vec![Uint8Array::from(request.encode().as_slice()).into()],
+        )
+        .await
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })?;
+        decode_bytes::<latest::RemotePreimageRetentionsResponse>(
+            bytes,
+            "retentions response did not decode",
+        )
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })
+    }
+
+    async fn stop_retention(
+        &self,
+        request: latest::RemotePreimageStopRetentionRequest,
+    ) -> Result<latest::RemotePreimageStopRetentionResponse, latest::PreimageRetainError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.stop_retention,
+            vec![Uint8Array::from(request.encode().as_slice()).into()],
+        )
+        .await
+        .map_err(|reason| latest::PreimageRetainError::Unknown { reason })?;
+        decode_bytes::<latest::RemotePreimageStopRetentionResponse>(
+            bytes,
+            "stopRetention response did not decode",
+        )
+        .map_err(|reason| latest::PreimageRetainError::Unknown { reason })
+    }
+
+    async fn set_cache_payer(&self, seed: Vec<u8>) -> Result<(), latest::PreimageReadError> {
+        invoke_unit(
+            &self.bridge.set_cache_payer,
+            vec![Uint8Array::from(seed.as_slice()).into()],
+        )
+        .await
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })
     }
 }
 

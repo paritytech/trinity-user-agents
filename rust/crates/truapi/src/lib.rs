@@ -71,29 +71,33 @@ uniffi::custom_type!(Bytes32, Vec<u8>, {
 pub mod latest {
 	use crate::versioned::{self, Versioned};
 
-	pub use crate::v01::{
-		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
-		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
-		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
-		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
-		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
-		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
-		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
-		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-		OperationStartedResult, PocketCard, PreimageReadRoute, ProductAccountId,
-		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
-		RemotePermission, RemoteStatementStoreCreateProofError,
-		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
-		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
-		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
-		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature,
+	pub use crate::{
+		v01::{
+			AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode,
+			BorderStyle, BoxProps, ButtonProps, ButtonVariant, CacheProviderInfo,
+			CacheProviderSource, ChainIdentifier, ChatAction, ChatActionLayout, ChatActions,
+			ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia, ChatMessageContent,
+			ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter, ChatRoomParticipation,
+			ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
+			ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions,
+			Effect, EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+			HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
+			HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+			HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
+			HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
+			ImageSource, Modifier, OperationStartedResult, PocketCard, PreimageReadRoute,
+			PreimageRetention, PreimageTarget, ProductAccountId, ProductProofContext, RawPayload,
+			RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+			RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+			RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+			RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode,
+			ResourceAllocationError, RetentionState, RingLocation, RingLocationJunction,
+			RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome,
+			Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
+			StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName,
+			ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
+		},
+		v02::{RetainItem, RetainKind, RetainOutcome, RetainState},
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -233,14 +237,35 @@ pub mod latest {
 	/// Cache account of the payer of a product, and the prices of the ledger.
 	pub type RemotePreimageCacheAccountResponse =
 		LatestOf<versioned::preimage::RemotePreimageCacheAccountResponse>;
-	/// Preimage retention request: the key, the period, the size and the provider.
+	/// Cache account failure.
+	pub type PreimageCacheAccountError =
+		LatestOf<versioned::preimage::RemotePreimageCacheAccountError>;
+	/// Preimage retention request: the items, each with its target, period, size and provider.
 	pub type RemotePreimageRetainRequest =
 		LatestOf<versioned::preimage::RemotePreimageRetainRequest>;
-	/// Preimage retention result: the provider, the end and the charge.
+	/// Preimage retention result: the provider, the end, the price and the state of each item.
 	pub type RemotePreimageRetainResponse =
 		LatestOf<versioned::preimage::RemotePreimageRetainResponse>;
 	/// Preimage retention failure.
 	pub type PreimageRetainError = LatestOf<versioned::preimage::RemotePreimageRetainError>;
+	/// Cache provider request: the target that the order is for.
+	pub type RemotePreimageCacheProvidersRequest =
+		LatestOf<versioned::preimage::RemotePreimageCacheProvidersRequest>;
+	/// The cache providers of the host, in its order.
+	pub type RemotePreimageCacheProvidersResponse =
+		LatestOf<versioned::preimage::RemotePreimageCacheProvidersResponse>;
+	/// Retentions request: the provider to ask for the ledger.
+	pub type RemotePreimageRetentionsRequest =
+		LatestOf<versioned::preimage::RemotePreimageRetentionsRequest>;
+	/// The retentions of the payer of a product.
+	pub type RemotePreimageRetentionsResponse =
+		LatestOf<versioned::preimage::RemotePreimageRetentionsResponse>;
+	/// Request to stop the renewal of a retention.
+	pub type RemotePreimageStopRetentionRequest =
+		LatestOf<versioned::preimage::RemotePreimageStopRetentionRequest>;
+	/// The end of a stopped retention.
+	pub type RemotePreimageStopRetentionResponse =
+		LatestOf<versioned::preimage::RemotePreimageStopRetentionResponse>;
 	/// Preimage read failure.
 	pub type PreimageReadError = LatestOf<versioned::preimage::RemotePreimageReadError>;
 	/// Login request error.

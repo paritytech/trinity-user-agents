@@ -9,14 +9,20 @@ use truapi::{
 	CallContext, CallError, Subscription,
 	api::Preimage,
 	v01,
-	versioned::preimage::{
-		RemotePreimageCacheAccountRequest, RemotePreimageCacheAccountResponse,
-		RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
-		RemotePreimageLookupSubscribeRequest, RemotePreimageReadError, RemotePreimageReadRequest,
-		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
-		RemotePreimageReadTorrentResponse, RemotePreimageRetainError, RemotePreimageRetainRequest,
-		RemotePreimageRetainResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
-		RemotePreimageSubmitResponse,
+	versioned::{
+		FromLatest, IntoLatest, Versioned,
+		preimage::{
+			RemotePreimageCacheAccountError, RemotePreimageCacheAccountRequest,
+			RemotePreimageCacheAccountResponse, RemotePreimageCacheProvidersRequest,
+			RemotePreimageCacheProvidersResponse, RemotePreimageLookupSubscribeError,
+			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
+			RemotePreimageReadError, RemotePreimageReadRequest, RemotePreimageReadResponse,
+			RemotePreimageReadTorrentRequest, RemotePreimageReadTorrentResponse,
+			RemotePreimageRetainError, RemotePreimageRetainRequest, RemotePreimageRetainResponse,
+			RemotePreimageRetentionsRequest, RemotePreimageRetentionsResponse,
+			RemotePreimageStopRetentionRequest, RemotePreimageStopRetentionResponse,
+			RemotePreimageSubmitError, RemotePreimageSubmitRequest, RemotePreimageSubmitResponse,
+		},
 	},
 };
 #[cfg(target_arch = "wasm32")]
@@ -203,6 +209,7 @@ impl Preimage for ProductRuntimeHost {
 		let Some(host) = self.services.preimage_read_host() else {
 			return Err(CallError::Unsupported);
 		};
+		sync_cache_payer(self, host.as_ref()).await;
 		let mut response = host
 			.read_preimage(key.clone(), route, skip_host_caches)
 			.await
@@ -238,6 +245,7 @@ impl Preimage for ProductRuntimeHost {
 		let Some(host) = self.services.preimage_read_host() else {
 			return Err(CallError::Unsupported);
 		};
+		sync_cache_payer(self, host.as_ref()).await;
 		let mut response = host
 			.read_torrent(request)
 			.await
@@ -261,15 +269,19 @@ impl Preimage for ProductRuntimeHost {
 		&self,
 		_cx: &CallContext,
 		request: RemotePreimageCacheAccountRequest,
-	) -> Result<RemotePreimageCacheAccountResponse, CallError<RemotePreimageReadError>> {
-		let RemotePreimageCacheAccountRequest::V1(request) = request;
+	) -> Result<RemotePreimageCacheAccountResponse, CallError<RemotePreimageCacheAccountError>> {
+		let version = request.version();
+		let request = request.into_latest();
 		let Some(host) = self.services.preimage_read_host() else {
 			return Err(CallError::Unsupported);
 		};
+		sync_cache_payer(self, host.as_ref()).await;
 		host.cache_account(request)
 			.await
-			.map(RemotePreimageCacheAccountResponse::V1)
-			.map_err(|error| CallError::Domain(RemotePreimageReadError::V1(error)))
+			.map(|response| RemotePreimageCacheAccountResponse::from_latest(response, version))
+			.map_err(|error| {
+				CallError::Domain(RemotePreimageCacheAccountError::from_latest(error, version))
+			})
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "preimage.retain"))]
@@ -278,26 +290,109 @@ impl Preimage for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: RemotePreimageRetainRequest,
 	) -> Result<RemotePreimageRetainResponse, CallError<RemotePreimageRetainError>> {
-		let RemotePreimageRetainRequest::V1(request) = request;
+		let version = request.version();
+		let request = request.into_latest();
+		let refuse = |error: v01::PreimageRetainError| {
+			CallError::Domain(RemotePreimageRetainError::from_latest(error, version))
+		};
 		let Some(host) = self.services.preimage_read_host() else {
 			return Err(CallError::Unsupported);
 		};
-		if request.key.len() != 32 {
-			return Err(CallError::Domain(RemotePreimageRetainError::V1(
-				v01::PreimageRetainError::Unknown {
-					reason: "a preimage key is 32 bytes".to_string(),
-				},
-			)));
+		sync_cache_payer(self, host.as_ref()).await;
+		if request.items.is_empty() {
+			return Err(refuse(v01::PreimageRetainError::Unknown {
+				reason: "a retention needs at least one item".to_string(),
+			}));
 		}
+		for item in &request.items {
+			if let v01::PreimageTarget::Key(key) = &item.target &&
+				key.len() != 32
+			{
+				return Err(refuse(v01::PreimageRetainError::Unknown {
+					reason: "a preimage key is 32 bytes".to_string(),
+				}));
+			}
+		}
+		if !request.dry_run {
+			self.require_remote_permission(
+				v01::RemotePermission::PreimageRetain,
+				RemotePreimageRetainError::from_latest(v01::PreimageRetainError::Declined, version),
+			)
+			.await?;
+		}
+		host.retain_preimage(request)
+			.await
+			.map(|response| RemotePreimageRetainResponse::from_latest(response, version))
+			.map_err(refuse)
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "preimage.cache_providers"))]
+	async fn cache_providers(
+		&self,
+		_cx: &CallContext,
+		request: RemotePreimageCacheProvidersRequest,
+	) -> Result<RemotePreimageCacheProvidersResponse, CallError<RemotePreimageReadError>> {
+		let RemotePreimageCacheProvidersRequest::V1(request) = request;
+		let Some(host) = self.services.preimage_read_host() else {
+			return Err(CallError::Unsupported);
+		};
+		sync_cache_payer(self, host.as_ref()).await;
+		host.cache_providers(request)
+			.await
+			.map(RemotePreimageCacheProvidersResponse::V1)
+			.map_err(|error| CallError::Domain(RemotePreimageReadError::V1(error)))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "preimage.retentions"))]
+	async fn retentions(
+		&self,
+		_cx: &CallContext,
+		request: RemotePreimageRetentionsRequest,
+	) -> Result<RemotePreimageRetentionsResponse, CallError<RemotePreimageReadError>> {
+		let RemotePreimageRetentionsRequest::V1(request) = request;
+		let Some(host) = self.services.preimage_read_host() else {
+			return Err(CallError::Unsupported);
+		};
+		sync_cache_payer(self, host.as_ref()).await;
+		host.retentions(request)
+			.await
+			.map(RemotePreimageRetentionsResponse::V1)
+			.map_err(|error| CallError::Domain(RemotePreimageReadError::V1(error)))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "preimage.stop_retention"))]
+	async fn stop_retention(
+		&self,
+		_cx: &CallContext,
+		request: RemotePreimageStopRetentionRequest,
+	) -> Result<RemotePreimageStopRetentionResponse, CallError<RemotePreimageRetainError>> {
+		let RemotePreimageStopRetentionRequest::V1(request) = request;
+		let Some(host) = self.services.preimage_read_host() else {
+			return Err(CallError::Unsupported);
+		};
+		sync_cache_payer(self, host.as_ref()).await;
 		self.require_remote_permission(
 			v01::RemotePermission::PreimageRetain,
 			RemotePreimageRetainError::V1(v01::PreimageRetainError::Declined),
 		)
 		.await?;
-		host.retain_preimage(request)
+		host.stop_retention(request)
 			.await
-			.map(RemotePreimageRetainResponse::V1)
+			.map(RemotePreimageStopRetentionResponse::V1)
 			.map_err(|error| CallError::Domain(RemotePreimageRetainError::V1(error)))
+	}
+}
+
+/// The cache payer of this product for the current session, for the read host.
+async fn sync_cache_payer(
+	runtime: &ProductRuntimeHost,
+	host: &dyn crate::platform::PreimageReadHost,
+) {
+	let seed = runtime.authority.current_session().and_then(|session| {
+		runtime.authority.cache_payer_seed(&session, &runtime.product_id()).ok()
+	});
+	if let Err(error) = host.set_cache_payer(seed.map(Vec::from).unwrap_or_default()).await {
+		warn!(?error, "the read host did not take the cache payer");
 	}
 }
 

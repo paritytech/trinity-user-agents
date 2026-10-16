@@ -522,6 +522,14 @@ pub trait ProductAuthority: Send + Sync {
 
 	/// Core-only root-derived key for stable contact handles across products.
 	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
+
+	/// Core-only seed of the cache payer of `product_id`: the key with which the
+	/// host pays cache providers for that product.
+	fn cache_payer_seed(
+		&self,
+		session: &AuthoritySession,
+		product_id: &str,
+	) -> Result<[u8; 32], AuthorityError>;
 }
 
 /// Build the neutral authority-session snapshot for `session`.
