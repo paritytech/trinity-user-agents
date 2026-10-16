@@ -151,7 +151,10 @@ pub enum HostFundingStatusSubscribeItem {
 /// Error from [`crate::api::Funding::status_subscribe`].
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingStatusSubscribeError {
-	/// No such session, or it does not belong to the caller.
+	/// No such session, it does not belong to the caller, or it ended so long
+	/// ago that the core no longer keeps it. A session the host recorded is
+	/// kept until 64 newer recorded sessions of the same product replace it,
+	/// and watching it yields its terminal item.
 	#[codec(index = 0)]
 	NotFound,
 	/// Catch-all.
