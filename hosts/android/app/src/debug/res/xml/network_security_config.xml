@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug builds open products from a development server on the developer's machine, served in the
+  clear and reached as localhost over adb reverse, as 10.0.2.2 from the emulator, or by the
+  machine's LAN address. A domain-config cannot name an address range, so cleartext is allowed for
+  every host here. This file replaces src/main's for the debug build type only.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
