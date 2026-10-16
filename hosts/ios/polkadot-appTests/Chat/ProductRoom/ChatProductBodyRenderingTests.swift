@@ -71,6 +71,20 @@ struct ChatProductBodyRenderingTests {
         #expect(bubble.replyInfo?.messageId == "m1")
     }
 
+    /// A reply quotes a Markdown text without its marks.
+    @Test func aReplyQuotesAMarkdownTextWithoutItsMarks() async throws {
+        let quoted = productMessage("m1", body: .richText(text: "**bold**, _italic_", media: []), replyTo: nil)
+        let reply = productMessage("m2", body: .text(text: "ok"), replyTo: "m1")
+        #expect(quoted.hasMarkdownText)
+
+        let (factory, presenter) = try makeFactory()
+        defer { withExtendedLifetime(presenter) {} }
+        let bubble = try await bubble(factory, reply, after: [quoted])
+
+        #expect(bubble.replyInfo?.preview == "bold, italic")
+        #expect(reply.quoteText("**bold**") == "**bold**")
+    }
+
     /// A body with media stays a media body, and a `Text` body has no Markdown.
     @Test func onlyARichTextWithTextAndNoMediaIsAMarkdownText() {
         let media = ChatMessageBody.richText(text: "**a**", media: [image()])
@@ -319,6 +333,19 @@ private extension ChatProductBodyRenderingTests {
         )
         factory.productRoom = presenter
         return (factory, presenter)
+    }
+
+    func productMessage(_ messageId: String, body: ChatMessageBody, replyTo: String?) -> Chat.LocalMessage {
+        ChatMessage(
+            messageId: messageId,
+            origin: ChatMessageOrigin(participantId: "c1"),
+            timestamp: 1_767_225_600_000,
+            body: body,
+            status: .sent,
+            replyTo: replyTo,
+            editedAt: nil,
+            reactions: []
+        ).localMessage(chatId: Data.chatId, extensionId: Data.productId, isUnread: false)
     }
 
     func bubble(

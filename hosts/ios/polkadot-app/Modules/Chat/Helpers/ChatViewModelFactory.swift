@@ -665,7 +665,7 @@ private extension ChatViewModelFactory {
 
         return ChatMessageContainerConfiguration.ReplyInfo(
             username: username,
-            preview: String(originalText.prefix(Self.replyPreviewMaxLength)),
+            preview: String(originalMessage.quoteText(originalText).prefix(Self.replyPreviewMaxLength)),
             messageId: replyContent.messageId
         )
     }

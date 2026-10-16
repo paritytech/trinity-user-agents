@@ -343,7 +343,7 @@ private extension ChatPresenter {
                 }
             }
 
-        view?.showReply(messageId: messageId, username: username, text: currentText)
+        view?.showReply(messageId: messageId, username: username, text: message.quoteText(currentText))
     }
 
     func handleCopyAction(content: String) {

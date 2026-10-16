@@ -10,6 +10,8 @@ final class ChatRoomCallBarModel: ObservableObject {
     var onDecline: () -> Void = {}
     var onOpen: () -> Void = {}
     var onEnd: () -> Void = {}
+    /// The height of the drawn bar, 0 when the room has no call. The room screen moves its messages below it.
+    var onHeight: (CGFloat) -> Void = { _ in }
 }
 
 /// The ringing banner and the call bar at the top of a product room (07-LATER §11.2).
@@ -17,6 +19,17 @@ struct ChatRoomCallBar: View {
     @ObservedObject var model: ChatRoomCallBarModel
 
     var body: some View {
+        VStack(spacing: 0) {
+            content
+        }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { height in
+            model.onHeight(height)
+        }
+    }
+
+    @ViewBuilder private var content: some View {
         if let viewModel = model.viewModel {
             Group {
                 switch viewModel.state {

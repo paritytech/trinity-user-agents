@@ -324,6 +324,22 @@ public extension ChatViewLayout {
         updateContentInsets(bottomInset: bottomInset)
     }
 
+    /// Moves the messages below a view over the top of the list, for example the call bar of a room. A list at its
+    /// top stays at its top, so the first message shows below the view.
+    func setTopOverlayInset(_ inset: CGFloat) {
+        guard collectionView.contentInset.top != inset else { return }
+
+        let oldTop = -collectionView.adjustedContentInset.top
+        let wasAtTop = collectionView.contentOffset.y <= oldTop + 1
+        collectionView.contentInset.top = inset
+        collectionView.verticalScrollIndicatorInsets.top = inset
+
+        let newTop = -collectionView.adjustedContentInset.top
+        if wasAtTop || collectionView.contentOffset.y < newTop {
+            collectionView.contentOffset.y = newTop
+        }
+    }
+
     func adoptToHiddenKeyboard() {
         updateContentInsets(bottomInset: 0)
     }

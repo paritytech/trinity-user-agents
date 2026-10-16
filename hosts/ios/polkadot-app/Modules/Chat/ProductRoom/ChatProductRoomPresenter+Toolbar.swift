@@ -61,6 +61,8 @@ extension ChatProductRoomPresenter {
                 image: UIImage(systemName: "ellipsis.circle"),
                 menu: UIMenu(children: entries)
             )
+            // When the bar folds its items into its own menu, it labels this submenu with the title.
+            overflowItem.title = String(localized: .ChatExtension.toolbarMore)
             overflowItem.accessibilityLabel = String(localized: .ChatExtension.toolbarMore)
             items.append(overflowItem)
         }

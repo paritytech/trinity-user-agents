@@ -31,12 +31,14 @@ struct ChatProductToolbarTests {
         _ = presenter
     }
 
-    /// P7.2: VoiceOver reads the label of each toolbar button, and names the overflow button.
+    /// P7.2: VoiceOver reads the label of each toolbar button, and names the overflow button. The title names the
+    /// overflow button also when the bar folds its items into its own menu.
     @Test func eachToolbarButtonHasALabelForVoiceOver() throws {
         _ = try makePresenter(toolbar: (1 ... 4).map { button("tb-\($0)") })
 
         let items = try #require(view.toolbars.last)
         #expect(items[0].accessibilityLabel == String(localized: .ChatExtension.toolbarMore))
+        #expect(items[0].title == String(localized: .ChatExtension.toolbarMore))
         #expect(items[1].accessibilityLabel == "tb-2")
         #expect(items[2].accessibilityLabel == "tb-1")
     }

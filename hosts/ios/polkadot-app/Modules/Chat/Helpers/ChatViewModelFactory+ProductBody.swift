@@ -28,6 +28,13 @@ extension Chat.LocalMessage.Content {
     }
 }
 
+extension Chat.LocalMessage {
+    /// The text that a reply quote shows for `text` of this message. A Markdown text shows without its marks.
+    func quoteText(_ text: String) -> String {
+        hasMarkdownText ? ChatReadAloudService.plainText(fromMarkdown: text) : text
+    }
+}
+
 extension Chat.LocalMessage.Content.ProductBody {
     /// The line that a reply quotes from the body.
     var replyPreview: String {
