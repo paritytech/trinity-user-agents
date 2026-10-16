@@ -1313,7 +1313,7 @@ mod tests {
 	use crate::{
 		host_logic::statement_store::decode_verified_statement_data,
 		platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig},
-		runtime::{authority::ProductAuthority, services::RuntimeServices},
+		runtime::{HostSession, authority::ProductAuthority, services::RuntimeServices},
 		test_support::{StubPlatform, test_spawner},
 	};
 	use std::sync::Arc;

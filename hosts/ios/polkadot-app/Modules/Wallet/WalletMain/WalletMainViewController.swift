@@ -57,6 +57,14 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
             self?.collapseExpandedSection()
         }
 
+        rootView.viewModel.onCollectibles = { [weak self] in
+            self?.showCollectiblesOverlay()
+        }
+
+        rootView.viewModel.onViewCollectibles = { [weak presenter] in
+            presenter?.showCollectibles()
+        }
+
         rootView.viewModel.onOpenPocketCard = { [weak presenter] card in
             presenter?.showPocketCard(card)
         }
@@ -97,8 +105,28 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
 }
 
 extension WalletMainViewController: WalletMainViewProtocol {
+    func didReceive(isCollectiblesAvailable: Bool) {
+        rootView.viewModel.isCollectiblesAvailable = isCollectiblesAvailable
+    }
+
     func didReceive(pocketCards: [PocketCardViewModel]) {
         rootView.viewModel.pocketCards = pocketCards
+    }
+
+    /// Nil once the card is gone or the Wallet is not what closing the card
+    /// returns to.
+    func frame(of key: PocketCardKey) -> CGRect? {
+        guard
+            UIApplication.shared.mainTabBarController?.container.selectedController === navigationController,
+            navigationController?.topViewController === self,
+            rootView.viewModel.pocketCards.contains(where: { $0.key == key })
+        else { return nil }
+
+        return rootView.viewModel.pocketCardFrames[key]
+    }
+
+    func setOpenCard(_ key: PocketCardKey?) {
+        rootView.viewModel.openPocketCard = key
     }
 
     @objc
@@ -126,6 +154,13 @@ extension WalletMainViewController: WalletMainViewProtocol {
         setOverlayCloseButton()
         setShareButton()
         setTitleCenter(String(localized: .walletMainIdCard))
+    }
+
+    private func showCollectiblesOverlay() {
+        rootView.viewModel.expandedSection = .collectiblesDetails
+        setOverlayCloseButton()
+        resetRightButton()
+        setTitleCenter(nil)
     }
 
     func setMainTitle() {
