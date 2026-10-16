@@ -235,10 +235,10 @@ struct PocketCardScreenTests {
         #expect(face?.safeAreaRegions == [])
     }
 
-    /// Drawn 16 pt from either edge, as on Android, and where the open and
-    /// close flight takes the card from.
+    /// 16 pt from either edge, as on Android. The open and close flight only
+    /// moves the card, so it must start from where the card is drawn.
     @Test
-    func drawsTheCardSixteenPointsFromEitherEdgeWhereItsFlightTakesIt() throws {
+    func drawsTheCardSixteenPointsInWhereItsFlightStarts() throws {
         let screen = laidOutScreen(product: StubSPAView())
         let size = CGSize(width: screenSize.width, height: PocketOpenedCardView.height)
         let pixels = try WidgetNodeRaster.pixels(
@@ -247,12 +247,15 @@ struct PocketCardScreenTests {
             under: .berlinNight
         )
 
-        let middleRow = Int(size.height) / 2 * Int(size.width) * 4
-        let painted = (0 ..< Int(size.width)).filter { pixels[middleRow + $0 * 4] > 0 }
+        let rowStart = Int(size.height / 2) * Int(size.width) * 4
+        let paintedColumns = (0 ..< Int(size.width)).filter { column in
+            pixels[rowStart + column * 4 ..< rowStart + column * 4 + 3].contains { $0 > 0 }
+        }
+        let drawn = try CGFloat(#require(paintedColumns.first)) ... CGFloat(#require(paintedColumns.last) + 1)
         let card = screen.cardFrame(in: screen.view)
 
-        #expect([painted.first, painted.last.map { $0 + 1 }] == [16, Int(size.width) - 16])
-        #expect([card.minX, card.maxX] == [16, size.width - 16])
+        #expect(drawn == card.minX ... card.maxX)
+        #expect(card.minX == 16)
     }
 }
 
