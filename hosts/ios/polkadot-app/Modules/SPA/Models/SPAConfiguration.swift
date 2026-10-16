@@ -10,6 +10,11 @@ enum SPAContentSource {
     /// through the polkadot:// scheme handler under the product's own origin,
     /// with no dotNS read. Rust runtime only.
     case bundled(URL)
+    #if DEBUG
+        /// Debug: a product served from a development server on the developer's machine, loaded from
+        /// `url` and run under the identifier the core gave it. Rust runtime only.
+        case devServer(url: URL, productId: ProductId)
+    #endif
 
     /// Whether only the rust runtime can serve it.
     var isRustOnly: Bool {
@@ -17,6 +22,9 @@ enum SPAContentSource {
         case .dotNs: false
         case .directURL,
              .bundled: true
+        #if DEBUG
+            case .devServer: true
+        #endif
         }
     }
 }
@@ -29,9 +37,15 @@ struct SPAConfiguration {
     let contentSource: SPAContentSource
     let isBrowserTab: Bool
     let browserTabId: UUID?
+    /// How a Pocket card's page reaches the face above it; nil for a page
+    /// shown anywhere else.
+    let cardFace: (any ExpandedCardFaceShowing)?
+
     /// Which of the product's executables this screen serves. A Pocket card
     /// opens the widget, everything else the app.
-    let executable: ExecutableKind
+    var executable: ExecutableKind {
+        cardFace == nil ? .app : .widget
+    }
 
     init(
         title: String?,
@@ -41,7 +55,7 @@ struct SPAConfiguration {
         contentSource: SPAContentSource = .dotNs,
         isBrowserTab: Bool = false,
         browserTabId: UUID? = nil,
-        executable: ExecutableKind = .app
+        cardFace: (any ExpandedCardFaceShowing)? = nil
     ) {
         self.title = title
         self.isRootScreen = isRootScreen
@@ -50,11 +64,24 @@ struct SPAConfiguration {
         self.contentSource = contentSource
         self.isBrowserTab = isBrowserTab
         self.browserTabId = browserTabId
-        self.executable = executable
+        self.cardFace = cardFace
     }
 }
 
 extension SPAConfiguration {
+    /// Identifier the product runs under, which storage, permissions and account derivation key off.
+    var productId: ProductId {
+        switch contentSource {
+        case .dotNs,
+             .directURL:
+            page.host.toDotDomain()
+        #if DEBUG
+            case let .devServer(_, productId):
+                productId
+        #endif
+        }
+    }
+
     static func browseRoot(host: ProductHost) -> SPAConfiguration {
         SPAConfiguration(
             title: nil,

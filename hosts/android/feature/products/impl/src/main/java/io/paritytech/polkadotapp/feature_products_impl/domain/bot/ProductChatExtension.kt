@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExte
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
@@ -54,11 +55,15 @@ import timber.log.Timber
  * the driving lease on dispose.
  *
  * Each instance is created by [ProductBotFactory] for a specific [Product].
+ *
+ * A product the host placed ([ProductChatExtensionOrigin.PlacedByHost]) has its rooms pinned above
+ * the rest and offers no removal.
  */
 class ProductChatExtension(
     appContext: Context,
     val product: Product,
     private val workerRefCounter: ProductWorkerRefCounter,
+    val origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
 
@@ -88,7 +93,12 @@ class ProductChatExtension(
         return listOf(messageRenderer)
     }
 
-    override fun customMenuRenderer(chatId: ChatId): CustomChatMenuRenderer = ProductChatMenuRenderer(product, chatId)
+    private val chatPreviewDelegate = ProductChatPreviewDelegate(origin)
+
+    override fun customMenuRenderer(chatId: ChatId): CustomChatMenuRenderer =
+        ProductChatMenuRenderer(product, chatId, removable = origin == ProductChatExtensionOrigin.InstalledByUser)
+
+    override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*> = chatPreviewDelegate
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {
@@ -133,7 +143,7 @@ class ProductChatExtension(
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is ProductChatExtension) return false
-        return product == other.product
+        return product == other.product && origin == other.origin
     }
 
     override fun hashCode(): Int = product.hashCode()

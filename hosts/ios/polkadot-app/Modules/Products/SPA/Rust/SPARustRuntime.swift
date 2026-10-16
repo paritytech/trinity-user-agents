@@ -71,6 +71,10 @@ extension SPARustRuntime: SPARuntimeProtocol {
                     at: directory,
                     domain: configuration.page.host.toDotDomain()
                 )
+            #if DEBUG
+                case let .devServer(url, _):
+                    url
+            #endif
             }
 
         try checkNotDisposed()
