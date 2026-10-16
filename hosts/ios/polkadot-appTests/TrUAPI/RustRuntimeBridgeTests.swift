@@ -551,9 +551,13 @@ struct RustRuntimeBridgeTests {
             routerFacade: ProductRoutersFacade.worker()
         )
 
-        let review = UserConfirmationReview.productSubtree(ProductSubtreeReview(productId: "test.product"))
+        for review in [
+            UserConfirmationReview.preimageSubmit(PreimageSubmitReview(size: 1_024)),
+            .productSubtree(ProductSubtreeReview(productId: "test.product"))
+        ] {
             #expect(await presenter.confirm(review: review, from: "test.product") == false)
         }
+    }
 
 
     // MARK: attach

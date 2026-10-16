@@ -92,6 +92,10 @@ private extension TrUAPIConfirmationPresenter {
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
             )
+        case let .preimageSubmit(preimageReview):
+            await confirmAction(
+                promptMapper.makeActionRequest(from: preimageReview, requester: requesterName)
+            )
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
         case .identityDisclosure,
