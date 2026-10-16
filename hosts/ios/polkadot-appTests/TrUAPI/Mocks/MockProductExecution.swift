@@ -47,17 +47,22 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     private var closeSignals: AsyncStream<Void>.AsyncIterator
     private let pocketCardSignal: AsyncStream<[PocketCard]>.Continuation
     private var pocketCardSignals: AsyncStream<[PocketCard]>.AsyncIterator
+    private let themeSignal: AsyncStream<Void>.Continuation
+    private var themeSignals: AsyncStream<Void>.AsyncIterator
 
     init() {
         let (renders, renderContinuation) = AsyncStream.makeStream(of: Void.self)
         let (closes, closeContinuation) = AsyncStream.makeStream(of: Void.self)
         let (cardLists, cardListContinuation) = AsyncStream.makeStream(of: [PocketCard].self)
+        let (themes, themeContinuation) = AsyncStream.makeStream(of: Void.self)
         renderSignal = renderContinuation
         renderSignals = renders.makeAsyncIterator()
         closeSignal = closeContinuation
         closeSignals = closes.makeAsyncIterator()
         pocketCardSignal = cardListContinuation
         pocketCardSignals = cardLists.makeAsyncIterator()
+        themeSignal = themeContinuation
+        themeSignals = themes.makeAsyncIterator()
     }
 
     /// Returns once a `render` call has happened that no earlier call to this method consumed.
@@ -73,6 +78,11 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     /// Returns the next card list pushed to the product that no earlier call to this method consumed.
     func awaitPocketCardNotification() async -> [PocketCard]? {
         await pocketCardSignals.next()
+    }
+
+    /// Returns once a theme notification has happened that no earlier call to this method consumed.
+    func awaitThemeChange() async {
+        _ = await themeSignals.next()
     }
 
     func startWsBridge(bindPort _: UInt16) throws -> WsBridgeEndpoint {
@@ -134,6 +144,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func notifyThemeChanged(theme: HostThemeSubscribeItem) {
         themeChanges.append(theme)
+        themeSignal.yield()
     }
 
     func notifyLocaleChanged(locale _: HostLocaleSubscribeItem) {}
