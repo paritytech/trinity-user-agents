@@ -254,6 +254,17 @@
         }
       }
     },
+    "cancel.anyway" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel anyway"
+          }
+        }
+      }
+    },
     "cancel.body" : {
       "extractionState" : "manual",
       "localizations" : {

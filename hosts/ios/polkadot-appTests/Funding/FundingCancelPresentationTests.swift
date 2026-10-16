@@ -64,11 +64,51 @@ struct FundingCancelPresentationTests {
     }
 
     @Test
-    func noSecondCancelWhileOneIsWithTheProvider() {
-        #expect(FundingCancelPresentation.isUnderway(.cancelRequested))
-        #expect(FundingCancelPresentation.isUnderway(.cancelOffered(fee: "1", refund: "1")))
-        #expect(FundingCancelPresentation.isUnderway(.cancelling))
-        #expect(!FundingCancelPresentation.isUnderway(.cancelRefused(reason: "no")))
-        #expect(!FundingCancelPresentation.isUnderway(.waitingForTransfer))
+    func aSecondCancelStaysReachableUntilMoneyMoves() {
+        #expect(FundingCancelPresentation.canCancel(.cancelRequested, moneyMoved: false))
+        #expect(FundingCancelPresentation.cancelTitle(.cancelRequested) == String(localized: .Funding.cancelAnyway))
+    }
+
+    @Test
+    func moneyMovesOnceFundsStartOrThePaymentArrives() {
+        #expect(!session().moneyMoved)
+        #expect(session(started: [StartedFunds(hostId: Data(repeating: 1, count: 32), amount: "1", namedAtMs: nil)])
+            .moneyMoved)
+        #expect(session(updates: [.paymentReceived(finalized: false, mismatch: nil)]).moneyMoved)
+        #expect(session(updates: [.collecting(paymentId: Data(repeating: 2, count: 32), amount: "1")]).moneyMoved)
+        #expect(!session(updates: [.awaitingPayment]).moneyMoved)
+    }
+
+    @Test
+    func onceMoneyMovedACancelWithTheProviderWaitsForItsAnswer() {
+        #expect(!FundingCancelPresentation.canCancel(.cancelRequested, moneyMoved: true))
+        #expect(!FundingCancelPresentation.canCancel(.cancelOffered(fee: "1", refund: "1"), moneyMoved: true))
+        #expect(!FundingCancelPresentation.canCancel(.cancelling, moneyMoved: true))
+        #expect(FundingCancelPresentation.canCancel(.cancelRefused(reason: "no"), moneyMoved: true))
+        #expect(FundingCancelPresentation.canCancel(.waitingForTransfer, moneyMoved: false))
+        #expect(FundingCancelPresentation.cancelTitle(.waitingForTransfer) == String(localized: .Funding.depositCancel))
+    }
+}
+
+private extension FundingCancelPresentationTests {
+    func session(updates: [FundingUpdate] = [], started: [StartedFunds] = []) -> FundingSession {
+        FundingSession(
+            intent: "intent",
+            ownerProductId: nil,
+            direction: .in,
+            amount: "50000000",
+            stage: .open,
+            openedAtMs: 0,
+            deadlineMs: 86_400_000,
+            acknowledged: false,
+            providerId: "provider",
+            assignedAtMs: 0,
+            cancel: .requested,
+            updates: updates.map { FundingUpdateRecord(update: $0, atMs: 1) },
+            started: started,
+            choice: nil,
+            saved: nil,
+            refund: nil
+        )
     }
 }

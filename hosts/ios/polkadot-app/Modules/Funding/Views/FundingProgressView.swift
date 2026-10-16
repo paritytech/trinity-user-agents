@@ -116,7 +116,7 @@ private extension FundingProgressView {
 
             if model.canRequestCancel {
                 FundingPrimaryButton(
-                    title: String(localized: .Funding.depositCancel),
+                    title: model.cancelTitle,
                     style: .destructive,
                     action: model.confirmCancel
                 )

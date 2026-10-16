@@ -54,13 +54,47 @@ enum FundingCancelPresentation {
         }
     }
 
-    /// Whether the cancel is already with the provider, so the user cannot
-    /// ask again.
-    static func isUnderway(_ status: FundingStatus) -> Bool {
+    /// Whether the user can cancel a session in `status`. Before money moved a
+    /// second cancel ends the session, so a provider that went silent cannot hold
+    /// it; after, a cancel already with the provider waits for its answer.
+    static func canCancel(_ status: FundingStatus, moneyMoved: Bool) -> Bool {
         switch status {
-        case .cancelRequested,
-             .cancelOffered,
+        case .cancelRequested: !moneyMoved
+        case .cancelOffered,
              .cancelling:
+            false
+        default:
+            true
+        }
+    }
+
+    /// The cancel action's title: a second cancel, which ends the session at
+    /// once, reads differently from the first.
+    static func cancelTitle(_ status: FundingStatus) -> String {
+        if case .cancelRequested = status {
+            String(localized: .Funding.cancelAnyway)
+        } else {
+            String(localized: .Funding.depositCancel)
+        }
+    }
+}
+
+extension FundingSession {
+    /// Whether money moved for the session: the provider started or named funds,
+    /// or saw the user's payment. The core's rule is the same; from then on only
+    /// the provider ends the session.
+    var moneyMoved: Bool {
+        !started.isEmpty || updates.contains { $0.update.movesMoney }
+    }
+}
+
+private extension FundingUpdate {
+    var movesMoney: Bool {
+        switch self {
+        case .paymentReceived,
+             .crediting,
+             .collecting,
+             .refunding:
             true
         default:
             false
