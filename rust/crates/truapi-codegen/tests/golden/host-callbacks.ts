@@ -222,8 +222,9 @@ export type CoreStorageKey =
    */
   | { tag: "FundingSessions"; value?: undefined }
   /**
-   * The last funding sessions blob the core could not read, kept as it was
-   * so a stored session is never overwritten unread.
+   * Funding sessions blobs the core could not read, as a SCALE list of the
+   * raw blobs, newest last, so a stored session is never overwritten
+   * unread and a later bad blob does not replace an earlier one.
    */
   | { tag: "FundingSessionsUnreadable"; value?: undefined };
 
