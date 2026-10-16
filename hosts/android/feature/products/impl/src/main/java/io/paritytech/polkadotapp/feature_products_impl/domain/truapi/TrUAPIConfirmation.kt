@@ -58,12 +58,6 @@ sealed interface TrUAPIConfirmation {
         val resources: List<String>,
     ) : TrUAPIConfirmation.Prompt
 
-    /** Submit a preimage to the host-selected backend. */
-    class PreimageSubmit(
-        override val requesterProductId: String,
-        val sizeBytes: Long,
-    ) : TrUAPIConfirmation.Prompt
-
     /** Let one product act on another product's account. */
     class AccountAccess(
         override val requesterProductId: String,

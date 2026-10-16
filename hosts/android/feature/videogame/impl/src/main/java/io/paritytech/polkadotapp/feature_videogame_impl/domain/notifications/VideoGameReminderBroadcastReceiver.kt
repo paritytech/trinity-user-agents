@@ -9,8 +9,6 @@ import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.canScheduleExactAlarms
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
-import io.paritytech.polkadotapp.feature_videogame_impl.service.VideoGameStateReader
-import io.paritytech.polkadotapp.feature_videogame_impl.service.isInWaitingRoom
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -27,42 +25,16 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
     lateinit var appLifecycleObserver: AppLifecycleObserver
 
     @Inject
-    lateinit var videoGameStateReader: VideoGameStateReader
-
-    @Inject
     lateinit var productGameReminder: RealProductGameReminder
 
     override fun onReceive(context: Context, intent: Intent) {
-        when (intent.action) {
-            ACTION_POST_NOTIFICATION -> {
-                when (val type = intent.getParcelableExtra<VideoGameNotificationType>(EXTRA_NOTIFICATION_TYPE)) {
-                    is VideoGameNotificationType.RegistrationOpened -> {
-                        notificationPublisher.publishRegistrationOpenedNotification(type.timestamp)
-                    }
+        if (intent.action != ACTION_POST_NOTIFICATION) return
 
-                    VideoGameNotificationType.WaitingRoomAvailable -> {
-                        notificationPublisher.publishWaitingRoomAvailableNotification()
-                    }
+        when (val type = intent.getParcelableExtra<VideoGameNotificationType>(EXTRA_NOTIFICATION_TYPE)) {
+            is VideoGameNotificationType.ProductGameStartsSoon ->
+                publishProductGameStartsSoon(context, ProductId.fromStoredValue(type.productId))
 
-                    VideoGameNotificationType.GameAboutToStart -> {
-                        notificationPublisher.publishGameAboutToStartNotification()
-                    }
-
-                    VideoGameNotificationType.GameStartsSoon -> {
-                        val isAppInForeground = appLifecycleObserver.getCurrentState() == AppLifecycleState.FOREGROUND
-                        val isViewingWaitingRoom = isAppInForeground && videoGameStateReader.isInWaitingRoom()
-                        if (!isViewingWaitingRoom) {
-                            notificationPublisher.publishGameStartsSoonNotification()
-                        }
-                    }
-
-                    is VideoGameNotificationType.ProductGameStartsSoon -> {
-                        publishProductGameStartsSoon(context, ProductId.fromStoredValue(type.productId))
-                    }
-
-                    null -> Unit
-                }
-            }
+            null -> Unit
         }
     }
 

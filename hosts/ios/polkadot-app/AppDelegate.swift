@@ -29,6 +29,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         issueMonitoringService.setup()
 
+        CoreDurableRecoveryTask.shared.register()
+
         UserNotificationService.shared.startGatheringNotifications()
 
         LegacyGameAlarmCleanup.run()

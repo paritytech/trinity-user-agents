@@ -9,11 +9,15 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     private(set) var closeCallCount = 0
     private(set) var chainResponses: [(UInt32, String)] = []
     private(set) var chainClosed: [UInt32] = []
+    private(set) var themeChanges: [HostThemeSubscribeItem] = []
 
     /// Status returned by `permissionAuthorizationStatus`; defaults to
     /// `.notDetermined` so existing tests are unaffected.
     var permissionStatus: PermissionAuthorizationStatus = .notDetermined
     private(set) var permissionRequests: [PermissionAuthorizationRequest] = []
+    /// Answer returned by `authorizeDevicePermission`.
+    var devicePermissionGranted = false
+    private(set) var devicePermissionRequests: [HostDevicePermissionRequest] = []
 
     /// Card lists pushed to the product, in order, so a test can assert the
     /// worker was told what it holds rather than only that it started.
@@ -34,6 +38,30 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     /// a test counting `render` calls has to hold it open to be deterministic.
     var keepsRenderStreamOpen = false
 
+    private let renderSignal: AsyncStream<Void>.Continuation
+    private var renderSignals: AsyncStream<Void>.AsyncIterator
+    private let closeSignal: AsyncStream<Void>.Continuation
+    private var closeSignals: AsyncStream<Void>.AsyncIterator
+
+    init() {
+        let (renders, renderContinuation) = AsyncStream.makeStream(of: Void.self)
+        let (closes, closeContinuation) = AsyncStream.makeStream(of: Void.self)
+        renderSignal = renderContinuation
+        renderSignals = renders.makeAsyncIterator()
+        closeSignal = closeContinuation
+        closeSignals = closes.makeAsyncIterator()
+    }
+
+    /// Returns once a `render` call has happened that no earlier call to this method consumed.
+    func awaitRenderRequest() async {
+        _ = await renderSignals.next()
+    }
+
+    /// Returns once a `close` call has happened that no earlier call to this method consumed.
+    func awaitClose() async {
+        _ = await closeSignals.next()
+    }
+
     func startWsBridge(bindPort _: UInt16) throws -> WsBridgeEndpoint {
         startWsBridgeCallCount += 1
         return WsBridgeEndpoint(port: 0, token: "test")
@@ -45,6 +73,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func close() {
         closeCallCount += 1
+        closeSignal.yield()
     }
 
     func publishChatAction(_ item: HostChatActionSubscribeItem) throws {
@@ -53,6 +82,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {
         renderRequests.append(request)
+        renderSignal.yield()
         if !renderErrors.isEmpty {
             throw renderErrors.removeFirst()
         }
@@ -76,12 +106,20 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         return permissionStatus
     }
 
+    func authorizeDevicePermission(_ request: HostDevicePermissionRequest) async throws -> Bool {
+        devicePermissionRequests.append(request)
+        return devicePermissionGranted
+    }
+
     func setPermissionAuthorizationStatus(
         request _: PermissionAuthorizationRequest,
         status _: PermissionAuthorizationStatus
     ) throws {}
 
-    func notifyThemeChanged(theme _: HostThemeSubscribeItem) {}
+    func notifyThemeChanged(theme: HostThemeSubscribeItem) {
+        themeChanges.append(theme)
+    }
+
     func notifyLocaleChanged(locale _: HostLocaleSubscribeItem) {}
     func notifyStorageChanged(key _: String, value _: Data?) {}
     func notifyPreimageChanged(key _: Data, value _: Data?) {}

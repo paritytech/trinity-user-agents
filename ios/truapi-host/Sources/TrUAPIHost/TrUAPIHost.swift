@@ -191,6 +191,15 @@ public protocol HostBridge: AnyObject, Sendable {
     /// pairing.
     func devicePaired(device: PairedSsoPeer)
 
+    /// Whether the core has durable transactions still awaiting a verdict.
+    /// While `pending` is true, keep a background task running that awaits
+    /// ``TrUAPIHostRuntime/runDurableRecovery()``; false means nothing needs
+    /// it. Reported on change, starting with the state the runtime finds at
+    /// launch. Runtime-wide, like `workerDemandChanged`, and arrives on a
+    /// core thread: hand it off rather than blocking. Defaults to a no-op
+    /// for a host that runs no durable work.
+    func durableWorkChanged(pending: Bool)
+
     /// Scoped key-value storage for the Rust core.
     var storage: HostStorageBackend { get }
 
@@ -352,6 +361,7 @@ public extension HostBridge {
     func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
     func workerDemandChanged(productId: String, transition: WorkerTransition) {}
     func devicePaired(device: PairedSsoPeer) {}
+    func durableWorkChanged(pending: Bool) {}
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
@@ -528,6 +538,10 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func devicePaired(device: PairedSsoPeer) {
         bridge.devicePaired(device: device)
+    }
+
+    func durableWorkChanged(pending: Bool) {
+        bridge.durableWorkChanged(pending: pending)
     }
 
     func navigateTo(url: String) async throws {
@@ -930,6 +944,17 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.coreDatabaseStatus()
     }
 
+    /// Decides durable transactions from the chain until none is live, then
+    /// returns. Await it from the background task
+    /// ``HostBridge/durableWorkChanged(pending:)`` asks for; a throw means
+    /// recovery stopped early and the task should be retried. Cancelling the
+    /// Swift task does not stop the run in the core, so a background task
+    /// completes itself from its expiration handler rather than waiting for
+    /// this call to return.
+    public func runDurableRecovery() async throws {
+        try await inner.runDurableRecovery()
+    }
+
     public func activateLocalSession(secret: Data, liteUsername: String? = nil) throws {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
     }
@@ -1050,6 +1075,7 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func permissionAuthorizationStatus(
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus
+    func authorizeDevicePermission(_ request: HostDevicePermissionRequest) async throws -> Bool
     func setPermissionAuthorizationStatus(
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus
@@ -1127,6 +1153,12 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus {
         try await inner.permissionAuthorizationStatus(request: request)
+    }
+
+    /// Resolves a capability the web view gates itself through the product's
+    /// saved, one-use, or prompted decision.
+    public func authorizeDevicePermission(_ request: HostDevicePermissionRequest) async throws -> Bool {
+        try await inner.authorizeDevicePermission(request: request)
     }
 
     /// Updates the product decision used by subsequent permission checks.

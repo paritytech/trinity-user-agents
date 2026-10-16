@@ -1,9 +1,11 @@
 import Foundation
+import os
 import FoundationExt
 import TrUAPIHost
 import Products
 import ChainRegistry
 import SubstrateSdk
+import DesignSystem
 
 /// Production `HostBridge` for one product execution: wires the rust core's
 /// platform callbacks to app services and, once attached, notifies the
@@ -30,6 +32,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let confirmationPresenter: TrUAPIConfirmationPresenting
         let preimageCache: TrUAPIPreimageLookuping
         let hostProvider: ProductHostProviding
+        let themeManager: ThemeManagerProtocol
         let logger: LoggerProtocol
     }
 
@@ -37,10 +40,16 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     let coreStorage: HostCoreStorageBackend
 
     private let dependencies: Dependencies
+    private let cardFace: (any ExpandedCardFaceShowing)?
     private weak var execution: TrUAPIProductExecutionProtocol?
+    private let cachedTheme = OSAllocatedUnfairLock(
+        uncheckedState: HostThemeSubscribeItem(name: .default, variant: .dark)
+    )
+    private var themeObservation: Task<Void, Never>?
 
-    init(dependencies: Dependencies) {
+    init(dependencies: Dependencies, cardFace: (any ExpandedCardFaceShowing)? = nil) {
         self.dependencies = dependencies
+        self.cardFace = cardFace
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
     }
@@ -49,6 +58,11 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     func attach(_ execution: TrUAPIProductExecutionProtocol) {
         self.execution = execution
         dependencies.chainConnections.eventHandler = self
+        observeTheme()
+    }
+
+    deinit {
+        themeObservation?.cancel()
     }
 
     func onCoreLog(marker: String, detail: String) {
@@ -91,7 +105,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
              .nfc,
              .clipboard,
              .openUrl,
-             .biometrics:
+             .biometrics,
+             .motion:
             .notApplicable
         }
     }
@@ -102,7 +117,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     ) async throws -> TrUAPIPermissionDecision {
         try await dependencies.permissionGuard.requestPermissionsDecision(
             productId: dependencies.productId,
-            permissions: request.toDomainRequest().toDomainPermissions()
+            permissions: request.toDomainPermissions()
         ).hostDecision
     }
 
@@ -150,8 +165,14 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         await dependencies.preimageCache.lookup(key: key)
     }
 
-    func currentTheme() throws -> ThemeVariant {
-        .dark
+    func currentTheme() throws -> HostThemeSubscribeItem {
+        cachedTheme.withLock { $0 }
+    }
+
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        guard let cardFace else { return .unsupported }
+
+        return await cardFace.setFaceShown(shown)
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
@@ -188,6 +209,23 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
             }
 
         dependencies.logger.debug("[truapi] auth state: \(details)")
+    }
+}
+
+// MARK: - Theme
+
+private extension RustProductExecutionBridge {
+    func observeTheme() {
+        themeObservation?.cancel()
+        let themeManager = dependencies.themeManager
+        themeObservation = Task { @MainActor [weak self] in
+            for await theme in themeManager.observeTheme() {
+                guard let self else { return }
+                let item = theme.hostThemeSubscribeItem
+                cachedTheme.withLock { $0 = item }
+                execution?.notifyThemeChanged(theme: item)
+            }
+        }
     }
 }
 
@@ -254,19 +292,21 @@ extension HostDevicePermissionRequest {
         case .clipboard: .clipboard
         case .openUrl: .openUrl
         case .biometrics: .biometrics
+        case .motion: .motion
         }
     }
 }
 
 extension RemotePermission {
-    /// Maps the TrUAPI remote permission to the Products domain request.
-    func toDomainRequest() -> Products.RemotePermissionRequest {
+    /// The Products permissions the guard asks the user about.
+    func toDomainPermissions() -> [ProductPermission] {
         switch self {
-        case let .remote(domains): .remote(domains: domains)
-        case .webRtc: .webRTC
-        case .chainSubmit: .chainSubmit
-        case .preimageSubmit: .preimageSubmit
-        case .statementSubmit: .statementSubmit
+        case let .remote(domains): Products.RemotePermissionRequest.remote(domains: domains).toDomainPermissions()
+        case .webRtc: Products.RemotePermissionRequest.webRTC.toDomainPermissions()
+        case .chainSubmit: Products.RemotePermissionRequest.chainSubmit.toDomainPermissions()
+        case .preimageSubmit: Products.RemotePermissionRequest.preimageSubmit.toDomainPermissions()
+        case .statementSubmit: Products.RemotePermissionRequest.statementSubmit.toDomainPermissions()
+        case .balanceAccess: [.balanceAccess]
         }
     }
 }
