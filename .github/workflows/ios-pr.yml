@@ -129,7 +129,7 @@ jobs:
     steps:
       - name: Decide which jobs this run needs
         id: check_skip
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const pr = context.payload.pull_request;
@@ -177,7 +177,7 @@ jobs:
     runs-on: parity-macos-large
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The xcframework targets iOS, so this needs the SDK.
       - name: Setup iOS Environment
@@ -218,7 +218,7 @@ jobs:
       # name. Overwriting rather than adding the attempt to the name, because
       # "re-run failed jobs" does not rerun core, and the app jobs would then
       # look for a name that was never uploaded.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
         with:
           name: ios-core-${{ github.run_id }}
           path: ${{ runner.temp }}/ios-core.tgz
@@ -232,7 +232,7 @@ jobs:
     timeout-minutes: 30
     runs-on: parity-macos
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -246,7 +246,7 @@ jobs:
         uses: ./.github/actions/setup-swiftlint
 
       - name: Restore the in-tree core
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ios-core-${{ github.run_id }}
           path: ${{ runner.temp }}
@@ -322,7 +322,7 @@ jobs:
       # commit.
       - name: Upload the warnings this build produced
         if: always() && hashFiles('hosts/ios/current_warnings.json') != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: warnings-${{ github.run_number }}
           path: hosts/ios/current_warnings.json
@@ -339,7 +339,7 @@ jobs:
       # Upload build artifacts for debugging - only when DEBUG_CI is enabled
       - name: Upload build artifacts
         if: env.DEBUG_CI == 'true' && (failure() || success())
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-artifacts-${{ github.run_number }}
           path: |
@@ -365,7 +365,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -374,7 +374,7 @@ jobs:
         uses: ./.github/actions/setup-swiftlint
 
       - name: Restore the in-tree core
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ios-core-${{ github.run_id }}
           path: ${{ runner.temp }}
@@ -444,7 +444,7 @@ jobs:
 
       - name: Upload the preview build
         id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: simulator-preview-${{ steps.package.outputs.short }}
           path: ${{ steps.package.outputs.archive }}
@@ -506,7 +506,7 @@ jobs:
     timeout-minutes: 30
     runs-on: parity-macos-large
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -515,7 +515,7 @@ jobs:
         uses: ./.github/actions/setup-swiftlint
 
       - name: Restore the in-tree core
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ios-core-${{ github.run_id }}
           path: ${{ runner.temp }}
@@ -564,7 +564,7 @@ jobs:
       # Upload test artifacts on failure, or always when DEBUG_CI is enabled
       - name: Upload test artifacts
         if: failure() || (env.DEBUG_CI == 'true' && success())
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-artifacts-${{ github.run_number }}
           path: |
