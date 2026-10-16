@@ -17,6 +17,7 @@ use truapi::latest::{
 	HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 };
 
+pub use crate::runtime::statement_allowance::inspection::WalletAllowanceSnapshot;
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
