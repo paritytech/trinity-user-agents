@@ -1900,9 +1900,6 @@ mod tests {
 		progress.steps.iter().map(|step| (step.step, step.reached_at_ms)).collect()
 	}
 
-	// A bank payment is approved once it can no longer be reversed, a card
-	// payment has no such step, and a step the provider skipped takes the
-	// time of the first later one, so the bar never shows a gap behind it.
 	// Hosts decide from this whether a second cancel can still end the
 	// session, so it must say exactly what the core's own rule says.
 	#[test]
@@ -1919,6 +1916,9 @@ mod tests {
 		assert_eq!(states, [(false, false), (true, true), (true, true)]);
 	}
 
+	// A bank payment is approved once it can no longer be reversed, a card
+	// payment has no such step, and a step the provider skipped takes the
+	// time of the first later one, so the bar never shows a gap behind it.
 	#[test]
 	fn progress_follows_the_rail_and_fills_skipped_steps() {
 		let mut bank = chosen(FundingDirection::In, FundingRail::Bank);
