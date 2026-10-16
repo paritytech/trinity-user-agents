@@ -133,6 +133,7 @@ hosts/ios/                 iOS host app; resolves the core from this tree
 hosts/android/             Android host app
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
+e2e/host-playground/       host-playground suite run inside the native host apps; see its README
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
@@ -204,6 +205,11 @@ a single package with tree-shakeable subpath entries:
   run off the page main thread.
 
 ### Chain transport
+
+The runtime registers each live product before it starts chain work. Pending and
+ready connections share an entry within that product's registry. Closing a product
+removes its registry, rejects delayed setup, and aborts its established follows;
+closed product IDs are not retained.
 
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an
 embedded smoldot light client plus a bundled chain-spec catalog, addressed by
@@ -479,14 +485,14 @@ the device slice, which is enough for Simulator but not for an archive.
 
 Because the app builds against the core in this tree, a core change that breaks
 it fails here rather than at the next version bump. Every push to main runs the
-jobs below, and so does a pull request touching the app, or the crates its
-bindings come from, once it is labelled `ios-simulator-build`. They are macOS
-jobs, so a pull request without the label runs none of them. CI's
-`iOS package (Swift + WebKit)` job still compiles the TrUAPIHost package against
-the core on a pull request touching `ios/` or the core crates, but the app itself
-is compiled before merge only with the label. The first time a pull request
-touches the iOS or Android app, `build-label-hint.yml` comments with the labels
-that build it: `ios-simulator-build`, `ios-device-build` and `android-device-build`.
+jobs below. A pull request touching the app, or the crates its bindings come
+from, always runs `test`; `build` and `preview` are macOS time no test needs, so
+they run once it is labelled `ios-simulator-build`. CI's
+`iOS package (Swift + WebKit)` job also compiles the TrUAPIHost package against
+the core on a pull request touching `ios/` or the core crates. The first time a
+pull request touches the iOS or Android app, `build-label-hint.yml` comments with
+the labels that build it: `ios-simulator-build`, `ios-device-build` and
+`android-device-build`.
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
@@ -506,6 +512,12 @@ xcrun simctl launch booted io.parity.polkadotapp.develop
 
 It is an arm64 simulator slice, so it needs an Apple Silicon Mac and cannot be
 installed on a device.
+
+### A product from your Mac on a phone
+
+Debug builds of both apps open a product from a development server on your Mac,
+on the simulator, the emulator or a phone, without a deploy. See
+[docs/dev-server-on-a-phone.md](docs/dev-server-on-a-phone.md).
 
 ### A build that installs on a phone
 
@@ -704,6 +716,8 @@ Prerequisites:
 The `TRUAPI_ANDROID_E2E_*` environment variables override every default
 (device, APK, product, room, message, username, URL, report path); they
 mirror the iOS `TRUAPI_IOS_E2E_*` ones.
+
+The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md).
 
 ## Regenerate the TypeScript client
 

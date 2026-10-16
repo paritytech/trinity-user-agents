@@ -936,6 +936,7 @@ fn device_permission_key(request: &latest::HostDevicePermissionRequest) -> &'sta
 		Request::Clipboard => "Clipboard",
 		Request::OpenUrl => "OpenUrl",
 		Request::Biometrics => "Biometrics",
+		Request::Motion => "Motion",
 	}
 }
 
@@ -952,6 +953,7 @@ fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str 
 		Permission::ChainSubmit => "ChainSubmit",
 		Permission::PreimageSubmit => "PreimageSubmit",
 		Permission::StatementSubmit => "StatementSubmit",
+		Permission::BalanceAccess => "BalanceAccess",
 	}
 }
 
