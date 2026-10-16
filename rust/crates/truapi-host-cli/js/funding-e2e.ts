@@ -18,19 +18,20 @@ import type { DiagnosisRow } from "./diagnosis.ts";
 // The cases make their requests in the order `scripts/battery.sh` scripts the
 // host's outcomes: deliver:900, release:500, fail, dismiss.
 
-const WAIT_MS = 15_000;
+export const WAIT_MS = 15_000;
 
-interface TranscriptLine {
+export interface TranscriptLine {
   kind: string;
   intent?: string;
   direction?: string;
   amount?: string | null;
   outcome?: string;
   tag?: string;
+  route?: string;
 }
 
 /** What the host recorded. */
-function transcript(path: string): TranscriptLine[] {
+export function transcript(path: string): TranscriptLine[] {
   if (!existsSync(path)) {
     return [];
   }
@@ -49,7 +50,7 @@ function transcript(path: string): TranscriptLine[] {
 
 /** Every item a stream emits until it completes, or a rejection once
  *  `WAIT_MS` passes or the stream fails. */
-function untilComplete<Item>(
+export function untilComplete<Item>(
   stream: ObservableLike<Item>,
   what: string,
 ): Promise<Item[]> {
@@ -103,7 +104,7 @@ function interruption<Item>(
 }
 
 /** Wait until the host's transcript holds a line matching `predicate`. */
-async function waitForTranscript(
+export async function waitForTranscript(
   path: string,
   predicate: (line: TranscriptLine) => boolean,
   what: string,
@@ -119,7 +120,7 @@ async function waitForTranscript(
   }
 }
 
-const stringify = (value: unknown) =>
+export const stringify = (value: unknown) =>
   JSON.stringify(value, (_, inner) =>
     typeof inner === "bigint" ? inner.toString() : inner,
   );

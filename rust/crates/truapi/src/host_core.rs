@@ -804,11 +804,42 @@ impl SigningHostRuntime {
 		Ok(self.services.acknowledge_funding_session(intent).await?)
 	}
 
-	/// Cancel open funding session `intent`. Returns whether it was still
-	/// open.
+	/// Cancel funding session `intent` at the user's request, and say what
+	/// that did: it ended, its provider was asked, a cancel is already with
+	/// the provider, or it is too late because the balance was credited.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
-	pub async fn cancel_funding(&self, intent: &str) -> Result<bool, v01::GenericError> {
+	pub async fn cancel_funding(
+		&self,
+		intent: &str,
+	) -> Result<crate::host_logic::funding::CancelOutcome, v01::GenericError> {
 		Ok(self.services.cancel_funding(intent).await?)
+	}
+
+	/// Answer the provider's cancel offer on funding session `intent`:
+	/// accept it on `terms`, the fee and refund the host showed, so the
+	/// provider settles the cancel, or decline it with `None`, so the session
+	/// carries on. An offer whose terms changed answers `Changed`.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.confirm_funding_cancel"))]
+	pub async fn confirm_funding_cancel(
+		&self,
+		intent: &str,
+		terms: Option<crate::host_logic::funding::CancelTerms>,
+	) -> Result<crate::host_logic::funding::CancelConfirmation, v01::GenericError> {
+		Ok(self.services.confirm_funding_cancel(intent, terms).await?)
+	}
+
+	/// Hand open funding session `intent` to the provider the user chose,
+	/// by product id. Returns whether it was open and not yet assigned.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.select_funding_provider"))]
+	pub async fn select_funding_provider(
+		&self,
+		intent: &str,
+		provider_id: &str,
+	) -> Result<bool, v01::GenericError> {
+		self.services
+			.select_funding_provider(intent, provider_id)
+			.await
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
 	/// One funding session as the core holds it, for the host's own status

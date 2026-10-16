@@ -38,7 +38,9 @@ use truapi::{
 
 use super::from_latest_error;
 use crate::{
+	current_unix_millis,
 	host_internal::extrinsic::sr25519_secret_from_bytes,
+	platform::ProductExecutionKind,
 	runtime::{ProductRuntimeHost, payment_id::host_payment_id},
 };
 
@@ -147,6 +149,53 @@ impl CoinPayment for ProductRuntimeHost {
 		let version = request.version();
 		let _request = request.into_latest();
 		Subscription::interrupted(from_latest_error(CallError::Unsupported, version))
+	}
+}
+
+impl ProductRuntimeHost {
+	/// Record funds this product's worker starts on the funding sessions it
+	/// serves, so its reports can name them, before the host sees them: funds
+	/// whose record cannot be stored are not started. Returns whether any
+	/// session recorded them.
+	async fn record_funding_start<E>(
+		&self,
+		direction: latest::FundingDirection,
+		host_id: [u8; 32],
+		amount: u128,
+	) -> Result<bool, CallError<E>> {
+		let registry = self.services.funding();
+		if self.product.execution_kind != ProductExecutionKind::Worker ||
+			registry.platform().is_none()
+		{
+			return Ok(false);
+		}
+		Ok(registry
+			.record_start(
+				self.platform.as_ref(),
+				current_unix_millis(),
+				&self.product.product_id,
+				direction,
+				host_id,
+				amount,
+			)
+			.await?)
+	}
+
+	/// Drop the record of funds the host refused to start.
+	async fn forget_funding_start(&self, host_id: [u8; 32]) {
+		let forgotten = self
+			.services
+			.funding()
+			.forget_start(
+				self.platform.as_ref(),
+				current_unix_millis(),
+				&self.product.product_id,
+				host_id,
+			)
+			.await;
+		if let Err(error) = forgotten {
+			tracing::warn!(%error, "dropping the record of refused funds failed");
+		}
 	}
 }
 
@@ -282,7 +331,20 @@ impl ProductRuntimeHost {
 			return Err(CallError::Domain(latest::HostPaymentError::InvalidAmount));
 		}
 		request.id = host_payment_id(&self.product, request.id);
-		match platform.request_payment(&self.product, request).await {
+		let (host_id, amount) = (request.id, request.amount);
+		self.record_funding_start(latest::FundingDirection::Out, host_id, amount)
+			.await?;
+		let requested = platform.request_payment(&self.product, request).await;
+		// A repeat of a payment the host already holds keeps its record; any
+		// other failure means no money moves under this id, even when an
+		// earlier call recorded it.
+		if requested
+			.as_ref()
+			.is_err_and(|error| !matches!(error, latest::HostPaymentError::AlreadyExists))
+		{
+			self.forget_funding_start(host_id).await;
+		}
+		match requested {
 			Ok(()) => Ok(()),
 			// Only a product the user lets see the balance may learn that the
 			// balance was short; to any other it reads as a refusal.
@@ -310,7 +372,18 @@ impl ProductRuntimeHost {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidSource));
 		}
 		request.id = host_payment_id(&self.product, request.id);
-		platform.top_up(&self.product, request).await.map_err(CallError::Domain)
+		let (host_id, amount) = (request.id, request.amount);
+		self.record_funding_start(latest::FundingDirection::In, host_id, amount).await?;
+		let started = platform.top_up(&self.product, request).await;
+		// As for payments: only a top-up the host already holds keeps its
+		// record.
+		if started
+			.as_ref()
+			.is_err_and(|error| !matches!(error, latest::HostPaymentTopUpError::AlreadyExists))
+		{
+			self.forget_funding_start(host_id).await;
+		}
+		started.map_err(CallError::Domain)
 	}
 }
 

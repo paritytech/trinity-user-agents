@@ -93,7 +93,9 @@ pub trait FundingProvider {
 ```rust
 enum HostFundingServeSubscribeItem {
     Assigned { session: FundingAssignment },  // chosen for this provider, or still in flight on open
-    Cancel { intent: String },                // the user asked to stop
+    Cancel { intent: String },                // the user asked to cancel
+    CancelAccepted { intent: String },        // the user accepted the provider's CancelOffer
+    CancelDeclined { intent: String },        // the user declined it, or it lapsed
     Quote { ask_id: String, ask: FundingQuoteAsk },
 }
 
@@ -101,7 +103,7 @@ struct FundingAssignment {
     intent: String,
     direction: FundingDirection,             // In | Out
     amount: Option<u128>,                    // None: the user picks it on the provider's screens
-    expires_at: u64,                         // Unix ms
+    expires_at: Option<u64>,                 // Unix ms; None once funds move
     last_update: Option<FundingUpdate>,      // where a restarted worker resumes
     quote: Option<FundingQuote>,             // the quote the user chose
     saved: Option<Vec<u8>>,                  // what `save` last stored
@@ -109,7 +111,9 @@ struct FundingAssignment {
 ```
 
 The stream replays every session still in flight and every unanswered ask when it opens, so a restarted worker carries
-on without its own bookkeeping. A worker answers `Cancel` by reporting `Failed { Cancelled }` if it can still stop.
+on without its own bookkeeping, including a cancel it has not answered and the user's answer to its offer. Before money
+moved, a worker answers `Cancel` by reporting `Failed { Cancelled }` if it can still stop. After, it answers with
+`CancelOffer` or `CancelRefused` (see [Cancel](#cancel)).
 
 ### `answer_quote`
 
@@ -160,6 +164,8 @@ enum FundingUpdate {
     Deposit { deposit: FundingDeposit },              // In, until funds move, outside the order
     Details { transaction_id: Option<String>, reference: Option<String> }, // any time, outside the order
     Payout { outcome: FundingPayout },                // Out: once, after release
+    CancelRefused { reason: String },                 // answers a Cancel, outside the order
+    CancelOffer { fee: u128, refund: u128, expires_at: Option<u64> }, // answers a Cancel, outside the order
 }
 
 enum FundingDeposit {
@@ -171,8 +177,12 @@ enum FundingDeposit {
 - Only the provider a session is assigned to may report on it, and updates only move forward. Otherwise the report
   fails with `NotFound` or `OutOfOrder`.
 - The core stores each report before answering and keeps the session until the host has written it to its history. After that it keeps the newest 64 recorded sessions per product in full and compacts older ones into a session pack it never trims (intent, owner, direction, amounts, outcome and times), so a product watching any session it opened gets its terminal item instead of `NotFound`, and the host can list the pack as history.
-- `Crediting` names a top-up the worker started with `payment.topUp`, `Collecting` a payment it requested with
-  `payment.request`. An id another of the provider's sessions names fails with `DuplicateId`.
+- The core records every top-up and payment request a provider's worker starts while it serves an open session in
+  that direction, with the amount: on the one such session asking for that amount when exactly one does, otherwise
+  on each of them (the report names which). `Crediting` must name a recorded
+  top-up and `Collecting` a recorded payment request, at the recorded amount, once across the provider's sessions;
+  anything else fails with `NotStarted`. Funds started before the session was assigned were never recorded for it.
+- A report on a session the user chose a provider for while the overlay is still up is stored like any other.
 - `Deposit` and `Details` carry what the host draws: where and what the user pays, and the provider's references. The
   latest of each is shown.
 
@@ -209,17 +219,45 @@ comes back in `Assigned.saved` and is dropped when the session ends.
 
 ## Outcome
 
-- **The core decides success, never the worker.** An inbound session is `Delivered { credited }` with what its named
-  top-ups claimed: the full amount, a partial claim, or nothing. An outbound session is `Released { debited }` once its
-  named payment completes. Nothing moved ends the session as failed.
-- **Funds moving locks the session.** Once a top-up or payment request is named, the provider can no longer fail the
-  session and the user can no longer cancel it.
-- **Cancel** ends a session no provider serves, asks the assigned provider otherwise, and is refused once the user's
-  payment reached the provider.
-- **Expiry** applies only to a session no provider has taken, 24 hours after it opened. An assigned session waits for
-  its provider, since a bank transfer can take days.
+- **The core decides success, never the worker.** An inbound session is `Delivered { credited }` with the recorded
+  amounts of its named top-ups whose claims are final (`Claimed { finalized: true }`), what a partial claim reports, or
+  nothing for one not claimed. An outbound session is `Released { debited }` with the recorded amount once its named
+  payment completes. Nothing moved ends the session as failed.
+- **Undecided statuses are read again.** A claim that is not final, a status stream that ends or fails first, or a
+  top-up or payment the host does not know yet leaves the session open, and the core reads the status again with
+  backoff. One the host still does not know an hour after the report named it, the time a payment can wait on the
+  user's approval, counts as nothing moved.
+- **Money moving locks the session.** Money moved once the provider started a top-up or payment request for the
+  session, named or not, or reported `PaymentReceived`. From then on only the provider ends the session: it cannot
+  fail it once funds started, no cancel ends it and nothing expires it. A worker can stop between starting funds and
+  naming them, so a recorded start locks the session as a named one does.
+- **Expiry** ends a session as `Failed { Expired }`: 24 hours after it opened while no provider has taken it, and 7
+  days after the provider's last update while it is assigned and no money moved, so a provider that went silent cannot
+  hold it. A bank transfer can take days, so a provider that keeps reporting keeps the session.
+- **Closing the overlay after choosing a provider** keeps the session as started, since the provider may already be
+  working on it, and asks the provider to stop unless money moved.
 - **Ids are scoped.** The core hashes the provider's product into every top-up and payment id it hands the host, and
   follows them under the same id.
+
+## Cancel
+
+`cancel_funding` answers `Ended`, `Requested`, `Pending`, `TooLate` or `Refused` (ended, or its overlay is up).
+
+- **No provider serves the session:** it ends as `Failed { Cancelled }`.
+- **Before money moved:** the provider gets `Cancel` and stops with `Failed { Cancelled }`. Asked again, the session
+  ends as `Failed { Cancelled }` and the worker is let go, so a provider that went silent cannot hold it.
+- **After money moved:** a cancel is a request and never ends the session. The provider answers `CancelRefused
+  { reason }`, and the session carries on, or, on an inbound session whose credit has not started, `CancelOffer { fee,
+  refund, expires_at }`: amounts in the user's balance units, `fee + refund` at most the session amount. The host shows
+  the offer from the session's `cancel` and answers it with `confirm_funding_cancel(intent, terms)`, passing the fee and
+  refund it showed to accept or `None` to decline. The provider hears `CancelAccepted` or `CancelDeclined`; while an
+  offer is open it is not sent `Cancel` again. The answer is `Changed` when the provider replaced the offer since the
+  host showed it, and nothing is accepted; `TooLate` when the credit started meanwhile, and the offer is declined; and
+  `Lapsed` past `expires_at`. A user who declined or was refused may ask again. On `CancelAccepted` the provider returns
+  the user's payment and ends the session with `Failed`. An outbound session is refunded only once refunds of a released
+  withdrawal exist, so until then its provider can only refuse.
+- **Inbound after its credit started:** too late. `cancel_funding` answers `TooLate`, the host tells the user, and the
+  provider is not asked.
 
 ## Trade-offs
 

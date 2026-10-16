@@ -27,6 +27,8 @@ import {
 } from "@parity/truapi";
 
 import type {
+  FundingFrameOutcome,
+  FundingFrameTarget,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -1613,6 +1615,18 @@ export interface FundingPlatform {
     product: ProductContext | undefined,
     session: FundingPresentation,
   ): Promise<FundingPresentOutcome>;
+
+  /**
+   * Show `target` for `provider`'s session `intent` in a frame the host
+   * owns, and answer once it closes. A page is an https URL the core has
+   * checked: the host shows its origin, and closes the frame with
+   * `Returned` when the page reaches its return URL.
+   */
+  presentProviderFrame(
+    provider: ProductContext,
+    intent: string,
+    target: FundingFrameTarget,
+  ): Promise<FundingFrameOutcome>;
 
   /**
    * Observe a session's status change, for host UI such as the in-flight

@@ -91,7 +91,7 @@ pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
-	api::{Chat, Contacts, Funding, Pocket, Renderer},
+	api::{Chat, Contacts, Funding, FundingProvider, Pocket, Renderer},
 	latest, v01,
 	versioned::{
 		FromLatest, IntoLatest, Versioned,
@@ -109,6 +109,12 @@ use truapi::{
 			HostFundingError, HostFundingRequest, HostFundingResponse,
 			HostFundingStatusSubscribeError, HostFundingStatusSubscribeItem,
 			HostFundingStatusSubscribeRequest,
+		},
+		funding_provider::{
+			HostFundingPresentFrameError, HostFundingPresentFrameRequest,
+			HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
+			HostFundingReportResponse, HostFundingServeSubscribeError,
+			HostFundingServeSubscribeItem, HostFundingServeSubscribeRequest,
 		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
@@ -1165,6 +1171,20 @@ impl ProductRuntimeHost {
 		self.pocket_platform.clone().ok_or(CallError::Unsupported)
 	}
 
+	/// Funding provider access policy for this connection: a provider serves
+	/// sessions only from a Worker execution with an active session, and only
+	/// where the host has a funding surface.
+	fn funding_provider_access<E>(
+		&self,
+	) -> Result<Arc<dyn crate::platform::FundingPlatform>, CallError<E>> {
+		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
+			self.authority.session_state().current().is_none()
+		{
+			return Err(CallError::Denied);
+		}
+		self.services.funding().platform().ok_or(CallError::Unsupported)
+	}
+
 	/// Replace declared contact handles with their accounts before review or signing.
 	pub async fn substitute_declared_contacts(
 		&self,
@@ -1480,6 +1500,84 @@ impl Renderer for ProductRuntimeHost {
 			return Subscription::interrupted(CallError::Denied);
 		}
 		self.renderer.subscribe()
+	}
+}
+
+#[truapi::async_trait]
+impl FundingProvider for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.serve_subscribe"))]
+	async fn serve_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingServeSubscribeRequest,
+	) -> Subscription<HostFundingServeSubscribeItem, CallError<HostFundingServeSubscribeError>> {
+		let version = request.version();
+		if let Err(error) = self.funding_provider_access() {
+			return Subscription::interrupted(error);
+		}
+		let registry = self.services.funding();
+		if let Err(error) = registry.load(&self.services).await {
+			return Subscription::interrupted(error.into());
+		}
+		Subscription::new(Box::pin(
+			registry
+				.serve(&self.product.product_id)
+				.map(move |item| Ok(HostFundingServeSubscribeItem::from_latest(item, version))),
+		))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.report"))]
+	async fn report(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingReportRequest,
+	) -> Result<HostFundingReportResponse, CallError<HostFundingReportError>> {
+		let version = request.version();
+		let request = request.into_latest();
+		self.funding_provider_access()?;
+		let reported = self
+			.services
+			.funding()
+			.report(
+				self.platform.as_ref(),
+				crate::current_unix_millis(),
+				&self.product,
+				&request.intent,
+				request.update,
+			)
+			.await?;
+		// A cancel offer can lapse on its own, so the expiry sweep keeps time
+		// for it.
+		self.services.funding().keep_expiring(&self.services);
+		reported
+			.map(|()| HostFundingReportResponse::from_latest((), version))
+			.map_err(|error| CallError::Domain(HostFundingReportError::from_latest(error, version)))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.present_frame"))]
+	async fn present_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingPresentFrameRequest,
+	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+		let version = request.version();
+		let latest::HostFundingPresentFrameRequest { intent, target } = request.into_latest();
+		let domain =
+			|error| CallError::Domain(HostFundingPresentFrameError::from_latest(error, version));
+		let platform = self.funding_provider_access()?;
+		if !self.services.funding().is_serving(&self.product.product_id, &intent) {
+			return Err(domain(latest::HostFundingPresentFrameError::NotFound));
+		}
+		let target = crate::host_logic::funding::checked_frame_target(target)
+			.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+		let outcome = platform
+			.present_provider_frame(&self.product, intent, target)
+			.await
+			.map_err(|error| CallError::HostFailure { reason: error.reason })?;
+		Ok(HostFundingPresentFrameResponse::from_latest(
+			latest::HostFundingPresentFrameResponse { outcome },
+			version,
+		))
 	}
 }
 

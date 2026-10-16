@@ -309,9 +309,25 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
 
-	/// Cancel open funding session `intent`.
-	pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
+	/// Cancel funding session `intent` at the user's request, and say what
+	/// that did. `TooLate` asks the host to tell the user the balance was
+	/// already credited.
+	pub async fn cancel_funding(
+		&self,
+		intent: String,
+	) -> Result<crate::host_logic::funding::CancelOutcome, HostRejection> {
 		Ok(self.runtime.cancel_funding(&intent).await?)
+	}
+
+	/// Answer the provider's cancel offer on funding session `intent`, which
+	/// the host showed from the session's `cancel`: accept it on `terms`, the
+	/// fee and refund shown, or decline it with `None`.
+	pub async fn confirm_funding_cancel(
+		&self,
+		intent: String,
+		terms: Option<crate::host_logic::funding::CancelTerms>,
+	) -> Result<crate::host_logic::funding::CancelConfirmation, HostRejection> {
+		Ok(self.runtime.confirm_funding_cancel(&intent, terms).await?)
 	}
 
 	/// Install the host's top-up engine. Set-once; answers whether this call
@@ -369,6 +385,16 @@ impl NativeTrUApiHostRuntime {
 		if let Some(platform) = self.balance.get() {
 			platform.notify_balance(purse, available);
 		}
+	}
+
+	/// Hand open funding session `intent` to the provider the user chose, by
+	/// product id.
+	pub async fn select_funding_provider(
+		&self,
+		intent: String,
+		provider_id: String,
+	) -> Result<bool, HostRejection> {
+		Ok(self.runtime.select_funding_provider(&intent, &provider_id).await?)
 	}
 }
 

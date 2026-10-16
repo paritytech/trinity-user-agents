@@ -471,6 +471,17 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		amount: Option<u128>,
 	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
 
+	/// Show `target` for provider `provider_id`'s session `intent` in a frame
+	/// the host owns, and report how it closed. A page is a checked https
+	/// URL: show its origin, and answer `Returned` when it reaches its return
+	/// URL.
+	async fn present_provider_frame(
+		&self,
+		provider_id: String,
+		intent: String,
+		target: v01::FundingFrameTarget,
+	) -> Result<v01::FundingFrameOutcome, HostRejection>;
+
 	/// A session's status changed, for host UI such as the in-flight pill.
 	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
 }

@@ -99,15 +99,16 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
-		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-		HostAccountGetError, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
-		ProductAccount, ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
-		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
+		Dimensions, Effect, EffectProps, FundingAssignment, FundingDirection, FundingFailure,
+		FundingFrameOutcome, FundingFrameTarget, FundingUpdate, GenericError, HorizontalAlignment,
+		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
+		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
+		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
+		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
+		RemotePermission, RemoteStatementStoreCreateProofError,
 		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
 		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
 		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
@@ -301,6 +302,7 @@ pub mod latest {
 	/// Failure watching a funding session.
 	pub type HostFundingStatusSubscribeError =
 		LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
+
 	/// Payment balance subscription request.
 	pub type HostPaymentBalanceSubscribeRequest =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeRequest>;
@@ -310,6 +312,26 @@ pub mod latest {
 	/// Payment balance subscription failure.
 	pub type HostPaymentBalanceSubscribeError =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+	/// A provider's assigned sessions and cancel requests.
+	pub type HostFundingServeSubscribeItem =
+		LatestOf<versioned::funding_provider::HostFundingServeSubscribeItem>;
+	/// Failure serving funding sessions.
+	pub type HostFundingServeSubscribeError =
+		LatestOf<versioned::funding_provider::HostFundingServeSubscribeError>;
+	/// A provider's progress report.
+	pub type HostFundingReportRequest =
+		LatestOf<versioned::funding_provider::HostFundingReportRequest>;
+	/// Failure reporting progress.
+	pub type HostFundingReportError = LatestOf<versioned::funding_provider::HostFundingReportError>;
+	/// Request to show a provider screen.
+	pub type HostFundingPresentFrameRequest =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameRequest>;
+	/// How a provider screen closed.
+	pub type HostFundingPresentFrameResponse =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameResponse>;
+	/// Failure showing a provider screen.
+	pub type HostFundingPresentFrameError =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameError>;
 	/// Payment request.
 	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
 	/// Payment request failure.
