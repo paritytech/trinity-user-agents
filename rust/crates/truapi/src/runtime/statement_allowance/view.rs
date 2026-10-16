@@ -5,10 +5,9 @@ use scale_info::{TypeDef, TypeDefPrimitive};
 use serde_json::Value;
 use thiserror::Error;
 
-use super::StatementAllowanceError;
-use super::extension::Metadata;
-use super::rpc::RpcClient;
-use super::view_cache::MetadataViewCache;
+use super::{
+	StatementAllowanceError, extension::Metadata, rpc::RpcClient, view_cache::MetadataViewCache,
+};
 
 const EXECUTE_VIEW_FUNCTION: &str = "RuntimeViewFunction_execute_view_function";
 
@@ -20,10 +19,7 @@ pub struct ViewFunctionError(ViewFunctionFailure);
 #[derive(Debug, Error)]
 enum ViewFunctionFailure {
     #[error("{pallet}.{function} state_call returned a non-string response")]
-    ResultNotString {
-        pallet: &'static str,
-        function: &'static str,
-    },
+	ResultNotString { pallet: &'static str, function: &'static str },
     #[error("{pallet}.{function} response hex: {source}")]
     ResponseHex {
         pallet: &'static str,
@@ -39,34 +35,15 @@ enum ViewFunctionFailure {
         source: parity_scale_codec::Error,
     },
     #[error("{pallet}.{function} response has {remaining} trailing bytes")]
-    ResponseTrailingBytes {
-        pallet: &'static str,
-        function: &'static str,
-        remaining: usize,
-    },
+	ResponseTrailingBytes { pallet: &'static str, function: &'static str, remaining: usize },
     #[error("{pallet}.{function} dispatch failed: {reason}")]
-    Dispatch {
-        pallet: &'static str,
-        function: &'static str,
-        reason: String,
-    },
+	Dispatch { pallet: &'static str, function: &'static str, reason: String },
     #[error("{pallet}.{function} view function missing")]
-    Missing {
-        pallet: &'static str,
-        function: &'static str,
-    },
+	Missing { pallet: &'static str, function: &'static str },
     #[error("{pallet}.{function} declares {actual} inputs, expected none")]
-    Inputs {
-        pallet: &'static str,
-        function: &'static str,
-        actual: usize,
-    },
+	Inputs { pallet: &'static str, function: &'static str, actual: usize },
     #[error("{pallet}.{function} output type {type_id} is not an unsigned integer up to u32")]
-    OutputType {
-        pallet: &'static str,
-        function: &'static str,
-        type_id: u32,
-    },
+	OutputType { pallet: &'static str, function: &'static str, type_id: u32 },
     #[error("cannot decode {pallet}.{function} output as {width}: {source}")]
     OutputDecode {
         pallet: &'static str,
@@ -108,8 +85,8 @@ async fn read_u32(
         }));
     }
     let id = definition.id;
-    if at.is_none()
-        && let Some(value) = metadata.cached_view_u32(&id)
+	if at.is_none() &&
+		let Some(value) = metadata.cached_view_u32(&id)
     {
         return Ok(value);
     }
@@ -131,9 +108,7 @@ async fn read_u32(
         })?;
     macro_rules! decode {
         ($type:ty, $width:literal) => {
-            <$type>::decode_all(&mut &output[..])
-                .map(u32::from)
-                .map_err(|source| {
+			<$type>::decode_all(&mut &output[..]).map(u32::from).map_err(|source| {
                     view_error(ViewFunctionFailure::OutputDecode {
                         pallet,
                         function,
@@ -181,12 +156,9 @@ pub fn supports_resource_u32(metadata: &Metadata, function: &'static str) -> boo
     let Some(definition) = metadata.view_function("Resources", function) else {
         return false;
     };
-    definition.inputs == 0
-        && matches!(
-            metadata
-                .registry()
-                .resolve(definition.output_type)
-                .map(|ty| &ty.type_def),
+	definition.inputs == 0 &&
+		matches!(
+			metadata.registry().resolve(definition.output_type).map(|ty| &ty.type_def),
             Some(TypeDef::Primitive(
                 TypeDefPrimitive::U8 | TypeDefPrimitive::U16 | TypeDefPrimitive::U32
             ))
@@ -223,21 +195,14 @@ impl ViewFunctionError {
         let encoded = response
             .as_str()
             .ok_or_else(|| view_error(ViewFunctionFailure::ResultNotString { pallet, function }))?;
-        let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded)).map_err(|source| {
-            view_error(ViewFunctionFailure::ResponseHex {
-                pallet,
-                function,
-                source,
-            })
+		let bytes =
+			hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded)).map_err(|source| {
+		view_error(ViewFunctionFailure::ResponseHex { pallet, function, source })
         })?;
         let mut cursor = &bytes[..];
-        let dispatched =
-            Result::<Vec<u8>, ViewFunctionDispatchError>::decode(&mut cursor).map_err(|source| {
-                view_error(ViewFunctionFailure::ResponseDecode {
-                    pallet,
-                    function,
-                    source,
-                })
+		let dispatched = Result::<Vec<u8>, ViewFunctionDispatchError>::decode(&mut cursor)
+			.map_err(|source| {
+			view_error(ViewFunctionFailure::ResponseDecode { pallet, function, source })
             })?;
         if !cursor.is_empty() {
             return Err(view_error(ViewFunctionFailure::ResponseTrailingBytes {
@@ -264,9 +229,10 @@ fn view_error(error: ViewFunctionFailure) -> StatementAllowanceError {
 mod tests {
     use subxt_rpcs::RpcClient as HostRpcClient;
 
-    use super::super::rpc::testing::ScriptedRpc;
-    use super::super::view_cache::ViewFunctionDef;
-    use super::*;
+	use super::{
+		super::{rpc::testing::ScriptedRpc, view_cache::ViewFunctionDef},
+		*,
+	};
 
     const FIXTURE_V16: &[u8] =
         include_bytes!("../../../tests/fixtures/paseo-next-v2-metadata-v16.scale");
@@ -323,9 +289,7 @@ mod tests {
     #[test]
     fn successful_reads_are_cached() {
         let mut metadata = Metadata::decode(FIXTURE_V16).unwrap();
-        let definition = metadata
-            .view_function("Resources", "current_stmt_store_period")
-            .unwrap();
+		let definition = metadata.view_function("Resources", "current_stmt_store_period").unwrap();
         metadata.insert_view_function("Resources", "get_stmt_store_slots_per_period", definition);
         let success = response(Ok(7u32.encode()));
         let scripted = ScriptedRpc::new([success.as_str()]);
@@ -355,9 +319,7 @@ mod tests {
     #[test]
     fn failed_reads_are_not_cached() {
         let mut metadata = Metadata::decode(FIXTURE_V16).unwrap();
-        let definition = metadata
-            .view_function("Resources", "current_stmt_store_period")
-            .unwrap();
+		let definition = metadata.view_function("Resources", "current_stmt_store_period").unwrap();
         metadata.insert_view_function(
             "Resources",
             "get_stmt_store_replacement_cooldown",
@@ -394,25 +356,14 @@ mod tests {
     #[test]
     fn support_requires_a_no_argument_unsigned_view() {
         let mut metadata = Metadata::decode(FIXTURE_V16).unwrap();
-        let definition = metadata
-            .view_function("Resources", "current_stmt_store_period")
-            .unwrap();
+		let definition = metadata.view_function("Resources", "current_stmt_store_period").unwrap();
         metadata.insert_view_function(
             "Resources",
             "get_stmt_store_slots_per_period",
-            ViewFunctionDef {
-                inputs: 1,
-                ..definition
-            },
+			ViewFunctionDef { inputs: 1, ..definition },
         );
 
-        assert!(!supports_resource_u32(
-            &metadata,
-            "get_stmt_store_slots_per_period",
-        ));
-        assert!(supports_resource_u32(
-            &metadata,
-            "get_lite_stmt_store_slots_per_period",
-        ));
+		assert!(!supports_resource_u32(&metadata, "get_stmt_store_slots_per_period",));
+		assert!(supports_resource_u32(&metadata, "get_lite_stmt_store_slots_per_period",));
     }
 }

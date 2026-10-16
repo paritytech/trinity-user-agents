@@ -1,6 +1,10 @@
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::{
+	collections::HashMap,
+	sync::{
+		Arc, Mutex, Weak,
+		atomic::{AtomicBool, Ordering},
+	},
+};
 
 use crate::platform::{
     CoinageWalletHost, CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
@@ -9,25 +13,28 @@ use crate::platform::{
 use parity_scale_codec::{Decode, Encode};
 use truapi::{Bytes32, v01};
 
-use super::reject_undecodable_deeplink;
-use super::renderer::observe_renderer;
-use super::renderer::{NativeRendererObserver, NativeRendererSubscription};
-use super::ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError};
-use crate::host_internal::permissions::TemporaryPermissions;
-use crate::host_internal::sso_messages::SsoRequestOutcome;
-use crate::host_internal::sso_messages::{
-    RemoteMessage, RemoteMessageData, decode_remote_message, v1,
+use super::{
+	reject_undecodable_deeplink,
+	renderer::{NativeRendererObserver, NativeRendererSubscription, observe_renderer},
+	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
-use crate::runtime::AnnouncedPairing;
-use crate::runtime::sso_remote::sso_message_id;
-use crate::store::{Db, core_db_config};
-use crate::subscription::Spawner;
-use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
+use crate::{
+	PairedSsoPeer, ResponderExit, SigningHostRuntime,
+	durable::RecoveryError,
+	host_internal::{
+		permissions::TemporaryPermissions,
+		sso_messages::{
+			RemoteMessage, RemoteMessageData, SsoRequestOutcome, decode_remote_message, v1,
+		},
+	},
+	runtime::{AnnouncedPairing, sso_remote::sso_message_id},
+	store::{Db, core_db_config},
+	subscription::Spawner,
+};
 
 use super::callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
-    NativeGameCallbacks,
-    NativePocketCallbacks,
+    NativeGameCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -40,7 +47,7 @@ use super::executor::shared_native_executor;
 use super::parse_pairing_deeplink;
 use super::platform::{
     CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
-    NativeCoinageCallbackPlatform, PocketCallbackPlatform,
+    NativeCoinageCallbackPlatform, PocketCallbackPlatform, ScannerCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -113,6 +120,10 @@ impl NativeTrUApiHostRuntime {
                 .worker_ledger()
                 .install_demand_observer(platform.clone()),
             "a freshly built runtime installs its worker demand observer once"
+        );
+        assert!(
+            runtime.set_durable_work_observer(platform.clone()),
+            "a freshly built runtime installs its durable work observer once"
         );
         assert!(
             runtime.set_device_pairing_observer(platform),
@@ -314,9 +325,7 @@ pub enum NativePairingError {
 
 impl From<v01::GenericError> for NativePairingError {
     fn from(error: v01::GenericError) -> Self {
-        Self::Rejected {
-            reason: error.reason,
-        }
+		Self::Rejected { reason: error.reason }
     }
 }
 
@@ -593,6 +602,13 @@ impl NativeTrUApiHostRuntime {
             }))
     }
 
+	/// Install the host's scanner before opening any product execution.
+	/// Set-once: answers whether this call installed it.
+	pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
+		self.runtime
+			.set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
+	}
+
     /// Tell the core the host's contacts changed. Call it whenever a contact
     /// is removed or blocked, so a handle the core cached stops resolving.
     pub fn notify_contacts_changed(&self) {
@@ -724,10 +740,7 @@ impl NativeTrUApiHostRuntime {
         &self,
         peer: PairedSsoPeer,
     ) -> Result<ResponderExit, NativePairingError> {
-        self.runtime
-            .resume_pairing(peer)
-            .await
-            .map_err(NativePairingError::from)
+		self.runtime.resume_pairing(peer).await.map_err(NativePairingError::from)
     }
 
     /// Tell a paired host this signing host is ending their SSO session.
@@ -784,9 +797,7 @@ impl NativeTrUApiHostRuntime {
     /// key, or which has no owner at all, is one a pass will renew; any other
     /// is one a pass will prune.
     pub fn statement_renewal_owner_key(&self) -> Result<Bytes32, HostRejection> {
-        self.runtime
-            .statement_renewal_owner_key()
-            .map_err(HostRejection::from)
+		self.runtime.statement_renewal_owner_key().map_err(HostRejection::from)
     }
 
     /// Stop renewing one fixed statement account, returning whether the ledger
@@ -863,8 +874,7 @@ impl NativeTrUApiHostRuntime {
         lite_username: Option<String>,
     ) -> Result<(), HostRejection> {
         futures::executor::block_on(
-            self.runtime
-                .activate_local_session_with_identity(secret, lite_username),
+			self.runtime.activate_local_session_with_identity(secret, lite_username),
         )
         .map_err(Into::into)
     }
@@ -874,10 +884,16 @@ impl NativeTrUApiHostRuntime {
     pub async fn core_database_status(
         &self,
     ) -> Result<crate::store::DbStatus, NativeCoreDatabaseError> {
-        self.runtime
-            .core_database_status()
-            .await
-            .map_err(Into::into)
+		self.runtime.core_database_status().await.map_err(Into::into)
+	}
+
+	/// Decides durable transactions from the chain until none is live, then
+	/// returns. Await it from the background task
+	/// [`HostCallbacks::durable_work_changed`] asks for; an error means
+	/// recovery stopped early and the task should be retried. Dropping the
+	/// future stops it.
+	pub async fn run_durable_recovery(&self) -> Result<(), RecoveryError> {
+		self.runtime.run_durable_recovery().await
     }
 
     /// Answer one decrypted SSO remote message from a wallet-managed
@@ -985,8 +1001,7 @@ impl NativeProductExecution {
     }
 
     fn admin(&self) -> crate::HostAdmin {
-        self.runtime
-            .product_admin_with(self.product.clone(), self.adapters())
+		self.runtime.product_admin_with(self.product.clone(), self.adapters())
     }
 
     fn require_chat(&self) -> Result<(), crate::ProductRuntimeError> {
@@ -1010,18 +1025,11 @@ impl NativeProductExecution {
 
     fn stop_bridge(&self) {
         // Release the token lock before waiting for connection cancellation.
-        let token = self
-            .bridge_token
-            .lock()
-            .expect("native product bridge mutex poisoned")
-            .take();
+		let token = self.bridge_token.lock().expect("native product bridge mutex poisoned").take();
         if let Some(token) = token {
             self.ws_bridge.revoke(&token);
         }
-        *self
-            .product_control
-            .lock()
-            .expect("native product control mutex poisoned") = None;
+		*self.product_control.lock().expect("native product control mutex poisoned") = None;
     }
 }
 
@@ -1032,8 +1040,7 @@ impl NativeProductExecution {
         &self,
         request: truapi::latest::RemotePermissionRequest,
     ) -> Result<bool, HostRejection> {
-        use truapi::api::Permissions;
-        use truapi::versioned::IntoLatest;
+		use truapi::{api::Permissions, versioned::IntoLatest};
 
         if self.closed.load(Ordering::Acquire) {
             return Err(HostRejection::Rejected {
@@ -1048,9 +1055,7 @@ impl NativeProductExecution {
                 truapi::versioned::permissions::RemotePermissionRequest::V1(request),
             )
             .await
-            .map_err(|error| HostRejection::Rejected {
-                reason: format!("{error:?}"),
-            })?;
+			.map_err(|error| HostRejection::Rejected { reason: format!("{error:?}") })?;
         if self.closed.load(Ordering::Acquire) {
             return Err(HostRejection::Rejected {
                 reason: "product execution is closed".to_string(),
@@ -1069,10 +1074,7 @@ impl NativeProductExecution {
         &self,
         request: PermissionAuthorizationRequest,
     ) -> Result<PermissionAuthorizationStatus, HostRejection> {
-        Ok(self
-            .admin()
-            .permission_authorization_status(request)
-            .await?)
+		Ok(self.admin().permission_authorization_status(request).await?)
     }
 
     /// Whether administration or lifecycle teardown closed this execution.
@@ -1083,17 +1085,13 @@ impl NativeProductExecution {
     /// Read the active session's X25519 chat identity private key, or `None`
     /// when no session is active.
     pub fn session_chat_identity_key(&self) -> Result<Option<Bytes32>, HostRejection> {
-        Ok(futures::executor::block_on(
-            self.admin().get_session_chat_identity_key(),
-        )?)
+		Ok(futures::executor::block_on(self.admin().get_session_chat_identity_key())?)
     }
 
     /// Read this device's X25519 encryption secret, for device sync against a
     /// peer's `deviceEncPublicKey`. Generated and persisted on first read.
     pub fn device_encryption_key(&self) -> Result<Bytes32, HostRejection> {
-        Ok(futures::executor::block_on(
-            self.admin().get_device_encryption_key(),
-        )?)
+		Ok(futures::executor::block_on(self.admin().get_device_encryption_key())?)
     }
 
     /// Resolve a product's hard-subtree public key for hosts naming the account
@@ -1106,8 +1104,7 @@ impl NativeProductExecution {
         timeout_ms: Option<u32>,
     ) -> Result<Option<Bytes32>, HostRejection> {
         Ok(futures::executor::block_on(
-            self.admin()
-                .get_product_subtree_public_key(product_id, timeout_ms),
+			self.admin().get_product_subtree_public_key(product_id, timeout_ms),
         )?)
     }
 
@@ -1136,8 +1133,7 @@ impl NativeProductExecution {
 
     /// Notify this execution's chain adapter of one JSON-RPC response.
     pub fn notify_chain_response(&self, connection_id: u32, json: String) {
-        self.shared_events
-            .notify_chain_response(connection_id, json.clone());
+		self.shared_events.notify_chain_response(connection_id, json.clone());
         self.events.notify_chain_response(connection_id, json);
     }
 
@@ -1160,9 +1156,7 @@ impl NativeProductExecution {
     ) -> Result<(), crate::ProductRuntimeError> {
         self.require_chat()?;
         self.chat_connection
-            .publish(truapi::versioned::chat::HostChatActionSubscribeItem::V1(
-                action,
-            ))
+			.publish(truapi::versioned::chat::HostChatActionSubscribeItem::V1(action))
     }
 
     /// Ask the product to draw one body, delivering each replacement tree to
@@ -1222,14 +1216,9 @@ impl NativeProductExecution {
     /// `bind_port` applies only when the listener first starts.
     pub fn start_ws_bridge(&self, bind_port: u16) -> Result<WsBridgeEndpoint, WsBridgeStartError> {
         if self.closed.load(Ordering::Acquire) {
-            return Err(WsBridgeStartError::Io(
-                "product execution is closed".to_string(),
-            ));
+			return Err(WsBridgeStartError::Io("product execution is closed".to_string()));
         }
-        let mut guard = self
-            .bridge_token
-            .lock()
-            .expect("native product bridge mutex poisoned");
+		let mut guard = self.bridge_token.lock().expect("native product bridge mutex poisoned");
         if guard.is_some() {
             return Err(WsBridgeStartError::AlreadyRunning);
         }
@@ -1246,14 +1235,11 @@ impl NativeProductExecution {
         let runtime_factory = Arc::new(move |sink| {
             let product_runtime =
                 runtime.product_runtime_with(product.clone(), adapters.clone(), sink);
-            *product_control
-                .lock()
-                .expect("native product control mutex poisoned") = Some(product_runtime.control());
+			*product_control.lock().expect("native product control mutex poisoned") =
+				Some(product_runtime.control());
             product_runtime
         });
-        let endpoint = self
-            .ws_bridge
-            .register(bind_port, runtime_factory, logger)?;
+		let endpoint = self.ws_bridge.register(bind_port, runtime_factory, logger)?;
         *guard = Some(endpoint.token.clone());
         Ok(endpoint)
     }
@@ -1283,15 +1269,16 @@ impl Drop for NativeProductExecution {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PairedSsoPeer;
-    use crate::native::tests::*;
-    use crate::platform::{
+	use crate::{
+		PairedSsoPeer,
+		native::tests::*,
+		platform::{
         PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
         ProductExecutionKind,
+		},
     };
     use futures::stream::StreamExt;
-    use std::sync::Arc;
-    use std::sync::atomic::Ordering;
+	use std::sync::{Arc, atomic::Ordering};
     use truapi::v01;
     #[test]
     fn native_wallet_dependency_survives_failure_and_product_replacement() {
@@ -1450,9 +1437,7 @@ mod tests {
 
         assert_eq!(
             futures::FutureExt::now_or_never(futures::StreamExt::next(&mut subscription)),
-            Some(Some(Ok(v01::HostLocalStorageChangeItem {
-                value: Some(vec![9]),
-            }))),
+			Some(Some(Ok(v01::HostLocalStorageChangeItem { value: Some(vec![9]) }))),
             "the screen and the worker share one storage namespace, so a write in one \
              reaches a subscription in the other"
         );
@@ -1488,9 +1473,7 @@ mod tests {
 
         assert_eq!(
             futures::FutureExt::now_or_never(futures::StreamExt::next(&mut subscription)),
-            Some(Some(Ok(v01::HostLocalStorageChangeItem {
-                value: Some(vec![7]),
-            }))),
+			Some(Some(Ok(v01::HostLocalStorageChangeItem { value: Some(vec![7]) }))),
             "a change the host made itself still reaches the product"
         );
     }
@@ -1571,8 +1554,6 @@ mod tests {
 
     #[test]
     fn a_renderer_action_reaches_the_product_that_rendered_it() {
-        // The channel is execution-scoped, so the admin handle built from this
-        // execution reads what the execution published.
         let host = NativeTrUApiHostRuntime::with_runtime_config(
             Arc::new(EventCallbacks::new()),
             native_host_runtime_config(),
@@ -1620,6 +1601,8 @@ mod tests {
             panic!("expected a renderer action item")
         };
         assert_eq!(delivered, published);
+		// The scanner checks taps on a connection, while hosts publish them here.
+		assert!(admin.product_runtime().recently_tapped());
     }
 
     #[test]
@@ -1656,16 +1639,9 @@ mod tests {
         ));
 
         assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
-        assert_eq!(
-            *card_callbacks.face_requests.lock().expect("face requests"),
-            [false]
-        );
+		assert_eq!(*card_callbacks.face_requests.lock().expect("face requests"), [false]);
         assert!(
-            other_callbacks
-                .face_requests
-                .lock()
-                .expect("face requests")
-                .is_empty(),
+			other_callbacks.face_requests.lock().expect("face requests").is_empty(),
             "another product's card must not be asked to move its face"
         );
     }
@@ -1693,14 +1669,8 @@ mod tests {
 
         execution.notify_chain_response(41, response.clone());
 
-        assert_eq!(
-            futures::executor::block_on(shared_responses.next()),
-            Some(response.clone())
-        );
-        assert_eq!(
-            futures::executor::block_on(scoped_responses.next()),
-            Some(response)
-        );
+		assert_eq!(futures::executor::block_on(shared_responses.next()), Some(response.clone()));
+		assert_eq!(futures::executor::block_on(scoped_responses.next()), Some(response));
 
         execution.notify_chain_closed(41);
         assert_eq!(futures::executor::block_on(shared_responses.next()), None);
@@ -1749,34 +1719,19 @@ mod tests {
             };
             let granted = sdk_request().await.unwrap();
             let permission = PermissionAuthorizationRequest::Remote(request.clone());
-            let other_status = other
-                .permission_authorization_status(permission.clone())
-                .await
-                .unwrap();
-            let consumed = execution
-                .authorize_remote_permission(request.clone())
-                .await
-                .unwrap();
-            let after_use = execution
-                .permission_authorization_status(permission.clone())
-                .await
-                .unwrap();
+			let other_status =
+				other.permission_authorization_status(permission.clone()).await.unwrap();
+			let consumed = execution.authorize_remote_permission(request.clone()).await.unwrap();
+			let after_use =
+				execution.permission_authorization_status(permission.clone()).await.unwrap();
             let prompts_after_use = callbacks.remote_permission_calls.load(Ordering::SeqCst);
-            let next_operation = execution
-                .authorize_remote_permission(request.clone())
-                .await
-                .unwrap();
-            let other_operation = other
-                .authorize_remote_permission(request.clone())
-                .await
-                .unwrap();
+			let next_operation =
+				execution.authorize_remote_permission(request.clone()).await.unwrap();
+			let other_operation = other.authorize_remote_permission(request.clone()).await.unwrap();
             let prompts_after_operations = callbacks.remote_permission_calls.load(Ordering::SeqCst);
             sdk_request().await.unwrap();
             execution.shutdown();
-            let after_shutdown = admin
-                .permission_authorization_status(permission)
-                .await
-                .unwrap();
+			let after_shutdown = admin.permission_authorization_status(permission).await.unwrap();
             assert_eq!(
                 (
                     granted,
@@ -1824,17 +1779,58 @@ mod tests {
         let status = futures::executor::block_on(host.core_database_status())
             .expect("the core database is open");
 
-        let file = dir
-            .path()
-            .canonicalize()
-            .unwrap()
-            .join(crate::store::CORE_DB_FILE);
+		let file = dir.path().canonicalize().unwrap().join(crate::store::CORE_DB_FILE);
         assert_eq!(
             status.path,
             Some(file.to_string_lossy().into_owned()),
             "the database lives in the configured directory"
         );
     }
+
+	/// Rows a previous process left live are decided by recovery, so the
+	/// host has to be asked for its background task as soon as the runtime
+	/// exists.
+	#[test]
+	fn durable_work_left_by_a_previous_process_is_reported_at_startup() {
+		let dir = tempfile::tempdir().unwrap();
+		let previous = futures::executor::block_on(Db::open(core_db_config(dir.path()))).unwrap();
+		futures::executor::block_on(previous.write(|tx| {
+			tx.execute(
+				"INSERT INTO durable_tx (domain, tx_hash, birth_number, birth_hash, period, status)
+                 VALUES ('nft', zeroblob(32), 0, zeroblob(32), 64, 'PENDING')",
+				[],
+			)?;
+			Ok(())
+		}))
+		.unwrap();
+		futures::executor::block_on(previous.close()).unwrap();
+		let callbacks = Arc::new(EventCallbacks::new());
+
+		let _host = NativeTrUApiHostRuntime::with_runtime_config(
+			callbacks.clone(),
+			HostRuntimeConfig {
+				database_directory: dir.path().to_string_lossy().into_owned(),
+				..native_host_runtime_config()
+			},
+		)
+		.expect("host runtime config should be valid");
+
+		crate::test_support::wait_until(
+			|| *callbacks.durable_work.lock().unwrap() == vec![true],
+			"the host is told durable work is pending",
+		);
+	}
+
+	#[test]
+	fn durable_recovery_returns_once_nothing_is_live() {
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+		)
+		.expect("host runtime config should be valid");
+
+		assert!(futures::executor::block_on(host.run_durable_recovery()).is_ok());
+	}
 
     #[test]
     fn a_missing_database_directory_fails_runtime_creation() {
@@ -1852,10 +1848,7 @@ mod tests {
             None,
         );
 
-        assert!(matches!(
-            result,
-            Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })
-        ));
+		assert!(matches!(result, Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })));
     }
 }
 

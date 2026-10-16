@@ -1,16 +1,17 @@
 //! TypeScript code generation from extracted API definitions.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fmt::Write;
-use std::fs;
-use std::path::Path;
+use std::{
+	collections::{BTreeMap, BTreeSet, HashMap},
+	fmt::Write,
+	fs,
+	path::Path,
+};
 
 use anyhow::{Result, bail};
 use convert_case::{Case, Casing};
 use indoc::{formatdoc, writedoc};
 
-use crate::RESERVED_PROTOCOL_ERROR_TRAIT_ID;
-use crate::rustdoc::*;
+use crate::{RESERVED_PROTOCOL_ERROR_TRAIT_ID, rustdoc::*};
 
 mod examples;
 mod explorer;
@@ -53,10 +54,9 @@ fn resolve_named(name: &str, mode: NameMode<'_>) -> String {
     match mode {
         NameMode::Public => public_versioned_type_name(name),
         NameMode::PreserveQualified => name.to_string(),
-        NameMode::Generated { aliases } => aliases
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| name.to_string()),
+		NameMode::Generated { aliases } => {
+			aliases.get(name).cloned().unwrap_or_else(|| name.to_string())
+		},
     }
 }
 
@@ -146,15 +146,15 @@ fn selected_public_aliases(
             };
             match selected_by_base.get_mut(base) {
                 Some(selected)
-                    if (!internal_types.contains(name), inner_version)
-                        > (!internal_types.contains(&selected.1), selected.0) =>
+					if (!internal_types.contains(name), inner_version) >
+						(!internal_types.contains(&selected.1), selected.0) =>
                 {
                     *selected = (inner_version, name.clone());
-                }
-                Some(_) => {}
+				},
+				Some(_) => {},
                 None => {
                     selected_by_base.insert(base.to_string(), (inner_version, name.clone()));
-                }
+				},
             }
         }
     }
@@ -169,9 +169,7 @@ fn selected_public_aliases(
         if selected_by_base.contains_key(base) {
             continue;
         }
-        let entry = selected_by_base
-            .entry(base.to_string())
-            .or_insert((version, ty.name.clone()));
+		let entry = selected_by_base.entry(base.to_string()).or_insert((version, ty.name.clone()));
         if version > entry.0 {
             *entry = (version, ty.name.clone());
         }
@@ -211,9 +209,9 @@ fn preserve_version_prefixed_types_referenced_by_emitted_types(
     loop {
         let before = names.len();
         for ty in &api.types {
-            if version_prefixed_type(&ty.name).is_some()
-                && !aliases.contains_key(&ty.name)
-                && !names.contains(&ty.name)
+			if version_prefixed_type(&ty.name).is_some() &&
+				!aliases.contains_key(&ty.name) &&
+				!names.contains(&ty.name)
             {
                 continue;
             }
@@ -243,10 +241,10 @@ fn collect_preserved_version_prefixed_types(
     names: &mut BTreeSet<String>,
 ) {
     match kind {
-        VersionedKind::Unit => {}
+		VersionedKind::Unit => {},
         VersionedKind::Tuple(inner) => {
             preserve_version_prefixed_names(type_ref_dependencies(inner), aliases, names);
-        }
+		},
     }
 }
 
@@ -273,15 +271,13 @@ fn detect_versioned_wrapper(ty: &TypeDef) -> Option<VersionedWrapper> {
             VariantFields::Unit => VersionedKind::Unit,
             VariantFields::Unnamed(types) if types.len() == 1 => {
                 VersionedKind::Tuple(types[0].clone())
-            }
+			},
             _ => return None,
         };
         version_variants.insert(version, VersionedWrapperVariant { version, kind });
     }
 
-    Some(VersionedWrapper {
-        variants: version_variants,
-    })
+	Some(VersionedWrapper { variants: version_variants })
 }
 
 fn is_versioned_variant_name(name: &str) -> bool {
@@ -342,9 +338,9 @@ fn versioned_wrapper_for<'a>(
     ty: &'a TypeRef,
     wrappers: &'a BTreeMap<String, VersionedWrapper>,
 ) -> Option<(&'a str, &'a VersionedWrapper)> {
-    if let TypeRef::Named { name, args } = ty
-        && args.is_empty()
-        && let Some(wrapper) = wrappers.get(name)
+	if let TypeRef::Named { name, args } = ty &&
+		args.is_empty() &&
+		let Some(wrapper) = wrappers.get(name)
     {
         return Some((name.as_str(), wrapper));
     }
@@ -453,10 +449,7 @@ pub fn generate(
     fs::write(Path::new(output_dir).join("client.ts"), client_code)?;
 
     let internal_client = generate_client_view(api, target_version, codec_version, true)?;
-    fs::write(
-        Path::new(output_dir).join("internal-client.ts"),
-        internal_client,
-    )?;
+	fs::write(Path::new(output_dir).join("internal-client.ts"), internal_client)?;
 
     let index_code = generate_index();
     fs::write(Path::new(output_dir).join("index.ts"), index_code)?;
@@ -465,10 +458,7 @@ pub fn generate(
     fs::write(Path::new(output_dir).join("wire-table.ts"), wire_table_code)?;
 
     let decode_table_code = generate_decode_table(api, target_version)?;
-    fs::write(
-        Path::new(output_dir).join("wire-decode.ts"),
-        decode_table_code,
-    )?;
+	fs::write(Path::new(output_dir).join("wire-decode.ts"), decode_table_code)?;
 
     Ok(())
 }
@@ -532,10 +522,7 @@ fn generate_wire_table(api: &ApiDefinition, target_version: u32) -> Result<Strin
         }
         let trait_id = trait_wire_id(trait_def)?;
         if let Some(existing) = seen_traits.insert(trait_id, trait_def.name.clone()) {
-            bail!(
-                "wire trait id {trait_id} reused: `{existing}` and `{}` collide",
-                trait_def.name
-            );
+			bail!("wire trait id {trait_id} reused: `{existing}` and `{}` collide", trait_def.name);
         }
         for method in &trait_def.methods {
             let method_id = wire_id_for_method(trait_def, method)?;
@@ -605,10 +592,7 @@ fn generate_wire_table(api: &ApiDefinition, target_version: u32) -> Result<Strin
 /// here).
 fn trait_wire_id(trait_def: &TraitDef) -> Result<u8> {
     trait_def.wire_trait_id.ok_or_else(|| {
-        anyhow::anyhow!(
-            "trait `{}` is missing #[wire_trait(id = N)] annotation",
-            trait_def.name
-        )
+		anyhow::anyhow!("trait `{}` is missing #[wire_trait(id = N)] annotation", trait_def.name)
     })
 }
 
@@ -633,10 +617,7 @@ fn wire_id_rows(api: &ApiDefinition, target_version: u32) -> Result<Vec<WireIdRo
     // be reassigned and every already-built debugger would keep confirming the
     // table. It carries no payload and no method, so its facts are fixed.
     let mut seen: BTreeMap<(u8, u8), (String, bool, String)> = BTreeMap::from([(
-        (
-            RESERVED_PROTOCOL_ERROR_TRAIT_ID,
-            RESERVED_PROTOCOL_ERROR_TRAIT_ID,
-        ),
+		(RESERVED_PROTOCOL_ERROR_TRAIT_ID, RESERVED_PROTOCOL_ERROR_TRAIT_ID),
         ("reserved::protocol_error".to_string(), false, String::new()),
     )]);
     for trait_def in &api.traits {
@@ -715,7 +696,7 @@ fn method_payload_signature(method: &MethodDef, types: &HashMap<&str, &TypeDef>)
                 type_signature(ok, types, &mut Vec::new()),
                 type_signature(err, types, &mut Vec::new())
             );
-        }
+		},
         ReturnType::Subscription { item, interrupt } => {
             let _ = write!(
                 out,
@@ -723,7 +704,7 @@ fn method_payload_signature(method: &MethodDef, types: &HashMap<&str, &TypeDef>)
                 type_signature(item, types, &mut Vec::new()),
                 type_signature(interrupt, types, &mut Vec::new())
             );
-        }
+		},
     }
     out
 }
@@ -749,19 +730,15 @@ fn type_signature(
         TypeRef::Option(inner) => format!("opt<{}>", type_signature(inner, types, seen)),
         TypeRef::Array(inner, len) => {
             format!("[{};{len}]", type_signature(inner, types, seen))
-        }
+		},
         TypeRef::Tuple(items) => {
-            let inner: Vec<String> = items
-                .iter()
-                .map(|item| type_signature(item, types, seen))
-                .collect();
+			let inner: Vec<String> =
+				items.iter().map(|item| type_signature(item, types, seen)).collect();
             format!("({})", inner.join(","))
-        }
+		},
         TypeRef::Named { name, args } => {
-            let rendered_args: Vec<String> = args
-                .iter()
-                .map(|arg| type_signature(arg, types, seen))
-                .collect();
+			let rendered_args: Vec<String> =
+				args.iter().map(|arg| type_signature(arg, types, seen)).collect();
             let suffix = if rendered_args.is_empty() {
                 String::new()
             } else {
@@ -785,7 +762,7 @@ fn type_signature(
             let body = match &def.kind {
                 TypeDefKind::Alias(inner) => {
                     format!("={}", type_signature(inner, types, seen))
-                }
+				},
                 TypeDefKind::Struct(fields) => {
                     let rendered: Vec<String> = fields
                         .iter()
@@ -798,14 +775,12 @@ fn type_signature(
                         })
                         .collect();
                     format!("{{{}}}", rendered.join(","))
-                }
+				},
                 TypeDefKind::TupleStruct(items) => {
-                    let rendered: Vec<String> = items
-                        .iter()
-                        .map(|item| type_signature(item, types, seen))
-                        .collect();
+					let rendered: Vec<String> =
+						items.iter().map(|item| type_signature(item, types, seen)).collect();
                     format!("({})", rendered.join(","))
-                }
+				},
                 TypeDefKind::Enum(variants) => {
                     let rendered: Vec<String> = variants
                         .iter()
@@ -819,7 +794,7 @@ fn type_signature(
                                         .map(|item| type_signature(item, types, seen))
                                         .collect();
                                     format!("({})", inner.join(","))
-                                }
+								},
                                 VariantFields::Named(fields) => {
                                     let inner: Vec<String> = fields
                                         .iter()
@@ -832,7 +807,7 @@ fn type_signature(
                                         })
                                         .collect();
                                     format!("{{{}}}", inner.join(","))
-                                }
+								},
                             };
                             // The SCALE discriminant is the explicit
                             // `#[codec(index = N)]` when the variant carries one,
@@ -849,11 +824,11 @@ fn type_signature(
                         })
                         .collect();
                     format!("|{}|", rendered.join(";"))
-                }
+				},
             };
             seen.pop();
             format!("{name}{suffix}{body}")
-        }
+		},
     }
 }
 
@@ -877,9 +852,7 @@ pub fn wire_schema_hash(
         for marker in payload.split("UNRESOLVED<").skip(1) {
             unresolved.insert(marker.chars().take_while(|c| *c != '>').collect());
         }
-        canonical.push_str(&format!(
-            "{trait_id}.{method_id}:{tag}:{initiator}:{payload}\n"
-        ));
+		canonical.push_str(&format!("{trait_id}.{method_id}:{tag}:{initiator}:{payload}\n"));
     }
     // Fail the BUILD, not a test. A type that does not resolve contributes only
     // its name, so its own fields or variants stop being fingerprinted and can
@@ -957,10 +930,9 @@ fn method_wire_version(
             .copied()
             .collect::<Vec<_>>();
         candidates = Some(match candidates {
-            Some(current) => current
-                .into_iter()
-                .filter(|version| versions.contains(version))
-                .collect(),
+			Some(current) => {
+				current.into_iter().filter(|version| versions.contains(version)).collect()
+			},
             None => versions,
         });
     }
@@ -1066,16 +1038,16 @@ fn collect_type_versioned_wrappers(
             for arg in args {
                 collect_type_versioned_wrappers(arg, wrappers, names);
             }
-        }
+		},
         TypeRef::Vec(inner) | TypeRef::Option(inner) | TypeRef::Array(inner, _) => {
             collect_type_versioned_wrappers(inner, wrappers, names);
-        }
+		},
         TypeRef::Tuple(items) => {
             for item in items {
                 collect_type_versioned_wrappers(item, wrappers, names);
             }
-        }
-        TypeRef::Primitive(_) | TypeRef::Generic(_) | TypeRef::Unit => {}
+		},
+		TypeRef::Primitive(_) | TypeRef::Generic(_) | TypeRef::Unit => {},
     }
 }
 
@@ -1126,10 +1098,10 @@ fn generate_type_bindings(
         .types
         .iter()
         .filter(|ty| {
-            internal_types.contains(&ty.name) == internal
-                && (version_prefixed_type(&ty.name).is_none()
-                    || aliases.contains_key(&ty.name)
-                    || preserved_version_prefixed_types.contains(&ty.name))
+			internal_types.contains(&ty.name) == internal &&
+				(version_prefixed_type(&ty.name).is_none() ||
+					aliases.contains_key(&ty.name) ||
+					preserved_version_prefixed_types.contains(&ty.name))
         })
         .collect();
     let dependencies: Vec<_> = types
@@ -1141,10 +1113,7 @@ fn generate_type_bindings(
     if !types.is_empty() {
         writeln!(out, "import * as S from '../scale.js';").unwrap();
     }
-    if dependencies
-        .iter()
-        .any(|(_, needs_hex_string)| *needs_hex_string)
-    {
+	if dependencies.iter().any(|(_, needs_hex_string)| *needs_hex_string) {
         writeln!(out, "import type {{ HexString }} from '../scale.js';").unwrap();
     }
     if internal {
@@ -1210,24 +1179,16 @@ fn generate_client_view(
             services.push((service.trait_def, methods));
         }
     }
-    let has_subscriptions = services.iter().any(|(_, methods)| {
-        methods
+	let has_subscriptions = services
             .iter()
-            .any(|method| method.kind == MethodKind::Subscription)
-    });
+		.any(|(_, methods)| methods.iter().any(|method| method.kind == MethodKind::Subscription));
     let has_host_initiated = services
         .iter()
         .any(|(_, methods)| methods.iter().any(|method| method.wire.host_initiated));
-    let hex_import = if uses_hex_string {
-        "import type { HexString } from '../scale.js';"
-    } else {
-        ""
-    };
-    let registration_import = if has_host_initiated {
-        "HostInitiatedSubscriptionRegistration, "
-    } else {
-        ""
-    };
+	let hex_import =
+		if uses_hex_string { "import type { HexString } from '../scale.js';" } else { "" };
+	let registration_import =
+		if has_host_initiated { "HostInitiatedSubscriptionRegistration, " } else { "" };
     let method_ids_import = if has_subscriptions { "MethodIds, " } else { "" };
 
     let schema_hash = wire_schema_hash(api, target_version, codec_version)?;
@@ -1269,22 +1230,14 @@ fn generate_client_view(
         if uses_transport {
             writeln!(out, "  readonly #transport: TrUApiTransport;").unwrap();
         }
-        for method in methods
-            .iter()
-            .copied()
-            .filter(|method| method.wire.host_initiated)
-        {
+		for method in methods.iter().copied().filter(|method| method.wire.host_initiated) {
             emit_host_initiated_field(&mut out, method, &wrappers, target_version)?;
         }
         writeln!(out, "  constructor(transport: TrUApiTransport) {{").unwrap();
         if uses_transport {
             writeln!(out, "    this.#transport = transport;").unwrap();
         }
-        for method in methods
-            .iter()
-            .copied()
-            .filter(|method| method.wire.host_initiated)
-        {
+		for method in methods.iter().copied().filter(|method| method.wire.host_initiated) {
             emit_host_initiated_registration(
                 &mut out,
                 api,
@@ -1306,31 +1259,20 @@ fn generate_client_view(
         }
     }
 
-    let client_type = if internal {
-        "InternalTrUApiClient"
-    } else {
-        "TrUApiClient"
-    };
+	let client_type = if internal { "InternalTrUApiClient" } else { "TrUApiClient" };
     writeln!(out, "export interface {client_type} {{").unwrap();
     for (trait_def, _) in &services {
         let field = to_camel_case(&trait_def.name);
         let namespace_type = format!("{}Client", trait_def.name);
-        let namespace_type = if internal {
-            format!("Readonly<{namespace_type}>")
-        } else {
-            namespace_type
-        };
+		let namespace_type =
+			if internal { format!("Readonly<{namespace_type}>") } else { namespace_type };
         writeln!(out, "  readonly {field}: {namespace_type};").unwrap();
     }
     writeln!(out, "}}\n").unwrap();
     if !internal {
         writeln!(out, "export type Client = TrUApiClient;\n").unwrap();
     }
-    let factory = if internal {
-        "createInternalClient"
-    } else {
-        "createClient"
-    };
+	let factory = if internal { "createInternalClient" } else { "createClient" };
     let freeze = if internal { "Object.freeze(" } else { "" };
     let close = if internal { ")" } else { "" };
     writedoc!(
@@ -1439,10 +1381,9 @@ fn generate_decode_table(api: &ApiDefinition, target_version: u32) -> Result<Str
             let key = u32::from(trait_id) * 256 + u32::from(method_id);
 
             let request_decoder = match request_wrapper_name(method, &wrappers) {
-                Some(name) => format!(
-                    "(payload) => T.{}.dec(payload)",
-                    versioned_wrapper_ts_name(name)
-                ),
+				Some(name) => {
+					format!("(payload) => T.{}.dec(payload)", versioned_wrapper_ts_name(name))
+				},
                 None => "() => undefined".to_string(),
             };
 
@@ -1455,7 +1396,7 @@ fn generate_decode_table(api: &ApiDefinition, target_version: u32) -> Result<Str
                     lines.push(format!(
                         "    1: (payload) => S.Result({response_codec}, {error_codec}).dec(payload),"
                     ));
-                }
+				},
                 (MethodKind::Subscription, ReturnType::Subscription { item, interrupt }) => {
                     let item_codec = leg_codec_expr(item, &wrappers)?;
                     let error_codec = leg_error_codec_expr(interrupt, &wrappers, &ctx)?;
@@ -1465,7 +1406,7 @@ fn generate_decode_table(api: &ApiDefinition, target_version: u32) -> Result<Str
                         "    2: (payload) => S.Result(S._void, {error_codec}).dec(payload),"
                     ));
                     lines.push("    3: () => undefined,".to_string());
-                }
+				},
                 (kind, return_type) => {
                     bail!(
                         "Generator internal mismatch for method `{}`: kind {:?} does not match return type {:?}",
@@ -1473,7 +1414,7 @@ fn generate_decode_table(api: &ApiDefinition, target_version: u32) -> Result<Str
                         kind,
                         return_type
                     );
-                }
+				},
             }
 
             entries.push((
@@ -1696,8 +1637,8 @@ fn emit_payload(
     // TS side callers pass the inner value directly, but we re-wrap before
     // handing bytes to the transport. The host-side dispatcher decodes the
     // full wrapper (variant byte included) from the wire payload.
-    if params.len() == 1
-        && let Some((wrapper_name, wrapper)) = versioned_wrapper_for(&params[0].type_ref, wrappers)
+	if params.len() == 1 &&
+		let Some((wrapper_name, wrapper)) = versioned_wrapper_for(&params[0].type_ref, wrappers)
     {
         let version = wire_version.ok_or_else(|| {
             anyhow::anyhow!("versioned wrapper `{wrapper_name}` has no selected wire version")
@@ -1720,7 +1661,7 @@ fn emit_payload(
                     inner_type_ts: inner_ts,
                     value_expr: "request".to_string(),
                 })
-            }
+			},
         };
     }
 
@@ -1771,18 +1712,14 @@ fn emit_response(
                 )
             })?;
         return match &wrapper.kind {
-            VersionedKind::Unit => Ok(ResponseEmission {
-                inner_type_ts: "undefined".to_string(),
-            }),
-            VersionedKind::Tuple(inner) => Ok(ResponseEmission {
-                inner_type_ts: ts_type_qualified(inner)?,
-            }),
+			VersionedKind::Unit => Ok(ResponseEmission { inner_type_ts: "undefined".to_string() }),
+			VersionedKind::Tuple(inner) => {
+				Ok(ResponseEmission { inner_type_ts: ts_type_qualified(inner)? })
+			},
         };
     }
 
-    Ok(ResponseEmission {
-        inner_type_ts: ts_type_qualified(ty)?,
-    })
+	Ok(ResponseEmission { inner_type_ts: ts_type_qualified(ty)? })
 }
 
 fn emit_error_response(
@@ -1800,10 +1737,8 @@ fn emit_error_response(
         return Ok(ResponseEmission { inner_type_ts });
     }
 
-    let inner_type_ts = format!(
-        "S.CallErrorValue<{}>",
-        ts_type_qualified_preserve(error_wrapper_ty)?
-    );
+	let inner_type_ts =
+		format!("S.CallErrorValue<{}>", ts_type_qualified_preserve(error_wrapper_ty)?);
     Ok(ResponseEmission { inner_type_ts })
 }
 
@@ -1814,11 +1749,13 @@ fn emit_error_response(
 fn leg_codec_expr(ty: &TypeRef, wrappers: &BTreeMap<String, VersionedWrapper>) -> Result<String> {
     match versioned_wrapper_for(ty, wrappers) {
         Some((wrapper_name, _)) => Ok(format!("T.{}", versioned_wrapper_ts_name(wrapper_name))),
-        None => bail!(
+		None => {
+			bail!(
             "type `{}` is not a recognized versioned wrapper, \
              so no wire codec can be derived for it",
             ts_type_name_hint(ty)
-        ),
+			)
+		},
     }
 }
 
@@ -1838,15 +1775,9 @@ fn leg_error_codec_expr(
         return leg_codec_expr(ty, wrappers);
     };
     if let Some((wrapper_name, _)) = versioned_wrapper_for(error_wrapper_ty, wrappers) {
-        return Ok(format!(
-            "S.CallError(T.{})",
-            versioned_wrapper_ts_name(wrapper_name)
-        ));
+		return Ok(format!("S.CallError(T.{})", versioned_wrapper_ts_name(wrapper_name)));
     }
-    Ok(format!(
-        "S.CallError({})",
-        codec_expr_mode(error_wrapper_ty, true, ctx, NameMode::Public)?
-    ))
+	Ok(format!("S.CallError({})", codec_expr_mode(error_wrapper_ty, true, ctx, NameMode::Public)?))
 }
 
 /// A human-readable name for an error message when a type ref that was
@@ -1883,10 +1814,7 @@ fn indexed_versioned_codec_expr(
             .ok_or_else(|| anyhow::anyhow!("versioned wrapper uses invalid V0 variant"))?;
         entries.push(format!("V{version}: [{index}, {codec}] as const"));
     }
-    Ok(format!(
-        "S.indexedTaggedUnion({{{entries}}})",
-        entries = entries.join(", ")
-    ))
+	Ok(format!("S.indexedTaggedUnion({{{entries}}})", entries = entries.join(", ")))
 }
 
 /// The request wrapper name for a method's single param, if its param shape
@@ -1937,10 +1865,7 @@ fn emit_method(
     // signature by this point, and the subscription arms would otherwise fall
     // through to an empty `Start` payload and silently drop it.
     if !method.params.is_empty() && request_name.is_none() {
-        bail!(
-            "method `{}`: request parameter is not a recognized versioned wrapper",
-            method.name
-        );
+		bail!("method `{}`: request parameter is not a recognized versioned wrapper", method.name);
     }
 
     match (&method.kind, &method.return_type) {
@@ -2006,7 +1931,7 @@ fn emit_method(
                 "
             )
             .unwrap();
-        }
+		},
         (MethodKind::Subscription, ReturnType::Subscription { item, interrupt }) => {
             let response = emit_response(item, wrappers, wire_version)?;
             let item_codec = leg_codec_expr(item, wrappers)?;
@@ -2026,7 +1951,7 @@ fn emit_method(
                 version,
                 request_name,
             )?;
-        }
+		},
         (kind, return_type) => {
             bail!(
                 "Generator internal mismatch for method `{}`: kind {:?} does not match return type {:?}",
@@ -2034,17 +1959,14 @@ fn emit_method(
                 kind,
                 return_type
             );
-        }
+		},
     }
 
     Ok(())
 }
 
 fn host_registration_field(method: &MethodDef) -> String {
-    format!(
-        "#{}Registration",
-        to_camel_case(&strip_prefix(&method.name))
-    )
+	format!("#{}Registration", to_camel_case(&strip_prefix(&method.name)))
 }
 
 fn emit_host_initiated_types(
@@ -2057,10 +1979,7 @@ fn emit_host_initiated_types(
     })?;
     let payload = emit_payload(&method.params, wrappers, Some(wire_version))?;
     let ReturnType::Subscription { item, interrupt } = &method.return_type else {
-        bail!(
-            "host-initiated method `{}` must return Subscription<Item, Interrupt>",
-            method.name
-        );
+		bail!("host-initiated method `{}` must return Subscription<Item, Interrupt>", method.name);
     };
     let response = emit_response(item, wrappers, Some(wire_version))?;
     let error = emit_error_response(interrupt, wrappers, Some(wire_version))?;
@@ -2098,15 +2017,8 @@ fn emit_host_initiated_registration(
     let (_, _, _, version) = emit_host_initiated_types(method, wrappers, target_version)?;
     let ctx = CodecContext::default();
     let wire_const = wire_const_name(&trait_def.name, &method.name);
-    let ReturnType::Subscription {
-        item: item_ty,
-        interrupt,
-    } = &method.return_type
-    else {
-        bail!(
-            "host-initiated method `{}` must return Subscription<Item, Interrupt>",
-            method.name
-        );
+	let ReturnType::Subscription { item: item_ty, interrupt } = &method.return_type else {
+		bail!("host-initiated method `{}` must return Subscription<Item, Interrupt>", method.name);
     };
     let Some(request_name) = request_wrapper_name(method, wrappers) else {
         bail!(
@@ -2149,10 +2061,7 @@ fn emit_host_initiated_method(
     wire_version: Option<u32>,
 ) -> Result<()> {
     let ReturnType::Subscription { item, interrupt } = &method.return_type else {
-        bail!(
-            "host-initiated method `{}` must return Subscription<Item, Interrupt>",
-            method.name
-        );
+		bail!("host-initiated method `{}` must return Subscription<Item, Interrupt>", method.name);
     };
     let response = emit_response(item, wrappers, wire_version)?;
     let error = emit_error_response(interrupt, wrappers, wire_version)?;
@@ -2208,11 +2117,13 @@ fn emit_subscribe_method(
     };
 
     let start_payload = match request_name {
-        Some(name) => format!(
+		Some(name) => {
+			format!(
             "T.{}.enc({{ tag: \"V{version}\", value: {} }})",
             versioned_wrapper_ts_name(name),
             payload.value_expr
-        ),
+			)
+		},
         None => "new Uint8Array()".to_string(),
     };
 
@@ -2288,7 +2199,7 @@ fn write_type_definition(
                 ts_type_with_named(type_ref, false, generated_names)?
             )
             .unwrap();
-        }
+		},
         TypeDefKind::Struct(fields) => {
             writeln!(out, "export interface {emitted_name}{generic_decl} {{").unwrap();
             for field in fields {
@@ -2311,7 +2222,7 @@ fn write_type_definition(
                 }
             }
             writeln!(out, "}}").unwrap();
-        }
+		},
         TypeDefKind::TupleStruct(fields) => {
             writeln!(
                 out,
@@ -2319,7 +2230,7 @@ fn write_type_definition(
                 unnamed_fields_type_mode(fields, false, generated_names)?
             )
             .unwrap();
-        }
+		},
         TypeDefKind::Enum(variants) => {
             if is_unit_only_enum(ty) {
                 writeln!(
@@ -2344,16 +2255,12 @@ fn write_type_definition(
                         }
                     }
                     write_jsdoc(out, "  ", variant.docs.as_deref());
-                    writeln!(
-                        out,
-                        "  | {}",
-                        enum_variant_ts_type_mode(variant, generated_names)?
-                    )
+					writeln!(out, "  | {}", enum_variant_ts_type_mode(variant, generated_names)?)
                     .unwrap();
                 }
                 writeln!(out, ";").unwrap();
             }
-        }
+		},
     }
 
     Ok(())
@@ -2405,10 +2312,7 @@ fn write_codec_definition(
             .unwrap();
             return Ok(());
         }
-        let emitted_name = aliases
-            .get(&ty.name)
-            .map(String::as_str)
-            .unwrap_or(&ty.name);
+		let emitted_name = aliases.get(&ty.name).map(String::as_str).unwrap_or(&ty.name);
         let type_name = top_level_type_name(emitted_name, &ty.generic_params);
         let codec_expr =
             type_codec_expr_mode_qualified(ty, &type_name, &ctx, generated_names, false)?;
@@ -2429,10 +2333,7 @@ fn write_codec_definition(
         .join(", ");
     let ctx = codec_context(&ty.generic_params);
     let type_name = top_level_type_name(
-        aliases
-            .get(&ty.name)
-            .map(String::as_str)
-            .unwrap_or(&ty.name),
+		aliases.get(&ty.name).map(String::as_str).unwrap_or(&ty.name),
         &ty.generic_params,
     );
 
@@ -2446,10 +2347,7 @@ fn write_codec_definition(
         )
         .unwrap();
     }
-    let function_name = aliases
-        .get(&ty.name)
-        .map(String::as_str)
-        .unwrap_or(&ty.name);
+	let function_name = aliases.get(&ty.name).map(String::as_str).unwrap_or(&ty.name);
     let codec_body = type_codec_expr_mode_qualified(ty, &type_name, &ctx, generated_names, false)?;
     writedoc!(
         out,
@@ -2469,8 +2367,8 @@ fn should_rename_wire_wrapper(
     emit_versions: &BTreeMap<String, BTreeSet<u32>>,
     aliases: &BTreeMap<String, String>,
 ) -> bool {
-    detect_versioned_wrapper(ty).is_some()
-        && (emit_versions.contains_key(&ty.name) || aliases.values().any(|alias| alias == &ty.name))
+	detect_versioned_wrapper(ty).is_some() &&
+		(emit_versions.contains_key(&ty.name) || aliases.values().any(|alias| alias == &ty.name))
 }
 
 fn type_codec_expr_mode_qualified(
@@ -2484,10 +2382,10 @@ fn type_codec_expr_mode_qualified(
         TypeDefKind::Alias(type_ref) => codec_expr_mode(type_ref, qualified, ctx, mode),
         TypeDefKind::Struct(fields) => {
             struct_codec_expr_mode(fields, type_name, qualified, ctx, mode)
-        }
+		},
         TypeDefKind::TupleStruct(fields) => {
             unnamed_fields_codec_expr_mode(fields, qualified, ctx, mode)
-        }
+		},
         TypeDefKind::Enum(variants) => {
             if is_unit_only_enum(ty) {
                 unit_enum_codec_expr(variants)
@@ -2505,13 +2403,13 @@ fn type_codec_expr_mode_qualified(
                     .join(", ");
                 Ok(format!("S.TaggedUnion({{{variants}}})"))
             }
-        }
+		},
     }
 }
 
 fn is_unit_only_enum(ty: &TypeDef) -> bool {
-    detect_versioned_wrapper(ty).is_none()
-        && matches!(
+	detect_versioned_wrapper(ty).is_none() &&
+		matches!(
             &ty.kind,
             TypeDefKind::Enum(variants)
                 if !variants.is_empty()
@@ -2571,11 +2469,13 @@ fn enum_variant_ts_type(variant: &VariantDef) -> Result<String> {
 fn enum_variant_ts_type_mode(variant: &VariantDef, mode: NameMode<'_>) -> Result<String> {
     Ok(match &variant.fields {
         VariantFields::Unit => format!("{{ tag: \"{}\"; value?: undefined }}", variant.name),
-        fields => format!(
+		fields => {
+			format!(
             "{{ tag: \"{}\"; value: {} }}",
             variant.name,
             variant_value_type_mode(fields, mode)?
-        ),
+			)
+		},
     })
 }
 
@@ -2589,7 +2489,7 @@ fn variant_codec_expr_mode(
         VariantFields::Unit => Ok("S._void".to_string()),
         VariantFields::Unnamed(types) => {
             unnamed_fields_codec_expr_mode(types, qualified, ctx, mode)
-        }
+		},
         VariantFields::Named(fields) => struct_codec_expr_mode(
             fields,
             &inline_object_type_mode(fields, qualified, mode)?,
@@ -2656,17 +2556,11 @@ fn struct_codec_expr_mode(
         .iter()
         .map(|field| {
             let (name, _optional) = ts_field_name(&field.name, &field.type_ref);
-            Ok(format!(
-                "{}: {}",
-                name,
-                codec_expr_mode(&field.type_ref, qualified, ctx, mode)?
-            ))
+			Ok(format!("{}: {}", name, codec_expr_mode(&field.type_ref, qualified, ctx, mode)?))
         })
         .collect::<Result<Vec<_>>>()?
         .join(", ");
-    Ok(format!(
-        "S.Struct({{{field_specs}}}) as S.Codec<{type_name}>"
-    ))
+	Ok(format!("S.Struct({{{field_specs}}}) as S.Codec<{type_name}>"))
 }
 
 fn inline_object_type_mode(
@@ -2731,11 +2625,7 @@ fn codec_expr_mode(
                 ));
             }
             let resolved = resolve_named(name, mode);
-            let target = if qualified {
-                qualify_named(&resolved, mode)
-            } else {
-                resolved
-            };
+			let target = if qualified { qualify_named(&resolved, mode) } else { resolved };
 
             if args.is_empty() {
                 Ok(target)
@@ -2747,18 +2637,14 @@ fn codec_expr_mode(
                     .join(", ");
                 Ok(format!("{target}({codecs})"))
             }
-        }
+		},
         TypeRef::Vec(inner) => match inner.as_ref() {
             TypeRef::Primitive(name) if name == "u8" => Ok("S.Hex()".to_string()),
-            _ => Ok(format!(
-                "S.Vector({})",
-                codec_expr_mode(inner, qualified, ctx, mode)?
-            )),
+			_ => Ok(format!("S.Vector({})", codec_expr_mode(inner, qualified, ctx, mode)?)),
+		},
+		TypeRef::Option(inner) => {
+			Ok(format!("S.Option({})", codec_expr_mode(inner, qualified, ctx, mode)?))
         },
-        TypeRef::Option(inner) => Ok(format!(
-            "S.Option({})",
-            codec_expr_mode(inner, qualified, ctx, mode)?
-        )),
         TypeRef::Tuple(items) => {
             if items.is_empty() {
                 Ok("S._void".to_string())
@@ -2770,14 +2656,12 @@ fn codec_expr_mode(
                     .join(", ");
                 Ok(format!("S.Tuple({codecs})"))
             }
-        }
+		},
         TypeRef::Array(inner, len) => match inner.as_ref() {
             TypeRef::Primitive(name) if name == "u8" => Ok(format!("S.Hex({len})")),
-            _ => Ok(format!(
-                "S.Vector({}, {})",
-                codec_expr_mode(inner, qualified, ctx, mode)?,
-                len
-            )),
+			_ => {
+				Ok(format!("S.Vector({}, {})", codec_expr_mode(inner, qualified, ctx, mode)?, len))
+			},
         },
         TypeRef::Generic(name) => ctx
             .generic_codecs
@@ -2811,11 +2695,7 @@ fn ts_type_with_named(ty: &TypeRef, qualified: bool, mode: NameMode<'_>) -> Resu
                 ));
             }
             let resolved = resolve_named(name, mode);
-            let target = if qualified {
-                qualify_named(&resolved, mode)
-            } else {
-                resolved
-            };
+			let target = if qualified { qualify_named(&resolved, mode) } else { resolved };
 
             if args.is_empty() {
                 Ok(target)
@@ -2827,18 +2707,14 @@ fn ts_type_with_named(ty: &TypeRef, qualified: bool, mode: NameMode<'_>) -> Resu
                     .join(", ");
                 Ok(format!("{target}<{args}>"))
             }
-        }
+		},
         TypeRef::Vec(inner) => match inner.as_ref() {
             TypeRef::Primitive(name) if name == "u8" => Ok(hex_string_ts_name(qualified)),
-            _ => Ok(format!(
-                "Array<{}>",
-                ts_type_with_named(inner, qualified, mode)?
-            )),
+			_ => Ok(format!("Array<{}>", ts_type_with_named(inner, qualified, mode)?)),
+		},
+		TypeRef::Option(inner) => {
+			Ok(format!("{} | undefined", ts_type_with_named(inner, qualified, mode)?))
         },
-        TypeRef::Option(inner) => Ok(format!(
-            "{} | undefined",
-            ts_type_with_named(inner, qualified, mode)?
-        )),
         TypeRef::Tuple(items) => {
             if items.is_empty() {
                 Ok("undefined".to_string())
@@ -2852,13 +2728,10 @@ fn ts_type_with_named(ty: &TypeRef, qualified: bool, mode: NameMode<'_>) -> Resu
                         .join(", ")
                 ))
             }
-        }
+		},
         TypeRef::Array(inner, _len) => match inner.as_ref() {
             TypeRef::Primitive(name) if name == "u8" => Ok(hex_string_ts_name(qualified)),
-            _ => Ok(format!(
-                "Array<{}>",
-                ts_type_with_named(inner, qualified, mode)?
-            )),
+			_ => Ok(format!("Array<{}>", ts_type_with_named(inner, qualified, mode)?)),
         },
         TypeRef::Generic(name) => Ok(name.clone()),
         TypeRef::Unit => Ok("undefined".to_string()),
@@ -2893,8 +2766,8 @@ fn ts_type_qualified_preserve(ty: &TypeRef) -> Result<String> {
 
 fn ts_field_name(name: &str, ty: &TypeRef) -> (String, bool) {
     let camel = to_camel_case(name);
-    let optional = matches!(ty, TypeRef::Option(_))
-        || matches!(ty, TypeRef::Primitive(name) if name == "optionBool");
+	let optional = matches!(ty, TypeRef::Option(_)) ||
+		matches!(ty, TypeRef::Primitive(name) if name == "optionBool");
     (camel, optional)
 }
 
@@ -2918,11 +2791,7 @@ fn payload_type_mode(params: &[ParamDef], mode: NameMode<'_>) -> Result<String> 
 }
 
 fn generic_param_declaration(params: &[String]) -> String {
-    if params.is_empty() {
-        String::new()
-    } else {
-        format!("<{}>", params.join(", "))
-    }
+	if params.is_empty() { String::new() } else { format!("<{}>", params.join(", ")) }
 }
 
 fn top_level_type_name(name: &str, generic_params: &[String]) -> String {
@@ -2964,11 +2833,7 @@ fn humanize_service_name(name: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ");
 
-    if display_name == "JSON RPC" {
-        "JSON-RPC".to_string()
-    } else {
-        display_name
-    }
+	if display_name == "JSON RPC" { "JSON-RPC".to_string() } else { display_name }
 }
 
 fn strip_prefix(name: &str) -> String {
@@ -2989,10 +2854,7 @@ mod tests {
     use super::*;
 
     fn wire_attrs(id: Option<u8>) -> WireAttrs {
-        WireAttrs {
-            id,
-            ..WireAttrs::default()
-        }
+		WireAttrs { id, ..WireAttrs::default() }
     }
 
     /// Build a one-method API whose request payload is `struct Payload`, with the
@@ -3019,15 +2881,9 @@ mod tests {
             kind: MethodKind::Request,
             params: vec![ParamDef {
                 name: "request".to_string(),
-                type_ref: TypeRef::Named {
-                    name: "Payload".to_string(),
-                    args: Vec::new(),
-                },
+				type_ref: TypeRef::Named { name: "Payload".to_string(), args: Vec::new() },
             }],
-            return_type: ReturnType::Result {
-                ok: TypeRef::Unit,
-                err: TypeRef::Unit,
-            },
+			return_type: ReturnType::Result { ok: TypeRef::Unit, err: TypeRef::Unit },
             wire: wire_attrs(Some(7)),
             docs: None,
         };
@@ -3066,15 +2922,9 @@ mod tests {
         let mut api = api(vec![internal, public]);
         api.traits[0].name = "Thing".into();
         api.public_trait_order = vec!["Thing".into()];
-        for name in [
-            "HiddenRequest",
-            "PublicRequest",
-            "SharedResponse",
-            "SharedError",
-        ] {
+		for name in ["HiddenRequest", "PublicRequest", "SharedResponse", "SharedError"] {
             let inner = format!("V01{name}");
-            api.types
-                .push(versioned_tuple_wrapper_variants(name, &[(1, &inner)]));
+			api.types.push(versioned_tuple_wrapper_variants(name, &[(1, &inner)]));
             let mut payload = empty_struct(&inner);
             payload.kind = TypeDefKind::Struct(vec![FieldDef {
                 name: "shared".into(),
@@ -3125,10 +2975,7 @@ mod tests {
         let internal = read("internal.ts");
         assert!(internal.contains("export interface HiddenRequest"));
         assert!(internal.contains("import { Shared } from './types.js'"));
-        assert_eq!(
-            generate_index(),
-            "export * from './types.js';\nexport * from './client.js';\n"
-        );
+		assert_eq!(generate_index(), "export * from './types.js';\nexport * from './client.js';\n");
     }
 
     #[test]
@@ -3187,17 +3034,13 @@ mod tests {
             unreachable!();
         };
         method.kind = MethodKind::Subscription;
-        method.return_type = ReturnType::Subscription {
-            item: ok,
-            interrupt: err,
-        };
+		method.return_type = ReturnType::Subscription { item: ok, interrupt: err };
         method.wire.host_initiated = true;
         let mut api = api(vec![method]);
         api.public_trait_order = vec!["Example".to_string()];
         for name in ["RenderRequest", "RenderItem", "RenderError"] {
             let inner = format!("V01{name}");
-            api.types
-                .push(versioned_tuple_wrapper_variants(name, &[(1, &inner)]));
+			api.types.push(versioned_tuple_wrapper_variants(name, &[(1, &inner)]));
             api.types.push(empty_struct(&inner));
         }
         let source = generate_client(&api, 1, 2).unwrap();
@@ -3249,18 +3092,12 @@ mod tests {
     #[test]
     fn internal_imports_follow_the_selected_wire_version() {
         let mut api = internal_api_fixture();
-        let wrapper = api
-            .types
-            .iter_mut()
-            .find(|ty| ty.name == "HiddenRequest")
-            .unwrap();
+		let wrapper = api.types.iter_mut().find(|ty| ty.name == "HiddenRequest").unwrap();
         *wrapper = versioned_tuple_wrapper_variants(
             "HiddenRequest",
             &[(1, "Shared"), (2, "FutureShared")],
         );
-        let TypeDefKind::Enum(variants) = &mut wrapper.kind else {
-            unreachable!()
-        };
+		let TypeDefKind::Enum(variants) = &mut wrapper.kind else { unreachable!() };
         variants.push(VariantDef {
             name: "V3".into(),
             fields: VariantFields::Unnamed(vec![TypeRef::Vec(Box::new(TypeRef::Primitive(
@@ -3345,10 +3182,7 @@ mod tests {
         let api =
             api_with_payload_fields(vec![("ring_index", TypeRef::Primitive("u32".to_string()))]);
 
-        assert_eq!(
-            wire_schema_hash(&api, 1, 1).unwrap(),
-            wire_schema_hash(&api, 1, 1).unwrap(),
-        );
+		assert_eq!(wire_schema_hash(&api, 1, 1).unwrap(), wire_schema_hash(&api, 1, 1).unwrap(),);
     }
 
     #[test]
@@ -3371,10 +3205,7 @@ mod tests {
         let types: HashMap<&str, &TypeDef> = [("Node", &node)].into_iter().collect();
 
         let sig = type_signature(
-            &TypeRef::Named {
-                name: "Node".to_string(),
-                args: Vec::new(),
-            },
+			&TypeRef::Named { name: "Node".to_string(), args: Vec::new() },
             &types,
             &mut Vec::new(),
         );
@@ -3390,10 +3221,7 @@ mod tests {
         // argument entirely, collapsing every compact site to one token, so a
         // widening left the fingerprint byte-identical.
         let build = |width: &str| {
-            api_with_payload_fields(vec![(
-                "size",
-                TypeRef::Primitive(format!("compact<{width}>")),
-            )])
+			api_with_payload_fields(vec![("size", TypeRef::Primitive(format!("compact<{width}>")))])
         };
 
         assert_ne!(
@@ -3425,15 +3253,9 @@ mod tests {
                 kind: MethodKind::Request,
                 params: vec![ParamDef {
                     name: "choice".to_string(),
-                    type_ref: TypeRef::Named {
-                        name: "Choice".to_string(),
-                        args: Vec::new(),
-                    },
+					type_ref: TypeRef::Named { name: "Choice".to_string(), args: Vec::new() },
                 }],
-                return_type: ReturnType::Result {
-                    ok: TypeRef::Unit,
-                    err: TypeRef::Unit,
-                },
+				return_type: ReturnType::Result { ok: TypeRef::Unit, err: TypeRef::Unit },
                 wire: wire_attrs(Some(7)),
                 docs: None,
             };
@@ -3471,10 +3293,7 @@ mod tests {
                 name: "write".to_string(),
                 kind: MethodKind::Request,
                 params: Vec::new(),
-                return_type: ReturnType::Result {
-                    ok: TypeRef::Unit,
-                    err: TypeRef::Unit,
-                },
+				return_type: ReturnType::Result { ok: TypeRef::Unit, err: TypeRef::Unit },
                 wire: wire_attrs(Some(7)),
                 docs: None,
             };
@@ -3511,15 +3330,9 @@ mod tests {
             kind: MethodKind::Request,
             params: vec![ParamDef {
                 name: "request".to_string(),
-                type_ref: TypeRef::Named {
-                    name: "Missing".to_string(),
-                    args: Vec::new(),
-                },
+				type_ref: TypeRef::Named { name: "Missing".to_string(), args: Vec::new() },
             }],
-            return_type: ReturnType::Result {
-                ok: TypeRef::Unit,
-                err: TypeRef::Unit,
-            },
+			return_type: ReturnType::Result { ok: TypeRef::Unit, err: TypeRef::Unit },
             wire: wire_attrs(Some(7)),
             docs: None,
         };
@@ -3580,10 +3393,7 @@ mod tests {
             name: name.to_string(),
             kind: MethodKind::Request,
             params: Vec::new(),
-            return_type: ReturnType::Result {
-                ok: TypeRef::Unit,
-                err: TypeRef::Unit,
-            },
+			return_type: ReturnType::Result { ok: TypeRef::Unit, err: TypeRef::Unit },
             wire: wire_attrs(wire_id),
             docs: None,
         }
@@ -3598,10 +3408,7 @@ mod tests {
                 item: TypeRef::Unit,
                 interrupt: TypeRef::Named {
                     name: "CallError".to_string(),
-                    args: vec![TypeRef::Named {
-                        name: "GenericError".to_string(),
-                        args: vec![],
-                    }],
+					args: vec![TypeRef::Named { name: "GenericError".to_string(), args: vec![] }],
                 },
             },
             wire: wire_attrs(wire_id),
@@ -3625,10 +3432,7 @@ mod tests {
     }
 
     fn named_type(name: &str) -> TypeRef {
-        TypeRef::Named {
-            name: name.to_string(),
-            args: Vec::new(),
-        }
+		TypeRef::Named { name: name.to_string(), args: Vec::new() }
     }
 
     fn request_method_with_wrappers(
@@ -3641,14 +3445,8 @@ mod tests {
         MethodDef {
             name: name.to_string(),
             kind: MethodKind::Request,
-            params: vec![ParamDef {
-                name: "request".to_string(),
-                type_ref: named_type(request),
-            }],
-            return_type: ReturnType::Result {
-                ok: named_type(response),
-                err: named_type(error),
-            },
+			params: vec![ParamDef { name: "request".to_string(), type_ref: named_type(request) }],
+			return_type: ReturnType::Result { ok: named_type(response), err: named_type(error) },
             wire: wire_attrs(wire_id),
             docs: None,
         }
@@ -3663,10 +3461,7 @@ mod tests {
                 item: named_type(item),
                 interrupt: TypeRef::Named {
                     name: "CallError".to_string(),
-                    args: vec![TypeRef::Named {
-                        name: "GenericError".to_string(),
-                        args: vec![],
-                    }],
+					args: vec![TypeRef::Named { name: "GenericError".to_string(), args: vec![] }],
                 },
             },
             wire: wire_attrs(wire_id),
@@ -3785,18 +3580,12 @@ mod tests {
         let fields = vec![
             FieldDef {
                 name: "product_account_id".to_string(),
-                type_ref: TypeRef::Named {
-                    name: "ProductAccountId".to_string(),
-                    args: Vec::new(),
-                },
+				type_ref: TypeRef::Named { name: "ProductAccountId".to_string(), args: Vec::new() },
                 docs: None,
             },
             FieldDef {
                 name: "context".to_string(),
-                type_ref: TypeRef::Named {
-                    name: "Bytes".to_string(),
-                    args: Vec::new(),
-                },
+				type_ref: TypeRef::Named { name: "Bytes".to_string(), args: Vec::new() },
                 docs: None,
             },
         ];
@@ -3925,21 +3714,21 @@ mod tests {
         match &legacy.kind {
             VersionedKind::Tuple(TypeRef::Named { name, .. }) => {
                 assert_eq!(name, "LegacyRequest");
-            }
+			},
             other => panic!("unexpected wrapper kind: {other:?}"),
         }
 
         match &latest.kind {
             VersionedKind::Tuple(TypeRef::Named { name, .. }) => {
                 assert_eq!(name, "LatestRequest");
-            }
+			},
             other => panic!("unexpected wrapper kind: {other:?}"),
         }
 
         match &fallback.kind {
             VersionedKind::Tuple(TypeRef::Named { name, .. }) => {
                 assert_eq!(name, "IntermediateRequest");
-            }
+			},
             other => panic!("unexpected wrapper kind: {other:?}"),
         }
     }
@@ -3973,10 +3762,7 @@ mod tests {
     #[test]
     fn generate_wire_table_emits_sorted_typescript_entries() {
         let source = generate_wire_table(
-            &api(vec![
-                request_method("later", Some(10)),
-                subscription_method("stream", Some(2)),
-            ]),
+			&api(vec![request_method("later", Some(10)), subscription_method("stream", Some(2))]),
             2,
         )
         .expect("generate wire table");
@@ -3987,12 +3773,8 @@ mod tests {
         assert!(source.contains("export const EXAMPLE_LATER = {"));
         assert!(source.contains("  method: 10,"));
         assert!(
-            source
-                .find("export const EXAMPLE_STREAM")
-                .expect("stream entry")
-                < source
-                    .find("export const EXAMPLE_LATER")
-                    .expect("later entry")
+			source.find("export const EXAMPLE_STREAM").expect("stream entry") <
+				source.find("export const EXAMPLE_LATER").expect("later entry")
         );
     }
 
@@ -4062,10 +3844,7 @@ mod tests {
     #[test]
     fn generate_wire_table_rejects_duplicate_ids() {
         let err = generate_wire_table(
-            &api(vec![
-                request_method("first", Some(2)),
-                subscription_method("second", Some(2)),
-            ]),
+			&api(vec![request_method("first", Some(2)), subscription_method("second", Some(2))]),
             2,
         )
         .expect_err("duplicate ids must error");
@@ -4086,8 +3865,8 @@ mod tests {
         let error = generate_wire_table(&api, 2).expect_err("trait id 255 must be refused");
         let message = error.to_string();
         assert!(
-            message.contains("wire trait id 255 reused")
-                && message.contains("reserved for protocol errors"),
+			message.contains("wire trait id 255 reused") &&
+				message.contains("reserved for protocol errors"),
             "unexpected error: {message}",
         );
     }
@@ -4135,8 +3914,8 @@ mod tests {
         let error = generate_wire_table(&api, 1)
             .expect_err("a filtered-out method must not unlock the reserved trait id");
         assert!(
-            error.to_string().contains("wire trait id 255 reused")
-                && error.to_string().contains("reserved for protocol errors"),
+			error.to_string().contains("wire trait id 255 reused") &&
+				error.to_string().contains("reserved for protocol errors"),
             "unexpected error: {error}",
         );
     }
@@ -4371,10 +4150,7 @@ mod tests {
                             name: "ExampleResponse".to_string(),
                             args: Vec::new(),
                         },
-                        err: TypeRef::Named {
-                            name: "ExampleError".to_string(),
-                            args: Vec::new(),
-                        },
+						err: TypeRef::Named { name: "ExampleError".to_string(), args: Vec::new() },
                     },
                     wire: wire_attrs(Some(2)),
                     docs: None,
@@ -4501,10 +4277,7 @@ mod tests {
                             name: "ExampleResponse".to_string(),
                             args: Vec::new(),
                         },
-                        err: TypeRef::Named {
-                            name: "ExampleError".to_string(),
-                            args: Vec::new(),
-                        },
+						err: TypeRef::Named { name: "ExampleError".to_string(), args: Vec::new() },
                     },
                     wire: wire_attrs(Some(2)),
                     docs: None,
@@ -4557,10 +4330,7 @@ mod tests {
                         type_ref: TypeRef::Primitive("u32".to_string()),
                     }],
                     return_type: ReturnType::Subscription {
-                        item: TypeRef::Named {
-                            name: "ExampleItem".to_string(),
-                            args: Vec::new(),
-                        },
+						item: TypeRef::Named { name: "ExampleItem".to_string(), args: Vec::new() },
                         interrupt: TypeRef::Named {
                             name: "CallError".to_string(),
                             args: vec![TypeRef::Named {

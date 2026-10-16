@@ -9,14 +9,16 @@ use std::{
     time::Duration,
 };
 
+use crate::platform::{
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
+	ProductExecutionKind,
+};
 use futures::{
     FutureExt,
     future::{AbortHandle, Abortable},
 };
 use futures_timer::Delay;
 use truapi::latest::{RemotePermission, RemotePermissionRequest};
-use crate::platform::{PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
-ProductExecutionKind,};
 
 use super::{ChatError, NativeChatContext, NativeChatRegistry};
 use crate::host_internal::permissions::PermissionsService;
@@ -122,10 +124,7 @@ async fn recover(registry: &NativeChatRegistry, context: &NativeChatContext) {
                 // Only existing_wallet may decide whether Rust storage is relevant.
                 let recoveries = registry.state.recoveries.lock();
                 context.require_current()?;
-                let wallets = cache
-                    .wallets
-                    .try_lock()
-                    .ok_or(ChatError::StorageUnavailable)?;
+				let wallets = cache.wallets.try_lock().ok_or(ChatError::StorageUnavailable)?;
                 if !wallets.contains_key(&key) {
                     if let Some(recovery) = recoveries.get(&key) {
                         recovery.active.store(false, Ordering::Release);
@@ -174,9 +173,7 @@ pub(super) async fn require_authorized(
     {
         PermissionAuthorizationStatus::Authorized => true,
         PermissionAuthorizationStatus::Denied => false,
-        PermissionAuthorizationStatus::NotDetermined => {
-            (context.chat_session_granted)(product)
-        }
+		PermissionAuthorizationStatus::NotDetermined => (context.chat_session_granted)(product),
     };
     if !authorized {
         return Err(ChatError::AccessNotGranted);
@@ -201,14 +198,12 @@ pub(super) async fn require_upload_authorized(
             .map_err(|_| ChatError::AccessNotGranted)?;
     let permissions = PermissionsService::new(platform, platform, &product);
     if permissions
-        .authorization_status(&PermissionAuthorizationRequest::Remote(
-            RemotePermissionRequest {
+		.authorization_status(&PermissionAuthorizationRequest::Remote(RemotePermissionRequest {
                 permission: RemotePermission::PreimageSubmit,
-            },
-        ))
+		}))
         .await
-        .map_err(|_| ChatError::StorageUnavailable)?
-        != PermissionAuthorizationStatus::Authorized
+		.map_err(|_| ChatError::StorageUnavailable)? !=
+		PermissionAuthorizationStatus::Authorized
     {
         return Err(ChatError::AccessNotGranted);
     }

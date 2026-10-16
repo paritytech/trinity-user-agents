@@ -38,6 +38,7 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hkdf = "0.12"
 image = { version = "0.25", default-features = false }
 indoc = "2"
+itertools = "0.14"
 js-sys = "0.3"
 jsonrpsee = "0.26"
 jsonrpsee-client-transport = "0.26"
@@ -105,6 +106,10 @@ zeroize = { version = "1", default-features = false }
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_code = "deny"
+
+[workspace.lints.clippy]
+complexity = "warn"
+correctness = "warn"
 
 # Line tables carry the file and line a failing test's backtrace needs, without
 # the variable-level DWARF only an attached debugger reads. Measured on a cold

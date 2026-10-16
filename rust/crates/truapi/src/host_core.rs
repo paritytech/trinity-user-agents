@@ -9,43 +9,49 @@
 //! Target-specific shells such as wasm-bindgen, iOS FFI, or desktop IPC should
 //! keep their conversion code outside this module.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+	collections::HashMap,
+	sync::{
+		Arc, Mutex,
+		atomic::{AtomicBool, AtomicU64, Ordering},
+	},
+	time::Duration,
+};
 
 use crate::platform::{
-    ChatPlatform, CoinageWalletHost, ContactsPlatform, ExpandedCardHost, GamePlatform,
-    PermissionStatusHost, PocketPlatform,
     ProfilePlatform,
+    CoinageWalletHost,
+	ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, GamePlatform, PairingHostAdmin,
+	PairingHostConfig, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+	PermissionStatusHost, Platform, PocketPlatform, ProductContext, ScannerPlatform,
+	SigningHostConfig, normalize_product_identifier,
 };
-use crate::platform::{
-    CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
-    PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
-    normalize_product_identifier,
+use futures::{
+	FutureExt, StreamExt,
+	future::{AbortHandle, Abortable},
+	pin_mut,
 };
-use futures::future::{AbortHandle, Abortable};
-use futures::{FutureExt, StreamExt, pin_mut};
 use parity_scale_codec::{Decode, Encode};
 use thiserror::Error;
 use tracing::{instrument, warn};
-use truapi::v01;
-use truapi::{CallContext, CancellationReason};
+use truapi::{CallContext, CancellationReason, v01};
 
-use crate::frame::ProtocolMessage;
-use crate::host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome};
-use crate::host_logic::worker::WorkerLedger;
-use crate::runtime::sso_service::Dispatch;
-use crate::runtime::{
+use crate::{
+	frame::ProtocolMessage,
+	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
+	host_logic::worker::WorkerLedger,
+	runtime::{
     ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
     LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority, ProductRuntimeHost,
-    ResponderExit, RuntimeServices, SigningHostRole, SigningHostSsoService, disconnect_paired_host,
-    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-    respond_to_pairing, resume_pairing,
+		ResponderExit, RuntimeServices, SigningHostRole, SigningHostSsoService,
+		disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
+		notify_pairing_failed, respond_to_pairing, resume_pairing, sso_service::Dispatch,
+	},
+	subscription::{HostInitiatedSubscriptionManager, Spawner},
+	transport::Transport,
+	truapi_core::TrUApiCore,
 };
-use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
-use crate::transport::Transport;
-use crate::truapi_core::TrUApiCore;
+
 
 /// Outgoing frame sink owned by a host adapter.
 ///
@@ -172,9 +178,8 @@ pub enum ProductRuntimeError {
 }
 
 fn product_context(product_id: &str) -> Result<ProductContext, v01::GenericError> {
-    ProductContext::new(product_id.to_string()).map_err(|err| v01::GenericError {
-        reason: err.to_string(),
-    })
+	ProductContext::new(product_id.to_string())
+		.map_err(|err| v01::GenericError { reason: err.to_string() })
 }
 
 /// A seedless pairing host: the user's keys live in an external wallet reached
@@ -256,10 +261,7 @@ impl PairingHostRuntime {
         }
         let pairing_host = PairingHostRole::new(services.clone(), config);
         pairing_host.clone().start_session_store_sync(spawner);
-        Self {
-            services,
-            pairing_host,
-        }
+		Self { services, pairing_host }
     }
 
     /// Install the host's [`PermissionStatusHost`], which carries the reasoning
@@ -303,6 +305,13 @@ impl PairingHostRuntime {
     pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
         self.services.install_game_platform(platform)
     }
+
+	/// Install the host's [`ScannerPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_scanner_platform"))]
+	pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+		self.services.install_scanner_platform(platform)
+	}
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
     /// draws the picker.
@@ -411,10 +420,7 @@ impl PairingHostRuntime {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-        self.pairing_host
-            .ring_vrf_providers(ring)
-            .await
-            .map_err(ring_vrf_admin_error)
+		self.pairing_host.ring_vrf_providers(ring).await.map_err(ring_vrf_admin_error)
     }
 
     /// Current provider selected for an internal well-known-ring feature.
@@ -450,10 +456,7 @@ impl PairingHostRuntime {
     /// running their own P2P chat channel for the paired identity.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.session_chat_identity_key"))]
     pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
-        self.pairing_host
-            .session_state()
-            .current()?
-            .identity_chat_private_key
+		self.pairing_host.session_state().current()?.identity_chat_private_key
     }
 
     /// Read the active session's sr25519 statement-store secret, for hosts
@@ -500,9 +503,7 @@ impl PairingHostRuntime {
         let product = product_context(product_id)?;
         match self.pairing_host.request_login(&product).await {
             Ok(truapi::versioned::account::HostRequestLoginResponse::V1(response)) => Ok(response),
-            Err(error) => Err(v01::GenericError {
-                reason: pairing_login_error_reason(error),
-            }),
+			Err(error) => Err(v01::GenericError { reason: pairing_login_error_reason(error) }),
         }
     }
 
@@ -598,9 +599,9 @@ fn pairing_login_error_reason(
     match error {
         truapi::CallError::Domain(truapi::versioned::account::HostRequestLoginError::V1(
             v01::HostRequestLoginError::Unknown { reason },
-        ))
-        | truapi::CallError::HostFailure { reason }
-        | truapi::CallError::MalformedFrame { reason } => reason,
+		)) |
+		truapi::CallError::HostFailure { reason } |
+		truapi::CallError::MalformedFrame { reason } => reason,
         truapi::CallError::Denied => "login denied".to_string(),
         truapi::CallError::Unsupported => "login unsupported".to_string(),
         truapi::CallError::Cancelled => "login cancelled".to_string(),
@@ -794,6 +795,13 @@ impl SigningHostRuntime {
         self.services.install_game_platform(platform)
     }
 
+	/// Install the host's [`ScannerPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_scanner_platform"))]
+	pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+		self.services.install_scanner_platform(platform)
+	}
+
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
     /// draws the picker.
     ///
@@ -830,10 +838,40 @@ impl SigningHostRuntime {
     ///
     /// Set-once, so durable state cannot move to another file under a running
     /// consumer. Returns whether this call installed it.
+	///
+	/// Also starts the durable transaction engine over it, which reports
+	/// pending work to the observer installed with
+	/// [`Self::set_durable_work_observer`]; install that first.
     #[cfg(not(target_arch = "wasm32"))]
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
     pub fn set_core_db(&self, db: crate::store::Db) -> bool {
-        self.services.install_core_db(db)
+		if !self.services.install_core_db(db.clone()) {
+			return false;
+		}
+		let engine = durable_engine(&self.services, db);
+		self.services.install_durable_engine(engine.clone());
+		forward_durable_work(&self.services, &engine);
+		true
+	}
+
+	/// Install the host observer told whether durable transactions are
+	/// pending. Set-once; returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn set_durable_work_observer(
+		&self,
+		observer: Arc<dyn crate::durable::DurableWorkObserver>,
+	) -> bool {
+		self.services.install_durable_work_observer(observer)
+	}
+
+	/// Runs durable recovery until no transaction is live.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn run_durable_recovery(&self) -> Result<(), crate::durable::RecoveryError> {
+		self.services
+			.durable_engine()
+			.ok_or(crate::durable::RecoveryError::NotConfigured)?
+			.run_until_settled()
+			.await
     }
 
     /// Reports the core database's state.
@@ -896,12 +934,7 @@ impl SigningHostRuntime {
         product: ProductContext,
         adapters: ConnectionAdapters,
     ) -> HostAdmin {
-        HostAdmin::new(
-            self.services.clone(),
-            self.signing_host.clone(),
-            product,
-            adapters,
-        )
+		HostAdmin::new(self.services.clone(), self.signing_host.clone(), product, adapters)
     }
 
     /// Reference counts per product worker, shared by every connection of
@@ -938,10 +971,7 @@ impl SigningHostRuntime {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-        self.signing_host
-            .ring_vrf_providers(ring)
-            .await
-            .map_err(ring_vrf_admin_error)
+		self.signing_host.ring_vrf_providers(ring).await.map_err(ring_vrf_admin_error)
     }
 
     /// Current provider selected for an internal well-known-ring feature.
@@ -1041,9 +1071,7 @@ impl SigningHostRuntime {
         self.signing_host
             .activate_local_session(secret)
             .await
-            .map_err(|err| v01::GenericError {
-                reason: err.to_string(),
-            })
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
     }
 
     /// Activate a wallet-local session from host-held secret material and
@@ -1057,9 +1085,7 @@ impl SigningHostRuntime {
         self.signing_host
             .activate_local_session_with_identity(secret, lite_username)
             .await
-            .map_err(|err| v01::GenericError {
-                reason: err.to_string(),
-            })
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
     }
 
     /// Capture the local activation fence for a multi-step identity operation.
@@ -1211,25 +1237,55 @@ impl SigningHostRuntime {
             .map_err(|reason| v01::GenericError { reason })
     }
 
-    /// Answer one decrypted SSO remote message with this signing host.
-    ///
-    /// Session control stays with the caller: `Disconnected` is reported as an
-    /// outcome, never handled here. A `Cancel` withdraws the request it names,
-    /// even while that request is still being answered by another call, and a
-    /// withdrawn request is answered `Ignored`.
+	/// Answer one SSO request using this signing host.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
     pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
         let service = SigningHostSsoService::new(self.signing_host.clone());
         match service.answer(message).await {
-            Dispatch::Response(answer) => SsoRequestOutcome::Response {
-                message: answer.message.encode(),
+			Dispatch::Response(answer) => {
+				SsoRequestOutcome::Response { message: answer.message.encode() }
             },
             Dispatch::Disconnected => SsoRequestOutcome::Disconnected,
             Dispatch::NotARequest(_) | Dispatch::Withdraw(_) | Dispatch::Withdrawn => {
                 SsoRequestOutcome::Ignored
+			},
             }
         }
+}
+
+/// The durable transaction engine over `db`, reading and submitting through
+/// the runtime's chain connections.
+#[cfg(not(target_arch = "wasm32"))]
+fn durable_engine(
+	services: &RuntimeServices,
+	db: crate::store::Db,
+) -> Arc<crate::durable::DurableTxEngine> {
+	use crate::durable::{DurableDeps, DurableRegistry, DurableTxEngine, RealTimer};
+
+	let chain = Arc::new(services.chain.clone());
+	DurableTxEngine::new(DurableDeps {
+		db,
+		registry: DurableRegistry::new(),
+		heads: chain.clone(),
+		blocks: chain.clone(),
+		validator: chain.clone(),
+		submitter: chain,
+		timer: Arc::new(RealTimer),
+		spawner: services.spawner.clone(),
+	})
+}
+
+/// Reports every change of the engine's pending work to the host observer,
+/// for as long as the engine lives.
+#[cfg(not(target_arch = "wasm32"))]
+fn forward_durable_work(services: &Arc<RuntimeServices>, engine: &crate::durable::DurableTxEngine) {
+	let services = Arc::downgrade(services);
+	engine.report_work_to(move |pending| {
+		let observer = services.upgrade().and_then(|services| services.durable_work_observer());
+		if let Some(observer) = observer {
+			observer.durable_work_changed(pending);
     }
+	});
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1293,8 +1349,7 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.renew_statement_allowances"))]
     pub async fn renew_statement_allowances(
         &self,
-    ) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError>
-    {
+	) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError> {
         self.signing_host
             .renew_statement_allowances()
             .await
@@ -1398,14 +1453,13 @@ pub struct HostAdmin {
 }
 
 impl HostAdmin {
-    /// Access the execution's product-facing capabilities and permission grants.
+	/// Product runtime managed by this admin handle.
     #[cfg(any(test, not(target_arch = "wasm32")))]
     pub fn product_runtime(&self) -> &Arc<ProductRuntimeHost> {
         &self.product_runtime
     }
 
-    /// Build an admin handle from a long-lived host runtime and the adapters
-    /// scoped to one product connection.
+	/// Build an admin handle for one product connection.
     #[instrument(skip_all, fields(runtime.method = "host_admin.new"))]
     pub fn new(
         services: Arc<RuntimeServices>,
@@ -1419,10 +1473,7 @@ impl HostAdmin {
             authority.clone(),
             product,
         ));
-        Self {
-            authority,
-            product_runtime,
-        }
+		Self { authority, product_runtime }
     }
 
     /// Core-owned logout/disconnect.
@@ -1441,9 +1492,7 @@ impl HostAdmin {
         &self,
         request: PermissionAuthorizationRequest,
     ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-        self.product_runtime
-            .permission_authorization_status(request)
-            .await
+		self.product_runtime.permission_authorization_status(request).await
     }
 
     /// Read stored permission authorization statuses without prompting.
@@ -1456,9 +1505,7 @@ impl HostAdmin {
         &self,
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-        self.product_runtime
-            .permission_authorization_statuses(requests)
-            .await
+		self.product_runtime.permission_authorization_statuses(requests).await
     }
 
     /// Update a stored permission authorization status.
@@ -1468,9 +1515,7 @@ impl HostAdmin {
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
-        self.product_runtime
-            .set_permission_authorization_status(request, status)
-            .await
+		self.product_runtime.set_permission_authorization_status(request, status).await
     }
 }
 
@@ -1554,10 +1599,8 @@ async fn product_subtree_public_key(
     product_id: &str,
     timeout_ms: Option<u32>,
 ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-    let product_id =
-        normalize_product_identifier(product_id).map_err(|reason| v01::GenericError {
-            reason: reason.to_string(),
-        })?;
+	let product_id = normalize_product_identifier(product_id)
+		.map_err(|reason| v01::GenericError { reason: reason.to_string() })?;
     let Some(session) = authority.current_session() else {
         return Ok(None);
     };
@@ -1567,9 +1610,7 @@ async fn product_subtree_public_key(
     let mut cx = CallContext::default();
     cx.set_timeout(timeout);
 
-    let call = authority
-        .product_subtree_public_key(&cx, &session, product_id)
-        .fuse();
+	let call = authority.product_subtree_public_key(&cx, &session, product_id).fuse();
     let deadline = futures_timer::Delay::new(timeout).fuse();
     pin_mut!(call, deadline);
     futures::select! {
@@ -1627,9 +1668,8 @@ impl ProductRuntimeControl {
         &self,
         action: v01::HostChatActionSubscribeItem,
     ) -> Result<(), ProductRuntimeError> {
-        self.runtime()?.publish_chat_action(
-            truapi::versioned::chat::HostChatActionSubscribeItem::V1(action),
-        )
+		self.runtime()?
+			.publish_chat_action(truapi::versioned::chat::HostChatActionSubscribeItem::V1(action))
     }
 
     /// Publish one action triggered inside a product-rendered body into this
@@ -1677,7 +1717,7 @@ impl ProductRuntimeControl {
                 match stream.next().await? {
                     Ok(truapi::versioned::renderer::ProductRendererRenderItem::V1(node)) => {
                         Some((Ok(node), (stream, reference)))
-                    }
+					},
                     Err(interrupt) => Some((
                         Err(crate::interrupt::interrupt_into_latest(interrupt)),
                         (stream, None),
@@ -1695,7 +1735,7 @@ struct WorkerReference {
 }
 
 impl WorkerReference {
-    /// Take a reference on the worker of the product `runtime` serves.
+	/// Hold a worker reference for this product runtime.
     fn acquire(runtime: Arc<ProductRuntimeHost>) -> Self {
         runtime.acquire_worker_reference();
         Self { runtime }
@@ -1789,7 +1829,7 @@ impl ProductRuntime {
         pairing.product_runtime(product, sink)
     }
 
-    /// Build a product-facing runtime from shared services and an authority.
+	/// Build a product runtime with connection-scoped adapters.
     #[instrument(skip_all, fields(runtime.method = "product_runtime.new"))]
     pub fn new(
         services: Arc<RuntimeServices>,
@@ -1837,19 +1877,12 @@ impl ProductRuntime {
         if let Some((channel_id, debug)) = self.transport.debug() {
             emit_debug(
                 debug,
-                DebugEvent::Frame {
-                    channel_id,
-                    dir: FrameDirection::In,
-                    bytes: frame.clone(),
-                },
+				DebugEvent::Frame { channel_id, dir: FrameDirection::In, bytes: frame.clone() },
             );
         }
 
-        let message = ProtocolMessage::decode(&mut frame.as_slice()).map_err(|err| {
-            ProductRuntimeError::InvalidFrame {
-                reason: err.to_string(),
-            }
-        })?;
+		let message = ProtocolMessage::decode(&mut frame.as_slice())
+			.map_err(|err| ProductRuntimeError::InvalidFrame { reason: err.to_string() })?;
         let Some(message) = self.host_subscriptions.handle_message(message) else {
             return Ok(());
         };
@@ -1866,10 +1899,8 @@ impl ProductRuntime {
         // Re-check under the disposal lock so a racing dispatch cannot register
         // after `dispose` has drained the active requests.
         {
-            let mut in_flight = self
-                .in_flight
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+			let mut in_flight =
+				self.in_flight.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if self.disposed.load(Ordering::Acquire) {
                 return Ok(());
             }
@@ -1941,9 +1972,7 @@ impl ProductRuntime {
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
-        self.admin
-            .set_permission_authorization_status(request, status)
-            .await
+		self.admin.set_permission_authorization_status(request, status).await
     }
 
     /// Install a dev-only [`DebugSink`] that observes every product frame in
@@ -1971,10 +2000,8 @@ impl ProductRuntime {
             return;
         }
         {
-            let mut in_flight = self
-                .in_flight
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+			let mut in_flight =
+				self.in_flight.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if self.disposed.swap(true, Ordering::AcqRel) {
                 return;
             }
@@ -2029,10 +2056,7 @@ impl SinkTransport {
         // The recovery is kept regardless, because this guard sits on the per-frame
         // path in both directions and outside `emit_debug`'s `catch_unwind`, so any
         // future in-guard work that can unwind would land in live dispatch.
-        self.debug
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+		self.debug.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
     }
 
     fn set_debug_sink(&self, channel_id: ChannelId, sink: Arc<dyn DebugSink>) {
@@ -2083,11 +2107,7 @@ impl Transport for SinkTransport {
         if let Some((channel_id, debug)) = self.debug() {
             emit_debug(
                 debug,
-                DebugEvent::Frame {
-                    channel_id,
-                    dir: FrameDirection::Out,
-                    bytes: encoded,
-                },
+				DebugEvent::Frame { channel_id, dir: FrameDirection::Out, bytes: encoded },
             );
         }
     }
@@ -2103,22 +2123,28 @@ impl Transport for SinkTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::{Payload, ProtocolMessage, request_ids, subscription_ids};
-    use crate::host_internal::sso_messages::{
+	use crate::{
+		frame::{Payload, ProtocolMessage, request_ids, subscription_ids},
+		host_internal::sso_messages::{
         RemoteMessage, RemoteMessageData, decode_incoming_sso_request, v1,
-    };
-    use crate::host_logic::product_account::derive_identity_keypair;
-    use crate::host_logic::sso::pairing::{
+		},
+		host_logic::{
+			product_account::derive_identity_keypair,
+			sso::pairing::{
         PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
         x25519_public_key,
+			},
+			worker::WorkerTransition,
+		},
+		test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
     };
-    use crate::host_logic::worker::WorkerTransition;
-    use crate::test_support::{StubPlatform, runtime_config, test_spawner, wait_until};
     use parity_scale_codec::Encode;
     use std::sync::atomic::Ordering;
-    use truapi::api::Permissions;
-    use truapi::latest::{RemotePermission, RemotePermissionRequest, RemotePermissionResponse};
-    use truapi::versioned::permissions;
+	use truapi::{
+		api::Permissions,
+		latest::{RemotePermission, RemotePermissionRequest, RemotePermissionResponse},
+		versioned::permissions,
+	};
 
     #[derive(Default)]
     struct RecordingSink {
@@ -2127,10 +2153,7 @@ mod tests {
 
     impl FrameSink for RecordingSink {
         fn emit_frame(&self, frame: Vec<u8>) {
-            self.frames
-                .lock()
-                .expect("recording sink mutex poisoned")
-                .push(frame);
+			self.frames.lock().expect("recording sink mutex poisoned").push(frame);
         }
     }
 
@@ -2166,13 +2189,7 @@ mod tests {
         session: crate::host_logic::session::SessionInfo,
     ) {
         wait_until(
-            || {
-                !platform
-                    .auth_states
-                    .lock()
-                    .expect("auth state list mutex poisoned")
-                    .is_empty()
-            },
+			|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
             "the boot reconcile did not report the empty session store",
         );
         runtime.pairing_host.session_state().set_session(session);
@@ -2313,10 +2330,8 @@ mod tests {
     #[test]
     fn network_access_honors_wildcard_precedence_revocation_and_product_isolation() {
         futures::executor::block_on(async {
-            let platform = Arc::new(StubPlatform {
-                remote_permission_denied: true,
-                ..Default::default()
-            });
+			let platform =
+				Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
             let (config, _) = runtime_config("fetch.dot");
             let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
             let admin = runtime.product_admin(product_context("fetch.dot").unwrap());
@@ -2378,15 +2393,14 @@ mod tests {
                 );
             }
             assert_eq!(
-                (
-                    decisions,
-                    platform.remote_permission_requests.lock().unwrap().clone(),
-                ),
+				(decisions, platform.remote_permission_requests.lock().unwrap().clone(),),
                 (
                     [true, true, false, false, true, false, false]
-                        .map(|granted| permissions::RemotePermissionResponse::V1(
-                            RemotePermissionResponse { granted }
-                        ))
+						.map(|granted| {
+							permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
+								granted,
+							})
+						})
                         .to_vec(),
                     vec![
                         network_permission(&["example.com"]),
@@ -2464,13 +2478,7 @@ mod tests {
         // The cache comes before the wallet. A one-millisecond deadline means
         // anything that reached for the wallet here would time out instead of
         // answering, and no statement-store traffic says it did not try.
-        assert!(
-            platform
-                .sent_rpc
-                .lock()
-                .expect("rpc list mutex poisoned")
-                .is_empty()
-        );
+		assert!(platform.sent_rpc.lock().expect("rpc list mutex poisoned").is_empty());
     }
 
     #[test]
@@ -2487,11 +2495,7 @@ mod tests {
         let error =
             futures::executor::block_on(runtime.product_subtree_public_key("myapp.dot", Some(1)))
                 .expect_err("an unanswered wallet request ends at its deadline");
-        assert!(
-            error.reason.contains("timed out"),
-            "expected a timeout, got {}",
-            error.reason
-        );
+		assert!(error.reason.contains("timed out"), "expected a timeout, got {}", error.reason);
     }
 
     #[test]
@@ -2517,11 +2521,7 @@ mod tests {
     impl DebugSink for RecordingDebugSink {
         fn emit(&self, event: DebugEvent) {
             match event {
-                DebugEvent::Frame {
-                    channel_id,
-                    dir,
-                    bytes,
-                } => self
+				DebugEvent::Frame { channel_id, dir, bytes } => self
                     .events
                     .lock()
                     .expect("debug events mutex poisoned")
@@ -2561,12 +2561,8 @@ mod tests {
         // The subscription's first item is emitted asynchronously; wait for it,
         // then let the tap (which runs right after delivery in `send`) settle.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while sink
-            .frames
-            .lock()
-            .expect("recording sink mutex poisoned")
-            .is_empty()
-            && std::time::Instant::now() < deadline
+		while sink.frames.lock().expect("recording sink mutex poisoned").is_empty() &&
+			std::time::Instant::now() < deadline
         {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
@@ -2589,35 +2585,19 @@ mod tests {
                 events.iter().map(|(cid, _, _)| cid.clone()).collect(),
             )
         };
-        let delivered = sink
-            .frames
-            .lock()
-            .expect("recording sink mutex poisoned")
-            .clone();
+		let delivered = sink.frames.lock().expect("recording sink mutex poisoned").clone();
 
         // Every event carries the installed channel id.
         assert!(
-            channels
-                .iter()
-                .all(|c| *c == ChannelId("myapp.dot".to_string())),
+			channels.iter().all(|c| *c == ChannelId("myapp.dot".to_string())),
             "every event carries its channel id"
         );
         // Inbound tapped once, untouched, before decode.
-        assert_eq!(
-            inbound,
-            vec![raw],
-            "inbound frame tapped exactly once, untouched"
-        );
+		assert_eq!(inbound, vec![raw], "inbound frame tapped exactly once, untouched");
         // Both directions fire, and every delivered outbound frame is tapped in
         // order: the tap is in the path, not a fabricated side channel.
-        assert!(
-            !outbound.is_empty(),
-            "at least one outbound frame is tapped"
-        );
-        assert_eq!(
-            outbound, delivered,
-            "every delivered outbound frame is tapped, in order"
-        );
+		assert!(!outbound.is_empty(), "at least one outbound frame is tapped");
+		assert_eq!(outbound, delivered, "every delivered outbound frame is tapped, in order");
     }
 
     /// A sink whose `Drop` panics. `emit` is a no-op: the point is the destructor,
@@ -2647,12 +2627,8 @@ mod tests {
             if dir != FrameDirection::Out {
                 return;
             }
-            let delivered = self
-                .transport
-                .frames
-                .lock()
-                .expect("recording sink mutex poisoned")
-                .len();
+			let delivered =
+				self.transport.frames.lock().expect("recording sink mutex poisoned").len();
             self.delivered_at_tap
                 .lock()
                 .expect("delivery order mutex poisoned")
@@ -2693,10 +2669,7 @@ mod tests {
         let installed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             runtime.set_debug_sink(channel.clone(), replaced.clone());
         }));
-        assert!(
-            installed.is_err(),
-            "the destructor's panic should surface to the installer"
-        );
+		assert!(installed.is_err(), "the destructor's panic should surface to the installer");
 
         // The mutex must not be poisoned: the new sink is reachable and taps.
         let ids = subscription_ids("theme_subscribe").expect("known subscription");
@@ -2710,15 +2683,8 @@ mod tests {
             },
         };
         futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
-        let tapped = replaced
-            .events
-            .lock()
-            .expect("debug events mutex poisoned")
-            .len();
-        assert!(
-            tapped > 0,
-            "the replacement sink should still receive frames after the panic"
-        );
+		let tapped = replaced.events.lock().expect("debug events mutex poisoned").len();
+		assert!(tapped > 0, "the replacement sink should still receive frames after the panic");
     }
 
     /// The inbound tap runs BEFORE decode, so a frame the codec rejects is still
@@ -2750,11 +2716,7 @@ mod tests {
         );
 
         let events = debug.events.lock().expect("debug events mutex poisoned");
-        assert_eq!(
-            events.len(),
-            1,
-            "a frame rejected by decode must still be tapped"
-        );
+		assert_eq!(events.len(), 1, "a frame rejected by decode must still be tapped");
         assert_eq!(events[0].1, FrameDirection::In);
         assert_eq!(
             events[0].2, corrupt,
@@ -2783,11 +2745,7 @@ mod tests {
         impl DebugSink for HandoffSink {
             fn emit(&self, _event: DebugEvent) {
                 let _ = self.tapped.send(());
-                let _ = self
-                    .release
-                    .lock()
-                    .expect("release receiver poisoned")
-                    .recv();
+				let _ = self.release.lock().expect("release receiver poisoned").recv();
             }
         }
         impl Drop for HandoffSink {
@@ -2812,10 +2770,7 @@ mod tests {
         let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
         runtime.set_debug_sink(
             channel.clone(),
-            Arc::new(HandoffSink {
-                tapped: tapped_tx,
-                release: Mutex::new(release_rx),
-            }),
+			Arc::new(HandoffSink { tapped: tapped_tx, release: Mutex::new(release_rx) }),
         );
 
         let ids = subscription_ids("theme_subscribe").expect("known subscription");
@@ -2844,10 +2799,7 @@ mod tests {
         let _ = release_tx.send(());
 
         let outcome = frame_thread.join();
-        assert!(
-            outcome.is_ok(),
-            "a panicking sink destructor unwound the frame path"
-        );
+		assert!(outcome.is_ok(), "a panicking sink destructor unwound the frame path");
     }
 
     #[test]
@@ -2888,22 +2840,15 @@ mod tests {
         futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while debug
-            .delivered_at_tap
-            .lock()
-            .expect("delivery order mutex poisoned")
-            .is_empty()
-            && std::time::Instant::now() < deadline
+		while debug.delivered_at_tap.lock().expect("delivery order mutex poisoned").is_empty() &&
+			std::time::Instant::now() < deadline
         {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
 
-        let observed = debug
-            .delivered_at_tap
-            .lock()
-            .expect("delivery order mutex poisoned")
-            .clone();
+		let observed =
+			debug.delivered_at_tap.lock().expect("delivery order mutex poisoned").clone();
         assert!(!observed.is_empty(), "expected at least one outbound tap");
         // Tap i (0-based) must see i+1 frames already delivered.
         let expected: Vec<usize> = (1..=observed.len()).collect();
@@ -3018,17 +2963,13 @@ mod tests {
         let _render = runtime
             .control()
             .render(v01::ProductRendererRenderRequest {
-                context: v01::RenderContext::PocketCard {
-                    card_id: "loyalty".into(),
-                },
+				context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
                 payload: vec![],
             })
             .expect("a signed-out Worker connection may render");
 
         let published = v01::HostRendererActionSubscribeItem {
-            context: v01::RenderContext::PocketCard {
-                card_id: "loyalty".into(),
-            },
+			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
             action_id: "vote".into(),
             payload: vec![],
         };
@@ -3082,9 +3023,7 @@ mod tests {
         let services = runtime.admin.product_runtime().services().clone();
         let demand = Arc::new(RecordingDemand::default());
         assert!(
-            services
-                .worker_ledger
-                .install_demand_observer(demand.clone()),
+			services.worker_ledger.install_demand_observer(demand.clone()),
             "the observer installs once"
         );
         assert_eq!(services.worker_ledger.count("worker.dot"), 0);
@@ -3092,9 +3031,7 @@ mod tests {
         let render = runtime
             .control()
             .render(v01::ProductRendererRenderRequest {
-                context: v01::RenderContext::PocketCard {
-                    card_id: "loyalty".into(),
-                },
+				context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
                 payload: vec![],
             })
             .expect("a Worker connection may render");
@@ -3103,11 +3040,7 @@ mod tests {
         drop(render);
         assert_eq!(services.worker_ledger.count("worker.dot"), 0);
         assert_eq!(
-            demand
-                .transitions
-                .lock()
-                .expect("transition mutex poisoned")
-                .as_slice(),
+			demand.transitions.lock().expect("transition mutex poisoned").as_slice(),
             [
                 ("worker.dot".to_string(), WorkerTransition::Start),
                 ("worker.dot".to_string(), WorkerTransition::Stop),
@@ -3143,9 +3076,7 @@ mod tests {
         runtime
             .control()
             .render(v01::ProductRendererRenderRequest {
-                context: v01::RenderContext::PocketCard {
-                    card_id: card_id.to_string(),
-                },
+				context: v01::RenderContext::PocketCard { card_id: card_id.to_string() },
                 payload: vec![],
             })
             .expect("a Worker connection may render")
@@ -3205,10 +3136,7 @@ mod tests {
             crate::frame::MESSAGE_TYPE_INTERRUPT,
             crate::frame::encode_clean_interrupt(),
         );
-        assert!(matches!(
-            poll_render(&mut render),
-            core::task::Poll::Ready(None)
-        ));
+		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
 
         assert_eq!(
             services.worker_ledger.count("worker.dot"),
@@ -3258,12 +3186,7 @@ mod tests {
         let mut render = start_render(&runtime, "loyalty");
 
         let request_id = render_request_id(&sink, 0);
-        deliver_render_frame(
-            &runtime,
-            &request_id,
-            crate::frame::MESSAGE_TYPE_RECEIVE,
-            vec![0xff],
-        );
+		deliver_render_frame(&runtime, &request_id, crate::frame::MESSAGE_TYPE_RECEIVE, vec![0xff]);
         assert!(matches!(
             poll_render(&mut render),
             core::task::Poll::Ready(Some(Err(truapi::CallError::MalformedFrame { .. })))
@@ -3282,10 +3205,7 @@ mod tests {
         assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
         runtime.dispose();
-        assert!(matches!(
-            poll_render(&mut render),
-            core::task::Poll::Ready(None)
-        ));
+		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
 
         assert_eq!(services.worker_ledger.count("worker.dot"), 0);
         drop(render);
@@ -3307,10 +3227,7 @@ mod tests {
             crate::frame::MESSAGE_TYPE_INTERRUPT,
             crate::frame::encode_clean_interrupt(),
         );
-        assert!(matches!(
-            poll_render(&mut first),
-            core::task::Poll::Ready(None)
-        ));
+		assert!(matches!(poll_render(&mut first), core::task::Poll::Ready(None)));
         assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
         drop(first);
@@ -3336,12 +3253,8 @@ mod tests {
         );
 
         assert!(matches!(
-            runtime
-                .control()
-                .publish_renderer_action(v01::HostRendererActionSubscribeItem {
-                    context: v01::RenderContext::PocketCard {
-                        card_id: "card".into()
-                    },
+			runtime.control().publish_renderer_action(v01::HostRendererActionSubscribeItem {
+				context: v01::RenderContext::PocketCard { card_id: "card".into() },
                     action_id: "vote".into(),
                     payload: vec![],
                 }),
@@ -3361,9 +3274,7 @@ mod tests {
         );
 
         assert!(matches!(
-            runtime
-                .control()
-                .publish_chat_action(v01::HostChatActionSubscribeItem {
+			runtime.control().publish_chat_action(v01::HostChatActionSubscribeItem {
                     room_id: "support".into(),
                     peer: "myapp.dot".into(),
                     payload: v01::ChatActionPayload::ActionTriggered(v01::ActionTrigger {
@@ -3411,10 +3322,7 @@ mod tests {
         let response = ProtocolMessage::decode(&mut frames[0].as_slice()).unwrap();
         assert_eq!(response.payload.trait_id, ids.trait_id);
         assert_eq!(response.payload.method_id, ids.method_id);
-        assert_eq!(
-            response.payload.message_type,
-            crate::frame::MESSAGE_TYPE_RESPONSE
-        );
+		assert_eq!(response.payload.message_type, crate::frame::MESSAGE_TYPE_RESPONSE);
         let expected: Result<
             truapi::versioned::chat::HostChatCreateRoomResponse,
             truapi::CallError<truapi::versioned::chat::HostChatCreateRoomError>,
@@ -3457,10 +3365,7 @@ mod tests {
         let response = ProtocolMessage::decode(&mut frames[0].as_slice()).unwrap();
         assert_eq!(response.payload.trait_id, ids.trait_id);
         assert_eq!(response.payload.method_id, ids.method_id);
-        assert_eq!(
-            response.payload.message_type,
-            crate::frame::MESSAGE_TYPE_RESPONSE
-        );
+		assert_eq!(response.payload.message_type, crate::frame::MESSAGE_TYPE_RESPONSE);
         let expected: Result<
             truapi::versioned::chat::HostChatRegisterBotResponse,
             truapi::CallError<truapi::versioned::chat::HostChatRegisterBotError>,
@@ -3498,10 +3403,7 @@ mod tests {
         assert_eq!(response.request_id, "chat:actions");
         assert_eq!(response.payload.trait_id, ids.trait_id);
         assert_eq!(response.payload.method_id, ids.method_id);
-        assert_eq!(
-            response.payload.message_type,
-            crate::frame::MESSAGE_TYPE_INTERRUPT
-        );
+		assert_eq!(response.payload.message_type, crate::frame::MESSAGE_TYPE_INTERRUPT);
         let expected = Some(truapi::CallError::<truapi::latest::GenericError>::Denied).encode();
         assert_eq!(response.payload.value, expected);
     }
@@ -3517,11 +3419,8 @@ mod tests {
         impl DebugSink for ParkingDebugSink {
             fn emit(&self, _event: DebugEvent) {
                 let _ = self.entered.try_send(());
-                if let Some(release) = self
-                    .release
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .take()
+				if let Some(release) =
+					self.release.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take()
                 {
                     let _ = release.recv();
                 }
@@ -3529,10 +3428,8 @@ mod tests {
         }
 
         let navigations = Arc::new(Mutex::new(Vec::new()));
-        let platform = Arc::new(StubPlatform {
-            navigations: navigations.clone(),
-            ..Default::default()
-        });
+		let platform =
+			Arc::new(StubPlatform { navigations: navigations.clone(), ..Default::default() });
         let (host_config, product) = runtime_config("myapp.dot");
         let runtime = Arc::new(ProductRuntime::from_platform_with_config(
             platform,
@@ -3560,9 +3457,7 @@ mod tests {
                 method_id: ids.method_id,
                 message_type: crate::frame::MESSAGE_TYPE_REQUEST,
                 value: truapi::versioned::system::HostNavigateToRequest::V1(
-                    v01::HostNavigateToRequest {
-                        url: "https://example.invalid/".to_string(),
-                    },
+					v01::HostNavigateToRequest { url: "https://example.invalid/".to_string() },
                 )
                 .encode(),
             },
@@ -3584,10 +3479,7 @@ mod tests {
         dispatching.join().expect("dispatch thread panicked");
 
         assert!(
-            navigations
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .is_empty(),
+			navigations.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_empty(),
             "a dispatch that lost the race with dispose still reached the platform"
         );
     }
@@ -3610,7 +3502,7 @@ mod tests {
             host.as_ref(),
             &truapi::CallContext::default(),
             truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-                truapi::v01::HostWorkerBeginOperationRequest { label: None },
+				truapi::latest::HostWorkerBeginOperationRequest { label: None },
             ),
         ))
         .expect("begin operation");
@@ -3618,8 +3510,6 @@ mod tests {
 
         runtime.dispose();
 
-        // A disposed connection can outlive its last `Arc` holder, so the
-        // release cannot wait for `Drop`.
         assert_eq!(
             host.services().worker_ledger.count("myapp.dot"),
             0,
@@ -3645,14 +3535,13 @@ mod tests {
             host.as_ref(),
             &truapi::CallContext::default(),
             truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-                truapi::v01::HostWorkerBeginOperationRequest { label: None },
+				truapi::latest::HostWorkerBeginOperationRequest { label: None },
             ),
         ))
         .expect("begin operation");
 
         runtime.dispose();
 
-        // Teardown ends the operation off the disposing thread.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
             let ended = platform
@@ -3752,8 +3641,10 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn the_core_database_is_installed_once_and_reports_when_missing() {
-        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
-        use crate::store::{Db, DbConfig, DbError, DbLocation};
+		use crate::{
+			platform::{HostInfo, PlatformInfo, SigningHostConfig},
+			store::{Db, DbConfig, DbError, DbLocation},
+		};
         use futures::executor::block_on;
 
         let config = SigningHostConfig::new(
@@ -3778,10 +3669,7 @@ mod tests {
             readers: 1,
         };
 
-        assert!(matches!(
-            runtime.services.core_db(),
-            Err(DbError::NotConfigured)
-        ));
+		assert!(matches!(runtime.services.core_db(), Err(DbError::NotConfigured)));
         let installed = block_on(Db::open(db_config.clone())).expect("database opens");
         let other = block_on(Db::open(db_config)).expect("database opens");
         assert!(runtime.set_core_db(installed));
@@ -3799,8 +3687,10 @@ mod tests {
 
     #[test]
     fn answer_sso_request_distinguishes_disconnect_from_ignorable_messages() {
-        use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1};
-        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
+		use crate::{
+			host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
+			platform::{HostInfo, PlatformInfo, SigningHostConfig},
+		};
 
         const ENTROPY: [u8; 32] = [0xab; 32];
 
@@ -3833,10 +3723,7 @@ mod tests {
         let response_variant = RemoteMessage {
             message_id: "m2".to_string(),
             data: RemoteMessageData::V1(v1::RemoteMessage::SignRawWithLegacyAccountResponse(
-                Response {
-                    responding_to: "m2".to_string(),
-                    payload: Ok(vec![]),
-                },
+				Response { responding_to: "m2".to_string(), payload: Ok(vec![]) },
             )),
         };
         let outcome = futures::executor::block_on(runtime.answer_sso_request(response_variant));
@@ -3845,10 +3732,12 @@ mod tests {
 
     #[test]
     fn answer_sso_request_returns_a_correlated_response() {
-        use crate::host_internal::sso_messages::{
+		use crate::{
+			host_internal::sso_messages::{
             ProductSubtreeRequest, RemoteMessage, RemoteMessageData, v1,
+			},
+			platform::{HostInfo, PlatformInfo, SigningHostConfig},
         };
-        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
         const ENTROPY: [u8; 32] = [0xab; 32];
 
@@ -3874,9 +3763,7 @@ mod tests {
         let request = RemoteMessage {
             message_id: "m3".to_string(),
             data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(
-                ProductSubtreeRequest {
-                    product_id: "browse.dot".to_string(),
-                },
+				ProductSubtreeRequest { product_id: "browse.dot".to_string() },
             )),
         };
         let outcome = futures::executor::block_on(runtime.answer_sso_request(request));
@@ -3942,9 +3829,8 @@ mod tests {
         let [submit] = submits.as_slice() else {
             panic!("expected one disconnect submission, got {submits:?}");
         };
-        let statement_hex = submit["params"][0]
-            .as_str()
-            .expect("statement submit carries encoded bytes");
+		let statement_hex =
+			submit["params"][0].as_str().expect("statement submit carries encoded bytes");
         let statement = hex::decode(statement_hex.strip_prefix("0x").unwrap_or(statement_hex))
             .expect("submitted statement is hex");
         let incoming = decode_incoming_sso_request(&pairing_session, &statement)
@@ -4102,15 +3988,12 @@ mod tests {
     /// A cross-product storage read for `owner`, uncached, on a signing-role
     /// product runtime configured with `asset_hub`.
     fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
-        use truapi::api::LocalStorage;
-        use truapi::versioned::local_storage::HostLocalStorageReadRequest;
+		use truapi::{api::LocalStorage, versioned::local_storage::HostLocalStorageReadRequest};
 
         // The stub serves no dotNS either way, so end the follow rather than
         // wait out `dotns_lookup::OPERATION_TIMEOUT` for the same refusal.
-        let platform = Arc::new(StubPlatform {
-            chain_responses_end: true,
-            ..StubPlatform::default()
-        });
+		let platform =
+			Arc::new(StubPlatform { chain_responses_end: true, ..StubPlatform::default() });
         let runtime = SigningHostRuntime::new(
             platform.clone(),
             signing_config_with_asset_hub(asset_hub),
@@ -4137,16 +4020,8 @@ mod tests {
             "the stub serves no dotNS registry, so the read is refused either way"
         );
         ManifestLookup {
-            rpc: platform
-                .sent_rpc
-                .lock()
-                .expect("sent rpc mutex poisoned")
-                .clone(),
-            connects: platform
-                .chain_connects
-                .lock()
-                .expect("chain connect mutex poisoned")
-                .clone(),
+			rpc: platform.sent_rpc.lock().expect("sent rpc mutex poisoned").clone(),
+			connects: platform.chain_connects.lock().expect("chain connect mutex poisoned").clone(),
         }
     }
 
@@ -4174,9 +4049,6 @@ mod tests {
             unconfigured.rpc.is_empty(),
             "a signing role with no Asset Hub refuses without touching the chain"
         );
-        assert!(
-            unconfigured.connects.is_empty(),
-            "and does not dial any chain at all"
-        );
+		assert!(unconfigured.connects.is_empty(), "and does not dial any chain at all");
     }
 }

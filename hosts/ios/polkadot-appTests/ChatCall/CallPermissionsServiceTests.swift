@@ -79,7 +79,46 @@ struct CallPermissionsServiceTests {
             requester: RecordPermissionRequesterSpy(grants: true)
         )
 
-        #expect(await sut.ensurePermissions(for: .audio) == scenario.2)
+        #expect(await sut.ensurePermissions() == scenario.2)
+    }
+
+    @Test(
+        "Settled camera status is reported without prompting",
+        arguments: [
+            (CameraPermissionResult.authorized, true),
+            (.denied, false)
+        ]
+    )
+    func settledCameraStatus(scenario: (CameraPermissionResult, Bool)) async {
+        let camera = CameraPermissionServiceSpy(status: scenario.0)
+        let sut = makeCameraSut(camera: camera, appState: .active)
+
+        #expect(await sut.ensureCameraAccess() == scenario.1)
+        #expect(sut.isCameraGranted == scenario.1)
+        #expect(sut.isCameraDenied == !scenario.1)
+        #expect(camera.requestCount == 0)
+    }
+
+    @Test("Camera access in background defers instead of awaiting a prompt that can't appear")
+    func cameraInBackgroundDefers() async {
+        let camera = CameraPermissionServiceSpy(status: .notDetermined, promptResult: .authorized)
+        let sut = makeCameraSut(camera: camera, appState: .background)
+
+        #expect(await sut.ensureCameraAccess() == false)
+        #expect(sut.isCameraDenied == false)
+        #expect(camera.requestCount == 0)
+    }
+
+    @Test(
+        "Active app prompts for the camera and maps the answer",
+        arguments: [(CameraPermissionResult.authorized, true), (.denied, false)]
+    )
+    func cameraInForegroundPrompts(answer: (CameraPermissionResult, Bool)) async {
+        let camera = CameraPermissionServiceSpy(status: .notDetermined, promptResult: answer.0)
+        let sut = makeCameraSut(camera: camera, appState: .active)
+
+        #expect(await sut.ensureCameraAccess() == answer.1)
+        #expect(camera.requestCount == 1)
     }
 
     @Test("Refused prompt fails audio call permissions")
@@ -90,7 +129,7 @@ struct CallPermissionsServiceTests {
             requester: RecordPermissionRequesterSpy(grants: false)
         )
 
-        #expect(await sut.ensurePermissions(for: .audio) == false)
+        #expect(await sut.ensurePermissions() == false)
     }
 }
 
@@ -98,12 +137,26 @@ private extension CallPermissionsServiceTests {
     func makeSut(
         permission: AVAudioApplication.recordPermission,
         appState: UIApplication.State,
-        requester: RecordPermissionRequesterSpy
+        requester: RecordPermissionRequesterSpy,
+        cameraPermissionService: CameraPermissionServicing = CameraPermissionServiceSpy(status: .denied)
     ) -> CallPermissionsService {
         CallPermissionsService(
             applicationStateProvider: { appState },
             recordPermissionProvider: StubRecordPermissionProvider(recordPermission: permission),
-            recordPermissionRequester: requester
+            recordPermissionRequester: requester,
+            cameraPermissionService: cameraPermissionService
+        )
+    }
+
+    func makeCameraSut(
+        camera: CameraPermissionServiceSpy,
+        appState: UIApplication.State
+    ) -> CallPermissionsService {
+        makeSut(
+            permission: .granted,
+            appState: appState,
+            requester: RecordPermissionRequesterSpy(grants: true),
+            cameraPermissionService: camera
         )
     }
 }

@@ -2,16 +2,20 @@ use super::*;
 
 use futures::FutureExt;
 use parity_scale_codec::Encode;
-use truapi::api::StatementStore;
-use truapi::versioned::statement_store::{
+use truapi::{
+	api::StatementStore,
+	versioned::statement_store::{
     RemoteStatementStoreSubmitError, RemoteStatementStoreSubmitRequest,
+	},
 };
 
-use crate::host_logic::product_account::{
-    derive_full_person_ring_vrf_entropy, derive_sr25519_hard_path,
+use crate::{
+	host_logic::{
+		product_account::{derive_full_person_ring_vrf_entropy, derive_sr25519_hard_path},
+		statement_store::SUBMIT_STATEMENT_METHOD,
+	},
+	runtime::statement_allowance::slot,
 };
-use crate::host_logic::statement_store::SUBMIT_STATEMENT_METHOD;
-use crate::runtime::statement_allowance::slot;
 
 const PRODUCT_ID: &str = "myapp.dot";
 const PERIOD: u32 = 7;
@@ -42,44 +46,23 @@ fn chain_with_allocated_target(target: [u8; 32]) -> Arc<StubPlatform> {
                 "state_getRuntimeVersion",
                 r#"{"specVersion":1000000,"transactionVersion":1}"#.to_string(),
             ),
-            (
-                "chain_getBlockHash",
-                format!(r#""0x{}""#, hex::encode([0u8; 32])),
-            ),
+			("chain_getBlockHash", format!(r#""0x{}""#, hex::encode([0u8; 32]))),
             (
                 "Metadata_metadata_at_version",
-                format!(
-                    r#""0x{}""#,
-                    hex::encode(Some(PEOPLE_METADATA.to_vec()).encode()),
-                ),
+				format!(r#""0x{}""#, hex::encode(Some(PEOPLE_METADATA.to_vec()).encode()),),
             ),
             (
                 "RuntimeViewFunction_execute_view_function",
-                format!(
-                    r#""0x{}""#,
-                    hex::encode(Ok::<Vec<u8>, ()>(20u32.encode()).encode()),
-                ),
+				format!(r#""0x{}""#, hex::encode(Ok::<Vec<u8>, ()>(20u32.encode()).encode()),),
             ),
             (
                 "RuntimeViewFunction_execute_view_function",
-                format!(
-                    r#""0x{}""#,
-                    hex::encode(Ok::<Vec<u8>, ()>(10u32.encode()).encode()),
-                ),
+				format!(r#""0x{}""#, hex::encode(Ok::<Vec<u8>, ()>(10u32.encode()).encode()),),
             ),
-            (
-                "state_getStorage",
-                format!(r#""0x{}""#, hex::encode(TEST_NETWORK_SUFFIX.encode())),
-            ),
-            (
-                "state_queryStorageAt",
-                people_row,
-            ),
+			("state_getStorage", format!(r#""0x{}""#, hex::encode(TEST_NETWORK_SUFFIX.encode()))),
+			("state_queryStorageAt", people_row),
             // The LitePeople row, read alongside People's, is empty.
-            (
-                "state_queryStorageAt",
-                r#"[{"block":"0xb10c","changes":[]}]"#.to_string(),
-            ),
+			("state_queryStorageAt", r#"[{"block":"0xb10c","changes":[]}]"#.to_string()),
         ],
         ..Default::default()
     })
@@ -96,9 +79,7 @@ fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
 /// of hanging.
 fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
     futures::executor::block_on(async {
-        let session = signing_host
-            .current_session()
-            .expect("a session is active");
+		let session = signing_host.current_session().expect("a session is active");
         let cx = CallContext::default();
         futures::select! {
             result = signing_host
@@ -113,11 +94,7 @@ fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
 }
 
 fn sent_rpc_count(platform: &StubPlatform) -> usize {
-    platform
-        .sent_rpc
-        .lock()
-        .expect("rpc list mutex poisoned")
-        .len()
+	platform.sent_rpc.lock().expect("rpc list mutex poisoned").len()
 }
 
 fn secret_key() -> StatementStoreAllowanceKey {
@@ -442,10 +419,7 @@ fn rejected(reason: &str) -> String {
 fn submit_answered(
     answers: Vec<String>,
     signer: [u8; 32],
-) -> (
-    Result<(), CallError<RemoteStatementStoreSubmitError>>,
-    Arc<SigningHostRole>,
-) {
+) -> (Result<(), CallError<RemoteStatementStoreSubmitError>>, Arc<SigningHostRole>) {
     let platform = Arc::new(StubPlatform {
         rpc_method_responses: answers
             .into_iter()
@@ -462,10 +436,7 @@ fn submit_answered(
     let submitted = futures::executor::block_on(runtime.submit(
         &CallContext::default(),
         RemoteStatementStoreSubmitRequest::V1(truapi::latest::SignedStatement {
-            proof: truapi::latest::StatementProof::Sr25519 {
-                signature: [0; 64],
-                signer,
-            },
+			proof: truapi::latest::StatementProof::Sr25519 { signature: [0; 64], signer },
             decryption_key: None,
             expiry: None,
             channel: None,

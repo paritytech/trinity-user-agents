@@ -4,20 +4,25 @@ use crate::platform::PermissionAuthorizationStatus;
 use futures::StreamExt;
 use parity_scale_codec::{Decode, Encode};
 use tracing::{instrument, warn};
-use truapi::api::{LocalStorage, Locale, Notifications, Permissions, System, Theme, Worker};
-use truapi::versioned::IntoLatest;
-use truapi::versioned::local_storage::{
+use truapi::{
+	CallContext, CallError, Subscription,
+	api::{LocalStorage, Locale, Notifications, Permissions, System, Theme, Worker},
+	latest,
+	versioned::{
+		FromLatest, IntoLatest, Versioned,
+		local_storage::{
     HostLocalStorageChangeItem, HostLocalStorageClearError, HostLocalStorageClearRequest,
     HostLocalStorageClearResponse, HostLocalStorageReadError, HostLocalStorageReadRequest,
-    HostLocalStorageReadResponse, HostLocalStorageSubscribeError, HostLocalStorageSubscribeRequest,
-    HostLocalStorageWriteError, HostLocalStorageWriteRequest, HostLocalStorageWriteResponse,
-};
-use truapi::versioned::locale::{
-    HostLocaleSubscribeError, HostLocaleSubscribeItem, HostLocaleSubscribeRequest,
+			HostLocalStorageReadResponse, HostLocalStorageSubscribeError,
+			HostLocalStorageSubscribeRequest, HostLocalStorageWriteError,
+			HostLocalStorageWriteRequest, HostLocalStorageWriteResponse,
+		},
+		locale::{
     HostLocaleLocalizeTimestampsError, HostLocaleLocalizeTimestampsRequest,
-    HostLocaleLocalizeTimestampsResponse,
-};
-use truapi::versioned::notifications::{
+			HostLocaleLocalizeTimestampsResponse, HostLocaleSubscribeError,
+			HostLocaleSubscribeItem, HostLocaleSubscribeRequest,
+		},
+		notifications::{
     HostPushNotificationCancelError, HostPushNotificationCancelRequest,
     HostPushNotificationCancelResponse, HostPushNotificationError, HostPushNotificationRequest,
     HostPushNotificationResponse,
@@ -31,31 +36,36 @@ use truapi::versioned::notifications::{
     NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
     NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
     NotificationActivationEventsRequest, NotificationActivationEventsResponse,
-};
-use truapi::versioned::permissions::{
+        },
+        permissions::{
     HostDevicePermissionError, HostDevicePermissionRequest, HostDevicePermissionResponse,
     RemotePermissionError, RemotePermissionRequest, RemotePermissionResponse,
-};
-use truapi::versioned::system::{
+		},
+		system::{
     HostFeatureSupportedError, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-    HostGetProductContextError, HostGetProductContextRequest, HostGetProductContextResponse,
-    HostInfoError, HostInfoRequest, HostInfoResponse, HostNavigateToError, HostNavigateToRequest,
-    HostNavigateToResponse,
-};
-use truapi::versioned::theme::{
-    HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest,
-};
-use truapi::versioned::worker::{
+			HostGetProductContextError, HostGetProductContextRequest,
+			HostGetProductContextResponse, HostInfoError, HostInfoRequest, HostInfoResponse,
+			HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
+		},
+		theme::{HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest},
+		worker::{
     HostWorkerBeginOperationError, HostWorkerBeginOperationRequest,
-    HostWorkerBeginOperationResponse, HostWorkerEndOperationError, HostWorkerEndOperationRequest,
-    HostWorkerEndOperationResponse,
+			HostWorkerBeginOperationResponse, HostWorkerEndOperationError,
+			HostWorkerEndOperationRequest, HostWorkerEndOperationResponse,
+		},
+	},
 };
-use truapi::{CallContext, CallError, Subscription, v01, v02};
 
-use crate::host_internal::product_manifest::Granted;
-use crate::host_logic::dotns::{NavigateDecision, parse_navigate};
-use crate::host_logic::features::feature_supported;
-use crate::runtime::{PERMISSION_DENIED_REASON, ProductRuntimeHost};
+use super::from_latest_error;
+
+use crate::{
+	host_internal::product_manifest::Granted,
+	host_logic::{
+		dotns::{NavigateDecision, parse_navigate},
+		features::feature_supported,
+	},
+	runtime::{PERMISSION_DENIED_REASON, ProductRuntimeHost},
+};
 
 #[truapi::async_trait]
 impl System for ProductRuntimeHost {
@@ -65,11 +75,12 @@ impl System for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostFeatureSupportedRequest,
     ) -> Result<HostFeatureSupportedResponse, CallError<HostFeatureSupportedError>> {
-        let HostFeatureSupportedRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
         feature_supported(self.platform.as_ref(), inner)
             .await
-            .map(HostFeatureSupportedResponse::V1)
-            .map_err(|err| CallError::Domain(HostFeatureSupportedError::V1(err)))
+			.map(|value| HostFeatureSupportedResponse::from_latest(value, version))
+			.map_err(|err| CallError::Domain(HostFeatureSupportedError::from_latest(err, version)))
     }
 
     #[instrument(skip_all, fields(runtime.method = "system.host_info"))]
@@ -78,13 +89,17 @@ impl System for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostInfoRequest,
     ) -> Result<HostInfoResponse, CallError<HostInfoError>> {
-        let HostInfoRequest::V1 = request;
+		let version = request.version();
+		let () = request.into_latest();
         let info = &self.services.host_info;
-        Ok(HostInfoResponse::V1(v01::HostInfo {
+		Ok(HostInfoResponse::from_latest(
+			latest::HostInfoResponse {
             platform: info.platform.clone(),
             name: info.name.clone(),
             version: info.version.clone().unwrap_or_default(),
-        }))
+			},
+			version,
+		))
     }
 
     #[instrument(skip_all, fields(runtime.method = "system.navigate_to"))]
@@ -93,60 +108,64 @@ impl System for ProductRuntimeHost {
         cx: &CallContext,
         request: HostNavigateToRequest,
     ) -> Result<HostNavigateToResponse, CallError<HostNavigateToError>> {
-        let HostNavigateToRequest::V1(v01::HostNavigateToRequest { url }) = request;
+		let version = request.version();
+		let latest::HostNavigateToRequest { url } = request.into_latest();
         let resolved = match parse_navigate(&url) {
             NavigateDecision::Reject { reason } => {
-                return Err(CallError::Domain(HostNavigateToError::V1(
-                    v01::HostNavigateToError::Unknown { reason },
+				return Err(CallError::Domain(HostNavigateToError::from_latest(
+					latest::HostNavigateToError::Unknown { reason },
+					version,
                 )));
-            }
+			},
             // dotNS, localhost and a host-handled Pocket target all resolve
             // back into the host's own product surface, which is already gated
             // by the product sandbox. None reaches an arbitrary internet host,
             // so none consumes a grant.
-            NavigateDecision::DotName { canonical_url, .. }
-            | NavigateDecision::Localhost { canonical_url, .. }
-            | NavigateDecision::Pocket { canonical_url, .. } => canonical_url,
+			NavigateDecision::DotName { canonical_url, .. } |
+			NavigateDecision::Localhost { canonical_url, .. } |
+			NavigateDecision::Pocket { canonical_url, .. } |
+			NavigateDecision::PocketCollection { canonical_url, .. } => canonical_url,
             NavigateDecision::External { url } => {
                 let status = self
                     .permissions_service()
-                    .authorize_device(v01::HostDevicePermissionRequest::OpenUrl)
+					.authorize_device(latest::HostDevicePermissionRequest::OpenUrl)
                     .await
                     .map_err(|error| CallError::HostFailure {
                         reason: format!("permission storage failed: {error:?}"),
                     })?;
                 if status != PermissionAuthorizationStatus::Authorized {
-                    return Err(CallError::Domain(HostNavigateToError::V1(
-                        v01::HostNavigateToError::PermissionDenied,
+					return Err(CallError::Domain(HostNavigateToError::from_latest(
+						latest::HostNavigateToError::PermissionDenied,
+						version,
                     )));
                 }
                 url
-            }
+			},
         };
         if let Some(reason) = cx.cancel().reason() {
-            return Err(CallError::Domain(HostNavigateToError::V1(
-                v01::HostNavigateToError::Unknown {
-                    reason: format!("navigation {reason}"),
-                },
+			return Err(CallError::Domain(HostNavigateToError::from_latest(
+				latest::HostNavigateToError::Unknown { reason: format!("navigation {reason}") },
+				version,
             )));
         }
         self.platform
             .navigate_to(resolved)
             .await
-            .map(|()| HostNavigateToResponse::V1)
-            .map_err(|err| CallError::Domain(HostNavigateToError::V1(err)))
+			.map(|()| HostNavigateToResponse::from_latest((), version))
+			.map_err(|err| CallError::Domain(HostNavigateToError::from_latest(err, version)))
     }
 
     #[instrument(skip_all, fields(runtime.method = "system.get_product_context"))]
     async fn get_product_context(
         &self,
         _cx: &CallContext,
-        _request: HostGetProductContextRequest,
+		request: HostGetProductContextRequest,
     ) -> Result<HostGetProductContextResponse, CallError<HostGetProductContextError>> {
-        Ok(HostGetProductContextResponse::V1(
-            v01::HostGetProductContextResponse {
-                product_id: self.product.product_id.clone(),
-            },
+		let version = request.version();
+		let () = request.into_latest();
+		Ok(HostGetProductContextResponse::from_latest(
+			latest::HostGetProductContextResponse { product_id: self.product.product_id.clone() },
+			version,
         ))
     }
 }
@@ -159,13 +178,15 @@ impl Permissions for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostDevicePermissionRequest,
     ) -> Result<HostDevicePermissionResponse, CallError<HostDevicePermissionError>> {
-        let HostDevicePermissionRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
         let service = self.permissions_service();
         match service.authorize_device(inner).await {
-            Ok(decision) => Ok(HostDevicePermissionResponse::V1(
-                v01::HostDevicePermissionResponse {
+			Ok(decision) => Ok(HostDevicePermissionResponse::from_latest(
+				latest::HostDevicePermissionResponse {
                     granted: decision == PermissionAuthorizationStatus::Authorized,
                 },
+				version,
             )),
             Err(err) => Err(CallError::HostFailure {
                 reason: format!("permission storage failed: {err:?}"),
@@ -179,13 +200,15 @@ impl Permissions for ProductRuntimeHost {
         _cx: &CallContext,
         request: RemotePermissionRequest,
     ) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
-        let RemotePermissionRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
         let service = self.permissions_service();
         match service.authorize_remote(inner).await {
-            Ok(decision) => Ok(RemotePermissionResponse::V1(
-                v01::RemotePermissionResponse {
+			Ok(decision) => Ok(RemotePermissionResponse::from_latest(
+				latest::RemotePermissionResponse {
                     granted: decision == PermissionAuthorizationStatus::Authorized,
                 },
+				version,
             )),
             Err(err) => Err(CallError::HostFailure {
                 reason: format!("permission storage failed: {err:?}"),
@@ -199,13 +222,15 @@ impl Permissions for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostDevicePermissionRequest,
     ) -> Result<HostDevicePermissionResponse, CallError<HostDevicePermissionError>> {
-        let HostDevicePermissionRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
         let service = self.permissions_service();
         match service.check_or_prompt_device(inner).await {
-            Ok(decision) => Ok(HostDevicePermissionResponse::V1(
-                v01::HostDevicePermissionResponse {
+			Ok(decision) => Ok(HostDevicePermissionResponse::from_latest(
+				latest::HostDevicePermissionResponse {
                     granted: decision == PermissionAuthorizationStatus::Authorized,
                 },
+				version,
             )),
             Err(err) => Err(CallError::HostFailure {
                 reason: format!("permission storage failed: {err:?}"),
@@ -219,13 +244,15 @@ impl Permissions for ProductRuntimeHost {
         _cx: &CallContext,
         request: RemotePermissionRequest,
     ) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
-        let RemotePermissionRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
         let service = self.permissions_service();
         match service.check_or_prompt_remote(inner).await {
-            Ok(decision) => Ok(RemotePermissionResponse::V1(
-                v01::RemotePermissionResponse {
+			Ok(decision) => Ok(RemotePermissionResponse::from_latest(
+				latest::RemotePermissionResponse {
                     granted: decision == PermissionAuthorizationStatus::Authorized,
                 },
+				version,
             )),
             Err(err) => Err(CallError::HostFailure {
                 reason: format!("permission storage failed: {err:?}"),
@@ -242,7 +269,8 @@ impl LocalStorage for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostLocalStorageReadRequest,
     ) -> Result<HostLocalStorageReadResponse, CallError<HostLocalStorageReadError>> {
-        let v02::HostLocalStorageReadRequest { product, key } = request.into_latest();
+		let version = request.version();
+		let latest::HostLocalStorageReadRequest { product, key } = request.into_latest();
 
         // One refusal for every reason the grant is not held: telling them apart
         // would make this call a probe for which products exist and which hold
@@ -250,18 +278,16 @@ impl LocalStorage for ProductRuntimeHost {
         // opaque bytes nobody could inspect to approve.
         let owner = match product {
             Some(target) => {
-                match self
-                    .cross_product_scope_target(&target, Granted::Storage)
-                    .await
-                {
+				match self.cross_product_scope_target(&target, Granted::Storage).await {
                     Some(owner) => owner,
                     None => {
-                        return Err(CallError::Domain(HostLocalStorageReadError::V2(
-                            v02::HostLocalStorageReadError::AccessNotGranted,
+						return Err(CallError::Domain(HostLocalStorageReadError::from_latest(
+							latest::HostLocalStorageReadError::AccessNotGranted,
+							version,
                         )));
+					},
                     }
-                }
-            }
+			},
             None => self.product_id(),
         };
 
@@ -269,12 +295,13 @@ impl LocalStorage for ProductRuntimeHost {
             .read(self.product_storage_key(&owner, key))
             .await
             .map(|value| {
-                HostLocalStorageReadResponse::V2(v01::HostLocalStorageReadResponse { value })
+				HostLocalStorageReadResponse::from_latest(
+					latest::HostLocalStorageReadResponse { value },
+					version,
+				)
             })
             .map_err(|err| {
-                CallError::Domain(HostLocalStorageReadError::V2(
-                    HostLocalStorageReadError::V1(err).into_latest(),
-                ))
+				CallError::Domain(HostLocalStorageReadError::from_latest(err.into(), version))
             })
     }
 
@@ -284,14 +311,14 @@ impl LocalStorage for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostLocalStorageWriteRequest,
     ) -> Result<HostLocalStorageWriteResponse, CallError<HostLocalStorageWriteError>> {
-        let HostLocalStorageWriteRequest::V1(v01::HostLocalStorageWriteRequest { key, value }) =
-            request;
+		let version = request.version();
+		let latest::HostLocalStorageWriteRequest { key, value } = request.into_latest();
         let storage_key = self.product_storage_key(self.product.product_id.as_str(), key);
         self.platform
             .write(storage_key, value)
             .await
-            .map(|()| HostLocalStorageWriteResponse::V1)
-            .map_err(|err| CallError::Domain(HostLocalStorageWriteError::V1(err)))
+			.map(|()| HostLocalStorageWriteResponse::from_latest((), version))
+			.map_err(|err| CallError::Domain(HostLocalStorageWriteError::from_latest(err, version)))
     }
 
     #[instrument(skip_all, fields(runtime.method = "local_storage.clear"))]
@@ -300,12 +327,13 @@ impl LocalStorage for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostLocalStorageClearRequest,
     ) -> Result<HostLocalStorageClearResponse, CallError<HostLocalStorageClearError>> {
-        let HostLocalStorageClearRequest::V1(v01::HostLocalStorageClearRequest { key }) = request;
+		let version = request.version();
+		let latest::HostLocalStorageClearRequest { key } = request.into_latest();
         self.platform
             .clear(self.product_storage_key(self.product.product_id.as_str(), key))
             .await
-            .map(|()| HostLocalStorageClearResponse::V1)
-            .map_err(|err| CallError::Domain(HostLocalStorageClearError::V1(err)))
+			.map(|()| HostLocalStorageClearResponse::from_latest((), version))
+			.map_err(|err| CallError::Domain(HostLocalStorageClearError::from_latest(err, version)))
     }
 
     #[instrument(skip_all, fields(runtime.method = "local_storage.subscribe"))]
@@ -314,8 +342,8 @@ impl LocalStorage for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostLocalStorageSubscribeRequest,
     ) -> Subscription<HostLocalStorageChangeItem, CallError<HostLocalStorageSubscribeError>> {
-        let HostLocalStorageSubscribeRequest::V1(v01::HostLocalStorageSubscribeRequest { key }) =
-            request;
+		let version = request.version();
+		let latest::HostLocalStorageSubscribeRequest { key } = request.into_latest();
         // A write that left the bytes alone is not a change, and the
         // subscription is where that holds for every host: the core cannot
         // know whether one reports repeats, and withholding the write instead
@@ -329,17 +357,15 @@ impl LocalStorage for ProductRuntimeHost {
                     Ok(item) if delivered.as_ref() == Some(&item.value) => None,
                     Ok(item) => {
                         delivered = Some(item.value.clone());
-                        Some(Ok(HostLocalStorageChangeItem::V1(item)))
-                    }
+						Some(Ok(HostLocalStorageChangeItem::from_latest(item, version)))
+					},
                     Err(error) => {
                         warn!(
                             reason = %error.reason,
                             "local storage subscription platform stream failed"
                         );
-                        Some(Err(CallError::HostFailure {
-                            reason: error.reason,
-                        }))
-                    }
+						Some(Err(CallError::HostFailure { reason: error.reason }))
+					},
                 };
                 futures::future::ready(next)
             });
@@ -355,14 +381,16 @@ impl Worker for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostWorkerBeginOperationRequest,
     ) -> Result<HostWorkerBeginOperationResponse, CallError<HostWorkerBeginOperationError>> {
-        let HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label }) =
-            request;
-        let response = self
-            .begin_operation_with_host(label.unwrap_or_default())
+		let version = request.version();
+		let latest::HostWorkerBeginOperationRequest { label } = request.into_latest();
+		let response =
+			self.begin_operation_with_host(label.unwrap_or_default())
             .await
-            .map_err(|error| CallError::Domain(HostWorkerBeginOperationError::V1(error)))?;
+				.map_err(|error| {
+					CallError::Domain(HostWorkerBeginOperationError::from_latest(error, version))
+				})?;
         self.hold_worker_for_operation(response.id);
-        Ok(HostWorkerBeginOperationResponse::V1(response))
+		Ok(HostWorkerBeginOperationResponse::from_latest(response, version))
     }
 
     #[instrument(skip_all, fields(runtime.method = "worker.end_operation"))]
@@ -371,15 +399,18 @@ impl Worker for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostWorkerEndOperationRequest,
     ) -> Result<HostWorkerEndOperationResponse, CallError<HostWorkerEndOperationError>> {
-        let HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }) = request;
+		let version = request.version();
+		let latest::HostWorkerEndOperationRequest { id } = request.into_latest();
         let ended = self.platform.end_operation(&self.product, id).await;
         // The product has declared the operation over, so the core stops
         // counting it whatever the host made of the call. A host that dropped
         // the operation and still failed would otherwise leave demand standing
         // with nothing left able to end it, and a retry releases nothing.
         self.release_worker_for_operation(id);
-        ended.map_err(|error| CallError::Domain(HostWorkerEndOperationError::V1(error)))?;
-        Ok(HostWorkerEndOperationResponse::V1)
+		ended.map_err(|error| {
+			CallError::Domain(HostWorkerEndOperationError::from_latest(error, version))
+		})?;
+		Ok(HostWorkerEndOperationResponse::from_latest((), version))
     }
 }
 
@@ -389,16 +420,16 @@ impl Theme for ProductRuntimeHost {
     async fn subscribe(
         &self,
         _cx: &CallContext,
-        _request: HostThemeSubscribeRequest,
+		request: HostThemeSubscribeRequest,
     ) -> Subscription<HostThemeSubscribeItem, CallError<HostThemeSubscribeError>> {
-        let stream = self.platform.subscribe_theme().map(|item| match item {
-            Ok(item) => Ok(HostThemeSubscribeItem::V1(item)),
+		let version = request.version();
+		let () = request.into_latest();
+		let stream = self.platform.subscribe_theme().map(move |item| match item {
+			Ok(item) => Ok(HostThemeSubscribeItem::from_latest(item, version)),
             Err(error) => {
                 warn!(reason = %error.reason, "theme platform stream failed");
-                Err(CallError::HostFailure {
-                    reason: error.reason,
-                })
-            }
+				Err(CallError::HostFailure { reason: error.reason })
+			},
         });
         Subscription::new(stream)
     }
@@ -410,16 +441,16 @@ impl Locale for ProductRuntimeHost {
     async fn subscribe(
         &self,
         _cx: &CallContext,
-        _request: HostLocaleSubscribeRequest,
+		request: HostLocaleSubscribeRequest,
     ) -> Subscription<HostLocaleSubscribeItem, CallError<HostLocaleSubscribeError>> {
-        let stream = self.platform.subscribe_locale().map(|item| match item {
-            Ok(item) => Ok(HostLocaleSubscribeItem::V2(item)),
+		let version = request.version();
+		let () = request.into_latest();
+		let stream = self.platform.subscribe_locale().map(move |item| match item {
+			Ok(item) => Ok(HostLocaleSubscribeItem::from_latest(item, version)),
             Err(error) => {
                 warn!(reason = %error.reason, "locale platform stream failed");
-                Err(CallError::HostFailure {
-                    reason: error.reason,
-                })
-            }
+				Err(CallError::HostFailure { reason: error.reason })
+			},
         });
         Subscription::new(stream)
     }
@@ -429,21 +460,26 @@ impl Locale for ProductRuntimeHost {
         &self,
         _cx: &CallContext,
         request: HostLocaleLocalizeTimestampsRequest,
-    ) -> Result<HostLocaleLocalizeTimestampsResponse, CallError<HostLocaleLocalizeTimestampsError>> {
+	) -> Result<HostLocaleLocalizeTimestampsResponse, CallError<HostLocaleLocalizeTimestampsError>>
+	{
         let request = request.into_latest();
-        if request.timestamps_ms.len() > 128
-            || request.timestamps_ms.iter().any(|timestamp| *timestamp > 253_402_300_799_999)
-            || request.language_tag.is_empty()
-            || request.time_zone.is_empty()
+		if request.timestamps_ms.len() > 128 ||
+			request.timestamps_ms.iter().any(|timestamp| *timestamp > 253_402_300_799_999) ||
+			request.language_tag.is_empty() ||
+			request.time_zone.is_empty()
         {
             return Err(CallError::Domain(HostLocaleLocalizeTimestampsError::V1(
-                truapi::latest::GenericError { reason: "Invalid local time conversion request".into() },
+				truapi::latest::GenericError {
+					reason: "Invalid local time conversion request".into(),
+				},
             )));
         }
         let count = request.timestamps_ms.len();
-        let response = self.platform.localize_timestamps(request).await.map_err(|error| {
-            CallError::Domain(HostLocaleLocalizeTimestampsError::V1(error))
-        })?;
+		let response = self
+			.platform
+			.localize_timestamps(request)
+			.await
+			.map_err(|error| CallError::Domain(HostLocaleLocalizeTimestampsError::V1(error)))?;
         if response.timestamps.len() != count {
             return Err(CallError::HostFailure {
                 reason: "Host returned an incomplete local time conversion".into(),
@@ -459,7 +495,7 @@ impl Locale for ProductRuntimeHost {
 impl ProductRuntimeHost {
     async fn forwarded_receiving<R: Decode>(
         &self, action: u8, payload: Vec<u8>,
-    ) -> Result<Option<R>, CallError<HostNotificationReceivingError>> {
+    ) -> Result<Option<R>, CallError<latest::HostNotificationReceivingError>> {
         let Some(bytes) = self.platform.receiver_command(
             self.product.product_id.clone(), action, payload,
         ).await.map_err(|error| CallError::HostFailure { reason: error.reason })? else {
@@ -471,21 +507,17 @@ impl ProductRuntimeHost {
         if !input.is_empty() {
             return Err(CallError::HostFailure { reason: "trailing receiving owner response bytes".into() });
         }
-        result.map(Some).map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
+        result.map(Some).map_err(CallError::Domain)
     }
 
     async fn receiving_execution_authority(
         &self,
-    ) -> Result<crate::platform::ReceivingAuthority, CallError<HostNotificationReceivingError>> {
+    ) -> Result<crate::platform::ReceivingAuthority, CallError<latest::HostNotificationReceivingError>> {
         let authority = self.platform.receiver_authority(&self.product.product_id).await
             .map_err(|error| CallError::HostFailure { reason: error.reason })?
-            .ok_or(CallError::Domain(HostNotificationReceivingError::V1(
-                crate::latest::HostNotificationReceivingError::Unsupported,
-            )))?;
+            .ok_or(CallError::Domain(latest::HostNotificationReceivingError::Unsupported))?;
         if authority.product_id != self.product.product_id {
-            return Err(CallError::Domain(HostNotificationReceivingError::V1(
-                crate::latest::HostNotificationReceivingError::PermissionDenied,
-            )));
+            return Err(CallError::Domain(latest::HostNotificationReceivingError::PermissionDenied));
         }
         Ok(authority)
     }
@@ -499,35 +531,39 @@ impl Notifications for ProductRuntimeHost {
         cx: &CallContext,
         request: HostPushNotificationRequest,
     ) -> Result<HostPushNotificationResponse, CallError<HostPushNotificationError>> {
-        let HostPushNotificationRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
         let status = self
             .permissions_service()
-            .authorize_device(v01::HostDevicePermissionRequest::Notifications)
+			.authorize_device(latest::HostDevicePermissionRequest::Notifications)
             .await
             .map_err(|err| CallError::HostFailure {
                 reason: format!("permission storage failed: {err:?}"),
             })?;
         if status != PermissionAuthorizationStatus::Authorized {
-            return Err(CallError::Domain(HostPushNotificationError::V1(
-                v01::HostPushNotificationError::Unknown {
+			return Err(CallError::Domain(HostPushNotificationError::from_latest(
+				latest::HostPushNotificationError::Unknown {
                     reason: PERMISSION_DENIED_REASON.to_string(),
                 },
+				version,
             )));
         }
         if let Some(reason) = cx.cancel().reason() {
-            return Err(CallError::Domain(HostPushNotificationError::V1(
-                v01::HostPushNotificationError::Unknown {
+			return Err(CallError::Domain(HostPushNotificationError::from_latest(
+				latest::HostPushNotificationError::Unknown {
                     reason: format!("notification {reason}"),
                 },
+				version,
             )));
         }
         self.platform
             .push_notification(inner)
             .await
-            .map(HostPushNotificationResponse::V1)
+			.map(|value| HostPushNotificationResponse::from_latest(value, version))
             .map_err(|err| {
-                CallError::Domain(HostPushNotificationError::V1(
-                    v01::HostPushNotificationError::Unknown { reason: err.reason },
+				CallError::Domain(HostPushNotificationError::from_latest(
+					latest::HostPushNotificationError::Unknown { reason: err.reason },
+					version,
                 ))
             })
     }
@@ -537,44 +573,48 @@ impl Notifications for ProductRuntimeHost {
         &self,
         _cx: &CallContext,
         request: HostPushNotificationCancelRequest,
-    ) -> Result<HostPushNotificationCancelResponse, CallError<HostPushNotificationCancelError>>
-    {
-        let HostPushNotificationCancelRequest::V1(v01::HostPushNotificationCancelRequest { id }) =
-            request;
+	) -> Result<HostPushNotificationCancelResponse, CallError<HostPushNotificationCancelError>> {
+		let version = request.version();
+		let latest::HostPushNotificationCancelRequest { id } = request.into_latest();
         self.platform
             .cancel_notification(id)
             .await
-            .map(|()| HostPushNotificationCancelResponse::V1)
+			.map(|()| HostPushNotificationCancelResponse::from_latest((), version))
             .map_err(|err| {
-                CallError::Domain(HostPushNotificationCancelError::V1(v01::GenericError {
-                    reason: err.reason,
-                }))
+				CallError::Domain(HostPushNotificationCancelError::from_latest(
+					latest::GenericError { reason: err.reason },
+					version,
+				))
             })
     }
 
     async fn receiver_status(
         &self,
         _cx: &CallContext,
-        _request: HostNotificationReceiverStatusRequest,
+        request: HostNotificationReceiverStatusRequest,
     ) -> Result<HostNotificationReceiverStatusResponse, CallError<HostNotificationReceivingError>> {
-        if let Some(status) = self.forwarded_receiving(2, Vec::new()).await? {
-            return Ok(HostNotificationReceiverStatusResponse::V1(status));
-        }
-        let authority = match self.receiving_execution_authority().await {
-            Ok(authority) => authority,
-            Err(CallError::Domain(HostNotificationReceivingError::V1(
-                crate::latest::HostNotificationReceivingError::Unsupported,
-            ))) => return Ok(HostNotificationReceiverStatusResponse::V1(
-                crate::latest::HostNotificationReceiverStatus {
-                    supported: false, os_permission: false, consent: false, enabled: false,
-                    revision: 0, sync_pending: false, transport_ready: false,
-                },
-            )),
-            Err(error) => return Err(error),
-        };
-        self.services.receiving.for_execution(authority).status().await
-            .map(HostNotificationReceiverStatusResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
+        let version = request.version();
+        let () = request.into_latest();
+        let result = async {
+            if let Some(status) = self.forwarded_receiving(2, Vec::new()).await? {
+                return Ok(status);
+            }
+            let authority = match self.receiving_execution_authority().await {
+                Ok(authority) => authority,
+                Err(CallError::Domain(latest::HostNotificationReceivingError::Unsupported)) => {
+                    return Ok(latest::HostNotificationReceiverStatus {
+                        supported: false, os_permission: false, consent: false, enabled: false,
+                        revision: 0, sync_pending: false, transport_ready: false,
+                    });
+                }
+                Err(error) => return Err(error),
+            };
+            self.services.receiving.for_execution(authority).status().await
+                .map_err(CallError::Domain)
+        }.await;
+        result
+            .map(|response| HostNotificationReceiverStatusResponse::from_latest(response, version))
+            .map_err(|error| from_latest_error::<HostNotificationReceivingError>(error, version))
     }
 
     async fn replace_receiver(
@@ -582,34 +622,33 @@ impl Notifications for ProductRuntimeHost {
         cx: &CallContext,
         request: HostNotificationReplaceReceiverRequest,
     ) -> Result<HostNotificationReplaceReceiverResponse, CallError<HostNotificationReceivingError>> {
-        let HostNotificationReplaceReceiverRequest::V1(request) = request;
-        let status = self.permissions_service()
-            .authorize_device(v01::HostDevicePermissionRequest::Notifications).await
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(
-                crate::latest::HostNotificationReceivingError::Storage {
+        let version = request.version();
+        let request = request.into_latest();
+        let result = async {
+            let status = self.permissions_service()
+                .authorize_device(latest::HostDevicePermissionRequest::Notifications).await
+                .map_err(|error| CallError::Domain(latest::HostNotificationReceivingError::Storage {
                     reason: format!("permission storage failed: {error:?}"),
-                },
-            )))?;
-        if status != PermissionAuthorizationStatus::Authorized {
-            return Err(CallError::Domain(HostNotificationReceivingError::V1(
-                crate::latest::HostNotificationReceivingError::PermissionDenied,
-            )));
-        }
-        if let Some(reason) = cx.cancel().reason() {
-            return Err(CallError::Domain(HostNotificationReceivingError::V1(
-                crate::latest::HostNotificationReceivingError::InvalidRequest {
+                }))?;
+            if status != PermissionAuthorizationStatus::Authorized {
+                return Err(CallError::Domain(latest::HostNotificationReceivingError::PermissionDenied));
+            }
+            if let Some(reason) = cx.cancel().reason() {
+                return Err(CallError::Domain(latest::HostNotificationReceivingError::InvalidRequest {
                     reason: format!("receiving enrollment {reason}"),
-                },
-            )));
-        }
-        if let Some(status) = self.forwarded_receiving(3, request.encode()).await? {
-            return Ok(HostNotificationReplaceReceiverResponse::V1(status));
-        }
-        let authority = self.receiving_execution_authority().await?;
-        self.services.receiving.for_execution(authority)
-            .replace(request.expected_revision, request.watches).await
-            .map(HostNotificationReplaceReceiverResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
+                }));
+            }
+            if let Some(status) = self.forwarded_receiving(3, request.encode()).await? {
+                return Ok(status);
+            }
+            let authority = self.receiving_execution_authority().await?;
+            self.services.receiving.for_execution(authority)
+                .replace(request.expected_revision, request.watches).await
+                .map_err(CallError::Domain)
+        }.await;
+        result
+            .map(|response| HostNotificationReplaceReceiverResponse::from_latest(response, version))
+            .map_err(|error| from_latest_error::<HostNotificationReceivingError>(error, version))
     }
 
     async fn disable_receiver(
@@ -617,14 +656,19 @@ impl Notifications for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostNotificationDisableReceiverRequest,
     ) -> Result<HostNotificationDisableReceiverResponse, CallError<HostNotificationReceivingError>> {
-        let HostNotificationDisableReceiverRequest::V1(request) = request;
-        if let Some(status) = self.forwarded_receiving(4, request.encode()).await? {
-            return Ok(HostNotificationDisableReceiverResponse::V1(status));
-        }
-        let authority = self.receiving_execution_authority().await?;
-        self.services.receiving.for_execution(authority).disable(request.expected_revision).await
-            .map(HostNotificationDisableReceiverResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
+        let version = request.version();
+        let request = request.into_latest();
+        let result = async {
+            if let Some(status) = self.forwarded_receiving(4, request.encode()).await? {
+                return Ok(status);
+            }
+            let authority = self.receiving_execution_authority().await?;
+            self.services.receiving.for_execution(authority).disable(request.expected_revision).await
+                .map_err(CallError::Domain)
+        }.await;
+        result
+            .map(|response| HostNotificationDisableReceiverResponse::from_latest(response, version))
+            .map_err(|error| from_latest_error::<HostNotificationReceivingError>(error, version))
     }
 
     async fn record_receipt(
@@ -632,16 +676,20 @@ impl Notifications for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostNotificationRecordReceiptRequest,
     ) -> Result<HostNotificationRecordReceiptResponse, CallError<HostNotificationReceivingError>> {
-        let HostNotificationRecordReceiptRequest::V1(request) = request;
-        if let Some(outcome) = self.forwarded_receiving(5, request.encode()).await? {
-            return Ok(HostNotificationRecordReceiptResponse::V1(outcome));
-        }
-        let authority = self.receiving_execution_authority().await?;
-        self.services.receiving.for_execution(authority).receipt(
-            request.revision, request.watch_id, request.event_id, request.kind,
-        ).await
-            .map(HostNotificationRecordReceiptResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
+        let version = request.version();
+        let request = request.into_latest();
+        let result = async {
+            if let Some(outcome) = self.forwarded_receiving(5, request.encode()).await? {
+                return Ok(outcome);
+            }
+            let authority = self.receiving_execution_authority().await?;
+            self.services.receiving.for_execution(authority).receipt(
+                request.revision, request.watch_id, request.event_id, request.kind,
+            ).await.map_err(CallError::Domain)
+        }.await;
+        result
+            .map(|response| HostNotificationRecordReceiptResponse::from_latest(response, version))
+            .map_err(|error| from_latest_error::<HostNotificationReceivingError>(error, version))
     }
 
     async fn receiver_events(
@@ -649,14 +697,19 @@ impl Notifications for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostNotificationReceiverEventsRequest,
     ) -> Result<HostNotificationReceiverEventsResponse, CallError<HostNotificationReceivingError>> {
-        let HostNotificationReceiverEventsRequest::V1(request) = request;
-        if let Some(events) = self.forwarded_receiving(6, request.encode()).await? {
-            return Ok(HostNotificationReceiverEventsResponse::V1(events));
-        }
-        let authority = self.receiving_execution_authority().await?;
-        self.services.receiving.for_execution(authority).events(request.after_sequence).await
-            .map(HostNotificationReceiverEventsResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
+        let version = request.version();
+        let request = request.into_latest();
+        let result = async {
+            if let Some(events) = self.forwarded_receiving(6, request.encode()).await? {
+                return Ok(events);
+            }
+            let authority = self.receiving_execution_authority().await?;
+            self.services.receiving.for_execution(authority).events(request.after_sequence).await
+                .map_err(CallError::Domain)
+        }.await;
+        result
+            .map(|response| HostNotificationReceiverEventsResponse::from_latest(response, version))
+            .map_err(|error| from_latest_error::<HostNotificationReceivingError>(error, version))
     }
 
     async fn acknowledge_receiver_event(
@@ -664,14 +717,19 @@ impl Notifications for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostNotificationAcknowledgeReceiverEventRequest,
     ) -> Result<HostNotificationAcknowledgeReceiverEventResponse, CallError<HostNotificationReceivingError>> {
-        let HostNotificationAcknowledgeReceiverEventRequest::V1(request) = request;
-        if let Some(()) = self.forwarded_receiving(7, request.encode()).await? {
-            return Ok(HostNotificationAcknowledgeReceiverEventResponse::V1);
-        }
-        let authority = self.receiving_execution_authority().await?;
-        self.services.receiving.for_execution(authority).acknowledge(request.sequence).await
-            .map(|()| HostNotificationAcknowledgeReceiverEventResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
+        let version = request.version();
+        let request = request.into_latest();
+        let result = async {
+            if let Some(()) = self.forwarded_receiving(7, request.encode()).await? {
+                return Ok(());
+            }
+            let authority = self.receiving_execution_authority().await?;
+            self.services.receiving.for_execution(authority).acknowledge(request.sequence).await
+                .map_err(CallError::Domain)
+        }.await;
+        result
+            .map(|response| HostNotificationAcknowledgeReceiverEventResponse::from_latest(response, version))
+            .map_err(|error| from_latest_error::<HostNotificationReceivingError>(error, version))
     }
 
     #[instrument(skip_all, fields(runtime.method = "notifications.activation_events"))]
@@ -680,16 +738,18 @@ impl Notifications for ProductRuntimeHost {
         _cx: &CallContext,
         request: NotificationActivationEventsRequest,
     ) -> Result<NotificationActivationEventsResponse, CallError<NotificationActivationEventsError>> {
-        let NotificationActivationEventsRequest::V1 = request;
-        let events = self.platform.activation_events().await.map_err(|err| {
-            CallError::Domain(NotificationActivationEventsError::V1(err))
-        })?;
+        let version = request.version();
+        let () = request.into_latest();
+        let events = self.platform.activation_events().await
+            .map_err(|error| from_latest_error::<NotificationActivationEventsError>(
+                CallError::Domain(error), version,
+            ))?;
         if events.events.len() > 32 {
             return Err(CallError::HostFailure {
                 reason: "notification activation batch exceeds 32 events".to_string(),
             });
         }
-        Ok(NotificationActivationEventsResponse::V1(events))
+        Ok(NotificationActivationEventsResponse::from_latest(events, version))
     }
 
     #[instrument(skip_all, fields(runtime.method = "notifications.acknowledge_activation"))]
@@ -698,13 +758,14 @@ impl Notifications for ProductRuntimeHost {
         _cx: &CallContext,
         request: NotificationActivationAcknowledgeRequest,
     ) -> Result<NotificationActivationAcknowledgeResponse, CallError<NotificationActivationAcknowledgeError>> {
-        let NotificationActivationAcknowledgeRequest::V1(
-            v01::NotificationActivationAcknowledgeRequest { sequence },
-        ) = request;
+        let version = request.version();
+        let request = request.into_latest();
         self.platform
-            .acknowledge_activation(v01::NotificationActivationAcknowledgeRequest { sequence })
+            .acknowledge_activation(request)
             .await
-            .map(|()| NotificationActivationAcknowledgeResponse::V1)
-            .map_err(|err| CallError::Domain(NotificationActivationAcknowledgeError::V1(err)))
+            .map(|()| NotificationActivationAcknowledgeResponse::from_latest((), version))
+            .map_err(|error| from_latest_error::<NotificationActivationAcknowledgeError>(
+                CallError::Domain(error), version,
+            ))
     }
 }

@@ -72,16 +72,11 @@ fn unwatermarked_signing_routes_product_and_legacy_accounts_without_downgrading(
             )),
             ..Default::default()
         });
-        let host = ProductRuntimeHost::new(
-            platform.clone(),
-            runtime_config("myapp.dot"),
-            test_spawner(),
-        );
+		let host =
+			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
         install_pairing_session(&host, session.clone());
         let cx = CallContext::with_request_id("unwatermarked".to_string());
-        let payload = v01::RawPayload::Bytes {
-            bytes: vec![0x11; 32],
-        };
+		let payload = v01::RawPayload::Bytes { bytes: vec![0x11; 32] };
         let signature = futures::executor::block_on(async {
             if !legacy {
                 let HostSignRawResponse::V1(response) = host
@@ -123,12 +118,12 @@ fn unwatermarked_signing_routes_product_and_legacy_accounts_without_downgrading(
                 assert!(!legacy);
                 assert_eq!(request.account, account_id("myapp.dot", 0));
                 assert_eq!(request.payload, payload);
-            }
+			},
             SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request) => {
                 assert!(legacy);
                 assert_eq!(request.account, identity);
                 assert_eq!(request.data, payload);
-            }
+			},
             request => panic!("unwatermarked signing was downgraded: {request:?}"),
         }
     }
@@ -137,10 +132,7 @@ fn unwatermarked_signing_routes_product_and_legacy_accounts_without_downgrading(
 #[test]
 fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
     let session = sso_session_info();
-    let signature = v01::VrfSignature {
-        pre_output: [0x11; 32],
-        proof: [0x22; 64],
-    };
+	let signature = v01::VrfSignature { pre_output: [0x11; 32], proof: [0x22; 64] };
     let platform = Arc::new(StubPlatform {
         sign_vrf_confirmed: true,
         sso_response_script: Some(sso_success_response_script(
@@ -157,19 +149,13 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
         )),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session.clone());
     let request = v01::HostAccountSignVrfRequest {
         account: account_id("other-product.dot", 0),
         transcript_label: b"ctx".to_vec(),
-        items: vec![v01::VrfTranscriptItem {
-            label: b"domain".to_vec(),
-            value: vec![1, 2],
-        }],
+		items: vec![v01::VrfTranscriptItem { label: b"domain".to_vec(), value: vec![1, 2] }],
     };
 
     let response = futures::executor::block_on(host.sign_vrf(
@@ -219,19 +205,13 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
         )),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session);
     let request = v01::HostAccountSignVrfRequest {
         account: account_id("other-product.dot", 0),
         transcript_label: b"ctx".to_vec(),
-        items: vec![v01::VrfTranscriptItem {
-            label: b"domain".to_vec(),
-            value: vec![1, 2],
-        }],
+		items: vec![v01::VrfTranscriptItem { label: b"domain".to_vec(), value: vec![1, 2] }],
     };
 
     let err = futures::executor::block_on(host.sign_vrf(
@@ -242,9 +222,7 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
 
     assert!(matches!(
         err,
-        CallError::Domain(HostAccountSignVrfError::V1(
-            v01::HostAccountSignVrfError::Rejected
-        ))
+		CallError::Domain(HostAccountSignVrfError::V1(v01::HostAccountSignVrfError::Rejected))
     ));
     assert_eq!(
         *platform
@@ -256,13 +234,7 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
             request,
         }]
     );
-    assert!(
-        platform
-            .sent_rpc
-            .lock()
-            .expect("RPC request list mutex poisoned")
-            .is_empty()
-    );
+	assert!(platform.sent_rpc.lock().expect("RPC request list mutex poisoned").is_empty());
 }
 
 #[test]
@@ -274,18 +246,14 @@ fn sign_vrf_rejects_oversized_transcript_before_sso() {
         account: account_id("myapp.dot", 0),
         transcript_label: vec![],
         items: vec![
-            v01::VrfTranscriptItem {
-                label: vec![],
-                value: vec![],
-            };
+			v01::VrfTranscriptItem { label: vec![], value: vec![] };
             MAX_VRF_TRANSCRIPT_ITEMS + 1
         ],
     };
 
-    let err = futures::executor::block_on(host.sign_vrf(
-        &CallContext::default(),
-        HostAccountSignVrfRequest::V1(request),
-    ))
+	let err = futures::executor::block_on(
+		host.sign_vrf(&CallContext::default(), HostAccountSignVrfRequest::V1(request)),
+	)
     .unwrap_err();
 
     assert!(matches!(
@@ -309,9 +277,7 @@ fn sign_raw_rejects_invalid_product_account() {
     let err = futures::executor::block_on(host.sign_raw(&cx, request)).unwrap_err();
     assert!(matches!(
         err,
-        CallError::Domain(HostSignRawError::V1(
-            v01::HostSignPayloadError::PermissionDenied
-        ))
+		CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::PermissionDenied))
     ));
 }
 
@@ -334,10 +300,7 @@ fn sign_raw_rejects_without_session_after_valid_account() {
 #[test]
 fn sign_raw_denies_when_chain_submit_denied() {
     let host = ProductRuntimeHost::new(
-        Arc::new(StubPlatform {
-            remote_permission_denied: true,
-            ..Default::default()
-        }),
+		Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() }),
         runtime_config("myapp.dot"),
         test_spawner(),
     );
@@ -350,9 +313,7 @@ fn sign_raw_denies_when_chain_submit_denied() {
     let err = futures::executor::block_on(host.sign_raw(&cx, request)).unwrap_err();
     assert!(matches!(
         err,
-        CallError::Domain(HostSignRawError::V1(
-            v01::HostSignPayloadError::PermissionDenied
-        ))
+		CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::PermissionDenied))
     ));
 }
 
@@ -384,11 +345,8 @@ fn sign_raw_accepts_confirmation_then_returns_sso_response() {
         )),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session.clone());
     let cx = CallContext::with_request_id("sign-raw-1".to_string());
     let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
@@ -447,16 +405,10 @@ fn sign_raw_uses_call_context_timeout_for_sso_response_wait() {
         sign_response_message(message_id, vec![], None),
     );
     rpc_responses.truncate(3);
-    let platform = Arc::new(StubPlatform {
-        sign_raw_confirmed: true,
-        rpc_responses,
-        ..Default::default()
-    });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let platform =
+		Arc::new(StubPlatform { sign_raw_confirmed: true, rpc_responses, ..Default::default() });
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session);
     let mut cx = CallContext::with_request_id(message_id.to_string());
     cx.set_timeout(std::time::Duration::from_millis(1));
@@ -468,11 +420,8 @@ fn sign_raw_uses_call_context_timeout_for_sso_response_wait() {
 
     match err {
         CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown { reason })) => {
-            assert_eq!(
-                reason,
-                "Account authority request timed out after 1ms for sign-raw-timeout"
-            )
-        }
+			assert_eq!(reason, "Account authority request timed out after 1ms for sign-raw-timeout")
+		},
         other => panic!("expected SSO response timeout, got {other:?}"),
     }
 
@@ -494,11 +443,8 @@ fn sign_raw_cancellation_unsubscribes_sso_subscriptions() {
         ],
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session);
     let cancel = truapi::CancellationToken::default();
     let cx = CallContext::with_parts(message_id.to_string(), cancel.clone());
@@ -516,20 +462,15 @@ fn sign_raw_cancellation_unsubscribes_sso_subscriptions() {
     );
     cancel.cancel();
 
-    let err = handle
-        .join()
-        .expect("sign_raw cancellation thread panicked");
+	let err = handle.join().expect("sign_raw cancellation thread panicked");
     match err {
         CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown { reason })) => {
-            assert!(
-                reason.contains("cancelled"),
-                "expected cancellation, got {reason}"
-            );
+			assert!(reason.contains("cancelled"), "expected cancellation, got {reason}");
             assert!(
                 reason.contains(message_id),
                 "expected request id in cancellation reason, got {reason}"
             );
-        }
+		},
         other => panic!("expected SSO cancellation, got {other:?}"),
     }
 
@@ -547,11 +488,8 @@ fn sign_raw_peer_disconnect_clears_session_store_and_broadcasts() {
         sso_response_script: Some(sso_peer_disconnect_response_script(&session)),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session);
     let mut statuses = host.test_session_state().subscribe();
     assert_eq!(
@@ -573,13 +511,7 @@ fn sign_raw_peer_disconnect_clears_session_store_and_broadcasts() {
         CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Rejected))
     ));
     assert!(host.test_session_state().current().is_none());
-    assert_eq!(
-        *platform
-            .session_clears
-            .lock()
-            .expect("session clear counter mutex poisoned"),
-        1
-    );
+	assert_eq!(*platform.session_clears.lock().expect("session clear counter mutex poisoned"), 1);
     assert_eq!(
         futures::executor::block_on(statuses.next()).unwrap(),
         HostAccountConnectionStatusSubscribeItem::V1(
@@ -591,10 +523,7 @@ fn sign_raw_peer_disconnect_clears_session_store_and_broadcasts() {
 #[test]
 fn sign_payload_denies_when_chain_submit_denied() {
     let host = ProductRuntimeHost::new(
-        Arc::new(StubPlatform {
-            remote_permission_denied: true,
-            ..Default::default()
-        }),
+		Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() }),
         runtime_config("myapp.dot"),
         test_spawner(),
     );
@@ -607,19 +536,14 @@ fn sign_payload_denies_when_chain_submit_denied() {
     let err = futures::executor::block_on(host.sign_payload(&cx, request)).unwrap_err();
     assert!(matches!(
         err,
-        CallError::Domain(HostSignPayloadError::V1(
-            v01::HostSignPayloadError::PermissionDenied
-        ))
+		CallError::Domain(HostSignPayloadError::V1(v01::HostSignPayloadError::PermissionDenied))
     ));
 }
 
 #[test]
 fn sign_payload_maps_confirmation_failure_to_host_failure() {
     let host = ProductRuntimeHost::new(
-        Arc::new(StubPlatform {
-            sign_payload_error: Some("modal failed"),
-            ..Default::default()
-        }),
+		Arc::new(StubPlatform { sign_payload_error: Some("modal failed"), ..Default::default() }),
         runtime_config("myapp.dot"),
         test_spawner(),
     );
@@ -644,11 +568,8 @@ fn sign_payload_accepts_confirmation_then_returns_sso_response() {
         )),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session.clone());
     let cx = CallContext::with_request_id("sign-payload-1".to_string());
     let request = HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
@@ -693,11 +614,8 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
         )),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session.clone());
     let cx = CallContext::with_request_id("create-tx-1".to_string());
     let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
@@ -713,35 +631,22 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
     ));
 }
 
-/// A `createTransaction` on a paired session whose confirmation prompt stays
-/// open until the returned sender releases it.
 fn gated_create_transaction(
     request_id: &str,
-) -> (
-    Arc<StubPlatform>,
-    ProductRuntimeHost,
-    CallContext,
-    futures::channel::oneshot::Sender<()>,
-) {
+) -> (Arc<StubPlatform>, ProductRuntimeHost, CallContext, futures::channel::oneshot::Sender<()>) {
     let (release, gate) = futures::channel::oneshot::channel();
     let platform = Arc::new(StubPlatform {
         create_transaction_confirmed: true,
         create_transaction_confirmation_gate: Mutex::new(Some(gate)),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, sso_session_info());
     let cx = CallContext::with_parts(request_id.to_string(), truapi::CancellationToken::default());
     (platform, host, cx, release)
 }
 
-/// A person who has not answered yet must not be able to authorize a
-/// transaction the product has already withdrawn, and the product must not
-/// wait on that person to learn the call is over.
 #[test]
 fn a_create_transaction_withdrawn_at_the_prompt_never_reaches_the_phone() {
     let (platform, host, cx, _release) = gated_create_transaction("create-tx-withdrawn");
@@ -765,16 +670,9 @@ fn a_create_transaction_withdrawn_at_the_prompt_never_reaches_the_phone() {
             }
         ))
     );
-    assert_eq!(
-        recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"),
-        0
-    );
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"), 0);
 }
 
-/// An approval that lands after the withdrawal is an answer to a call that no
-/// longer exists, so it must authorize nothing. Either the prompt race or the
-/// authority call's own check is enough to hold this; the test pins that at
-/// least one of them does.
 #[test]
 fn a_create_transaction_approved_after_its_withdrawal_never_reaches_the_phone() {
     let (platform, host, cx, release) = gated_create_transaction("create-tx-approved-late");
@@ -799,14 +697,9 @@ fn a_create_transaction_approved_after_its_withdrawal_never_reaches_the_phone() 
             }
         ))
     );
-    assert_eq!(
-        recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"),
-        0
-    );
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"), 0);
 }
 
-/// A withdrawal that lands while the paired-host request is still subscribing
-/// must stop it before the request itself is published.
 #[test]
 fn a_signature_withdrawn_during_sso_setup_is_never_submitted() {
     let (release, gate) = futures::channel::oneshot::channel();
@@ -822,11 +715,8 @@ fn a_signature_withdrawn_during_sso_setup_is_never_submitted() {
         rpc_method_responses_gate: Arc::new(Mutex::new(Some(gate))),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, sso_session_info());
     let cancel = truapi::CancellationToken::default();
     let cx = CallContext::with_parts("sign-raw-setup".to_string(), cancel.clone());
@@ -846,10 +736,7 @@ fn a_signature_withdrawn_during_sso_setup_is_never_submitted() {
     release.send(()).unwrap();
     call.join().expect("sign_raw thread panicked");
 
-    assert_eq!(
-        recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"),
-        0
-    );
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"), 0);
 }
 
 #[test]
@@ -901,10 +788,7 @@ fn legacy_sign_raw_rejects_signer_mismatch() {
 #[test]
 fn legacy_sign_raw_denies_when_chain_submit_denied() {
     let host = ProductRuntimeHost::new(
-        Arc::new(StubPlatform {
-            remote_permission_denied: true,
-            ..Default::default()
-        }),
+		Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() }),
         runtime_config("myapp.dot"),
         test_spawner(),
     );
@@ -937,11 +821,8 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
         )),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session.clone());
     let cx = CallContext::with_request_id("legacy-sign-raw-1".to_string());
     let request =
@@ -991,11 +872,8 @@ fn legacy_sign_raw_accepts_derived_hex_then_returns_sso_response() {
         )),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session.clone());
     let cx = CallContext::with_request_id("legacy-sign-raw-hex-1".to_string());
     let request =
@@ -1039,11 +917,8 @@ fn legacy_sign_raw_accepts_identity_ss58_then_routes_legacy_request() {
         )),
         ..Default::default()
     });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
     install_pairing_session(&host, session.clone());
     let cx = CallContext::with_request_id("identity-sign-raw-1".to_string());
     let request =
@@ -1080,4 +955,31 @@ fn create_transaction_rejects_invalid_product_account() {
             v01::HostCreateTransactionError::PermissionDenied
         ))
     ));
+}
+
+/// Remembering approvals is for another product's account only. A product
+/// signing with its own account is confirmed as before, every time.
+#[test]
+fn a_products_own_signature_is_confirmed_every_time() {
+	let platform = Arc::new(StubPlatform { sign_payload_confirmed: true, ..Default::default() });
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+	install_pairing_session(&host, sso_session_info());
+
+	let cx = CallContext::default();
+	for _ in 0..2 {
+		let call = host.sign_payload(
+			&cx,
+			HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
+				account: account_id("myapp.dot", 0),
+				payload: sign_payload_data(),
+			}),
+		);
+		assert!(
+			call.now_or_never().is_none(),
+			"the user approves and the request goes to the phone",
+		);
+	}
+
+	assert_eq!(platform.sign_payload_reviews.lock().unwrap().len(), 2);
 }

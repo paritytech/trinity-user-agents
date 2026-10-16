@@ -6,33 +6,40 @@
 //! `ProtocolMessage`, matching the browser transport's framing.
 
 use core::sync::atomic::{AtomicU64, Ordering};
-use std::net::{IpAddr, SocketAddr};
-use std::path::Path;
-use std::pin::Pin;
-use std::sync::{Arc, RwLock};
-use std::task::{Context as TaskContext, Poll};
-use std::time::Duration;
+use std::{
+	net::{IpAddr, SocketAddr},
+	path::Path,
+	pin::Pin,
+	sync::{Arc, RwLock},
+	task::{Context as TaskContext, Poll},
+	time::Duration,
+};
 
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 #[cfg(unix)]
 use tokio::net::UnixListener;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, watch};
+use tokio::{
+	io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
+	net::{TcpListener, TcpStream},
+	sync::{mpsc, watch},
+};
 #[cfg(test)]
 use tokio_tungstenite::accept_async;
-use tokio_tungstenite::accept_hdr_async;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
-use tokio_tungstenite::tungstenite::http::{StatusCode, header};
+use tokio_tungstenite::{
+	accept_hdr_async,
+	tungstenite::{
+		Message,
+		handshake::server::{ErrorResponse, Request, Response},
+		http::{StatusCode, header},
+	},
+};
 use tracing::{debug, warn};
 
 use crate::bootstrap;
-use truapi::platform::ProductExecutionKind;
 use truapi::{
     ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
-    ProductRuntimeError, SigningHostRuntime,
+	ProductRuntimeError, SigningHostRuntime, platform::ProductExecutionKind,
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -71,10 +78,7 @@ impl ProductSelection {
         let product = ProductContext::new_with_execution(product_id, execution_kind)
             .map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
         let (current, _) = watch::channel(product);
-        Ok(Arc::new(Self {
-            current,
-            execution_kind,
-        }))
+		Ok(Arc::new(Self { current, execution_kind }))
     }
 
     /// Return the normalized current product id.
@@ -157,11 +161,7 @@ pub struct DebugTappedRuntime {
 impl DebugTappedRuntime {
     /// Wrap `inner` so the runtimes it builds report their frames to `sink`.
     pub fn new(inner: Arc<dyn ProductRuntimeFactory>, sink: Arc<dyn DebugSink>) -> Arc<Self> {
-        Arc::new(Self {
-            inner,
-            sink,
-            connections: AtomicU64::new(0),
-        })
+		Arc::new(Self { inner, sink, connections: AtomicU64::new(0) })
     }
 }
 
@@ -199,10 +199,7 @@ pub struct SwitchableSigningRuntime {
 impl SwitchableSigningRuntime {
     pub fn new(runtime: Arc<SigningHostRuntime>) -> Arc<Self> {
         let (generation, _) = watch::channel(0);
-        Arc::new(Self {
-            current: RwLock::new(runtime),
-            generation,
-        })
+		Arc::new(Self { current: RwLock::new(runtime), generation })
     }
 
     /// Replace the runtime and disconnect every product using the old one.
@@ -349,7 +346,7 @@ async fn accept_tcp_loop(
                 );
                 tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
                 continue;
-            }
+			},
         };
         let runtime = runtime.clone();
         let product = product.clone();
@@ -395,11 +392,7 @@ impl BufferedRequestHead {
     }
 
     fn replay<S>(self, stream: S) -> ReplayStream<S> {
-        ReplayStream {
-            prefix: self.consumed,
-            prefix_position: 0,
-            stream,
-        }
+		ReplayStream { prefix: self.consumed, prefix_position: 0, stream }
     }
 }
 
@@ -484,8 +477,7 @@ where
 }
 
 fn find_head_end(head: &[u8]) -> Option<usize> {
-    head.windows(HEAD_TERMINATOR.len())
-        .position(|window| window == HEAD_TERMINATOR)
+	head.windows(HEAD_TERMINATOR.len()).position(|window| window == HEAD_TERMINATOR)
 }
 
 fn is_websocket_upgrade(head: &[u8]) -> bool {
@@ -591,11 +583,7 @@ fn check_origin(
     if connection_allowed(peer, origin) {
         return Ok(response);
     }
-    warn!(
-        ?peer,
-        origin = origin.unwrap_or_default(),
-        "rejected a non-loopback frame connection"
-    );
+	warn!(?peer, origin = origin.unwrap_or_default(), "rejected a non-loopback frame connection");
     let mut rejection = ErrorResponse::new(Some(
         "frame connections are limited to loopback clients and origins".to_string(),
     ));
@@ -612,10 +600,8 @@ fn origin_host(origin: &str) -> Option<&str> {
 }
 
 fn is_loopback_host(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
+	host.eq_ignore_ascii_case("localhost") ||
+		host.parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
 }
 
 #[cfg(unix)]
@@ -630,7 +616,7 @@ async fn accept_unix_loop(
             Err(err) => {
                 warn!(%err, "product frame accept failed");
                 continue;
-            }
+			},
         };
         let runtime = runtime.clone();
         let product = product.clone();
@@ -664,20 +650,10 @@ where
     .await?;
     let (outbound_tx, outbound_rx) = mpsc::unbounded_channel::<Message>();
     let product = product_updates.borrow().clone();
-    let sink = Arc::new(WsFrameSink {
-        outbound: outbound_tx.clone(),
-    });
+	let sink = Arc::new(WsFrameSink { outbound: outbound_tx.clone() });
     let product_runtime = Arc::new(runtime.product_runtime(product, sink));
 
-    drive_connection(
-        ws,
-        product_runtime,
-        reset,
-        product_updates,
-        outbound_tx,
-        outbound_rx,
-    )
-    .await
+	drive_connection(ws, product_runtime, reset, product_updates, outbound_tx, outbound_rx).await
 }
 
 async fn drive_connection<S>(
@@ -738,7 +714,7 @@ async fn connection_reset(reset: &mut Option<watch::Receiver<u64>>) {
     match reset {
         Some(reset) => {
             let _ = reset.changed().await;
-        }
+		},
         None => std::future::pending().await,
     }
 }
@@ -748,10 +724,8 @@ mod tests {
     use super::*;
     use futures_util::{SinkExt, StreamExt};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use tokio::sync::Notify;
-    use tokio::task::JoinHandle;
-    use tokio_tungstenite::client_async;
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+	use tokio::{sync::Notify, task::JoinHandle};
+	use tokio_tungstenite::{client_async, tungstenite::client::IntoClientRequest};
 
     struct UnusedRuntimeFactory;
 
@@ -835,10 +809,7 @@ mod tests {
                 version: None,
                 platform: truapi::latest::HostPlatform::Cli,
             },
-            truapi::platform::PlatformInfo {
-                kind: Some("test".into()),
-                version: None,
-            },
+			truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
             network.people_genesis,
             network.bulletin_genesis,
             network.asset_hub_genesis,
@@ -854,16 +825,8 @@ mod tests {
         let remote = ConnectionPeer::Tcp("192.0.2.1:3000".parse()?);
         let expected = [
             (ConnectionPeer::LocalSocket, None, true),
-            (
-                ConnectionPeer::LocalSocket,
-                Some("http://localhost:3000"),
-                true,
-            ),
-            (
-                ConnectionPeer::LocalSocket,
-                Some("https://evil.example"),
-                false,
-            ),
+			(ConnectionPeer::LocalSocket, Some("http://localhost:3000"), true),
+			(ConnectionPeer::LocalSocket, Some("https://evil.example"), false),
             (loopback, None, true),
             (loopback, Some("http://LocalHost:3000"), true),
             (loopback, Some("http://127.0.0.2:3000"), true),
@@ -933,9 +896,7 @@ mod tests {
         assert!(script.starts_with("HTTP/1.1 200 OK"), "{script}");
         assert!(script.contains("application/javascript"));
         assert!(
-            script.contains(&format!(
-                r#"window.__truapi_localhost = {{ url: "{endpoint}" }};"#
-            )),
+			script.contains(&format!(r#"window.__truapi_localhost = {{ url: "{endpoint}" }};"#)),
             "{script}"
         );
         assert!(script.ends_with("\ninstallSandbox();"));
@@ -943,14 +904,8 @@ mod tests {
         let missing = fetch("/nope", endpoint, true).await?;
         assert!(missing.starts_with("HTTP/1.1 404 Not Found"), "{missing}");
         let missing_asset = fetch(bootstrap::PATH, endpoint, false).await?;
-        assert!(
-            missing_asset.starts_with("HTTP/1.1 500 Internal Server Error"),
-            "{missing_asset}"
-        );
-        assert!(
-            missing_asset.contains("reinstall truapi-host"),
-            "{missing_asset}"
-        );
+		assert!(missing_asset.starts_with("HTTP/1.1 500 Internal Server Error"), "{missing_asset}");
+		assert!(missing_asset.contains("reinstall truapi-host"), "{missing_asset}");
         Ok(())
     }
 
@@ -974,9 +929,8 @@ mod tests {
 
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
         assert!(
-            response.contains(&format!(
-                r#"window.__truapi_localhost = {{ url: "ws://{address}" }};"#
-            )),
+			response
+				.contains(&format!(r#"window.__truapi_localhost = {{ url: "ws://{address}" }};"#)),
             "{response}"
         );
         Ok(())
@@ -997,9 +951,7 @@ mod tests {
 
         let client_exchange = async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
-            client
-                .write_all(b"strap.js HTTP/1.1\r\nHost: localhost\r\n\r\n")
-                .await?;
+			client.write_all(b"strap.js HTTP/1.1\r\nHost: localhost\r\n\r\n").await?;
             let mut response = String::new();
             client.read_to_string(&mut response).await?;
             anyhow::ensure!(response.starts_with("HTTP/1.1 200 OK\r\n"), response);
@@ -1023,10 +975,9 @@ mod tests {
     async fn a_loopback_origin_connection_finishes_when_its_client_disconnects() -> Result<()> {
         let (address, server) = start_tcp_server(signing_runtime()?).await?;
         let mut request = format!("ws://{address}/").into_client_request()?;
-        request.headers_mut().insert(
-            header::ORIGIN,
-            "http://localhost:3000".parse().expect("valid origin"),
-        );
+		request
+			.headers_mut()
+			.insert(header::ORIGIN, "http://localhost:3000".parse().expect("valid origin"));
         let stream = TcpStream::connect(address).await?;
 
         let (websocket, response) = client_async(request, stream).await?;
@@ -1077,10 +1028,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), runtime.dispatch_started.notified()).await?;
         assert!(ui.has_pending_approval());
         websocket.send(Message::Binary(vec![1])).await?;
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            runtime.second_dispatch_finished.notified(),
-        )
+		tokio::time::timeout(Duration::from_secs(1), runtime.second_dispatch_finished.notified())
         .await?;
         drop(websocket);
 
@@ -1120,10 +1068,9 @@ mod tests {
     async fn a_non_loopback_origin_cannot_open_the_tcp_websocket() -> Result<()> {
         let (address, server) = start_tcp_server(Arc::new(UnusedRuntimeFactory)).await?;
         let mut request = format!("ws://{address}/").into_client_request()?;
-        request.headers_mut().insert(
-            header::ORIGIN,
-            "https://evil.example".parse().expect("valid origin"),
-        );
+		request
+			.headers_mut()
+			.insert(header::ORIGIN, "https://evil.example".parse().expect("valid origin"));
         let stream = TcpStream::connect(address).await?;
 
         let error = client_async(request, stream)
@@ -1177,15 +1124,10 @@ mod tests {
         use tokio::net::UnixStream;
 
         let server = bind(None).await?;
-        let socket_path = server
-            .endpoint()
-            .strip_prefix("ws+unix:")
-            .expect("Unix endpoint prefix");
+		let socket_path = server.endpoint().strip_prefix("ws+unix:").expect("Unix endpoint prefix");
         let socket_path = std::path::PathBuf::from(socket_path);
-        let socket_directory = socket_path
-            .parent()
-            .expect("socket has a parent directory")
-            .to_path_buf();
+		let socket_directory =
+			socket_path.parent().expect("socket has a parent directory").to_path_buf();
         assert!(socket_path.exists());
 
         let FrameListener::Unix(listener) = &server.listener else {
@@ -1194,10 +1136,7 @@ mod tests {
         let server_exchange = async {
             let (stream, _) = listener.accept().await?;
             let mut websocket = accept_async(stream).await?;
-            let message = websocket
-                .next()
-                .await
-                .context("client closed before sending")??;
+			let message = websocket.next().await.context("client closed before sending")??;
             websocket.send(message).await?;
             Ok::<(), anyhow::Error>(())
         };
@@ -1235,14 +1174,16 @@ mod tests {
         use crate::product_config::{self, LocalProductConfig};
         use parity_scale_codec::{Decode, Encode};
         use std::sync::Mutex;
-        use truapi::frame::{
+		use truapi::{
+			frame::{
             MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, Payload, ProtocolMessage, request_ids,
+			},
+			v01, v02,
+			versioned::local_storage::{
+				HostLocalStorageReadError, HostLocalStorageReadRequest,
+				HostLocalStorageReadResponse, HostLocalStorageWriteRequest,
+			},
         };
-        use truapi::versioned::local_storage::{
-            HostLocalStorageReadError, HostLocalStorageReadRequest, HostLocalStorageReadResponse,
-            HostLocalStorageWriteRequest,
-        };
-        use truapi::{v01, v02};
 
         const OWNER: &str = "peopl.paseo";
         const CALLER: &str = "dim2.paseo";
@@ -1294,10 +1235,7 @@ mod tests {
                     version: None,
                     platform: truapi::latest::HostPlatform::Cli,
                 },
-                truapi::platform::PlatformInfo {
-                    kind: Some("test".into()),
-                    version: None,
-                },
+				truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
                 network.people_genesis,
                 network.bulletin_genesis,
                 network.asset_hub_genesis,
@@ -1311,10 +1249,7 @@ mod tests {
                 "the Asset Hub genesis must route to the closed port, not to live Paseo"
             );
             let spawner: truapi::subscription::Spawner = Arc::new(|_| {});
-            Ok((
-                platform.clone(),
-                SigningHostRuntime::new(platform, config, spawner),
-            ))
+			Ok((platform.clone(), SigningHostRuntime::new(platform, config, spawner)))
         }
 
         /// Apply `OWNER`'s local product config, `trusted` being the
@@ -1357,10 +1292,7 @@ mod tests {
                 },
             }
             .encode();
-            connection
-                .receive_frame(frame)
-                .await
-                .expect("the host answers the frame");
+			connection.receive_frame(frame).await.expect("the host answers the frame");
             let answered = ProtocolMessage::decode(&mut frames.take_one().as_slice())
                 .expect("the answer is a protocol message");
             assert_eq!(
@@ -1487,9 +1419,7 @@ mod tests {
         let inner: Arc<dyn ProductRuntimeFactory> = Arc::new(ResettingFactory { tx: tx.clone() });
         let tapped = DebugTappedRuntime::new(inner, Arc::new(SilentSink));
 
-        let mut reset = tapped
-            .connection_reset()
-            .context("the tap dropped the reset signal")?;
+		let mut reset = tapped.connection_reset().context("the tap dropped the reset signal")?;
         tx.send(7)?;
         reset.changed().await?;
         assert_eq!(*reset.borrow_and_update(), 7);
@@ -1522,26 +1452,19 @@ mod tests {
         fn emit(&self, event: truapi::DebugEvent) {
             // `DebugEvent` is `#[non_exhaustive]` so host-internal events can be
             // added without a break; a tap that only wants frames ignores the rest.
-            if let truapi::DebugEvent::Frame {
-                channel_id,
+			if let truapi::DebugEvent::Frame { channel_id, dir, bytes } = event {
+				self.frames.lock().expect("recording debug sink mutex poisoned").push((
+					channel_id.0,
                 dir,
                 bytes,
-            } = event
-            {
-                self.frames
-                    .lock()
-                    .expect("recording debug sink mutex poisoned")
-                    .push((channel_id.0, dir, bytes));
+				));
             }
         }
     }
 
     impl RecordingDebugSink {
         fn taken(&self) -> Vec<(String, truapi::FrameDirection, Vec<u8>)> {
-            self.frames
-                .lock()
-                .expect("recording debug sink mutex poisoned")
-                .clone()
+			self.frames.lock().expect("recording debug sink mutex poisoned").clone()
         }
     }
 
@@ -1573,11 +1496,7 @@ mod tests {
 
         assert_eq!(
             sink.taken(),
-            vec![(
-                "localhost:3000#0".to_string(),
-                truapi::FrameDirection::In,
-                frame
-            )]
+			vec![("localhost:3000#0".to_string(), truapi::FrameDirection::In, frame)]
         );
         Ok(())
     }

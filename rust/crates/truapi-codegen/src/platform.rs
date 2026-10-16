@@ -14,7 +14,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::rustdoc::{
     Crate, Item, NameContext, TypeDef, TypeDefKind, TypeRef, VariantFields, clean_docs,
-    extract_enum, extract_struct, resolve_type, summarize_json,
+	extract_enum, extract_struct, protocol_name_context, resolve_type, summarize_json,
 };
 
 /// Top-level extracted shape of the platform surface.
@@ -26,8 +26,6 @@ pub struct PlatformDefinition {
     /// sorted alphabetically by name. Emitted alongside the trait interfaces
     /// so the generated TS does not have to import them from the API client.
     pub types: Vec<TypeDef>,
-    /// Public API paths actually used by platform signatures, including version pins.
-    pub api_type_paths: BTreeMap<String, String>,
     /// Composite super-trait (`Platform: Storage + Navigation + ...`), if any.
     pub super_trait: Option<PlatformSuperTrait>,
     /// Composite super-trait of capabilities a host may omit
@@ -119,7 +117,6 @@ pub fn extract_all(krates: &[Crate]) -> Result<PlatformDefinition> {
     let mut merged = PlatformDefinition {
         traits: Vec::new(),
         types: Vec::new(),
-        api_type_paths: BTreeMap::new(),
         super_trait: None,
         optional_super_trait: None,
     };
@@ -127,28 +124,13 @@ pub fn extract_all(krates: &[Crate]) -> Result<PlatformDefinition> {
         let definition = extract(krate)?;
         merged.traits.extend(definition.traits);
         merged.types.extend(definition.types);
-        for (name, path) in definition.api_type_paths {
-            if merged
-                .api_type_paths
-                .insert(name.clone(), path.clone())
-                .is_some_and(|old| old != path)
-            {
-                bail!("platform API type `{name}` has conflicting Rust paths");
-            }
-        }
         for (slot, found) in [
             (&mut merged.super_trait, definition.super_trait),
-            (
-                &mut merged.optional_super_trait,
-                definition.optional_super_trait,
-            ),
+			(&mut merged.optional_super_trait, definition.optional_super_trait),
         ] {
             if let Some(found) = found {
                 if slot.is_some() {
-                    bail!(
-                        "Multiple `{}` super-traits found; only one is supported",
-                        found.name
-                    );
+					bail!("Multiple `{}` super-traits found; only one is supported", found.name);
                 }
                 *slot = Some(found);
             }
@@ -156,15 +138,8 @@ pub fn extract_all(krates: &[Crate]) -> Result<PlatformDefinition> {
     }
     merged.traits.sort_by(|a, b| a.name.cmp(&b.name));
     merged.types.sort_by(|a, b| a.name.cmp(&b.name));
-    if let Some(pair) = merged
-        .types
-        .windows(2)
-        .find(|pair| pair[0].name == pair[1].name)
-    {
-        bail!(
-            "platform type name `{}` is defined by more than one crate",
-            pair[0].name
-        );
+	if let Some(pair) = merged.types.windows(2).find(|pair| pair[0].name == pair[1].name) {
+		bail!("platform type name `{}` is defined by more than one crate", pair[0].name);
     }
     Ok(merged)
 }
@@ -176,12 +151,11 @@ fn in_platform_module(path: &[String]) -> bool {
 /// Walk one crate's `platform` module and extract every public trait + its methods.
 fn extract(krate: &Crate) -> Result<PlatformDefinition> {
     let trait_ids = collect_local_trait_ids(krate);
-    let names = NameContext::default();
+	let names = protocol_name_context(krate);
 
     let mut traits = Vec::new();
     let mut super_trait = None;
     let mut optional_super_trait = None;
-    let mut api_type_paths = BTreeMap::new();
     for item_id in &trait_ids {
         let item = krate
             .index
@@ -210,84 +184,13 @@ fn extract(krate: &Crate) -> Result<PlatformDefinition> {
             continue;
         }
 
-        if let Some(methods) = trait_inner
-            .get("items")
-            .and_then(serde_json::Value::as_array)
-        {
-            for id in methods {
-                let id = id
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| id.to_string());
-                if let Some(method) = krate.index.get(&id) {
-                    collect_api_type_paths(&method.inner, krate, &mut api_type_paths)?;
-                }
-            }
-        }
-        traits.push(extract_capability_trait(
-            &name,
-            item,
-            trait_inner,
-            krate,
-            &names,
-        )?);
+		traits.push(extract_capability_trait(&name, item, trait_inner, krate, &names)?);
     }
 
     traits.sort_by(|a, b| a.name.cmp(&b.name));
     let types = collect_referenced_local_types(krate, &traits, &names)?;
 
-    Ok(PlatformDefinition {
-        traits,
-        types,
-        api_type_paths,
-        super_trait,
-        optional_super_trait,
-    })
-}
-
-fn collect_api_type_paths(
-    value: &serde_json::Value,
-    krate: &Crate,
-    paths: &mut BTreeMap<String, String>,
-) -> Result<()> {
-    match value {
-        serde_json::Value::Object(object) => {
-            if let Some(id) = object.get("resolved_path").and_then(|path| path.get("id")) {
-                let id = id
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| id.to_string());
-                if let Some(path) = krate.paths.get(&id) {
-                    let module = path.path.get(1).map(String::as_str).unwrap_or_default();
-                    if path.path.first().is_some_and(|name| name == "truapi")
-                        && (module == "latest"
-                            || module.strip_prefix('v').is_some_and(|v| {
-                                !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())
-                            }))
-                        && let Some(name) = path.path.last()
-                    {
-                        let public_path = format!("truapi::{module}::{name}");
-                        if paths
-                            .insert(name.clone(), public_path.clone())
-                            .is_some_and(|old| old != public_path)
-                        {
-                            bail!("platform API type `{name}` uses conflicting Rust versions");
-                        }
-                    }
-                }
-            }
-            for value in object.values() {
-                collect_api_type_paths(value, krate, paths)?;
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                collect_api_type_paths(value, krate, paths)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
+	Ok(PlatformDefinition { traits, types, super_trait, optional_super_trait })
 }
 
 /// Extract every local struct or enum whose name appears in a trait method
@@ -312,17 +215,17 @@ fn collect_referenced_local_types(
                 PlatformInner::Result { ok, .. } => collect_named_types(ok, &mut referenced),
                 PlatformInner::Stream(inner) | PlatformInner::Plain(inner) => {
                     collect_named_types(inner, &mut referenced)
-                }
-                PlatformInner::TraitObject(_) | PlatformInner::Unit => {}
+				},
+				PlatformInner::TraitObject(_) | PlatformInner::Unit => {},
             }
         }
     }
 
     let mut local_type_candidates = BTreeMap::new();
     for (item_id, item_path) in &krate.paths {
-        if item_path.crate_id != 0
-            || !matches!(item_path.kind.as_str(), "struct" | "enum")
-            || !in_platform_module(&item_path.path)
+		if item_path.crate_id != 0 ||
+			!matches!(item_path.kind.as_str(), "struct" | "enum") ||
+			!in_platform_module(&item_path.path)
         {
             continue;
         }
@@ -336,10 +239,7 @@ fn collect_referenced_local_types(
     }
     for candidates in local_type_candidates.values_mut() {
         candidates.sort_by(|(left_id, left_path), (right_id, right_path)| {
-            left_path
-                .path
-                .cmp(&right_path.path)
-                .then_with(|| left_id.cmp(right_id))
+			left_path.path.cmp(&right_path.path).then_with(|| left_id.cmp(right_id))
         });
     }
 
@@ -369,10 +269,7 @@ fn collect_referenced_local_types(
             }
             let (item_id, item_path) = candidates[0];
             let item = krate.index.get(item_id).with_context(|| {
-                format!(
-                    "Missing rustdoc item `{item_id}` for {} `{name}`",
-                    item_path.kind
-                )
+				format!("Missing rustdoc item `{item_id}` for {} `{name}`", item_path.kind)
             })?;
             let module_path = item_path.path[..item_path.path.len() - 1].to_vec();
             let type_def = if item_path.kind == "struct" {
@@ -401,29 +298,29 @@ fn collect_type_def_references(type_def: &TypeDef, out: &mut BTreeSet<String>) {
             for field in fields {
                 collect_named_types(&field.type_ref, out);
             }
-        }
+		},
         TypeDefKind::TupleStruct(types) => {
             for ty in types {
                 collect_named_types(ty, out);
             }
-        }
+		},
         TypeDefKind::Enum(variants) => {
             for variant in variants {
                 match &variant.fields {
-                    VariantFields::Unit => {}
+					VariantFields::Unit => {},
                     VariantFields::Unnamed(types) => {
                         for ty in types {
                             collect_named_types(ty, out);
                         }
-                    }
+					},
                     VariantFields::Named(fields) => {
                         for field in fields {
                             collect_named_types(&field.type_ref, out);
                         }
+					},
                     }
                 }
-            }
-        }
+		},
     }
 }
 
@@ -434,25 +331,25 @@ fn collect_named_types(ty: &TypeRef, out: &mut BTreeSet<String>) {
             for arg in args {
                 collect_named_types(arg, out);
             }
-        }
+		},
         TypeRef::Vec(inner) | TypeRef::Option(inner) | TypeRef::Array(inner, _) => {
             collect_named_types(inner, out)
-        }
+		},
         TypeRef::Tuple(items) => {
             for item in items {
                 collect_named_types(item, out);
             }
-        }
-        TypeRef::Primitive(_) | TypeRef::Generic(_) | TypeRef::Unit => {}
+		},
+		TypeRef::Primitive(_) | TypeRef::Generic(_) | TypeRef::Unit => {},
     }
 }
 
 fn collect_local_trait_ids(krate: &Crate) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for (item_id, item_path) in &krate.paths {
-        if item_path.crate_id != 0
-            || item_path.kind != "trait"
-            || !in_platform_module(&item_path.path)
+		if item_path.crate_id != 0 ||
+			item_path.kind != "trait" ||
+			!in_platform_module(&item_path.path)
         {
             continue;
         }
@@ -549,11 +446,7 @@ fn extract_capability_trait(
         }
     }
 
-    Ok(PlatformTrait {
-        name: name.to_string(),
-        docs: clean_docs(item.docs.as_deref()),
-        methods,
-    })
+	Ok(PlatformTrait { name: name.to_string(), docs: clean_docs(item.docs.as_deref()), methods })
 }
 
 fn extract_method(item: &Item, names: &NameContext) -> Result<Option<PlatformMethod>> {
@@ -599,10 +492,8 @@ fn extract_method(item: &Item, names: &NameContext) -> Result<Option<PlatformMet
 
     let return_shape = resolve_return(sig.get("output"), names)
         .with_context(|| format!("Method `{name}` has an unsupported return type"))?;
-    let has_default = fn_inner
-        .get("has_body")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
+	let has_default =
+		fn_inner.get("has_body").and_then(serde_json::Value::as_bool).unwrap_or(false);
 
     Ok(Some(PlatformMethod {
         name,
@@ -618,31 +509,19 @@ fn resolve_return(
     names: &NameContext,
 ) -> Result<PlatformReturn> {
     let Some(output) = output else {
-        return Ok(PlatformReturn {
-            is_async: false,
-            inner: PlatformInner::Unit,
-        });
+		return Ok(PlatformReturn { is_async: false, inner: PlatformInner::Unit });
     };
     if output.is_null() {
-        return Ok(PlatformReturn {
-            is_async: false,
-            inner: PlatformInner::Unit,
-        });
+		return Ok(PlatformReturn { is_async: false, inner: PlatformInner::Unit });
     }
 
     if let Some(future_output) = extract_async_trait_future_output(output) {
         let inner = resolve_inner_shape(&future_output, names)?;
-        return Ok(PlatformReturn {
-            is_async: true,
-            inner,
-        });
+		return Ok(PlatformReturn { is_async: true, inner });
     }
 
     let inner = resolve_inner_shape(output, names)?;
-    Ok(PlatformReturn {
-        is_async: false,
-        inner,
-    })
+	Ok(PlatformReturn { is_async: false, inner })
 }
 
 fn extract_async_trait_future_output(output: &serde_json::Value) -> Option<serde_json::Value> {
@@ -663,11 +542,8 @@ fn extract_async_trait_future_output(output: &serde_json::Value) -> Option<serde
         if resolved_leaf(trait_obj) != Some("Future") {
             continue;
         }
-        let constraints = trait_obj
-            .get("args")?
-            .get("angle_bracketed")?
-            .get("constraints")?
-            .as_array()?;
+		let constraints =
+			trait_obj.get("args")?.get("angle_bracketed")?.get("constraints")?.as_array()?;
         for constraint in constraints {
             if constraint.get("name")?.as_str()? != "Output" {
                 continue;
@@ -681,17 +557,14 @@ fn extract_async_trait_future_output(output: &serde_json::Value) -> Option<serde
 
 fn resolve_inner_shape(ty: &serde_json::Value, names: &NameContext) -> Result<PlatformInner> {
     // `()` tuple.
-    if let Some(arr) = ty.get("tuple").and_then(|v| v.as_array())
-        && arr.is_empty()
+	if let Some(arr) = ty.get("tuple").and_then(|v| v.as_array()) &&
+		arr.is_empty()
     {
         return Ok(PlatformInner::Unit);
     }
 
     if let Some(resolved) = ty.get("resolved_path") {
-        let path = resolved
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
+		let path = resolved.get("path").and_then(|v| v.as_str()).unwrap_or_default();
         let leaf = path.rsplit("::").next().unwrap_or(path);
 
         match leaf {
@@ -702,11 +575,8 @@ fn resolve_inner_shape(ty: &serde_json::Value, names: &NameContext) -> Result<Pl
                     generic_arg(resolved, 1).context("Result<...> return type missing err arg")?;
                 let ok_ref = resolve_inner_type(&ok, names)?;
                 let err_ref = resolve_inner_type(&err, names)?;
-                return Ok(PlatformInner::Result {
-                    ok: ok_ref,
-                    err: err_ref,
-                });
-            }
+				return Ok(PlatformInner::Result { ok: ok_ref, err: err_ref });
+			},
             "BoxStream" => {
                 // `BoxStream<'a, T>`: the lifetime arg is filtered out by
                 // `generic_arg` (it has no `type` field), so the first
@@ -714,16 +584,16 @@ fn resolve_inner_shape(ty: &serde_json::Value, names: &NameContext) -> Result<Pl
                 let item =
                     generic_arg(resolved, 0).context("BoxStream<'a, T> missing item type")?;
                 return Ok(PlatformInner::Stream(resolve_type(&item, names)?));
-            }
+			},
             "Box" => {
                 // `Box<dyn TraitName>` or `Box<T>`.
-                if let Some(arg) = generic_arg(resolved, 0)
-                    && let Some(dyn_trait) = arg.get("dyn_trait")
+				if let Some(arg) = generic_arg(resolved, 0) &&
+					let Some(dyn_trait) = arg.get("dyn_trait")
                 {
                     return Ok(PlatformInner::TraitObject(dyn_trait_leaf_name(dyn_trait)?));
                 }
-            }
-            _ => {}
+			},
+			_ => {},
         }
     }
 
@@ -736,19 +606,16 @@ fn resolve_inner_shape(ty: &serde_json::Value, names: &NameContext) -> Result<Pl
 /// into a `TypeRef::Named { name: TraitName, args: [] }` so it survives
 /// through to TS emission without `rustdoc.rs` having to model dyn traits.
 fn resolve_inner_type(ty: &serde_json::Value, names: &NameContext) -> Result<TypeRef> {
-    if let Some(resolved) = ty.get("resolved_path")
-        && resolved
+	if let Some(resolved) = ty.get("resolved_path") &&
+		resolved
             .get("path")
             .and_then(|v| v.as_str())
             .map(|p| p.rsplit("::").next().unwrap_or(p) == "Box")
-            .unwrap_or(false)
-        && let Some(arg) = generic_arg(resolved, 0)
-        && let Some(dyn_trait) = arg.get("dyn_trait")
+			.unwrap_or(false) &&
+		let Some(arg) = generic_arg(resolved, 0) &&
+		let Some(dyn_trait) = arg.get("dyn_trait")
     {
-        return Ok(TypeRef::Named {
-            name: dyn_trait_leaf_name(dyn_trait)?,
-            args: Vec::new(),
-        });
+		return Ok(TypeRef::Named { name: dyn_trait_leaf_name(dyn_trait)?, args: Vec::new() });
     }
     resolve_type(ty, names)
 }
@@ -870,10 +737,7 @@ mod tests {
             }
         });
 
-        assert_eq!(
-            extract_async_trait_future_output(&output),
-            Some(json!({ "primitive": "u8" }))
-        );
+		assert_eq!(extract_async_trait_future_output(&output), Some(json!({ "primitive": "u8" })));
     }
 
     // Server-internal traits such as `Transport` share the rustdoc JSON with
@@ -889,26 +753,14 @@ mod tests {
             format_version: Some(57),
             index: HashMap::new(),
             paths: HashMap::from([
-                (
-                    "1".to_string(),
-                    item_path(0, &["truapi", "platform", "Navigation"]),
-                ),
-                (
-                    "2".to_string(),
-                    item_path(0, &["truapi", "transport", "Transport"]),
-                ),
+				("1".to_string(), item_path(0, &["truapi", "platform", "Navigation"])),
+				("2".to_string(), item_path(0, &["truapi", "transport", "Transport"])),
                 ("3".to_string(), item_path(0, &["truapi", "Platform"])),
-                (
-                    "4".to_string(),
-                    item_path(1, &["truapi_provider", "platform", "ChainProvider"]),
-                ),
+				("4".to_string(), item_path(1, &["truapi_provider", "platform", "ChainProvider"])),
             ]),
         };
 
-        assert_eq!(
-            collect_local_trait_ids(&krate),
-            BTreeSet::from(["1".to_string()])
-        );
+		assert_eq!(collect_local_trait_ids(&krate), BTreeSet::from(["1".to_string()]));
     }
 
     #[test]
@@ -953,16 +805,10 @@ mod tests {
                 docs: None,
                 params: vec![PlatformParam {
                     name: "value".to_string(),
-                    type_ref: TypeRef::Named {
-                        name: "Shared".to_string(),
-                        args: Vec::new(),
-                    },
+					type_ref: TypeRef::Named { name: "Shared".to_string(), args: Vec::new() },
                     borrowed: false,
                 }],
-                return_shape: PlatformReturn {
-                    is_async: false,
-                    inner: PlatformInner::Unit,
-                },
+				return_shape: PlatformReturn { is_async: false, inner: PlatformInner::Unit },
                 has_default: false,
             }],
         }];
@@ -975,8 +821,8 @@ mod tests {
             "unexpected error: {msg}"
         );
         assert!(
-            msg.contains("truapi::platform::one::Shared")
-                && msg.contains("truapi::platform::two::Shared"),
+			msg.contains("truapi::platform::one::Shared") &&
+				msg.contains("truapi::platform::two::Shared"),
             "unexpected error: {msg}"
         );
     }

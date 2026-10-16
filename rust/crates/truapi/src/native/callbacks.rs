@@ -5,13 +5,11 @@ use crate::platform::{
 };
 use truapi::v01;
 
-use crate::PairedSsoPeer;
-use crate::host_logic::worker::WorkerTransition;
+use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
 
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
-use super::config::ProductExecutionConfig;
-use super::errors::HostRejection;
+use super::{config::ProductExecutionConfig, errors::HostRejection};
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
 
@@ -42,9 +40,9 @@ pub trait NativeCoinageCallbacks: Send + Sync {
 /// the entire bridge — not just the request being served. Async callbacks
 /// (`navigate_to`, `push_notification`, `device_permission`,
 /// `remote_permission`, `feature_supported`, `confirm_user_action`, `confirm_permission`,
-/// `lookup_preimage`, and the core and local storage callbacks) are awaited by the core. Implementations hop to the
-/// main thread for any UI and may keep the future pending arbitrarily long,
-/// but must suspend rather than block the polling thread (foreign
+/// `lookup_preimage`, and the core and local storage callbacks) are awaited by the core.
+/// Implementations hop to the main thread for any UI and may keep the future pending arbitrarily
+/// long, but must suspend rather than block the polling thread (foreign
 /// implementations bridged through UniFFI suspend naturally; the rule
 /// chiefly binds Rust implementations). Dropping the returned future
 /// cancels the foreign task. The remaining sync callbacks run inline on the
@@ -317,6 +315,16 @@ pub trait HostCallbacks: Send + Sync {
     /// inline.
     fn device_paired(&self, device: PairedSsoPeer);
 
+	/// Whether durable transactions are still awaiting a verdict. `true`
+	/// means keep a background task running that awaits
+	/// [`NativeTrUApiHostRuntime::run_durable_recovery`]; `false` that
+	/// nothing needs it any more. Reported on change, starting with the state
+	/// the runtime finds at launch.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with. Arrives on a core thread: hand it off rather than blocking.
+	fn durable_work_changed(&self, pending: bool);
+
     /// Read a value from the host's scoped key-value store.
     async fn local_storage_read(
         &self,
@@ -373,12 +381,26 @@ pub trait NativeChatCallbacks: Send + Sync {
     /// The returned id is [`HostChatPostMessageResponse`]'s `message_id`, which
     /// chat actions carry back for as long as the host stores this message.
     ///
+	/// `alt` is the product's one-line description of the message, for places
+	/// that list it without drawing it, such as a chat list preview.
+	///
     /// [`HostChatPostMessageResponse`]: truapi::latest::HostChatPostMessageResponse
     async fn post_message(
         &self,
         room_id: String,
         content: v01::ChatMessageContent,
+		alt: Option<String>,
     ) -> Result<String, HostRejection>;
+
+	/// Set what a product's native Chat room shows below its messages, and keep
+	/// it until the product sets another. The core has already checked the
+	/// product created the room. A room the product never set a footer on shows
+	/// the text input.
+	async fn set_room_footer(
+		&self,
+		room_id: String,
+		footer: v01::ChatRoomFooter,
+	) -> Result<(), HostRejection>;
 
     /// Return the current product-scoped native Chat room list.
     async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;
@@ -477,4 +499,19 @@ pub trait NativeContactsCallbacks: Send + Sync {
         product_id: String,
         placed: crate::platform::PlacedContactLabels,
     ) -> Result<(), crate::latest::HostContactsPlaceLabelsError>;
+}
+
+/// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeScannerCallbacks: Send + Sync {
+	/// Open the viewfinder on behalf of `product_id`'s execution of
+	/// `execution_kind` and report how it ended.
+	async fn scan_code(
+		&self,
+		product_id: String,
+		execution_kind: crate::platform::ProductExecutionKind,
+		request: truapi::latest::HostScannerScanRequest,
+	) -> Result<crate::platform::HostScan, HostRejection>;
 }

@@ -26,14 +26,22 @@ mod renderer;
 mod runtime;
 mod ws_bridge;
 
-pub use crate::host_internal::sso_messages::SsoRequestOutcome;
-pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
+pub use crate::{
+	host_internal::sso_messages::SsoRequestOutcome,
+	host_logic::{
+		dotns::{NavigateDecision, PocketDeeplinkAction},
+		scanner::{ScanFilter, ScanVerdict},
+	},
+};
 pub use callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeCoinageCallbackResult, NativeCoinageCallbacks,
     NativeContactsCallbacks, NativeGameCallbacks, NativePocketCallbacks, NativePocketRemoval,
+    NativeScannerCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
-pub use errors::{HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError};
+pub use errors::{
+	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
+};
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
     NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
@@ -45,10 +53,9 @@ use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
-use crate::PairingProposal;
 #[cfg(doc)]
 use crate::SigningHostRuntime;
-use crate::host_logic::dotns;
+use crate::{PairingProposal, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
 /// call: dotNS first, then `localhost`, then normalized external, with
@@ -73,15 +80,19 @@ pub struct NativeCoreStorageKeyDescription {
 pub fn native_describe_core_storage_key(
     encoded: Vec<u8>,
 ) -> Result<NativeCoreStorageKeyDescription, HostRejection> {
-    let description = crate::platform::describe_core_storage_key(&encoded).map_err(|error| {
-        HostRejection::Rejected {
-            reason: error.to_string(),
-        }
-    })?;
+	let description = crate::platform::describe_core_storage_key(&encoded)
+		.map_err(|error| HostRejection::Rejected { reason: error.to_string() })?;
     Ok(NativeCoreStorageKeyDescription {
         kind: description.kind.to_owned(),
         product_id: description.product_id,
     })
+}
+
+/// The `@parity/truapi-host` release this core was built from, which the
+/// native host packages share.
+#[uniffi::export]
+pub fn truapi_host_version() -> String {
+	env!("CARGO_PKG_VERSION").to_string()
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`
@@ -163,9 +174,7 @@ fn read_face_on_stack(
         .name("truapi-face-reader".to_string())
         .stack_size(stack_bytes)
         .spawn(move || read_renderer_node_json(&json))
-        .map_err(|error| NativeRendererError::ReaderUnavailable {
-            reason: error.to_string(),
-        })?
+		.map_err(|error| NativeRendererError::ReaderUnavailable { reason: error.to_string() })?
         .join()
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
@@ -177,26 +186,19 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
     // so a tree built to exhaust the stack would do so before any check on the
     // value it produced. Counting brackets needs no recursion at all.
     if json_nesting_exceeds(json, MAX_FACE_JSON_NESTING) {
-        return Err(NativeRendererError::TooDeep {
-            limit: MAX_FACE_DEPTH,
-        });
+		return Err(NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH });
     }
 
     // With the text bounded above, the reader's own limit would only impose a
     // second, stricter bound in JSON levels rather than in renderer levels.
     let mut reader = serde_json::Deserializer::from_str(json);
     reader.disable_recursion_limit();
-    let node = latest::RendererNode::deserialize(&mut reader).map_err(|error| {
-        NativeRendererError::Malformed {
-            reason: error.to_string(),
-        }
-    })?;
+	let node = latest::RendererNode::deserialize(&mut reader)
+		.map_err(|error| NativeRendererError::Malformed { reason: error.to_string() })?;
 
     match node_depth(&node, MAX_FACE_DEPTH) {
         Some(_) => Ok(node),
-        None => Err(NativeRendererError::TooDeep {
-            limit: MAX_FACE_DEPTH,
-        }),
+		None => Err(NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH }),
     }
 }
 
@@ -211,7 +213,7 @@ fn json_nesting_exceeds(json: &str, limit: u32) -> bool {
                 _ if escaped => escaped = false,
                 b'\\' => escaped = true,
                 b'"' => in_string = false,
-                _ => {}
+				_ => {},
             }
             continue;
         }
@@ -223,9 +225,9 @@ fn json_nesting_exceeds(json: &str, limit: u32) -> bool {
                 if depth > limit {
                     return true;
                 }
-            }
+			},
             b'}' | b']' => depth = depth.saturating_sub(1),
-            _ => {}
+			_ => {},
         }
     }
 
@@ -240,12 +242,12 @@ fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
     }
 
     let children: &[latest::RendererNode] = match node {
-        latest::RendererNode::Box { children, .. }
-        | latest::RendererNode::Column { children, .. }
-        | latest::RendererNode::Row { children, .. }
-        | latest::RendererNode::Text { children, .. }
-        | latest::RendererNode::Button { children, .. }
-        | latest::RendererNode::Effect { children, .. } => children,
+		latest::RendererNode::Box { children, .. } |
+		latest::RendererNode::Column { children, .. } |
+		latest::RendererNode::Row { children, .. } |
+		latest::RendererNode::Text { children, .. } |
+		latest::RendererNode::Button { children, .. } |
+		latest::RendererNode::Effect { children, .. } => children,
         _ => &[],
     };
 
@@ -270,11 +272,8 @@ pub fn encode_renderer_node(node: latest::RendererNode) -> Vec<u8> {
 /// Read back a face kept as [`encode_renderer_node`] wrote it.
 #[uniffi::export]
 pub fn decode_renderer_node(bytes: Vec<u8>) -> Result<latest::RendererNode, NativeRendererError> {
-    latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice()).map_err(
-        |error| NativeRendererError::Malformed {
-            reason: error.to_string(),
-        },
-    )
+	latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice())
+		.map_err(|error| NativeRendererError::Malformed { reason: error.to_string() })
 }
 
 /// Screen a product-supplied Pocket card id with the rules every Pocket call

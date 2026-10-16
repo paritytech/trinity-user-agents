@@ -6,8 +6,6 @@ use crate::platform::{
 };
 use truapi::latest::HostPlatform;
 
-
-
 /// Process-owned native host configuration shared by every product execution.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct HostRuntimeConfig {
@@ -112,17 +110,13 @@ pub enum NativeRuntimeConfigError {
 
 impl From<RuntimeConfigValidationError> for NativeRuntimeConfigError {
     fn from(err: RuntimeConfigValidationError) -> Self {
-        Self::Invalid {
-            reason: err.to_string(),
-        }
+		Self::Invalid { reason: err.to_string() }
     }
 }
 
 /// A 32-byte genesis hash handed over as bytes, or the error naming `field`.
 pub fn genesis_hash(field: &str, bytes: &[u8]) -> Result<[u8; 32], NativeRuntimeConfigError> {
-    bytes
-        .try_into()
-        .map_err(|_| NativeRuntimeConfigError::Invalid {
+	bytes.try_into().map_err(|_| NativeRuntimeConfigError::Invalid {
             reason: format!("{field} must be exactly 32 bytes, got {}", bytes.len()),
         })
 }
@@ -158,10 +152,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
                 version: config.host_version,
                 platform: native_host_platform(),
             },
-            PlatformInfo {
-                kind: config.platform_type,
-                version: config.platform_version,
-            },
+			PlatformInfo { kind: config.platform_type, version: config.platform_version },
             people_chain_genesis_hash,
             bulletin_chain_genesis_hash,
             asset_hub_chain_genesis_hash,
@@ -179,10 +170,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 
 impl From<&ProductContext> for ProductExecutionConfig {
     fn from(product: &ProductContext) -> Self {
-        Self {
-            product_id: product.product_id.clone(),
-            execution_kind: product.execution_kind,
-        }
+		Self { product_id: product.product_id.clone(), execution_kind: product.execution_kind }
     }
 }
 
