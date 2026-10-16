@@ -3,6 +3,7 @@ import AsyncExtensions
 import ChainRegistry
 import PolkadotUI
 import Products
+import StructuredConcurrency
 import Testing
 import UIKit
 @testable import polkadot_app
@@ -26,11 +27,11 @@ struct WalletMainPocketTests {
         )
 
         interactor.setup()
-        try await settle()
+        try await presenter.waitForCards { _ in true }
         let beforeTheChange = presenter.pocketCards.count
 
         try await collection.add(loyalty, face: .nil)
-        try await settle()
+        try await presenter.waitForCards { $0.contains(loyalty.key) }
 
         #expect(presenter.pocketCards.count > beforeTheChange)
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == true)
@@ -45,11 +46,11 @@ struct WalletMainPocketTests {
         let interactor = makeInteractor(collection: collection, presenter: presenter)
 
         interactor.setup()
-        try await settle()
+        try await presenter.waitForCards { $0.contains(loyalty.key) }
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == true)
 
         _ = try await collection.removeCard(loyalty.key)
-        try await settle()
+        try await presenter.waitForCards { !$0.contains(loyalty.key) }
 
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == false)
     }
@@ -62,15 +63,6 @@ private let loyalty = PocketCardEntry(
     title: "Loyalty",
     privileged: false
 )
-
-/// The tab hands its reads to tasks, so the assertions wait for them rather
-/// than for a fixed time.
-private func settle() async throws {
-    for _ in 0 ..< 20 {
-        await Task.yield()
-    }
-    try await Task.sleep(for: .milliseconds(150))
-}
 
 @MainActor
 private func makeInteractor(
@@ -93,11 +85,29 @@ private func makeInteractor(
 @MainActor
 private final class RecordingPresenter: WalletMainInteractorOutputProtocol {
     private(set) var pocketCards: [[PocketCardViewModel]] = []
+    private let shown: AsyncStream<Set<PocketCardKey>>
+    private let continuation: AsyncStream<Set<PocketCardKey>>.Continuation
+
+    init() {
+        (shown, continuation) = AsyncStream<Set<PocketCardKey>>.makeStream()
+    }
 
     func didReceive(networkStatus _: NetworkStatus) {}
 
     func didReceive(pocketCards: [PocketCardViewModel]) {
         self.pocketCards.append(pocketCards)
+        continuation.yield(Set(pocketCards.map(\.key)))
+    }
+
+    /// Returns once the presenter has shown a card list matching `predicate`,
+    /// failing rather than hanging if it never does.
+    func waitForCards(where predicate: @escaping @Sendable (Set<PocketCardKey>) -> Bool) async throws {
+        try await withTimeout(.seconds(5)) { [shown] in
+            for await keys in shown where predicate(keys) {
+                return
+            }
+            throw CancellationError()
+        }
     }
 }
 
