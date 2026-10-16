@@ -242,12 +242,17 @@ export type CoreStorageKey =
    */
   | { tag: "FundingSupport"; value?: undefined }
   /**
-   * Funding sessions blobs the core could not read, as a SCALE list of the
+   * Funding sessions or session pack blobs the core could not read, as a SCALE list of the
    * raw blobs, newest last, so a stored session is never overwritten
    * unread and a later bad blob does not replace an earlier one. Kept for
    * diagnosis only: the core never reads them back.
    */
-  | { tag: "FundingSessionsUnreadable"; value?: undefined };
+  | { tag: "FundingSessionsUnreadable"; value?: undefined }
+  /**
+   * Recorded funding sessions compacted out of the funding sessions blob,
+   * as one versioned SCALE blob. Never trimmed.
+   */
+  | { tag: "FundingSessionPack"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -951,6 +956,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       PublishedProducts: S._void,
       FundingSupport: S._void,
       FundingSessionsUnreadable: S._void,
+      FundingSessionPack: S._void,
     }),
 );
 
