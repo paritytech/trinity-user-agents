@@ -316,6 +316,30 @@ fn spawned_tasks_sleep_on_host_timers_and_a_raw_call_round_trips() {
 	assert_eq!((outcome, seed, lines), (Ok(()), Some(32), vec!["order: fast, slow".to_string()]));
 }
 
+/// With the fuel in the log, each line of the guest starts with the fuel
+/// that the worker used so far, and the line itself follows unchanged.
+#[test]
+fn the_fuel_used_so_far_starts_each_log_line_on_request() {
+	let host = Arc::new(TestHost::default());
+	let lines = Arc::new(Mutex::new(Vec::new()));
+	let log = lines.clone();
+	let worker = WasmWorker::new(env(host), &guest("tasks"))
+		.unwrap()
+		.with_fuel_in_log(true)
+		.with_log(move |line| log.lock().unwrap().push(line.to_string()));
+
+	let outcome = block_on(worker.run()).map_err(|error| error.to_string());
+
+	let lines = lines.lock().unwrap().clone();
+	let [line] = lines.as_slice() else { panic!("one line: {lines:?}") };
+	let (fuel, text) = line
+		.strip_prefix("fuel=")
+		.and_then(|rest| rest.split_once(' '))
+		.unwrap_or_else(|| panic!("no fuel in {line:?}"));
+	assert_eq!((outcome, text), (Ok(()), "order: fast, slow"));
+	assert!(fuel.parse::<u64>().unwrap() > 0, "{line}");
+}
+
 #[test]
 fn spawned_tasks_run_on_a_tokio_runtime_too() {
 	let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
