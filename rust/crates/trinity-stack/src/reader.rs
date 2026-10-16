@@ -1,4 +1,4 @@
-use crate::{Error, Pointer, Verified, envelope::open, format};
+use crate::{Error, Pointer, Verified, envelope::open};
 
 /// The result of fetching a stack's descriptor.
 #[derive(Clone, Copy, Debug)]
@@ -96,14 +96,10 @@ fn finish(
 	new_generation: bool,
 	now_unix_seconds: i64,
 ) -> Accepted {
-	let passed = |time: &Option<String>| {
-		time.as_deref()
-			.and_then(|time| format::unix_seconds(time).ok())
-			.is_some_and(|time| now_unix_seconds >= time)
-	};
+	let passed = |time: Option<u32>| time.is_some_and(|time| now_unix_seconds >= i64::from(time));
 	Accepted {
-		stale: passed(&stack.descriptor.valid_until),
-		expired: passed(&stack.descriptor.expires_at),
+		stale: passed(stack.descriptor.valid_until),
+		expired: passed(stack.descriptor.expires_at),
 		status,
 		document: document.to_vec(),
 		stack,
