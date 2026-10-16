@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-sim-build ios-sim-run ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-sim-build ios-sim-run ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli e2e-allocation-retry
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -535,6 +535,9 @@ e2e-trusted-device-permission: ## Send a notification as a trusted product on th
 
 e2e-chain-head-failure-cause: ## Cut the chain connection under a chain-head call on the signing-host CLI; both failures must name their cause.
 	scripts/chain-head-failure-cause-e2e.sh
+
+e2e-allocation-retry: ## Retry a resource allocation the product got no answer to, on a paired signing-host CLI; the retry reuses the slot.
+	scripts/allocation-retry-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
 	node scripts/e2e-cli-update.mjs
