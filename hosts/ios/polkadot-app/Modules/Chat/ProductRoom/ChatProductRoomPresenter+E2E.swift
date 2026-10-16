@@ -142,6 +142,10 @@ extension ChatProductRoomPresenter {
             case "jump": action.target.map { interactor?.jump(to: $0) }
             case "retry": action.target.flatMap(e2eMessageId).map { interactor?.retrySend(messageId: $0) }
             case "delete": action.target.flatMap(e2eMessageId).map { interactor?.deleteMessage(messageId: $0) }
+            case "reply",
+                 "edit",
+                 "react": runMessageAction(action)
+            case "dump": markMessages()
             case "retry-room":
                 e2eReadyWaitStart = .now
                 interactor?.retryRoom()
@@ -162,6 +166,52 @@ extension ChatProductRoomPresenter {
             default:
                 if !runCallE2E(action) { logger.warning("[e2e:ui] unknown action \(action.action)") }
             }
+        }
+
+        /// The actions of the message menu that the harness asks for: a reply with the text of the argument to
+        /// the target, an edit of the target to the text of the argument, or a reaction with the emoji of the
+        /// argument (a second reaction with the same emoji removes it). They take the path of the room screen.
+        private func runMessageAction(_ action: TrUAPIE2EHostAction) {
+            guard let messageId = action.target.flatMap(e2eMessageId), let argument = action.argument else {
+                mark(action.action, "\(action.target ?? "") missing")
+                return
+            }
+
+            switch action.action {
+            case "reply": interactor?.send(text: argument, attachments: nil, replyToMessageId: messageId)
+            case "edit": interactor?.sendEdit(messageId: messageId, newText: argument)
+            default: interactor?.toggleReaction(messageId: messageId, emoji: argument)
+            }
+        }
+
+        /// Writes the messages of the window, oldest first, as one JSON array: the id that the product gave, the
+        /// author (`user`, `product` or the participant id), the name that the room shows for the author, the
+        /// time, the status, the text, the quoted message, and the emoji of the reactions.
+        private func markMessages() {
+            let rows: [[String: Any]] = messages.values
+                .sorted { ($0.order, $0.timestamp) < ($1.order, $1.timestamp) }
+                .map { message in
+                    var row: [String: Any] = [
+                        "id": productMessageId(message.messageId),
+                        "status": message.status.e2eName,
+                        "time": message.timestamp,
+                        "text": message.content.originalMessageText ?? "",
+                        "reactions": message.reactions.map(\.emoji)
+                    ]
+                    let author = message.authorParticipantId
+                        ?? (message.status.isOutgoing ? "user" : Chat.ProductParticipant.product)
+                    row["author"] = author
+                    if let participant = message.authorParticipantId.flatMap(participants.participant) {
+                        row["name"] = participant.e2eName
+                    }
+                    if case let .reply(reply) = message.content {
+                        row["replyTo"] = productMessageId(reply.messageId)
+                    }
+                    return row
+                }
+            let data = (try? JSONSerialization.data(withJSONObject: rows, options: [.sortedKeys])) ?? Data()
+            e2eMarks["dump"] = nil
+            mark("dump", String(bytes: data, encoding: .utf8) ?? "[]")
         }
 
         /// The gestures of the Chat Extension v2 additions: a tap on a thread chip, on a branch arrow (the
@@ -387,6 +437,16 @@ extension ChatProductRoomPresenter {
             case .delete: "delete"
             case let .product(action): "product:" + action.actionId + (action.destructive ? "!" : "")
             case .readAloud: "readAloud"
+            }
+        }
+    }
+
+    private extension ChatRoomParticipant {
+        /// The name that the room shows for the participant, for the harness.
+        var e2eName: String {
+            switch kind {
+            case let .custom(nickname, _): nickname
+            default: String(describing: kind)
             }
         }
     }

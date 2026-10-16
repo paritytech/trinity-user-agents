@@ -263,6 +263,69 @@ test("the helper sends the operations of the page and matches each reply", async
   }
 });
 
+test("the helper sends the message actions of a room that the worker keeps", async () => {
+  const host = await fakeHost(
+    {
+      kind: "snapshot",
+      productId: "verbosity.dot",
+      rooms: [{ roomId: "dm-7", name: "bob" }],
+      messages: [],
+    },
+    (op, send) => {
+      const ok =
+        op.op === "participants"
+          ? { type: "Resolved", participants: [] }
+          : op.op === "search"
+            ? { hits: [], next: null }
+            : { type: "Acknowledged" };
+      if (op.op === "delete" && op.messageId === "i9")
+        send({
+          kind: "answer",
+          op: op.op,
+          reqId: op.reqId,
+          error: { tag: "Rejected", reason: "no message 9 in this chat" },
+        });
+      else send({ kind: "answer", op: op.op, reqId: op.reqId, ok });
+    },
+  );
+  const chat = await ChatSocket.connect(host.port);
+  try {
+    assert.deepEqual(await chat.edit("dm-7", "i3", "hi, edited"), {
+      type: "Acknowledged",
+    });
+    await chat.react("dm-7", "i3", "👍");
+    await chat.react("dm-7", "i3", "👍", { placed: false });
+    await chat.seen("dm-7", "i3");
+    await chat.delete("dm-7", "i3");
+    await assert.rejects(chat.delete("dm-7", "i9"), /delete refused: no message 9/);
+    assert.deepEqual(
+      await chat.participants("dm-7", { type: "ByIds", participantIds: ["c7"] }),
+      { type: "Resolved", participants: [] },
+    );
+    assert.deepEqual(await chat.search("dm-7", "hi"), { hits: [], next: null });
+    assert.deepEqual(
+      host.received.map(({ reqId: _reqId, ...op }) => op),
+      [
+        { op: "edit", roomId: "dm-7", messageId: "i3", text: "hi, edited" },
+        { op: "react", roomId: "dm-7", messageId: "i3", emoji: "👍", placed: true },
+        { op: "react", roomId: "dm-7", messageId: "i3", emoji: "👍", placed: false },
+        { op: "seen", roomId: "dm-7", messageId: "i3" },
+        { op: "delete", roomId: "dm-7", messageId: "i3" },
+        { op: "delete", roomId: "dm-7", messageId: "i9" },
+        {
+          op: "participants",
+          roomId: "dm-7",
+          query: { type: "ByIds", participantIds: ["c7"] },
+        },
+        { op: "search", roomId: "dm-7", text: "hi", cursor: null },
+      ],
+    );
+  } finally {
+    chat.close();
+    host.close();
+  }
+});
+
 // The live checks need a built host and guests:
 //   cargo build -p truapi-host-cli
 //   cargo build --manifest-path rust/guests/Cargo.toml --target wasm32-unknown-unknown --release

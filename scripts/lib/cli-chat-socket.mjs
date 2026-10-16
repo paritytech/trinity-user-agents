@@ -6,8 +6,9 @@
 // The helper speaks the protocol of the `/chat` page on its socket
 // `/chat/ws`: it keeps the rooms and the messages the host sends, and sends
 // the operations the page sends when a person types a message, presses a
-// button of a message, runs a command, or reads a page of a room that the
-// worker keeps (`productSource`). A test of a worker (a wasm worker that
+// button of a message, runs a command, reads a page of a room that the
+// worker keeps (`productSource`), or edits, deletes, reacts to, sees and
+// searches the messages of such a room. A test of a worker (a wasm worker that
 // `--worker-wasm` runs, or the JS worker of `--worker-bundle`) uses it to see
 // what the worker draws and to answer it.
 //
@@ -302,6 +303,58 @@ export class ChatSocket {
       { op: "post", roomId, text, replyTo: replyTo ?? null },
       timeoutMs,
     );
+  }
+
+  /**
+   * Edit the message `messageId` of `roomId` to `text`, as the person does
+   * from the message menu. Gives the `ok` of the answer.
+   */
+  edit(roomId, messageId, text, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    return this.#ask({ op: "edit", roomId, messageId, text }, timeoutMs);
+  }
+
+  /** Delete the message `messageId` of `roomId`. Gives the `ok` of the answer. */
+  delete(roomId, messageId, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    return this.#ask({ op: "delete", roomId, messageId }, timeoutMs);
+  }
+
+  /**
+   * Place the reaction `emoji` on the message `messageId` of `roomId`, or
+   * remove it with `placed: false`. Gives the `ok` of the answer.
+   */
+  react(
+    roomId,
+    messageId,
+    emoji,
+    { placed = true, timeoutMs = DEFAULT_TIMEOUT_MS } = {},
+  ) {
+    return this.#ask(
+      { op: "react", roomId, messageId, emoji, placed },
+      timeoutMs,
+    );
+  }
+
+  /** Tell the room that the person sees `messageId`, the newest message. */
+  seen(roomId, messageId, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    return this.#ask({ op: "seen", roomId, messageId }, timeoutMs);
+  }
+
+  /**
+   * Ask who the participants of `roomId` are: `{ type: "Count" }`,
+   * `{ type: "Page", cursor, pageSize }` or `{ type: "ByIds",
+   * participantIds }`. Gives the `ok` of the answer.
+   */
+  participants(roomId, query, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    return this.#ask({ op: "participants", roomId, query }, timeoutMs);
+  }
+
+  /** Search `roomId` for `text`. Gives the `ok` of the answer. */
+  search(
+    roomId,
+    text,
+    { cursor = null, timeoutMs = DEFAULT_TIMEOUT_MS } = {},
+  ) {
+    return this.#ask({ op: "search", roomId, text, cursor }, timeoutMs);
   }
 
   /**
