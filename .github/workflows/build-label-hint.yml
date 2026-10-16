@@ -65,7 +65,7 @@ jobs:
                 label: 'ios-simulator-build',
                 name: 'iOS simulator build',
                 path: /^(hosts\/ios\/|ios\/|Package\.swift$)/,
-                what: 'builds the iOS app, runs its tests and attaches a build for the iOS Simulator on a Mac',
+                what: 'builds the iOS app and attaches a build for the iOS Simulator on a Mac; its unit tests run on every pull request',
               },
               {
                 label: 'ios-device-build',
