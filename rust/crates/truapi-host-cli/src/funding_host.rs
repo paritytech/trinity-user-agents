@@ -38,7 +38,7 @@ use truapi::{
 	SigningHostRuntime, current_unix_millis,
 	host_logic::{
 		funding::{CancelTerms, FundingCancel, FundingSession, FundingStage},
-		funding_providers::FundingProviderEntry,
+		funding_providers::{FundingProviderEntry, FundingProviderOrigin},
 	},
 	latest::{
 		FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget, FundingQuoteAsk,
@@ -57,7 +57,7 @@ use crate::transcript::Transcript;
 
 /// Worker manifest every scripted provider publishes: card in, and crypto in
 /// and out, quoted by its worker.
-const SCRIPTED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}]}}}"#;
+const SCRIPTED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"],"networks":["polkadot"]}]}}}"#;
 
 /// Offer each product named in `TRUAPI_FUNDING_PROVIDERS` (comma-separated)
 /// as a funding provider publishing [`SCRIPTED_PROVIDER_MANIFEST`], seeded
@@ -85,6 +85,7 @@ pub async fn offer_scripted_providers(
 		providers.push(FundingProviderEntry {
 			product_id: product_id.to_string(),
 			worker_manifest: Some(SCRIPTED_PROVIDER_MANIFEST.to_string()),
+			origin: FundingProviderOrigin::Published,
 		});
 	}
 	runtime
@@ -95,14 +96,15 @@ pub async fn offer_scripted_providers(
 /// The ask a scripted session is quoted on: a card payment in EUR inbound,
 /// USDT outbound, as [`SCRIPTED_PROVIDER_MANIFEST`] serves them.
 fn scripted_ask(direction: FundingDirection, amount: Option<u128>) -> FundingQuoteAsk {
-	let (rail, asset) = match direction {
-		FundingDirection::In => (FundingRail::Card, "EUR"),
-		FundingDirection::Out => (FundingRail::Crypto, "USDT"),
+	let (rail, asset, network) = match direction {
+		FundingDirection::In => (FundingRail::Card, "EUR", None),
+		FundingDirection::Out => (FundingRail::Crypto, "USDT", Some("polkadot".to_string())),
 	};
 	FundingQuoteAsk {
 		direction,
 		rail,
 		asset: asset.to_string(),
+		network,
 		amount: amount.unwrap_or(1_000),
 		country: None,
 	}
@@ -429,6 +431,14 @@ impl FundingPlatform for CliFundingHost {
 		Ok(outcome)
 	}
 
+	/// The country `TRUAPI_FUNDING_COUNTRY` names, as a scripted device
+	/// would detect it.
+	async fn detected_country(&self) -> Option<String> {
+		std::env::var("TRUAPI_FUNDING_COUNTRY")
+			.ok()
+			.filter(|country| !country.is_empty())
+	}
+
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
 		let (tag, amount) = match status {
 			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),
@@ -436,11 +446,19 @@ impl FundingPlatform for CliFundingHost {
 			HostFundingStatusSubscribeItem::Released { debited } => ("Released", Some(debited)),
 			HostFundingStatusSubscribeItem::Failed { .. } => ("Failed", None),
 		};
+		// The core's own status, which shows what the product's item does
+		// not, such as a withdrawal cancelled after its release.
+		let progress = self
+			.runtime
+			.upgrade()
+			.and_then(|runtime| runtime.funding_progress(&intent))
+			.map(|progress| format!("{:?}", progress.status));
 		self.transcript.record(serde_json::json!({
 			"kind": "status",
 			"intent": intent,
 			"tag": tag,
 			"amount": amount.map(|amount| amount.to_string()),
+			"progress": progress,
 		}));
 	}
 }

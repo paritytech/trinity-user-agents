@@ -18,7 +18,7 @@ use std::{
 	},
 };
 
-use truapi::latest::FundingDirection;
+use truapi::latest::{FundingDirection, FundingRail};
 
 use futures::lock::Mutex as AsyncMutex;
 use parity_scale_codec::{Decode, Encode};
@@ -30,7 +30,10 @@ use super::{
 use crate::{
 	host_logic::{
 		funding::FundingSessionError,
-		funding_providers::{FundingCandidate, FundingProviderEntry, LearnedSupport},
+		funding_providers::{
+			FundingAmountLimits, FundingCandidate, FundingCountry, FundingProviderEntry,
+			FundingProviderOrigin, LearnedSupport, LimitScope, amount_limits, country_support,
+		},
 		worker_manifest::WorkerManifest,
 	},
 	platform::{CoreStorageKey, ProductContext, ProductExecutionKind},
@@ -43,6 +46,7 @@ use crate::{
 struct OfferedProvider {
 	product_id: String,
 	snapshot: Option<WorkerManifest>,
+	origin: FundingProviderOrigin,
 }
 
 /// The host's funding providers and what each one serves.
@@ -138,11 +142,35 @@ impl FundingProviders {
 
 	/// Record what an answer showed, replacing what was known for the same
 	/// ask and dropping what is no longer trusted.
-	fn learn(&self, support: LearnedSupport) {
+	fn learn(&self, mut support: LearnedSupport) {
 		let mut learned = lock(&self.learned);
 		let now_ms = support.learned_at_ms;
+		if let Some(known) =
+			learned.iter().find(|known| known.is_fresh(now_ms) && known.same_ask(&support))
+		{
+			support.keep_limits_of(known);
+		}
 		learned.retain(|known| known.is_fresh(now_ms) && !known.same_ask(&support));
 		learned.push(support);
+	}
+
+	/// The amounts a session can take in `scope`, across every provider a
+	/// quote is asked of.
+	pub fn amount_limits(&self, scope: LimitScope<'_>) -> FundingAmountLimits {
+		let learned = lock(&self.learned).clone();
+		amount_limits(&self.quote_targets(), &learned, scope, current_unix_millis())
+	}
+
+	/// What the providers' manifests and recent quote answers say about each
+	/// country for `direction`, `rail` and `asset`.
+	pub fn countries(
+		&self,
+		direction: FundingDirection,
+		rail: FundingRail,
+		asset: &str,
+	) -> Vec<FundingCountry> {
+		let learned = lock(&self.learned).clone();
+		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
 	}
 
 	/// Whether a session can be handed to `provider_id`: it is a quote target.
@@ -150,9 +178,13 @@ impl FundingProviders {
 		self.quote_targets().iter().any(|target| target == provider_id)
 	}
 
-	/// The manifest the core goes by for `entry`: dotNS's answer once it has
-	/// one, the host's snapshot until then.
+	/// The manifest the core goes by for `entry`: the host's for a bundled
+	/// provider; otherwise dotNS's answer once it has one, the host's
+	/// snapshot until then.
 	fn manifest(&self, entry: &OfferedProvider) -> Option<WorkerManifest> {
+		if entry.origin == FundingProviderOrigin::Bundled {
+			return entry.snapshot.clone();
+		}
 		match lock(&self.live).get(&entry.product_id) {
 			Some(live) => live.clone(),
 			None => entry.snapshot.clone(),
@@ -200,7 +232,10 @@ impl RuntimeServices {
 			services.load_learned_support(&mut loaded).await;
 		}));
 		let entries = lock(&self.funding_providers().entries).clone();
-		for entry in entries {
+		for entry in entries
+			.into_iter()
+			.filter(|entry| entry.origin == FundingProviderOrigin::Published)
+		{
 			if !lock(&self.funding_providers().refreshing).insert(entry.product_id.clone()) {
 				continue;
 			}
@@ -323,8 +358,13 @@ fn offered_providers(
 			.map_err(|reason| FundingSessionError::InvalidProvider {
 				reason: format!("{product_id}: {reason}"),
 			})?;
+		if entry.origin == FundingProviderOrigin::Bundled && snapshot.is_none() {
+			return Err(FundingSessionError::InvalidProvider {
+				reason: format!("{product_id}: a bundled provider needs its manifest"),
+			});
+		}
 		if offered.iter().all(|kept| kept.product_id != product_id) {
-			offered.push(OfferedProvider { product_id, snapshot });
+			offered.push(OfferedProvider { product_id, snapshot, origin: entry.origin });
 		}
 	}
 	Ok(offered)
@@ -363,6 +403,7 @@ mod tests {
 				.map(|(product_id, worker_manifest)| FundingProviderEntry {
 					product_id: product_id.to_string(),
 					worker_manifest: worker_manifest.clone(),
+					origin: FundingProviderOrigin::Published,
 				})
 				.collect(),
 		)
@@ -404,6 +445,28 @@ mod tests {
 		);
 	}
 
+	// A provider the host ships in the app is never published, so dotNS
+	// answering "nothing" must not drop it the way it drops a listed one.
+	#[test]
+	fn a_bundled_provider_keeps_the_hosts_manifest() {
+		let providers = providers(&[("listed.dot", Some(manifest(CARD_IN)))]);
+		lock(&providers.entries).extend(
+			offered_providers(vec![FundingProviderEntry {
+				product_id: "bundled.dot".to_string(),
+				worker_manifest: Some(manifest(CARD_IN)),
+				origin: FundingProviderOrigin::Bundled,
+			}])
+			.expect("offered"),
+		);
+		lock(&providers.live)
+			.extend([("listed.dot".to_string(), None), ("bundled.dot".to_string(), None)]);
+
+		assert_eq!(
+			ids(providers.candidates(FundingDirection::In)),
+			vec!["bundled.dot".to_string()]
+		);
+	}
+
 	// A snapshot the core cannot read is the host's mistake, so it is refused
 	// when offered rather than leaving the provider silently missing.
 	#[test]
@@ -412,6 +475,7 @@ mod tests {
 			offered_providers(vec![FundingProviderEntry {
 				product_id: "card.dot".to_string(),
 				worker_manifest: Some(worker_manifest.to_string()),
+				origin: FundingProviderOrigin::Published,
 			}])
 			.map(|offered| offered.len())
 			.map_err(|error| matches!(error, FundingSessionError::InvalidProvider { .. }))
@@ -486,6 +550,46 @@ mod tests {
 				ids(providers.candidates(FundingDirection::Out)),
 			),
 			(vec!["unshipped.dot".to_string()], vec!["changed.dot".to_string()])
+		);
+	}
+
+	// A limit stands on its own clock: a later quote does not renew it, and a
+	// quote at an amount below a known minimum shows that minimum is gone.
+	#[test]
+	fn a_limit_ages_on_its_own_and_a_lower_quote_clears_it() {
+		use crate::host_logic::funding_providers::{LEARNED_SUPPORT_TTL_MS, LearnedLimit};
+		let ask = |asked, min: Option<u128>, at_ms| LearnedSupport {
+			provider_id: "ramp.dot".to_string(),
+			direction: FundingDirection::In,
+			rail: truapi::latest::FundingRail::Card,
+			asset: "EUR".to_string(),
+			network: None,
+			country: None,
+			asked,
+			supported: true,
+			min: min.map(|amount| LearnedLimit { amount, learned_at_ms: at_ms }),
+			max: None,
+			learned_at_ms: at_ms,
+		};
+		let min_after = |answers: &[LearnedSupport]| {
+			let providers = FundingProviders::default();
+			for answer in answers {
+				providers.learn(answer.clone());
+			}
+			lock(&providers.learned)
+				.iter()
+				.map(|known| known.min.map(|min| min.amount))
+				.collect::<Vec<_>>()
+		};
+		let later = LEARNED_SUPPORT_TTL_MS - 1;
+
+		assert_eq!(
+			(
+				min_after(&[ask(5, Some(10), 1_000), ask(20, None, 2_000)]),
+				min_after(&[ask(5, Some(10), 1_000), ask(8, None, 2_000)]),
+				min_after(&[ask(5, Some(10), 1_000), ask(20, None, 1_000 + later + 2)]),
+			),
+			(vec![Some(10)], vec![None], vec![None])
 		);
 	}
 

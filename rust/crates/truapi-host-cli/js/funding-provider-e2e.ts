@@ -40,6 +40,7 @@ const OUT_AMOUNT = 500n;
 const CANCEL_AMOUNT = 300n;
 const OFFER_AMOUNT = 250n;
 const LATE_AMOUNT = 200n;
+const RELEASED_CANCEL_AMOUNT = 400n;
 const CANCEL_FEE = 3n;
 
 function randomId(): HexString {
@@ -114,6 +115,7 @@ function serve(client: TrUApiClient): Served {
               providerFee: 0n,
               networkFee: 0n,
               etaSecs: 60n,
+              assetDecimals: 2,
             },
           },
         },
@@ -192,6 +194,7 @@ export async function runProviderStart(
   const check = rowFactory(rows);
   const served = serve(client);
   let inbound = "";
+  let outbound = "";
   let state: ProviderState | undefined;
 
   await check("provider_assigned", async () => {
@@ -278,7 +281,7 @@ export async function runProviderStart(
           tag: "Crypto",
           value: {
             address: "0x0000000000000000000000000000000000000001",
-            network: "Ethereum",
+            network: "polkadot",
             asset: "USDT",
             amount: 1_000n,
             decimals: 6,
@@ -346,7 +349,7 @@ export async function runProviderStart(
   });
 
   await check("provider_out_released", async () => {
-    const outbound = await requestFunding(client, "Out", OUT_AMOUNT);
+    outbound = await requestFunding(client, "Out", OUT_AMOUNT);
     await served.next(assignedTo(outbound), `the session ${outbound}`);
     const paymentId = randomId();
     const paid = await client.payment.request({
@@ -366,6 +369,27 @@ export async function runProviderStart(
       throw new Error(`ended as ${stringify(last)}`);
     }
     return "the core released the session once the named payment completed";
+  });
+
+  await check("provider_payout_retrying", async () => {
+    if (!outbound) throw new Error("no released withdrawal");
+    await report(client, outbound, { tag: "Converting" });
+    await report(client, outbound, { tag: "PayoutRetrying" });
+    await report(client, outbound, { tag: "PayoutRetrying" });
+    await report(client, outbound, {
+      tag: "Payout",
+      value: { outcome: { tag: "PaidOut" } },
+    });
+    const late = await client.fundingProvider.report({
+      intent: outbound,
+      update: { tag: "PayoutRetrying" },
+    });
+    if (!late.isErr() || !stringify(late.error).includes("OutOfOrder")) {
+      throw new Error(
+        `a retry after the payout was not refused: ${stringify(late)}`,
+      );
+    }
+    return "retries were taken after the release, and refused once the payout was reported";
   });
 
   await check("provider_cancel", async () => {
@@ -465,6 +489,70 @@ export async function runProviderStart(
       throw new Error(`ended as ${stringify(last)}`);
     }
     return "a cancel after the credit started was too late, and the session was delivered";
+  });
+
+  await check("provider_cancel_refund_after_release", async () => {
+    const intent = await requestFunding(client, "Out", RELEASED_CANCEL_AMOUNT);
+    await served.next(assignedTo(intent), `the session ${intent}`);
+    const paymentId = randomId();
+    const paid = await client.payment.request({
+      amount: RELEASED_CANCEL_AMOUNT,
+      destination: `0x${"11".repeat(32)}`,
+      id: paymentId,
+    });
+    if (paid.isErr()) {
+      throw new Error(`payment.request failed: ${stringify(paid.error)}`);
+    }
+    await served.next(
+      (item) => item.tag === "Cancel" && item.value.intent === intent,
+      `a cancel of ${intent}`,
+    );
+    await report(client, intent, {
+      tag: "Collecting",
+      value: { paymentId, amount: RELEASED_CANCEL_AMOUNT },
+    });
+    const released = await lastStatus(client, intent);
+    if (
+      released?.tag !== "Released" ||
+      released.value.debited !== RELEASED_CANCEL_AMOUNT
+    ) {
+      throw new Error(`was not released: ${stringify(released)}`);
+    }
+    const refund = RELEASED_CANCEL_AMOUNT - CANCEL_FEE;
+    await report(client, intent, {
+      tag: "CancelOffer",
+      value: { fee: CANCEL_FEE, refund },
+    });
+    await served.next(
+      (item) => item.tag === "CancelAccepted" && item.value.intent === intent,
+      `the user accepting the offer on ${intent}`,
+    );
+    const topUpId = randomId();
+    const toppedUp = await client.payment.topUp({
+      amount: refund,
+      source: {
+        tag: "ProductAccount",
+        value: { derivationIndex: { tag: "Index", value: 0 } },
+      },
+      id: topUpId,
+    });
+    if (toppedUp.isErr()) {
+      throw new Error(`payment.topUp failed: ${stringify(toppedUp.error)}`);
+    }
+    await report(client, intent, {
+      tag: "Refunding",
+      value: { topUpId, amount: refund },
+    });
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "status" &&
+        line.intent === intent &&
+        typeof line.progress === "string" &&
+        line.progress.startsWith(`Cancelled { refunded: Some(${refund})`),
+      `${intent} ending cancelled with its refund`,
+    );
+    return "a released withdrawal the user cancelled on the provider's terms was refunded less the fee";
   });
 
   served.close();

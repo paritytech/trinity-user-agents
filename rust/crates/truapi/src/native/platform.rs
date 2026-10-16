@@ -718,12 +718,16 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
+	async fn detected_country(&self) -> Option<String> {
+		self.funding.detected_country().await
+	}
+
 	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
 		self.funding.funding_session_changed(intent, status);
 	}
 
-	fn funding_quote_changed(&self, intent: String, row: crate::platform::FundingQuoteRow) {
-		self.funding.funding_quote_changed(intent, row);
+	fn funding_quotes_changed(&self, intent: String, quotes: crate::platform::FundingQuoteList) {
+		self.funding.funding_quotes_changed(intent, quotes);
 	}
 }
 

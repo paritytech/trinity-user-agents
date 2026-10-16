@@ -115,6 +115,12 @@ pub struct FundingRegistry {
 	services: Weak<RuntimeServices>,
 }
 
+/// Whether a provider still works on `session`: it serves it, or still owes
+/// the user for it.
+fn provider_works_on(session: &FundingSession) -> bool {
+	session.provider_id.is_some() && session.serves_provider()
+}
+
 impl FundingRegistry {
 	/// Install the host's funding surface. Set-once; returns whether this call
 	/// installed it.
@@ -164,7 +170,8 @@ impl FundingRegistry {
 	}
 
 	/// The sessions assigned to `provider_id` and what the user asked of
-	/// them. Opening the stream replays every session still in flight, oldest
+	/// them. Opening the stream replays every session the provider still
+	/// works on, including a released withdrawal awaiting its payout, oldest
 	/// first, each followed by its pending cancel request or answer, then
 	/// every quote ask still unanswered; later items follow in the order they
 	/// happen. An item can repeat, as each
@@ -177,7 +184,7 @@ impl FundingRegistry {
 			let mut assigned: Vec<&FundingSession> = sessions
 				.values()
 				.filter(|session| {
-					!session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
+					session.serves_provider() && session.provider_id.as_deref() == Some(provider_id)
 				})
 				.collect();
 			assigned.sort_by_key(|session| session.opened_at_ms);
@@ -254,8 +261,8 @@ impl FundingRegistry {
 	}
 
 	/// Store `update` from `provider` on session `intent`. Funds a
-	/// `Crediting` or `Collecting` update names are used up: no other session
-	/// of the provider can name them after.
+	/// `Crediting`, `Collecting` or `Refunding` update names are used up: no
+	/// other session of the provider can name them after.
 	pub async fn report(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -289,9 +296,11 @@ impl FundingRegistry {
 	}
 
 	/// Record funds `provider_id` started under `host_id`, so a report can
-	/// name them: on the one open session it serves in `direction` whose
-	/// amount is `amount`, when exactly one is, and otherwise on every such
-	/// session, since a top-up does not say which session it is for. Returns
+	/// name them: on the one session it serves in `direction` whose amount
+	/// is `amount`, when exactly one is, and otherwise on every such
+	/// session, since a top-up does not say which session it is for. A
+	/// withdrawal whose payout failed takes top-ups too, as its refund, and
+	/// asks for what it debited. Returns
 	/// whether any session recorded them.
 	pub async fn record_start(
 		&self,
@@ -304,13 +313,16 @@ impl FundingRegistry {
 	) -> Result<bool, FundingSessionError> {
 		self.commit(storage, now_ms, |sessions| {
 			let served = |session: &FundingSession| {
-				!session.is_terminal() &&
-					session.direction == direction &&
-					session.provider_id.as_deref() == Some(provider_id)
+				session.provider_id.as_deref() == Some(provider_id) &&
+					((!session.is_terminal() && session.direction == direction) ||
+						(direction == FundingDirection::In && session.awaits_refund()))
+			};
+			let asks = |session: &FundingSession| {
+				session.refund_due().or(session.amount).unwrap_or_default()
 			};
 			let matching: Vec<String> = sessions
 				.values()
-				.filter(|session| served(session) && session.amount == Some(amount))
+				.filter(|session| served(session) && asks(session) == amount)
 				.map(|session| session.intent.clone())
 				.collect();
 			let mut recorded = false;
@@ -365,16 +377,37 @@ impl FundingRegistry {
 		.await
 	}
 
-	/// Whether open session `intent` is assigned to `provider_id`.
+	/// Whether session `intent` is assigned to `provider_id` and still has
+	/// work for it: open, or released and awaiting its payout outcome.
 	pub fn is_serving(&self, provider_id: &str, intent: &str) -> bool {
 		self.get(intent).is_some_and(|session| {
-			!session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
+			session.serves_provider() && session.provider_id.as_deref() == Some(provider_id)
 		})
 	}
 
 	/// Snapshot one session.
 	pub fn get(&self, intent: &str) -> Option<FundingSession> {
 		self.lock_sessions().get(intent).cloned()
+	}
+
+	/// Whether a provider still works on any session: one in flight, or a
+	/// withdrawal whose payout or refund it has not reported.
+	pub fn in_progress(&self) -> bool {
+		self.lock_sessions().values().any(provider_works_on)
+	}
+
+	/// [`Self::in_progress`], reading storage when the sessions are not
+	/// loaded yet. It writes nothing back and starts nothing.
+	pub async fn in_progress_stored(
+		&self,
+		storage: &(impl CoreStorage + ?Sized),
+	) -> Result<bool, FundingSessionError> {
+		let loaded = self.writes.lock().await;
+		if *loaded {
+			return Ok(self.in_progress());
+		}
+		drop(loaded);
+		Ok(load_sessions(storage).await?.iter().any(provider_works_on))
 	}
 
 	/// Every session the user started that the host still has to hear of, for
@@ -677,7 +710,7 @@ impl FundingRegistry {
 					)
 				}));
 			}
-			if session.is_terminal() {
+			if !session.serves_provider() {
 				session.saved = None;
 			}
 		}
@@ -759,7 +792,7 @@ impl FundingRegistry {
 				.collect();
 			let assigned: HashMap<String, String> = sessions
 				.values()
-				.filter(|session| !session.is_terminal())
+				.filter(|session| session.serves_provider())
 				.filter_map(|session| Some((session.intent.clone(), session.provider_id.clone()?)))
 				.collect();
 			let due: Vec<(String, String, Settlement)> = sessions
@@ -1122,6 +1155,13 @@ impl RuntimeServices {
 			.await
 	}
 
+	/// Whether a provider still works on any session, once the stored
+	/// sessions are loaded: a host asking at launch, before funding resumes,
+	/// gets the answer from storage rather than an empty registry.
+	pub async fn funding_in_progress(&self) -> Result<bool, FundingSessionError> {
+		self.funding().in_progress_stored(self.platform.as_ref()).await
+	}
+
 	/// Record that the host wrote ended session `intent` into its own
 	/// history. Returns whether it was ended and not yet acknowledged.
 	pub async fn acknowledge_funding_session(
@@ -1209,8 +1249,8 @@ impl RuntimeServices {
 			.await
 	}
 
-	/// Follow a session's top-ups or payment to the end, then settle it with
-	/// what moved, from the amounts the provider started them with.
+	/// Follow a session's top-ups, payment or refund to the end, then settle
+	/// it with what moved, from the amounts the provider started them with.
 	fn follow_settlement(
 		self: Arc<Self>,
 		intent: String,
@@ -1230,6 +1270,7 @@ impl RuntimeServices {
 						return;
 					},
 				};
+			let refund = matches!(settlement, Settlement::Refund(_));
 			let moved = match settlement {
 				Settlement::TopUps(top_ups) => {
 					let mut credited: Option<u128> = Some(0);
@@ -1248,15 +1289,22 @@ impl RuntimeServices {
 				Settlement::Payment(funds) => {
 					self.follow_funds(&provider, &intent, FundingDirection::Out, &funds).await
 				},
+				Settlement::Refund(funds) => {
+					self.follow_funds(&provider, &intent, FundingDirection::In, &funds).await
+				},
 			};
 			if let Some(moved) = moved {
 				let settling = intent.clone();
 				let settled = registry
 					.commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
 						let now_ms = current_unix_millis();
-						let settled = sessions
-							.get_mut(&settling)
-							.is_some_and(|session| session.settle(moved, now_ms));
+						let settled = sessions.get_mut(&settling).is_some_and(|session| {
+							if refund {
+								session.settle_refund(moved)
+							} else {
+								session.settle(moved, now_ms)
+							}
+						});
 						((), if settled { vec![settling] } else { Vec::new() })
 					})
 					.await;
@@ -1269,8 +1317,8 @@ impl RuntimeServices {
 	}
 
 	/// What `funds` moved, read again after a growing wait until the host
-	/// reports an outcome. `None` once session `intent` is no longer open or
-	/// the host has no engine to ask.
+	/// reports an outcome. `None` once session `intent` has nothing left to
+	/// settle or the host has no engine to ask.
 	async fn follow_funds(
 		&self,
 		provider: &ProductContext,
@@ -1303,7 +1351,11 @@ impl RuntimeServices {
 			}
 			futures_timer::Delay::new(retry_in).await;
 			retry_in = (retry_in * 2).min(FOLLOW_RETRY_LONGEST);
-			if self.funding().get(intent).is_none_or(|session| session.is_terminal()) {
+			if self
+				.funding()
+				.get(intent)
+				.is_none_or(|session| session.settlement_due().is_none())
+			{
 				return None;
 			}
 		}
@@ -1461,7 +1513,7 @@ fn unknown_for_good(funds: &StartedFunds, now_ms: u64) -> bool {
 mod tests {
 	use super::*;
 
-	use futures::executor::block_on;
+	use futures::{FutureExt, executor::block_on};
 	use truapi::latest::FundingFailure;
 
 	use crate::{
@@ -1588,6 +1640,41 @@ mod tests {
 		);
 	}
 
+	// A provider that restarts after a withdrawal was released must still be
+	// handed it, or it could never report how the payout went; once it has,
+	// there is nothing left for it to do.
+	#[test]
+	fn a_released_withdrawal_is_served_until_its_payout_is_reported() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		let mut released =
+			FundingSession { direction: FundingDirection::Out, ..session("fs_out", NOW) };
+		assert!(released.assign("ramp.dot", None, NOW));
+		released.updates.push(crate::host_logic::funding::FundingUpdateRecord {
+			update: FundingUpdate::Collecting { payment_id: [4; 32], amount: 100 },
+			at_ms: NOW,
+		});
+		assert!(released.settle(100, NOW));
+		insert(&registry, storage.as_ref(), released);
+		let first_served = || match registry.serve("ramp.dot").next().now_or_never().flatten() {
+			Some(HostFundingServeSubscribeItem::Assigned { session }) => Some(session.intent),
+			_ => None,
+		};
+
+		let before = first_served();
+		let reported = block_on(registry.report(
+			storage.as_ref(),
+			NOW + 1,
+			&worker("ramp.dot"),
+			"fs_out",
+			FundingUpdate::Payout { outcome: truapi::latest::FundingPayout::PaidOut },
+		))
+		.expect("stored");
+		let after = first_served();
+
+		assert_eq!((before, reported, after), (Some("fs_out".to_string()), Ok(()), None));
+	}
+
 	fn worker(provider_id: &str) -> ProductContext {
 		ProductContext::new_with_execution(provider_id.to_string(), ProductExecutionKind::Worker)
 			.expect("test provider id is valid")
@@ -1635,6 +1722,55 @@ mod tests {
 		};
 
 		assert_eq!((started("fs_fifty"), started("fs_thirty")), (vec![1, 2], vec![2]));
+	}
+
+	// A withdrawal whose payout failed is refunded with a top-up, so it takes
+	// top-ups like an inbound session does, and its amount picks it.
+	#[test]
+	fn a_refund_top_up_goes_to_the_withdrawal_whose_payout_failed() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		let mut inbound = session("fs_in", NOW);
+		assert!(inbound.assign("ramp.dot", None, NOW));
+		insert(&registry, storage.as_ref(), inbound);
+		let mut withdrawal =
+			FundingSession { direction: FundingDirection::Out, ..session("fs_out", NOW) };
+		assert!(withdrawal.assign("ramp.dot", None, NOW));
+		withdrawal.record_start([4; 32], 80);
+		withdrawal
+			.report(
+				"ramp.dot",
+				FundingUpdate::Collecting { payment_id: [4; 32], amount: 80 },
+				|id| *id,
+				NOW,
+			)
+			.expect("collecting");
+		assert!(withdrawal.settle(80, NOW));
+		let failed = truapi::latest::FundingPayout::Failed { reason: "card closed".to_string() };
+		withdrawal
+			.report("ramp.dot", FundingUpdate::Payout { outcome: failed }, |id| *id, NOW)
+			.expect("payout");
+		insert(&registry, storage.as_ref(), withdrawal);
+
+		let recorded = block_on(registry.record_start(
+			storage.as_ref(),
+			NOW,
+			"ramp.dot",
+			FundingDirection::In,
+			[7; 32],
+			80,
+		))
+		.expect("recorded");
+		let started = |intent: &str| {
+			registry
+				.get(intent)
+				.expect("kept")
+				.started
+				.iter()
+				.any(|record| record.host_id == [7; 32])
+		};
+
+		assert_eq!((recorded, started("fs_out"), started("fs_in")), (true, true, false));
 	}
 
 	// A top-up settles one session once, from the amount it was started with:

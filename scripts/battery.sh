@@ -261,7 +261,7 @@ funding_phase() {
   export TRUAPI_FUNDING_LOG="$ROOT/$LOG_DIR/funding-host-transcript.jsonl"
   # One outcome per request the cases make, in order; see funding-e2e.ts and
   # funding-provider-e2e.ts.
-  export TRUAPI_FUNDING_OUTCOMES="deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel,provide-cancel-moved,provide-cancel-moved"
+  export TRUAPI_FUNDING_OUTCOMES="deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel,provide-cancel-moved,provide-cancel-moved,provide-cancel-moved"
   # The scripted top-up and payment engines' record, kept across the restart.
   export TRUAPI_FUNDING_LEDGER="$ROOT/$LOG_DIR/funding-host-ledger.jsonl"
   # The product the cases run as is also the provider they choose.

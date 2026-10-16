@@ -52,8 +52,15 @@ pub enum FundingFailure {
 	/// release.
 	#[codec(index = 9)]
 	Cancelled,
-	/// Outcome not covered above. A client shows `message`, except for the
-	/// codes the core sets itself, which it may show in its own words.
+	/// The provider returned the user's payment instead of crediting it.
+	#[codec(index = 11)]
+	Refunded,
+	/// The user's bank or card issuer refused the payment.
+	#[codec(index = 12)]
+	Declined,
+	/// Outcome not covered by the other variants. A client shows `message`,
+	/// except for the codes the core sets itself, which it may show in its
+	/// own words.
 	#[codec(index = 10)]
 	Other {
 		/// Stable machine-readable code. The core sets `not_claimed` when
