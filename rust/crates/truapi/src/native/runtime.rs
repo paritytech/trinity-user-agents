@@ -2098,6 +2098,53 @@ mod tests {
         );
     }
 
+	/// Rows a previous process left live are decided by recovery, so the
+	/// host has to be asked for its background task as soon as the runtime
+	/// exists.
+	#[test]
+	fn durable_work_left_by_a_previous_process_is_reported_at_startup() {
+		let dir = tempfile::tempdir().unwrap();
+		let previous = futures::executor::block_on(Db::open(core_db_config(dir.path()))).unwrap();
+		futures::executor::block_on(previous.write(|tx| {
+			tx.execute(
+				"INSERT INTO durable_tx (domain, tx_hash, birth_number, birth_hash, period, status)
+                 VALUES ('nft', zeroblob(32), 0, zeroblob(32), 64, 'PENDING')",
+				[],
+			)?;
+			Ok(())
+		}))
+		.unwrap();
+		futures::executor::block_on(previous.close()).unwrap();
+		let callbacks = Arc::new(EventCallbacks::new());
+
+		let _host = NativeTrUApiHostRuntime::with_runtime_config(
+			callbacks.clone(),
+			HostRuntimeConfig {
+				database_directory: dir.path().to_string_lossy().into_owned(),
+				..native_host_runtime_config()
+			},
+			None,
+		)
+		.expect("host runtime config should be valid");
+
+		crate::test_support::wait_until(
+			|| *callbacks.durable_work.lock().unwrap() == vec![true],
+			"the host is told durable work is pending",
+		);
+	}
+
+	#[test]
+	fn durable_recovery_returns_once_nothing_is_live() {
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+			None,
+		)
+		.expect("host runtime config should be valid");
+
+		assert!(futures::executor::block_on(host.run_durable_recovery()).is_ok());
+	}
+
     #[test]
     fn a_missing_database_directory_fails_runtime_creation() {
         // A wrong directory must stop the host at startup, not surface later

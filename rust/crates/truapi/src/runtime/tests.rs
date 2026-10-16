@@ -10554,6 +10554,7 @@ fn scanner_host_for(
 		host_config.asset_hub_chain_genesis_hash,
 		test_spawner(),
 		None,
+		None,
 	);
 	if let Some(scanner) = scanner {
 		services.install_scanner_platform(scanner);
