@@ -85,10 +85,11 @@ export interface OpenProductOptions {
    */
   mounted?: boolean;
   /**
-   * What the core treats the frame as: the product's app (the default), or
-   * its worker executable, which alone may reach Chat and the renderer.
+   * What the core treats the frame as: the product's app (the default), its
+   * widget, which an opened Pocket card runs, or its worker executable, which
+   * alone may reach Chat and the renderer.
    */
-  executionKind?: "App" | "Worker";
+  executionKind?: "App" | "Widget" | "Worker";
 }
 
 /**

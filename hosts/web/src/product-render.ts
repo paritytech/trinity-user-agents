@@ -34,15 +34,15 @@ export const MAX_NODES = 2000;
 const MAX_LENGTH = 2000;
 
 const COLORS: Record<ColorToken, string> = {
-  FgPrimary: "var(--chat-primary)",
-  FgSecondary: "var(--chat-secondary)",
-  FgTertiary: "var(--chat-tertiary)",
-  BgSurfaceMain: "var(--chat-bg)",
-  BgSurfaceContainer: "var(--chat-surface)",
-  BgSurfaceNested: "var(--chat-surface-raised)",
-  FgSuccess: "var(--chat-success)",
-  FgError: "var(--chat-danger)",
-  FgWarning: "var(--chat-warning)",
+  FgPrimary: "var(--pr-primary)",
+  FgSecondary: "var(--pr-secondary)",
+  FgTertiary: "var(--pr-tertiary)",
+  BgSurfaceMain: "var(--pr-bg)",
+  BgSurfaceContainer: "var(--pr-surface)",
+  BgSurfaceNested: "var(--pr-surface-raised)",
+  FgSuccess: "var(--pr-success)",
+  FgError: "var(--pr-danger)",
+  FgWarning: "var(--pr-warning)",
 };
 
 const TYPOGRAPHY: Record<TypographyStyle, string> = {

@@ -6,7 +6,7 @@ import { openProduct, type OpenProduct } from "./product.js";
 import { archiveCacheName, fileKey } from "./sandbox/files.js";
 import { loaderUrl, mountScope } from "./sandbox/mount.js";
 import { WORKER_SHELL, archivePath, contentTypeOf } from "./sandbox/serve.js";
-import type { ResolvedWorker } from "./worker-manifest.js";
+import type { ResolvedWorker, WorkerManifest } from "./worker-manifest.js";
 
 /**
  * The product workers the user added, run while their wallet is signed in.
@@ -17,6 +17,9 @@ import type { ResolvedWorker } from "./worker-manifest.js";
  * as the product's `Worker` execution. The product id is the name, the one
  * its app opens under, so the two share the product's storage and accounts.
  *
+ * Pocket can hold a product's worker too, to draw a card. A product has one
+ * worker whatever holds it, and it runs while anything does.
+ *
  * The list is kept per network and wallet. Signing out, switching wallet or
  * network, or a reload stops every worker; signing in starts the saved ones.
  * A worker runs on this host's origin, as a product opened by name does, so
@@ -25,8 +28,17 @@ import type { ResolvedWorker } from "./worker-manifest.js";
 
 export type WorkerState =
   | { state: "starting" }
-  | { state: "running"; manifest: ResolvedWorker["manifest"]; cid: string }
+  | {
+      state: "running";
+      manifest: WorkerManifest;
+      /** The record the worker was read from, such as `worker.myapp.paseo`. */
+      record: string;
+      cid: string;
+    }
   | { state: "failed"; reason: string };
+
+/** What a worker runs for: Chat's list of workers, or a card in Pocket. */
+export type WorkerSurface = "chat" | "pocket";
 
 export interface WorkerSession {
   walletId: string;
@@ -51,6 +63,10 @@ interface Running {
   handle: OpenProduct | null;
   cid: string | null;
   images: Map<string, string>;
+  /** Why the worker does not serve a surface that wants it. */
+  refusals: Map<WorkerSurface, string>;
+  /** Settles once the start that made this entry has run or failed. */
+  ready: Promise<void>;
 }
 
 export const workersKey = (network: string, walletId: string): string =>
@@ -63,6 +79,8 @@ export class ProductWorkers {
   private session: WorkerSession | null = null;
   private generation = 0;
   private readonly workers = new Map<string, Running>();
+  /** Products Pocket holds a worker for, with the cards it draws. */
+  private readonly pocketCards = new Map<string, string[]>();
   private readonly listeners = new Set<() => void>();
 
   constructor(private readonly deps: ProductWorkersDeps) {}
@@ -101,8 +119,27 @@ export class ProductWorkers {
     );
   }
 
-  state(name: string): WorkerState | null {
-    return this.workers.get(name)?.state ?? null;
+  /**
+   * The worker's state as `surface` sees it: failed with the reason when the
+   * worker runs for another surface but does not serve this one.
+   */
+  state(name: string, surface: WorkerSurface = "chat"): WorkerState | null {
+    const running = this.workers.get(name);
+    if (running === undefined) return null;
+    const refusal = running.refusals.get(surface);
+    return refusal === undefined
+      ? running.state
+      : { state: "failed", reason: refusal };
+  }
+
+  /** Whether `name`'s worker runs and serves `surface`. */
+  serves(name: string, surface: WorkerSurface): boolean {
+    const running = this.workers.get(name);
+    return (
+      running?.state.state === "running" &&
+      this.wanted(name).has(surface) &&
+      !running.refusals.has(surface)
+    );
   }
 
   /** The running worker's channel to the core, or null. */
@@ -115,7 +152,8 @@ export class ProductWorkers {
 
   /**
    * Follow the signed-in session: stop every worker, then start the saved
-   * ones of the new session, if any.
+   * ones of the new session, if any. Pocket's holds belong to the session
+   * and end with it.
    */
   setSession(session: WorkerSession | null): void {
     if (
@@ -129,9 +167,9 @@ export class ProductWorkers {
     this.changed();
   }
 
-  /** Start the saved workers not running yet, as once the core is up. */
+  /** Start the wanted workers not running yet, as once the core is up. */
   resume(): void {
-    for (const name of this.names())
+    for (const name of new Set([...this.names(), ...this.pocketCards.keys()]))
       if (!this.workers.has(name)) void this.start(name);
   }
 
@@ -142,23 +180,104 @@ export class ProductWorkers {
     if (trimmed === "") throw new Error("Enter a product name.");
     if (!this.names().includes(trimmed))
       this.saveNames([...this.names(), trimmed]);
-    await this.start(trimmed);
+    await this.settle(trimmed);
     const state = this.state(trimmed);
     if (state?.state === "failed") throw new Error(state.reason);
   }
 
-  /** Stop `name`'s worker and remove it from this wallet's list. */
+  /** Take `name` off this wallet's list, and stop its worker unless Pocket still holds it. */
   remove(name: string): void {
-    this.stop(name);
-    this.workers.delete(name);
     this.saveNames(this.names().filter((entry) => entry !== name));
+    void this.settle(name);
+  }
+
+  /**
+   * Run `name`'s worker for Pocket while this session lasts, to draw
+   * `cardIds`. A worker that does not serve Pocket, or does not draw one of
+   * the cards, is not started for it.
+   */
+  holdForPocket(name: string, cardIds: string[]): Promise<void> {
+    if (this.session === null) return Promise.resolve();
+    this.pocketCards.set(name, cardIds);
+    return this.settle(name);
+  }
+
+  /** Stop `name`'s worker for Pocket; it keeps running if Chat lists it. */
+  releaseForPocket(name: string): void {
+    if (!this.pocketCards.delete(name)) return;
+    void this.settle(name);
+  }
+
+  /** The surfaces that want `name`'s worker. */
+  private wanted(name: string): Set<WorkerSurface> {
+    const wanted = new Set<WorkerSurface>();
+    if (this.names().includes(name)) wanted.add("chat");
+    if (this.pocketCards.has(name)) wanted.add("pocket");
+    return wanted;
+  }
+
+  /** Why the worker `record` publishes does not serve each wanted surface. */
+  private refusals(
+    name: string,
+    record: string,
+    manifest: WorkerManifest,
+  ): Map<WorkerSurface, string> {
+    const refusals = new Map<WorkerSurface, string>();
+    const wanted = this.wanted(name);
+    if (wanted.has("chat") && !manifest.includes.chat)
+      refusals.set(
+        "chat",
+        `${record} serves no chat, so this host has nothing to show for it.`,
+      );
+    if (wanted.has("pocket")) {
+      const missing = (this.pocketCards.get(name) ?? []).filter(
+        (card) => !manifest.pocketCards.includes(card),
+      );
+      if (!manifest.includes.pocket)
+        refusals.set("pocket", `${record} serves no Pocket.`);
+      else if (missing.length > 0)
+        refusals.set(
+          "pocket",
+          `${record} draws no ${missing.join(", ")} card in Pocket.`,
+        );
+    }
+    return refusals;
+  }
+
+  /**
+   * Bring `name`'s worker in line with what wants it: stop it when nothing
+   * does, start it when it is not running, and otherwise read again which
+   * surfaces it serves.
+   */
+  private async settle(name: string): Promise<void> {
+    const wanted = this.wanted(name);
+    const running = this.workers.get(name);
+    if (wanted.size === 0) {
+      this.stop(name);
+      this.workers.delete(name);
+      this.changed();
+      return;
+    }
+    if (running === undefined || running.state.state === "failed")
+      return this.start(name);
+    if (running.state.state === "starting") return running.ready;
+    running.refusals = this.refusals(
+      name,
+      running.state.record,
+      running.state.manifest,
+    );
+    if ([...wanted].every((surface) => running.refusals.has(surface))) {
+      const [reason] = running.refusals.values();
+      this.stop(name);
+      running.state = { state: "failed", reason: reason! };
+    }
     this.changed();
   }
 
-  private async start(name: string): Promise<void> {
+  private start(name: string): Promise<void> {
     const session = this.session;
     const runtime = this.deps.runtime();
-    if (session === null || runtime === null) return;
+    if (session === null || runtime === null) return Promise.resolve();
     this.stop(name);
     const running: Running = {
       generation: this.generation,
@@ -166,19 +285,33 @@ export class ProductWorkers {
       handle: null,
       cid: null,
       images: new Map(),
+      refusals: new Map(),
+      ready: Promise.resolve(),
     };
     this.workers.set(name, running);
     this.changed();
+    running.ready = this.run(name, running, session, runtime);
+    return running.ready;
+  }
+
+  private async run(
+    name: string,
+    running: Running,
+    session: WorkerSession,
+    runtime: WorkerPairingHostRuntime,
+  ): Promise<void> {
     const current = () =>
       this.workers.get(name) === running &&
       running.generation === this.generation;
     try {
       const worker = await this.deps.resolve(name, session.network);
       if (!current()) return;
-      if (!worker.manifest.includes.chat)
-        throw new Error(
-          `${worker.record} serves no chat, so this host has nothing to show for it.`,
-        );
+      running.refusals = this.refusals(name, worker.record, worker.manifest);
+      const wanted = this.wanted(name);
+      if ([...wanted].every((surface) => running.refusals.has(surface))) {
+        const [reason] = running.refusals.values();
+        throw new Error(reason);
+      }
       const scope = mountScope(this.deps.base, {
         walletId: session.walletId,
         productId: name,
@@ -223,11 +356,13 @@ export class ProductWorkers {
         running.state = {
           state: "running",
           manifest: worker.manifest,
+          record: worker.record,
           cid: worker.cid,
         };
       this.deps.log(`worker ${name} started from ${worker.record}`);
     } catch (error) {
       if (!current()) return;
+      running.refusals = new Map();
       running.state = { state: "failed", reason: errorText(error) };
       this.deps.log(`worker ${name}: ${errorText(error)}`);
     }
@@ -251,6 +386,7 @@ export class ProductWorkers {
     this.generation += 1;
     for (const name of this.workers.keys()) this.stop(name);
     this.workers.clear();
+    this.pocketCards.clear();
     this.changed();
   }
 

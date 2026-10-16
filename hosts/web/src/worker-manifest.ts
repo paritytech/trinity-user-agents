@@ -20,6 +20,12 @@ export interface WorkerManifest {
   entrypoint: string;
   /** Surfaces the worker serves; an omitted key is `false`. */
   includes: { chat: boolean; pocket: boolean; input: boolean };
+  /**
+   * The ids of the Pocket cards the worker draws, read only when it serves
+   * Pocket. A malformed list costs the worker its cards, not its other
+   * surfaces.
+   */
+  pocketCards: string[];
 }
 
 const MODULE = /\.m?js$/;
@@ -77,15 +83,41 @@ export function parseWorkerManifest(json: string): WorkerManifest {
   )
     throw new Error("includes is not an object");
   const surfaces = includes as Record<string, unknown>;
+  const pocket = flag(surfaces.pocket, "pocket");
   return {
     appVersion: semver(record.appVersion),
     entrypoint,
     includes: {
       chat: flag(surfaces.chat, "chat"),
-      pocket: flag(surfaces.pocket, "pocket"),
+      pocket,
       input: flag(surfaces.input, "input"),
     },
+    pocketCards: pocket ? pocketCards(record.pocket) : [],
   };
+}
+
+/**
+ * The `pocket.cards` list. Any card without an id, a title or a preview path,
+ * with a `faceShown` that is not true or false, or with an id used twice
+ * drops the whole list, as the Pocket RFC says.
+ */
+function pocketCards(section: unknown): string[] {
+  const cards = (section as { cards?: unknown } | null | undefined)?.cards;
+  if (!Array.isArray(cards)) return [];
+  const ids: string[] = [];
+  for (const card of cards) {
+    const { id, title, preview, faceShown } = (card ?? {}) as Record<
+      string,
+      unknown
+    >;
+    if (typeof id !== "string" || id === "") return [];
+    if (typeof title !== "string" || title.trim() === "") return [];
+    if (typeof preview !== "string" || preview.trim() === "") return [];
+    if (faceShown !== undefined && typeof faceShown !== "boolean") return [];
+    if (ids.includes(id)) return [];
+    ids.push(id);
+  }
+  return ids;
 }
 
 /** A worker found on chain, ready to mount. */

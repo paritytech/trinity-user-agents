@@ -10,6 +10,10 @@
  * Nothing here reads a chain or invents a figure.
  */
 
+import type { PocketPlatform } from "@parity/truapi-host";
+import type { PocketCardKey } from "./pocket-faces.js";
+import { constant } from "./subscription.js";
+
 /** The title the native top bar shows. `pocket_toolbar_title`. */
 export const POCKET_TITLE = "Pocket";
 
@@ -26,6 +30,11 @@ export interface DigitalDollarCard {
 export interface ProductCard {
   kind: "product";
   id: "humanity";
+  /**
+   * The label of the product that backs the card. With the network's TLD it
+   * is the product id, such as `peopl.paseo`.
+   */
+  product: string;
   title: string;
   subtitle: string;
   /** A pinned card is never offered for removal. */
@@ -40,11 +49,14 @@ export const COINAGE_MISSING =
 
 /**
  * Humanity's bundled face: `assets/pocket/humanity.json`, a title and a
- * subtitle. `pocket_pinned_card_humanity` is the title.
+ * subtitle. `pocket_pinned_card_humanity` is the title. The personhood
+ * product, the governance-reserved `peopl`, backs it, as it does in the
+ * native apps.
  */
 const HUMANITY: ProductCard = {
   kind: "product",
   id: "humanity",
+  product: "peopl",
   title: "Humanity",
   subtitle: "Proof of personhood",
   pinned: true,
@@ -60,4 +72,58 @@ export function pocketCards(): PocketCard[] {
     },
     HUMANITY,
   ];
+}
+
+/** `card` as Pocket keys it on the network whose TLD is `networkSuffix`. */
+export function cardKey(
+  card: ProductCard,
+  networkSuffix: string,
+): PocketCardKey {
+  return { productId: `${card.product}.${networkSuffix}`, cardId: card.id };
+}
+
+/** The pinned product cards on the network whose TLD is `networkSuffix`. */
+export function pinnedCards(networkSuffix: string): PocketCardKey[] {
+  return pocketCards().flatMap((card) =>
+    card.kind === "product" && card.pinned
+      ? [cardKey(card, networkSuffix)]
+      : [],
+  );
+}
+
+/**
+ * Where an opened card starts its product's Widget: the card named in the
+ * query, as every host builds it.
+ */
+export function cardLaunchPath(cardId: string): string {
+  return `/?card=${encodeURIComponent(cardId)}`;
+}
+
+/**
+ * The Pocket a product sees: the cards it backs. They are the pinned ones,
+ * which no product can remove. The core's web bridge carries a refusal as
+ * `Unknown` with this reason, not as `Privileged`.
+ */
+export function pocketPlatform(
+  networkSuffix: string,
+): Required<PocketPlatform> {
+  const cardsOf = (productId: string) =>
+    pinnedCards(networkSuffix).filter((card) => card.productId === productId);
+  return {
+    subscribePocketCards: (product) =>
+      constant({
+        cards: cardsOf(product.productId).map(({ cardId }) => ({
+          cardId,
+          privileged: true,
+        })),
+      }),
+    removePocketCard: (product, request) =>
+      cardsOf(product.productId).some((card) => card.cardId === request.cardId)
+        ? Promise.reject(
+            new Error(
+              `Privileged: ${request.cardId} is pinned by the host and cannot be removed.`,
+            ),
+          )
+        : Promise.resolve(),
+  };
 }

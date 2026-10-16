@@ -9,10 +9,21 @@ import {
 /**
  * The Pocket list as the native app lays it out: a large title over cards that
  * overlap, so each card behind the last shows a strip of itself. Only the
- * layout and the faces are drawn here. A card takes no press yet, because the
- * native card opens a details page that needs the product or the balance
- * behind it.
+ * layout and the bundled faces are drawn here. A product card's live face and
+ * its press are bound by the caller through {@link PocketHooks}; the digital
+ * dollar takes no press, because its details page needs a balance this host
+ * does not have.
  */
+
+/** What the caller adds to the drawn list. */
+export interface PocketHooks {
+  /** Bind a product card: `root` is its element and `bundled` its bundled face. */
+  productCard?(
+    card: ProductCard,
+    root: HTMLElement,
+    bundled: HTMLElement,
+  ): void;
+}
 
 const SVG = "http://www.w3.org/2000/svg";
 
@@ -79,32 +90,33 @@ function digitalDollar(card: DigitalDollarCard): HTMLElement {
   return root;
 }
 
-function productCard(card: ProductCard): HTMLElement {
+function productCard(card: ProductCard, hooks: PocketHooks): HTMLElement {
   const root = el("article", "pocket-card pocket-product");
   root.dataset.card = card.id;
-  root.append(el("div", "pocket-grain"), el("div", "pocket-face"));
-  const face = root.lastElementChild!;
+  const face = el("div", "pocket-face");
   face.append(
     el("span", "pocket-face-title", card.title),
     el("span", "pocket-face-subtitle", card.subtitle),
   );
+  root.append(el("div", "pocket-grain"), face);
+  hooks.productCard?.(card, root, face);
   return root;
 }
 
-function drawCard(card: PocketCard): HTMLElement {
+function drawCard(card: PocketCard, hooks: PocketHooks): HTMLElement {
   return card.kind === "digital-dollar"
     ? digitalDollar(card)
-    : productCard(card);
+    : productCard(card, hooks);
 }
 
 /** The Pocket list, ready to put in the screen. */
-export function drawPocket(): HTMLElement[] {
+export function drawPocket(hooks: PocketHooks = {}): HTMLElement[] {
   const bar = el("header", "pocket-bar");
   bar.append(el("h2", "pocket-title", POCKET_TITLE));
   const list = el("div", "pocket-list");
   for (const card of pocketCards()) {
     const slot = el("div", "pocket-slot");
-    slot.append(drawCard(card));
+    slot.append(drawCard(card, hooks));
     list.append(slot);
   }
   return [bar, list];

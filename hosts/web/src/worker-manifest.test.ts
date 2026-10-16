@@ -11,7 +11,36 @@ describe("parseWorkerManifest", () => {
       appVersion: [0, 1, 0],
       entrypoint: "index.js",
       includes: { chat: true, pocket: false, input: false },
+      pocketCards: [],
     });
+  });
+
+  test("reads the Pocket cards a worker that serves Pocket draws", () => {
+    const pocket = (cards: unknown, includesPocket = true) =>
+      parseWorkerManifest(
+        JSON.stringify({
+          ...JSON.parse(PUBLISHED),
+          includes: { chat: false, pocket: includesPocket },
+          pocket: { cards },
+        }),
+      ).pocketCards;
+    const card = { id: "membership", title: "Membership", preview: "p.json" };
+    expect(pocket([card, { ...card, id: "badge", faceShown: false }])).toEqual([
+      "membership",
+      "badge",
+    ]);
+    // Cards are read only behind `includes.pocket`.
+    expect(pocket([card], false)).toEqual([]);
+    // One bad definition drops every card, and only the cards.
+    for (const bad of [
+      { ...card, id: "" },
+      { ...card, title: " " },
+      { id: "x", title: "X" },
+      { ...card, faceShown: "yes" },
+    ])
+      expect(pocket([card, bad])).toEqual([]);
+    expect(pocket([card, card])).toEqual([]);
+    expect(pocket("not a list")).toEqual([]);
   });
 
   test("refuses what is not a worker manifest", () => {
