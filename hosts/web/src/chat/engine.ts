@@ -6,6 +6,7 @@ import {
   sanitizeReason,
   shortHex,
   shortId,
+  subscriptionEvent,
   type ChatEventBody,
   type ChatEventSink,
 } from "./diagnostics.js";
@@ -249,17 +250,15 @@ export class ChatEngine {
       this.store = store;
       const opened = store;
       void opened.closed.then(() => this.lost(run, opened));
+      const inbox = requestTopic(this.me);
       this.stopRequests = await opened.subscribe(
-        { matchAll: [requestTopic(this.me)] },
+        { matchAll: [inbox] },
         (statements) =>
           void this.serial(() => this.receiveRequests(statements)),
       );
-      this.emit({
-        type: "subscription",
-        stream: "requests",
-        action: "subscribe",
-        topics: 1,
-      });
+      this.emit(
+        subscriptionEvent("requests", "subscribe", [bytesToHex(inbox)]),
+      );
       await this.serial(() => this.listenToSessions());
       if (run !== this.run) return;
       this.failures = 0;
@@ -527,16 +526,18 @@ export class ChatEngine {
     const topics = this.record.contacts.map((contact) =>
       this.incomingTopic(contact),
     );
-    const fingerprint = topics.map(bytesToHex).join();
+    const topicIds = topics.map(bytesToHex);
+    const fingerprint = topicIds.join();
     if (fingerprint === this.sessionTopics) return;
     if (this.stopSessions !== null) {
       this.stopSessions();
-      this.emit({
-        type: "subscription",
-        stream: "sessions",
-        action: "unsubscribe",
-        topics: this.sessionTopics.split(",").filter(Boolean).length,
-      });
+      this.emit(
+        subscriptionEvent(
+          "sessions",
+          "unsubscribe",
+          this.sessionTopics.split(",").filter(Boolean),
+        ),
+      );
     }
     this.stopSessions = null;
     this.sessionTopics = fingerprint;
@@ -545,12 +546,7 @@ export class ChatEngine {
       { matchAny: topics },
       (statements) => void this.serial(() => this.receiveSessions(statements)),
     );
-    this.emit({
-      type: "subscription",
-      stream: "sessions",
-      action: "subscribe",
-      topics: topics.length,
-    });
+    this.emit(subscriptionEvent("sessions", "subscribe", topicIds));
   }
 
   private async receiveSessions(statements: Uint8Array[]): Promise<void> {

@@ -18,12 +18,26 @@ import type { ChatEventBody } from "../src/chat/diagnostics.js";
 const STEP_MS = 60_000;
 const PAGE = "/__chat-diagnostics-view.html";
 const KEY = `0x${"ab".repeat(32)}`;
+const INBOX = `0x${"5e".repeat(16)}${"a1".repeat(16)}`;
+const SESSION = `0x${"c0".repeat(16)}${"de".repeat(16)}`;
 
 /** A session's worth of events, in the shapes the engine records. */
 const SAMPLE_EVENTS: ChatEventBody[] = [
   { type: "lifecycle", state: "starting" },
-  { type: "subscription", stream: "requests", action: "subscribe", topics: 1 },
-  { type: "subscription", stream: "sessions", action: "subscribe", topics: 1 },
+  {
+    type: "subscription",
+    stream: "requests",
+    action: "subscribe",
+    topics: 1,
+    topicIds: [INBOX],
+  },
+  {
+    type: "subscription",
+    stream: "sessions",
+    action: "subscribe",
+    topics: 1,
+    topicIds: [SESSION],
+  },
   { type: "lifecycle", state: "listening" },
   {
     type: "session",
@@ -303,6 +317,43 @@ describe("chat diagnostics view", () => {
   );
 
   test(
+    "shows and copies a subscription's topics in full",
+    async () => {
+      const { context, page } = await newPage();
+      try {
+        await row(page, "subscribe requests").click();
+        expect(await detail(page).locator(".cdv-fields").innerText()).toContain(
+          `request inbox topic\n${INBOX}`,
+        );
+        await row(page, "subscribe sessions").click();
+        expect(await detail(page).locator(".cdv-fields").innerText()).toContain(
+          `session topic 1\n${SESSION}`,
+        );
+        await page.fill(".ins-filter", SESSION.slice(10, 30));
+        expect(await rows(page).count()).toBe(1);
+
+        await detail(page).locator("[data-copy-event]").click();
+        await detail(page)
+          .locator("[data-copy-event]", { hasText: "copied" })
+          .waitFor();
+        const copied = JSON.parse(
+          await page.evaluate(() => navigator.clipboard.readText()),
+        );
+        expect(copied.event).toEqual({
+          type: "subscription",
+          stream: "sessions",
+          action: "subscribe",
+          topics: 1,
+          topicIds: [SESSION],
+        });
+      } finally {
+        await context.close();
+      }
+    },
+    STEP_MS,
+  );
+
+  test(
     "pausing freezes the list while recording goes on",
     async () => {
       const { context, page } = await newPage();
@@ -368,7 +419,8 @@ describe("chat diagnostics view", () => {
           type: "subscription",
           stream: "sessions",
           action: "subscribe",
-          topics: 2,
+          topics: 1,
+          topicIds: [SESSION],
         }));
         await record(page, filler, 10);
         expect(await rows(page).count()).toBe(300);
