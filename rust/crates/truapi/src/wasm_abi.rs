@@ -17,6 +17,12 @@
 //! [`CALL_END_IMPORT`], and [`ON_CANCEL_EXPORT`] tells the guest that the
 //! host stopped the call.
 //!
+//! When the host stops the worker, it calls the guest's [`ON_STOP_EXPORT`]
+//! once, if the guest exports it. The host then keeps answering the calls of
+//! the guest for a short grace time, so that the guest can write what it
+//! holds in memory. The guest ends through [`FINISH_IMPORT`] when it is
+//! ready.
+//!
 //! The host only touches guest memory behind a pointer an import passes, within
 //! the length the guest gave or was told, which is why guests declare those
 //! imports safe.
@@ -80,6 +86,12 @@ pub const ON_CALL_EXPORT: &str = "truapi_on_call";
 /// Export telling the guest that the host stopped a call it started:
 /// `(call)`. The host drops each answer that comes after it.
 pub const ON_CANCEL_EXPORT: &str = "truapi_on_cancel";
+
+/// Export telling the guest that the host stops it: `()`. It is optional. The
+/// host calls it at most once, then answers the calls of the guest until the
+/// guest calls [`FINISH_IMPORT`] or a grace time ends. A guest without it
+/// ends at once when the host stops it.
+pub const ON_STOP_EXPORT: &str = "truapi_on_stop";
 
 /// What one event carries for a call handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

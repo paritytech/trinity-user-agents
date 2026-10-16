@@ -3,7 +3,7 @@
 # cargo build --manifest-path rust/guests/Cargo.toml --target wasm32-unknown-unknown --release
 [workspace]
 resolver = "3"
-members = ["busy", "chat-actions", "chat-echo", "chat-source", "early-stop", "hello", "preimage", "tasks"]
+members = ["busy", "chat-actions", "chat-echo", "chat-source", "early-stop", "hello", "preimage", "stop-flush", "tasks"]
 
 [workspace.package]
 edition = "2024"

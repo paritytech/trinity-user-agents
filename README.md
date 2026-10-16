@@ -770,6 +770,23 @@ diagnosis row per Android scenario of the test plan to
 make android-chat-v2-run ANDROID_GOOGLE_SERVICES_JSON=<path>/google-services.json
 ```
 
+The wasm chat product has an Android two-user launcher too. It boots two
+isolated AVDs (`verbosity-android-a` on port 5740 and `verbosity-android-b` on
+port 5742), restores on each a live account that `truapi-host signing-host`
+registered through the debug `restore_wallet` hook (the app then finds the
+username on chain), installs the module by hand as
+`files/Products/<host>/ChatExtension/index.wasm` beside a `manifest.json` with
+`keepAlive: "foreground"`, and keeps both apps running; the app runs the
+module in the core with no WebView. The APK must be a debug build on the Paseo
+network of the nightly build:
+
+```bash
+cd hosts/android && ./gradlew :app:assembleVanillaDebug -Ppolkadotapp.debugEnvironment=NIGHTLY && cd -
+TRUAPI_ANDROID_E2E_VERBOSITY_WASM=/path/to/product.wasm TRUAPI_ANDROID_E2E_VERBOSITY_FRESH=1 make android-verbosity-run
+node scripts/android-verbosity.mjs a send verbosity "@<username of b>"
+node scripts/android-verbosity.mjs b press verbosity Accept
+```
+
 Every host that runs the sample product (the test host, the CLI chat page, the
 iOS simulator and the Android emulator), the order to run them in, the
 simulator and emulator switches and the known limits are listed in the Chat

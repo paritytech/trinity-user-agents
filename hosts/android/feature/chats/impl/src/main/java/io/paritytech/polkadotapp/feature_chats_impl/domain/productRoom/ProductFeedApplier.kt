@@ -24,8 +24,10 @@ import javax.inject.Inject
  * Stores the feed updates that an extension pushes to a room whose messages the host keeps (Chat Extension
  * v2, `update_feed` with `persist`). The extension writes as its participants, never as the user.
  *
- * The status of a message of the product goes to [preparing] only, for the reasoning rows. A deleted message loses
- * its meta (07-LATER §9.6).
+ * The status of a message of the product goes to [preparing] only, for the reasoning rows. The status of a message
+ * of the user is the status that the user sees, as on iOS: the product tells when it sent the message on, when the
+ * other side has it, and when the send failed (VERBOSITY-WASM-PRODUCT A2). A deleted message loses its meta
+ * (07-LATER §9.6).
  */
 class ProductFeedApplier @Inject constructor(
     private val chatMessageRepository: ChatMessageRepository,
@@ -54,8 +56,12 @@ class ProductFeedApplier @Inject constructor(
             // The status of a message of the product means nothing to the user of a room that the host keeps,
             // except that a reasoning row shows "Thinking" while its message is `Preparing`.
             is ProductFeedUpdateModel.StatusChanged -> {
-                requireLive(chatId, update.messageId, decoder)
-                preparing.set(chatId, update.messageId, update.status == ProductMessageStatusModel.PREPARING)
+                val message = requireLive(chatId, update.messageId, decoder)
+                if (message.origin is ChatMessageOrigin.User) {
+                    chatMessageRepository.updateMessageStatus(message.id, update.status.toUserMessageStatus())
+                } else {
+                    preparing.set(chatId, update.messageId, update.status == ProductMessageStatusModel.PREPARING)
+                }
             }
         }
     }
@@ -141,4 +147,13 @@ class ProductFeedApplier @Inject constructor(
         ProductMessageIds.candidates(messageId, chatId).firstNotNullOfOrNull { candidate ->
             chatMessageRepository.getMessageById(chatId, candidate, decoder)?.takeIf { it.chatId == chatId }
         }
+}
+
+// Delivered is the double tick of a message that the other side has, as in a chat with a contact.
+private fun ProductMessageStatusModel.toUserMessageStatus(): ChatMessage.Status = when (this) {
+    ProductMessageStatusModel.PREPARING -> ChatMessage.Status.NEW
+    ProductMessageStatusModel.SENT -> ChatMessage.Status.IS_SENT
+    ProductMessageStatusModel.DELIVERED,
+    ProductMessageStatusModel.READ -> ChatMessage.Status.IS_READ
+    ProductMessageStatusModel.FAILED -> ChatMessage.Status.DELIVERY_FAILED
 }

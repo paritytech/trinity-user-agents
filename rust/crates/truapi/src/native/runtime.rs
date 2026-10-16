@@ -898,9 +898,11 @@ impl NativeProductExecution {
 		if let Some(token) = token {
 			self.ws_bridge.revoke(&token);
 		}
+		// The worker stays in its slot while it stops, so that the next worker
+		// of this execution starts only after it ended.
 		#[cfg(feature = "wasm-worker")]
 		if let Some(worker) =
-			self.wasm_worker.lock().expect("native wasm worker mutex poisoned").take()
+			self.wasm_worker.lock().expect("native wasm worker mutex poisoned").as_ref()
 		{
 			worker.stop();
 		}
@@ -1285,7 +1287,7 @@ impl NativeProductExecution {
 			.lock()
 			.expect("native wasm worker mutex poisoned")
 			.as_ref()
-			.is_some_and(super::wasm_worker::RunningWasmWorker::is_running)
+			.is_some_and(|worker| worker.is_running() && !worker.is_stopping())
 		{
 			return Err(WsBridgeStartError::AlreadyRunning);
 		}
@@ -1339,7 +1341,9 @@ impl NativeProductExecution {
 		}
 		let bridge = self.bridge_token.lock().expect("native product bridge mutex poisoned");
 		let mut slot = self.wasm_worker.lock().expect("native wasm worker mutex poisoned");
-		if bridge.is_some() || slot.as_ref().is_some_and(RunningWasmWorker::is_running) {
+		if bridge.is_some() ||
+			slot.as_ref().is_some_and(|worker| worker.is_running() && !worker.is_stopping())
+		{
 			return Err(crate::ProductRuntimeError::Rejected {
 				reason: "a worker already runs for this execution".to_string(),
 			});
@@ -1354,8 +1358,15 @@ impl NativeProductExecution {
 		});
 		*self.product_control.lock().expect("native product control mutex poisoned") =
 			Some(product_runtime.control());
-		*slot =
-			Some(RunningWasmWorker::spawn(worker, product_runtime, observer.into(), &self.spawner));
+		// A worker that still stops ends before this one starts.
+		let previous = slot.take().filter(RunningWasmWorker::is_running);
+		*slot = Some(RunningWasmWorker::spawn(
+			worker,
+			product_runtime,
+			observer.into(),
+			&self.spawner,
+			previous,
+		));
 		Ok(())
 	}
 }

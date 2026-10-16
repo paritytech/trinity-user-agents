@@ -10,16 +10,26 @@
 //! the product of a [`crate::ProductRuntime`], the worker gets the
 //! host-initiated calls of that connection; see
 //! [`WasmWorker::for_product_runtime`].
+//!
+//! The host stops a worker through a [`WorkerStop`]. A worker that exports
+//! [`ON_STOP_EXPORT`] then gets a short time to write what it holds in memory
+//! before it ends; see [`WasmWorker::stopper`].
 
 mod host_calls;
 mod product;
 
 pub use host_calls::{HostCall, HostCallEvent, HostCallStream, HostCalls};
 
-use core::task::{Context, Poll};
+use core::{
+	task::{Context, Poll},
+	time::Duration,
+};
 use std::{
 	collections::{BTreeMap, BTreeSet, HashMap},
-	sync::Arc,
+	sync::{
+		Arc,
+		atomic::{AtomicBool, Ordering},
+	},
 };
 
 use futures::{
@@ -27,6 +37,7 @@ use futures::{
 	channel::mpsc,
 	future::BoxFuture,
 	stream::{self, BoxStream},
+	task::AtomicWaker,
 };
 use parity_scale_codec::{DecodeAll, Encode};
 use wasmi::{
@@ -42,8 +53,8 @@ use crate::{
 	wasm_abi::{
 		CALL_END_IMPORT, CALL_ITEM_IMPORT, EventKind, FINISH_IMPORT, IMPORT_MODULE, LOG_IMPORT,
 		MONOTONIC_MILLIS_IMPORT, NOW_MILLIS_IMPORT, ON_CALL_EXPORT, ON_CANCEL_EXPORT,
-		ON_EVENT_EXPORT, RANDOM_IMPORT, READ_EVENT_IMPORT, RELEASE_IMPORT, SLEEP_IMPORT,
-		START_EXPORT,
+		ON_EVENT_EXPORT, ON_STOP_EXPORT, RANDOM_IMPORT, READ_EVENT_IMPORT, RELEASE_IMPORT,
+		SLEEP_IMPORT, START_EXPORT,
 	},
 };
 use host_calls::{Answers, HostCommand, worker_ended};
@@ -60,6 +71,10 @@ pub const DEFAULT_FUEL_PER_ENTRY: u64 = 20_000_000_000;
 /// gets memory only when the worker grows it, so a high limit costs nothing.
 /// [`WasmWorker::with_memory_limit`] changes it.
 pub const DEFAULT_MEMORY_LIMIT: usize = 256 * 1024 * 1024;
+
+/// Default time that a stopped worker gets to end by itself: see
+/// [`WasmWorker::stopper`]. [`WasmWorker::with_stop_grace`] changes it.
+pub const DEFAULT_STOP_GRACE: Duration = Duration::from_secs(2);
 
 /// Largest request or log line a worker may pass, matching the frame cap of
 /// the native WebSocket bridge.
@@ -104,6 +119,48 @@ pub enum WasmWorkerError {
 		/// Error the guest reported.
 		message: String,
 	},
+	/// The host stopped the worker through its [`WorkerStop`].
+	#[display("the host stopped the worker")]
+	Stopped,
+}
+
+/// A handle that stops a [`WasmWorker`]. It can stop the worker before it
+/// runs, while it runs, and after it ended (then it does nothing).
+#[derive(Clone, Default)]
+pub struct WorkerStop {
+	inner: Arc<StopState>,
+}
+
+#[derive(Default)]
+struct StopState {
+	requested: AtomicBool,
+	waker: AtomicWaker,
+}
+
+impl WorkerStop {
+	/// A handle that no worker uses yet. Give it to
+	/// [`WasmWorker::with_stopper`].
+	pub fn new() -> Self {
+		Self::default()
+	}
+
+	/// Ask the worker to stop. A worker that exports [`ON_STOP_EXPORT`] gets
+	/// the stop and runs until it ends or until its grace time ends. Any
+	/// other worker ends at once.
+	pub fn stop(&self) {
+		self.inner.requested.store(true, Ordering::Release);
+		self.inner.waker.wake();
+	}
+
+	/// Whether a stop was asked.
+	pub fn is_requested(&self) -> bool {
+		self.inner.requested.load(Ordering::Acquire)
+	}
+
+	fn poll_requested(&self, context: &mut Context<'_>) -> bool {
+		self.inner.waker.register(context.waker());
+		self.is_requested()
+	}
 }
 
 impl From<wasmi::Error> for WasmWorkerError {
@@ -329,6 +386,9 @@ struct Exports {
 	/// The exports that take calls from the host. A module without them
 	/// answers no call.
 	host_calls: Option<HostCallExports>,
+	/// The export that takes the stop. A module without it ends at once when
+	/// the host stops it.
+	on_stop: Option<TypedFunc<(), ()>>,
 }
 
 struct HostCallExports {
@@ -364,6 +424,10 @@ pub struct WasmWorker {
 	inbox_closed: bool,
 	/// The calls of the host that the worker did not end, by call id.
 	answering: HashMap<u32, Answers>,
+	stop: WorkerStop,
+	stop_grace: Duration,
+	/// The end of the grace time, after the guest got the stop.
+	stopping: Option<futures_timer::Delay>,
 }
 
 /// What the worker does next.
@@ -374,6 +438,10 @@ enum Next {
 	Host(HostCommand),
 	/// No handle of the host is left.
 	InboxClosed,
+	/// The host asked the worker to stop.
+	Stop,
+	/// The grace time of a stop ended.
+	StopTimeout,
 }
 
 impl WasmWorker {
@@ -421,10 +489,17 @@ impl WasmWorker {
 					.map_err(invalid_module)?,
 			}),
 		};
+		let on_stop = match instance.get_export(&store, ON_STOP_EXPORT) {
+			None => None,
+			Some(_) => {
+				Some(instance.get_typed_func(&store, ON_STOP_EXPORT).map_err(invalid_module)?)
+			},
+		};
 		let exports = Exports {
 			start: instance.get_typed_func(&store, START_EXPORT).map_err(invalid_module)?,
 			on_event: instance.get_typed_func(&store, ON_EVENT_EXPORT).map_err(invalid_module)?,
 			host_calls,
+			on_stop,
 		};
 		let (handle, inbox) = host_calls::channel();
 		Ok(Self {
@@ -437,7 +512,34 @@ impl WasmWorker {
 			inbox,
 			inbox_closed: false,
 			answering: HashMap::new(),
+			stop: WorkerStop::new(),
+			stop_grace: DEFAULT_STOP_GRACE,
+			stopping: None,
 		})
+	}
+
+	/// The handle that stops this worker. After [`WorkerStop::stop`], a
+	/// worker that exports [`ON_STOP_EXPORT`] gets one call of it, and the
+	/// host keeps answering its calls for the grace time
+	/// ([`Self::with_stop_grace`]). [`Self::run`] then returns when the
+	/// guest ends or when the grace time ends. A worker without the export
+	/// ends at once. Either way the result is [`WasmWorkerError::Stopped`],
+	/// unless the guest fails while it stops.
+	pub fn stopper(&self) -> WorkerStop {
+		self.stop.clone()
+	}
+
+	/// Use `stop` as the handle that stops this worker, in place of its own.
+	pub fn with_stopper(mut self, stop: WorkerStop) -> Self {
+		self.stop = stop;
+		self
+	}
+
+	/// Set the time that a stopped worker gets to end by itself. The default
+	/// is [`DEFAULT_STOP_GRACE`].
+	pub fn with_stop_grace(mut self, grace: Duration) -> Self {
+		self.stop_grace = grace;
+		self
 	}
 
 	/// A handle that starts calls into this worker. The worker takes them
@@ -471,26 +573,56 @@ impl WasmWorker {
 	/// host, until it returns.
 	pub async fn run(mut self) -> Result<(), WasmWorkerError> {
 		self.host_calls = None;
+		if self.stop.is_requested() {
+			return Err(WasmWorkerError::Stopped);
+		}
 		self.store.set_fuel(self.fuel_per_entry)?;
 		self.exports.start.call(&mut self.store, ())?;
 		loop {
 			self.apply_commands();
 			if let Some(outcome) = self.store.data_mut().finished.take() {
-				return outcome.map_err(|message| WasmWorkerError::Failed { message });
+				return match outcome {
+					Ok(()) if self.stopping.is_some() => Err(WasmWorkerError::Stopped),
+					Ok(()) => Ok(()),
+					Err(message) => Err(WasmWorkerError::Failed { message }),
+				};
 			}
-			if self.inbox_closed && self.calls.values().all(|call| call.released) {
+			// A stopped worker can wait on nothing. It then ends when its
+			// grace time ends.
+			if self.stopping.is_none() &&
+				self.inbox_closed &&
+				self.calls.values().all(|call| call.released)
+			{
 				return Err(WasmWorkerError::Stalled);
 			}
 			match futures::future::poll_fn(|context| self.poll_next(context)).await {
 				Next::Event(handle, event) => self.deliver(handle, event)?,
 				Next::Host(command) => self.host_command(command)?,
 				Next::InboxClosed => self.inbox_closed = true,
+				Next::Stop => {
+					let Some(on_stop) = self.exports.on_stop else {
+						return Err(WasmWorkerError::Stopped);
+					};
+					self.stopping = Some(futures_timer::Delay::new(self.stop_grace));
+					self.enter(Vec::new(), |store| on_stop.call(store, ()))?;
+				},
+				Next::StopTimeout => return Err(WasmWorkerError::Stopped),
 			}
 		}
 	}
 
-	/// A call of the host first, then the next event of a call of the worker.
+	/// A stop first, then a call of the host, then the next event of a call
+	/// of the worker.
 	fn poll_next(&mut self, context: &mut Context<'_>) -> Poll<Next> {
+		match &mut self.stopping {
+			None if self.stop.poll_requested(context) => return Poll::Ready(Next::Stop),
+			None => {},
+			Some(grace) => {
+				if grace.poll_unpin(context).is_ready() {
+					return Poll::Ready(Next::StopTimeout);
+				}
+			},
+		}
 		if !self.inbox_closed &&
 			let Poll::Ready(command) = self.inbox.poll_next_unpin(context)
 		{

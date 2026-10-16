@@ -8,6 +8,11 @@ plugins {
 
 val localProperties = gradleLocalProperties(rootDir, providers)
 
+// A debug build for a live end-to-end run can use the network of the nightly build (Paseo), as the iOS
+// harness does with the Nightly flags: `-Ppolkadotapp.debugEnvironment=NIGHTLY`. Only debug reads it.
+val debugEnvironment = providers.gradleProperty("polkadotapp.debugEnvironment").orElse("TESTNET").get()
+require(debugEnvironment in setOf("TESTNET", "NIGHTLY")) { "polkadotapp.debugEnvironment must be TESTNET or NIGHTLY" }
+
 android {
     namespace = "io.paritytech.polkadotapp.common"
 
@@ -16,7 +21,7 @@ android {
         buildConfigString("FIAT_SYMBOL", localProperties.readSecretOrThrow("FIAT_SYMBOL"))
         buildConfigString("APP_NAME", localProperties.readSecretOrThrow("APPLICATION_NAME"))
 
-        buildConfigField("String", "TESTNET_ENVIRONMENT", "\"TESTNET\"")
+        buildConfigField("String", "TESTNET_ENVIRONMENT", "\"$debugEnvironment\"")
         buildConfigField("boolean", "COINAGE_DEBUG_FEATURES", "true")
         buildConfigField("boolean", "TESTNET_FUND_ENABLED", "true")
         buildConfigField("boolean", "SAMPLE_BOT", "true")

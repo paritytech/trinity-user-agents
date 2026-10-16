@@ -1439,8 +1439,8 @@ async fn run_signing_host(
 						0
 					},
 				};
-				if let Some(task) = wasm_worker {
-					task.abort();
+				if let Some(worker) = wasm_worker {
+					stop_wasm_worker(worker).await;
 				}
 				session.responders.stop_all();
 				Ok(code)
@@ -2074,11 +2074,12 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// `product_id` on the runtime of `session`. The worker keeps its rooms in the
 /// chat of the surface. The task prints each line the worker logs, and tells
 /// when the worker ends. The host keeps serving the chat after that.
+/// [`stop_wasm_worker`] stops it.
 fn spawn_wasm_worker(
 	session: &SigningHostSession,
 	surface: &Arc<chat_surface::ChatSurface>,
 	product_id: &str,
-) -> Option<tokio::task::JoinHandle<()>> {
+) -> Option<(tokio::task::JoinHandle<()>, truapi::WorkerStop)> {
 	let path = surface.wasm_worker_path()?.to_path_buf();
 	let runtime = session.runtime.clone();
 	let surface = surface.clone();
@@ -2087,19 +2088,42 @@ fn spawn_wasm_worker(
 		"Wasm worker started",
 		Some(format!("{} runs as the Worker of {product_id}", path.display())),
 	);
-	Some(tokio::spawn(async move {
+	let stop = truapi::WorkerStop::new();
+	let worker_stop = stop.clone();
+	let task = tokio::spawn(async move {
 		let log = |line: &str| println!("[worker] {line}");
-		match worker::run_on_surface(&runtime, &surface, &product_id, &path, log).await {
+		match worker::run_on_surface(&runtime, &surface, &product_id, &path, worker_stop, log).await
+		{
 			Ok(()) => terminal_ui::output_warning(
 				"Wasm worker finished",
 				Some("its entry point returned; the chat stays open".to_string()),
 			),
+			Err(error)
+				if matches!(
+					error.downcast_ref::<truapi::WasmWorkerError>(),
+					Some(truapi::WasmWorkerError::Stopped)
+				) =>
+			{
+				terminal_ui::output_success("Wasm worker stopped", None)
+			},
 			Err(error) => terminal_ui::output_warning(
 				"Wasm worker failed",
 				Some(format!("{error:#}; the chat stays open")),
 			),
 		}
-	}))
+	});
+	Some((task, stop))
+}
+
+/// Stop the wasm worker of [`spawn_wasm_worker`], and wait until it ended. The
+/// worker gets its grace time to write what it holds in memory, so that a
+/// stop of the host loses nothing that the worker confirmed.
+async fn stop_wasm_worker((task, stop): (tokio::task::JoinHandle<()>, truapi::WorkerStop)) {
+	stop.stop();
+	let wait = truapi::DEFAULT_STOP_GRACE + std::time::Duration::from_secs(1);
+	if tokio::time::timeout(wait, task).await.is_err() {
+		terminal_ui::output_warning("Wasm worker did not stop in time", None);
+	}
 }
 
 async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -> Result<()> {

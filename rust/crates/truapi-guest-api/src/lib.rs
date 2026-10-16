@@ -85,6 +85,29 @@ mod imports {
 	}
 }
 
+/// Run `handler` when the host stops the worker, for example when the app
+/// goes to the background.
+///
+/// The host then gives the worker a short grace time (two seconds by
+/// default). The handlers run one after the other, in the order of their
+/// registration, while the other tasks continue. When the last handler
+/// returns, the worker ends. Use it to write what the worker holds in memory:
+///
+/// ```ignore
+/// truapi::on_stop(|| async move {
+///     truapi::local_storage::write(request).await.ok();
+/// });
+/// ```
+///
+/// A host from before this function never calls the handlers.
+pub fn on_stop<Handler, Done>(handler: Handler)
+where
+	Handler: FnOnce() -> Done + 'static,
+	Done: core::future::Future<Output = ()> + 'static,
+{
+	exports::on_stop_handler(handler);
+}
+
 /// Run `future` as a task beside the entry point.
 ///
 /// A task runs while the entry point waits. When the entry point returns, the
@@ -247,6 +270,11 @@ macro_rules! export_entry {
 		#[unsafe(no_mangle)]
 		pub extern "C" fn truapi_on_cancel(call: u32) {
 			$crate::exports::on_cancel(call);
+		}
+
+		#[unsafe(no_mangle)]
+		pub extern "C" fn truapi_on_stop() {
+			$crate::exports::on_stop();
 		}
 	};
 }

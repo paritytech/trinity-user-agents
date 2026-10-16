@@ -6,9 +6,9 @@ use std::sync::{
 	atomic::{AtomicBool, Ordering},
 };
 
-use futures::future::{AbortHandle, Abortable};
+use futures::{FutureExt, channel::oneshot, future::Shared};
 
-use crate::{ProductRuntime, WasmWorker, subscription::Spawner};
+use crate::{ProductRuntime, WasmWorker, WasmWorkerError, WorkerStop, subscription::Spawner};
 
 /// The marker of the log lines of a wasm worker in `HostCallbacks::on_core_log`.
 pub const WASM_WORKER_LOG_MARKER: &str = "wasm-worker";
@@ -37,44 +37,63 @@ pub trait NativeWasmWorkerObserver: Send + Sync {
 
 /// One wasm worker that runs on the executor of the core.
 pub struct RunningWasmWorker {
-	abort: AbortHandle,
+	stop: WorkerStop,
 	ended: Arc<AtomicBool>,
+	/// Completes when the worker ended.
+	done: Shared<oneshot::Receiver<()>>,
 }
 
 impl RunningWasmWorker {
 	/// Start `worker` on `spawner`. The worker serves its calls through
 	/// `product_runtime`, which the core disposes when the worker ends.
+	///
+	/// When `previous` is a worker of the same execution that still stops, the
+	/// new worker starts only after it ended. Thus two workers of one product
+	/// never write its product storage at the same time.
 	pub fn spawn(
 		worker: WasmWorker,
 		product_runtime: ProductRuntime,
 		observer: Arc<dyn NativeWasmWorkerObserver>,
 		spawner: &Spawner,
+		previous: Option<RunningWasmWorker>,
 	) -> Self {
-		let (abort, registration) = AbortHandle::new_pair();
 		let ended = Arc::new(AtomicBool::new(false));
 		let task_ended = ended.clone();
+		let stop = worker.stopper();
+		let (finished, done) = oneshot::channel();
+		let previous = previous.map(|previous| previous.done);
 		(spawner)(Box::pin(async move {
-			let end = match Abortable::new(worker.run(), registration).await {
-				Ok(Ok(())) => NativeWasmWorkerEnd::Finished,
-				Ok(Err(error)) => NativeWasmWorkerEnd::Failed { reason: error.to_string() },
-				Err(_) => NativeWasmWorkerEnd::Stopped,
+			if let Some(previous) = previous {
+				let _ = previous.await;
+			}
+			let end = match worker.run().await {
+				Ok(()) => NativeWasmWorkerEnd::Finished,
+				Err(WasmWorkerError::Stopped) => NativeWasmWorkerEnd::Stopped,
+				Err(error) => NativeWasmWorkerEnd::Failed { reason: error.to_string() },
 			};
 			product_runtime.dispose();
 			task_ended.store(true, Ordering::Release);
+			let _ = finished.send(());
 			observer.on_end(end);
 		}));
-		Self { abort, ended }
+		Self { stop, ended, done: done.shared() }
 	}
 
-	/// Whether the worker still runs.
+	/// Whether the worker still runs. A worker that stops runs until it ends.
 	pub fn is_running(&self) -> bool {
 		!self.ended.load(Ordering::Acquire)
 	}
 
-	/// Stop the worker. Its observer then receives `Stopped`, unless the
-	/// worker ended before.
+	/// Whether the host asked the worker to stop.
+	pub fn is_stopping(&self) -> bool {
+		self.stop.is_requested()
+	}
+
+	/// Stop the worker. A worker that takes the stop runs for a short grace
+	/// time ([`crate::DEFAULT_STOP_GRACE`]) to write what it holds in memory.
+	/// Its observer then receives `Stopped`, unless the worker ended before.
 	pub fn stop(&self) {
-		self.abort.abort();
+		self.stop.stop();
 	}
 }
 
@@ -279,6 +298,34 @@ mod tests {
 		execution.shutdown();
 		wait_until("the worker stops", || !again.all().is_empty());
 		assert_eq!(again.all(), vec![NativeWasmWorkerEnd::Stopped]);
+	}
+
+	/// A stopped worker gets a grace time in which its calls still reach the host, so that it can
+	/// write what it holds in memory (an app that goes to the background stops its workers). A
+	/// worker started meanwhile waits until the stopped one ended, so the two never write the
+	/// storage of the product at the same time.
+	#[test]
+	fn a_stopped_worker_writes_its_state_before_the_next_one_starts() {
+		let (callbacks, execution) = worker_execution();
+		let first = start(&execution, "stop_flush");
+		wait_until("the worker runs", || worker_log(&callbacks).contains(&"running".to_string()));
+
+		execution.stop_ws_bridge();
+		let second = start(&execution, "stop_flush");
+		wait_until("the first worker ends", || !first.all().is_empty());
+		wait_until("the second worker runs", || {
+			worker_log(&callbacks).iter().filter(|line| *line == "running").count() == 2
+		});
+
+		assert_eq!(first.all(), vec![NativeWasmWorkerEnd::Stopped]);
+		let log = worker_log(&callbacks);
+		assert_eq!(log[0], "running", "{log:?}");
+		assert_eq!(log[1], "stopping", "{log:?}");
+		assert!(log[2].starts_with("flushed "), "the write after the stop failed: {log:?}");
+		assert_eq!(log[3], "running", "{log:?}");
+		execution.stop_ws_bridge();
+		wait_until("the second worker ends", || !second.all().is_empty());
+		assert_eq!(second.all(), vec![NativeWasmWorkerEnd::Stopped]);
 	}
 
 	/// One execution serves one worker: a second module or a script bridge beside a running module
