@@ -122,6 +122,8 @@ js/packages/
                           `/testing/dev-accounts`, `/testing/host-page`
   truapi-provider/         @parity/truapi-provider: WASM ChainProvider backends
                           (embedded smoldot light client + remote WebSocket RPC)
+  trinity-stack/           @parity/trinity-stack: the trinity-stack crate as WASM, plus
+                          reading with a store and publishing
 js/container/              TS lockdown container for the iOS host web view; bundles into
                            ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
