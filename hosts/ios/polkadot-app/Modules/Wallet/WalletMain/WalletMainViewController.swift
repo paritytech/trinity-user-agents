@@ -101,6 +101,22 @@ extension WalletMainViewController: WalletMainViewProtocol {
         rootView.viewModel.pocketCards = pocketCards
     }
 
+    /// Nil once the card is gone or the Wallet is not what closing the card
+    /// returns to.
+    func frame(of key: PocketCardKey) -> CGRect? {
+        guard
+            UIApplication.shared.mainTabBarController?.container.selectedController === navigationController,
+            navigationController?.topViewController === self,
+            rootView.viewModel.pocketCards.contains(where: { $0.key == key })
+        else { return nil }
+
+        return rootView.viewModel.pocketCardFrames[key]
+    }
+
+    func setOpenCard(_ key: PocketCardKey?) {
+        rootView.viewModel.openPocketCard = key
+    }
+
     @objc
     func didTapShare() {
         identityDetailsScene.share()

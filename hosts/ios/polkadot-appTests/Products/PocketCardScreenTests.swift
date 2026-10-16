@@ -36,23 +36,32 @@ struct PocketCardScreenTests {
     }
 
     /// A card whose product publishes its face away, and answers while the
-    /// card is still coming up, must open onto the page alone, not show the
-    /// face and then scroll it off.
-    @Test
-    func opensWithThePublishedFaceAwayWhenTheAnswerComesFirst() throws {
+    /// card is still coming up, opens onto the page alone. One that flies from
+    /// the Pocket lands with its face first and folds it after, as on Android,
+    /// since the flight lands on the face.
+    @Test(arguments: [false, true])
+    func foldsAPublishedFaceAwayThatAnswersWhileTheCardComesUp(flying: Bool) async throws {
         let product = StubSPAView()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
+        let origin = FakePocketCardOrigin(slot: pocketSlot)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, origin: flying ? origin : nil)
         let presenter = UIViewController()
         let window = try showing(presenter)
-        presenter.present(cardNavigation(screen), animated: true)
+        var offsetOnArrival: CGFloat?
 
-        screen.applyOpeningFace(shown: false)
+        await withCheckedContinuation { arrived in
+            presenter.present(cardNavigation(screen), animated: true) {
+                offsetOnArrival = screen.scrollView?.contentOffset.y
+                arrived.resume()
+            }
+            screen.applyOpeningFace(shown: false)
+        }
 
+        #expect(offsetOnArrival == (flying ? 0 : faceHeight))
         #expect(waitUntil(on: screen) {
             screen.scrollView?.contentOffset.y == faceHeight
                 && product.controller.view.frame.height == screen.scrollView?.bounds.height
         })
-        withExtendedLifetime(window) {}
+        withExtendedLifetime((window, origin)) {}
     }
 
     /// The card is shown before its product is asked, so an answer that comes
