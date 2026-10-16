@@ -2218,7 +2218,7 @@ mod tests {
 				offered,
 				answer,
 				cancelling,
-				paid_out.map(|()| ()),
+				paid_out,
 				off_terms,
 				named,
 				settled,
