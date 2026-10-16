@@ -20,7 +20,7 @@ use crate::{
 	platform::{
 		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
 		PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform,
-		TopUpPlatform,
+		SharePlatform, TopUpPlatform,
 	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
@@ -77,6 +77,12 @@ pub struct RuntimeServices {
 	/// Whether a scan is open. Shared by every product runtime of this host,
 	/// because the device has one viewfinder.
 	scan_open: AtomicBool,
+	/// Host share sheet, installed once at startup by a host that can draw
+	/// one. Unset leaves every product share `Unsupported`.
+	share_platform: OnceLock<Arc<dyn SharePlatform>>,
+	/// Whether a share sheet is open. Shared by every product runtime of this
+	/// host, because the screen shows one sheet.
+	share_open: AtomicBool,
 	/// Host observer told when a device finishes pairing with this signing
 	/// host. Unset leaves a paired device unannounced.
 	device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -181,6 +187,8 @@ impl RuntimeServices {
 			game_platform: OnceLock::new(),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),
+			share_platform: OnceLock::new(),
+			share_open: AtomicBool::new(false),
 			device_pairing_observer: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			core_db: OnceLock::new(),
@@ -351,11 +359,25 @@ impl RuntimeServices {
 
 	/// Claim the one open scan, or `None` while another holds it. Dropping the
 	/// claim frees it, so a cancelled or failed scan cannot keep it.
-	pub fn claim_scan(&self) -> Option<ScanClaim<'_>> {
-		self.scan_open
-			.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-			.ok()
-			.map(|_| ScanClaim(&self.scan_open))
+	pub fn claim_scan(&self) -> Option<OverlayClaim<'_>> {
+		OverlayClaim::take(&self.scan_open)
+	}
+
+	/// Install the host's share sheet. Answers whether this call was the one
+	/// that installed it.
+	pub fn install_share_platform(&self, platform: Arc<dyn SharePlatform>) -> bool {
+		self.share_platform.set(platform).is_ok()
+	}
+
+	/// The host's share sheet, when one is installed.
+	pub fn share_platform(&self) -> Option<Arc<dyn SharePlatform>> {
+		self.share_platform.get().cloned()
+	}
+
+	/// Claim the one open share sheet, or `None` while another holds it.
+	/// Dropping the claim frees it.
+	pub fn claim_share(&self) -> Option<OverlayClaim<'_>> {
+		OverlayClaim::take(&self.share_open)
 	}
 
 	/// Install the host's device-pairing observer.
@@ -601,10 +623,18 @@ impl RuntimeChainProvider for HostChainProvider {
 	}
 }
 
-/// The open scan. Frees the slot when dropped.
-pub struct ScanClaim<'a>(&'a AtomicBool);
+/// The open scan or share sheet. Frees the slot when dropped.
+pub struct OverlayClaim<'a>(&'a AtomicBool);
 
-impl Drop for ScanClaim<'_> {
+impl<'a> OverlayClaim<'a> {
+	fn take(open: &'a AtomicBool) -> Option<Self> {
+		open.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+			.ok()
+			.map(|_| Self(open))
+	}
+}
+
+impl Drop for OverlayClaim<'_> {
 	fn drop(&mut self) {
 		self.0.store(false, Ordering::Release);
 	}

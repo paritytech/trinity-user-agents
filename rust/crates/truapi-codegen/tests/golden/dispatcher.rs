@@ -31,6 +31,7 @@ use truapi::api::{
     Renderer,
     ResourceAllocation,
     Scanner,
+    Share,
     Signing,
     StatementStore,
     System,
@@ -71,6 +72,7 @@ where
     register_renderer(dispatcher, host.clone());
     register_resource_allocation(dispatcher, host.clone());
     register_scanner(dispatcher, host.clone());
+    register_share(dispatcher, host.clone());
     register_signing(dispatcher, host.clone());
     register_statement_store(dispatcher, host.clone());
     register_system(dispatcher, host.clone());
@@ -164,6 +166,19 @@ pub fn chat_search_query(
 ) -> truapi::Subscription<versioned::chat::ProductChatSearchQueryItem, truapi::CallError<versioned::chat::ProductChatQueryError>> {
     subscriptions.start(
         wire_table::CHAT_SEARCH_QUERY,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    )
+}
+
+/// Start the host-initiated `chat_open_link` subscription.
+pub fn chat_open_link(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::chat::ProductChatOpenLinkRequest,
+) -> truapi::Subscription<versioned::chat::ProductChatOpenLinkItem, truapi::CallError<versioned::chat::ProductChatQueryError>> {
+    subscriptions.start(
+        wire_table::CHAT_OPEN_LINK,
         parity_scale_codec::Encode::encode(&request),
         transport,
     )
@@ -2786,6 +2801,40 @@ where
                 let result: Result<versioned::scanner::HostScannerScanResponse, truapi::CallError<versioned::scanner::HostScannerScanError>> =
                     match host.scan(&cx, request).await {
                         Ok(response) => Ok(<versioned::scanner::HostScannerScanResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_share<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: Share + Send + Sync + 'static,
+{
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::SHARE_SHARE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::share::HostShareRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::share::HostShareError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::share::HostShareResponse, truapi::CallError<versioned::share::HostShareError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::share::HostShareResponse, truapi::CallError<versioned::share::HostShareError>> =
+                    match host.share(&cx, request).await {
+                        Ok(response) => Ok(<versioned::share::HostShareResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),

@@ -120,6 +120,8 @@ truapi_macros::versioned_type! {
 	pub enum HostChatRoomEventsSubscribeError { V1 => v01::GenericError }
 	pub enum ProductChatSearchQueryRequest { V1 => v01::ProductChatSearchQueryRequest }
 	pub enum ProductChatSearchQueryItem { V1 => v01::ProductChatSearchQueryItem }
+	pub enum ProductChatOpenLinkRequest { V1 => v01::ProductChatOpenLinkRequest }
+	pub enum ProductChatOpenLinkItem { V1 => v01::ProductChatOpenLinkItem }
 }
 
 /// Answer `latest` as `Self::V1` for a v0.1 peer and as `Self::V2` otherwise,

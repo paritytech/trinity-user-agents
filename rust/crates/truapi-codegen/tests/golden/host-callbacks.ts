@@ -66,6 +66,7 @@ import type {
   HostPushNotificationRequest,
   HostPushNotificationResponse,
   HostScannerScanRequest,
+  HostShareRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
   Result,
@@ -479,6 +480,11 @@ export type HostScan =
    * and is never answered this way.
    */
   | { tag: "NotVisible"; value?: undefined };
+
+/**
+ * How the host's share sheet ended.
+ */
+export type HostShare = "Shared" | "Dismissed" | "NotVisible";
 
 /**
  * Review shown before a product learns the user's primary identity.
@@ -1065,6 +1071,13 @@ export const HostScan: S.Codec<HostScan> = S.lazy(
       CameraUnavailable: S._void,
       NotVisible: S._void,
     }),
+);
+
+/**
+ * How the host's share sheet ended.
+ */
+export const HostShare: S.Codec<HostShare> = S.lazy(
+  (): S.Codec<HostShare> => S.Status("Shared", "Dismissed", "NotVisible"),
 );
 
 /**
@@ -2120,6 +2133,26 @@ export interface ScannerPlatform {
     product: ProductContext,
     request: HostScannerScanRequest,
   ): Promise<HostScan>;
+}
+
+/**
+ * Host-owned share sheet. Optional; a host without one leaves every product
+ * share `Unsupported`. The Swift and Kotlin bridges follow the same rules.
+ *
+ * - Show the sheet over what is on screen, with the text as the only item.
+ *   Never send the text anywhere by yourself.
+ * - Answer `HostShare::NotVisible` for an App or Widget that is not on
+ *   screen. A Worker reaching the host already passed the core's tap check.
+ * - Close the sheet when the core drops the future.
+ */
+export interface SharePlatform {
+  /**
+   * Open the share sheet on behalf of `product` and wait for the user.
+   */
+  shareText(
+    product: ProductContext,
+    request: HostShareRequest,
+  ): Promise<HostShare>;
 }
 
 /**

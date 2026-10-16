@@ -579,6 +579,21 @@ pub trait NativeWakeRelayCallbacks: Send + Sync {
 	) -> Result<(), HostRejection>;
 }
 
+/// Native form of [`crate::platform::SharePlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_share_callbacks`].
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeShareCallbacks: Send + Sync {
+	/// Open the share sheet on behalf of `product_id`'s execution of
+	/// `execution_kind` and report how it ended.
+	async fn share_text(
+		&self,
+		product_id: String,
+		execution_kind: crate::platform::ProductExecutionKind,
+		request: truapi::latest::HostShareRequest,
+	) -> Result<crate::platform::HostShare, HostRejection>;
+}
+
 /// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
 /// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
 #[uniffi::export(rust, foreign)]

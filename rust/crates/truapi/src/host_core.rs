@@ -22,7 +22,7 @@ use crate::platform::{
 	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, GamePlatform,
 	PairingHostAdmin, PairingHostConfig, PaymentPlatform, PermissionAuthorizationRequest,
 	PermissionAuthorizationStatus, PermissionStatusHost, Platform, PocketPlatform, ProductContext,
-	ScannerPlatform, SigningHostConfig, TopUpPlatform, normalize_product_identifier,
+	ScannerPlatform, SharePlatform, SigningHostConfig, TopUpPlatform, normalize_product_identifier,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -322,6 +322,13 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_scanner_platform"))]
 	pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
 		self.services.install_scanner_platform(platform)
+	}
+
+	/// Install the host's [`SharePlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_share_platform"))]
+	pub fn set_share_platform(&self, platform: Arc<dyn SharePlatform>) -> bool {
+		self.services.install_share_platform(platform)
 	}
 
 	/// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -780,6 +787,13 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_scanner_platform"))]
 	pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
 		self.services.install_scanner_platform(platform)
+	}
+
+	/// Install the host's [`SharePlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_share_platform"))]
+	pub fn set_share_platform(&self, platform: Arc<dyn SharePlatform>) -> bool {
+		self.services.install_share_platform(platform)
 	}
 
 	/// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -1896,6 +1910,29 @@ impl ProductRuntimeControl {
 			},
 			move |answer| crate::platform::validate_chat_search_answer(answer, page_size),
 			|answer| answer.hits.iter().map(|hit| hit.origin.participant_id.as_str()).collect(),
+		)
+	}
+
+	/// Give the product the payload of a room link the user opened. The core
+	/// asks for any room of the product, and answers `NotAvailable` itself
+	/// for a room the product does not have.
+	pub fn chat_open_link(
+		&self,
+		request: truapi::latest::ProductChatOpenLinkRequest,
+	) -> Result<ChatQuery<truapi::latest::ProductChatOpenLinkItem>, ProductRuntimeError> {
+		let request = crate::platform::validate_chat_open_link(request);
+		self.chat_query(
+			request.as_ref().map(|request| request.room_id.clone()).map_err(Clone::clone),
+			crate::runtime::ChatHandler::Config(|_| true),
+			move |subscriptions, transport| {
+				Ok(crate::generated::dispatcher::chat_open_link(
+					subscriptions,
+					transport,
+					truapi::versioned::chat::ProductChatOpenLinkRequest::V1(request?),
+				))
+			},
+			crate::platform::validate_chat_open_link_answer,
+			|_| Vec::new(),
 		)
 	}
 
@@ -4742,6 +4779,86 @@ mod tests {
 			));
 		}
 		assert!(sent_frames(&sink).is_empty());
+	}
+
+	fn open_link_request(payload: &str) -> truapi::latest::ProductChatOpenLinkRequest {
+		truapi::latest::ProductChatOpenLinkRequest {
+			room_id: "support".to_string(),
+			payload: payload.to_string(),
+		}
+	}
+
+	// B5: a room link with a payload reaches the product of any room, with
+	// the payload as the host read it, and the product's answer names the
+	// room the host shows next.
+	#[test]
+	fn an_opened_link_reaches_the_product_with_its_payload() {
+		let (runtime, sink) = chat_query_runtime(Default::default());
+		let mut query = runtime
+			.control()
+			.chat_open_link(open_link_request("verbosity:/contact#AAEC"))
+			.expect("may be asked");
+		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+		assert!(query.poll_next_unpin(&mut cx).is_pending());
+		let start = sent_frames(&sink).remove(0);
+		assert_eq!(
+			truapi::versioned::chat::ProductChatOpenLinkRequest::decode(
+				&mut start.payload.value.as_slice()
+			),
+			Ok(truapi::versioned::chat::ProductChatOpenLinkRequest::V1(open_link_request(
+				"verbosity:/contact#AAEC"
+			)))
+		);
+		let answer = truapi::latest::ProductChatOpenLinkItem { room_id: Some("dm-7".to_string()) };
+		deliver_chat_frame(
+			&runtime,
+			&start,
+			truapi::versioned::chat::ProductChatOpenLinkItem::V1(answer.clone()).encode(),
+		);
+		assert_eq!(futures::executor::block_on(query.next()), Some(Ok(answer)));
+	}
+
+	#[test]
+	fn an_empty_or_long_link_payload_never_reaches_the_product() {
+		let (runtime, sink) = chat_query_runtime(Default::default());
+		for payload in [String::new(), "x".repeat(crate::platform::CHAT_LINK_PAYLOAD_MAX_BYTES + 1)]
+		{
+			let mut query = runtime
+				.control()
+				.chat_open_link(open_link_request(&payload))
+				.expect("may be asked");
+			assert!(matches!(
+				futures::executor::block_on(query.next()),
+				Some(Err(truapi::CallError::Domain(
+					truapi::latest::ProductChatQueryError::Unknown { .. }
+				)))
+			));
+		}
+		assert!(sent_frames(&sink).is_empty());
+	}
+
+	#[test]
+	fn an_open_link_answer_with_a_bad_room_is_refused() {
+		let (runtime, sink) = chat_query_runtime(Default::default());
+		let mut query =
+			runtime.control().chat_open_link(open_link_request("x")).expect("may be asked");
+		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+		assert!(query.poll_next_unpin(&mut cx).is_pending());
+		let start = sent_frames(&sink).remove(0);
+		deliver_chat_frame(
+			&runtime,
+			&start,
+			truapi::versioned::chat::ProductChatOpenLinkItem::V1(
+				truapi::latest::ProductChatOpenLinkItem { room_id: Some("  ".to_string()) },
+			)
+			.encode(),
+		);
+		assert!(matches!(
+			futures::executor::block_on(query.next()),
+			Some(Err(truapi::CallError::Domain(
+				truapi::latest::ProductChatQueryError::Unknown { .. }
+			)))
+		));
 	}
 
 	// S62: a scripted product answers the host's search; the core holds the

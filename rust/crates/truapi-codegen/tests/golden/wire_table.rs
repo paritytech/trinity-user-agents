@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "c780b64e2cc69fb8";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "55eb35f9ff732859";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -386,6 +386,12 @@ pub const CHAT_SEARCH_QUERY: MethodIds = MethodIds {
     method_id: 27,
 };
 
+/// Wire discriminants for `chat_open_link`.
+pub const CHAT_OPEN_LINK: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 28,
+};
+
 /// Wire discriminants for `coin_payment_create_purse`.
 pub const COIN_PAYMENT_CREATE_PURSE: MethodIds = MethodIds {
     trait_id: 5,
@@ -710,6 +716,12 @@ pub const SCANNER_SCAN: MethodIds = MethodIds {
     method_id: 0,
 };
 
+/// Wire discriminants for `share_share`.
+pub const SHARE_SHARE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 0,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -943,6 +955,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Subscription(CHAT_SEARCH_QUERY),
     },
     WireEntry {
+        method: "chat_open_link",
+        kind: WireKind::Subscription(CHAT_OPEN_LINK),
+    },
+    WireEntry {
         method: "coin_payment_create_purse",
         kind: WireKind::Request(COIN_PAYMENT_CREATE_PURSE),
     },
@@ -1157,5 +1173,9 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "scanner_scan",
         kind: WireKind::Request(SCANNER_SCAN),
+    },
+    WireEntry {
+        method: "share_share",
+        kind: WireKind::Request(SHARE_SHARE),
     },
 ];

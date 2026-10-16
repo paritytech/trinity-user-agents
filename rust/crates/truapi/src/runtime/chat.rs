@@ -3,7 +3,10 @@
 use core::time::Duration;
 use std::{
 	collections::{HashMap, VecDeque},
-	sync::{Arc, Mutex},
+	sync::{
+		Arc, Mutex,
+		atomic::{AtomicU64, Ordering},
+	},
 };
 
 use futures::{StreamExt, channel::mpsc};
@@ -77,6 +80,9 @@ impl Default for ChatRateLimits {
 pub struct ChatEventChannel {
 	events: Arc<ActionChannel<latest::HostChatActionSubscribeItem>>,
 	seen: Arc<Mutex<HashMap<String, SeenWindow>>>,
+	/// When the user last pressed something the host drew for a room of the
+	/// product, in unix seconds. Zero before the first press.
+	tapped_at_secs: AtomicU64,
 }
 
 /// The `Seen` pacing state of one room.
@@ -92,6 +98,7 @@ impl Default for ChatEventChannel {
 		Self {
 			events: Arc::new(ActionChannel::new("chat is closed for this product connection")),
 			seen: Arc::default(),
+			tapped_at_secs: AtomicU64::new(0),
 		}
 	}
 }
@@ -112,6 +119,10 @@ impl ChatEventChannel {
 		item: latest::HostChatActionSubscribeItem,
 		spawner: &Spawner,
 	) -> Result<(), ProductRuntimeError> {
+		if is_press(&item.event) {
+			self.tapped_at_secs
+				.store(crate::unix_time::current_unix_secs(), Ordering::Release);
+		}
 		if !matches!(item.event, latest::ChatEvent::Seen { .. }) {
 			return self.events.publish(item);
 		}
@@ -151,6 +162,14 @@ impl ChatEventChannel {
 		Ok(())
 	}
 
+	/// Whether the user pressed a button, a menu entry, a quick reply or a
+	/// command of a room of the product within the last `window_secs`.
+	pub fn pressed_within(&self, window_secs: u64) -> bool {
+		let tapped_at = self.tapped_at_secs.load(Ordering::Acquire);
+		tapped_at != 0 &&
+			crate::unix_time::current_unix_secs().saturating_sub(tapped_at) <= window_secs
+	}
+
 	/// End the current subscriber's stream while keeping buffered events for
 	/// the next product connection that subscribes.
 	pub fn detach(&self) {
@@ -163,6 +182,21 @@ impl ChatEventChannel {
 		self.events.close();
 		self.seen.lock().expect("chat seen mutex poisoned").clear();
 	}
+}
+
+/// Whether `event` is a press of the user on something the host drew for the
+/// room: a button, a menu entry, a quick reply or a command. A posted message
+/// and the screen events are not presses.
+fn is_press(event: &latest::ChatEvent) -> bool {
+	matches!(
+		event,
+		latest::ChatEvent::ActionTriggered(_) |
+			latest::ChatEvent::Command(_) |
+			latest::ChatEvent::MessageActionTriggered { .. } |
+			latest::ChatEvent::ParticipantActionTriggered { .. } |
+			latest::ChatEvent::ToolbarActionTriggered { .. } |
+			latest::ChatEvent::SuggestionSelected { .. }
+	)
 }
 
 /// The room events of each product, shared by every connection of one host
