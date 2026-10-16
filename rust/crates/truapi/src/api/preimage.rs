@@ -44,10 +44,10 @@ pub trait Preimage: Send + Sync {
 
 	/// Submit a preimage. Returns the preimage key (hash) on success.
 	///
-	/// Requires the `PreimageSubmit` permission and raises no per-upload
-	/// confirmation. `AllowAlways` covers every upload; `AllowOnce` covers a
-	/// single upload. Allocating or renewing the Bulletin allowance may still
-	/// ask the paired wallet.
+	/// Requires the `PreimageSubmit` permission. Upload consent is separate
+	/// from that capability grant. The host reviews each upload unless an
+	/// explicit bounded automatic-upload policy approves it. Allocating or
+	/// renewing the Bulletin allowance may also require approval.
 	///
 	/// ```ts
 	/// const value = `0x${crypto.getRandomValues(new Uint8Array(4)).toHex()}` as `0x${string}`;
