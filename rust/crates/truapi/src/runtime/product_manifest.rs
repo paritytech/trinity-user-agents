@@ -454,9 +454,8 @@ pub async fn require_context_access(
 ///
 /// Returned together because every consumer needs both and deriving either one
 /// again from the request re-introduces the raw-vs-normalized skew the gate
-/// exists to remove: `sso_responder` hands `calling_product_id` through
-/// untouched, so a caller that re-derives it compares a peer's spelling against
-/// a normalized owner.
+/// exists to remove: the key handle's owner arrives as the peer spelled it, so
+/// a caller that re-derives it compares that spelling against a normalized id.
 pub struct AuthorizedAccess {
 	/// The caller the gate authorized.
 	pub caller: ProductId,
@@ -469,17 +468,9 @@ pub struct AuthorizedAccess {
 pub async fn ring_vrf_key_access_granted(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
-	calling_product_id: &str,
+	caller: ProductId,
 	handle: &v01::ProductAccountId,
 ) -> Result<AuthorizedAccess, RingVrfError> {
-	// A caller id that does not normalize names no product, so it holds no key
-	// and no manifest can grant it. It takes the same refusal as a product that
-	// granted nothing rather than an error carrying the string back: on the wire
-	// path this field is peer-supplied, and one refusal for every reason is the
-	// whole design of this seam.
-	let Ok(caller) = calling_product_id.parse::<ProductId>() else {
-		return Err(RingVrfError::NotAllowlisted);
-	};
 	// The handle is normalized here, not only at the frontend. The frontend
 	// does it before delegating, but `sso_responder` hands a wire request
 	// straight to the authority unnormalized, so without this the two doors

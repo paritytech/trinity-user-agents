@@ -334,7 +334,7 @@ impl PairingHost {
 			return Ok(public_key);
 		}
 		let public_key = self
-			.call(cx, session, ProductSubtreeRequest { product_id: product_id.to_string() })
+			.call(cx, session, ProductSubtreeRequest { product_id: product_id.clone() })
 			.await
 			.map_err(remote_authority_error)?
 			.map_err(remote_authority_error)?;
@@ -358,7 +358,7 @@ impl PairingHost {
 		self.call(
 			cx,
 			session,
-			ProductRequest { calling_product_id: calling_product_id.to_string(), payload: request },
+			ProductRequest { calling_product_id: calling_product_id.clone(), payload: request },
 		)
 		.await
 		.map_err(remote_authority_error)?
@@ -569,7 +569,7 @@ impl PairingHost {
 				cx,
 				session,
 				ResourceAllocationRequest {
-					calling_product_id: product_id.to_string(),
+					calling_product_id: product_id.clone(),
 					resources: request.resources,
 					on_existing: OnExistingAllowancePolicy::Increase,
 				},
@@ -599,7 +599,7 @@ impl PairingHost {
 				cx,
 				session,
 				ResourceAllocationRequest {
-					calling_product_id: product_id.to_string(),
+					calling_product_id: product_id.clone(),
 					resources: vec![resource],
 					on_existing,
 				},

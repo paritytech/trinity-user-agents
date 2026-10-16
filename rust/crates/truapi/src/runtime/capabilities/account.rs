@@ -132,14 +132,16 @@ impl Account for ProductRuntimeHost {
 				return Err(CallError::Domain(latest::HostAccountGetAliasError::Rejected));
 			};
 
-			let calling_product_id = self.product_id().to_string();
 			let cx = remote_authority_context(cx);
 			remote_authority_call(
 				&cx,
 				self.authority.account_alias(
 					&cx,
 					&session,
-					ProductRequest { calling_product_id, payload: request },
+					ProductRequest {
+						calling_product_id: self.product_id().clone(),
+						payload: request,
+					},
 				),
 			)
 			.await
@@ -185,7 +187,7 @@ impl Account for ProductRuntimeHost {
 					&cx,
 					&session,
 					ProductRequest {
-						calling_product_id: self.product_id().to_string(),
+						calling_product_id: self.product_id().clone(),
 						payload: request,
 					},
 				),
@@ -214,14 +216,16 @@ impl Account for ProductRuntimeHost {
 					latest::HostAccountRegisterRingVrfKeyError::NotConnected,
 				));
 			};
-			let calling_product_id = self.product_id().to_string();
 			let cx = remote_authority_context(cx);
 			remote_authority_call(
 				&cx,
 				self.authority.register_ring_vrf_key(
 					&cx,
 					&session,
-					ProductRequest { calling_product_id, payload: request },
+					ProductRequest {
+						calling_product_id: self.product_id().clone(),
+						payload: request,
+					},
 				),
 			)
 			.await
@@ -258,14 +262,16 @@ impl Account for ProductRuntimeHost {
 					})
 				})?
 				.into();
-			let calling_product_id = self.product_id().to_string();
 			let cx = remote_authority_context(cx);
 			remote_authority_call(
 				&cx,
 				self.authority.list_ring_vrf_keys(
 					&cx,
 					&session,
-					ProductRequest { calling_product_id, payload: request },
+					ProductRequest {
+						calling_product_id: self.product_id().clone(),
+						payload: request,
+					},
 				),
 			)
 			.await
@@ -310,7 +316,7 @@ impl Account for ProductRuntimeHost {
 					&cx,
 					&session,
 					ProductRequest {
-						calling_product_id: self.product_id().to_string(),
+						calling_product_id: self.product_id().clone(),
 						payload: request,
 					},
 				),

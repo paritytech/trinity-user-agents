@@ -3631,7 +3631,7 @@ mod tests {
 		let request = RemoteMessage {
 			message_id: "m3".to_string(),
 			data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(
-				ProductSubtreeRequest { product_id: "browse.dot".to_string() },
+				ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
 			)),
 		};
 		let outcome = futures::executor::block_on(runtime.answer_sso_request(request));

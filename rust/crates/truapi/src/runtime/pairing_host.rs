@@ -1838,7 +1838,7 @@ impl PairingHost {
 	/// this role the request can have arrived over the pairing wire.
 	async fn require_ring_vrf_key_access(
 		&self,
-		calling_product_id: &str,
+		calling_product_id: ProductId,
 		handle: &latest::ProductAccountId,
 	) -> Result<
 		(latest::ProductAccountId, crate::runtime::product_manifest::AuthorizedAccess),
@@ -2155,7 +2155,7 @@ impl PairingHost {
 		request: ProductRequest<HostAccountGetAliasRequest>,
 	) -> Result<latest::ContextualAlias, RingVrfError> {
 		let private_session = self.current_private_session(session)?;
-		if request.calling_product_id == request.payload.key_handle.dot_ns_identifier &&
+		if request.calling_product_id.as_str() == request.payload.key_handle.dot_ns_identifier &&
 			let Some(entropy) = self
 				.local_ring_vrf_entropy_for_ring(
 					&private_session,
@@ -2181,7 +2181,10 @@ impl PairingHost {
 		request: ProductRequest<HostAccountCreateProofRequest>,
 	) -> Result<latest::HostAccountCreateProofResponse, RingVrfError> {
 		let (key_handle, access) = self
-			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+			.require_ring_vrf_key_access(
+				request.calling_product_id.clone(),
+				&request.payload.key_handle,
+			)
 			.await?;
 		// A grant cannot expose the owner's alias in a third product's context unless
 		// that product's manifest grants the caller `context`.
@@ -2227,16 +2230,12 @@ impl PairingHost {
 		request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
 	) -> Result<[u8; 32], RingVrfError> {
 		let private_session = self.current_private_session(session)?;
-		let calling_product_id = request
-			.calling_product_id
-			.parse::<ProductId>()
-			.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?;
 		let handle = latest::ProductAccountId {
-			dot_ns_identifier: calling_product_id.to_string(),
+			dot_ns_identifier: request.calling_product_id.to_string(),
 			derivation_index: request.payload.index.clone(),
 		};
 		if let Some(auto_signing) = self
-			.auto_signing_key(&private_session, &calling_product_id)
+			.auto_signing_key(&private_session, &request.calling_product_id)
 			.await
 			.map_err(RingVrfError::from)?
 		{
@@ -2317,7 +2316,10 @@ impl PairingHost {
 		request: ProductRequest<HostAccountRingVrfSignRequest>,
 	) -> Result<Vec<u8>, RingVrfError> {
 		let (key_handle, _access) = self
-			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+			.require_ring_vrf_key_access(
+				request.calling_product_id.clone(),
+				&request.payload.key_handle,
+			)
 			.await?;
 		let private_session = self.current_private_session(session)?;
 		if let Some(entropy) = self.local_ring_vrf_entropy(&private_session, &key_handle).await? {

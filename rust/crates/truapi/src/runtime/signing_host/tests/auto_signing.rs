@@ -187,7 +187,10 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
 	let Dispatch::Response(answer) = futures::executor::block_on(
 		SigningHostSsoService::new(activation).answer(RemoteMessage::request(
 			"relayed-vrf".to_string(),
-			ProductRequest { calling_product_id: "dim2.paseo".to_string(), payload: request },
+			ProductRequest {
+				calling_product_id: ProductId::for_test("dim2.paseo"),
+				payload: request,
+			},
 		)),
 	) else {
 		panic!("expected a VRF response")

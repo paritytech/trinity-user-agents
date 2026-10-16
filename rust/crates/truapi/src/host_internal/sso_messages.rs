@@ -44,6 +44,7 @@ use crate::{
 			decode_verified_statement_data, statement_expiry_elapsed,
 		},
 	},
+	platform::ProductId,
 	unix_time::current_unix_secs,
 };
 
@@ -127,7 +128,7 @@ pub enum SsoRequestOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ProductRequest<P> {
 	/// Product making the request.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Canonical payload sent to the signing host.
 	pub payload: P,
 }
@@ -222,7 +223,7 @@ pub type CreateAccountProofResponse = Result<HostAccountCreateProofResponse, Rin
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ResourceAllocationRequest {
 	/// Product id the allocation is requested for.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Resources to allocate; outcomes come back in the same order.
 	pub resources: Vec<AllocatableResource>,
 	/// Policy applied when an allocation already exists for this product.
@@ -305,7 +306,7 @@ pub struct Withdrawal {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ProductSubtreeRequest {
 	/// DotNS product identifier whose hard subtree is requested.
-	pub product_id: String,
+	pub product_id: ProductId,
 }
 
 /// Account Holder response carrying a product subtree public key.
@@ -740,7 +741,7 @@ mod tests {
 		let register = RemoteMessage::request(
 			String::new(),
 			ProductRequest {
-				calling_product_id: "caller.dot".to_string(),
+				calling_product_id: ProductId::for_test("caller.dot"),
 				payload: truapi::latest::HostAccountRegisterRingVrfKeyRequest {
 					index: DerivationIndex::Index(0),
 					ring: ring_location.clone(),
@@ -759,7 +760,7 @@ mod tests {
 		let list = RemoteMessage::request(
 			String::new(),
 			ProductRequest {
-				calling_product_id: "caller.dot".to_string(),
+				calling_product_id: ProductId::for_test("caller.dot"),
 				payload: truapi::latest::HostAccountListRingVrfKeysRequest {
 					owner: "peopl.dot".to_string(),
 					disclosure: truapi::v01::RingVrfKeyDisclosure::Anonymized,
@@ -778,7 +779,7 @@ mod tests {
 		let sign = RemoteMessage::request(
 			String::new(),
 			ProductRequest {
-				calling_product_id: "caller.dot".to_string(),
+				calling_product_id: ProductId::for_test("caller.dot"),
 				payload: truapi::latest::HostAccountRingVrfSignRequest {
 					key_handle,
 					message: vec![],
@@ -827,21 +828,21 @@ mod tests {
 		};
 		let messages = [
 			v1::RemoteMessage::RegisterRingVrfKeyRequest(ProductRequest {
-				calling_product_id: "game.dot".to_string(),
+				calling_product_id: ProductId::for_test("game.dot"),
 				payload: truapi::latest::HostAccountRegisterRingVrfKeyRequest {
 					index: DerivationIndex::Index(4),
 					ring: ring.clone(),
 				},
 			}),
 			v1::RemoteMessage::ListRingVrfKeysRequest(ProductRequest {
-				calling_product_id: "game.dot".to_string(),
+				calling_product_id: ProductId::for_test("game.dot"),
 				payload: truapi::latest::HostAccountListRingVrfKeysRequest {
 					owner: "peopl.dot".to_string(),
 					disclosure: truapi::v01::RingVrfKeyDisclosure::PublicKey,
 				},
 			}),
 			v1::RemoteMessage::RingVrfSignRequest(ProductRequest {
-				calling_product_id: "game.dot".to_string(),
+				calling_product_id: ProductId::for_test("game.dot"),
 				payload: truapi::latest::HostAccountRingVrfSignRequest {
 					key_handle: handle,
 					message: (0..16).collect(),
@@ -883,7 +884,7 @@ mod tests {
 		let alias = RemoteMessage::request(
 			"m-alias".to_string(),
 			ProductRequest {
-				calling_product_id: "caller.dot".to_string(),
+				calling_product_id: ProductId::for_test("caller.dot"),
 				payload: truapi::latest::HostAccountGetAliasRequest {
 					key_handle: key_handle.clone(),
 					context: context.clone(),
@@ -894,7 +895,7 @@ mod tests {
 		let proof = RemoteMessage::request(
 			"m-proof".to_string(),
 			ProductRequest {
-				calling_product_id: "caller.dot".to_string(),
+				calling_product_id: ProductId::for_test("caller.dot"),
 				payload: truapi::latest::HostAccountCreateProofRequest {
 					key_handle,
 					context,
@@ -969,7 +970,7 @@ mod tests {
 		let message = RemoteMessage::request(
 			"m-resource".to_string(),
 			ResourceAllocationRequest {
-				calling_product_id: "truapi-playground.dot".to_string(),
+				calling_product_id: ProductId::for_test("truapi-playground.dot"),
 				resources: vec![
 					AllocatableResource::StatementStoreAllowance,
 					AllocatableResource::BulletinAllowance,
@@ -984,6 +985,31 @@ mod tests {
 			message,
 			"0x286d2d7265736f757263650005547472756170692d706c617967726f756e642e646f741000010200090000000301",
 		);
+	}
+
+	#[test]
+	fn a_request_from_a_caller_that_is_not_a_product_id_does_not_decode() {
+		// The signing host answers an undecodable request with a decoding
+		// failure, so a caller id dotNS cannot register never reaches a review
+		// or a key derivation.
+		let valid = RemoteMessage::request(
+			"m-resource".to_string(),
+			ResourceAllocationRequest {
+				calling_product_id: ProductId::for_test("myapp.dot"),
+				resources: vec![AllocatableResource::StatementStoreAllowance],
+				on_existing: OnExistingAllowancePolicy::Ignore,
+			},
+		)
+		.encode();
+		let caller = valid
+			.windows(b"myapp.dot".len())
+			.position(|window| window == b"myapp.dot")
+			.expect("the caller id is encoded");
+		let mut invalid = valid.clone();
+		invalid[caller..caller + b"myapp.dot".len()].copy_from_slice(b"my_pp.dot");
+
+		assert!(decode_remote_message(&valid).is_ok());
+		assert!(decode_remote_message(&invalid).is_err());
 	}
 
 	#[test]
@@ -1095,7 +1121,7 @@ mod tests {
 	fn product_subtree_messages_match_mobile_wire_contract() {
 		let request = RemoteMessage::request(
 			"request".to_string(),
-			ProductSubtreeRequest { product_id: "browse.dot".to_string() },
+			ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
 		);
 		assert_eq!(hex::encode(request.encode()), "1c7265717565737400102862726f7773652e646f74");
 
@@ -1132,7 +1158,7 @@ mod tests {
 		};
 		let request = RemoteMessage::request(
 			"req".to_string(),
-			ProductRequest { calling_product_id: "browse.dot".to_string(), payload },
+			ProductRequest { calling_product_id: ProductId::for_test("browse.dot"), payload },
 		);
 		assert_eq!(
 			hex::encode(request.encode()),

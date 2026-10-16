@@ -412,7 +412,7 @@ impl SigningHost {
 			&self.services,
 			self,
 			session,
-			product_id.as_str(),
+			product_id,
 			policy,
 		)
 		.await?;
@@ -722,7 +722,7 @@ impl SigningHost {
 	/// this role the request can have arrived over the pairing wire.
 	async fn require_ring_vrf_key_access(
 		&self,
-		calling_product_id: &str,
+		calling_product_id: ProductId,
 		handle: &v01::ProductAccountId,
 	) -> Result<
 		(v01::ProductAccountId, crate::runtime::product_manifest::AuthorizedAccess),
@@ -1094,7 +1094,10 @@ impl ProductAuthority for SigningHost {
 		// Aliases expose the same identity as `create_proof`, so both must enforce
 		// the same RFC-0024 grant and context restrictions.
 		let granted = match self
-			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+			.require_ring_vrf_key_access(
+				request.calling_product_id.clone(),
+				&request.payload.key_handle,
+			)
 			.await
 		{
 			Ok(granted) => Some(granted),
@@ -1115,10 +1118,7 @@ impl ProductAuthority for SigningHost {
 			},
 			None => {
 				// Permission lookups and prompts must use the same canonical identifiers.
-				let requester = request
-					.calling_product_id
-					.parse::<ProductId>()
-					.map_err(|_| RingVrfError::NotAllowlisted)?;
+				let requester = &request.calling_product_id;
 				let owner = request
 					.payload
 					.key_handle
@@ -1127,7 +1127,7 @@ impl ProductAuthority for SigningHost {
 					.map_err(|_| RingVrfError::NotAllowlisted)?;
 				match super::account_access_authorization(
 					self.services.platform.as_ref(),
-					&requester,
+					requester,
 					&owner,
 				)
 				.await
@@ -1170,7 +1170,7 @@ impl ProductAuthority for SigningHost {
 	) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
 		self.require_current_session(session)?;
 		let (key_handle, access) = self
-			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+			.require_ring_vrf_key_access(request.calling_product_id, &request.payload.key_handle)
 			.await?;
 		// A grant cannot expose the owner's alias in a third product's context unless
 		// that product's manifest grants the caller `context`.
@@ -1216,11 +1216,7 @@ impl ProductAuthority for SigningHost {
 		self.ring_resolver.validate(&request.payload.ring).await?;
 
 		let handle = v01::ProductAccountId {
-			dot_ns_identifier: request
-				.calling_product_id
-				.parse::<ProductId>()
-				.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?
-				.into(),
+			dot_ns_identifier: request.calling_product_id.into(),
 			derivation_index: request.payload.index,
 		};
 		let entropy = self.ring_vrf_entropy(session, &handle)?;
@@ -1243,15 +1239,11 @@ impl ProductAuthority for SigningHost {
 			.owner
 			.parse::<ProductId>()
 			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?;
-		// Ownership checks and permission decisions must use canonical identifiers.
-		let caller = request
-			.calling_product_id
-			.parse::<ProductId>()
-			.map_err(|_| RingVrfError::NotAllowlisted)?;
-		if caller != owner {
+		let caller = &request.calling_product_id;
+		if *caller != owner {
 			match super::account_access_authorization(
 				self.services.platform.as_ref(),
-				&caller,
+				caller,
 				&owner,
 			)
 			.await
@@ -1286,7 +1278,7 @@ impl ProductAuthority for SigningHost {
 	) -> Result<Vec<u8>, RingVrfError> {
 		self.require_current_session(session)?;
 		let (key_handle, _access) = self
-			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+			.require_ring_vrf_key_access(request.calling_product_id, &request.payload.key_handle)
 			.await?;
 		let vrf = vrf::load().await?;
 		let entropy = self.resolve_registered_ring_vrf_key(&vrf, session, &key_handle).await?;
@@ -1349,7 +1341,7 @@ impl ProductAuthority for SigningHost {
 						&self.services,
 						self,
 						session,
-						product_id.as_str(),
+						product_id,
 						OnExistingAllowancePolicy::Increase,
 					)
 					.await
@@ -1360,7 +1352,7 @@ impl ProductAuthority for SigningHost {
 						&self.services,
 						self,
 						session,
-						product_id.as_str(),
+						product_id,
 						index,
 						OnExistingAllowancePolicy::Increase,
 					)
@@ -1439,7 +1431,7 @@ impl ProductAuthority for SigningHost {
 			&self.services,
 			self,
 			session,
-			product_id.as_str(),
+			product_id,
 			OnExistingAllowancePolicy::Ignore,
 		)
 		.await
@@ -1460,7 +1452,7 @@ impl ProductAuthority for SigningHost {
 			&self.services,
 			self,
 			session,
-			product_id.as_str(),
+			product_id,
 			OnExistingAllowancePolicy::Increase,
 		)
 		.await
@@ -1921,7 +1913,7 @@ mod tests {
 				&CallContext::default(),
 				&session,
 				ProductRequest {
-					calling_product_id: caller.to_string(),
+					calling_product_id: ProductId::for_test(caller),
 					payload: v01::HostAccountGetAliasRequest {
 						key_handle: full_person_key_handle(),
 						context: context.clone(),
@@ -1983,7 +1975,7 @@ mod tests {
 				&CallContext::default(),
 				&session,
 				ProductRequest {
-					calling_product_id: caller.to_string(),
+					calling_product_id: ProductId::for_test(caller),
 					payload: v01::HostAccountCreateProofRequest {
 						key_handle: full_person_key_handle(),
 						context: v01::ProductProofContext {
@@ -2076,7 +2068,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: "dim2next.dot".to_string(),
+				calling_product_id: ProductId::for_test("dim2next.dot"),
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: full_person_key_handle(),
 					context: context.clone(),
@@ -2089,7 +2081,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: "dim2next.dot".to_string(),
+				calling_product_id: ProductId::for_test("dim2next.dot"),
 				payload: v01::HostAccountGetAliasRequest {
 					key_handle: full_person_key_handle(),
 					context,
@@ -2247,7 +2239,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: "PEOPL.DOT".to_string(),
+				calling_product_id: ProductId::for_test("PEOPL.DOT"),
 				payload: v01::HostAccountListRingVrfKeysRequest {
 					owner: "peopl.dot".to_string(),
 					disclosure: v01::RingVrfKeyDisclosure::PublicKey,
@@ -2295,7 +2287,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: "peopl.paseo".to_string(),
+				calling_product_id: ProductId::for_test("peopl.paseo"),
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: full_person_key_handle(),
 					context: v01::ProductProofContext {
@@ -2335,7 +2327,7 @@ mod tests {
 				&CallContext::default(),
 				&session,
 				ProductRequest {
-					calling_product_id: "dim2.dot".to_string(),
+					calling_product_id: ProductId::for_test("dim2.dot"),
 					payload: v01::HostAccountCreateProofRequest {
 						key_handle: full_person_key_handle(),
 						context: v01::ProductProofContext {
@@ -2467,7 +2459,7 @@ mod tests {
 				&CallContext::default(),
 				&session,
 				ProductRequest {
-					calling_product_id: caller.to_string(),
+					calling_product_id: ProductId::for_test(caller),
 					payload: v01::HostAccountGetAliasRequest {
 						key_handle: full_person_key_handle(),
 						context: v01::ProductProofContext {
@@ -2532,7 +2524,7 @@ mod tests {
 				&CallContext::default(),
 				&session,
 				ProductRequest {
-					calling_product_id: caller.to_string(),
+					calling_product_id: ProductId::for_test(caller),
 					payload: v01::HostAccountCreateProofRequest {
 						key_handle: full_person_key_handle(),
 						context: v01::ProductProofContext {
@@ -2801,7 +2793,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: caller.to_string(),
+				calling_product_id: ProductId::for_test(caller),
 				payload: v01::HostAccountRingVrfSignRequest {
 					key_handle: v01::ProductAccountId {
 						dot_ns_identifier: handle_owner.to_string(),
@@ -2841,7 +2833,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: caller.to_string(),
+				calling_product_id: ProductId::for_test(caller),
 				payload: v01::HostAccountRingVrfSignRequest {
 					key_handle: full_person_key_handle(),
 					message: b"sign me".to_vec(),
@@ -2879,7 +2871,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: "dim2.dot".to_string(),
+				calling_product_id: ProductId::for_test("dim2.dot"),
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: full_person_key_handle(),
 					context: v01::ProductProofContext {
@@ -2930,7 +2922,7 @@ mod tests {
 			&CallContext::default(),
 			session,
 			ProductRequest {
-				calling_product_id: "peopl.dot".to_string(),
+				calling_product_id: ProductId::for_test("peopl.dot"),
 				payload: HostAccountRegisterRingVrfKeyRequest {
 					index: v01::DerivationIndex::Index(0),
 					ring: ring.clone(),
@@ -3041,7 +3033,7 @@ mod tests {
 			&cx,
 			&session,
 			ProductRequest {
-				calling_product_id: "peopl.dot".to_string(),
+				calling_product_id: ProductId::for_test("peopl.dot"),
 				payload: HostAccountGetAliasRequest {
 					key_handle: full_person_key_handle(),
 					context: context.clone(),
@@ -3054,7 +3046,7 @@ mod tests {
 			&cx,
 			&session,
 			ProductRequest {
-				calling_product_id: "peopl.dot".to_string(),
+				calling_product_id: ProductId::for_test("peopl.dot"),
 				payload: HostAccountCreateProofRequest {
 					key_handle: full_person_key_handle(),
 					context,
@@ -3086,7 +3078,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: "peopl.dot".to_string(),
+				calling_product_id: ProductId::for_test("peopl.dot"),
 				payload: HostAccountGetAliasRequest {
 					key_handle: full_person_key_handle(),
 					context: v01::ProductProofContext {
@@ -3129,7 +3121,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: "myapp.dot".to_string(),
+				calling_product_id: ProductId::for_test("myapp.dot"),
 				payload: HostAccountRingVrfSignRequest {
 					key_handle: handle,
 					message: b"reject mismatched registry state".to_vec(),
@@ -3164,7 +3156,7 @@ mod tests {
 			&cx,
 			&session,
 			ProductRequest {
-				calling_product_id: "myapp.dot".to_string(),
+				calling_product_id: ProductId::for_test("myapp.dot"),
 				payload: HostAccountGetAliasRequest {
 					key_handle: full_person_key_handle(),
 					context: context.clone(),
@@ -3178,7 +3170,7 @@ mod tests {
 			&cx,
 			&session,
 			ProductRequest {
-				calling_product_id: "myapp.dot".to_string(),
+				calling_product_id: ProductId::for_test("myapp.dot"),
 				payload: HostAccountCreateProofRequest {
 					key_handle: full_person_key_handle(),
 					context,
@@ -3209,7 +3201,7 @@ mod tests {
 		let session = authority.current_session().expect("active session");
 		let cx = CallContext::default();
 		let request = ProductRequest {
-			calling_product_id: "myapp.dot".to_string(),
+			calling_product_id: ProductId::for_test("myapp.dot"),
 			payload: HostAccountGetAliasRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
