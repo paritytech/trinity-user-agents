@@ -475,6 +475,11 @@ is unchanged. Use `RemoteMessage::request(message_id, request)` to construct
 requests. Decoded `SsoSessionStatement::RemoteMessages` preserves message order;
 match variants directly or use the request's `SsoRequest::response_from_message`.
 
+Within an authenticated message batch, unreadable unrelated messages and replies
+for another request do not fail the current wait. A readable matching correlation
+id with a malformed payload fails immediately, without waiting for the stream to
+close. An earlier matching response still takes precedence over later messages.
+
 ## Host platform interface
 
 The `platform` module holds the capability traits a TrUAPI host implements.
