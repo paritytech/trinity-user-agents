@@ -305,7 +305,7 @@ function systemImageAbi() {
   return process.arch === "arm64" ? "arm64-v8a" : "x86_64";
 }
 
-function startEmulator(avd) {
+function startEmulator(avd, port) {
   const available = listAvds();
   if (!available.includes(avd)) {
     throw new Error(
@@ -315,7 +315,7 @@ function startEmulator(avd) {
   }
   const child = spawn(
     emulatorPath(),
-    ["-avd", avd, ...EMULATOR_HEADLESS_ARGS],
+    ["-avd", avd, ...(port ? ["-port", String(port)] : []), ...EMULATOR_HEADLESS_ARGS],
     { detached: true, stdio: "ignore" },
   );
   child.unref();
@@ -337,16 +337,23 @@ function waitForBootCompleted(serial, timeoutMs) {
   );
 }
 
+/**
+ * The serial of a booted device. With no device online, boot `avd` headless.
+ * A `port` pins the console port of the emulator, so its serial is
+ * `emulator-<port>`, and two emulators can run beside each other.
+ */
 export async function ensureEmulator({
   avd = DEFAULT_AVD,
-  serial,
+  serial: requested,
+  port,
   timeoutMs = BOOT_TIMEOUT_MS,
   log = () => {},
 } = {}) {
+  const serial = requested ?? (port ? emulatorSerial(port) : undefined);
   let device = onlineDevice(serial);
   if (!device) {
     log(`no device online; booting AVD ${avd} headless`);
-    startEmulator(avd);
+    startEmulator(avd, port);
     device = await waitFor(() => onlineDevice(serial), {
       timeoutMs,
       intervalMs: 2_000,
@@ -356,6 +363,11 @@ export async function ensureEmulator({
   }
   await waitForBootCompleted(device.serial, timeoutMs);
   return device.serial;
+}
+
+/** The adb serial of the emulator whose console port is `port`. */
+export function emulatorSerial(port) {
+  return `emulator-${port}`;
 }
 
 export function installApk(serial, apk, timeoutMs = INSTALL_TIMEOUT_MS) {

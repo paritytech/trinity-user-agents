@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-v2-run ios-verbosity-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run android-chat-v2-run
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-v2-run ios-verbosity-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run android-chat-v2-run android-verbosity-run
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -294,6 +294,17 @@ android-chat-v2-run: ## Build the debug APK and run the Chat Extension v2 sample
 	fi
 	cd $(ANDROID_HOST) && ./gradlew :app:assembleVanillaDebug
 	TRUAPI_ANDROID_E2E_APK="$(TRUAPI_ANDROID_E2E_APK)" node scripts/launch-android-chat-v2.mjs
+
+# The debug APK on the Paseo network of the nightly build, which the live accounts of truapi-host use.
+TRUAPI_ANDROID_E2E_VERBOSITY_APK ?= $(TRUAPI_ANDROID_E2E_APK)
+
+android-verbosity-run: ## Run the wasm chat product in TRUAPI_ANDROID_E2E_VERBOSITY_WASM on two Android emulators with live accounts (build the APK with -Ppolkadotapp.debugEnvironment=NIGHTLY first).
+	@test -f "$(TRUAPI_ANDROID_E2E_VERBOSITY_APK)" || { \
+		echo "Missing debug APK at $(TRUAPI_ANDROID_E2E_VERBOSITY_APK)"; \
+		echo "Build it first: cd hosts/android && ./gradlew :app:assembleVanillaDebug -Ppolkadotapp.debugEnvironment=NIGHTLY"; \
+		exit 1; \
+	}
+	TRUAPI_ANDROID_E2E_APK="$(TRUAPI_ANDROID_E2E_VERBOSITY_APK)" node scripts/launch-android-verbosity.mjs
 
 UNIFFI_KOTLIN_OUT := android/truapi-host/src/main/kotlin/generated
 
