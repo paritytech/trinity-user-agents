@@ -8,8 +8,8 @@
 //!
 //! Plus the diagnostics and one-shot commands: `identity-check` for the dotNS
 //! usernames of a mnemonic's accounts, `register-name` for a full-person
-//! username, `alloc-check` for statement-store allowance, and `pgas-check` for
-//! an Asset Hub PGAS allowance claim.
+//! username, `alloc-check` for statement-store allowance, `pgas-check` for
+//! an Asset Hub PGAS allowance claim, and `stack` for Trinity stack descriptors.
 
 mod accounts;
 mod attestation;
@@ -32,6 +32,7 @@ mod script_project;
 mod script_runner;
 mod sessions;
 mod signing_shell;
+mod stack;
 mod terminal_ui;
 mod update;
 
@@ -310,6 +311,11 @@ enum Command {
 	/// Only works for a binary the installer put in place; a `cargo install`
 	/// copy or a source build is reported and left alone.
 	Update,
+	/// Publish, check and bundle Trinity stack descriptors.
+	Stack {
+		#[command(subcommand)]
+		command: stack::StackCommand,
+	},
 }
 
 /// Execution kind the CLI serves a product as.
@@ -628,6 +634,7 @@ async fn dispatch(
 		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
 			run_pgas_check(mnemonic, network.config(), target, lookback, submit).await
 		},
+		Command::Stack { command } => stack::run(command).await,
 	}
 }
 
