@@ -234,11 +234,23 @@ data class FundingDepositUiState(
     val failed: Boolean,
     val isCancelling: Boolean,
     val cancel: FundingCancelUiState?,
+    val moneyMoved: Boolean,
     val content: FundingDepositContent,
 ) {
-    /** The user can ask to cancel, and ask again after a refusal, but not while a cancel is with the provider. */
+    /**
+     * The user can ask to cancel, and ask again after a refusal. Before money moved a second cancel ends the session,
+     * so a provider that went silent cannot hold it; after, a cancel with the provider waits for its answer.
+     */
     val canCancel: Boolean
-        get() = started && !failed && (cancel == null || cancel is FundingCancelUiState.Refused)
+        get() = started && !failed && when (cancel) {
+            null, is FundingCancelUiState.Refused -> true
+            FundingCancelUiState.Requested -> !moneyMoved
+            else -> false
+        }
+
+    /** A second cancel ends the session at once, so it reads differently from the first. */
+    val isSecondCancel: Boolean
+        get() = cancel == FundingCancelUiState.Requested && !moneyMoved
 }
 
 /** Where the user's cancel stands once money has moved, so the provider decides it. */

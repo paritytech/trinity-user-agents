@@ -26,6 +26,7 @@ import io.paritytech.polkadotapp.feature_usernames_api.presentation.filterAvaila
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.scanAddressQr.ScanAddressQrResultPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.SendPaymentInteractor
@@ -53,6 +54,7 @@ class SendPaymentViewModel @Inject constructor(
     previousPaymentsAddressConverterFactory: PreviousPaymentsAddressConverterFactory,
     contactsAddressConverterFactory: ContactsAddressConverterFactory,
     private val interactor: SendPaymentInteractor,
+    private val fundingEntryPoints: FundingEntryPoints,
 ) : BaseViewModel(), SendPaymentContract {
     private val withdrawalInProgress = MutableStateFlow(false)
 
@@ -88,7 +90,7 @@ class SendPaymentViewModel @Inject constructor(
     ) { inputValue, results ->
         SendPaymentUiState(
             input = inputValue,
-            sendToYourselfVisible = inputValue.isEmpty(),
+            sendToYourselfVisible = inputValue.isEmpty() && fundingEntryPoints.visible,
             results = results,
         )
     }.stateIn(
@@ -96,7 +98,7 @@ class SendPaymentViewModel @Inject constructor(
         started = SharingStarted.Eagerly,
         initialValue = SendPaymentUiState(
             input = "",
-            sendToYourselfVisible = true,
+            sendToYourselfVisible = fundingEntryPoints.visible,
             results = PaymentSearchResults.Loading
         )
     )

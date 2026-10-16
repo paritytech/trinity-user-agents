@@ -40,6 +40,7 @@ import uniffi.truapi.CancelOutcome
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingStage
+import uniffi.truapi.StartedFunds
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /** A started session the user cancels from its deposit screen, whatever the core and the provider then answer. */
@@ -51,6 +52,7 @@ class FundingCancelViewModelTest {
     private val router = mockk<ProductsRouter>(relaxed = true)
     private val sessionChanges = MutableSharedFlow<Unit>()
     private var cancel: FundingCancel? = null
+    private var moneyMoved = false
     private val models = mutableListOf<FundingViewModel>()
 
     private val interactor = mockk<FundingFlowInteractor> {
@@ -86,16 +88,41 @@ class FundingCancelViewModelTest {
         }
     }
 
+    /** The core sends the first cancel to the provider; the second, before money moved, ends the session. */
     @Test
-    fun `a cancel before money moved ends the session and closes the sheet`() = runCancelTest {
-        coEvery { interactor.cancel("intent") } returns Result.success(CancelOutcome.ENDED)
+    fun `before money moved, cancelling again ends a session a silent provider holds`() = runCancelTest {
+        coEvery { interactor.cancel("intent") } returns Result.success(CancelOutcome.REQUESTED)
         val model = resumed()
 
         model.onCancelTopUp()
         model.onConfirmCancel()
+        cancel = FundingCancel.Requested
+        sessionChanges.emit(Unit)
         runCurrent()
 
+        assertEquals(FundingCancelUiState.Requested, deposit(model).cancel)
+        assertTrue(deposit(model).canCancel)
+        assertTrue(deposit(model).isSecondCancel)
+
+        coEvery { interactor.cancel("intent") } returns Result.success(CancelOutcome.ENDED)
+        model.onCancelTopUp()
+        model.onConfirmCancel()
+        runCurrent()
+
+        coVerify(exactly = 2) { interactor.cancel("intent") }
         coVerify { router.closeFundingOverlay("intent") }
+        stop(model)
+    }
+
+    @Test
+    fun `once money moved, a cancel with the provider can't be sent again`() = runCancelTest {
+        moneyMoved = true
+        cancel = FundingCancel.Requested
+        val model = resumed()
+
+        assertEquals(FundingCancelUiState.Requested, deposit(model).cancel)
+        assertFalse(deposit(model).canCancel)
+        assertFalse(deposit(model).isSecondCancel)
         stop(model)
     }
 
@@ -212,6 +239,7 @@ class FundingCancelViewModelTest {
 
     @Test
     fun `a refusal shows the provider's reason and lets the user ask again`() = runCancelTest {
+        moneyMoved = true
         cancel = FundingCancel.Requested
         val model = resumed()
         assertEquals(FundingCancelUiState.Requested, deposit(model).cancel)
@@ -231,6 +259,10 @@ class FundingCancelViewModelTest {
         every { choice } returns null
         every { providerId } returns null
         every { cancel } answers { this@FundingCancelViewModelTest.cancel }
+        every { updates } returns emptyList()
+        every { started } answers {
+            if (moneyMoved) listOf(mockk<StartedFunds>(relaxed = true)) else emptyList()
+        }
     }
 
     private fun TestScope.resumed(): FundingViewModel {

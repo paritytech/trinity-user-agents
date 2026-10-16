@@ -6,13 +6,15 @@ import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
-import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModelEvent
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldingsUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
+import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -26,7 +28,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 
@@ -49,6 +51,9 @@ class DigitalDollarCardDetailsViewModelTest {
         }
         every { observeActivity() } returns emptyFlow()
     }
+
+    private var fundingVisible = true
+    private val fundingEntryPoints = mockk<FundingEntryPoints> { every { visible } answers { fundingVisible } }
 
     private val interactor = DigitalDollarCardDetailsInteractor(
         chainAssetProvider = mockk(),
@@ -112,9 +117,26 @@ class DigitalDollarCardDetailsViewModelTest {
         viewModel.onGetCashClick()
         answerOpens(Result.success("intent"))
 
-        assertPresentationErrorShown(viewModel)
+        assertPresentationErrorShown<GetCashUnavailablePresentationError>(viewModel)
         coVerify(exactly = 2) { hostFunding.openFunding(FundingDirection.IN, null) }
     }
+
+    /** A build that cannot run a funding provider, such as release, offers Send but not Get. */
+    @Test
+    fun `get is offered only where funding is`() = runBlocking<Unit> {
+        every { coinageBackupService.subscribeProgress() } returns flowOf(BackupProgress.NotStarted)
+
+        fundingVisible = true
+        assertEquals(BalanceRestoreUiState.SendCash(canGetCash = true), balanceRestore(createViewModel()))
+
+        fundingVisible = false
+        assertEquals(BalanceRestoreUiState.SendCash(canGetCash = false), balanceRestore(createViewModel()))
+    }
+
+    private suspend fun balanceRestore(viewModel: DigitalDollarCardDetailsViewModel): BalanceRestoreUiState =
+        withTimeout(EVENT_TIMEOUT_MS) {
+            viewModel.state.first { it.balanceRestore != BalanceRestoreUiState.NotDetermined }.balanceRestore
+        }
 
     private fun answerOpens(result: Result<String?>) {
         while (pendingOpens.isNotEmpty()) {
@@ -122,15 +144,11 @@ class DigitalDollarCardDetailsViewModelTest {
         }
     }
 
-    private suspend fun assertPresentationErrorShown(viewModel: DigitalDollarCardDetailsViewModel) {
-        val event = withTimeout(EVENT_TIMEOUT_MS) { viewModel.events.first() }
-        assertTrue("expected a PresentationError event but was $event", event is BaseViewModelEvent.PresentationError)
-    }
-
     private fun createViewModel() = DigitalDollarCardDetailsViewModel(
         interactor = interactor,
         router = mockk(),
         tokenAmountMapper = mockk(),
-        paymentAssetBrandProvider = mockk { every { brand } returns MutableStateFlow(PaymentAssetBrand.mocked) }
+        paymentAssetBrandProvider = mockk { every { brand } returns MutableStateFlow(PaymentAssetBrand.mocked) },
+        fundingEntryPoints = fundingEntryPoints,
     )
 }

@@ -325,6 +325,7 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
         failed = start.failure != null,
         isCancelling = start.isCancelling,
         cancel = start.cancel?.toUi(cash),
+        moneyMoved = start.moneyMoved,
         content = start.failure?.let { FundingDepositContent.Problem(FundingSummaryProblem.Failed(it)) } ?: content,
     )
 }

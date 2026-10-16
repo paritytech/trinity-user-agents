@@ -160,10 +160,11 @@ private fun DigitalDollarCardDetailsContent(
                         when (balanceRestoreState) {
                             BalanceRestoreUiState.NotDetermined -> Unit
 
-                            BalanceRestoreUiState.SendCash -> SendCashActions(
+                            is BalanceRestoreUiState.SendCash -> SendCashActions(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(IntrinsicSize.Min),
+                                canGetCash = balanceRestoreState.canGetCash,
                                 onGetCashClick = onGetCashClick,
                                 onSendClick = onSendClick
                             )
@@ -245,6 +246,7 @@ private fun DigitalDollarCardDetailsContent(
 @Composable
 private fun SendCashActions(
     modifier: Modifier = Modifier,
+    canGetCash: Boolean,
     onGetCashClick: () -> Unit,
     onSendClick: () -> Unit
 ) {
@@ -254,7 +256,7 @@ private fun SendCashActions(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)
     ) {
-        CashActionButton(
+        if (canGetCash) CashActionButton(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight(),
@@ -356,7 +358,7 @@ private fun DigitalDollarCardDetailsPreview() {
                     )
                 ),
                 state = DigitalDollarCardDetailsUiState(
-                    balanceRestore = BalanceRestoreUiState.SendCash
+                    balanceRestore = BalanceRestoreUiState.SendCash(canGetCash = true)
                 ),
                 fundingActivity = FundingActivityUiState(inFlight = persistentListOf(), days = persistentListOf()),
                 onSendClick = {},

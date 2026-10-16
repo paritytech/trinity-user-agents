@@ -111,7 +111,9 @@ fun FundingDepositScreen(
                 if (state.canCancel) {
                     PolkadotTextButton(
                         modifier = Modifier.weight(1f),
-                        text = stringResource(RCommon.string.common_cancel),
+                        text = stringResource(
+                            if (state.isSecondCancel) RCommon.string.funding_cancel_anyway else RCommon.string.common_cancel,
+                        ),
                         style = PolkadotButtonStyle.destructive(),
                         onClick = onCancel,
                     )

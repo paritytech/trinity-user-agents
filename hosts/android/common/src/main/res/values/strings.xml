@@ -1063,6 +1063,7 @@
     <string name="funding_amount_minimum">Minimum %1$s</string>
     <string name="funding_amount_withdraw_minimum">Withdrawal minimum %1$s</string>
     <string name="funding_amount_withdraw_title">Move money out</string>
+    <string name="funding_cancel_anyway">Cancel anyway</string>
     <string name="funding_cancel_body">The deposit address will stop working. Don\'t cancel if you\'ve already sent your funds.</string>
     <string name="funding_cancel_accepted">Cancelling. The provider is refunding you.</string>
     <string name="funding_cancel_body_provider">If your payment is already on its way, the provider decides whether it can still cancel, and may charge a fee.</string>

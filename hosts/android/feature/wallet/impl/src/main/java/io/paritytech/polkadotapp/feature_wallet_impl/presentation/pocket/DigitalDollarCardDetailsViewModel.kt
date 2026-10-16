@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
@@ -44,7 +45,8 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
     private val interactor: DigitalDollarCardDetailsInteractor,
     private val router: PocketRouter,
     private val tokenAmountMapper: TokenAmountMapper,
-    private val paymentAssetBrandProvider: PaymentAssetBrandProvider
+    private val paymentAssetBrandProvider: PaymentAssetBrandProvider,
+    private val fundingEntryPoints: FundingEntryPoints,
 ) : BaseViewModel() {
     private companion object {
         const val FUNDING_ACTIVITY_STOP_TIMEOUT = 5_000L
@@ -206,7 +208,7 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             is BackupProgress.Deep.Completed,
             is BackupProgress.Deep.Syncing,
             is BackupProgress.Initial.Completed -> BalanceRestoreUiState.Restore(inProgress = isInProgress())
-            else -> BalanceRestoreUiState.SendCash
+            else -> BalanceRestoreUiState.SendCash(canGetCash = fundingEntryPoints.visible)
         }
     }
 }
