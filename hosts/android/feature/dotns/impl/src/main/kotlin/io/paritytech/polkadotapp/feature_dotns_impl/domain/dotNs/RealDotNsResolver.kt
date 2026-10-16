@@ -64,20 +64,18 @@ internal class RealDotNsResolver @Inject constructor(
             val inUse = contentInUse[dotNsName]
 
             latestContentHash
-                .flatMap { contentHash ->
-                    inUse?.takeIf { it.contentHash == contentHash }
-                        ?.let { Result.success(it.uri) }
-                        ?: useContent(dotNsName, contentHash).onFailure { unavailableContent[dotNsName] = contentHash }
-                }
-                .flatRecover { error -> inUse?.let { keepInUse(dotNsName, it, error) } ?: Result.failure(error) }
+                .flatMap { contentHash -> useLatestContent(dotNsName, contentHash, inUse) }
+                .flatRecover { error -> fallBackToContentInUse(dotNsName, inUse, error) }
                 .reportFailure(dotNsName)
         }
     }
 
     override suspend fun isOutdated(dotNsName: String, localUri: Uri): Result<Boolean> = withContext(dispatchers.computation) {
         readContentHash(dotNsName).map { contentHash ->
-            contentHash != unavailableContent[dotNsName] &&
-                contentStorage.getContentDirectory(contentHash)?.absolutePath != localUri.path
+            val failedToDownload = contentHash == unavailableContent[dotNsName]
+            val isAlreadyServed = contentStorage.getContentDirectory(contentHash)?.absolutePath == localUri.path
+
+            !failedToDownload && !isAlreadyServed
         }
     }
 
@@ -97,7 +95,16 @@ internal class RealDotNsResolver @Inject constructor(
             }
     }
 
-    private fun keepInUse(dotNsName: DomainName, inUse: ResolvedContent, cause: Throwable): Result<Uri> {
+    private suspend fun useLatestContent(dotNsName: DomainName, latest: ContentHash, inUse: ResolvedContent?): Result<Uri> {
+        if (inUse?.contentHash == latest) return Result.success(inUse.uri)
+
+        return useContent(dotNsName, latest)
+            .onFailure { unavailableContent[dotNsName] = latest }
+    }
+
+    private fun fallBackToContentInUse(dotNsName: DomainName, inUse: ResolvedContent?, cause: Throwable): Result<Uri> {
+        if (inUse == null) return Result.failure(cause)
+
         Timber.w(cause, "keeping content ${inUse.contentHash} for $dotNsName")
         progressRegistry.markCompleted(dotNsName)
         return Result.success(inUse.uri)

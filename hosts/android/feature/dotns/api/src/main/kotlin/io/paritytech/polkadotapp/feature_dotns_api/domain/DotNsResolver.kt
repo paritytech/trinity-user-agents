@@ -13,7 +13,6 @@ interface DotNsResolver {
 
     suspend fun getMetadataEntry(dotNsName: String, key: String): Result<String?>
 
-    /** Observes resolution progress for [dotNsName]. Emits [DotNsLoadProgress.Idle] when nothing is in flight. */
     fun getProgressByDomain(dotNsName: String): Flow<DotNsLoadProgress>
 
     suspend fun clearCache()
