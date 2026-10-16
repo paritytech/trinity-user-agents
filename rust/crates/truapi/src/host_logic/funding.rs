@@ -1608,8 +1608,8 @@ pub fn retained(
 
 /// Read every persisted session.
 ///
-/// A blob that does not decode is set aside and reads as no sessions; see
-/// [`load_versioned`].
+/// A blob that does not decode is set aside under
+/// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as no sessions.
 pub async fn load_sessions(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<FundingSession>, FundingSessionError> {
@@ -1618,8 +1618,8 @@ pub async fn load_sessions(
 
 /// Read the session pack, in no particular order.
 ///
-/// A blob that does not decode is set aside and reads as an empty pack; see
-/// [`load_versioned`].
+/// A blob that does not decode is set aside under
+/// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as an empty pack.
 pub async fn load_pack(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<FundingSessionSummary>, FundingSessionError> {
