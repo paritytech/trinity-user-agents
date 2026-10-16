@@ -127,8 +127,11 @@ Import names are `<trait>_<method>`, the names the wire table uses. Internal and
 | `truapi_on_event` | `(handle, kind, len)` | Announce one event for a call; the guest reads its payload with `read_event` |
 | `truapi_on_call` | `(call, method_len, request_len)` | Start a call of the host; the guest reads the UTF-8 method name, then the SCALE versioned request, with `read_event` |
 | `truapi_on_cancel` | `(call)` | The host stopped a call it started; it drops each answer that comes after |
+| `truapi_on_stop` | `()` | Optional. The host stops the worker; the guest ends through `finish` when it has written what it holds |
 
 A module exports both `truapi_on_call` and `truapi_on_cancel`, or neither. Without them the host ends each of its calls at once with `Unsupported`. The `call` ids are the host's own, apart from the handles of the guest's calls.
+
+A module without `truapi_on_stop` ends at once when the host stops it, as before. With it, see "Stop".
 
 The guest owns all of its memory: it passes the buffers for requests and events, and the host never allocates in it. This is the caller-provided buffer pattern of WASI preview 1 and `pallet-revive-uapi`, so the ABI itself needs no allocator in the guest. The typed bindings in `truapi-guest-api` still allocate, since protocol types hold `Vec` and `String`.
 
@@ -285,6 +288,23 @@ host.set_app_foreground(false); // `Stop`, unless a room screen or a wake still 
 ```
 
 On iOS a worker installed by hand declares it in `Products/<host>/ChatExtension/manifest.json` beside `index.wasm`. In the background nothing keeps the worker; a start on a statement for the product needs the notification wake and a push relay (Worker Lifecycle, "Foreground").
+
+### Stop
+
+A host stops a worker through its `WorkerStop` (`WasmWorker::stopper`, or `with_stopper` for a handle made before the worker): the ledger's `Stop` (`stop_ws_bridge`, `shutdown` on a native execution), or the end of `truapi-host dev`. A worker can hold state in memory that it did not write yet, such as the pages of an in-memory database, so the stop is not a drop:
+
+1. The host calls `truapi_on_stop` once and starts the grace time, `DEFAULT_STOP_GRACE` (2 s; `with_stop_grace` changes it).
+2. The host keeps answering the calls of the guest. The guest runs its stop handlers (`truapi::on_stop(|| async { ... })`, one after the other, while its other tasks continue), then calls `finish`.
+3. `WasmWorker::run` returns `WasmWorkerError::Stopped` when the guest finished or when the grace time ended, whichever is first; a guest that fails or traps meanwhile gives that error instead. A worker stopped before it ran never starts.
+
+A native execution keeps a stopping worker in its slot: `start_wasm_worker` meanwhile starts the next worker only after the stopping one ended (`NativeWasmWorkerEnd::Stopped`), so two workers of one product never write its storage at the same time. A host process killed by the system gets no stop; a worker that must survive that writes its state before each effect that the user or the network sees.
+
+```rust
+truapi::on_stop(|| async move {
+    // Write what is still in memory; the host answers this call after the stop.
+    let _ = truapi::local_storage::write(request).await;
+});
+```
 
 ## Open questions
 
