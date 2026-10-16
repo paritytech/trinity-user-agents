@@ -78,6 +78,29 @@ final class TrUAPIStorageTests {
 
     /// A product value goes to a file, never to `UserDefaults`: CFPreferences
     /// refuses each write once the domain passes 4 MiB, without an error.
+    /// Product files stay out of device backups: a restore must not give a
+    /// product an earlier copy of its state (a chat ratchet, for example).
+    @Test func productFilesAreExcludedFromBackup() throws {
+        let storage = product("test.product")
+        try storage.write(key: "k", value: Data([0x01]))
+
+        let values = try directory.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        #expect(values.isExcludedFromBackup == true)
+    }
+
+    /// A directory that is gone when a value is written comes back out of
+    /// device backups too.
+    @Test func aRecreatedDirectoryIsExcludedFromBackup() throws {
+        let storage = product("test.product")
+        try FileManager.default.removeItem(at: directory)
+
+        try storage.write(key: "k", value: Data([0x01]))
+
+        let values = try directory.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        #expect(values.isExcludedFromBackup == true)
+        #expect(try storage.read(key: "k") == Data([0x01]))
+    }
+
     @Test func productValuesDoNotGoToUserDefaults() throws {
         let storage = product("counter.paseo")
         let key = "truapi:product-storage:v1:13:counter.paseo:count"

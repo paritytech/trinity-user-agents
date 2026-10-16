@@ -125,7 +125,15 @@ attributes need a `defaultValueString`. If lightweight isn't possible, add an
 What an iOS device backup carries, and what the app does about it:
 
 - **Backed up**: standard UserDefaults, the App Group suite, the `io.products.dotns.cache` suite,
-  Documents and Application Support files (except the chat attachments directory).
+  Documents and Application Support files (except the chat attachments directory, the core database
+  directory `truapi` and the product storage directory `TrUAPIProductStorage`).
+- **Not backed up: TrUAPI product storage** (`Application Support/TrUAPIProductStorage`, the
+  `localStorage` of every product). `TrUAPILocalStorage` sets `isExcludedFromBackup` on the directory
+  when it makes a product store and when it creates the directory again. A product can keep state that
+  must never go back to an earlier value, with its rollback checkpoint in the same store (the verbosity
+  chat keeps its ratchet state and the checkpoint there): a restore of both from a backup is a rollback
+  that the product cannot see. After a restore a product has no data and starts again from its account,
+  as on Android (`data_extraction_rules.xml` excludes all app data) and on the web.
 - **Not backed up**: the CoreData directory. Operation-iOS `CoreDataService` creates it with
   `isExcludedFromBackup` (`CoreDataPersistentSettings.excludeFromiCloudBackup` defaults to `true`; both
   facades keep the default). Nothing else may create that directory first, or the flag is never set.
