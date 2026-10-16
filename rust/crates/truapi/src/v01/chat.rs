@@ -1539,3 +1539,23 @@ pub struct ProductChatSearchQueryItem {
 	/// Cursor for older matches. `None` ends the matches.
 	pub next: Option<String>,
 }
+
+/// Host question: the user opened a room link of the product that carries a
+/// payload, `polkadot://<product>/-/chat/<room>#<payload>` or its web form.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatOpenLinkRequest {
+	/// The room the link names.
+	pub room_id: String,
+	/// The text after `#` in the link, percent-decoded. The host does not
+	/// read it.
+	pub payload: String,
+}
+
+/// What the product did with an opened link.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatOpenLinkItem {
+	/// The room the host shows next. `None` keeps the room of the link.
+	pub room_id: Option<String>,
+}

@@ -10,6 +10,7 @@ mod platform;
 mod preimage;
 mod resources;
 mod scanner;
+mod share;
 mod signing;
 
 use crate::{CallError, versioned::FromLatest};

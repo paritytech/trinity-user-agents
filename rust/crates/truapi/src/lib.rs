@@ -125,9 +125,10 @@ pub mod latest {
 		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
 		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
 		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
-		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
-		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature, WorkerWakeDelivery, WorkerWakeWatch,
+		ShareOutcome, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
+		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
+		TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature, WorkerWakeDelivery,
+		WorkerWakeWatch,
 	};
 
 	pub use crate::v02::ChatRoomFooter;
@@ -308,6 +309,10 @@ pub mod latest {
 		LatestOf<versioned::chat::ProductChatSearchQueryRequest>;
 	/// Product-to-host page of the messages that match a search.
 	pub type ProductChatSearchQueryItem = LatestOf<versioned::chat::ProductChatSearchQueryItem>;
+	/// Host-to-product room link that carries a payload for the product.
+	pub type ProductChatOpenLinkRequest = LatestOf<versioned::chat::ProductChatOpenLinkRequest>;
+	/// Product-to-host answer to an opened room link.
+	pub type ProductChatOpenLinkItem = LatestOf<versioned::chat::ProductChatOpenLinkItem>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
 	/// Native chat message posting request.
@@ -336,6 +341,12 @@ pub mod latest {
 	pub type HostScannerScanResponse = LatestOf<versioned::scanner::HostScannerScanResponse>;
 	/// Scanner failure.
 	pub type HostScannerScanError = LatestOf<versioned::scanner::HostScannerScanError>;
+	/// Share sheet request.
+	pub type HostShareRequest = LatestOf<versioned::share::HostShareRequest>;
+	/// Share sheet outcome.
+	pub type HostShareResponse = LatestOf<versioned::share::HostShareResponse>;
+	/// Share sheet failure.
+	pub type HostShareError = LatestOf<versioned::share::HostShareError>;
 	/// Contextual alias derivation result.
 	pub type HostAccountGetAliasResponse =
 		LatestOf<versioned::account::HostAccountGetAliasResponse>;

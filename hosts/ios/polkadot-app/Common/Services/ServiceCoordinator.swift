@@ -416,6 +416,8 @@ extension ServiceCoordinator {
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
         RootDependencyLocator.setDependency(productWorkerFacade)
+        // The share sheet of the SPA screen lists product rooms as targets.
+        RootDependencyLocator.setDependency(ShareProductRooms(registry: chatExtensionsRegistry))
 
         let fiatOnrampConfiguration = MeldFiatOnrampConfiguration.prod
         let fiatOnrampStorage = FiatOnrampStorage()

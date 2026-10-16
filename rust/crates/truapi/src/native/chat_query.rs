@@ -48,6 +48,11 @@ pub enum NativeChatQueryAnswer {
 		/// One page of matches, newest first.
 		page: latest::ProductChatSearchQueryItem,
 	},
+	/// The answer to `chat_open_link`.
+	OpenLink {
+		/// The room the host shows next.
+		answer: latest::ProductChatOpenLinkItem,
+	},
 }
 
 /// Why a chat query has no answer.

@@ -209,6 +209,15 @@ extension ProductBot: ProductChatListSearching {
     }
 }
 
+extension ProductBot: ProductChatLinkTaking {
+    func openLink(_ request: ProductChatOpenLinkRequest) async throws -> ProductChatOpenLinkItem {
+        guard let taking = runtime as? ProductChatLinkTaking else {
+            throw ChatQueryError.refused(.notAvailable)
+        }
+        return try await taking.openLink(request)
+    }
+}
+
 extension ProductBot: ChatRoomLifecycle {
     /// A runtime without room lifecycle, the native one, holds its worker for the whole session.
     func open(roomId: String) async throws {

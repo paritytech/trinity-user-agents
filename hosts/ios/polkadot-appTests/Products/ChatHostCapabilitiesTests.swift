@@ -9,7 +9,8 @@ struct ChatHostCapabilitiesTests {
         "product_source_rooms", "reaction_details", "participants", "message_menus", "participant_menus",
         "toolbar", "suggestions", "commands", "activity", "custom_bodies", "custom_footer", "inline_attachments",
         "payment_button", "room_links", "preimage_attachments", "search", "bot_personas", "mute_archive", "threads",
-        "branches", "reasoning_rows", "read_aloud", "wake", "call_buttons", "room_calls"
+        "branches", "reasoning_rows", "read_aloud", "wake", "call_buttons", "room_calls",
+        "room_link_payloads"
     ]
 
     @Test func everyNameIsAFeatureOfTheRfcOnceAndInItsOrder() {

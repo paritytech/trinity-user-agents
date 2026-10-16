@@ -8486,3 +8486,112 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 		)
 	);
 }
+
+/// A share sheet that records what it was asked and answers `answer`.
+struct StubSharePlatform {
+	answer: crate::platform::HostShare,
+	asked: Mutex<Vec<(String, truapi::latest::HostShareRequest)>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::SharePlatform for StubSharePlatform {
+	async fn share_text(
+		&self,
+		product: &crate::platform::ProductContext,
+		request: &truapi::latest::HostShareRequest,
+	) -> Result<crate::platform::HostShare, truapi::latest::GenericError> {
+		self.asked.lock().unwrap().push((product.product_id.clone(), request.clone()));
+		Ok(self.answer)
+	}
+}
+
+/// A runtime of `kind` for `greenmarket.dot` with `sheet` installed.
+fn share_host(kind: ProductExecutionKind, sheet: Arc<StubSharePlatform>) -> ProductRuntimeHost {
+	let host = scanner_host_for(kind, None);
+	host.services.install_share_platform(sheet);
+	host
+}
+
+fn share(
+	host: &ProductRuntimeHost,
+	text: &str,
+) -> Result<v01::ShareOutcome, CallError<v01::HostShareError>> {
+	let result = futures::executor::block_on(truapi::api::Share::share(
+		host,
+		&CallContext::default(),
+		truapi::versioned::share::HostShareRequest::V1(v01::HostShareRequest { text: text.into() }),
+	));
+	match result {
+		Ok(truapi::versioned::share::HostShareResponse::V1(response)) => Ok(response.outcome),
+		Err(CallError::Domain(truapi::versioned::share::HostShareError::V1(error))) => {
+			Err(CallError::Domain(error))
+		},
+		Err(CallError::Unsupported) => Err(CallError::Unsupported),
+		Err(other) => panic!("unexpected share error: {other:?}"),
+	}
+}
+
+/// The user pressing a button of a message in a room of the product.
+fn room_press() -> latest::HostChatActionSubscribeItem {
+	latest::HostChatActionSubscribeItem {
+		room_id: "verbosity".into(),
+		peer: "native".into(),
+		event: latest::ChatEvent::ActionTriggered(latest::ActionTrigger {
+			message_id: "m1".into(),
+			action_id: "share".into(),
+			payload: None,
+		}),
+	}
+}
+
+#[test]
+fn a_worker_shares_only_shortly_after_the_user_presses_something_of_its_rooms() {
+	// A Worker has no screen of its own. Without a recent press, the sheet
+	// would open over whatever the user is doing. A press on a button of its
+	// room counts, as a tap on its card face does; a posted message does not.
+	let sheet = Arc::new(StubSharePlatform {
+		answer: crate::platform::HostShare::Shared,
+		asked: Mutex::default(),
+	});
+	let host = share_host(ProductExecutionKind::Worker, sheet.clone());
+	let not_visible = Err(CallError::Domain(v01::HostShareError::NotVisible));
+	assert_eq!(share(&host, "Add me"), not_visible);
+
+	let posted = latest::HostChatActionSubscribeItem {
+		event: latest::ChatEvent::MessagePosted {
+			message_id: "m2".into(),
+			body: latest::ChatMessageBody::Text { text: "hi".into() },
+			reply_to: None,
+		},
+		..room_press()
+	};
+	host.chat.publish(posted, &host.services.spawner).unwrap();
+	assert_eq!(share(&host, "Add me"), not_visible);
+	assert!(sheet.asked.lock().unwrap().is_empty());
+
+	host.chat.publish(room_press(), &host.services.spawner).unwrap();
+	assert_eq!(share(&host, "Add me"), Ok(v01::ShareOutcome::Shared));
+	assert_eq!(
+		*sheet.asked.lock().unwrap(),
+		vec![("greenmarket.dot".to_owned(), v01::HostShareRequest { text: "Add me".into() })]
+	);
+}
+
+#[test]
+fn a_share_without_a_sheet_or_with_a_bad_text_never_reaches_the_host() {
+	assert_eq!(
+		share(&scanner_host_for(ProductExecutionKind::App, None), "Add me"),
+		Err(CallError::Unsupported)
+	);
+	let sheet = Arc::new(StubSharePlatform {
+		answer: crate::platform::HostShare::Dismissed,
+		asked: Mutex::default(),
+	});
+	let host = share_host(ProductExecutionKind::App, sheet.clone());
+	assert!(matches!(
+		share(&host, " "),
+		Err(CallError::Domain(v01::HostShareError::InvalidRequest { .. }))
+	));
+	assert!(sheet.asked.lock().unwrap().is_empty());
+	assert_eq!(share(&host, "Add me"), Ok(v01::ShareOutcome::Dismissed));
+}

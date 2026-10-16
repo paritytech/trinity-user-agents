@@ -24,12 +24,12 @@ use crate::{
 		HostChatSetRoomToolbarRequest, HostChatSetRoomToolbarResponse, HostChatUpdateFeedError,
 		HostChatUpdateFeedRequest, HostChatUpdateFeedResponse, ProductChatMessageActionsQueryItem,
 		ProductChatMessageActionsQueryRequest, ProductChatMessagesQueryItem,
-		ProductChatMessagesQueryRequest, ProductChatParticipantActionsQueryItem,
-		ProductChatParticipantActionsQueryRequest, ProductChatParticipantsQueryItem,
-		ProductChatParticipantsQueryRequest, ProductChatQueryError, ProductChatReactionsQueryItem,
-		ProductChatReactionsQueryRequest, ProductChatSearchQueryItem,
-		ProductChatSearchQueryRequest, ProductChatUserActionError, ProductChatUserActionItem,
-		ProductChatUserActionRequest,
+		ProductChatMessagesQueryRequest, ProductChatOpenLinkItem, ProductChatOpenLinkRequest,
+		ProductChatParticipantActionsQueryItem, ProductChatParticipantActionsQueryRequest,
+		ProductChatParticipantsQueryItem, ProductChatParticipantsQueryRequest,
+		ProductChatQueryError, ProductChatReactionsQueryItem, ProductChatReactionsQueryRequest,
+		ProductChatSearchQueryItem, ProductChatSearchQueryRequest, ProductChatUserActionError,
+		ProductChatUserActionItem, ProductChatUserActionRequest,
 	},
 	wasm_env, wire, wire_trait,
 };
@@ -882,6 +882,27 @@ pub trait Chat: Send + Sync {
 		_cx: &CallContext,
 		_request: ProductChatSearchQueryRequest,
 	) -> Subscription<ProductChatSearchQueryItem, CallError<ProductChatQueryError>> {
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Take the payload of a room link that the user opened: the text after
+	/// `#` in `polkadot://<product>/-/chat/<room>#<payload>`. Send one item,
+	/// then the host closes the query and shows the room. The host asks for
+	/// any room of the product, and shows the room without the payload when
+	/// the product does not answer.
+	///
+	/// ```ts
+	/// truapi.chat.onOpenLink(({ roomId, payload }, send) => {
+	///   console.log("link opened:", roomId, payload);
+	///   send({});
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 28)]
+	fn open_link(
+		&self,
+		_cx: &CallContext,
+		_request: ProductChatOpenLinkRequest,
+	) -> Subscription<ProductChatOpenLinkItem, CallError<ProductChatQueryError>> {
 		Subscription::interrupted(CallError::unavailable())
 	}
 }

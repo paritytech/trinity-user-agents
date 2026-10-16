@@ -41,7 +41,8 @@ enum ChatHostCapabilities {
         "branches",
         "reasoning_rows",
         "read_aloud",
-        "call_buttons"
+        "call_buttons",
+        "room_link_payloads"
     ]
 
     /// The header buttons, the ringing banner, the call bar and the call events (P10.7). The room screen draws a
