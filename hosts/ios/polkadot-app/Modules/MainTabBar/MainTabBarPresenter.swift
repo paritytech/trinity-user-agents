@@ -69,6 +69,10 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 }
 
 extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
+    func didReceivePaymentsSetupWaiting(_ isWaiting: Bool) {
+        wireframe.showPaymentsSetupNotice(isVisible: isWaiting, from: view)
+    }
+
     func didUpdateSettingsAttention(isVisible: Bool) {
         let nextBadge = isVisible ? TabBarBadge.attention : nil
         guard settingsBadge != nextBadge else {

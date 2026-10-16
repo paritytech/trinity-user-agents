@@ -19,7 +19,6 @@ protocol AssetDetailsViewModelProtocol: Observation.Observable {
     var balanceCardModel: AssetDetailsBalanceCard.ViewModel? { get set }
     var showsBackupNotification: Bool { get set }
     /// This installation's on-chain registration has not landed in the expected time (D4).
-    var showsAccountBackupPending: Bool { get set }
     var fundingStates: [AssetFundingStatusView.FundingState] { get set }
     var isFundingExpanded: Bool { get set }
     var isUpdating: Bool { get set }
@@ -46,7 +45,6 @@ protocol AssetDetailsViewModelProtocol: Observation.Observable {
 class AssetDetailsViewModel: AssetDetailsViewModelProtocol {
     var balanceCardModel: AssetDetailsBalanceCard.ViewModel?
     var showsBackupNotification: Bool = false
-    var showsAccountBackupPending: Bool = false
     var fundingStates: [AssetFundingStatusView.FundingState] = []
     var isFundingExpanded: Bool = false
     var isUpdating: Bool = false

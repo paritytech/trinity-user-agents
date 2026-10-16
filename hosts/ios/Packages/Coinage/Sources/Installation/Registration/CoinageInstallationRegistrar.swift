@@ -12,8 +12,6 @@ public enum CoinageAccountBackupStatus: Hashable, Sendable {
     /// Not final within the expected time, or a reorg dropped it after it was included.
     case delayed
     case completed
-
-    public var needsAttention: Bool { self == .delayed }
 }
 
 public protocol CoinageAccountBackupObserving: Sendable {
