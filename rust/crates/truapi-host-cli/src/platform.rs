@@ -225,10 +225,13 @@ impl CliPlatform {
 		key.encode()
 	}
 
-	fn persist_product_storage(
+	/// Make one change of the values of `product_id` durable. `values` are
+	/// all its values after the change.
+	fn persist_product_change(
 		&self,
 		product_id: &str,
 		values: &HashMap<String, Vec<u8>>,
+		change: StorageChange<'_>,
 	) -> Result<(), String> {
 		let Some(directory) = self
 			.product_storage_dir
@@ -238,7 +241,18 @@ impl CliPlatform {
 		else {
 			return Ok(());
 		};
-		save_product_storage(&directory, product_id, values)
+		let started = std::time::Instant::now();
+		let result = append_product_change(&directory, product_id, values, change);
+		tracing::debug!(
+			product_id,
+			bytes = match change {
+				StorageChange::Set(_, value) => value.len(),
+				StorageChange::Clear(_) => 0,
+			},
+			millis = started.elapsed().as_millis() as u64,
+			"product storage write"
+		);
+		result
 	}
 
 	/// Whether a slot belongs to the install rather than the signed-in user.
@@ -449,8 +463,13 @@ impl ProductStorage for CliPlatform {
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
 		let values = storage.entry(scoped.product_id().to_string()).or_default();
 		values.insert(scoped.key().to_string(), value);
-		self.persist_product_storage(scoped.product_id(), values)
-			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
+		let value = &values[scoped.key()];
+		self.persist_product_change(
+			scoped.product_id(),
+			values,
+			StorageChange::Set(scoped.key(), value),
+		)
+		.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
 	}
 
 	async fn clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError> {
@@ -459,7 +478,7 @@ impl ProductStorage for CliPlatform {
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
 		let values = storage.entry(scoped.product_id().to_string()).or_default();
 		values.remove(scoped.key());
-		self.persist_product_storage(scoped.product_id(), values)
+		self.persist_product_change(scoped.product_id(), values, StorageChange::Clear(scoped.key()))
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
 	}
 
@@ -1023,6 +1042,19 @@ fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec
 				);
 				continue;
 			}
+			let mut values = values;
+			let log = product_log_path(directory, &product_id);
+			if !replay_product_log(&log, &mut values) {
+				// A record that a stop cut is not in the log. A new snapshot
+				// removes it, so that the next record follows a whole one.
+				if let Err(error) = save_product_storage(directory, &product_id, &values) {
+					tracing::warn!(
+						path = %log.display(),
+						%error,
+						"could not replace a product storage log that ends in a partial record"
+					);
+				}
+			}
 			products.entry(product_id).or_default().extend(values);
 		}
 	}
@@ -1097,7 +1129,171 @@ fn save_product_storage(
 		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
 	};
 	let text = serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?;
-	atomic_write(&product_storage_path(directory, product_id), text.as_bytes())
+	atomic_write(&product_storage_path(directory, product_id), text.as_bytes())?;
+	// The snapshot holds every record of the log now. If a stop comes before
+	// the removal, the next load applies the records again, with the same
+	// result.
+	match fs::remove_file(product_log_path(directory, product_id)) {
+		Ok(()) => Ok(()),
+		Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+		Err(error) => Err(format!("remove product storage log: {error}")),
+	}
+}
+
+/// The log of a product's storage is larger than this before a write
+/// replaces it with a new snapshot, and also larger than the snapshot.
+const PRODUCT_LOG_COMPACTION_BYTES: u64 = 16 * 1024 * 1024;
+
+/// One change of the storage of a product.
+#[derive(Clone, Copy, Debug)]
+enum StorageChange<'a> {
+	/// The key has this value now.
+	Set(&'a str, &'a [u8]),
+	/// The key has no value now.
+	Clear(&'a str),
+}
+
+/// The bytes of the checksum at the end of each log record.
+const LOG_CHECKSUM_BYTES: usize = 8;
+/// The bytes of the header of a log record: the kind and two lengths.
+const LOG_HEADER_BYTES: usize = 9;
+
+/// Write one change of the storage of `product_id` in `directory`.
+///
+/// The JSON file of the product is a snapshot, and a log beside it holds the
+/// changes after the snapshot, one record each. A change adds one record and
+/// syncs it, so it costs the size of its value and not the size of all the
+/// values. A product with no snapshot gets a snapshot of all its `values`. A
+/// log that gets larger than the snapshot (and than
+/// [`PRODUCT_LOG_COMPACTION_BYTES`]) is replaced by a new snapshot.
+fn append_product_change(
+	directory: &Path,
+	product_id: &str,
+	values: &HashMap<String, Vec<u8>>,
+	change: StorageChange<'_>,
+) -> Result<(), String> {
+	append_product_change_within(
+		directory,
+		product_id,
+		values,
+		change,
+		PRODUCT_LOG_COMPACTION_BYTES,
+	)
+}
+
+/// [`append_product_change`] with `compaction_bytes` in place of
+/// [`PRODUCT_LOG_COMPACTION_BYTES`].
+fn append_product_change_within(
+	directory: &Path,
+	product_id: &str,
+	values: &HashMap<String, Vec<u8>>,
+	change: StorageChange<'_>,
+	compaction_bytes: u64,
+) -> Result<(), String> {
+	let Ok(snapshot) = fs::metadata(product_storage_path(directory, product_id)) else {
+		return save_product_storage(directory, product_id, values);
+	};
+	let path = product_log_path(directory, product_id);
+	let new_log = !path.exists();
+	let mut log = fs::OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(&path)
+		.map_err(|error| format!("open {}: {error}", path.display()))?;
+	log.write_all(&encode_log_record(change))
+		.map_err(|error| format!("write {}: {error}", path.display()))?;
+	log.sync_data().map_err(|error| format!("sync {}: {error}", path.display()))?;
+	if new_log {
+		#[cfg(unix)]
+		fs::File::open(directory)
+			.and_then(|directory| directory.sync_all())
+			.map_err(|error| format!("sync storage dir {}: {error}", directory.display()))?;
+	}
+	let length = log.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+	if length > compaction_bytes.max(snapshot.len()) {
+		save_product_storage(directory, product_id, values)?;
+	}
+	Ok(())
+}
+
+/// The log beside the snapshot of `product_id`.
+fn product_log_path(directory: &Path, product_id: &str) -> PathBuf {
+	product_storage_path(directory, product_id).with_extension("log")
+}
+
+/// A log record: the kind (1 sets a value, 2 clears it), the length of the
+/// key and of the value (little endian), the key, the value, then the first
+/// bytes of the SHA-256 of all the bytes before them.
+fn encode_log_record(change: StorageChange<'_>) -> Vec<u8> {
+	let (kind, key, value): (u8, &str, &[u8]) = match change {
+		StorageChange::Set(key, value) => (1, key, value),
+		StorageChange::Clear(key) => (2, key, &[]),
+	};
+	let mut record =
+		Vec::with_capacity(LOG_HEADER_BYTES + key.len() + value.len() + LOG_CHECKSUM_BYTES);
+	record.push(kind);
+	record.extend_from_slice(&(key.len() as u32).to_le_bytes());
+	record.extend_from_slice(&(value.len() as u32).to_le_bytes());
+	record.extend_from_slice(key.as_bytes());
+	record.extend_from_slice(value);
+	let checksum = Sha256::digest(&record);
+	record.extend_from_slice(&checksum[..LOG_CHECKSUM_BYTES]);
+	record
+}
+
+/// Apply the records of the log at `path` to `values`, in order. The records
+/// set and clear whole values, so to apply a record two times gives the same
+/// result. Returns `false` when the log ends in a record that is not whole
+/// (a stop in the middle of a write): the records before it apply.
+fn replay_product_log(path: &Path, values: &mut HashMap<String, Vec<u8>>) -> bool {
+	let bytes = match fs::read(path) {
+		Ok(bytes) => bytes,
+		Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+		Err(error) => {
+			tracing::warn!(path = %path.display(), %error, "could not read product storage log");
+			return true;
+		},
+	};
+	let mut rest = bytes.as_slice();
+	while !rest.is_empty() {
+		let Some((kind, key, value, length)) = decode_log_record(rest) else {
+			tracing::warn!(
+				path = %path.display(),
+				"product storage log ends in a partial record; the records before it apply"
+			);
+			return false;
+		};
+		match kind {
+			1 => {
+				values.insert(key, value.to_vec());
+			},
+			_ => {
+				values.remove(&key);
+			},
+		}
+		rest = &rest[length..];
+	}
+	true
+}
+
+/// Decode the first record of `bytes`: its kind, key, value and length.
+/// `None` when the record is not whole or its checksum does not match.
+fn decode_log_record(bytes: &[u8]) -> Option<(u8, String, &[u8], usize)> {
+	let header = bytes.get(..LOG_HEADER_BYTES)?;
+	let kind = header[0];
+	let key_length = u32::from_le_bytes(header[1..5].try_into().ok()?) as usize;
+	let value_length = u32::from_le_bytes(header[5..9].try_into().ok()?) as usize;
+	let body = LOG_HEADER_BYTES.checked_add(key_length)?.checked_add(value_length)?;
+	let length = body.checked_add(LOG_CHECKSUM_BYTES)?;
+	let record = bytes.get(..length)?;
+	if !matches!(kind, 1 | 2) ||
+		Sha256::digest(&record[..body])[..LOG_CHECKSUM_BYTES] != record[body..]
+	{
+		return None;
+	}
+	let key =
+		String::from_utf8(record[LOG_HEADER_BYTES..LOG_HEADER_BYTES + key_length].to_vec()).ok()?;
+	Some((kind, key, &record[LOG_HEADER_BYTES + key_length..body], length))
 }
 
 fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
@@ -1956,6 +2152,118 @@ mod tests {
 		});
 		assert_eq!(first_value, Some(b"dark".to_vec()));
 		assert_eq!(localhost_value, Some(b"light".to_vec()));
+	}
+
+	/// A write after the first adds a record to the log and leaves the
+	/// snapshot as it is. A restart applies the records, clears included.
+	#[test]
+	fn product_storage_writes_after_the_first_go_to_the_log() {
+		let temporary = tempdir().expect("create product storage root");
+		let key = |name: &str| ProductStorageKey::new("log.dot", name).expect("product key");
+		let platform = CliPlatform::new(
+			test_network(),
+			Some(test_storage_paths(temporary.path(), "test")),
+			ApprovalPolicy::AutoAccept,
+			None,
+		);
+		let directory = temporary.path().join("storage").join("test");
+		let snapshot = product_storage_path(&directory, "log.dot");
+		let log = product_log_path(&directory, "log.dot");
+		futures::executor::block_on(async {
+			platform.write(key("a").encode(), b"one".to_vec()).await.expect("first write");
+			assert!(snapshot.is_file());
+			assert!(!log.exists(), "the first write makes the snapshot");
+			let before = fs::read(&snapshot).expect("read snapshot");
+			platform.write(key("a").encode(), b"two".to_vec()).await.expect("second write");
+			platform.write(key("b").encode(), vec![7; 1000]).await.expect("third write");
+			platform.clear(key("c").encode()).await.expect("clear an absent key");
+			platform
+				.write(key("c").encode(), b"three".to_vec())
+				.await
+				.expect("fourth write");
+			platform.clear(key("c").encode()).await.expect("clear");
+			assert_eq!(fs::read(&snapshot).expect("read snapshot"), before);
+			assert!(log.is_file());
+		});
+		drop(platform);
+		assert_eq!(
+			load_product_storage(&directory),
+			HashMap::from([(
+				"log.dot".to_string(),
+				HashMap::from([
+					("a".to_string(), b"two".to_vec()),
+					("b".to_string(), vec![7; 1000]),
+				]),
+			)])
+		);
+	}
+
+	/// A stop in the middle of a record leaves a partial record at the end of
+	/// the log. The load applies the records before it and replaces the log
+	/// with a new snapshot, so that the next record follows a whole one.
+	#[test]
+	fn a_partial_record_at_the_end_of_the_log_is_dropped() {
+		let temporary = tempdir().expect("create product storage root");
+		let directory = temporary.path().join("storage");
+		let mut values = HashMap::from([("a".to_string(), b"one".to_vec())]);
+		save_product_storage(&directory, "cut.dot", &values).expect("snapshot");
+		values.insert("b".to_string(), b"two".to_vec());
+		append_product_change(&directory, "cut.dot", &values, StorageChange::Set("b", b"two"))
+			.expect("record");
+		let log = product_log_path(&directory, "cut.dot");
+		let whole = fs::read(&log).expect("read log");
+		let partial = encode_log_record(StorageChange::Set("c", b"three"));
+		fs::write(&log, [whole.as_slice(), &partial[..partial.len() - 3]].concat())
+			.expect("cut the last record");
+
+		let loaded = load_product_storage(&directory);
+		assert_eq!(loaded["cut.dot"], values);
+		assert!(!log.exists(), "the load replaced the log with a snapshot");
+		assert_eq!(load_product_storage(&directory)["cut.dot"], values);
+	}
+
+	/// A record whose checksum does not match ends the log, as a partial
+	/// record does.
+	#[test]
+	fn a_record_with_a_wrong_checksum_ends_the_log() {
+		let mut record = encode_log_record(StorageChange::Set("key", b"value"));
+		assert!(decode_log_record(&record).is_some());
+		let last = record.len() - 1;
+		record[last] ^= 1;
+		assert!(decode_log_record(&record).is_none());
+		assert!(decode_log_record(&record[..LOG_HEADER_BYTES - 1]).is_none());
+	}
+
+	/// A log that gets larger than the snapshot is replaced by a new snapshot
+	/// of all the values.
+	#[test]
+	fn a_large_log_becomes_a_new_snapshot() {
+		let temporary = tempdir().expect("create product storage root");
+		let directory = temporary.path().join("storage");
+		let mut values = HashMap::from([("a".to_string(), vec![1; 1000])]);
+		save_product_storage(&directory, "big.dot", &values).expect("snapshot");
+		let log = product_log_path(&directory, "big.dot");
+		values.insert("b".to_string(), vec![2; 100]);
+		append_product_change_within(
+			&directory,
+			"big.dot",
+			&values,
+			StorageChange::Set("b", &[2; 100]),
+			0,
+		)
+		.expect("first record");
+		assert!(log.is_file(), "a log smaller than the snapshot stays");
+		values.insert("c".to_string(), vec![3; 4000]);
+		append_product_change_within(
+			&directory,
+			"big.dot",
+			&values,
+			StorageChange::Set("c", &[3; 4000]),
+			0,
+		)
+		.expect("second record");
+		assert!(!log.exists(), "a log larger than the snapshot becomes a snapshot");
+		assert_eq!(load_product_storage(&directory)["big.dot"], values);
 	}
 
 	#[test]
