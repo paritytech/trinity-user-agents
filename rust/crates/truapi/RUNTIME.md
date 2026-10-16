@@ -401,11 +401,11 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   without linking the runtime, and re-exported here.
 - `AuthPresenter`: render core-owned auth state transitions.
 - `UserConfirmation`: confirm signing, transaction, resource and alias
-  actions before the core asks the paired wallet. `preimage.submit` raises
-  no per-upload confirmation: the `PreimageSubmit` permission authorizes it.
-  `AllowAlways` covers every upload; `AllowOnce` covers a single upload.
-  Allocating or renewing the Bulletin allowance may still ask the paired
-  wallet.
+  actions before the core asks the paired wallet. Upload consent is separate
+  from the `PreimageSubmit` capability grant. The host reviews each upload
+  unless an explicit bounded automatic-upload policy approves it. Keep the
+  `PreimageSubmit` review callback even when the capability is already granted.
+  Allocating or renewing the Bulletin allowance may also require approval.
 - `ThemeHost`: stream the host theme into the runtime.
 - `PreimageHost`: submit and look up preimages through the host-selected backend.
 - `ChatPlatform`: create product-scoped native chat rooms, register product
