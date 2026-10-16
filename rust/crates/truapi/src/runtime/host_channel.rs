@@ -251,85 +251,86 @@ impl Receiver {
 /// through the same path a Chat frame takes. Re-reads the peers every
 /// `REFRESH`, resubscribing when they changed, until the session ends.
 async fn receive(context: NativeChatContext) {
-    loop {
-        if context.require_current().is_err() {
-            return;
-        }
-        let current_pairs = match pairs(&context).await {
-            Ok(pairs) => pairs,
-            Err(error) => {
-                tracing::debug!(%error, "host channel peers unreadable");
-                Delay::new(RETRY).await;
-                continue;
-            }
-        };
-        let by_topic: HashMap<[u8; 32], ([u8; 32], Pair)> = current_pairs
-            .into_iter()
-            .take(MAX_TOPICS)
-            .map(|(peer, pair)| (pair.topic(), (peer, pair)))
-            .collect();
-        let topics: Vec<[u8; 32]> = by_topic.keys().copied().collect();
-        if topics.is_empty() {
-            Delay::new(REFRESH).await;
-            continue;
-        }
-        let client = match context.services.statement_store.client("host channel").await {
-            Ok(client) => client,
-            Err(error) => {
-                tracing::debug!(%error, "host channel store unavailable");
-                Delay::new(RETRY).await;
-                continue;
-            }
-        };
-        let mut subscription = match statement_store_rpc::subscribe(
-            &client,
-            crate::host_logic::statement_store::TopicFilterKind::MatchAny,
-            &topics,
-        )
-        .await
-        {
-            Ok(subscription) => subscription.fuse(),
-            Err(error) => {
-                tracing::debug!(%error, "host channel subscribe failed");
-                Delay::new(RETRY).await;
-                continue;
-            }
-        };
-        let watched = topics;
-        let mut refresh = Delay::new(REFRESH).fuse();
-        loop {
-            futures::select! {
-                item = subscription.next() => match item {
-                    Some(Ok(value)) => handle_page(&context, &by_topic, &value).await,
-                    Some(Err(error)) => {
-                        tracing::debug!(%error, "host channel subscription failed");
-                        break;
-                    }
-                    None => break,
-                },
-                () = refresh => {
-                    if context.require_current().is_err() {
-                        return;
-                    }
-                    let current: Vec<[u8; 32]> = pairs(&context)
-                        .await
-                        .unwrap_or_default()
-                        .into_iter()
-                        .take(MAX_TOPICS)
-                        .map(|(_, pair)| pair.topic())
-                        .collect();
-                    let mut sorted = watched.clone();
-                    sorted.sort_unstable();
-                    let mut now = current;
-                    now.sort_unstable();
-                    if sorted != now {
-                        break;
-                    }
-                    refresh = Delay::new(REFRESH).fuse();
-                }
-            }
-        }
-    }
+	loop {
+		if context.require_current().is_err() {
+			return;
+		}
+		let current_pairs = match pairs(&context).await {
+			Ok(pairs) => pairs,
+			Err(error) => {
+				tracing::debug!(%error, "host channel peers unreadable");
+				Delay::new(RETRY).await;
+				continue;
+			},
+		};
+		let by_topic: HashMap<[u8; 32], ([u8; 32], Pair)> = current_pairs
+			.into_iter()
+			.take(MAX_TOPICS)
+			.map(|(peer, pair)| (pair.topic(), (peer, pair)))
+			.collect();
+		let topics: Vec<[u8; 32]> = by_topic.keys().copied().collect();
+		if topics.is_empty() {
+			Delay::new(REFRESH).await;
+			continue;
+		}
+		let client = match context.services.statement_store.client("host channel").await {
+			Ok(client) => client,
+			Err(error) => {
+				tracing::debug!(%error, "host channel store unavailable");
+				Delay::new(RETRY).await;
+				continue;
+			},
+		};
+		let mut subscription = match statement_store_rpc::subscribe(
+			&client,
+			crate::host_logic::statement_store::TopicFilterKind::MatchAny,
+			&topics,
+		)
+		.await
+		{
+			Ok(subscription) => subscription.fuse(),
+			Err(error) => {
+				tracing::debug!(%error, "host channel subscribe failed");
+				Delay::new(RETRY).await;
+				continue;
+			},
+		};
+		tracing::debug!(topics = topics.len(), "host channel watching bootstrapped peers");
+		let watched = topics;
+		let mut refresh = Delay::new(REFRESH).fuse();
+		loop {
+			futures::select! {
+				item = subscription.next() => match item {
+					Some(Ok(value)) => handle_page(&context, &by_topic, &value).await,
+					Some(Err(error)) => {
+						tracing::debug!(%error, "host channel subscription failed");
+						break;
+					}
+					None => break,
+				},
+				() = refresh => {
+					if context.require_current().is_err() {
+						return;
+					}
+					let current: Vec<[u8; 32]> = pairs(&context)
+						.await
+						.unwrap_or_default()
+						.into_iter()
+						.take(MAX_TOPICS)
+						.map(|(_, pair)| pair.topic())
+						.collect();
+					let mut sorted = watched.clone();
+					sorted.sort_unstable();
+					let mut now = current;
+					now.sort_unstable();
+					if sorted != now {
+						break;
+					}
+					refresh = Delay::new(REFRESH).fuse();
+				}
+			}
+		}
+	}
 }
 
 async fn handle_page(
@@ -337,59 +338,62 @@ async fn handle_page(
     by_topic: &HashMap<[u8; 32], ([u8; 32], Pair)>,
     value: &serde_json::Value,
 ) {
-    let page = match parse_new_statements_result("host-channel".to_string(), value) {
-        Ok(page) => page,
-        Err(error) => {
-            tracing::debug!(%error, "host channel page unreadable");
-            return;
-        }
-    };
-    let owner = owner_of(context);
-    let mut changed = false;
-    for bytes in page.statements {
-        let Ok(statement) = decode_signed_statement(&bytes) else {
-            continue;
-        };
-        let Some((peer, pair)) = statement
-            .topics
-            .iter()
-            .find_map(|topic| by_topic.get(topic))
-        else {
-            continue;
-        };
-        let Some(data) = statement.data.as_deref() else {
-            continue;
-        };
-        // The seal is the authentication: what does not open is not the peer's.
-        let Ok(message) = pair.open(data) else {
-            continue;
-        };
-        let Some(Ok(reference)) = ProfileReference::from_message(&message) else {
-            continue;
-        };
-        let now = current_unix_secs().saturating_mul(1000);
-        let _gate = context.services.profile_state_gate.lock().await;
-        match record_personal_received_reference(
-            &*context.services.platform,
-            owner,
-            *peer,
-            reference.discloser_product_id,
-            now,
-            reference.revision,
-            reference.reference,
-        )
-        .await
-        {
-            Ok(kept) => changed |= kept,
-            Err(error) => tracing::debug!(%error, "host channel reference not recorded"),
-        }
-    }
-    if changed {
-        context
-            .services
-            .contact_avatars
-            .redraw_owner(owner, &context.services.spawner);
-    }
+	let page = match parse_new_statements_result("host-channel".to_string(), value) {
+		Ok(page) => page,
+		Err(error) => {
+			tracing::debug!(%error, "host channel page unreadable");
+			return;
+		},
+	};
+	let owner = owner_of(context);
+	let mut changed = false;
+	for bytes in page.statements {
+		let Ok(statement) = decode_signed_statement(&bytes) else {
+			continue;
+		};
+		let Some((peer, pair)) = statement.topics.iter().find_map(|topic| by_topic.get(topic))
+		else {
+			continue;
+		};
+		let Some(data) = statement.data.as_deref() else {
+			continue;
+		};
+		// The seal is the authentication: what does not open is not the peer's.
+		let Ok(message) = pair.open(data) else {
+			tracing::debug!(peer = %hex::encode(&peer[..4]), "host channel statement did not open");
+			continue;
+		};
+		let Some(Ok(reference)) = ProfileReference::from_message(&message) else {
+			continue;
+		};
+		let now = current_unix_secs().saturating_mul(1000);
+		let _gate = context.services.profile_state_gate.lock().await;
+		match record_personal_received_reference(
+			&*context.services.platform,
+			owner,
+			*peer,
+			reference.discloser_product_id,
+			now,
+			reference.revision,
+			reference.reference,
+		)
+		.await
+		{
+			Ok(kept) => {
+				if kept {
+					tracing::info!(
+						peer = %hex::encode(&peer[..4]),
+						"host channel reference recorded from a contact"
+					);
+				}
+				changed |= kept;
+			},
+			Err(error) => tracing::debug!(%error, "host channel reference not recorded"),
+		}
+	}
+	if changed {
+		context.services.contact_avatars.redraw_owner(owner, &context.services.spawner);
+	}
 }
 
 #[cfg(test)]

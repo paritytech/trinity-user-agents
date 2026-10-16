@@ -38,14 +38,14 @@ impl NativeChatActor {
 					.collect()
 			})
 			.await?;
+		if pending.is_empty() {
+			return Ok(false);
+		}
 		tracing::debug!(
 			product = %self.product,
 			pending = ?pending.iter().map(|peer| hex::encode(&peer[..4])).collect::<Vec<_>>(),
 			"host channel bootstrap: ready peers not yet sent this session"
 		);
-		if pending.is_empty() {
-			return Ok(false);
-		}
 		require_authorized(context, &self.product).await?;
 		let keys: Vec<([u8; 32], [u8; 32])> = pending
 			.iter()
