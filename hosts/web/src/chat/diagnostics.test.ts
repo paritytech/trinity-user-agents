@@ -15,6 +15,8 @@ import {
   sanitizeReason,
   shortHex,
   shortId,
+  subscriptionEvent,
+  TOPIC_ID_LIMIT,
   type ChatEventBody,
 } from "./diagnostics.js";
 import { CONTROL_TAGS, encodeMessage, messageKind } from "./protocol.js";
@@ -145,6 +147,49 @@ describe("chat diagnostics", () => {
       ["warning", "missing", true],
       ["error", "failed", true],
     ]);
+  });
+
+  test("a subscription keeps its topics in full, only as 32-byte hex", () => {
+    const diagnostics = new ChatDiagnostics(10, () => 0);
+    const inbox = `0x${"ab".repeat(32)}`;
+    diagnostics.record(subscriptionEvent("requests", "subscribe", [inbox]));
+    const many = Array.from(
+      { length: TOPIC_ID_LIMIT + 3 },
+      (_, index) => `0x${index.toString(16).padStart(64, "0")}`,
+    );
+    diagnostics.record(
+      subscriptionEvent("sessions", "subscribe", [
+        "not a topic",
+        `0x${"cd".repeat(31)}`,
+        `0x${"EF".repeat(32)}`,
+        ...many,
+      ]),
+    );
+    const [requests, sessions] = diagnostics.list();
+    expect(requests).toMatchObject({ topics: 1, topicIds: [inbox] });
+    expect(eventSummary(requests)).toBe("subscribe requests (1 topic)");
+    expect(eventFields(requests)).toEqual([
+      { label: "Stream", value: "requests" },
+      { label: "Action", value: "subscribe" },
+      { label: "Topics", value: "1" },
+      { label: "Request inbox topic", value: inbox },
+      {
+        label: "Topic is",
+        value: 'blake2b-256("chat-request" ‖ identity account)',
+      },
+    ]);
+    expect(eventSearchText(requests)).toContain(inbox);
+    expect(eventRecord(requests).event).toMatchObject({ topicIds: [inbox] });
+
+    // Anything that is not a 32-byte topic is dropped, and the list is bounded.
+    expect(sessions.type === "subscription" && sessions.topicIds).toEqual([
+      `0x${"ef".repeat(32)}`,
+      ...many.slice(0, TOPIC_ID_LIMIT - 1),
+    ]);
+    expect(eventFields(sessions)[2]).toEqual({
+      label: "Topics",
+      value: `${TOPIC_ID_LIMIT + 6}, the first ${TOPIC_ID_LIMIT} kept`,
+    });
   });
 
   test("links events by the shortened account and request id they carry", () => {

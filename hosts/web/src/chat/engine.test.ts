@@ -13,7 +13,12 @@ import { cryptoRandom } from "./crypto.js";
 import { ChatDiagnostics } from "./diagnostics.js";
 import { ChatKeys } from "./keys.js";
 import { loadChatRecord } from "./store.js";
-import { requestChannel, sealSession, sessionTopic } from "./protocol.js";
+import {
+  requestChannel,
+  requestTopic,
+  sealSession,
+  sessionTopic,
+} from "./protocol.js";
 import { decodeStatement, encodeSigned, expiryAt } from "./statement.js";
 import type { SubmitResult, TopicFilter } from "./statement-store.js";
 import { MemoryStorage } from "../test-support.js";
@@ -890,6 +895,27 @@ describe("chat engine diagnostics", () => {
       type: "lifecycle",
       state: "stopped",
     });
+    // A subscription names the topics it filters on in full: Bob's request
+    // inbox, then the topic Alice writes to him on once they are contacts.
+    const subscriptions = events.filter(
+      (event) => event.type === "subscription",
+    );
+    expect(subscriptions).toContainEqual(
+      expect.objectContaining({
+        stream: "requests",
+        action: "subscribe",
+        topics: 1,
+        topicIds: [bytesToHex(requestTopic(bob.identity))],
+      }),
+    );
+    expect(subscriptions).toContainEqual(
+      expect.objectContaining({
+        stream: "sessions",
+        action: "subscribe",
+        topics: 1,
+        topicIds: [bytesToHex(topic)],
+      }),
+    );
 
     const dump = JSON.stringify(events).toLowerCase();
     const hex = (bytes: Uint8Array) => bytesToHex(bytes).slice(2);

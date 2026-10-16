@@ -4,9 +4,11 @@
  * and chain storage directly.
  *
  * Events hold metadata only: shortened public accounts, shortened request and
- * message ids, message kind numbers, sizes, store answers and error text with
- * long hex runs shortened. Never keys, shared secrets, message text, push
- * tokens or decrypted payloads. They are kept in memory, at most
+ * message ids, message kind numbers, sizes, store answers, error text with
+ * long hex runs shortened, and the statement-store topics a subscription
+ * names, in full. A topic is a public routing identifier the store sees on
+ * every statement, a hash and not a key. Never keys, shared secrets, message
+ * text, push tokens or decrypted payloads. They are kept in memory, at most
  * {@link DIAGNOSTICS_LIMIT} of them, and cleared when the session changes.
  */
 
@@ -23,7 +25,13 @@ export type ChatEventBody =
       type: "subscription";
       stream: "requests" | "sessions";
       action: "subscribe" | "unsubscribe";
+      /** How many topics the subscription's filter names. */
       topics: number;
+      /**
+       * The topics as 32-byte hex, in filter order. At most
+       * {@link TOPIC_ID_LIMIT} are kept, so there can be fewer than `topics`.
+       */
+      topicIds: string[];
     }
   | {
       type: "set-aside";
@@ -80,7 +88,36 @@ export type ChatEvent = ChatEventBody & { seq: number; at: number };
 export type ChatEventSink = (event: ChatEventBody) => void;
 
 export const DIAGNOSTICS_LIMIT = 300;
+/** The most topics one subscription event keeps. */
+export const TOPIC_ID_LIMIT = 32;
 const REASON_LIMIT = 200;
+const TOPIC_ID = /^0x[0-9a-f]{64}$/;
+
+/** A subscription event for a filter of `topicIds`, given as hex. */
+export function subscriptionEvent(
+  stream: "requests" | "sessions",
+  action: "subscribe" | "unsubscribe",
+  topicIds: readonly string[],
+): ChatEventBody {
+  return {
+    type: "subscription",
+    stream,
+    action,
+    topics: topicIds.length,
+    topicIds: [...topicIds],
+  };
+}
+
+/**
+ * Keep only what a topic field may hold: 32-byte lowercase hex, at most
+ * {@link TOPIC_ID_LIMIT}. Anything else is dropped, so no other value can be
+ * recorded in full through this field.
+ */
+const allowedTopicIds = (topicIds: readonly string[]): string[] =>
+  topicIds
+    .map((topic) => topic.toLowerCase())
+    .filter((topic) => TOPIC_ID.test(topic))
+    .slice(0, TOPIC_ID_LIMIT);
 
 /** `0x1234…abcd` for a public account or key. */
 export const shortHex = (hex: string): string =>
@@ -117,7 +154,11 @@ export class ChatDiagnostics {
   ) {}
 
   readonly record: ChatEventSink = (event) => {
-    this.events.push({ ...event, seq: ++this.seq, at: this.now() });
+    const body: ChatEventBody =
+      event.type === "subscription"
+        ? { ...event, topicIds: allowedTopicIds(event.topicIds) }
+        : event;
+    this.events.push({ ...body, seq: ++this.seq, at: this.now() });
     if (this.events.length > this.limit) {
       const over = this.events.length - this.limit;
       this.events.splice(0, over);
@@ -447,7 +488,25 @@ export function eventFields(event: ChatEventBody): EventField[] {
       return [
         ...field("Stream", event.stream),
         ...field("Action", event.action),
-        ...field("Topics", event.topics),
+        ...field(
+          "Topics",
+          event.topicIds.length === event.topics
+            ? event.topics
+            : `${event.topics}, the first ${event.topicIds.length} kept`,
+        ),
+        ...event.topicIds.map((topic, index) => ({
+          label:
+            event.stream === "requests"
+              ? "Request inbox topic"
+              : `Session topic ${index + 1}`,
+          value: topic,
+        })),
+        ...field(
+          "Topic is",
+          event.stream === "requests"
+            ? 'blake2b-256("chat-request" ‖ identity account)'
+            : "keyed by a contact's shared chat secret, one per contact",
+        ),
       ];
     case "set-aside":
       return [
@@ -522,6 +581,7 @@ export function eventSearchText(event: ChatEventBody): string {
     eventOutcome(event),
     eventSummary(event),
     describeEvent(event),
+    ...(event.type === "subscription" ? event.topicIds : []),
   ]
     .join(" ")
     .toLowerCase();

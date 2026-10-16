@@ -418,8 +418,11 @@ says so. Frames stay in the tab, may carry sensitive payloads, and are held in m
 subscriptions, requests received and why one was set aside, key lookups and which chain named the key, session requests
 with the kind number of each message, responses, and every submission with its purpose and the store's answer. Chat is
 not a product, so none of this is a TrUAPI frame, and it is listed apart from the traces. The events are metadata only:
-shortened accounts and ids, kinds, counts and error text with hex shortened. They never hold keys, shared secrets,
-message text, push tokens or decrypted payloads. The last 300 are kept in memory and cleared when the session changes.
+shortened accounts and ids, kinds, counts and error text with hex shortened. A subscription also lists, in full hex, the
+statement-store topics it filters on, at most 32: the request inbox topic,
+`blake2b-256("chat-request" ‖ identity account)`, and one session topic per contact. A topic is a hash every statement
+on it carries in public, not a key. The events never hold keys, shared secrets, message text, push tokens or decrypted
+payloads. The last 300 are kept in memory and cleared when the session changes.
 
 **Versions.** The menu shows client, host and core, provider and debugger versions, read from the linked packages and
 the loaded `testing` bundle. A warning appears only when the core's wire schema differs from the client's. **Technical
