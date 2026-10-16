@@ -3,7 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFaceP
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocketFacePreview.PocketFacePreviewInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import javax.inject.Inject
@@ -31,13 +34,21 @@ class PocketFacePreviewViewModel @Inject constructor(
     private val requests = MutableStateFlow<Request?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val face: Flow<LoadingState<JsWidget>?> = requests.flatMapLatest { request ->
-        if (request == null) flowOf(null) else request.url.load()
+    private val face: Flow<Pair<Int, LoadingState<JsWidget>?>> = requests.flatMapLatest { request ->
+        if (request == null) flowOf(0 to null) else request.url.load().map { request.attempt to it }
     }
 
     override val state: StateFlow<PocketFacePreviewState> =
-        combine(typedUrl, face) { url, face -> PocketFacePreviewState(url = url, face = face) }
-            .stateIn(this, SharingStarted.Eagerly, PocketFacePreviewState(url = "", face = null))
+        combine(typedUrl, face) { url, (draws, face) -> PocketFacePreviewState(url = url, face = face, draws = draws) }
+            .stateIn(this, SharingStarted.Eagerly, PocketFacePreviewState(url = "", face = null, draws = 0))
+
+    override val imageResolver = JsImageResolver { source ->
+        val faceUrl = requests.value?.url ?: return@JsImageResolver null
+
+        interactor.resolveImage(faceUrl, source)
+            .logFailure("PocketFacePreview: face image unavailable")
+            .getOrNull()
+    }
 
     override fun onBackClick() {
         router.back()

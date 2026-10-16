@@ -9,13 +9,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
@@ -27,8 +33,11 @@ import io.paritytech.polkadotapp.design.components.text.NovaTextField
 import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardSize
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview.PocketFacePreviewContract
@@ -41,6 +50,7 @@ fun PocketFacePreviewScreen(contract: PocketFacePreviewContract) {
 
     PocketFacePreviewScreenInternal(
         state = state,
+        imageResolver = contract.imageResolver,
         onBackClick = contract::onBackClick,
         onUrlChanged = contract::onUrlChanged,
         onDrawClick = contract::onDrawClick,
@@ -50,6 +60,7 @@ fun PocketFacePreviewScreen(contract: PocketFacePreviewContract) {
 @Composable
 private fun PocketFacePreviewScreenInternal(
     state: PocketFacePreviewState,
+    imageResolver: JsImageResolver,
     onBackClick: () -> Unit,
     onUrlChanged: (String) -> Unit,
     onDrawClick: () -> Unit,
@@ -101,7 +112,11 @@ private fun PocketFacePreviewScreenInternal(
                         shape = PolkadotTheme.shapes.large,
                         color = PolkadotTheme.colors.bg.surface.container,
                     ) {
-                        FaceOrExplanation(face = state.face)
+                        CompositionLocalProvider(LocalJsImageResolver provides rememberUncachedArchive(imageResolver)) {
+                            key(state.draws) {
+                                FaceOrExplanation(face = state.face)
+                            }
+                        }
                     }
                 }
             }
@@ -135,6 +150,29 @@ private fun FaceOrExplanation(face: LoadingState<JsWidget>?) {
     }
 }
 
+// Drawing again is how an edited archive image is picked up, so no cache may answer for the dev server.
+// A Bulletin CID names content that never changes, so it keeps the cache.
+@Composable
+private fun rememberUncachedArchive(resolver: JsImageResolver): JsImageResolver {
+    val context = LocalContext.current
+
+    return remember(resolver, context) {
+        JsImageResolver { source ->
+            val address = resolver.resolve(source)
+
+            if (address == null || source is JsImageSource.Bulletin) {
+                address
+            } else {
+                ImageRequest.Builder(context)
+                    .data(address)
+                    .memoryCachePolicy(CachePolicy.DISABLED)
+                    .diskCachePolicy(CachePolicy.DISABLED)
+                    .build()
+            }
+        }
+    }
+}
+
 @Composable
 private fun Explanation(text: String) {
     NovaText(
@@ -154,7 +192,9 @@ private fun PocketFacePreviewScreenPreview() {
             state = PocketFacePreviewState(
                 url = "http://127.0.0.1:5173/faces/loyalty.json",
                 face = LoadingState.Loaded(JsWidget.Text(text = "Loyalty")),
+                draws = 1,
             ),
+            imageResolver = JsImageResolver { null },
             onBackClick = {},
             onUrlChanged = {},
             onDrawClick = {},

@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.readNBytesCompat
 import kotlinx.coroutines.withContext
+import okhttp3.CacheControl
 import okhttp3.Call
 import okhttp3.Request
 import uniffi.truapi.RendererNode
@@ -40,7 +41,8 @@ class OkHttpRemoteFaceSource @Inject constructor(
     // a `NetworkOnMainThreadException`, which carries no message and so tells the screen nothing.
     override suspend fun fetch(url: String): Result<RendererNode> = withContext(dispatchers.io) {
         runCatching {
-            val request = Request.Builder().url(url).build()
+            // The face is edited between fetches, so the app's HTTP cache must not answer for the server.
+            val request = Request.Builder().url(url).cacheControl(CacheControl.FORCE_NETWORK).build()
 
             calls.newCall(request).execute().use { response ->
                 require(response.isSuccessful) { "face at $url answered ${response.code}" }

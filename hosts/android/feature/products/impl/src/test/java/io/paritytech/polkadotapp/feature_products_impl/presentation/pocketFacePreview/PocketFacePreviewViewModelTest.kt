@@ -1,10 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview
 
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocketFacePreview.PocketFacePreviewInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -37,7 +39,7 @@ class PocketFacePreviewViewModelTest {
     private val router: ProductsRouter = mock()
 
     private fun viewModel() =
-        PocketFacePreviewViewModel(PocketFacePreviewInteractor(remoteFaces), router)
+        PocketFacePreviewViewModel(PocketFacePreviewInteractor(remoteFaces, mockk<IpfsContentLookup>()), router)
 
     @Before
     fun setUp() = Dispatchers.setMain(testDispatcher)
