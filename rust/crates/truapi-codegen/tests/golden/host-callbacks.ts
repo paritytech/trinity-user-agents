@@ -12,8 +12,6 @@ import {
   ChainIdentifier,
   CodeFormat,
   FundingDirection,
-  FundingQuote,
-  FundingQuoteRefusal,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -226,23 +224,9 @@ export type CoreStorageKey =
    */
   | { tag: "FundingSessions"; value?: undefined }
   /**
-   * A product's Worker executable manifest as last read from dotNS, and when,
-   * cached for the same lifetime as `Self::ProductManifest`.
-   */
-  | { tag: "WorkerManifest"; value: { productId: string } }
-  /**
-   * The products published to browse on this network, as last read, and
-   * when, cached for the same lifetime as `Self::ProductManifest`.
-   */
-  | { tag: "PublishedProducts"; value?: undefined }
-  /**
-   * What funding providers' quote answers showed about what they serve,
-   * each record trusted for twelve hours.
-   */
-  | { tag: "FundingSupport"; value?: undefined }
-  /**
-   * The last funding sessions blob the core could not read, kept as it was
-   * so a stored session is never overwritten unread.
+   * Funding sessions blobs the core could not read, as a SCALE list of the
+   * raw blobs, newest last, so a stored session is never overwritten
+   * unread and a later bad blob does not replace an earlier one.
    */
   | { tag: "FundingSessionsUnreadable"; value?: undefined };
 
@@ -346,52 +330,6 @@ export interface FundingPresentation {
    */
   amount?: bigint;
 }
-
-/**
- * One provider's place in the list a quote request fills in.
- */
-export interface FundingQuoteRow {
-  /**
-   * The provider.
-   */
-  providerId: string;
-
-  /**
-   * Where its quote stands.
-   */
-  state: FundingQuoteState;
-}
-
-/**
- * Where a provider's quote stands.
- */
-export type FundingQuoteState =
-  /**
-   * Asked, not answered yet.
-   */
-  | { tag: "Pending"; value?: undefined }
-  /**
-   * The provider's price.
-   */
-  | { tag: "Quoted"; value: { quote: FundingQuote } }
-  /**
-   * The provider cannot be offered for this ask; the host shows it
-   * disabled.
-   */
-  | { tag: "Unavailable"; value: { reason: FundingQuoteUnavailable } };
-
-/**
- * Why a provider cannot be offered for an ask.
- */
-export type FundingQuoteUnavailable =
-  /**
-   * The provider refused to price it.
-   */
-  | { tag: "Refused"; value: { reason: FundingQuoteRefusal } }
-  /**
-   * The provider did not answer in time.
-   */
-  | { tag: "Timeout"; value?: undefined };
 
 /**
  * One chain a host serves: a protocol chain role mapped to the concrete
@@ -871,52 +809,62 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
  */
 export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
   (): S.Codec<CoreStorageKey> =>
-    S.TaggedUnion({
-      AuthSession: S._void,
-      PairingDeviceIdentity: S._void,
-      PermissionAuthorization: S.Struct({
-        productId: S.str,
-        request: PermissionAuthorizationRequest,
-      }) as S.Codec<{
-        productId: string;
-        request: PermissionAuthorizationRequest;
-      }>,
-      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
-        sessionId: string;
-      }>,
-      LastProcessedPairingStatement: S._void,
-      AutoSigningKey: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
-      AutoSigningKeys: S._void,
-      RingVrfRegistry: S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-      }>,
-      StatementRenewalTargets: S._void,
-      DeviceEncryptionKey: S._void,
-      ProductSubtree: S.Struct({
-        sessionId: S.str,
-        productId: S.str,
-      }) as S.Codec<{ sessionId: string; productId: string }>,
-      SsoResponderRequestLedger: S.Struct({
-        rootPublicKey: S.Bytes(32),
-        peerStatementAccountId: S.Bytes(32),
-        peerEncryptionPublicKey: S.Bytes(32),
-      }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-        peerStatementAccountId: Uint8Array;
-        peerEncryptionPublicKey: Uint8Array;
-      }>,
-      ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
-      FundingSessions: S._void,
-      WorkerManifest: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
-      PublishedProducts: S._void,
-      FundingSupport: S._void,
-      FundingSessionsUnreadable: S._void,
+    S.indexedTaggedUnion({
+      AuthSession: [0, S._void] as const,
+      PairingDeviceIdentity: [1, S._void] as const,
+      PermissionAuthorization: [
+        2,
+        S.Struct({
+          productId: S.str,
+          request: PermissionAuthorizationRequest,
+        }) as S.Codec<{
+          productId: string;
+          request: PermissionAuthorizationRequest;
+        }>,
+      ] as const,
+      AllowanceKeys: [
+        3,
+        S.Struct({ sessionId: S.str }) as S.Codec<{ sessionId: string }>,
+      ] as const,
+      LastProcessedPairingStatement: [4, S._void] as const,
+      AutoSigningKey: [
+        5,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
+      AutoSigningKeys: [6, S._void] as const,
+      RingVrfRegistry: [
+        7,
+        S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      StatementRenewalTargets: [8, S._void] as const,
+      DeviceEncryptionKey: [9, S._void] as const,
+      ProductSubtree: [
+        10,
+        S.Struct({ sessionId: S.str, productId: S.str }) as S.Codec<{
+          sessionId: string;
+          productId: string;
+        }>,
+      ] as const,
+      SsoResponderRequestLedger: [
+        11,
+        S.Struct({
+          rootPublicKey: S.Bytes(32),
+          peerStatementAccountId: S.Bytes(32),
+          peerEncryptionPublicKey: S.Bytes(32),
+        }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+          peerStatementAccountId: Uint8Array;
+          peerEncryptionPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      ProductManifest: [
+        12,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
+      FundingSessions: [13, S._void] as const,
+      FundingSessionsUnreadable: [17, S._void] as const,
     }),
 );
 
@@ -1000,46 +948,6 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
       direction: FundingDirection,
       amount: S.Option(S.u128),
     }) as S.Codec<FundingPresentation>,
-);
-
-/**
- * One provider's place in the list a quote request fills in.
- */
-export const FundingQuoteRow: S.Codec<FundingQuoteRow> = S.lazy(
-  (): S.Codec<FundingQuoteRow> =>
-    S.Struct({
-      providerId: S.str,
-      state: FundingQuoteState,
-    }) as S.Codec<FundingQuoteRow>,
-);
-
-/**
- * Where a provider's quote stands.
- */
-export const FundingQuoteState: S.Codec<FundingQuoteState> = S.lazy(
-  (): S.Codec<FundingQuoteState> =>
-    S.TaggedUnion({
-      Pending: S._void,
-      Quoted: S.Struct({ quote: FundingQuote }) as S.Codec<{
-        quote: FundingQuote;
-      }>,
-      Unavailable: S.Struct({ reason: FundingQuoteUnavailable }) as S.Codec<{
-        reason: FundingQuoteUnavailable;
-      }>,
-    }),
-);
-
-/**
- * Why a provider cannot be offered for an ask.
- */
-export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
-  (): S.Codec<FundingQuoteUnavailable> =>
-    S.TaggedUnion({
-      Refused: S.Struct({ reason: FundingQuoteRefusal }) as S.Codec<{
-        reason: FundingQuoteRefusal;
-      }>,
-      Timeout: S._void,
-    }),
 );
 
 /**
@@ -1721,13 +1629,6 @@ export interface FundingPlatform {
     intent: string,
     status: HostFundingStatusSubscribeItem,
   ): void;
-
-  /**
-   * Observe one provider's row of a quote list the host requested, for the
-   * provider list. Each provider's row arrives `Pending`, then once more
-   * with its quote or why it is unavailable.
-   */
-  fundingQuoteChanged?(intent: string, row: FundingQuoteRow): void;
 }
 
 /**

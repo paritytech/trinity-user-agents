@@ -20,7 +20,8 @@ pub struct FundingProviderEntry {
 	/// The provider's product id.
 	pub product_id: String,
 	/// The Worker manifest JSON the host shipped for it, used until the core
-	/// has read the live one. `None` waits for that read.
+	/// has read the live one. `None` waits for that read: until dotNS answers,
+	/// the provider is neither asked for quotes nor offered for a session.
 	pub worker_manifest: Option<String>,
 }
 

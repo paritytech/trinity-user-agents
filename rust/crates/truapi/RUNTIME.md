@@ -506,9 +506,11 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   answers what a cancel did: it ends an unassigned session; before money
   moved it asks the provider and ends the session when asked again; after,
   it asks the provider, who answers `CancelRefused` or `CancelOffer`, and the
-  host answers the offer with `confirm_funding_cancel`, which the provider
-  hears as `CancelAccepted` or `CancelDeclined`; an inbound session whose
-  credit started answers `TooLate`. An overlay closed after the user chose a
+  host answers the offer with `confirm_funding_cancel(intent, terms)`,
+  passing the fee and refund it showed (`None` declines), which the provider
+  hears as `CancelAccepted` or `CancelDeclined`; terms that no longer match
+  the offer answer `Changed`, and an inbound session whose credit started
+  answers `TooLate`. An overlay closed after the user chose a
   provider keeps the session as started and asks the provider to stop unless
   money moved.
 - `BalancePlatform`: stream what a payment request can spend right now, the

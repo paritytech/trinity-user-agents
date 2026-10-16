@@ -35,9 +35,9 @@ use truapi::latest::{
 use super::services::RuntimeServices;
 use crate::{
 	host_logic::funding::{
-		CancelConfirmation, CancelOutcome, FundingChoice, FundingSession, FundingSessionError,
-		SaveRefusal, Settlement, StartedFunds, load_sessions, named_funds, retained,
-		store_sessions,
+		CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
+		FundingSessionError, SaveRefusal, Settlement, StartedFunds, load_sessions, named_funds,
+		retained, store_sessions,
 	},
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
@@ -453,7 +453,7 @@ impl FundingRegistry {
 		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		intent: &str,
-		accept: bool,
+		terms: Option<CancelTerms>,
 	) -> Result<CancelConfirmation, FundingSessionError> {
 		let target = intent.to_string();
 		let (confirmation, provider) = self
@@ -461,10 +461,10 @@ impl FundingRegistry {
 				let Some(session) = sessions.get_mut(&target) else {
 					return ((CancelConfirmation::NoOffer, None), Vec::new());
 				};
-				let confirmation = session.confirm_cancel(accept, now_ms);
+				let confirmation = session.confirm_cancel(terms, now_ms);
 				let provider = session.provider_id.clone();
 				let changed = match confirmation {
-					CancelConfirmation::NoOffer => Vec::new(),
+					CancelConfirmation::NoOffer | CancelConfirmation::Changed => Vec::new(),
 					_ => vec![target],
 				};
 				((confirmation, provider), changed)
@@ -474,10 +474,12 @@ impl FundingRegistry {
 			CancelConfirmation::Accepted => {
 				Some(HostFundingServeSubscribeItem::CancelAccepted { intent: intent.to_string() })
 			},
-			CancelConfirmation::Declined | CancelConfirmation::Lapsed => {
+			CancelConfirmation::Declined |
+			CancelConfirmation::Lapsed |
+			CancelConfirmation::TooLate => {
 				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: intent.to_string() })
 			},
-			CancelConfirmation::NoOffer => None,
+			CancelConfirmation::NoOffer | CancelConfirmation::Changed => None,
 		};
 		if let (Some(item), Some(provider)) = (item, provider) {
 			self.serve_item(&provider, item);
@@ -549,8 +551,13 @@ impl FundingRegistry {
 				((), vec![intent.to_string()])
 			})
 			.await;
-		if started.is_err() {
-			let _ = self.discard(intent).await;
+		if started.is_err() &&
+			!self.discard(intent).await &&
+			let Some(session) = self.get(intent)
+		{
+			// A provider took it under the overlay, so it is stored and runs
+			// as started: announce it like any started session.
+			self.fan_out(&session);
 		}
 		started
 	}
@@ -569,6 +576,10 @@ impl FundingRegistry {
 			.get(intent)
 			.is_some_and(|session| session.provider_id.is_some())
 		{
+			// Its provider may be working on it and it is stored, so it runs
+			// as started instead of staying hidden under an overlay that is
+			// gone.
+			self.lock_presenting().remove(intent);
 			return false;
 		}
 		self.lock_presenting().remove(intent);
@@ -1024,14 +1035,15 @@ impl RuntimeServices {
 			.await
 	}
 
-	/// Answer the provider's cancel offer on session `intent`.
+	/// Answer the provider's cancel offer on session `intent`: accept it on
+	/// `terms`, the terms the host showed, or decline it with `None`.
 	pub async fn confirm_funding_cancel(
 		&self,
 		intent: &str,
-		accept: bool,
+		terms: Option<CancelTerms>,
 	) -> Result<CancelConfirmation, FundingSessionError> {
 		self.funding()
-			.confirm_cancel(self.platform.as_ref(), current_unix_millis(), intent, accept)
+			.confirm_cancel(self.platform.as_ref(), current_unix_millis(), intent, terms)
 			.await
 	}
 
@@ -1744,14 +1756,11 @@ mod tests {
 			..Default::default()
 		};
 
-		let started = block_on(registry.commit(&failing, NOW, |_| {
-			registry.lock_presenting().remove("fs_1");
-			((), vec!["fs_1".to_string()])
-		}));
-		// Another commit stores before the failed start is discarded.
+		let started = block_on(registry.start(&failing, NOW, "fs_1"));
 		insert(&registry, storage.as_ref(), session("fs_2", NOW));
 
 		assert!(started.is_err());
+		assert_eq!(registry.get("fs_1"), None);
 		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(vec![session("fs_2", NOW)]));
 	}
 

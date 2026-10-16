@@ -31,10 +31,13 @@ pub struct FundingAssignment {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingRail {
 	/// A card payment.
+	#[codec(index = 0)]
 	Card,
 	/// A bank transfer.
+	#[codec(index = 1)]
 	Bank,
 	/// A crypto transfer.
+	#[codec(index = 2)]
 	Crypto,
 }
 
@@ -83,20 +86,25 @@ pub struct FundingQuote {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingQuoteRefusal {
 	/// Not offered in the user's country.
+	#[codec(index = 0)]
 	CountryUnsupported,
 	/// Below the provider's minimum, in the ask's balance units.
+	#[codec(index = 1)]
 	BelowMinimum {
 		/// The smallest amount the provider takes.
 		min: u128,
 	},
 	/// Above the provider's maximum, in the ask's balance units.
+	#[codec(index = 2)]
 	AboveMaximum {
 		/// The largest amount the provider takes.
 		max: u128,
 	},
 	/// The provider cannot serve the ask right now.
+	#[codec(index = 3)]
 	Unavailable,
 	/// Outcome not covered above.
+	#[codec(index = 4)]
 	Other {
 		/// Human-readable reason.
 		message: String,
@@ -107,11 +115,13 @@ pub enum FundingQuoteRefusal {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum FundingQuoteAnswer {
 	/// The provider's price.
+	#[codec(index = 0)]
 	Quoted {
 		/// The quote.
 		quote: FundingQuote,
 	},
 	/// The provider will not price it.
+	#[codec(index = 1)]
 	Refused {
 		/// Why.
 		reason: FundingQuoteRefusal,
@@ -127,8 +137,10 @@ pub enum FundingQuoteAnswer {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingUpdate {
 	/// Inbound: waiting for the user to pay the provider.
+	#[codec(index = 0)]
 	AwaitingPayment,
 	/// Inbound: the provider has seen the user's payment.
+	#[codec(index = 1)]
 	PaymentReceived {
 		/// Whether the payment can no longer be reversed.
 		finalized: bool,
@@ -138,9 +150,11 @@ pub enum FundingUpdate {
 	},
 	/// Inbound: the provider is converting the payment to the user's balance
 	/// asset.
+	#[codec(index = 2)]
 	Converting,
 	/// Inbound: the provider started a top-up with `payment.topUp` to credit
 	/// the user. A partial claim may be followed by further top-ups.
+	#[codec(index = 3)]
 	Crediting {
 		/// Id the top-up was started with.
 		top_up_id: [u8; 32],
@@ -149,10 +163,12 @@ pub enum FundingUpdate {
 	},
 	/// Inbound: the provider started every top-up it will. The session is
 	/// delivered with what they claimed.
+	#[codec(index = 4)]
 	Delivered,
 	/// Outbound: the provider asked the user to pay it with
 	/// `payment.request`. The session is released once that payment
 	/// completes.
+	#[codec(index = 5)]
 	Collecting {
 		/// Id the payment request was made with.
 		payment_id: [u8; 32],
@@ -160,6 +176,7 @@ pub enum FundingUpdate {
 		amount: u128,
 	},
 	/// The session ended without success, before any funds moved.
+	#[codec(index = 6)]
 	Failed {
 		/// Why it ended.
 		reason: FundingFailure,
@@ -167,6 +184,7 @@ pub enum FundingUpdate {
 	/// Inbound: where and what the user pays, for the host to draw. Allowed
 	/// until funds move, outside the order of the others, so a provider can
 	/// ask for the rest of a short payment; the latest is shown.
+	#[codec(index = 9)]
 	Deposit {
 		/// The instructions.
 		deposit: FundingDeposit,
@@ -174,6 +192,7 @@ pub enum FundingUpdate {
 	/// The provider's own references for the session, which the user can
 	/// quote to it. Allowed at any point while the session is open, outside
 	/// the order of the others; the latest value of each is shown.
+	#[codec(index = 10)]
 	Details {
 		/// The provider's transaction id.
 		transaction_id: Option<String>,
@@ -183,6 +202,7 @@ pub enum FundingUpdate {
 	},
 	/// The provider will not cancel a session the user asked to cancel once
 	/// money moved. The session carries on. Outside the order of steps.
+	#[codec(index = 7)]
 	CancelRefused {
 		/// Why, shown to the user.
 		reason: String,
@@ -191,6 +211,7 @@ pub enum FundingUpdate {
 	/// moved, on these terms. The user accepts or declines in the host, and
 	/// the provider hears which on its serve stream. Outside the order of
 	/// steps.
+	#[codec(index = 8)]
 	CancelOffer {
 		/// What the provider keeps, in the user's payment balance units.
 		fee: u128,
@@ -207,6 +228,7 @@ pub enum FundingUpdate {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingDeposit {
 	/// A transfer to an address on a chain.
+	#[codec(index = 0)]
 	Crypto {
 		/// The address to send to.
 		address: String,
@@ -227,6 +249,7 @@ pub enum FundingDeposit {
 		expires_at: Option<u64>,
 	},
 	/// A bank transfer.
+	#[codec(index = 1)]
 	Bank {
 		/// Amount in the currency's minor unit, fees included.
 		amount: u128,
@@ -262,6 +285,7 @@ pub struct FundingReceived {
 pub enum HostFundingServeSubscribeItem {
 	/// A session the user chose this provider for, or one still in flight
 	/// when the stream opened.
+	#[codec(index = 0)]
 	Assigned {
 		/// The session.
 		session: Box<FundingAssignment>,
@@ -269,12 +293,14 @@ pub enum HostFundingServeSubscribeItem {
 	/// The user asked to cancel a session. Before money moved the provider
 	/// reports `Failed` with `Cancelled` if it can still stop. After, it
 	/// answers with `CancelOffer` or `CancelRefused`.
+	#[codec(index = 1)]
 	Cancel {
 		/// Session to cancel.
 		intent: String,
 	},
 	/// The host asks for a price, answered with `answerQuote` and this
 	/// `ask_id`. An ask still unanswered when the stream opens is sent again.
+	#[codec(index = 4)]
 	Quote {
 		/// Id the answer names.
 		ask_id: String,
@@ -283,12 +309,14 @@ pub enum HostFundingServeSubscribeItem {
 	},
 	/// The user accepted the provider's `CancelOffer`. The provider settles
 	/// the cancel: it refunds the user and ends the session.
+	#[codec(index = 2)]
 	CancelAccepted {
 		/// The session.
 		intent: String,
 	},
 	/// The user declined the provider's `CancelOffer`, or it lapsed. The
 	/// session carries on.
+	#[codec(index = 3)]
 	CancelDeclined {
 		/// The session.
 		intent: String,
@@ -299,6 +327,7 @@ pub enum HostFundingServeSubscribeItem {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingServeSubscribeError {
 	/// Catch-all.
+	#[codec(index = 0)]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
@@ -318,15 +347,19 @@ pub struct HostFundingReportRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingReportError {
 	/// No open session with this id is assigned to the caller.
+	#[codec(index = 0)]
 	NotFound,
 	/// The update does not follow the session's last one, or does not fit
 	/// its direction.
+	#[codec(index = 1)]
 	OutOfOrder,
 	/// The top-up or payment request it names was not started by the
 	/// caller with `payment.topUp` or `payment.request` for this session since
 	/// it was assigned, asks a different amount, or was already named.
+	#[codec(index = 2)]
 	NotStarted,
 	/// Catch-all.
+	#[codec(index = 3)]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
@@ -347,12 +380,14 @@ pub struct HostFundingPresentFrameRequest {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingFrameTarget {
 	/// A route of the provider's own App, such as its KYC or card entry.
+	#[codec(index = 0)]
 	App {
 		/// The route.
 		route: String,
 	},
 	/// An external https page, such as an onramp's widget, shown with its
 	/// origin visible.
+	#[codec(index = 1)]
 	Page {
 		/// The page to open.
 		url: String,
@@ -367,10 +402,13 @@ pub enum FundingFrameTarget {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingFrameOutcome {
 	/// The provider's screen finished and closed itself.
+	#[codec(index = 0)]
 	Closed,
 	/// The user closed it.
+	#[codec(index = 1)]
 	Dismissed,
 	/// The page navigated to the request's `return_url`.
+	#[codec(index = 2)]
 	Returned {
 		/// The full URL it navigated to, query included.
 		url: String,
@@ -388,11 +426,14 @@ pub struct HostFundingPresentFrameResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingPresentFrameError {
 	/// No open session with this id is assigned to the caller.
+	#[codec(index = 0)]
 	NotFound,
 	/// An App route that leaves the provider's App, or a page or return URL
 	/// that is not an https URL with a host, or that carries credentials.
+	#[codec(index = 1)]
 	InvalidUrl,
 	/// Catch-all.
+	#[codec(index = 2)]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
@@ -412,13 +453,16 @@ pub struct HostFundingSaveRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingSaveError {
 	/// No open session with this id is assigned to the caller.
+	#[codec(index = 0)]
 	NotFound,
 	/// The state is larger than the host keeps.
+	#[codec(index = 1)]
 	TooLarge {
 		/// The most bytes the host keeps for a session.
 		max: u32,
 	},
 	/// Catch-all.
+	#[codec(index = 2)]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
@@ -438,8 +482,10 @@ pub struct HostFundingAnswerQuoteRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingAnswerQuoteError {
 	/// No open ask with this id was sent to the caller; it may have timed out.
+	#[codec(index = 0)]
 	NotFound,
 	/// Catch-all.
+	#[codec(index = 1)]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
