@@ -75,7 +75,7 @@ use truapi::{
 use zeroize::Zeroizing;
 
 use super::{
-	ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing},
+	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
 	signing_host::ring_vrf::{
 		ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof,
 	},
@@ -2411,17 +2411,6 @@ impl PairingHost {
 			AuthorityError::Unavailable { reason: "Session secret missing".to_string() }
 		})?;
 		Ok(crate::runtime::contacts::handle_key_from_root_source(&root_entropy_source))
-	}
-}
-
-fn apply_ring_vrf_disclosure(
-	entries: &mut [latest::RegisteredRingVrfKey],
-	disclosure: latest::RingVrfKeyDisclosure,
-) {
-	if disclosure == latest::RingVrfKeyDisclosure::Anonymized {
-		for entry in entries {
-			entry.public_key = None;
-		}
 	}
 }
 
