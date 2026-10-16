@@ -224,6 +224,10 @@ pub struct MockConfig {
 	pub remote_permissions: PermissionPolicy,
 	/// Whether `feature_supported` reports support.
 	pub feature_supported: bool,
+	/// When set, `feature_supported` answers from `supported_chains`, as a real
+	/// host does, so a chain outside that set is unsupported. It becomes the
+	/// default in a later breaking release.
+	pub only_served_chains: bool,
 	/// Theme emitted by `subscribe_theme`.
 	pub theme: latest::ThemeVariant,
 	/// BCP 47 language tag the mock reports.
@@ -249,6 +253,7 @@ impl Default for MockConfig {
 			device_permissions: PermissionPolicy::AllowAll,
 			remote_permissions: PermissionPolicy::AllowAll,
 			feature_supported: true,
+			only_served_chains: false,
 			theme: latest::ThemeVariant::Dark,
 			language_tag: "en".to_string(),
 			confirm_user_actions: true,
@@ -1045,12 +1050,21 @@ impl Features for MockPlatform {
 
 	async fn feature_supported(
 		&self,
-		_request: latest::HostFeatureSupportedRequest,
+		request: latest::HostFeatureSupportedRequest,
 	) -> Result<latest::HostFeatureSupportedResponse, latest::GenericError> {
 		if let Some(reason) = &self.config.faults.feature_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		Ok(latest::HostFeatureSupportedResponse { supported: self.config.feature_supported })
+		let latest::HostFeatureSupportedRequest::Chain { genesis_hash } = request;
+		let served = !self.config.only_served_chains ||
+			self.config
+				.supported_chains
+				.chains
+				.iter()
+				.any(|entry| entry.genesis_hash.as_slice() == genesis_hash.as_slice());
+		Ok(latest::HostFeatureSupportedResponse {
+			supported: self.config.feature_supported && served,
+		})
 	}
 }
 
@@ -1641,6 +1655,27 @@ mod tests {
 		}))
 		.unwrap();
 		assert!(!response.supported);
+	}
+
+	#[test]
+	fn feature_supported_reports_unserved_chains_only_when_asked() {
+		let supported = |p: &MockPlatform, genesis_hash: Vec<u8>| {
+			block_on(
+				p.feature_supported(latest::HostFeatureSupportedRequest::Chain { genesis_hash }),
+			)
+			.unwrap()
+			.supported
+		};
+		let unserved = vec![0xab; 32];
+		// The default keeps answering every chain as supported.
+		assert!(supported(&MockPlatform::new(), unserved.clone()));
+		let strict = MockPlatform::with_config(MockConfig {
+			only_served_chains: true,
+			..Default::default()
+		});
+		let served = strict.config.supported_chains.chains[0].genesis_hash.to_vec();
+		assert!(supported(&strict, served));
+		assert!(!supported(&strict, unserved));
 	}
 
 	#[test]
