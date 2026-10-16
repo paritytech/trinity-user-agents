@@ -446,8 +446,10 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   again when the provider reports. Of the rest it recorded, the core keeps
   the newest 64 per product in full and compacts older ones into the
   session pack (intent, owner, direction, amounts, outcome and times), which
-  it never trims: `funding_session_pack` lists it newest first, and a
-  product watching a compacted session still gets its terminal item.
+  it never trims, so a product watching a compacted session still gets its
+  terminal item. `funding_history` lists every recorded session, full or
+  compacted, as a summary newest first, so a host that lost its history
+  rebuilds it from there.
   The core keeps at most the 200 newest unrecorded sessions. Products see a
   session in flight as `InProgress`.
   The host lists its providers with `set_funding_providers`, each with the
