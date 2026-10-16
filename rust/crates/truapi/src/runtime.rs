@@ -329,6 +329,7 @@ pub struct ProductRuntimeHost {
     media: std::sync::OnceLock<Arc<media::MediaService>>,
     media_closed: std::sync::atomic::AtomicBool,
     game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
+    scanner_platform: Option<Arc<dyn crate::platform::ScannerPlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
     expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
     open_operations: Mutex<HashSet<u32>>,
@@ -370,6 +371,7 @@ impl ProductRuntimeHost {
             pocket_platform: adapters.pocket_platform,
             expanded_card: adapters.expanded_card,
             game_platform: adapters.game_platform,
+            scanner_platform: adapters.scanner_platform,
             open_operations: Mutex::new(HashSet::new()),
             media_platform: adapters.media_platform,
             media: std::sync::OnceLock::new(),
@@ -518,6 +520,7 @@ impl ProductRuntimeHost {
             pocket_platform: None,
             expanded_card: None,
             game_platform: None,
+            scanner_platform: None,
             open_operations: Mutex::new(HashSet::new()),
             media_platform: None,
             media: std::sync::OnceLock::new(),

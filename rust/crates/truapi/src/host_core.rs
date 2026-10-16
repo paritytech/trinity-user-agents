@@ -1073,7 +1073,6 @@ impl SigningHostRuntime {
             .refresh_permission_authorization(request)
             .await
     }
-
     /// Activate a wallet-local session from host-held secret material (raw
     /// BIP-39 entropy).
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
@@ -1418,6 +1417,7 @@ pub struct ConnectionAdapters {
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
     pub media_platform: Option<Arc<dyn MediaPlatform>>,
     pub game_platform: Option<Arc<dyn GamePlatform>>,
+    pub scanner_platform: Option<Arc<dyn ScannerPlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
     pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
@@ -1437,6 +1437,7 @@ impl ConnectionAdapters {
             media_platform: services.media_platform(),
             expanded_card: None,
             game_platform: services.game_platform(),
+            scanner_platform: services.scanner_platform(),
         }
     }
 }
