@@ -1445,6 +1445,17 @@ pub fn product_account_address(public_key: Vec<u8>) -> Result<String, JsValue> {
 	Ok(crate::host_logic::product_account::product_public_key_to_address(public_key))
 }
 
+/// The key the host stores `product_id`'s storage entry `key` under.
+///
+/// Pure, so a test host can seed an entry where the core will read it without
+/// rebuilding the core's namespacing or its product id normalization.
+#[wasm_bindgen(js_name = productStorageKey)]
+pub fn product_storage_key(product_id: String, key: String) -> Result<String, JsValue> {
+	crate::platform::ProductStorageKey::new(&product_id, key)
+		.map(|storage_key| storage_key.encode())
+		.map_err(|err| JsValue::from_str(&err.to_string()))
+}
+
 /// The ring-VRF member for `entropy`, derived through the module this core
 /// loads on demand.
 ///

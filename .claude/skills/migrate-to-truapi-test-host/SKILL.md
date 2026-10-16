@@ -121,14 +121,19 @@ The fixture starts and shares its own host server when none is given, so
  );
 ```
 
-Chain options need no edit. Both spellings are accepted -- `networks: [X]` and
-the older `chain: X`, which is exactly `networks: [X]` -- and either expands
+Chain options keep their spelling. Both are accepted, `networks: [X]` and the
+older `chain: X`, which is exactly `networks: [X]`, and either expands
 into the chain proxy, the reported chain set and the runtime genesis, which
 have to agree. Passing both is refused rather than merged.
 
 A suite that starts the server itself also needs no restructuring:
 `createTestHostServer` takes the same host configuration it always did
-(`productUrl`, `accounts`, `networks`) and returns a URL ready to open.
+(`productUrl`, `accounts`, `networks`) and returns a URL ready to open. Chains
+need that `productUrl`: a server started without one returns a bare base the
+fixture configures per test, so it refuses `networks` and `chain` rather than
+dropping them, and they go to the fixture instead. A URL built with a
+`productUrl` is complete: open it directly, not as the fixture's `hostUrl`,
+whose own options replace what it carries.
 
 Set `productId` to the dotNS identifier the product signs with. A product that
 derives its own identifier from `window.location.host` wants that value here --
@@ -149,8 +154,9 @@ statements therefore passes with no on-chain identity.
 The store is served on the People chain when the suite declares one, and on the
 single declared chain when it does not -- that proxy takes every request, so it
 carries the statement traffic too. Declaring several chains with no People among
-them is refused rather than served: there is no request the store could attach
-to, and answering statement reads on a hub would answer what a hub refuses.
+them serves no store, since there is no request the store could attach to and
+answering statement reads on a hub would answer what a hub refuses. Asking for
+one there with `loopbackStatements: true` is refused.
 
 What that buys is narrower than it looks. Nothing is registered anywhere, so a
 green run says the product handles a grant, not that a host would have given
@@ -219,6 +225,29 @@ the caller does not need to know the namespacing and a prefixed store stays
 distinct from an unprefixed one. It returns `Uint8Array | undefined`;
 `getProductStorageValue` returns the same value decoded as UTF-8.
 
+Product storage lives in the host page, so a `page.reload()` or a new page
+starts it empty, where the old host kept it in the page's `localStorage`. State
+a product reads once at startup has to be there before it starts, so pass it as
+a boot option, by the product's own keys:
+
+```ts
+createTestHostFixture({
+  productUrl: PRODUCT_URL,
+  productStorage: { "app:state": JSON.stringify(value) },
+});
+```
+
+It travels in the host page URL, so a reload starts from it again.
+`testHost.seedProductStorage(key, value)` writes an entry while the product
+runs. It reaches a product that subscribes to the key or reads it later, not a
+read already made at startup. Either way the host builds the key the core
+reads, so a spec never spells out the namespace.
+
+The product's own iframe storage does not carry over either: the frame is
+`credentialless`, so its `localStorage` and IndexedDB start empty with each
+host page and are not shared with a top-level page on the product's origin.
+Seed those from inside the frame with `context.addInitScript`.
+
 **A pinned product account.** `productAccounts: { "demo.dot/0": "bob" }` is
 rejected at construction, and cannot be supported: TrUAPI *derives* a product
 account from (session root, product id), so it is not assignable. The old
@@ -261,6 +290,52 @@ await client.permissions.requestDevicePermission("Camera"); // asks again, denie
 A spec that revokes and then waits for a host-side entry works. One that expects
 a *product* asking twice to re-prompt does not, and is asserting the old
 package's behaviour.
+
+### Smaller changes
+
+Each of these is a one-line edit, but each fails quietly or confusingly if
+missed:
+
+- **Declare the chains.** The old fixture and server fell back to Paseo Asset
+  Hub when a suite named none; this host serves no chain then, and a product's
+  chain reads get no answer. Pass `networks` explicitly (`DEFAULT_CHAIN` is
+  Paseo Asset Hub, with the genesis below).
+- **A chain's role comes from its `id`.** An id ending in `-asset-hub`,
+  `-people` or `-bulletin` selects that role; anything else is a relay chain.
+  A `chain: "AssetHub"` field is ignored.
+- **`PASEO_ASSET_HUB` carries a new genesis.** It is re-pinned to the hash the
+  chain reports since its reset, so a product or suite still holding an older
+  copy of the hash disagrees with it, and a suite that spreads it and overrides
+  `rpcUrl` declares a genesis that endpoint may not serve. `PREVIEWNET`,
+  `PREVIEWNET_ASSET_HUB`, `SUPPORTED_CHAINS`, `Account` and `DevAccountInfo`
+  are not exported:
+  declare the chain inline, type it as `NetworkConfig`, and use `DevAccount`.
+- **Permission names.** `setPermissionBehavior` takes `"allow-all"` or
+  `"deny-all"` (`"reject-all"` is accepted as the latter); the old default
+  `"approve-all"` throws. A permission tag is the core's, so
+  `"TransactionSubmit"` is `"ChainSubmit"`, and `grantPermission` with the old
+  tag records a decision no request ever matches.
+- **Themes are capitalised:** `setTheme("Dark")`, not `"dark"`.
+- **Signed out is a boot option.** An empty `accounts` fails the page at boot,
+  which a suite sees as the fixture timing out; pass `loginBehavior: "manual"`.
+  `simulateDisconnect` drops the chain connections and refuses new ones until
+  `simulateReconnect`; neither touches the session.
+- **Accounts.** `uri` is refused by the fixture and the server; pass
+  `{ name, entropy }`. The `name` is the
+  username the product sees. `switchAccount` must name an account in the boot
+  roster, and switching re-activates the session without reloading the product,
+  as on a real host: wait on the product's own UI for the new account rather
+  than on `waitForConnection`, which has already resolved.
+- **Seed preimages whenever.** `seedPreimage` reaches a lookup the product
+  already has open, so a spec need not seed before the product asks. It returns
+  the key as bytes, not hex.
+- **Log shapes.** `getNavigationLog()` answers URLs, not `{url, timestamp}`.
+  `getPreimages()` answers the seeded values only, as bytes. Statement entries
+  carry `topics` and `data` directly, not under `.statement`. A `Remote`
+  permission's value is `{ domains }`, not an array.
+- **Deep links go in `productUrl`.** The host page's own path, query and hash
+  configure the host and do not reach the product, so a spec opening the
+  product at a route passes that route in `productUrl`.
 
 ### A suite that submits extrinsics must fund the product account first
 
