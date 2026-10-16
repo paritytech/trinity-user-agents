@@ -67,7 +67,7 @@ fn fail_on_chain(
 /// an attempt, and the round made no progress.
 #[test]
 fn a_build_for_a_row_that_changed_meanwhile_starts_no_attempt() {
-	let ready_now = Preparation::Ready(nth_build(0));
+	let ready_now = Preparation::Ready(extrinsic_for_index(0));
 	let harness = racing_harness(ready_now, dao::abandon_submission);
 
 	let id = harness.schedule_one();
@@ -103,7 +103,7 @@ fn a_failure_the_watch_proves_goes_back_to_the_policy_and_is_rebuilt() {
 
 	fail_on_chain(&harness, &events, &presigned);
 
-	let both = vec![presigned.extrinsic, nth_build(0).extrinsic];
+	let both = vec![presigned.extrinsic, extrinsic_for_index(0).extrinsic];
 	wait_until(|| harness.broadcast() == both, "the rebuilt bytes are broadcast");
 	assert_eq!(harness.policy().batches(), vec![vec![id]]);
 	assert_eq!(harness.status(id), DurableTxStatus::Pending);

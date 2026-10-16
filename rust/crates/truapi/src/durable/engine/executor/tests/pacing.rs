@@ -33,7 +33,7 @@ fn a_policy_that_cannot_answer_is_asked_again_after_a_growing_backoff() {
 	let unavailable_twice =
 		ScriptedPolicy::answering_with(move |ids| match asked.fetch_add(1, Ordering::SeqCst) {
 			0 | 1 => fee_estimate_unavailable(),
-			_ => answer_all_with(ids, Preparation::Ready(nth_build(0))),
+			_ => answer_all_with(ids, Preparation::Ready(extrinsic_for_index(0))),
 		});
 	let harness = ScheduledTxHarness::with_policy(unavailable_twice);
 	let id = harness.schedule_one();
@@ -90,7 +90,7 @@ fn a_transaction_handed_back_is_built_again_after_a_cooldown() {
 fn a_round_that_decides_one_row_runs_the_next_without_backing_off() {
 	let builds_first_row_only = ScriptedPolicy::answering_with(|ids| {
 		let first_row = ids.iter().filter(|id| **id == DurableTxId(1));
-		Ok(first_row.map(|id| (*id, Preparation::Ready(nth_build(0)))).collect())
+		Ok(first_row.map(|id| (*id, Preparation::Ready(extrinsic_for_index(0)))).collect())
 	});
 	let harness = ScheduledTxHarness::with_policy(builds_first_row_only);
 

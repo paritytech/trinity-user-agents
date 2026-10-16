@@ -5,8 +5,8 @@ mod policy;
 
 pub use harness::{ScheduledTxHarness, other_domain, test_domain};
 pub use policy::{
-	PrepareAnswer, PrepareScript, RetryQuestion, ScriptedPolicy, answer_all_with, first_builds,
-	insert_retryable, nth_build, test_plan, test_policy_id, without_plan,
+	PrepareAnswer, PrepareScript, RetryQuestion, ScriptedPolicy, answer_all_with,
+	extrinsic_for_index, first_builds, insert_retryable, test_plan, test_policy_id, without_plan,
 };
 
 use core::time::Duration;

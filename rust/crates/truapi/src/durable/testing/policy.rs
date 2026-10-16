@@ -88,7 +88,7 @@ impl ScriptedPolicy {
 	}
 
 	/// The test policy, building every row it is asked about into new bytes:
-	/// [`nth_build`] for its `n`th build.
+	/// [`extrinsic_for_index`] of each build's index, from 0.
 	pub fn building_everything() -> Self {
 		let builds = AtomicU8::new(0);
 		Self::answering_with(move |ids| {
@@ -163,20 +163,20 @@ pub fn answer_all_with(ids: &[DurableTxId], preparation: Preparation) -> Prepare
 	Ok(ids.iter().map(|id| (*id, preparation.clone())).collect())
 }
 
-/// The bytes the `n`th build of [`ScriptedPolicy::building_everything`]
+/// The bytes build `index` of [`ScriptedPolicy::building_everything`]
 /// signs, counting from 0.
-pub fn nth_build(n: u8) -> MortalExtrinsic {
-	extrinsic(100 + n, 100, 64)
+pub fn extrinsic_for_index(index: u8) -> MortalExtrinsic {
+	extrinsic(100 + index, 100, 64)
 }
 
 /// What the first `count` builds of [`ScriptedPolicy::building_everything`]
 /// broadcast, in order.
 pub fn first_builds(count: u8) -> Vec<EncodedExtrinsic> {
-	(0..count).map(|n| nth_build(n).extrinsic).collect()
+	(0..count).map(|n| extrinsic_for_index(n).extrinsic).collect()
 }
 
 fn next_build(builds: &AtomicU8) -> MortalExtrinsic {
-	nth_build(builds.fetch_add(1, Ordering::SeqCst))
+	extrinsic_for_index(builds.fetch_add(1, Ordering::SeqCst))
 }
 
 /// `extrinsics` as presigned submissions with no plan to rebuild them.

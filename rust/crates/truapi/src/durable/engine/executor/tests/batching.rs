@@ -31,7 +31,7 @@ fn first_build_gated() -> (oneshot::Sender<()>, PrepareScript) {
 	let gate = Mutex::new(Some(released));
 	let builds = AtomicU8::new(0);
 	let script: PrepareScript = Box::new(move |ids| {
-		let built = nth_build(builds.fetch_add(1, Ordering::SeqCst));
+		let built = extrinsic_for_index(builds.fetch_add(1, Ordering::SeqCst));
 		let answer = answer_all_with(ids, Preparation::Ready(built));
 		let first_gate = gate.lock().take();
 		Box::pin(async move {
@@ -77,7 +77,7 @@ fn a_batch_stuck_in_its_policy_does_not_hold_up_another_group() {
 		if ids.contains(&first_row) {
 			return Box::pin(pending());
 		}
-		let built = nth_build(builds.fetch_add(1, Ordering::SeqCst));
+		let built = extrinsic_for_index(builds.fetch_add(1, Ordering::SeqCst));
 		Box::pin(ready(answer_all_with(ids, Preparation::Ready(built))))
 	});
 	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::from_script(stuck_on_first_row));

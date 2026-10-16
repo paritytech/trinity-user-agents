@@ -20,8 +20,8 @@ use crate::{
 		policy::{PolicyError, Preparation},
 		testing::{
 			FakeChain, GENESIS, PrepareAnswer, ScheduledTxHarness, ScriptedPolicy, answer_all_with,
-			engine_with_spawner, extrinsic, first_builds, nth_build, other_domain, test_domain,
-			test_plan, test_policy_id,
+			engine_with_spawner, extrinsic, extrinsic_for_index, first_builds, other_domain,
+			test_domain, test_plan, test_policy_id,
 		},
 	},
 	store::Db,
