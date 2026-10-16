@@ -36,6 +36,7 @@ mod signing_shell;
 mod stack;
 mod terminal_ui;
 mod update;
+mod wake_relay;
 mod worker;
 
 use std::{
@@ -313,6 +314,14 @@ enum Command {
 	/// Only works for a binary the installer put in place; a `cargo install`
 	/// copy or a source build is reported and left alone.
 	Update,
+	/// Run a reference push relay for wake pushes, for tests.
+	///
+	/// Hosts register a device, its key and its watched statement-store topics
+	/// at `POST /v1/registrations`. The relay follows the topics on the People
+	/// statement store and, for each new statement, writes a signed wake push
+	/// to a file or delivers it to a simulator with `xcrun simctl push`. It has
+	/// no APNs or FCM credentials.
+	WakeRelay(wake_relay::WakeRelayArgs),
 	/// Publish, check and bundle Trinity stack descriptors.
 	Stack {
 		#[command(subcommand)]
@@ -657,6 +666,7 @@ async fn dispatch(
 		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
 			run_pgas_check(mnemonic, network.config(), target, lookback, submit).await
 		},
+		Command::WakeRelay(args) => wake_relay::run(args).await,
 		Command::Stack { command } => stack::run(command).await,
 	}
 }

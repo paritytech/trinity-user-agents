@@ -1290,6 +1290,25 @@ nowhere to prompt: confirmations are denied instead, and the startup line says
 so. `--serve` cannot be combined with `--script` or `exec`, which are the
 one-shot modes.
 
+## Reference push relay (`wake-relay`)
+
+`truapi-host wake-relay` is a push relay for wake pushes, for tests ([Push wakes](../../../docs/design/push-wake.md)).
+A host registers a device, its key and its watched statement-store topics at `POST /v1/registrations`; the relay
+follows the topics on the People statement store of `--network` and, for each new statement, signs a wake push and
+gives it to its sinks. It has no APNs or FCM credentials.
+
+```bash
+truapi-host wake-relay --port 9988 --sink file:/tmp/pushes.jsonl --sink simulator
+curl -s http://127.0.0.1:9988/v1/registrations   # the registered devices and topics
+```
+
+- `file:<path>`: one JSON line for each push.
+- `simulator`: for a device registered with platform `simctl`, writes the payload in the app container
+  (`tmp/truapi-e2e/wake-pushes`) and posts the Darwin notification that the E2E iOS build reads.
+- `simctl`: runs `xcrun simctl push`; an iOS 27 simulator refuses a background payload, so it wakes nothing there.
+
+The iOS launcher takes the relay with `TRUAPI_IOS_E2E_VERBOSITY_WAKE_RELAY=http://127.0.0.1:9988`.
+
 ## Scope / gaps
 
 - **Chain methods** route to real `wss://` nodes from the selected `--network`.
