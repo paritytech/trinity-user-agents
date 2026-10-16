@@ -2,6 +2,8 @@
 //!
 //! Payment returns typed domain errors; CoinPayment returns Unsupported.
 
+use std::sync::Arc;
+
 use futures::{StreamExt, stream::BoxStream};
 use tracing::instrument;
 use truapi::{
@@ -38,7 +40,11 @@ use truapi::{
 
 use super::from_latest_error;
 use crate::{
-	host_internal::extrinsic::sr25519_secret_from_bytes,
+	host_internal::{
+		extrinsic::sr25519_secret_from_bytes,
+		permissions::{PermissionsService, TemporaryPermissions},
+	},
+	platform::{PermissionAuthorizationStatus, PermissionStatusHost, Platform, ProductContext},
 	runtime::{ProductRuntimeHost, payment_id::host_payment_id},
 };
 
@@ -276,32 +282,21 @@ impl ProductRuntimeHost {
 		'static,
 		Result<latest::HostPaymentBalanceSubscribeItem, latest::HostPaymentBalanceSubscribeError>,
 	> {
-		let platform = self.platform.clone();
-		let status = self.permission_status.clone();
-		let temporary = self.temporary_permissions.clone();
-		let product = self.product.clone();
+		let check = Arc::new(self.balance_access_check());
 		balances
 			.then(move |balance| {
-				let (platform, status, temporary, product) =
-					(platform.clone(), status.clone(), temporary.clone(), product.clone());
+				let check = check.clone();
 				async move {
-					let held = crate::host_internal::permissions::PermissionsService::new(
-						platform.as_ref(),
-						platform.as_ref(),
-						&product,
-					)
-					.with_status_host(status.as_deref())
-					.with_temporary_permissions(temporary)
-					.peek_remote(&latest::RemotePermissionRequest {
-						permission: latest::RemotePermission::BalanceAccess,
-					})
-					.await;
-					match held {
-						Ok(crate::platform::PermissionAuthorizationStatus::Authorized) => balance,
-						_ => Err(latest::HostPaymentBalanceSubscribeError::PermissionDenied),
+					if check.holds().await {
+						balance
+					} else {
+						Err(latest::HostPaymentBalanceSubscribeError::PermissionDenied)
 					}
 				}
 			})
+			// The runtime stops polling at the first `Err`; ending here keeps
+			// the subscription's "at most one `Err`" for anything else polling
+			// it, since every later push would be denied again.
 			.scan(false, |denied, balance| {
 				let next = (!*denied).then_some(balance);
 				*denied = matches!(
@@ -315,14 +310,16 @@ impl ProductRuntimeHost {
 
 	/// Whether the product already holds balance access, without asking.
 	async fn holds_balance_access(&self) -> bool {
-		matches!(
-			self.permissions_service()
-				.peek_remote(&latest::RemotePermissionRequest {
-					permission: latest::RemotePermission::BalanceAccess,
-				})
-				.await,
-			Ok(crate::platform::PermissionAuthorizationStatus::Authorized)
-		)
+		self.balance_access_check().holds().await
+	}
+
+	fn balance_access_check(&self) -> BalanceAccessCheck {
+		BalanceAccessCheck {
+			platform: self.platform.clone(),
+			status: self.permission_status.clone(),
+			temporary: self.temporary_permissions.clone(),
+			product: self.product.clone(),
+		}
 	}
 
 	/// Ask the host to collect `request` from the user, under the id the core
@@ -366,6 +363,31 @@ impl ProductRuntimeHost {
 		}
 		request.id = host_payment_id(&self.product, request.id);
 		platform.top_up(&self.product, request).await.map_err(CallError::Domain)
+	}
+}
+
+/// What a balance access lookup reads, owned so a stream can repeat it for
+/// each balance a host pushes.
+struct BalanceAccessCheck {
+	platform: Arc<dyn Platform>,
+	status: Option<Arc<dyn PermissionStatusHost>>,
+	temporary: Arc<TemporaryPermissions>,
+	product: ProductContext,
+}
+
+impl BalanceAccessCheck {
+	/// Whether the product holds balance access, without asking.
+	async fn holds(&self) -> bool {
+		matches!(
+			PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
+				.with_status_host(self.status.as_deref())
+				.with_temporary_permissions(self.temporary.clone())
+				.peek_remote(&latest::RemotePermissionRequest {
+					permission: latest::RemotePermission::BalanceAccess,
+				})
+				.await,
+			Ok(PermissionAuthorizationStatus::Authorized)
+		)
 	}
 }
 

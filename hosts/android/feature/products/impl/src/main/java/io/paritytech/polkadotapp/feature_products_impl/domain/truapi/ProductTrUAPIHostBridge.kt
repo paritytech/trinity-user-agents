@@ -214,7 +214,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         ): TrUAPIPermissionDecision =
             when (request) {
                 RemotePermission.BalanceAccess -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
-                else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, request.toDomain())
+                else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, request.toRemoteAccessRequest())
             }
                 .getOrElse { throw it }
                 .toNative()
@@ -395,14 +395,17 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.MOTION -> DeviceCapabilityType.Motion
 }
 
-/** The remote permission this host prompts for. Balance access is asked as a product permission instead. */
-private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
+/**
+ * The request this host's remote-access prompt shows for `this`. Balance access
+ * has its own prompt (`ProductPermission.BalanceAccess`) and never reaches here.
+ */
+private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
-    RemotePermission.BalanceAccess -> error("balance access is asked as a product permission")
+    RemotePermission.BalanceAccess -> error("balance access has its own prompt")
 }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {
