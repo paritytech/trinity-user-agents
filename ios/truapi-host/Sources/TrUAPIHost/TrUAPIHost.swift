@@ -521,6 +521,15 @@ public protocol ScannerHostBridge: AnyObject, Sendable {
     ) async throws -> HostScan
 }
 
+/// The push relay client of the host. The core gives it the wake topics of
+/// every product and the key of the device; the host adds what identifies the
+/// device to its relay (the push token and the app id) and sends the
+/// registration to its relay endpoint. Only the core calls it. An empty topic
+/// list removes the registration.
+public protocol WakeRelayHostBridge: AnyObject, Sendable {
+    func registerWakeTopics(registration: WakeRelayRegistration) async throws
+}
+
 public extension HostBridge {
     /// Default no-op logger. Override to plumb into your logging framework.
     func onCoreLog(marker: String, detail: String) {}
@@ -762,6 +771,20 @@ private final class GameCallbackAdapter: NativeGameCallbacks, @unchecked Sendabl
 
     func cancelReminder() async throws {
         try await withHostRejection { try await bridge.cancelReminder() }
+    }
+}
+
+/// Adapter that bridges the public `WakeRelayHostBridge` to the generated
+/// UniFFI `NativeWakeRelayCallbacks` protocol.
+private final class WakeRelayCallbackAdapter: NativeWakeRelayCallbacks, @unchecked Sendable {
+    private let bridge: WakeRelayHostBridge
+
+    init(bridge: WakeRelayHostBridge) {
+        self.bridge = bridge
+    }
+
+    func registerWakeTopics(registration: WakeRelayRegistration) async throws {
+        try await withHostRejection { try await bridge.registerWakeTopics(registration: registration) }
     }
 }
 
@@ -1037,6 +1060,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
     private var scannerRetainer: NativeScannerCallbacks?
+    private let wakeRelayLock = NSLock()
+    private var wakeRelayAdapter: NativeWakeRelayCallbacks?
 
     public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
         try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
@@ -1092,6 +1117,25 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         let adapter = ScannerCallbackAdapter(bridge: scanner)
         scannerRetainer = adapter
         return inner.setScannerCallbacks(callbacks: adapter)
+    }
+
+    /// Install the host's push relay client, or remove it with `nil`. The core
+    /// gives it the stored wake topics of every product at once, and again at
+    /// each change of the watches. Throws when the relay refused the stored
+    /// topics; the relay stays installed.
+    public func setWakeRelay(_ relay: WakeRelayHostBridge?) async throws {
+        let adapter = relay.map { WakeRelayCallbackAdapter(bridge: $0) }
+        wakeRelayLock.withLock { wakeRelayAdapter = adapter }
+        try await inner.setWakeRelay(relay: adapter)
+    }
+
+    /// Check a wake push from the push relay and wake each product that
+    /// watches its topic for 30 seconds, as a notification wake. `payload` is
+    /// the JSON text of the `truapi-wake` value of the push. Throws
+    /// ``PushWakeRejection`` for a push the core does not trust; the core
+    /// wakes nothing then. Keep the app running until the end of each hold.
+    public func handleWakePush(payload: String) async throws -> [PushWakeDelivery] {
+        try await inner.handleWakePush(payload: payload)
     }
 
     /// Tell the core the host's contacts changed. Call it whenever a contact

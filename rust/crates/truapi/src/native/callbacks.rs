@@ -562,6 +562,23 @@ pub trait NativeBalanceCallbacks: Send + Sync {
 	) -> Result<u128, v01::HostPaymentBalanceSubscribeError>;
 }
 
+/// Native form of [`crate::runtime::WakeRelay`]: the push relay client of the
+/// host. Installed with [`NativeTrUApiHostRuntime::set_wake_relay`].
+///
+/// The host adds what identifies the device to its relay (the push token and
+/// the app id) and sends the registration to its relay endpoint. Only the
+/// core calls it.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeWakeRelayCallbacks: Send + Sync {
+	/// Replace the registration of this device with `registration`. An empty
+	/// topic list removes the registration.
+	async fn register_wake_topics(
+		&self,
+		registration: crate::runtime::WakeRelayRegistration,
+	) -> Result<(), HostRejection>;
+}
+
 /// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
 /// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
 #[uniffi::export(rust, foreign)]

@@ -182,6 +182,10 @@ private final class SpentReferences: TrUAPIWorkerReferencing, @unchecked Sendabl
     func wakeProduct(productId _: ProductId, reason _: ChatWakeReason) throws -> ChatWakeOutcome {
         .budgetSpent
     }
+
+    func handleWakePush(payload _: String) async throws -> [PushWakeDelivery] {
+        [PushWakeDelivery(productId: "a.dot", roomId: "host", watchId: "w", outcome: .budgetSpent)]
+    }
 }
 
 /// A builder for a manager whose tests start no worker.

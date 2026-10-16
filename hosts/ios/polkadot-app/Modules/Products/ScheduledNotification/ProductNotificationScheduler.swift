@@ -130,12 +130,13 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
 
 private extension ProductNotificationScheduler {
     /// Gives a notification to the OS. Under the truapi E2E harness that grants notifications, the app has no OS
-    /// permission and the OS never answers, so the harness gets a log line in place of the notification.
+    /// permission and the OS never answers, so the harness gets a log line in place of the notification. When the
+    /// harness also gave the OS permission (A1), the notification goes to the OS.
     static func systemAdding(
         _ notificationCenter: UNUserNotificationCenter,
         logger: LoggerProtocol
     ) -> (UNNotificationRequest) async throws -> Void {
-        guard !TrUAPIE2ENotificationGrant.isOn else {
+        guard !TrUAPIE2ENotificationGrant.isOn || TrUAPIE2ENotificationGrant.osPermissionGranted else {
             return { logger.debug("[e2e] notification \($0.identifier) given to the OS") }
         }
         return { try await notificationCenter.add($0) }

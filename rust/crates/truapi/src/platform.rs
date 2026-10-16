@@ -2441,6 +2441,11 @@ pub enum CoreStorageKey {
 		/// Product whose manifest was cached, normalized.
 		product_id: String,
 	},
+	/// The wake watches of every product and the key this device registers
+	/// with its push relay. The key authenticates wake pushes, so hosts must
+	/// keep this slot private to the install.
+	#[codec(index = 13)]
+	PushWakeRegistry,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -2494,6 +2499,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
 		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
+		CoreStorageKey::PushWakeRegistry => ("PushWakeRegistry", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, product_id })
 }

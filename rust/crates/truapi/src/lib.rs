@@ -127,7 +127,7 @@ pub mod latest {
 		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
 		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
 		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature,
+		TypographyStyle, VerticalAlignment, VrfSignature, WorkerWakeDelivery, WorkerWakeWatch,
 	};
 
 	pub use crate::v02::ChatRoomFooter;
@@ -469,6 +469,15 @@ pub mod latest {
 	/// Result of beginning a worker pending operation.
 	pub type HostWorkerBeginOperationResponse =
 		LatestOf<versioned::worker::HostWorkerBeginOperationResponse>;
+	/// Request to replace the wake watches of a worker.
+	pub type HostWorkerSetWakeWatchesRequest =
+		LatestOf<versioned::worker::HostWorkerSetWakeWatchesRequest>;
+	/// Result of a wake watch replacement.
+	pub type HostWorkerSetWakeWatchesResponse =
+		LatestOf<versioned::worker::HostWorkerSetWakeWatchesResponse>;
+	/// Wake watch replacement failure.
+	pub type HostWorkerSetWakeWatchesError =
+		LatestOf<versioned::worker::HostWorkerSetWakeWatchesError>;
 	/// Transaction creation payload for a legacy account.
 	pub type LegacyAccountTxPayload =
 		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountRequest>;
@@ -905,7 +914,9 @@ pub use runtime::{
 #[cfg(feature = "runtime")]
 pub use runtime::{
 	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_RINGING_HOLD_MS, CHAT_WAKE_HOLD_MS, ChatStageRejection,
-	ChatWakeOutcome, ChatWakeReason,
+	ChatWakeOutcome, ChatWakeReason, PushWakeDelivery, PushWakeOutcome, PushWakeRejection,
+	WAKE_PUSH_PAYLOAD_KEY, WakePush, WakeRelay, WakeRelayRegistration, statement_hash,
+	wake_push_mac,
 };
 
 #[cfg(feature = "runtime")]

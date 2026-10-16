@@ -29,6 +29,7 @@ mod payment_id;
 mod product_accounts;
 pub mod product_manifest;
 mod product_subtree;
+mod push_wake;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
@@ -75,6 +76,10 @@ use futures::{FutureExt, StreamExt, pin_mut};
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
 use product_accounts::ProductAccounts;
+pub use push_wake::{
+	PushWakeDelivery, PushWakeOutcome, PushWakeRejection, PushWakes, WAKE_PUSH_PAYLOAD_KEY,
+	WakePush, WakeRelay, WakeRelayRegistration, statement_hash, wake_push_mac,
+};
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
 pub use signing_host::{

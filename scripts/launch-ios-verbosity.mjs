@@ -40,6 +40,11 @@
 //   TRUAPI_IOS_E2E_VERBOSITY_PROMPTS   the answer to a permission prompt of
 //                                      the product: always (default), once,
 //                                      deny, or ask (the launcher leaves it)
+//   TRUAPI_IOS_E2E_VERBOSITY_WAKE_RELAY  URL of `truapi-host wake-relay`; the
+//                                      apps register their wake topics there
+//   TRUAPI_IOS_E2E_VERBOSITY_OS_NOTIFICATIONS=1  give the app the OS
+//                                      notification permission, so a product
+//                                      notification shows (A1)
 
 import { spawn } from "node:child_process";
 import {
@@ -110,6 +115,13 @@ const promptAnswer = environment.TRUAPI_IOS_E2E_VERBOSITY_PROMPTS ?? "always";
 /** The harness holds the worker, beside the foreground hold of the core. */
 const holdWorker = environment.TRUAPI_IOS_E2E_VERBOSITY_HOLD === "1";
 
+/** The reference relay of wake pushes (VERBOSITY-WASM-PRODUCT A1). */
+const wakeRelay = environment.TRUAPI_IOS_E2E_VERBOSITY_WAKE_RELAY;
+
+/** The OS shows the notifications of the product (A1). */
+const osNotifications =
+  environment.TRUAPI_IOS_E2E_VERBOSITY_OS_NOTIFICATIONS === "1";
+
 if (!existsSync(app)) throw new Error(`iOS app bundle not found: ${app}`);
 if (!wasm || !existsSync(wasm)) {
   throw new Error(
@@ -141,8 +153,10 @@ for (const [index, user] of USERS.entries()) {
   console.log(`user ${user}: ${identities[index].username}`);
 }
 
-const users = USERS.map((user, index) =>
-  prepareUser(user, deviceNames[index], identities[index]),
+const users = await Promise.all(
+  USERS.map((user, index) =>
+    prepareUser(user, deviceNames[index], identities[index]),
+  ),
 );
 const consoles = users.map(launch);
 
@@ -200,7 +214,7 @@ process.on("SIGTERM", stop);
 await new Promise(() => {});
 
 /** Boot the simulator of a user, install the app, the seed and the module. */
-function prepareUser(name, device, identity) {
+async function prepareUser(name, device, identity) {
   const udid = simulator(device);
   run("xcrun", ["simctl", "bootstatus", udid, "-b"], { stdio: "ignore" });
   if (environment.TRUAPI_IOS_E2E_VERBOSITY_FRESH === "1") {
@@ -243,6 +257,8 @@ function prepareUser(name, device, identity) {
     resolve(products, "ChatExtension/manifest.json"),
     `${JSON.stringify(WORKER_MANIFEST, null, 2)}\n`,
   );
+  // After the install: a new install starts with no notification settings.
+  if (osNotifications) await grantNotifications(udid, bundle);
 
   return new SimulatorUser({
     name,
@@ -252,6 +268,27 @@ function prepareUser(name, device, identity) {
     appLog: resolve(outDir, `${name}.log`),
     productHost,
   });
+}
+
+/**
+ * Give the app the notification permission on a simulator, as the user would
+ * with "Allow". A new simulator writes its store some seconds after its first
+ * boot, and the store is read at boot, so the simulator restarts.
+ */
+async function grantNotifications(udid, bundleId) {
+  const script = resolve(repoRoot, "scripts/grant-sim-notifications.py");
+  run("xcrun", ["simctl", "bootstatus", udid, "-b"], { stdio: "ignore" });
+  await waitFor(
+    () => captureOptional("python3", [script, "--ready", udid]) !== undefined || undefined,
+    {
+      timeoutMs: 60_000,
+      intervalMs: 2_000,
+      message: `${udid}: the simulator wrote no notification settings`,
+    },
+  );
+  captureOptional("xcrun", ["simctl", "shutdown", udid]);
+  run("python3", [script, udid, bundleId]);
+  run("xcrun", ["simctl", "boot", udid]);
 }
 
 /**
@@ -300,7 +337,13 @@ function launch(user) {
     {
       env: {
         ...environment,
-        ...launchEnvironment({ productHost, productName, holdWorker }),
+        ...launchEnvironment({
+          productHost,
+          productName,
+          holdWorker,
+          wakeRelay,
+          osNotifications,
+        }),
       },
       stdio: ["ignore", "pipe", "pipe"],
     },

@@ -279,7 +279,13 @@ export type CoreStorageKey =
    * core honours it for a bounded lifetime, which is what makes a revoked
    * trust grant eventually take effect.
    */
-  | { tag: "ProductManifest"; value: { productId: string } };
+  | { tag: "ProductManifest"; value: { productId: string } }
+  /**
+   * The wake watches of every product and the key this device registers
+   * with its push relay. The key authenticates wake pushes, so hosts must
+   * keep this slot private to the install.
+   */
+  | { tag: "PushWakeRegistry"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -913,6 +919,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
         productId: string;
       }>,
+      PushWakeRegistry: S._void,
     }),
 );
 

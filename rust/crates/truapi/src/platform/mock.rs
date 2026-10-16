@@ -842,6 +842,7 @@ fn core_key(key: &CoreStorageKey) -> String {
 		CoreStorageKey::LastProcessedPairingStatement => {
 			"core:last-processed-pairing-statement".to_string()
 		},
+		CoreStorageKey::PushWakeRegistry => "core:push-wake-registry".to_string(),
 	}
 }
 

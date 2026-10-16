@@ -37,6 +37,8 @@ use truapi::{
 			HostWorkerBeginOperationError, HostWorkerBeginOperationRequest,
 			HostWorkerBeginOperationResponse, HostWorkerEndOperationError,
 			HostWorkerEndOperationRequest, HostWorkerEndOperationResponse,
+			HostWorkerSetWakeWatchesError, HostWorkerSetWakeWatchesRequest,
+			HostWorkerSetWakeWatchesResponse,
 		},
 	},
 };
@@ -411,6 +413,27 @@ impl Worker for ProductRuntimeHost {
 			CallError::Domain(HostWorkerEndOperationError::from_latest(error, version))
 		})?;
 		Ok(HostWorkerEndOperationResponse::from_latest((), version))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "worker.set_wake_watches"))]
+	async fn set_wake_watches(
+		&self,
+		_cx: &CallContext,
+		request: HostWorkerSetWakeWatchesRequest,
+	) -> Result<HostWorkerSetWakeWatchesResponse, CallError<HostWorkerSetWakeWatchesError>> {
+		let version = request.version();
+		let latest::HostWorkerSetWakeWatchesRequest { watches } = request.into_latest();
+		let delivery = self
+			.services
+			.set_wake_watches(&self.product.product_id, watches)
+			.await
+			.map_err(|error| {
+				CallError::Domain(HostWorkerSetWakeWatchesError::from_latest(error, version))
+			})?;
+		Ok(HostWorkerSetWakeWatchesResponse::from_latest(
+			latest::HostWorkerSetWakeWatchesResponse { delivery },
+			version,
+		))
 	}
 }
 

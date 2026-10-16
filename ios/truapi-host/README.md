@@ -288,6 +288,14 @@ own allowance pays for, and returns its key, or throws
 the file is above 8 MiB or the chain's per-transaction bound, the user refused
 `PreimageSubmit`, no allowance, or the submission failed).
 
+Push wakes ([design](../../docs/design/push-wake.md)): `setWakeRelay(_:)` installs
+the host's push relay client (`WakeRelayHostBridge.registerWakeTopics`), which
+gets the wake topics of every product and the key of the device, and
+`handleWakePush(payload:)` takes the JSON text of the `truapi-wake` value of a
+background push, checks it, and wakes each product that watches its topic
+(`[PushWakeDelivery]`, or throws `PushWakeRejection`). Keep the app running
+until the end of each hold.
+
 ## Pocket
 
 A host with a Pocket surface owns the card collection and implements

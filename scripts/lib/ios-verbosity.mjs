@@ -101,10 +101,30 @@ export const WORKER_MANIFEST = Object.freeze({
 /**
  * The environment of the app of one user. The command feed is on, and the
  * harness holds the worker only when `holdWorker` is true: else the worker
- * runs as the foreground worker that its manifest declares.
+ * runs as the foreground worker that its manifest declares. With `wakeRelay`
+ * (a URL of `truapi-host wake-relay`) the app registers the wake topics of
+ * its products there and takes wake pushes from the relay's `simulator`
+ * sink, and with `osNotifications` the notifications of a
+ * product go to the OS, which the launcher gave the permission
+ * (VERBOSITY-WASM-PRODUCT A1).
  */
-export function launchEnvironment({ productHost, productName, holdWorker }) {
+export function launchEnvironment({
+  productHost,
+  productName,
+  holdWorker,
+  wakeRelay,
+  osNotifications,
+}) {
   return {
+    ...(wakeRelay
+      ? {
+          SIMCTL_CHILD_TRUAPI_IOS_E2E_WAKE_RELAY_URL: wakeRelay,
+          SIMCTL_CHILD_TRUAPI_IOS_E2E_WAKE_PUSH_FEED: "1",
+        }
+      : {}),
+    ...(osNotifications
+      ? { SIMCTL_CHILD_TRUAPI_IOS_E2E_OS_NOTIFICATIONS: "1" }
+      : {}),
     SIMCTL_CHILD_RUST_BACKTRACE: "1",
     SIMCTL_CHILD_TRUAPI_IOS_E2E_RESTORE_WALLET: "1",
     SIMCTL_CHILD_TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST: productHost,

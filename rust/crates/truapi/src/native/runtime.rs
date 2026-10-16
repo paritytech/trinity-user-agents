@@ -42,7 +42,7 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
-		NativeTopUpCallbacks,
+		NativeTopUpCallbacks, NativeWakeRelayCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -54,7 +54,7 @@ use super::{
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
 		GameCallbackPlatform, PaymentCallbackPlatform, PocketCallbackPlatform,
-		ScannerCallbackPlatform, TopUpCallbackPlatform,
+		ScannerCallbackPlatform, TopUpCallbackPlatform, WakeRelayCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -439,6 +439,34 @@ impl NativeTrUApiHostRuntime {
 				truapi::latest::HostChatRoomEventsSubscribeItem { room_id, event },
 			)
 			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
+	}
+
+	/// Install the host's push relay client, or remove it with `None`. The
+	/// core gives it the wake topics of every product at once and at each
+	/// change of the watches. Answers whether the relay took the stored
+	/// topics; the relay stays installed after a refusal.
+	pub async fn set_wake_relay(
+		&self,
+		relay: Option<Arc<dyn NativeWakeRelayCallbacks>>,
+	) -> Result<(), HostRejection> {
+		let relay = relay.map(|relay| -> Arc<dyn crate::runtime::WakeRelay> {
+			Arc::new(WakeRelayCallbackPlatform { relay })
+		});
+		self.runtime
+			.set_wake_relay(relay)
+			.await
+			.map_err(|reason| HostRejection::Rejected { reason })
+	}
+
+	/// Check a wake push and wake each product that watches its topic, each
+	/// for [`crate::CHAT_WAKE_HOLD_MS`] as a notification wake. `payload` is
+	/// the text of the JSON object under the key `truapi-wake` of the push.
+	/// The host keeps the app running until the end of each hold.
+	pub async fn handle_wake_push(
+		&self,
+		payload: String,
+	) -> Result<Vec<crate::PushWakeDelivery>, crate::PushWakeRejection> {
+		self.runtime.handle_wake_push(&payload).await
 	}
 
 	/// Hold the worker of the product for a wake of
