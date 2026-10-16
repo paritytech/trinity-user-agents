@@ -278,6 +278,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
      * A second call opens nothing and answers with the execution already
      * running: opening another would leak the first, along with its loopback
      * listener and chain sockets.
+     *
+     * With no [onReadyToInject], no bridge starts: the core runs a wasm worker
+     * itself and needs no page.
      */
     suspend fun attach(
         runtime: TrUAPIHostRuntime,
@@ -287,7 +290,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         kind: ProductExecutionKind,
         chat: ChatHostBridge? = null,
         card: ExpandedCardFace? = null,
-        onReadyToInject: suspend (bootstrap: String) -> Unit,
+        onReadyToInject: (suspend (bootstrap: String) -> Unit)?,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
             Timber.w("truapi.attach: already attached to %s, ignoring", productId.value)
@@ -314,10 +317,12 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                 onResponse = opened::notifyChainResponse,
                 onClosed = opened::notifyChainClosed,
             )
-            val endpoint = opened.startWsBridge()
+            val endpoint = onReadyToInject?.let { opened.startWsBridge() }
             observeAppTheme()
             observeAppLifecycle()
-            onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
+            if (onReadyToInject != null && endpoint != null) {
+                onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
+            }
             opened
         }.onFailure { stop() }
     }

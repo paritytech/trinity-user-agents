@@ -23,5 +23,16 @@ sealed interface ProductExecutable {
         val includesChat: Boolean,
         val includesPocket: Boolean,
         val pocketCards: List<PocketCardDefinition>,
+        /** When the worker runs, from the `keepAlive` field of its Worker executable manifest. */
+        val keepAlive: WorkerKeepAlive,
     ) : ProductExecutable
+}
+
+/** When the worker of a product runs, beside the holders of its rooms and cards. */
+enum class WorkerKeepAlive {
+    /** The worker runs only while a room, a card or an operation holds it. This is the default. */
+    ON_DEMAND,
+
+    /** The worker also runs while the app is in the foreground. */
+    FOREGROUND,
 }

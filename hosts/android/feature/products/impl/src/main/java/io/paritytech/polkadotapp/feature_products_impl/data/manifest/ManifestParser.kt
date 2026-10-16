@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.data.manifest
 
 import com.google.gson.Gson
+import com.google.gson.JsonElement
 import io.paritytech.polkadotapp.common.utils.enumValueOfOrNull
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
@@ -9,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductIcon
+import io.paritytech.polkadotapp.feature_products_api.model.WorkerKeepAlive
 import io.paritytech.polkadotapp.tools_ipfs_api.Cid
 import timber.log.Timber
 import uniffi.truapi.screenPocketCardId
@@ -67,6 +69,7 @@ internal class ManifestParser @Inject constructor(
                         includesChat = requireNotNull(includes.chat) { "worker includes missing 'chat'" },
                         includesPocket = includesPocket,
                         pocketCards = remote.pocket.toCardDefinitions(includesPocket),
+                        keepAlive = remote.keepAlive.toKeepAlive(),
                     )
                 }
             }
@@ -110,6 +113,29 @@ internal class ManifestParser @Inject constructor(
         )
     }
 
+    /**
+     * The `keepAlive` field of a manifest that a person installs by hand beside a worker file. Only this field is
+     * read there. A file that is not a JSON object reads as [WorkerKeepAlive.ON_DEMAND].
+     */
+    fun parseHandInstalledKeepAlive(rawText: String): WorkerKeepAlive =
+        runCatching { gson.fromJson(rawText, ExecutableManifestRemote::class.java)?.keepAlive.toKeepAlive() }
+            .onFailure { Timber.w(it, "the manifest beside a worker installed by hand is not a JSON object") }
+            .getOrNull() ?: WorkerKeepAlive.ON_DEMAND
+
+    // An unknown value or JSON type keeps the worker as an on-demand worker, so a newer value does not cost the
+    // product its worker.
+    private fun JsonElement?.toKeepAlive(): WorkerKeepAlive {
+        val value = this?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+        return when (value) {
+            KEEP_ALIVE_FOREGROUND -> WorkerKeepAlive.FOREGROUND
+            null, KEEP_ALIVE_ON_DEMAND -> WorkerKeepAlive.ON_DEMAND
+            else -> {
+                Timber.w("worker keepAlive '%s' is unknown; the worker runs on demand", value)
+                WorkerKeepAlive.ON_DEMAND
+            }
+        }
+    }
+
     private fun IconRemote.toDomain(): ProductIcon? {
         val cid = Cid.decode(requireNotNull(cid) { "icon missing cid" })
         val rawFormat = requireNotNull(format) { "icon missing format" }
@@ -121,5 +147,7 @@ internal class ManifestParser @Inject constructor(
     private companion object {
         const val SCHEMA_VERSION = 1
         const val DEFAULT_WIDGET_WIDTH = 1
+        const val KEEP_ALIVE_FOREGROUND = "foreground"
+        const val KEEP_ALIVE_ON_DEMAND = "onDemand"
     }
 }

@@ -61,6 +61,7 @@ class TrUAPIWorkerSupervisorFailureTest {
         bootstrapInstaller = bootstrapInstaller,
         refCounter = Lazy { refCounter },
         chatStoredState = mock(),
+        workerCode = mock(),
         dispatchers = testDispatchers(),
     )
 

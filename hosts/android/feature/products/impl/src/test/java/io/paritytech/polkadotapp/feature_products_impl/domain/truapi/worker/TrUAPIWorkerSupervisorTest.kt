@@ -146,6 +146,7 @@ class TrUAPIWorkerSupervisorTest {
         bootstrapInstaller = mockk(relaxed = true),
         refCounter = { mockk(relaxed = true) },
         chatStoredState = mockk(),
+        workerCode = mockk { coEvery { load(any(), any()) } answers { Result.success(TrUAPIWorkerCode.Script(SCRIPT_URL)) } },
         dispatchers = testDispatchers(),
     )
 

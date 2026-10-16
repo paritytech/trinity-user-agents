@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
@@ -33,7 +35,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
+import uniffi.truapi.NativeWasmWorkerEnd
 import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.WorkerKeepAlive
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
@@ -47,7 +51,8 @@ sealed interface WorkerExecutionState {
 
 /**
  * Runs product workers on the core for as long as the core's reference ledger wants them: a `Start`
- * boots the worker script in a hidden WebView behind a `WORKER` execution, a `Stop` tears it down.
+ * boots the worker behind a `WORKER` execution, a `Stop` tears it down. A script worker runs in a
+ * hidden WebView; a wasm worker runs in the core, with no WebView (VERBOSITY-WASM-PRODUCT A2).
  */
 @Singleton
 class TrUAPIWorkerSupervisor @Inject constructor(
@@ -60,6 +65,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     private val chatStoredState: ProductChatStoredState,
+    private val workerCode: TrUAPIWorkerCodeSource,
     dispatchers: CoroutineDispatchers,
 ) {
     // `bootLosses` counts the renderers that stopped during a boot of this start chain.
@@ -72,6 +78,10 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val transitions = Mutex()
     private val workers = mutableMapOf<ProductId, RunningWorker>()
     private val executionStates = MutableStateFlow<Map<ProductId, WorkerExecutionState>>(emptyMap())
+
+    // The core keeps one keep-alive flag for each product, so the declarations are counted, and the count and the
+    // call to the core change under one lock.
+    private val foregroundDeclarations = mutableMapOf<ProductId, Int>()
 
     /** Demand crossing zero, as the core reports it. May arrive on any thread, so the work is handed to [scope]. */
     fun onDemandChanged(productId: ProductId, demand: WorkerDemand) {
@@ -95,6 +105,42 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 if (executionStates.value[productId] is WorkerExecutionState.Failed) start(productId)
             }
         }
+    }
+
+    /** Starts again each worker whose last start failed or whose wasm module ended. The app calls this in the foreground. */
+    fun restartFailed() {
+        scope.launch {
+            transitions.withLock {
+                executionStates.value.filterValues { it is WorkerExecutionState.Failed }.keys.forEach { start(it) }
+            }
+        }
+    }
+
+    /**
+     * Declares that the worker of [productId] runs while the app is in the foreground. The core holds the worker
+     * while the host reports the app in the foreground. Pair each call with one [withdrawForegroundWorker].
+     */
+    fun declareForegroundWorker(runtime: TrUAPIHostRuntime, productId: ProductId) = synchronized(foregroundDeclarations) {
+        val count = foregroundDeclarations.getOrDefault(productId, 0) + 1
+        foregroundDeclarations[productId] = count
+        if (count == 1) setKeepAlive(runtime, productId, WorkerKeepAlive.FOREGROUND)
+    }
+
+    /** Gives back one [declareForegroundWorker]. The last one ends the foreground hold of the product. */
+    fun withdrawForegroundWorker(runtime: TrUAPIHostRuntime, productId: ProductId) = synchronized(foregroundDeclarations) {
+        val count = foregroundDeclarations[productId] ?: return@synchronized
+        if (count > 1) {
+            foregroundDeclarations[productId] = count - 1
+        } else {
+            foregroundDeclarations.remove(productId)
+            setKeepAlive(runtime, productId, WorkerKeepAlive.ON_DEMAND)
+        }
+    }
+
+    private fun setKeepAlive(runtime: TrUAPIHostRuntime, productId: ProductId, keepAlive: WorkerKeepAlive) {
+        runCatching { runtime.setWorkerKeepAlive(productId.value, keepAlive) }
+            .onSuccess { Timber.d("TrUAPI %s's worker keep alive: %s", productId.value, keepAlive) }
+            .onFailure { Timber.w(it, "TrUAPI %s's worker keep alive %s did not reach the core", productId.value, keepAlive) }
     }
 
     /** The product's worker execution while it runs, null otherwise. */
@@ -140,6 +186,67 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private suspend fun boot(productId: ProductId, worker: RunningWorker): Result<TrUAPIProductExecution> {
         val script = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
+        return when (val code = workerCode.load(productId, script).getOrElse { return Result.failure(it) }) {
+            is TrUAPIWorkerCode.Wasm -> bootWasm(productId, worker, runtime, script, code)
+            is TrUAPIWorkerCode.Script -> bootScript(productId, worker, runtime, script)
+        }
+    }
+
+    private suspend fun bootWasm(
+        productId: ProductId,
+        worker: RunningWorker,
+        runtime: TrUAPIHostRuntime,
+        script: ProductExecutable.Worker,
+        code: TrUAPIWorkerCode.Wasm,
+    ): Result<TrUAPIProductExecution> =
+        hostBridgeFactory.create(worker.scope)
+            .attach(
+                runtime,
+                productId,
+                chainDirectory.resolve(),
+                ignoredNavigation(),
+                ProductExecutionKind.WORKER,
+                chat = chatBridge(productId, script),
+                onReadyToInject = null,
+            )
+            .mapCatching { execution ->
+                val end = execution.startWasmWorker(code.module)
+                worker.scope.launch { onWasmWorkerEnd(productId, worker, end.await(), code.name) }
+                Timber.d("TrUAPI wasm worker running: %s (%d bytes)", code.name, code.module.size)
+                execution
+            }
+
+    // Each end of a module that still runs is a fault, also a clean return of its entry point: nothing then serves
+    // the product. The worker ends as a failed start does, and the next room or the next foreground starts it again.
+    private suspend fun onWasmWorkerEnd(productId: ProductId, worker: RunningWorker, end: NativeWasmWorkerEnd, name: String) {
+        val reason = when (end) {
+            NativeWasmWorkerEnd.Stopped -> return
+            NativeWasmWorkerEnd.Finished -> "the entry point of the wasm worker returned"
+            is NativeWasmWorkerEnd.Failed -> end.reason
+        }
+        Timber.e("TrUAPI worker fault, the worker ends: %s (%s)", reason, name)
+        transitions.withLock {
+            if (workers[productId] !== worker) return@withLock
+            stop(productId)
+            executionStates.update { it + (productId to WorkerExecutionState.Failed(WasmWorkerEndedException(reason))) }
+        }
+    }
+
+    private class WasmWorkerEndedException(reason: String) : Exception(reason)
+
+    private fun chatBridge(productId: ProductId, script: ProductExecutable.Worker): ProductChatHostBridge? =
+        if (script.includesChat) {
+            ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId), chatStoredState)
+        } else {
+            null
+        }
+
+    private suspend fun bootScript(
+        productId: ProductId,
+        worker: RunningWorker,
+        runtime: TrUAPIHostRuntime,
+        script: ProductExecutable.Worker,
+    ): Result<TrUAPIProductExecution> {
         val workerScript = WorkerScript.of(script.scriptUrl)
 
         val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript), worker.scope)
@@ -158,11 +265,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
-                chat = if (script.includesChat) {
-                    ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId), chatStoredState)
-                } else {
-                    null
-                },
+                chat = chatBridge(productId, script),
             ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }
             .flatMap { execution ->
                 runCatching {
@@ -208,6 +311,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         val worker = workers.remove(productId) ?: return
         worker.webViewRuntime?.dispose()
         worker.scope.cancel()
+        Timber.d("TrUAPI worker for %s stopped", productId.value)
     }
 
     // A worker has no screen of its own to navigate; a `navigate_to` from it is logged and dropped.
