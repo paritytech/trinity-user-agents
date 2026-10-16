@@ -149,14 +149,26 @@ struct ConnectionRetentionTests {
         chainToken.release()
         #expect(connection.disconnectCallCount == 2)
     }
+
+    // MARK: - Chain sockets
+
+    @Test func chainSocketUsesCallerAttempt() throws {
+        let factory = StubConnectionFactory()
+        let pool = makePool(factory: factory)
+
+        _ = try pool.makeChainSocket(for: makeChain(id: "chain-1"), attempt: 3)
+        _ = try pool.makeChainSocket(for: makeChain(id: "chain-1"), attempt: 3)
+
+        #expect(factory.socketAttempts == ["chain-1": [3, 3]])
+    }
 }
 
 // MARK: - Helpers
 
 private extension ConnectionRetentionTests {
-    func makePool() -> ConnectionPool {
+    func makePool(factory: StubConnectionFactory = StubConnectionFactory()) -> ConnectionPool {
         ConnectionPool(
-            connectionFactory: StubConnectionFactory(),
+            connectionFactory: factory,
             applicationHandler: StubApplicationHandler()
         )
     }
@@ -237,6 +249,8 @@ private final class RecordingChainConnection: ChainConnection {
 }
 
 private final class StubConnectionFactory: ConnectionFactoryProtocol {
+    private(set) var socketAttempts: [ChainModel.Id: [Int]] = [:]
+
     func createConnection(
         for _: ChainNodeConnectable,
         delegate _: WebSocketEngineDelegate?
@@ -257,6 +271,16 @@ private final class StubConnectionFactory: ConnectionFactoryProtocol {
 
     func createOneShotConnection(for _: ChainNodeConnectable) throws -> OneShotConnection {
         throw NSError(domain: "ConnectionRetentionTests", code: 0)
+    }
+
+    func createChainSocket(for chain: ChainNodeConnectable, attempt: Int) throws -> ChainSocketProtocol {
+        guard let url = URL(string: "wss://\(chain.chainId).example") else {
+            throw NSError(domain: "ConnectionRetentionTests", code: 1)
+        }
+
+        socketAttempts[chain.chainId, default: []].append(attempt)
+
+        return ChainSocket(url: url, transportFactory: RecordingTransportFactory(), logger: SilentLogger())
     }
 }
 
