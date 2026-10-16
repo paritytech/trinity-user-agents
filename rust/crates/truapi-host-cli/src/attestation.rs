@@ -18,9 +18,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use std::{collections::BTreeSet, sync::Mutex};
+use subxt_rpcs::client::RpcClient;
 use tracing::{debug, warn};
 use truapi::host_logic::{
-	attestation::build_lite_registration,
+	attestation::{RegistrationSignatureForms, account_signature_form, build_lite_registration},
 	dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
 	product_account::{
 		SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_root_keypair_from_entropy,
@@ -28,7 +29,10 @@ use truapi::host_logic::{
 	},
 };
 
-use crate::{dotns_read::AssetHubReader, network::NetworkConfig};
+use crate::{
+	dotns_read::{AssetHubReader, runtime_version},
+	network::NetworkConfig,
+};
 
 /// Env var carrying an optional bearer token for the identity backend.
 /// Set it to reuse a token minted elsewhere. Unset, the CLI runs the sr25519
@@ -233,6 +237,9 @@ pub struct AttestConfig {
 	/// Asset Hub WebSocket URL for the reservation timestamp and the dotNS
 	/// username poll.
 	pub asset_hub_ws: String,
+	/// People WebSocket URL for the runtime version the registration
+	/// signatures follow.
+	pub people_ws: String,
 	/// The network's dotNS TLD without the dot (`paseo`, `testnet`); the
 	/// registered person is `uid.<suffix>` / `peopl.<suffix>`.
 	pub network_suffix: String,
@@ -312,6 +319,7 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		}
 	}
 
+	let signature_forms = registration_signature_forms(config, &reader).await?;
 	let verifier = fetch_verifier(&client, &config.backend_base).await?;
 	let registration = build_lite_registration(
 		&config.entropy,
@@ -320,6 +328,7 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		&config.username_base,
 		config.reserved_username.as_deref(),
 		signed_at,
+		signature_forms,
 	)
 	.map_err(|reason| anyhow::anyhow!("failed to build registration params: {reason}"))?;
 	debug!(
@@ -333,6 +342,30 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 	let identity = wait_for_dotns_username(&mut reader, &registration.candidate_public_key).await?;
 	debug!("lite username registered and confirmed on-chain");
 	identity.lite_username.context("registered dotNS identity has no lite username")
+}
+
+/// The forms the registration signatures take. Each follows the runtime of the
+/// chain that checks it: People for the candidate and consumer registration
+/// signatures, Asset Hub for the dotNS reservation signature.
+async fn registration_signature_forms(
+	config: &AttestConfig,
+	reader: &AssetHubReader,
+) -> Result<RegistrationSignatureForms> {
+	let people = RpcClient::from_insecure_url(&config.people_ws)
+		.await
+		.with_context(|| format!("connect {}", config.people_ws))?;
+	let (people_name, people_version) =
+		runtime_version(&people).await.context("read People runtime version")?;
+	let (asset_hub_name, asset_hub_version) =
+		reader.runtime_version().await.context("read Asset Hub runtime version")?;
+	Ok(RegistrationSignatureForms {
+		people: account_signature_form(&people_name, people_version, &config.network_suffix),
+		asset_hub: account_signature_form(
+			&asset_hub_name,
+			asset_hub_version,
+			&config.network_suffix,
+		),
+	})
 }
 
 /// Resolves the on-chain lite username for an already-attested signer: the
@@ -696,12 +729,17 @@ mod tests {
 		let server = tokio::spawn(serve_candidate_bound_registration(listener));
 
 		let entropy = [7u8; 16];
+		let plain = RegistrationSignatureForms {
+			people: truapi::host_logic::attestation::AccountSignatureForm::Plain,
+			asset_hub: truapi::host_logic::attestation::AccountSignatureForm::Plain,
+		};
 		let registration =
-			build_lite_registration(&entropy, "paseo", [9u8; 32], "testing", None, 123)?;
+			build_lite_registration(&entropy, "paseo", [9u8; 32], "testing", None, 123, plain)?;
 		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 		let config = AttestConfig {
 			backend_base: backend_base.clone(),
 			asset_hub_ws: String::new(),
+			people_ws: String::new(),
 			network_suffix: "paseo".to_string(),
 			entropy: entropy.to_vec(),
 			username_base: "testing".to_string(),

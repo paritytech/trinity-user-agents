@@ -1298,6 +1298,10 @@ mod tests {
 			"headless",
 			None,
 			0,
+			crate::host_logic::attestation::RegistrationSignatureForms {
+				people: crate::host_logic::attestation::AccountSignatureForm::Plain,
+				asset_hub: crate::host_logic::attestation::AccountSignatureForm::Plain,
+			},
 		)
 		.expect("registration builds");
 
