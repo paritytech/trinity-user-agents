@@ -522,6 +522,13 @@ catalog. The genesis hashes the core is configured with and the chain set report
 catalog. The light client keeps no state between loads, so each tab syncs from the chain spec checkpoint when it starts.
 A name lookup uses one public RPC node instead, as described above.
 
+The core opens one connection per chain and runs every product's `chainHead_v1_follow` over it, along with some follows
+of its own. One light-client connection holds two follows and refuses a third with "too many active follow
+subscriptions", so with a worker running, an opened card's Widget could not follow the People chain and its reads never
+started. `src/follow-spread.ts` gives the core one connection that opens each follow on a light-client connection with a
+free slot, a new one when none has, and sends every `chainHead_v1_*` call that names a follow to the connection that
+holds it. The connections share the light client's sync.
+
 ## Tests
 
 From `hosts/web`:
@@ -582,6 +589,7 @@ and layout on narrow screens.
   `src/callbacks.ts`, `src/prompt.ts`, `src/reviews.ts`: the host callbacks and prompts.
 - `src/wallets.ts`, `src/storage.ts`: wallet and per-wallet, per-network storage. `src/network.ts`,
   `src/network-config.ts`, `src/network-choice.ts`: the light client, the networks it serves and the per-tab choice.
+  `src/follow-spread.ts`: spreading the core's follows over light-client connections.
 - `src/dotns.ts`, `src/address.ts`: name lookup and the address bar's grammar.
 - `src/shell.ts`: the dock's destinations and saved addresses, and what a product's `navigateTo` turns into.
   `src/pocket.ts`, `src/pocket-screen.ts`: the Pocket cards, the Pocket the core's calls see, and how the screen draws

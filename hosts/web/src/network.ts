@@ -7,6 +7,7 @@ import type {
   HostChainSet,
   JsonRpcConnection,
 } from "@parity/truapi-host";
+import { spreadFollows } from "./follow-spread.js";
 import { type NetworkConfig } from "./network-config.js";
 
 /** Genesis hashes of the chains this host serves. */
@@ -66,26 +67,11 @@ export async function connectNetwork(config: NetworkConfig): Promise<Network> {
       ],
     },
     chain: {
+      // The core multiplexes every product's follows over the connection it
+      // opens here, and one light-client connection holds two.
       async connect(genesisHash) {
-        const connection = await provider.connect(bytesToHex(genesisHash));
-        const wrapped: JsonRpcConnection = {
-          send: (request) => connection.send(request),
-          async *responses() {
-            for (
-              let response = await connection.nextResponse();
-              response !== undefined;
-              response = await connection.nextResponse()
-            ) {
-              yield response;
-            }
-          },
-          close: () => {
-            open.delete(wrapped);
-            connection.close();
-          },
-        };
-        open.add(wrapped);
-        return wrapped;
+        const lane = () => openConnection(bytesToHex(genesisHash));
+        return spreadFollows(await lane(), lane);
       },
     },
     dispose() {
@@ -94,4 +80,28 @@ export async function connectNetwork(config: NetworkConfig): Promise<Network> {
       provider.free();
     },
   };
+
+  async function openConnection(
+    genesisHash: string,
+  ): Promise<JsonRpcConnection> {
+    const connection = await provider.connect(genesisHash);
+    const wrapped: JsonRpcConnection = {
+      send: (request) => connection.send(request),
+      async *responses() {
+        for (
+          let response = await connection.nextResponse();
+          response !== undefined;
+          response = await connection.nextResponse()
+        ) {
+          yield response;
+        }
+      },
+      close: () => {
+        open.delete(wrapped);
+        connection.close();
+      },
+    };
+    open.add(wrapped);
+    return wrapped;
+  }
 }
