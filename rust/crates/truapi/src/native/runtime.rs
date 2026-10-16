@@ -273,22 +273,20 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Report a later status of `product_id`'s top-up `id` to the products
-	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`. A
-	/// status for an id that is not a product id is logged and dropped.
+	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`.
+	///
+	/// Returns a `Result` so a `product_id` UniFFI cannot parse throws in Swift
+	/// and Kotlin.
 	pub fn notify_top_up_status(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		id: crate::Bytes32,
 		status: v01::HostPaymentTopUpStatusSubscribeItem,
-	) {
+	) -> Result<(), HostRejection> {
 		if let Some(platform) = self.top_up.get() {
-			match product_id.parse::<ProductId>() {
-				Ok(product_id) => platform.notify_status(product_id, id, status),
-				Err(error) => {
-					tracing::warn!(%error, "top-up status for an id that is not a product id")
-				},
-			}
+			platform.notify_status(product_id, id, status);
 		}
+		Ok(())
 	}
 
 	/// Install the host's payment engine. Set-once; answers whether this
@@ -300,22 +298,20 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Report a later status of `product_id`'s payment `id` to the products
-	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`. A
-	/// status for an id that is not a product id is logged and dropped.
+	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`.
+	///
+	/// Returns a `Result` so a `product_id` UniFFI cannot parse throws in Swift
+	/// and Kotlin.
 	pub fn notify_payment_status(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		id: crate::Bytes32,
 		status: v01::HostPaymentStatusSubscribeItem,
-	) {
+	) -> Result<(), HostRejection> {
 		if let Some(platform) = self.payments.get() {
-			match product_id.parse::<ProductId>() {
-				Ok(product_id) => platform.notify_status(product_id, id, status),
-				Err(error) => {
-					tracing::warn!(%error, "payment status for an id that is not a product id")
-				},
-			}
+			platform.notify_status(product_id, id, status);
 		}
+		Ok(())
 	}
 
 	/// Install the host's balance view. Set-once; answers whether this call
@@ -381,9 +377,8 @@ impl NativeTrUApiHostRuntime {
 	/// Chat modality pass `None`. `pocket_callbacks` does the same for the
 	/// card collection. `game_callbacks` does the same for game reminders.
 	///
-	/// UniFFI parses `execution_config.product_id` before this runs. The
-	/// `Result` makes a failed parse throw in Swift and Kotlin instead of
-	/// crashing the app.
+	/// Returns a `Result` so an `execution_config.product_id` UniFFI cannot
+	/// parse throws in Swift and Kotlin.
 	pub fn open_product_execution(
 		&self,
 		callbacks: Arc<dyn HostCallbacks>,
