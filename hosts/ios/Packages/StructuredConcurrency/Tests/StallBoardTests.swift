@@ -413,6 +413,7 @@ struct StallBoardTests {
             }
             throw SnapshotsStreamTimeout()
         }
+        defer { snapshotTask.cancel() }
 
         // Now trigger the state change
         await source.push([activity])
@@ -421,18 +422,12 @@ struct StallBoardTests {
         fakeTime.value = 5.0
         await MainActor.run { board.refresh() }
 
-        // Wait for the snapshot with timeout guard
-        let result = try await withThrowingTaskGroup(of: StallReportSnapshot?.self) { group in
-            group.addTask {
+        let result = try await withTimeout(.seconds(5)) {
+            try await withTaskCancellationHandler {
                 try await snapshotTask.value
+            } onCancel: {
+                snapshotTask.cancel()
             }
-            group.addTask {
-                try await Task.sleep(for: .seconds(2))
-                throw SnapshotsStreamTimeout()
-            }
-            let snapshot = try await group.next()!
-            group.cancelAll()
-            return snapshot
         }
 
         #expect(result != nil)
