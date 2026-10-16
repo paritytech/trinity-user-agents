@@ -47,6 +47,12 @@ class QRScannerViewController: UIViewController, ViewHolder {
         presenter.viewWillDisappear()
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // A scheduled hide retains the screen, which would outlive its closing.
+        invalidateMessageScheduling()
+    }
+
     func configureVideoLayer(with captureSession: AVCaptureSession) {
         if let layer = rootView.qrFrameView.frameLayer as? AVCaptureVideoPreviewLayer {
             if layer.session === captureSession {

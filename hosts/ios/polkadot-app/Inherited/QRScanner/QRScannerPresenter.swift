@@ -53,7 +53,7 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
         qrScanService.stop()
     }
 
-    private func handleQRService(error: Error) {
+    func handleQRService(error: Error) {
         if let captureError = error as? QRCaptureServiceError {
             handleQRCaptureService(error: captureError)
         } else if let extractionError = error as? QRExtractionServiceError {
@@ -76,7 +76,7 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
                 autoDismiss: false
             )
         case .deviceAccessDeniedPreviously:
-            wireframe.askOpenSettings(from: view)
+            wireframe.askOpenSettings(from: view, completion: nil)
         case .unsupportedFormat:
             view.present(
                 message: errorDisplayFactory.createStringCapture(error: error),
@@ -94,6 +94,20 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
 
     func handle(code _: String) {
         fatalError("Child presenter must override")
+    }
+
+    /// Hands on the first code of a frame, as the app's own scanners read one code at a time.
+    func handle(codes: [CapturedCode]) {
+        guard let first = codes.first else {
+            return
+        }
+
+        guard let code = first.text else {
+            handleQRService(error: QRCaptureServiceError.unsupportedFormat)
+            return
+        }
+
+        handle(code: code)
     }
 
     func setup() {
@@ -124,9 +138,9 @@ extension QRScannerPresenter: @MainActor QRCaptureServiceDelegate {
         }
     }
 
-    func qrCapture(service _: QRCaptureServiceProtocol, didReceive code: String) {
+    func qrCapture(service _: QRCaptureServiceProtocol, didReceive codes: [CapturedCode]) {
         DispatchQueue.main.async {
-            self.handle(code: code)
+            self.handle(codes: codes)
         }
     }
 

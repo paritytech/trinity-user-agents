@@ -12,4 +12,21 @@ extension NavigationBarSettings {
     static var shadowSettings: NavigationBarSettings {
         NavigationBarSettings(style: .shadowStyle, shouldSetCloseButton: true)
     }
+
+    /// A bare bar over the camera preview, with a white close button.
+    static var scannerSettings: NavigationBarSettings {
+        NavigationBarSettings(
+            style: NavigationBarStyle(
+                backgroundColor: nil,
+                shadow: nil,
+                shadowColor: nil,
+                tintColor: .white100,
+                backImage: nil,
+                backgroundEffect: nil,
+                titleAttributes: nil,
+                largeTitleAttributes: nil
+            ),
+            shouldSetCloseButton: true
+        )
+    }
 }
