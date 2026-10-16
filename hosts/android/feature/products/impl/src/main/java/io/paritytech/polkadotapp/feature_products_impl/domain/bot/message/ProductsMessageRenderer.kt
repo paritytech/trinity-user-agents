@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot.message
 import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -55,7 +55,7 @@ class ProductsMessageRenderer(
             Column(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .widthIn(max = 280.dp)
+                    .fillMaxWidth()
             ) {
                 message.content.fold(
                     onSuccess = { content ->
