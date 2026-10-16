@@ -18,6 +18,7 @@ import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
 import javax.inject.Inject
 
 class TrUAPIFundingRuntime @Inject constructor(
@@ -32,6 +33,8 @@ class TrUAPIFundingRuntime @Inject constructor(
     override suspend fun progress(intent: String): FundingProgress? = read { it.fundingProgress(intent) }
 
     override suspend fun sessions(): List<FundingSession> = read { it.fundingSessions() }.orEmpty()
+
+    override suspend fun history(): List<FundingSessionSummary>? = read { it.fundingHistory() }
 
     override suspend fun candidates(intent: String): List<FundingCandidate> = read { it.fundingCandidates(intent) }.orEmpty()
 

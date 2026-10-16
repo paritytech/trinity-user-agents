@@ -39,9 +39,9 @@ import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCancel
+import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingStage
-import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingStatus
 import io.paritytech.polkadotapp.common.R as RCommon
 

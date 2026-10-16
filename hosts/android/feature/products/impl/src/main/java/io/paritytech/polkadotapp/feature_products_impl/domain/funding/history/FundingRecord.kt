@@ -11,6 +11,7 @@ import uniffi.truapi.FundingPayout
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import kotlin.time.Instant
 
@@ -35,21 +36,9 @@ data class FundingRecord(
     companion object {
         /** The record for a session that has ended, or `null` while it is open. */
         fun of(session: FundingSession, progress: FundingProgress?): FundingRecord? {
-            val (outcome, amount, settledAtMs) = when (val stage = session.stage) {
-                FundingStage.Open -> return null
-                is FundingStage.Delivered -> Triple(FundingRecordOutcome.Delivered, stage.credited, stage.settledAtMs)
-                is FundingStage.Released -> Triple(
-                    // A cancel the user accepted stands; the core marks one the payout overtook, which was sent.
-                    if (session.cancel is FundingCancel.Accepted) {
-                        FundingRecordOutcome.Cancelled
-                    } else {
-                        FundingRecordOutcome.Released
-                    },
-                    stage.debited,
-                    stage.settledAtMs,
-                )
-                is FundingStage.Failed -> Triple(stage.reason.toOutcome(), null, stage.settledAtMs)
-            }
+            // A cancel the user accepted stands; the core marks one the payout overtook, which was sent.
+            val (outcome, amount, settledAtMs) = session.stage.ended(cancelled = session.cancel is FundingCancel.Accepted)
+                ?: return null
 
             return FundingRecord(
                 intent = session.intent,
@@ -68,7 +57,40 @@ data class FundingRecord(
                 settledAt = Instant.fromEpochMilliseconds(settledAtMs.toLong()),
             )
         }
+
+        /**
+         * The record the core's summary of a recorded session rebuilds, or `null` for one still open. The summary keeps
+         * only how the session ended, so the provider, rail, payout and references are unknown.
+         */
+        fun of(summary: FundingSessionSummary): FundingRecord? {
+            val (outcome, amount, settledAtMs) = summary.stage.ended(cancelled = false) ?: return null
+            return FundingRecord(
+                intent = summary.intent,
+                direction = summary.direction,
+                rail = null,
+                asset = null,
+                providerId = null,
+                requestedAmount = summary.amount?.toBalanceOrNull(),
+                settledAmount = amount?.toBalanceOrNull(),
+                outcome = outcome,
+                payout = null,
+                refunded = null,
+                transactionId = null,
+                reference = null,
+                openedAt = Instant.fromEpochMilliseconds(summary.openedAtMs.toLong()),
+                settledAt = Instant.fromEpochMilliseconds(settledAtMs.toLong()),
+            )
+        }
     }
+}
+
+/** How an ended stage reads in a record: outcome, amount moved and when; `null` while open. */
+private fun FundingStage.ended(cancelled: Boolean): Triple<FundingRecordOutcome, String?, ULong>? = when (this) {
+    FundingStage.Open -> null
+    is FundingStage.Delivered -> Triple(FundingRecordOutcome.Delivered, credited, settledAtMs)
+    is FundingStage.Released ->
+        Triple(if (cancelled) FundingRecordOutcome.Cancelled else FundingRecordOutcome.Released, debited, settledAtMs)
+    is FundingStage.Failed -> Triple(reason.toOutcome(), null, settledAtMs)
 }
 
 sealed interface FundingRecordOutcome {
