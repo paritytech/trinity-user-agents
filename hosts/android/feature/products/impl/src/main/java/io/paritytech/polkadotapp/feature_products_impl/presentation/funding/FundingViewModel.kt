@@ -47,7 +47,6 @@ import uniffi.truapi.FundingRail
 import java.math.BigDecimal
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 import io.paritytech.polkadotapp.common.R as RCommon
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
@@ -74,7 +73,6 @@ class FundingViewModel @Inject constructor(
 ) : BaseViewModel() {
     private companion object {
         val REQUOTE_DELAY = 600.milliseconds
-        val DEPOSIT_POLL = 3.seconds
     }
 
     private val intent = context.request.intent
@@ -403,10 +401,19 @@ class FundingViewModel @Inject constructor(
         }
     }
 
+    /**
+     * The core announces every change to the session, which [sessionChanges] follows. What it does not announce is
+     * the moment a step starts taking longer than quoted, so the deposit screen reads the session again then.
+     */
     private suspend fun followDeposit() {
-        while (true) {
+        if (start.value.started) refreshSession()
+        progress.collectLatest { current ->
+            val longerAtMs = current?.longerAtMs?.toLong() ?: return@collectLatest
+            // A moment already past is in the status the core gave; only a future one needs another read.
+            val waitMs = longerAtMs - System.currentTimeMillis()
+            if (waitMs <= 0) return@collectLatest
+            delay(waitMs)
             if (start.value.started) refreshSession()
-            delay(DEPOSIT_POLL)
         }
     }
 
@@ -429,12 +436,15 @@ class FundingViewModel @Inject constructor(
         }
     }
 
-    /** What the providers take for the rail, asset, network and country on screen, as the core works it out. */
+    /**
+     * What the providers take for the rail, asset, network and country on screen, as the core works it out. Lookups
+     * run unordered, so an answer for a choice the user has since left is dropped.
+     */
     private suspend fun refreshAmountLimits() {
         val current = flow.value ?: return
-        val asset = current.asset ?: current.fiatAsset
-        val limits = interactor.amountLimits(intent, current.cash, current.rail, asset, current.network, current.country?.code)
-        flow.update { it?.withAmountLimits(limits) }
+        val key = current.limitsKey
+        val limits = interactor.amountLimits(intent, current.cash, key.rail, key.asset, key.network, key.country)
+        flow.update { state -> if (state?.limitsKey == key) state.withAmountLimits(limits) else state }
     }
 
     /** The least each crypto network takes: the lowest minimum across its tokens. */
@@ -452,7 +462,11 @@ class FundingViewModel @Inject constructor(
                 .minOrNull()
             network.id to minimum
         }
-        flow.update { state -> state?.withNetworkMinimums(minimums.mapNotNull { (id, min) -> min?.let { id to it } }.toMap()) }
+        val country = current.country?.code
+        flow.update { state ->
+            if (state == null || state.country?.code != country) return@update state
+            state.withNetworkMinimums(minimums.mapNotNull { (id, min) -> min?.let { id to it } }.toMap())
+        }
     }
 
     /** What the core now knows about each country for the rail and asset on screen. */

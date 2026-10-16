@@ -260,6 +260,10 @@ data class FundingFlowState(
         )
     }
 
+    /** The choice the amount limits are read for; an answer for another one is stale. */
+    val limitsKey: FundingLimitsKey
+        get() = FundingLimitsKey(rail = rail, asset = asset ?: fiatAsset, network = network, country = country?.code)
+
     fun withAmountLimits(limits: FundingLimits): FundingFlowState = copy(amountLimits = limits)
 
     fun withNetworkMinimums(minimums: Map<String, BigDecimal>): FundingFlowState = copy(networkMinimums = minimums)
@@ -267,3 +271,11 @@ data class FundingFlowState(
     fun withCountrySupport(countries: List<CoreFundingCountry>): FundingFlowState =
         copy(countrySupport = countries.associate { it.country.uppercase(Locale.ROOT) to it.support })
 }
+
+/** The rail, asset, network and country an amount-limit lookup answers for. */
+data class FundingLimitsKey(
+    val rail: FundingRail,
+    val asset: String,
+    val network: String?,
+    val country: String?,
+)

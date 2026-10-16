@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -28,6 +30,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCircleButton
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.fundingProblemText
+import kotlinx.coroutines.delay
 import uniffi.truapi.FundingRail
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -297,11 +300,25 @@ fun FundingCancelOfferScreen(
             OfferRow(stringResource(RCommon.string.funding_cancel_offer_fee), offer.fee)
             OfferRow(stringResource(RCommon.string.funding_cancel_offer_refund), offer.refund)
         }
+        val secondsLeft = offerSecondsLeft(offer)
+        val lapsed = secondsLeft == 0L
+        secondsLeft?.let { seconds ->
+            NovaText(
+                text = if (lapsed) {
+                    stringResource(RCommon.string.funding_cancel_offer_expired)
+                } else {
+                    stringResource(RCommon.string.funding_cancel_offer_valid_for, "%d:%02d".format(seconds / 60, seconds % 60))
+                },
+                style = PolkadotTheme.typography.body.small,
+                color = PolkadotTheme.colors.fg.secondary,
+            )
+        }
         PolkadotTextButton(
             modifier = Modifier.fillMaxWidth(),
             text = stringResource(RCommon.string.funding_cancel_offer_accept),
             style = PolkadotButtonStyle.destructive(),
             loading = isAnswering,
+            enabled = !lapsed,
             onClick = onAccept,
         )
         PolkadotTextButton(
@@ -312,6 +329,22 @@ fun FundingCancelOfferScreen(
         )
     }
 }
+
+/** The seconds left on the offer, ticking down once a second; `null` when it has no deadline. */
+@Composable
+private fun offerSecondsLeft(offer: FundingCancelUiState.Offered): Long? {
+    val expiresAtMs = offer.expiresAtMs ?: return null
+    val left by produceState(initialValue = offer.secondsLeft(System.currentTimeMillis()), expiresAtMs) {
+        while (true) {
+            value = offer.secondsLeft(System.currentTimeMillis())
+            if (value == 0L) break
+            delay(OFFER_TICK_MS)
+        }
+    }
+    return left
+}
+
+private const val OFFER_TICK_MS = 1_000L
 
 @Composable
 private fun OfferRow(title: String, value: String) {

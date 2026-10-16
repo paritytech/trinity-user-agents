@@ -28,6 +28,9 @@ data class FundingCash(
     /** "$50.20 CASH". */
     fun label(value: BigDecimal): String = FundingMoney.label(value, symbol)
 
+    /** A fee, rounded up to the cent so it never reads as less than it is. */
+    fun cost(value: BigDecimal): String = FundingMoney.cost(value, symbol)
+
     /** "+$50 CASH" for value moving in, "-$50 CASH" for value moving out. */
     fun signed(value: BigDecimal, direction: FundingDirection): String {
         val sign = if (direction == FundingDirection.IN) "+" else "-"

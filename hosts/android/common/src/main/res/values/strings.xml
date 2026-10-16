@@ -1070,6 +1070,7 @@
     <string name="funding_cancel_keep">Keep it</string>
     <string name="funding_cancel_offer_accept">Accept</string>
     <string name="funding_cancel_offer_body">The provider can still cancel, but keeps a fee for the work already done.</string>
+    <string name="funding_cancel_offer_expired">This offer has expired.</string>
     <string name="funding_cancel_offer_fee">Fee</string>
     <string name="funding_cancel_offer_gone">There\'s no cancel offer to answer anymore.</string>
     <string name="funding_cancel_offer_keep">Keep going</string>
@@ -1077,6 +1078,7 @@
     <string name="funding_cancel_offer_refund">You get back</string>
     <string name="funding_cancel_offer_review">Review the offer</string>
     <string name="funding_cancel_offer_title">Cancel for a fee?</string>
+    <string name="funding_cancel_offer_valid_for">Offer valid for %1$s</string>
     <string name="funding_cancel_offer_waiting">The provider can cancel for a fee.</string>
     <string name="funding_cancel_refused_top_up">The provider can\'t cancel: %1$s. Your top-up continues.</string>
     <string name="funding_cancel_refused_withdrawal">The provider can\'t cancel: %1$s. Your withdrawal continues.</string>
@@ -1130,8 +1132,6 @@
     <string name="funding_frame_sent_funds">I\'ve sent funds</string>
     <string name="funding_network_minimum">Minimum for this network is %1$s</string>
     <string name="funding_network_title">Select network</string>
-    <string name="funding_outside_pocket_subtitle">To your bank, crypto wallet, or card</string>
-    <string name="funding_outside_pocket_title">Move money out</string>
     <string name="funding_provider_changed">Provider changed successfully</string>
     <string name="funding_providers_country_unsupported">Not available in your country</string>
     <string name="funding_providers_for">for %1$s</string>

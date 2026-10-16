@@ -134,7 +134,7 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
     val quote = selectedQuote ?: return null
     val inbound = direction == FundingDirection.IN
     val quoteUnit = unitOf(quote)
-    val feeText = { units: String -> if (inbound) quoteUnit.format(units) else cash.label(cash.decimal(units)) }
+    val feeText = { units: String -> if (inbound) quoteUnit.format(units) else cash.cost(cash.decimal(units)) }
     val total = (quote.providerFee.toBigIntegerOrNull() ?: BigInteger.ZERO) + (quote.networkFee.toBigIntegerOrNull() ?: BigInteger.ZERO)
 
     return FundingFeesUiState(
@@ -146,7 +146,7 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
         providerFee = feeText(quote.providerFee),
         networkFee = feeText(quote.networkFee),
         totalFee = feeText(total.toString()),
-        pay = feeText(quote.sendAmount),
+        pay = if (inbound) quoteUnit.format(quote.sendAmount) else cash.label(cash.decimal(quote.sendAmount)),
         rate = rateOf(quote),
     )
 }
@@ -333,7 +333,11 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
 private fun FundingCancel.toUi(cash: FundingCash): FundingCancelUiState? = when (this) {
     FundingCancel.Requested -> FundingCancelUiState.Requested
     is FundingCancel.Refused -> FundingCancelUiState.Refused(reason)
-    is FundingCancel.Offered -> FundingCancelUiState.Offered(fee = cash.label(cash.decimal(fee)), refund = cash.label(cash.decimal(refund)))
+    is FundingCancel.Offered -> FundingCancelUiState.Offered(
+        fee = cash.cost(cash.decimal(fee)),
+        refund = cash.label(cash.decimal(refund)),
+        expiresAtMs = expiresAt?.toLong(),
+    )
     is FundingCancel.Accepted -> FundingCancelUiState.Cancelling
     FundingCancel.Declined -> null
 }

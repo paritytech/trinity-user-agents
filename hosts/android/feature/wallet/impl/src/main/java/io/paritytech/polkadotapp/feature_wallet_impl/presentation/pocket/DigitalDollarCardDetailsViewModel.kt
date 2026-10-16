@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
@@ -17,6 +16,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHoldingsInfo
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageBreakdownFactory

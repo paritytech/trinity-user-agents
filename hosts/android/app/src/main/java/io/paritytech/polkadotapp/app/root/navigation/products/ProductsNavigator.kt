@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.app.root.navigation.products
 
+import androidx.navigation.NavGraph
 import androidx.core.os.bundleOf
 import io.paritytech.polkadotapp.app.R
 import io.paritytech.polkadotapp.app.root.navigation.BaseNavigator
@@ -114,7 +115,7 @@ class ProductsNavigator @Inject constructor(
     }
 
     override suspend fun closeFundingOverlay(intent: String) = withContext(dispatchers.main) {
-        popIfOnTop(R.id.fundingBottomSheet, FundingBottomSheet.INTENT, intent)
+        popSession(R.id.fundingBottomSheet, FundingBottomSheet.INTENT, intent)
     }
 
     override suspend fun openFundingProviderFrame(intent: String) = withContext(dispatchers.main) {
@@ -126,6 +127,21 @@ class ProductsNavigator @Inject constructor(
 
     override suspend fun closeFundingProviderFrame(intent: String) = withContext(dispatchers.main) {
         popIfOnTop(R.id.fundingProviderFrameBottomSheet, FundingProviderFrameBottomSheet.INTENT, intent)
+    }
+
+    /**
+     * Closes the session's sheet even when its provider frame sits on top of it: the frame belongs to the same
+     * session, so it goes too. Anything else on top is left alone, and so is the sheet under it.
+     */
+    private fun popSession(destinationId: Int, argument: String, intent: String) {
+        val controller = navigationHolder.navController ?: return
+        val stack = controller.currentBackStack.value
+        val index = stack.indexOfLast { it.destination.id == destinationId && it.arguments?.getString(argument) == intent }
+        if (index < 0) return
+
+        val above = stack.drop(index + 1).filter { it.destination !is NavGraph }
+        val sameSession = above.all { it.arguments?.getString(FundingProviderFrameBottomSheet.INTENT) == intent }
+        if (sameSession) controller.popBackStack(destinationId, inclusive = true)
     }
 
     private fun popIfOnTop(destinationId: Int, argument: String, value: String) {

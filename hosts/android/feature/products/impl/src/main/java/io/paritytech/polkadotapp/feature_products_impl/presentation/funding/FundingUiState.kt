@@ -262,7 +262,16 @@ sealed interface FundingCancelUiState {
     data class Refused(val reason: String) : FundingCancelUiState
 
     /** The provider can cancel, keeping [fee] and returning [refund], both as "$1,000.25 CASH". */
-    data class Offered(val fee: String, val refund: String) : FundingCancelUiState
+
+    /** The provider's terms; past [expiresAtMs] the offer has lapsed and can't be accepted. */
+    data class Offered(val fee: String, val refund: String, val expiresAtMs: Long? = null) : FundingCancelUiState {
+        /** Whole seconds the offer stays open, or `null` when the provider set no deadline. */
+        fun secondsLeft(nowMs: Long): Long? = expiresAtMs?.let { ((it - nowMs) / MILLIS_PER_SECOND).coerceAtLeast(0) }
+
+        private companion object {
+            const val MILLIS_PER_SECOND = 1_000L
+        }
+    }
 
     /** The user accepted and the provider is refunding them. */
     data object Cancelling : FundingCancelUiState

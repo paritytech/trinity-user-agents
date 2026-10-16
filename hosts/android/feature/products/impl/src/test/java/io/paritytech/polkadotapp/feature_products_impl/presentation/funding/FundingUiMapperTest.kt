@@ -99,4 +99,24 @@ class FundingUiMapperTest {
             ),
         ),
     )
+
+    /** A fee under a cent still costs something, so it rounds up; a balance never reads as more than it is. */
+    @Test
+    fun `a fee rounds up to the cent while a balance rounds down`() {
+        val cash = FundingCash(symbol = "CASH", precision = 6)
+
+        assertEquals("$0.01 CASH", cash.cost(cash.decimal("9000")))
+        assertEquals("$0.00 CASH", cash.label(cash.decimal("9000")))
+        assertEquals("$1,000.26 CASH", cash.cost(cash.decimal("1000250001")))
+        assertEquals("$1,000.25 CASH", cash.label(cash.decimal("1000259999")))
+    }
+
+    @Test
+    fun `a cancel offer counts down to its deadline and stops at zero`() {
+        val offer = FundingCancelUiState.Offered(fee = "$1 CASH", refund = "$99 CASH", expiresAtMs = 10_000)
+
+        assertEquals(9L, offer.secondsLeft(nowMs = 1_000))
+        assertEquals(0L, offer.secondsLeft(nowMs = 12_000))
+        assertEquals(null, FundingCancelUiState.Offered(fee = "$1 CASH", refund = "$99 CASH").secondsLeft(nowMs = 0))
+    }
 }
