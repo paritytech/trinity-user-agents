@@ -12,6 +12,7 @@ import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingCountry as CoreFundingCountry
 
 /** The part of the TrUAPI core the funding screens drive. The core owns every session; the screens read it, price it and hand it to a provider. */
@@ -24,6 +25,9 @@ interface FundingRuntime {
     suspend fun progress(intent: String): FundingProgress?
 
     suspend fun sessions(): List<FundingSession>
+
+    /** Every session the host recorded, as summaries, to rebuild lost history from; `null` while the core cannot be read. */
+    suspend fun history(): List<FundingSessionSummary>?
 
     suspend fun candidates(intent: String): List<FundingCandidate>
 

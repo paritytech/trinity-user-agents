@@ -105,6 +105,7 @@ import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.HostFundingStatusSubscribeItem
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelTerms
@@ -956,6 +957,9 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     /** Every funding session the core keeps, in flight first, then ended, each newest first. */
     fun fundingSessions(): List<FundingSession> = inner.fundingSessions()
+
+    /** Every funding session the host recorded, as summaries newest first, for rebuilding lost history. */
+    fun fundingHistory(): List<FundingSessionSummary> = inner.fundingHistory()
 
     /**
      * Whether a provider still works on any funding session, read from storage until funding has resumed. A host

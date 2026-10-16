@@ -25,6 +25,7 @@ import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
 import kotlin.time.Clock
@@ -33,6 +34,7 @@ class FundingActivityCenterTest {
     private val runtime = mockk<FundingRuntime> {
         every { sessionChanges() } returns emptyFlow()
         coEvery { acknowledge(any()) } returns Result.success(true)
+        coEvery { history() } returns emptyList()
     }
     private val saved = mutableListOf<FundingRecord>()
     private val history = mockk<FundingHistoryRepository> {
@@ -177,6 +179,45 @@ class FundingActivityCenterTest {
 
         assertEquals(2, reads.size)
     }
+
+    // The core keeps every session the host recorded, so a row lost from the store comes back from its summary, once.
+    @Test
+    fun `a row lost from the store is rebuilt from the core's history once, and a stored row wins`() = runBlocking {
+        serve(session("kept", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 1uL)) to progress(FundingStatus.ToppedUp))
+        coEvery { runtime.history() } returns listOf(
+            summary("kept", FundingStage.Delivered("40", settledAtMs = 1uL)),
+            summary("lost", FundingStage.Released("30", settledAtMs = 2uL)),
+        )
+
+        center.observe().first()
+        center.observe().first()
+
+        assertEquals(1, saved.count { it.intent == "lost" })
+        assertEquals(setOf(50.intoBalance()), saved.filter { it.intent == "kept" }.mapTo(mutableSetOf()) { it.settledAmount })
+        coVerify(exactly = 1) { runtime.history() }
+    }
+
+    // A core that cannot be read yet leaves the rebuild for the next reload.
+    @Test
+    fun `the rebuild waits for the core`() = runBlocking {
+        serve()
+        coEvery { runtime.history() } returns null
+        center.observe().first()
+
+        coEvery { runtime.history() } returns listOf(summary("lost", FundingStage.Delivered("30", settledAtMs = 2uL)))
+        center.observe().first()
+
+        assertEquals(listOf("lost"), saved.map { it.intent })
+    }
+
+    private fun summary(intent: String, stage: FundingStage) = FundingSessionSummary(
+        intent = intent,
+        ownerProductId = null,
+        direction = FundingDirection.IN,
+        amount = "50",
+        stage = stage,
+        openedAtMs = 0uL,
+    )
 
     private fun serve(vararg entries: Pair<FundingSession, FundingProgress>) {
         coEvery { runtime.sessions() } returns entries.map { it.first }
