@@ -123,6 +123,9 @@ type FollowStartRegistry = Arc<ParkingMutex<HashMap<(Vec<u8>, String), LocalFoll
 /// One scope's registered follow ids, keyed by genesis hash.
 type ScopeFollowIntents = HashMap<String, HashSet<String>>;
 
+/// One scope's broadcast operations, keyed by the sequence in the id handed out.
+type ScopeTransactionOperations = BTreeMap<u64, TransactionOperation>;
+
 /// Shared, single-flight provider connect keyed by genesis hash. Concurrent
 /// first connections for the same chain await one in-flight `connect` rather
 /// than each opening a connection and orphaning all but the last insert.
@@ -295,8 +298,7 @@ pub struct ChainRuntime {
 	/// Broadcast operations each scope started, keyed by the sequence in the id
 	/// handed to the product. A scope reaches only its own, so an id another
 	/// product knows or guesses is unknown here.
-	transaction_operations:
-		Arc<Mutex<HashMap<ConnectionScope, BTreeMap<u64, TransactionOperation>>>>,
+	transaction_operations: Arc<Mutex<HashMap<ConnectionScope, ScopeTransactionOperations>>>,
 	/// Mints the sequence above. One counter for every scope, so no two
 	/// callers can be handed the same operation id.
 	next_transaction_operation_id: Arc<AtomicU64>,
@@ -311,8 +313,8 @@ struct TransactionOperation {
 /// Prefix of the host-assigned transaction operation ids handed to products.
 const TRANSACTION_OPERATION_ID_PREFIX: &str = "truapi-tx-";
 /// Cap on tracked broadcast operations per scope; a product that never stops an
-/// operation would otherwise grow its map for the whole session. Provider operation ids
-/// are short-lived, so evicting the oldest handles is safe.
+/// operation would otherwise grow its map for the whole session. Provider
+/// operation ids are short-lived, so evicting the oldest handles is safe.
 const MAX_TRACKED_TRANSACTION_OPERATIONS: usize = 256;
 
 fn transaction_operation_sequence(operation_id: &str) -> Option<u64> {
@@ -393,10 +395,7 @@ impl ChainRuntime {
 			.into_iter()
 			.flat_map(|chains| chains.into_values().flatten())
 			.collect();
-		self.transaction_operations
-			.lock()
-			.expect("transaction operation mutex poisoned")
-			.remove(&self.scope);
+		self.transaction_operations.lock().unwrap().remove(&self.scope);
 		self.follow_starts
 			.lock()
 			.retain(|(_, follow_id), _| !released_follow_ids.contains(follow_id));
@@ -771,16 +770,37 @@ impl ChainRuntime {
 	/// Runs `f` on the broadcast operations this scope started, and no other scope's.
 	fn with_transaction_operations<R>(
 		&self,
-		f: impl FnOnce(&mut BTreeMap<u64, TransactionOperation>) -> R,
+		f: impl FnOnce(&mut ScopeTransactionOperations) -> R,
 	) -> R {
-		let mut operations = self
-			.transaction_operations
-			.lock()
-			.expect("transaction operation mutex poisoned");
-		let scope_operations = operations.entry(self.scope).or_default();
-		let result = f(scope_operations);
-		if scope_operations.is_empty() {
-			operations.remove(&self.scope);
+		self.with_scope_group(&self.transaction_operations, BTreeMap::is_empty, f)
+	}
+
+	/// Runs `f` on the follow intents this scope registered, and no other scope's.
+	fn with_follow_intents<R>(&self, f: impl FnOnce(&mut ScopeFollowIntents) -> R) -> R {
+		self.with_scope_group(&self.follow_intents, HashMap::is_empty, f)
+	}
+
+	/// Runs `f` on this scope's group in `groups`, dropping the group once it is empty.
+	///
+	/// A released scope gets a throwaway group, so a call that finishes after
+	/// `release_scope` cannot bring the scope's entries back. The connections
+	/// lock is held throughout, and `release_scope` removes the scope from
+	/// `connections` before it touches `groups`, so the check cannot race it.
+	fn with_scope_group<Group: Default, R>(
+		&self,
+		groups: &Mutex<HashMap<ConnectionScope, Group>>,
+		is_empty: impl Fn(&Group) -> bool,
+		f: impl FnOnce(&mut Group) -> R,
+	) -> R {
+		let connections = self.connections.lock().unwrap();
+		if !connections.contains_key(&self.scope) {
+			return f(&mut Group::default());
+		}
+		let mut groups = groups.lock().unwrap();
+		let group = groups.entry(self.scope).or_default();
+		let result = f(group);
+		if is_empty(group) {
+			groups.remove(&self.scope);
 		}
 		result
 	}
@@ -1026,30 +1046,23 @@ impl ChainRuntime {
 	}
 
 	fn register_follow_intent(&self, genesis_hash: &[u8], local_follow_id: &str) {
-		self.follow_intents
-			.lock()
-			.unwrap()
-			.entry(self.scope)
-			.or_default()
-			.entry(self.connection_key(genesis_hash))
-			.or_default()
-			.insert(local_follow_id.to_string());
+		let key = self.connection_key(genesis_hash);
+		self.with_follow_intents(|chains| {
+			chains.entry(key).or_default().insert(local_follow_id.to_string());
+		});
 	}
 
 	fn remove_follow_intent(&self, genesis_hash: &[u8], local_follow_id: &str) {
 		let key = self.connection_key(genesis_hash);
-		let mut intents = self.follow_intents.lock().unwrap();
-		let Some(chains) = intents.get_mut(&self.scope) else { return };
-		let remove_key = chains.get_mut(&key).is_some_and(|chain_intents| {
-			chain_intents.remove(local_follow_id);
-			chain_intents.is_empty()
+		self.with_follow_intents(|chains| {
+			let emptied = chains.get_mut(&key).is_some_and(|chain_intents| {
+				chain_intents.remove(local_follow_id);
+				chain_intents.is_empty()
+			});
+			if emptied {
+				chains.remove(&key);
+			}
 		});
-		if remove_key {
-			chains.remove(&key);
-		}
-		if chains.is_empty() {
-			intents.remove(&self.scope);
-		}
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chain_runtime.cleanup_follow"))]
@@ -2004,6 +2017,50 @@ mod tests {
 		}
 	}
 
+	/// A stop the node acknowledges.
+	const STOPPED: &str = r#""result":null"#;
+
+	/// A provider answering every broadcast with one provider operation id and
+	/// every stop with `stop_reply`, the JSON-RPC member that follows `"id"`.
+	fn broadcast_provider(stop_reply: &'static str) -> Arc<ScriptedProvider> {
+		Arc::new(ScriptedProvider::new(move |request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("transaction_v1_broadcast") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-OP"}}"#))
+			} else if request.contains("transaction_v1_stop") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}",{stop_reply}}}"#))
+			} else {
+				None
+			}
+		}))
+	}
+
+	/// Broadcasts one transaction on `genesis` and returns the operation id handed out.
+	fn broadcast(runtime: &ChainRuntime, genesis: &[u8]) -> String {
+		futures::executor::block_on(runtime.remote_chain_transaction_broadcast(
+			RemoteChainTransactionBroadcastRequest {
+				genesis_hash: genesis.to_vec(),
+				transaction: vec![0],
+			},
+		))
+		.expect("broadcast succeeds")
+		.operation_id
+		.expect("operation id")
+	}
+
+	fn stop(
+		runtime: &ChainRuntime,
+		genesis: &[u8],
+		operation_id: &str,
+	) -> Result<(), RuntimeFailure> {
+		futures::executor::block_on(runtime.remote_chain_transaction_stop(
+			RemoteChainTransactionStopRequest {
+				genesis_hash: genesis.to_vec(),
+				operation_id: operation_id.to_owned(),
+			},
+		))
+	}
+
 	#[test]
 	fn chain_head_best_hash_prefers_best_block_after_initialization() {
 		let mut follow = stream::iter(vec![
@@ -2365,36 +2422,17 @@ mod tests {
 
 	#[test]
 	fn transaction_stop_uses_host_handle_and_accepts_finished_provider_operation() {
-		let provider = Arc::new(ScriptedProvider::new(|request| {
-			let id = extract_id(request).unwrap();
-			if request.contains("transaction_v1_broadcast") {
-				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-OP"}}"#))
-			} else if request.contains("transaction_v1_stop") {
-				Some(format!(
-					r#"{{"jsonrpc":"2.0","id":"{id}","error":{{"code":-32602,"message":"Invalid operation id"}}}}"#
-				))
-			} else {
-				None
-			}
-		}));
+		let provider =
+			broadcast_provider(r#""error":{"code":-32602,"message":"Invalid operation id"}"#);
 		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-		let genesis_hash = vec![0x11; 32];
+		let genesis = vec![0x11; 32];
 
-		let broadcast = futures::executor::block_on(runtime.remote_chain_transaction_broadcast(
-			RemoteChainTransactionBroadcastRequest {
-				genesis_hash: genesis_hash.clone(),
-				transaction: vec![0],
-			},
-		))
-		.expect("broadcast succeeds");
-		let local_id = broadcast.operation_id.expect("operation id");
+		let local_id = broadcast(&runtime, &genesis);
 		assert!(local_id.starts_with("truapi-tx-"));
 		assert_ne!(local_id, "REMOTE-OP");
 
-		futures::executor::block_on(runtime.remote_chain_transaction_stop(
-			RemoteChainTransactionStopRequest { genesis_hash, operation_id: local_id },
-		))
-		.expect("an already-finished provider operation is stopped idempotently");
+		stop(&runtime, &genesis, &local_id)
+			.expect("an already-finished provider operation is stopped idempotently");
 
 		let sent = provider.sent.lock().unwrap().clone();
 		let stop: Value = serde_json::from_str(
@@ -2408,35 +2446,15 @@ mod tests {
 
 	#[test]
 	fn transaction_operations_evict_oldest_beyond_cap() {
-		let provider = Arc::new(ScriptedProvider::new(|request| {
-			let id = extract_id(request).unwrap();
-			request
-				.contains("transaction_v1_broadcast")
-				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-OP"}}"#))
-		}));
-		let runtime = ChainRuntime::new(provider, spawner_for_tests());
-		let genesis_hash = vec![0x11; 32];
+		let runtime = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let genesis = vec![0x11; 32];
 
-		let mut first_id = None;
-		for _ in 0..=MAX_TRACKED_TRANSACTION_OPERATIONS {
-			let broadcast =
-				futures::executor::block_on(runtime.remote_chain_transaction_broadcast(
-					RemoteChainTransactionBroadcastRequest {
-						genesis_hash: genesis_hash.clone(),
-						transaction: vec![0],
-					},
-				))
-				.expect("broadcast succeeds");
-			first_id.get_or_insert(broadcast.operation_id.expect("operation id"));
+		let first_id = broadcast(&runtime, &genesis);
+		for _ in 0..MAX_TRACKED_TRANSACTION_OPERATIONS {
+			broadcast(&runtime, &genesis);
 		}
 
-		let err = futures::executor::block_on(runtime.remote_chain_transaction_stop(
-			RemoteChainTransactionStopRequest {
-				genesis_hash,
-				operation_id: first_id.expect("first operation id"),
-			},
-		))
-		.expect_err("evicted operation id is unknown");
+		let err = stop(&runtime, &genesis, &first_id).expect_err("evicted operation id is unknown");
 		assert!(err.reason().contains("unknown transaction operation id"));
 	}
 
@@ -2953,7 +2971,6 @@ mod tests {
 		);
 	}
 
-	/// Releasing one product leaves another product's connections alone.
 	#[test]
 	fn releasing_a_product_drops_only_its_own_follow_intents() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
@@ -2999,40 +3016,16 @@ mod tests {
 
 	#[test]
 	fn a_product_cannot_stop_another_products_transaction() {
-		let provider = Arc::new(ScriptedProvider::new(|request| {
-			let id = extract_id(request).unwrap();
-			(request.contains("transaction_v1_broadcast") ||
-				request.contains("transaction_v1_stop"))
-			.then(|| {
-				if request.contains("transaction_v1_broadcast") {
-					format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-OP"}}"#)
-				} else {
-					format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":null}}"#)
-				}
-			})
-		}));
+		let provider = broadcast_provider(STOPPED);
 		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
 		let genesis = vec![0x11; 32];
 		let owner = core.for_product(1);
 		let other = core.for_product(2);
 
-		let operation_id = futures::executor::block_on(owner.remote_chain_transaction_broadcast(
-			RemoteChainTransactionBroadcastRequest {
-				genesis_hash: genesis.clone(),
-				transaction: vec![0],
-			},
-		))
-		.expect("broadcast succeeds")
-		.operation_id
-		.expect("operation id");
+		let operation_id = broadcast(&owner, &genesis);
 
-		let err = futures::executor::block_on(other.remote_chain_transaction_stop(
-			RemoteChainTransactionStopRequest {
-				genesis_hash: genesis.clone(),
-				operation_id: operation_id.clone(),
-			},
-		))
-		.expect_err("another product stopped this product's transaction");
+		let err = stop(&other, &genesis, &operation_id)
+			.expect_err("another product stopped this product's transaction");
 		assert!(err.reason().contains("unknown transaction operation id"));
 		assert!(
 			!provider
@@ -3044,36 +3037,85 @@ mod tests {
 			"the stop reached the node",
 		);
 
-		futures::executor::block_on(owner.remote_chain_transaction_stop(
-			RemoteChainTransactionStopRequest { genesis_hash: genesis, operation_id },
-		))
-		.expect("the owner can still stop its own transaction");
+		stop(&owner, &genesis, &operation_id)
+			.expect("the owner can still stop its own transaction");
+	}
+
+	#[test]
+	fn the_transaction_cap_applies_per_product() {
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let genesis = vec![0x11; 32];
+		let quiet = core.for_product(1);
+		let flooding = core.for_product(2);
+
+		let kept = broadcast(&quiet, &genesis);
+		for _ in 0..=MAX_TRACKED_TRANSACTION_OPERATIONS {
+			broadcast(&flooding, &genesis);
+		}
+
+		stop(&quiet, &genesis, &kept).expect("one product's flood evicted another's operation");
 	}
 
 	#[test]
 	fn releasing_a_product_forgets_its_transactions() {
-		let provider = Arc::new(ScriptedProvider::new(|request| {
-			let id = extract_id(request).unwrap();
-			request
-				.contains("transaction_v1_broadcast")
-				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-OP"}}"#))
-		}));
-		let core = ChainRuntime::new(provider, spawner_for_tests());
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
 		let genesis = vec![0x11; 32];
 		let product = core.for_product(1);
-		futures::executor::block_on(product.remote_chain_transaction_broadcast(
-			RemoteChainTransactionBroadcastRequest {
-				genesis_hash: genesis.clone(),
-				transaction: vec![0],
-			},
-		))
-		.expect("broadcast succeeds");
+		broadcast(&product, &genesis);
 
 		product.release_scope();
 
 		assert!(core.transaction_operations.lock().unwrap().is_empty());
 	}
 
+	#[test]
+	fn a_call_finishing_after_release_leaves_nothing_behind() {
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let genesis = vec![0x11; 32];
+		let product = core.for_product(1);
+		product.release_scope();
+
+		product.register_follow_intent(&genesis, "c1:late");
+		product.with_transaction_operations(|operations| {
+			operations.insert(
+				1,
+				TransactionOperation {
+					genesis_hash: genesis.clone(),
+					provider_operation_id: "REMOTE-OP".to_owned(),
+				},
+			)
+		});
+
+		assert!(core.follow_intents.lock().unwrap().is_empty());
+		assert!(core.transaction_operations.lock().unwrap().is_empty());
+	}
+
+	#[test]
+	fn releasing_a_product_sweeps_only_its_own_follow_starts() {
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+		let first = core.for_product(1);
+		let second = core.for_product(2);
+		for (runtime, follow_id) in [(&first, "c1:request"), (&second, "c2:request")] {
+			runtime.register_follow_intent(&genesis, follow_id);
+			let started: LocalFollowStart = futures::future::ready(Ok(())).boxed().shared();
+			core.follow_starts
+				.lock()
+				.insert((genesis.clone(), follow_id.to_owned()), started);
+		}
+
+		first.release_scope();
+
+		let remaining: Vec<String> = core
+			.follow_starts
+			.lock()
+			.keys()
+			.map(|(_, follow_id)| follow_id.clone())
+			.collect();
+		assert_eq!(remaining, vec!["c2:request".to_owned()]);
+	}
+
+	/// Releasing one product leaves another product's connections alone.
 	#[test]
 	fn releasing_one_product_does_not_touch_another() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
