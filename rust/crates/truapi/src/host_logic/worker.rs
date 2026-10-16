@@ -95,22 +95,6 @@ impl WorkerLedger {
 		self.drain();
 	}
 
-	/// [`Self::acquire`] for a product the host names by string. An id that is
-	/// not a product id is logged and dropped, since no product runs under it.
-	pub fn acquire_for_host(&self, product_id: &str) {
-		if let Some(product_id) = host_product_id(product_id) {
-			self.acquire(&product_id);
-		}
-	}
-
-	/// [`Self::release`] for a product the host names by string, dropping an
-	/// id that is not a product id as [`Self::acquire_for_host`] does.
-	pub fn release_for_host(&self, product_id: &str) {
-		if let Some(product_id) = host_product_id(product_id) {
-			self.release(&product_id);
-		}
-	}
-
 	/// Install the host's observer for every transition the ledger produces.
 	/// Set-once, so a host cannot be swapped out from under a live reference.
 	/// Returns whether this call installed it.
@@ -182,15 +166,6 @@ impl WorkerLedger {
 			observer.worker_demand_changed(&next.0, next.1);
 		}
 	}
-}
-
-fn host_product_id(product_id: &str) -> Option<ProductId> {
-	product_id
-		.parse::<ProductId>()
-		.inspect_err(
-			|error| tracing::warn!(%error, "worker reference for an id that is not a product id"),
-		)
-		.ok()
 }
 
 /// Clears [`LedgerState::draining`] for a drain that ends without clearing it
@@ -283,25 +258,6 @@ mod tests {
 			]
 		);
 		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
-	}
-
-	#[test]
-	fn a_host_reference_counts_under_the_normalized_product_id() {
-		// Two spellings of one product would otherwise be two workers, and an
-		// id no product runs under would start a worker with nothing to serve.
-		let (ledger, recorder) = observed();
-		ledger.acquire_for_host("A.dot");
-		ledger.acquire_for_host("a.dot");
-		ledger.acquire_for_host("a_b.dot");
-		ledger.release_for_host("a.dot");
-		ledger.release_for_host("A.DOT");
-		assert_eq!(
-			recorder.seen(),
-			vec![
-				("a.dot".to_string(), WorkerTransition::Start),
-				("a.dot".to_string(), WorkerTransition::Stop),
-			]
-		);
 	}
 
 	#[test]

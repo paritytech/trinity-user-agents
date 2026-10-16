@@ -404,14 +404,25 @@ impl NativeTrUApiHostRuntime {
 	/// [`Self::release_worker`]. An id that is not a product id is logged and
 	/// dropped.
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire_for_host(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Release one reference. The last one reports
 	/// [`WorkerTransition::Stop`], after which the host may stop the worker;
-	/// releasing with none held is a no-op.
+	/// releasing with none held is a no-op, and so is an id that is not a
+	/// product id.
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release_for_host(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is

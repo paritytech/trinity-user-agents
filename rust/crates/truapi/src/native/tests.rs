@@ -811,6 +811,32 @@ fn process_runtime_counts_worker_references_per_product() {
 	);
 }
 
+/// Two spellings of one product would otherwise be two workers, and an id no
+/// product runs under would start a worker with nothing to serve.
+#[test]
+fn process_runtime_counts_worker_references_under_the_normalized_product_id() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+
+	host.acquire_worker("Shared.DOT".to_string());
+	host.acquire_worker("shared.dot".to_string());
+	host.acquire_worker("not_a.dot".to_string());
+	host.release_worker("shared.dot".to_string());
+	host.release_worker("SHARED.dot".to_string());
+
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![
+			("shared.dot".to_string(), WorkerTransition::Start),
+			("shared.dot".to_string(), WorkerTransition::Stop),
+		]
+	);
+}
+
 /// A host removes a card through its own storage, which can take a while,
 /// so the core waits for the answer without holding the thread that asked.
 #[test]

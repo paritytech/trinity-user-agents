@@ -1128,14 +1128,25 @@ impl WasmPairingHostRuntime {
 	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire_for_host(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
-	/// host may stop the worker; releasing with none held is a no-op.
+	/// host may stop the worker; releasing with none held is a no-op, and so
+	/// is an id that is not a product id.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release_for_host(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 }
 
@@ -1397,14 +1408,25 @@ impl WasmSigningHostRuntime {
 	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire_for_host(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
-	/// host may stop the worker; releasing with none held is a no-op.
+	/// host may stop the worker; releasing with none held is a no-op, and so
+	/// is an id that is not a product id.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release_for_host(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 }
 
