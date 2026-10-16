@@ -6,7 +6,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 // `unwrap_or_skip` reads a field that may be left out but, when present, holds a value: `null`
 // is not absent.
 use serde_with::{rust::unwrap_or_skip, skip_serializing_none};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// The only format version this crate reads and writes.
@@ -123,10 +122,14 @@ pub struct Service {
 	pub kind: String,
 	/// Endpoints, most preferred first.
 	pub urls: Vec<String>,
-	/// The EVM chain id; set on `eth-rpc` only.
+	/// The EVM chain id; set on `eth-rpc` only. Up to 2^53 - 1, since EVM chain ids can exceed
+	/// 2^32 and every JSON reader holds that range exactly.
 	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
-	pub chain_id: Option<u32>,
+	pub chain_id: Option<u64>,
 }
+
+/// The largest `chainId`: every JSON reader holds integers up to 2^53 - 1 exactly.
+const MAX_CHAIN_ID: u64 = (1 << 53) - 1;
 
 /// An asset readers treat specially.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,15 +191,6 @@ impl Descriptor {
 			Self::deserialize(document).map_err(|error| Error::Malformed(error.to_string()))?;
 		descriptor.validate()?;
 		Ok(descriptor)
-	}
-
-	/// SHA-256 of everything but `sequence`, in this crate's field order. Two publishes compare it
-	/// to keep `sequence` while nothing changed; it does not depend on how the source JSON ordered
-	/// its keys, so every publisher built on this crate agrees on it.
-	pub fn content_hash(&self) -> [u8; 32] {
-		let unsequenced = Self { sequence: 0, ..self.clone() };
-		let bytes = serde_json::to_vec(&unsequenced).expect("a descriptor always serialises");
-		Sha256::digest(bytes).into()
 	}
 
 	/// The chain with this role.
@@ -261,7 +255,9 @@ impl Descriptor {
 			if !kinds.insert(service.kind.as_str()) {
 				return Err(Error::DuplicateServiceKind(service.kind.clone()));
 			}
-			if (service.kind == "eth-rpc") != service.chain_id.is_some() {
+			if (service.kind == "eth-rpc") != service.chain_id.is_some() ||
+				service.chain_id.is_some_and(|id| id > MAX_CHAIN_ID)
+			{
 				return Err(Error::ChainId);
 			}
 			if service.urls.is_empty() {
@@ -360,24 +356,7 @@ fn is_known_kind(kind: &str) -> bool {
 mod tests {
 	use super::*;
 
-	fn parse(text: &str) -> Descriptor {
-		Descriptor::from_json(serde_json::from_str(text).unwrap()).unwrap()
-	}
-
 	const RELAY: &str = r#"[{"role":"Relay","genesisHash":"0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92","rpc":["ws://127.0.0.1:9944"]}]"#;
-
-	#[test]
-	fn content_hash_ignores_sequence_and_key_order_but_not_content() {
-		let one = parse(&format!(
-			r#"{{"$v":1,"sequence":1,"generation":"g","id":"a","name":"A","network":"n","tld":"t","services":[],"chains":{RELAY}}}"#
-		));
-		let reordered = parse(&format!(
-			r#"{{"chains":{RELAY},"services":[],"tld":"t","network":"n","name":"A","id":"a","generation":"g","sequence":9,"$v":1}}"#
-		));
-		assert_eq!(one.content_hash(), reordered.content_hash());
-		let renamed = Descriptor { name: "B".into(), ..one.clone() };
-		assert_ne!(one.content_hash(), renamed.content_hash());
-	}
 
 	#[test]
 	fn deserialising_directly_applies_the_same_rules() {

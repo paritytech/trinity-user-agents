@@ -1,9 +1,10 @@
 # @parity/trinity-stack
 
 Reads, verifies, signs and publishes Trinity stack descriptors, as
-[RFC: Trinity stack descriptor](../../../docs/rfcs/trinity-stack-descriptor.md) defines them. Every rule a reader
-applies runs in the [`trinity-stack`](../../../rust/crates/trinity-stack) Rust crate, compiled to WebAssembly, so this
-package and the host core accept and refuse the same descriptors.
+[RFC: Trinity stack descriptor](https://github.com/paritytech/trinity-user-agents/blob/main/docs/rfcs/trinity-stack-descriptor.md)
+defines them. Every rule a reader applies runs in the
+[`trinity-stack`](https://github.com/paritytech/trinity-user-agents/tree/main/rust/crates/trinity-stack) Rust crate,
+compiled to WebAssembly, so this package and the host core accept and refuse the same descriptors.
 
 ## Reading a stack
 
@@ -40,9 +41,10 @@ publishes in the same second get the same `sequence`.
 
 ## Conformance
 
-The crate's [vectors](../../../rust/crates/trinity-stack/vectors) cover every rule of the RFC, and the
-[JSON Schema](../../../rust/crates/trinity-stack/schema/trinity-stack.v1.schema.json) covers the shape. This package's
-tests run the same vectors against the WebAssembly build.
+The crate's [vectors](https://github.com/paritytech/trinity-user-agents/tree/main/rust/crates/trinity-stack/vectors)
+cover every rule of the RFC, and the
+[JSON Schema](https://github.com/paritytech/trinity-user-agents/blob/main/rust/crates/trinity-stack/schema/trinity-stack.v1.schema.json)
+covers the shape. This package's tests run the same vectors against the WebAssembly build.
 
 ## Building
 

@@ -469,6 +469,33 @@
       }
     },
     {
+      "expect": "ok",
+      "file": "documents/chain-id-above-u32.json",
+      "name": "chain-id-above-u32",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "chain-id",
+      "file": "documents/chain-id-above-2-53.json",
+      "name": "chain-id-above-2-53",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/url-with-credentials.json",
+      "name": "url-with-credentials",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
       "expect": "forked-at",
       "file": "documents/fork-without-forked-at.json",
       "name": "fork-without-forked-at",
@@ -545,7 +572,7 @@
       "file": "documents/key-non-canonical.json",
       "name": "key-non-canonical",
       "pointer": {
-        "key": "0xeeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "key": "0xf0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
       }
     },

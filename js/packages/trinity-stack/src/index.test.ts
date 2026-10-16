@@ -8,6 +8,7 @@ import {
   generateSecret,
   isTrinityStackError,
   memoryStore,
+  MAX_DESCRIPTOR_BYTES,
   fetchDescriptor,
   open,
   publicKey,
@@ -128,6 +129,24 @@ describe("publish", () => {
       state: first.state,
     });
     expect(again.state).toEqual(first.state);
+    // Same sequence must mean same bytes, or a reader holding the first sees a conflict.
+    expect(again.document).toEqual(first.document);
+  });
+
+  test("a service kind only newer readers know still raises sequence", async () => {
+    const first = await publish(MODEL, { generation: "g1" });
+    const future = {
+      ...MODEL,
+      services: [
+        ...MODEL.services,
+        { kind: "future-kind", urls: ["https://a.example/"] },
+      ],
+    };
+    const again = await publish(future, {
+      generation: "g1",
+      state: first.state,
+    });
+    expect(again.state.sequence).toBeGreaterThan(first.state.sequence);
   });
 
   test("an invalid Date is refused rather than turning off expiry", () => {
@@ -219,6 +238,17 @@ describe("read", () => {
       timeoutMs: 20,
     });
     expect(accepted.status).toBe("unreachable");
+  });
+
+  test("a body past the size cap is unreachable", async () => {
+    const huge = new Uint8Array(MAX_DESCRIPTOR_BYTES + 1);
+    const streaming = async () => new Response(new Blob([huge]).stream());
+    expect(await fetchDescriptor(URL_, { fetch: streaming })).toBeUndefined();
+    const declared = async () =>
+      new Response("{}", {
+        headers: { "content-length": String(MAX_DESCRIPTOR_BYTES + 1) },
+      });
+    expect(await fetchDescriptor(URL_, { fetch: declared })).toBeUndefined();
   });
 
   test("a redirect is unreachable, whatever it points at", async () => {

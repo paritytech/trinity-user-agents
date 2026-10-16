@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+mod canonical;
 mod descriptor;
 mod envelope;
 mod error;
@@ -13,6 +14,7 @@ mod qr;
 mod reader;
 mod spec;
 
+pub use canonical::{canonical, content_hash};
 pub use descriptor::{
 	Asset, Block, Chain, Coinage, Descriptor, Fork, ForkSource, SERVICE_KINDS, Service, SpecFile,
 	VERSION,
