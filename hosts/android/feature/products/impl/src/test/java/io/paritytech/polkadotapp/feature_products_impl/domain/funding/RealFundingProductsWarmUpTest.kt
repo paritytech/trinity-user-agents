@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
+import io.paritytech.polkadotapp.feature_products_api.model.WorkerKeepAlive
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -111,6 +112,7 @@ class RealFundingProductsWarmUpTest {
                     includesChat = true,
                     includesPocket = false,
                     pocketCards = emptyList(),
+                    keepAlive = WorkerKeepAlive.ON_DEMAND,
                 )
             },
         )

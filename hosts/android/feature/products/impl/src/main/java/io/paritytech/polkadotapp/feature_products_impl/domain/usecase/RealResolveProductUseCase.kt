@@ -14,11 +14,13 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
+import io.paritytech.polkadotapp.feature_products_api.model.WorkerKeepAlive
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.RootManifest
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.toDefinition
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.HandInstalledWorkers
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductManifest
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -35,6 +37,7 @@ internal class RealResolveProductUseCase @Inject constructor(
     private val manifestParser: ManifestParser,
     private val productRepository: ProductRepository,
     private val debugPocketCards: DebugPocketCards,
+    private val handInstalledWorkers: HandInstalledWorkers,
 ) : ResolveProductUseCase {
     // Successful resolutions only, so a transient read failure stays retryable. Hit without the
     // lock, since the WebView's request-interception thread blocks on this for every request.
@@ -131,8 +134,8 @@ internal class RealResolveProductUseCase @Inject constructor(
     }
 
     /**
-     * A worker served from a developer's machine. It carries a Pocket card when the debug menu names
-     * one, which is what lets a card be tried without publishing a manifest first.
+     * A worker served from a developer's machine, or installed by hand in the files of the app. It carries a Pocket
+     * card when the debug menu names one, which is what lets a card be tried without publishing a manifest first.
      */
     private fun userSuppliedWorker(productId: ProductId, scriptUrl: String): ProductExecutable.Worker {
         val card = debugPocketCards.get(productId)
@@ -143,7 +146,15 @@ internal class RealResolveProductUseCase @Inject constructor(
             includesChat = true,
             includesPocket = card != null,
             pocketCards = listOfNotNull(card?.toDefinition()),
+            keepAlive = handInstalledKeepAlive(scriptUrl),
         )
+    }
+
+    // A worker installed by hand declares its keepAlive in the manifest beside its entry file, as on iOS.
+    private fun handInstalledKeepAlive(scriptUrl: String): WorkerKeepAlive {
+        val entry = handInstalledWorkers.entryFile(scriptUrl) ?: return WorkerKeepAlive.ON_DEMAND
+        val manifest = runCatching { handInstalledWorkers.manifestBeside(entry) }.getOrNull() ?: return WorkerKeepAlive.ON_DEMAND
+        return manifestParser.parseHandInstalledKeepAlive(manifest)
     }
 
     // A read failure fails the whole resolution, so a transient one is retried rather than cached

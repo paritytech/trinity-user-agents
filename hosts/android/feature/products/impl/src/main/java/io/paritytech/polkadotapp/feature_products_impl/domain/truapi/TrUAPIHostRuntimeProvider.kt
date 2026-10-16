@@ -130,7 +130,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             onResponse = runtime::notifyChainResponse,
             onClosed = runtime::notifyChainClosed,
         )
-        observeAppLifecycle()
+        observeAppLifecycle(runtime)
         observeWalletAccount(runtime)
     }
 
@@ -195,7 +195,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         }
     }
 
-    private fun observeAppLifecycle() {
+    private fun observeAppLifecycle(runtime: TrUAPIHostRuntime) {
+        scope.launch {
+            // A worker that ended on a fault keeps its holds in the core, so the core sends no new start.
+            appLifecycleObserver.subscribe().reportForeground(runtime::setAppForeground) { workerSupervisor.get().restartFailed() }
+        }
         scope.launch {
             appLifecycleObserver.subscribe().collect { state ->
                 // closeAll reports each connection back to the core, so it

@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductIcon
+import io.paritytech.polkadotapp.feature_products_api.model.WorkerKeepAlive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -290,5 +291,36 @@ class ManifestParserTest {
 
         assertEquals(true, worker?.includesChat)
         assertEquals(emptyList<PocketCardDefinition>(), worker?.pocketCards)
+    }
+
+    private fun workerKeepAlive(keepAlive: String): WorkerKeepAlive? =
+        (
+            parser.parseExecutable(
+                """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.wasm","includes":{"chat":true,"pocket":false}$keepAlive}""",
+                ExecutableKind.WORKER,
+                host("worker.coinflip.dot"),
+            ).getOrNull() as? ProductExecutable.Worker
+            )?.keepAlive
+
+    @Test
+    fun `a worker declares a foreground worker with keepAlive`() {
+        assertEquals(WorkerKeepAlive.FOREGROUND, workerKeepAlive(""","keepAlive":"foreground""""))
+        assertEquals(WorkerKeepAlive.ON_DEMAND, workerKeepAlive(""","keepAlive":"onDemand""""))
+        assertEquals(WorkerKeepAlive.ON_DEMAND, workerKeepAlive(""))
+    }
+
+    // A newer value must not cost the product its worker.
+    @Test
+    fun `an unknown keepAlive keeps the worker as an on-demand worker`() {
+        assertEquals(WorkerKeepAlive.ON_DEMAND, workerKeepAlive(""","keepAlive":"always""""))
+        assertEquals(WorkerKeepAlive.ON_DEMAND, workerKeepAlive(""","keepAlive":true"""))
+        assertEquals(WorkerKeepAlive.ON_DEMAND, workerKeepAlive(""","keepAlive":{"mode":"foreground"}"""))
+    }
+
+    @Test
+    fun `the manifest beside a worker installed by hand gives only its keepAlive`() {
+        assertEquals(WorkerKeepAlive.FOREGROUND, parser.parseHandInstalledKeepAlive("""{"keepAlive":"foreground"}"""))
+        assertEquals(WorkerKeepAlive.ON_DEMAND, parser.parseHandInstalledKeepAlive("""{"kind":"worker"}"""))
+        assertEquals(WorkerKeepAlive.ON_DEMAND, parser.parseHandInstalledKeepAlive("not json"))
     }
 }

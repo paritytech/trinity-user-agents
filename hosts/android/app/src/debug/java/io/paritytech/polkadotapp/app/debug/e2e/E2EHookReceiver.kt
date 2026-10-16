@@ -25,6 +25,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostR
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_usernames_api.data.LocalUsernameStorage
 import io.paritytech.polkadotapp.feature_usernames_api.domain.model.Username
+import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.RecoverUsernameUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,10 +38,15 @@ import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.RemotePermissionRequest
+import java.io.File
 
 /**
- * Debug-only entry point the chat e2e drives: seeds an identity, registers a product, posts a
+ * Debug-only entry point the chat e2e drives: seeds an identity, restores a live wallet, registers a product, posts a
  * user message through the real chat path, puts a text on the clipboard, and wakes a product for a room.
+ *
+ * The wallet restore reads the words from `files/truapi-e2e/seed`, which the launcher writes with `run-as`, and
+ * removes the file. It does the step of the restore screen after the words, and then the username lookup of the app
+ * finds the registered username on chain. The words never go to the log.
  *
  * With the clipboard hook, the launcher can type a text that `adb shell input text` cannot type,
  * for example an emoji. The launcher sets the text here, and then pastes it into the input.
@@ -56,6 +62,7 @@ class E2EHookReceiver : BroadcastReceiver() {
         fun accountRepository(): AccountRepository
         fun manualMnemonicInteractor(): ManualMnemonicInteractor
         fun localUsernameStorage(): LocalUsernameStorage
+        fun recoverUsernameUseCase(): RecoverUsernameUseCase
         fun productBotManagementInteractor(): ProductBotManagementInteractor
         fun chatMessageSender(): ChatMessageSender
         fun e2eRuntimeMarkers(): E2ERuntimeMarkers
@@ -81,6 +88,9 @@ class E2EHookReceiver : BroadcastReceiver() {
 
     private suspend fun handle(context: Context, hooks: Hooks, intent: Intent) {
         intent.getStringExtra(EXTRA_CLIPBOARD)?.let { setClipboard(context, it) }
+
+        // The restore reads the chain and can take longer than a broadcast may run, so it continues after it.
+        if (intent.getBooleanExtra(EXTRA_RESTORE_WALLET, false)) scope.launch { restoreWallet(context, hooks) }
 
         if (intent.getBooleanExtra(EXTRA_SEED_IDENTITY, false)) {
             seedIdentity(hooks, username = intent.stringExtra(EXTRA_USERNAME) ?: DEFAULT_USERNAME)
@@ -209,6 +219,25 @@ class E2EHookReceiver : BroadcastReceiver() {
         )
     }
 
+    // Errors go to the log by type only: the message of a rejected mnemonic can quote its words.
+    private suspend fun restoreWallet(context: Context, hooks: Hooks) {
+        val seed = File(context.filesDir, SEED_FILE)
+        val words = runCatching { seed.readText().trim() }
+        seed.delete()
+        runCatching {
+            check(!hooks.accountRepository().areAccountsInitialized()) { "the app has another wallet" }
+            hooks.manualMnemonicInteractor().restoreAccountWithEnteredMnemonic(words.getOrThrow()).getOrThrow()
+            check(hooks.recoverUsernameUseCase().invoke().getOrThrow()) { "no username is registered for this account" }
+            hooks.localUsernameStorage().getValue()?.getDisplayUsername()
+        }.fold(
+            onSuccess = { log(E2EAcks.walletRestored(it)) },
+            onFailure = { failure ->
+                val reason = (failure as? IllegalStateException)?.message ?: failure::class.java.simpleName
+                logError("restore_wallet", reason)
+            },
+        )
+    }
+
     private suspend fun registerProduct(hooks: Hooks, productId: ProductId, workerUrl: String, name: String) {
         hooks.productBotManagementInteractor().upsertProduct(productId, workerUrl, name, card = null, appUrl = null).fold(
             onSuccess = { log(E2EAcks.productRegistered(productId.value)) },
@@ -227,6 +256,8 @@ class E2EHookReceiver : BroadcastReceiver() {
 
     private companion object {
         const val EXTRA_SEED_IDENTITY = "seed_identity"
+        const val EXTRA_RESTORE_WALLET = "restore_wallet"
+        const val SEED_FILE = "truapi-e2e/seed"
         const val EXTRA_USERNAME = "username"
         const val EXTRA_PRODUCT_ID = "product_id"
         const val EXTRA_PRODUCT_NAME = "product_name"

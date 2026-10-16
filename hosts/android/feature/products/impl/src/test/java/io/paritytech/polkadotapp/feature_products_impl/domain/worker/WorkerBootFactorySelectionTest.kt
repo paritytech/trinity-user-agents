@@ -3,8 +3,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 import dagger.Lazy
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.BindableProductsBotApi
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.HostApiProductsScriptExecutor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIChatWorker
@@ -38,6 +40,9 @@ class WorkerBootFactorySelectionTest {
         runtimeSettings = runtimeSettings,
         runtimeProvider = Lazy { runtimeProvider },
         workerSupervisor = Lazy { workerSupervisor },
+        scriptResolver = object : ProductScriptResolver {
+            override suspend fun resolveWorker(productId: ProductId) = Result.failure<ProductExecutable.Worker>(IllegalStateException("no worker"))
+        },
     )
 
     private fun settingsWith(enabled: Boolean): ProductRuntimeSettings {

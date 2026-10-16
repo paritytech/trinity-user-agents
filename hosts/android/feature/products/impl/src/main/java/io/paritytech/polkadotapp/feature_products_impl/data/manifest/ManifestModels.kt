@@ -32,6 +32,8 @@ internal class ExecutableManifestRemote(
     val entrypoint: String? = null,
     val includes: IncludesRemote? = null,
     val pocket: PocketRemote? = null,
+    // Kept raw: an unknown value or JSON type reads as "onDemand" and keeps the worker.
+    val keepAlive: JsonElement? = null,
     // widget
     val description: String? = null,
     val dimensions: DimensionsRemote? = null,
