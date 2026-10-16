@@ -1736,6 +1736,7 @@ mod tests {
 				database_directory: dir.path().to_string_lossy().into_owned(),
 				..native_host_runtime_config()
 			},
+			None,
 		)
 		.expect("host runtime config should be valid");
 
@@ -1750,6 +1751,7 @@ mod tests {
 		let host = NativeTrUApiHostRuntime::with_runtime_config(
 			Arc::new(EventCallbacks::new()),
 			native_host_runtime_config(),
+			None,
 		)
 		.expect("host runtime config should be valid");
 
