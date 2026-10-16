@@ -16,10 +16,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
+import io.paritytech.polkadotapp.design.components.dialog.NovaAlertDialog
 import io.paritytech.polkadotapp.design.components.error.DefaultErrorState
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
@@ -44,10 +46,42 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
         viewModel.onBackPressed()
     }
 
+    LifecycleStartEffect(Unit) {
+        viewModel.onScreenStarted()
+
+        onStopOrDispose { }
+    }
+
     SpaBrowserScreenInternal(
         state = state,
         webView = webView,
         onRefresh = viewModel::onRefresh,
+    )
+
+    val newBuildProduct = state.newBuildPromptProduct
+    if (newBuildProduct != null) {
+        NewBuildDialog(
+            product = newBuildProduct,
+            onReload = viewModel::onReloadForNewBuildConfirmed,
+            onDismiss = viewModel::onReloadForNewBuildDismissed,
+        )
+    }
+}
+
+@Composable
+private fun NewBuildDialog(
+    product: String,
+    onReload: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    NovaAlertDialog(
+        title = stringResource(RCommon.string.spa_browser_new_build_title, product),
+        text = stringResource(RCommon.string.spa_browser_new_build_message, product),
+        positiveButtonTitle = stringResource(RCommon.string.spa_browser_new_build_reload),
+        onPositiveButtonClick = onReload,
+        negativeButtonTitle = stringResource(RCommon.string.spa_browser_new_build_later),
+        onNegativeButtonClick = onDismiss,
+        onDismissRequest = onDismiss,
     )
 }
 

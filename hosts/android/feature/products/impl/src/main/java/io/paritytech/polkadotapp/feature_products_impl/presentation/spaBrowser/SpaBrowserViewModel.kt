@@ -6,6 +6,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
@@ -13,11 +14,14 @@ import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSess
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.SpaBrowserInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -48,6 +52,13 @@ class SpaBrowserViewModel @Inject constructor(
 ) : BaseViewModel(), SpaBrowserContract {
     val webView: StateFlow<WebView?> = productSessionController.webView
 
+    private val newBuildPrompt = MutableStateFlow<NewBuildPrompt?>(null)
+    private var outdatedTabCheck: Job? = null
+
+    private val activeTabId: Flow<Long?> = productSessionController.openTabs
+        .map { tabs -> tabs.firstOrNull { it.isActive }?.id }
+        .distinctUntilChanged()
+
     // One load per tab, in two phases: resolve the manifest, then serve the archive. Both report
     // into this stream, so progress and page state are views of it rather than separate truths.
     private val pageLoad: Flow<PageLoad> = productSessionController.activeTab
@@ -77,13 +88,17 @@ class SpaBrowserViewModel @Inject constructor(
     override val state: StateFlow<SpaBrowserUiState> = combine(
         productSessionController.activeTab,
         pageLoad,
-    ) { info, load ->
+        newBuildPrompt,
+        activeTabId,
+    ) { info, load, newBuildPrompt, activeTabId ->
         SpaBrowserUiState(
             title = info?.title,
             subtitle = info?.host,
             loadProgress = load.toProgress(),
             pageState = load.toPageState(),
             isDevServer = info?.isDevServer == true,
+            // A check answers for the tab it started on, which may no longer be the one on screen.
+            newBuildPromptProduct = newBuildPrompt?.takeIf { it.tabId == activeTabId }?.productId?.value,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, SpaBrowserUiState())
 
@@ -122,6 +137,37 @@ class SpaBrowserViewModel @Inject constructor(
         }
     }
 
+    // Runs when a tab is opened or restored from the tab bar and when the app returns from background. The user may
+    // be in the middle of something, so a new build waits for their consent.
+    override fun onScreenStarted() {
+        val tabId = productSessionController.openTabs.value.firstOrNull { it.isActive }?.id ?: return
+
+        outdatedTabCheck?.cancel()
+        outdatedTabCheck = launch {
+            productSessionController.productWithNewBuild(tabId)
+                .logFailure("failed to check tab $tabId for a new build")
+                .onSuccess { productId ->
+                    newBuildPrompt.value = productId?.takeIf { asksBeforeNewBuild(it) }?.let { NewBuildPrompt(tabId, it) }
+                }
+        }
+    }
+
+    override fun onReloadForNewBuildConfirmed() {
+        val prompt = newBuildPrompt.value ?: return
+        newBuildPrompt.value = null
+        productSessionController.reloadTab(prompt.tabId)
+    }
+
+    override fun onReloadForNewBuildDismissed() {
+        newBuildPrompt.value = null
+    }
+
+    // A built-in product updates like the app itself: on its next start, without asking.
+    private suspend fun asksBeforeNewBuild(productId: ProductId): Boolean {
+        val tld = dotNsTldProvider.getTld().getOrNull() ?: return false
+        return productId !in ReservedProductIds.all(tld)
+    }
+
     private fun quitOnLastTabClosed() {
         launch {
             productSessionController.openTabs
@@ -141,6 +187,8 @@ private sealed interface PageLoad {
     data class Serving(val resolved: ResolvedProduct, val progress: DotNsLoadProgress) : PageLoad
     data class Failed(val error: ProductResolutionError) : PageLoad
 }
+
+private data class NewBuildPrompt(val tabId: Long, val productId: ProductId)
 
 private fun PageLoad.toProgress(): DotNsLoadProgress = when (this) {
     PageLoad.NotAProduct -> DotNsLoadProgress.Idle

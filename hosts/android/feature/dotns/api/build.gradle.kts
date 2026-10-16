@@ -10,4 +10,5 @@ dependencies {
     api(project(":common"))
 
     testImplementation(libs.junit)
+    testImplementation(libs.mockk)
 }

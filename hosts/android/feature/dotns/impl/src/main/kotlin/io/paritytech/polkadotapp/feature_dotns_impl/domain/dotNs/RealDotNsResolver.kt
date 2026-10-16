@@ -3,9 +3,9 @@ package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 import android.net.Uri
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.novasama.substrate_sdk_android.extensions.toHexString
-import io.paritytech.polkadotapp.common.data.memory.MapCache
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.flatRecover
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapNotNull
 import io.paritytech.polkadotapp.common.utils.requireNotNull
@@ -17,14 +17,17 @@ import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHash
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHashOverrides
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsContentStorage
 import io.paritytech.polkadotapp.tools_car_parser.CarParser
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 private typealias DomainName = String
+
+private class ResolvedContent(val contentHash: ContentHash, val uri: Uri)
 
 @OptIn(ExperimentalStdlibApi::class)
 internal class RealDotNsResolver @Inject constructor(
@@ -33,31 +36,85 @@ internal class RealDotNsResolver @Inject constructor(
     private val contentStorage: DotNsContentStorage,
     private val contentHashOverrides: ContentHashOverrides,
     private val dispatchers: CoroutineDispatchers
-) : DotNsResolver, CoroutineScope {
-    override val coroutineContext = dispatchers.io + SupervisorJob()
-
+) : DotNsResolver {
     private val progressRegistry = DotNsLoadProgressRegistry()
 
-    private val localDomainsCache: MapCache<DomainName, Result<Uri>> = MapCache(this) { domainName ->
+    private val contentInUseMutex = Mutex()
+    private val contentInUse = mutableMapOf<DomainName, ResolvedContent>()
+
+    // A page whose new content failed to download is served its content in use, so offering that content as a new
+    // build would only reload the page into the same one. Read without the lock, which a download may hold.
+    private val unavailableContent = ConcurrentHashMap<DomainName, ContentHash>()
+
+    override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
+        contentInUseMutex.withLock {
+            contentInUse[dotNsName]?.let { return@withLock Result.success(it.uri) }
+
+            readContentHash(dotNsName)
+                .flatMap { contentHash -> useContent(dotNsName, contentHash) }
+                .reportFailure(dotNsName)
+        }
+    }
+
+    override suspend fun resolveLatestToLocalUri(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
+        // Read before taking the lock, so the round trip to chain does not hold up the pages being served.
+        val latestContentHash = readContentHash(dotNsName)
+
+        contentInUseMutex.withLock {
+            val inUse = contentInUse[dotNsName]
+
+            latestContentHash
+                .flatMap { contentHash -> useLatestContent(dotNsName, contentHash, inUse) }
+                .flatRecover { error -> fallBackToContentInUse(dotNsName, inUse, error) }
+                .reportFailure(dotNsName)
+        }
+    }
+
+    override suspend fun isOutdated(dotNsName: String, localUri: Uri): Result<Boolean> = withContext(dispatchers.computation) {
+        readContentHash(dotNsName).map { contentHash ->
+            val failedToDownload = contentHash == unavailableContent[dotNsName]
+            val isAlreadyServed = contentStorage.getContentDirectory(contentHash)?.absolutePath == localUri.path
+
+            !failedToDownload && !isAlreadyServed
+        }
+    }
+
+    private suspend fun readContentHash(domainName: DomainName): Result<ContentHash> {
         Timber.d("resolving content hash for $domainName")
 
-        resolveContentHash(domainName)
+        return resolveContentHash(domainName)
             .logFailure("failed to resolve content hash for $domainName")
             .requireNotNull { IllegalStateException("Domain $domainName is not registered or has no content") }
-            .flatMap { contentHash -> resolveContentHash(domainName, contentHash) }
-            .logFailure("failed to resolve $domainName")
-            // A domain with nothing registered behind it never reaches the download that reports its
-            // own failures, and a host screen reading progress would wait on it for good.
-            .onFailure { progressRegistry.markFailed(domainName, it) }
     }
 
-    // TODO v1: Currently always fetches the latest content hash from chain for session. In the target solution,
-    //  product updates should be under full user control: once a content hash is fetched for a domain,
-    //  it should be pinned and never auto-updated. A separate UX flow will prompt the user to
-    //  acknowledge and update to a newer version when available.
-    override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
-        localDomainsCache.getOrCompute(dotNsName)
+    private suspend fun useContent(dotNsName: DomainName, contentHash: ContentHash): Result<Uri> {
+        return resolveContentHash(dotNsName, contentHash)
+            .onSuccess { uri ->
+                contentInUse[dotNsName] = ResolvedContent(contentHash, uri)
+                unavailableContent.remove(dotNsName)
+            }
     }
+
+    private suspend fun useLatestContent(dotNsName: DomainName, latest: ContentHash, inUse: ResolvedContent?): Result<Uri> {
+        if (inUse?.contentHash == latest) return Result.success(inUse.uri)
+
+        return useContent(dotNsName, latest)
+            .onFailure { unavailableContent[dotNsName] = latest }
+    }
+
+    private fun fallBackToContentInUse(dotNsName: DomainName, inUse: ResolvedContent?, cause: Throwable): Result<Uri> {
+        if (inUse == null) return Result.failure(cause)
+
+        Timber.w(cause, "keeping content ${inUse.contentHash} for $dotNsName")
+        progressRegistry.markCompleted(dotNsName)
+        return Result.success(inUse.uri)
+    }
+
+    // Reported once the resolution is over, never from a step a fallback may still recover: a host screen reads
+    // a failure as final, and a domain with nothing registered would otherwise leave it waiting for good.
+    private fun Result<Uri>.reportFailure(dotNsName: DomainName): Result<Uri> =
+        logFailure("failed to resolve $dotNsName")
+            .onFailure { progressRegistry.markFailed(dotNsName, it) }
 
     private suspend fun resolveContentHash(domainName: DomainName): Result<ContentHash?> {
         val override = contentHashOverrides.getContentHashOverride(domainName)
@@ -98,7 +155,6 @@ internal class RealDotNsResolver @Inject constructor(
                 }
             }
             .onSuccess { progressRegistry.markCompleted(dotNsName) }
-            .onFailure { progressRegistry.markFailed(dotNsName, it) }
             .logFailure("failed to parse CAR for $contentHashHex")
     }
 
@@ -113,7 +169,8 @@ internal class RealDotNsResolver @Inject constructor(
     }
 
     override suspend fun clearCache() {
-        localDomainsCache.clear()
+        contentInUseMutex.withLock { contentInUse.clear() }
+        unavailableContent.clear()
         progressRegistry.clear()
 
         contentStorage.deleteAll()
