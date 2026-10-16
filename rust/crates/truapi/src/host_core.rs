@@ -951,6 +951,24 @@ impl SigningHostRuntime {
 		self.services.wake_product(product_id, reason)
 	}
 
+	/// Install the host's push relay client, or remove it with `None`, and
+	/// give it the stored wake topics of every product.
+	pub async fn set_wake_relay(
+		&self,
+		relay: Option<Arc<dyn crate::runtime::WakeRelay>>,
+	) -> Result<(), String> {
+		self.services.set_wake_relay(relay).await
+	}
+
+	/// Check a wake push from the push relay and wake each product that
+	/// watches its topic.
+	pub async fn handle_wake_push(
+		&self,
+		payload: &str,
+	) -> Result<Vec<crate::runtime::PushWakeDelivery>, crate::runtime::PushWakeRejection> {
+		self.services.handle_wake_push(payload).await
+	}
+
 	/// Return whether this host currently has an authenticated signing session.
 	pub fn has_active_session(&self) -> bool {
 		self.signing_host.session_state().current().is_some()

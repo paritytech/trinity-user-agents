@@ -22,7 +22,7 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeScannerCallbacks, NativeTopUpCallbacks, NativeWakeRelayCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -74,6 +74,26 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 	) -> Result<crate::platform::HostScan, v01::GenericError> {
 		self.scanner
 			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::runtime::WakeRelay`] served by host-provided
+/// [`NativeWakeRelayCallbacks`].
+pub struct WakeRelayCallbackPlatform {
+	/// Host push relay client.
+	pub relay: Arc<dyn NativeWakeRelayCallbacks>,
+}
+
+#[async_trait]
+impl crate::runtime::WakeRelay for WakeRelayCallbackPlatform {
+	async fn register_wake_topics(
+		&self,
+		registration: crate::runtime::WakeRelayRegistration,
+	) -> Result<(), v01::GenericError> {
+		self.relay
+			.register_wake_topics(registration)
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}

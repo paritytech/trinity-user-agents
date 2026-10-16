@@ -103,6 +103,8 @@ pub struct RuntimeServices {
 	pub chat_room_events: crate::runtime::ChatRoomEventHub,
 	/// Wake holds of each product.
 	pub chat_wakes: crate::runtime::ChatWakes,
+	/// Wake watches of each product and the push relay of the host.
+	pub push_wakes: crate::runtime::PushWakes,
 	/// The `preimage_attachments` flag of each room the core saw declared.
 	pub chat_staging: crate::runtime::ChatStagingDeclarations,
 	/// The rooms whose call holds the worker of their product.
@@ -191,6 +193,7 @@ impl RuntimeServices {
 			chat_rate_limits: Default::default(),
 			chat_room_events: Default::default(),
 			chat_wakes: Default::default(),
+			push_wakes: Default::default(),
 			chat_staging: Default::default(),
 			chat_call_holds: Default::default(),
 			chain,

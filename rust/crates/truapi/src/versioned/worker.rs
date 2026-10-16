@@ -9,4 +9,7 @@ truapi_macros::versioned_type! {
 	pub enum HostWorkerEndOperationRequest { V1 => v01::HostWorkerEndOperationRequest }
 	pub enum HostWorkerEndOperationResponse { V1 }
 	pub enum HostWorkerEndOperationError { V1 => v01::HostWorkerOperationError }
+	pub enum HostWorkerSetWakeWatchesRequest { V1 => v01::HostWorkerSetWakeWatchesRequest }
+	pub enum HostWorkerSetWakeWatchesResponse { V1 => v01::HostWorkerSetWakeWatchesResponse }
+	pub enum HostWorkerSetWakeWatchesError { V1 => v01::HostWorkerSetWakeWatchesError }
 }

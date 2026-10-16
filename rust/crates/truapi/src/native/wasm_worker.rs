@@ -455,4 +455,108 @@ mod tests {
 
 		assert!(matches!(started, Err(ProductRuntimeError::Closed)), "{started:?}");
 	}
+
+	#[derive(Default)]
+	struct Relay(Mutex<Vec<crate::WakeRelayRegistration>>);
+
+	#[async_trait::async_trait]
+	impl crate::native::NativeWakeRelayCallbacks for Relay {
+		async fn register_wake_topics(
+			&self,
+			registration: crate::WakeRelayRegistration,
+		) -> Result<(), crate::native::HostRejection> {
+			self.0.lock().expect("relay mutex poisoned").push(registration);
+			Ok(())
+		}
+	}
+
+	/// A worker declares its wake watch; the core gives the topic and the key of the device to the
+	/// relay of the host, never to the worker; a wake push that the relay signs with that key holds
+	/// the worker of the product and starts it. That is the whole path of a push wake on a native
+	/// host, up to the push service.
+	#[test]
+	fn a_wake_push_on_the_watch_of_a_worker_starts_the_worker() {
+		let callbacks = Arc::new(EventCallbacks::new());
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			callbacks.clone(),
+			native_host_runtime_config(),
+		)
+		.expect("host runtime config should be valid");
+		let relay = Arc::new(Relay::default());
+		futures::executor::block_on(host.set_wake_relay(Some(relay.clone())))
+			.expect("a relay with no topic yet");
+		let execution = host
+			.open_product_execution(
+				callbacks.clone(),
+				Some(callbacks.clone()),
+				None,
+				None,
+				native_execution_config(PRODUCT, ProductExecutionKind::Worker),
+			)
+			.expect("open worker execution");
+		let _ends = start(&execution, "chat_echo");
+		wait_until("the worker creates its room", || echo_room_ready(&callbacks));
+
+		execution
+			.publish_chat_event(
+				"echo".to_string(),
+				"native".to_string(),
+				v01::ChatEvent::MessagePosted {
+					message_id: "m1".to_string(),
+					body: v01::ChatMessageBody::Text { text: "/wake ping".to_string() },
+					reply_to: None,
+				},
+			)
+			.expect("the user posts");
+		wait_until("the worker sets its watch", || {
+			!callbacks.chat_posted.lock().expect("posted mutex poisoned").is_empty()
+		});
+		assert_eq!(
+			callbacks.chat_posted.lock().expect("posted mutex poisoned")[0].1,
+			v01::ChatMessageContent::Text { text: "echo: /wake ping -> Push".to_string() }
+		);
+		let registration = relay
+			.0
+			.lock()
+			.expect("relay mutex poisoned")
+			.last()
+			.cloned()
+			.expect("registered");
+		let mut topic = [0u8; 32];
+		topic[..15].copy_from_slice(b"/statement ping");
+		assert_eq!(registration.topics, vec![topic]);
+
+		let push = crate::WakePush::sign(
+			&registration.key,
+			topic,
+			[9; 32],
+			crate::unix_time::current_unix_millis(),
+		);
+		let deliveries =
+			futures::executor::block_on(host.handle_wake_push(push.to_json().to_string()))
+				.expect("the core takes the push");
+
+		assert!(
+			matches!(
+				deliveries.as_slice(),
+				[crate::PushWakeDelivery {
+					product_id,
+					room_id,
+					watch_id,
+					outcome: crate::PushWakeOutcome::Held { .. },
+				}] if product_id == PRODUCT && room_id == "echo" && watch_id == "echo"
+			),
+			"{deliveries:?}"
+		);
+		assert_eq!(
+			callbacks.worker_demand.lock().expect("worker demand mutex poisoned").clone(),
+			vec![(PRODUCT.to_string(), crate::WorkerTransition::Start)]
+		);
+		let forged = crate::WakePush::sign(&[0; 32], topic, [8; 32], push.sent_at_ms);
+		assert_eq!(
+			futures::executor::block_on(host.handle_wake_push(forged.to_json().to_string())),
+			Err(crate::PushWakeRejection::BadSignature)
+		);
+		execution.stop_ws_bridge();
+	}
 }
