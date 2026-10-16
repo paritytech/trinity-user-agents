@@ -65,6 +65,11 @@ fn publish(dir: &Path, model: &str, key_file: &str, state: &str) -> Vec<u8> {
 
 /// Serves `document` to one request on a loopback port and returns its URL.
 fn serve_once(document: Vec<u8>) -> String {
+	respond_once("200 OK", "", document)
+}
+
+/// Answers one request with `status`, extra `headers` and `body`, and returns the URL.
+fn respond_once(status: &'static str, headers: &'static str, body: Vec<u8>) -> String {
 	let listener = TcpListener::bind("127.0.0.1:0").unwrap();
 	let url = format!("http://{}/stack.json", listener.local_addr().unwrap());
 	thread::spawn(move || {
@@ -72,13 +77,56 @@ fn serve_once(document: Vec<u8>) -> String {
 		let mut request = [0; 4096];
 		let _ = socket.read(&mut request);
 		let head = format!(
-			"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-			document.len()
+			"HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
+			body.len()
 		);
 		socket.write_all(head.as_bytes()).unwrap();
-		socket.write_all(&document).unwrap();
+		socket.write_all(&body).unwrap();
 	});
 	url
+}
+
+#[test]
+fn a_redirect_is_refused_and_says_where_it_led() {
+	let url =
+		respond_once("301 Moved Permanently", "Location: http://elsewhere.example/\r\n", vec![]);
+	let output = stack(&["verify", &url]);
+	assert!(!output.status.success());
+	assert!(stderr(&output).contains("redirects are not followed"), "{}", stderr(&output));
+	assert!(stderr(&output).contains("http://elsewhere.example/"), "{}", stderr(&output));
+}
+
+#[test]
+fn publish_checks_the_url_before_writing_anything() {
+	let dir = tempfile::tempdir().unwrap();
+	let model = write_model(dir.path(), "Local", None);
+	let site = dir.path().join("site");
+	let output = stack(&[
+		"publish",
+		&model,
+		"--generation",
+		"g1",
+		"--out",
+		site.to_str().unwrap(),
+		"--url",
+		"http://stack.example/s.json",
+	]);
+	assert!(stderr(&output).contains("invalid-url"), "{}", stderr(&output));
+	assert!(!site.exists(), "nothing is published when the link would be refused");
+}
+
+#[test]
+fn verify_fails_on_an_expired_stack_but_still_prints_it() {
+	let dir = tempfile::tempdir().unwrap();
+	let model = write_model(dir.path(), "Gone", Some("2020-01-01T00:00:00Z"));
+	let site = dir.path().join("site");
+	let published =
+		stack(&["publish", &model, "--generation", "g1", "--out", site.to_str().unwrap()]);
+	assert!(published.status.success(), "{}", stderr(&published));
+	let output = stack(&["verify", site.join(".well-known/trinity-stack.json").to_str().unwrap()]);
+	assert!(!output.status.success());
+	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+	assert_eq!(report["expired"], true);
 }
 
 #[test]

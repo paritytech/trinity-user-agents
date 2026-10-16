@@ -13,6 +13,7 @@ use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use trinity_stack::{DEFAULT_LINK_BASE, Document, Fetched, Pointer, Status, accept, qr_terminal};
+use zeroize::Zeroizing;
 
 /// Where `publish` writes the descriptor under its output directory.
 const WELL_KNOWN: &str = ".well-known/trinity-stack.json";
@@ -51,6 +52,9 @@ pub enum StackCommand {
 		url: Option<String>,
 	},
 	/// Check a descriptor and print it with whether it is signed, stale or expired.
+	///
+	/// Exits non-zero when the descriptor breaks a rule or the stack is past `expiresAt`, so a
+	/// monitoring job can rely on the exit code. A stale copy is reported, not failed.
 	Verify {
 		/// A link, a URL or a local file.
 		stack: String,
@@ -88,7 +92,8 @@ pub async fn run(command: StackCommand) -> Result<()> {
 		StackCommand::Keygen { out } => keygen(&out),
 		StackCommand::Publish { model, generation, out, signing_key_file, state, url } => {
 			let secret = signing_key_file.as_deref().map(read_secret).transpose()?;
-			publish(&model, &generation, &out, secret.as_ref(), state.as_deref(), url.as_deref())
+			let secret = secret.as_deref();
+			publish(&model, &generation, &out, secret, state.as_deref(), url.as_deref())
 		},
 		StackCommand::Verify { stack, key } => verify(&stack, key.as_deref()).await,
 		StackCommand::Bundle { stack, key, out } => bundle(&stack, key.as_deref(), &out).await,
@@ -106,23 +111,26 @@ fn refused(error: trinity_stack::Error) -> anyhow::Error {
 }
 
 fn keygen(out: &Path) -> Result<()> {
-	let mut secret = [0u8; 32];
-	getrandom::getrandom(&mut secret).map_err(|error| anyhow!("no randomness: {error}"))?;
+	let mut secret = Zeroizing::new([0u8; 32]);
+	getrandom::getrandom(secret.as_mut()).map_err(|error| anyhow!("no randomness: {error}"))?;
 	let mut options = fs::OpenOptions::new();
 	options.write(true).create_new(true);
 	#[cfg(unix)]
 	std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
 	let mut file = options.open(out).with_context(|| format!("create {}", out.display()))?;
-	writeln!(file, "0x{}", hex::encode(secret))?;
+	let encoded = Zeroizing::new(format!("0x{}\n", hex::encode(secret.as_ref())));
+	file.write_all(encoded.as_bytes())?;
 	println!("0x{}", hex::encode(trinity_stack::public_key(&secret)));
 	Ok(())
 }
 
-fn read_secret(path: &Path) -> Result<[u8; 32]> {
-	let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+fn read_secret(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
+	let text = Zeroizing::new(
+		fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?,
+	);
 	let digits = text.trim().strip_prefix("0x").unwrap_or(text.trim());
-	let mut secret = [0u8; 32];
-	hex::decode_to_slice(digits, &mut secret)
+	let mut secret = Zeroizing::new([0u8; 32]);
+	hex::decode_to_slice(digits, secret.as_mut())
 		.with_context(|| format!("{} is not a 32-byte hex secret key", path.display()))?;
 	Ok(secret)
 }
@@ -143,12 +151,24 @@ fn publish(
 	state_file: Option<&Path>,
 	url: Option<&str>,
 ) -> Result<()> {
+	let link = url
+		.map(|url| {
+			let key = secret
+				.map(|secret| format!("0x{}", hex::encode(trinity_stack::public_key(secret))));
+			Pointer::new(url, key.as_deref()).map(|pointer| pointer.to_link(DEFAULT_LINK_BASE))
+		})
+		.transpose()
+		.map_err(refused)?;
 	let model = fs::read(model).with_context(|| format!("read {}", model.display()))?;
 	let model: serde_json::Map<String, serde_json::Value> =
 		serde_json::from_slice(&model).context("the model is not a JSON object")?;
 	let state = match state_file {
 		Some(path) if path.exists() => {
-			Some(serde_json::from_slice::<PublishState>(&fs::read(path)?)?)
+			let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+			Some(
+				serde_json::from_slice::<PublishState>(&bytes)
+					.with_context(|| format!("{} is not a publish state", path.display()))?,
+			)
 		},
 		_ => None,
 	};
@@ -159,19 +179,26 @@ fn publish(
 	};
 	let path = out.join(WELL_KNOWN);
 	fs::create_dir_all(path.parent().expect("WELL_KNOWN has a parent"))?;
-	fs::write(&path, document)?;
+	// The state goes first: if the descriptor write then fails, a retry repeats the same
+	// `sequence` rather than skipping one the readers never saw.
 	if let Some(state_file) = state_file {
-		fs::write(state_file, serde_json::to_vec_pretty(&state)?)?;
+		write_atomically(state_file, &serde_json::to_vec_pretty(&state)?)?;
 	}
+	write_atomically(&path, &document)?;
 	println!("wrote {}, sequence {}", path.display(), state.sequence);
-	if let Some(url) = url {
-		let key =
-			secret.map(|secret| format!("0x{}", hex::encode(trinity_stack::public_key(secret))));
-		println!(
-			"{}",
-			Pointer::new(url, key.as_deref()).map_err(refused)?.to_link(DEFAULT_LINK_BASE)
-		);
+	if let Some(link) = link {
+		println!("{link}");
 	}
+	Ok(())
+}
+
+/// Replaces `path` in one step, so a web root or a build never sees half a file.
+fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
+	let directory = path.parent().filter(|parent| !parent.as_os_str().is_empty());
+	let mut file = tempfile::NamedTempFile::new_in(directory.unwrap_or(Path::new(".")))
+		.with_context(|| format!("write {}", path.display()))?;
+	file.write_all(contents)?;
+	file.persist(path).with_context(|| format!("write {}", path.display()))?;
 	Ok(())
 }
 
@@ -205,16 +232,13 @@ fn render(
 
 /// A link or URL as a pointer, with `key` filling in a link that has none. `None` for a path.
 fn pointer_of(stack: &str, key: Option<&str>) -> Result<Option<Pointer>> {
-	if let Ok(pointer) = Pointer::from_link(stack) {
-		return match (pointer.key(), key) {
-			(Some(own), Some(given)) if format!("0x{}", hex::encode(own)) != given => {
-				bail!("--key contradicts the key the link carries")
-			},
-			(None, Some(given)) => {
-				Ok(Some(Pointer::new(pointer.url().as_str(), Some(given)).map_err(refused)?))
-			},
-			_ => Ok(Some(pointer)),
-		};
+	if let Ok(linked) = Pointer::from_link(stack) {
+		let Some(given) = key else { return Ok(Some(linked)) };
+		let keyed = Pointer::new(linked.url().as_str(), Some(given)).map_err(refused)?;
+		if linked.key().is_some_and(|own| Some(own) != keyed.key()) {
+			bail!("--key contradicts the key the link carries");
+		}
+		return Ok(Some(keyed));
 	}
 	if stack.starts_with("https://") || stack.starts_with("http://") {
 		return Ok(Some(Pointer::new(stack, key).map_err(refused)?));
@@ -230,11 +254,14 @@ async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
 		},
 		None => (
 			Pointer::new(LOCAL_FILE_URL, key).map_err(refused)?,
-			Some(fs::read(stack).with_context(|| format!("read {stack}"))?),
+			Ok(fs::read(stack).with_context(|| format!("read {stack}"))?),
 		),
 	};
-	let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
-	let accepted = accept(&pointer, None, fetched, unix_now() as i64).map_err(refused)?;
+	let bytes = fetched
+		.as_deref()
+		.map_err(|cause| anyhow!("{} is unreachable: {cause}", pointer.url()))?;
+	let accepted =
+		accept(&pointer, None, Fetched::Document(bytes), unix_now() as i64).map_err(refused)?;
 	let report = serde_json::json!({
 		"signed": accepted.stack.signed,
 		"stale": accepted.stale,
@@ -242,6 +269,9 @@ async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
 		"descriptor": accepted.stack.descriptor,
 	});
 	println!("{}", serde_json::to_string_pretty(&report)?);
+	if accepted.expired {
+		bail!("{stack} is past expiresAt");
+	}
 	Ok(())
 }
 
@@ -255,6 +285,9 @@ async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
 		Err(error) => return Err(error).with_context(|| format!("read {}", out.display())),
 	};
 	let fetched = fetch(pointer.url().as_str()).await;
+	if let Err(cause) = &fetched {
+		bail!("not bundled: {} is unreachable: {cause}", pointer.url());
+	}
 	let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
 	let accepted =
 		accept(&pointer, previous.as_deref(), fetched, unix_now() as i64).map_err(refused)?;
@@ -271,25 +304,38 @@ async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
 	if accepted.stale {
 		eprintln!("warning: {} is past validUntil; its operator should republish", pointer.url());
 	}
-	fs::write(out, &accepted.document)?;
+	write_atomically(out, &accepted.document)?;
 	let descriptor = &accepted.stack.descriptor;
 	println!("wrote {}, {} sequence {}", out.display(), descriptor.id, descriptor.sequence);
 	Ok(())
 }
 
-/// The bytes a descriptor URL serves, or `None` when it is unreachable. Redirects are refused:
-/// the URL rules hold for the URL the pointer names, and a redirect could lead to plain http.
-async fn fetch(url: &str) -> Option<Vec<u8>> {
+/// The bytes a descriptor URL serves, or why it is unreachable. Redirects are refused: the URL
+/// rules hold for the URL the pointer names, and a redirect could lead to plain http.
+async fn fetch(url: &str) -> Result<Vec<u8>, String> {
 	let client = reqwest::Client::builder()
 		.timeout(FETCH_TIMEOUT)
 		.redirect(reqwest::redirect::Policy::none())
 		.build()
-		.ok()?;
-	let response = client.get(url).send().await.ok()?;
-	if !response.status().is_success() {
-		return None;
+		.map_err(|error| error.to_string())?;
+	let response = client.get(url).send().await.map_err(|error| match error.is_timeout() {
+		true => format!("no answer within {}s", FETCH_TIMEOUT.as_secs()),
+		false => error.to_string(),
+	})?;
+	let status = response.status();
+	if status.is_redirection() {
+		let location = response.headers().get(reqwest::header::LOCATION);
+		let location = location.and_then(|value| value.to_str().ok()).unwrap_or("nowhere");
+		return Err(format!("HTTP {status} to {location}; redirects are not followed"));
 	}
-	response.bytes().await.ok().map(|bytes| bytes.to_vec())
+	if !status.is_success() {
+		return Err(format!("HTTP {status}"));
+	}
+	response
+		.bytes()
+		.await
+		.map(|bytes| bytes.to_vec())
+		.map_err(|error| error.to_string())
 }
 
 fn unix_now() -> u64 {

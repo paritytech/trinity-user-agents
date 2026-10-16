@@ -562,7 +562,8 @@ async fn main() -> Result<()> {
 	// reports through `tracing`, which the terminal UI renders in its transcript
 	// so it cannot corrupt the full-screen display. The command then waits for
 	// it at exit, so even a short one completes the download it started.
-	let check = (!matches!(cli.command, Command::Update)).then(|| {
+	// `stack` runs inside builds and publish jobs, which must not stall on or swap the binary.
+	let check = (!matches!(cli.command, Command::Update | Command::Stack { .. })).then(|| {
 		update::report_install();
 		tokio::spawn(update::run_background_check())
 	});
