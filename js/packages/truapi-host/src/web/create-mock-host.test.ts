@@ -248,8 +248,12 @@ describe("createMockHost callbacks", () => {
     await expect(drain(lookup, 1)).rejects.toThrow("delivered 0 of 1");
   });
 
-  it("feature support follows the chains the host serves", async () => {
-    const supported = async (genesisHash: string, featureSupported = true) =>
+  it("reports unserved chains as unsupported only when asked to", async () => {
+    const unserved = `0x${"ab".repeat(32)}`;
+    const supported = async (
+      genesisHash: string,
+      featureSupported?: boolean | "served",
+    ) =>
       (
         await createMockHost({
           featureSupported,
@@ -258,10 +262,13 @@ describe("createMockHost callbacks", () => {
           value: { genesisHash },
         })
       ).supported;
-    expect(await supported(MOCK_GENESIS.assetHub)).toBe(true);
-    // A chain the host does not serve is refused, not accepted and then left
-    // silent, so a product's "network unavailable" path is reachable.
-    expect(await supported(`0x${"ab".repeat(32)}`)).toBe(false);
+    // The default keeps answering every chain as supported, so existing
+    // suites that rely on a silent chain they never declared keep working.
+    expect(await supported(unserved)).toBe(true);
+    // "served" answers as a real host does, which makes a product's "network
+    // unavailable" path reachable.
+    expect(await supported(MOCK_GENESIS.assetHub, "served")).toBe(true);
+    expect(await supported(unserved, "served")).toBe(false);
     expect(await supported(MOCK_GENESIS.assetHub, false)).toBe(false);
   });
 
