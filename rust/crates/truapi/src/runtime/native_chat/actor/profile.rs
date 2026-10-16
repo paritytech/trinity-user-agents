@@ -571,6 +571,11 @@ impl NativeChatActor {
 				state.peers.iter().any(|peer| peer.ready() && unready.contains(&peer.identity))
 			})
 			.await;
+		tracing::debug!(
+			?became_ready,
+			unready = unready.len(),
+			"host channel bootstrap: readiness after a Chat request"
+		);
 		if became_ready.unwrap_or(false) {
 			self.relay_profile_reference(context).await;
 		}

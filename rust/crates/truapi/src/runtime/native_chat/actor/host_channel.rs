@@ -41,6 +41,11 @@ impl NativeChatActor {
 					.collect()
 			})
 			.await?;
+		tracing::debug!(
+			product = %self.product,
+			pending = ?pending.iter().map(|peer| hex::encode(&peer[..4])).collect::<Vec<_>>(),
+			"host channel bootstrap: ready peers not yet sent this session"
+		);
 		if pending.is_empty() {
 			return Ok(false);
 		}
@@ -105,6 +110,10 @@ impl NativeChatActor {
 				Ok(queued)
 			})
 			.await?;
+		tracing::debug!(
+			queued = ?queued.iter().map(|peer| hex::encode(&peer[..4])).collect::<Vec<_>>(),
+			"host channel bootstrap: queued in the Chat outbox"
+		);
 		let any = !queued.is_empty();
 		self.host_channel_bootstrapped
 			.lock()
@@ -124,6 +133,10 @@ impl NativeChatActor {
 		let Some(newest) = frames.into_iter().max_by_key(|frame| frame.timestamp) else {
 			return Ok(());
 		};
+		tracing::debug!(
+			peer = %hex::encode(&peer[..4]),
+			"host channel bootstrap: received a contact's channel key"
+		);
 		let owner = super::profile::profile_owner(context);
 		let changed = crate::runtime::host_channel::upsert_peer(
 			&*context.services.platform,

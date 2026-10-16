@@ -729,7 +729,8 @@ impl NativeChatActor {
 								entry.kind,
 								OutgoingKind::Payment(_) |
 									OutgoingKind::Rich(_) | OutgoingKind::ProfileReference(_) |
-									OutgoingKind::PersonalProfileReference(_)
+									OutgoingKind::PersonalProfileReference(_) |
+									OutgoingKind::HostChannelBootstrap
 							)
 					})
 					.filter(|entry| {
