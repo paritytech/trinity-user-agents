@@ -114,12 +114,10 @@ impl ProductId {
 		})
 	}
 
-	/// Whether `other` names the same product on the same network.
+	/// Whether `other` is the same product on the same network.
 	///
-	/// [`bare_label`](Self::bare_label) alone answers "same product" across
-	/// networks, which is right where a grant is read and wrong where a proof
-	/// context is: the alias is what a product shows on the chain it is on, so a
-	/// `.paseo` namesake's context is not the `.dot` grantor's.
+	/// `app.dim2.dot` and `dim2.dot` are the same product, so this differs from
+	/// `==`. `dim2.paseo` and `dim2.dot` are not: they are on different networks.
 	pub fn same_product_on_one_network(&self, other: &Self) -> bool {
 		self.bare_label() == other.bare_label() && self.on_one_network(other)
 	}
