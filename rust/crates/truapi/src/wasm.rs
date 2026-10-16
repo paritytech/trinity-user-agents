@@ -1883,48 +1883,6 @@ impl WasmSigningHostRuntime {
             .map_err(generic_error_to_js)
     }
 
-    /// Read one permission authorization status for a product.
-    #[wasm_bindgen(js_name = permissionAuthorizationStatus)]
-    pub async fn permission_authorization_status(
-        &self,
-        product_id: String,
-        payload: Vec<u8>,
-    ) -> Result<JsValue, JsValue> {
-        let request = decode_permission_authorization_request(&payload)?;
-        let status = self
-            .runtime
-            .permission_authorization_status(&product_id, request)
-            .await
-            .map_err(generic_error_to_js)?;
-        Ok(permission_authorization_status_to_js(status))
-    }
-
-	/// Notify the runtime that the host's contacts changed, so cached contact
-	/// handles are dropped and the next resolution reads the list.
-	#[wasm_bindgen(js_name = notifyContactsChanged)]
-	pub fn notify_contacts_changed(&self) {
-		self.runtime.notify_contacts_changed();
-	}
-
-	/// Revoke one product's grants from the current local activation.
-	#[wasm_bindgen(js_name = clearProductState)]
-	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id_from_js(&product_id)?).await;
-		Ok(())
-	}
-
-    /// Re-read a product's stored authorization after another core changes it.
-    #[wasm_bindgen(js_name = refreshPermissionAuthorization)]
-    pub async fn refresh_permission_authorization(
-        &self,
-        product_id: String,
-        payload: Vec<u8>,
-    ) -> Result<(), JsValue> {
-        let request = decode_permission_authorization_request(&payload)?;
-        self.runtime.refresh_permission_authorization(&product_id, request)
-            .await.map_err(generic_error_to_js)
-    }
-
     /// Activate a wallet-local session from raw BIP-39 entropy.
     #[wasm_bindgen(js_name = activateLocalSession)]
     pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), JsValue> {
