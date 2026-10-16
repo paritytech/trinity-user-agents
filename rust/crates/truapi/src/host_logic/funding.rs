@@ -21,19 +21,67 @@ const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
 /// newest first, so a host that never records them cannot grow the store
 /// without bound.
 const UNACKNOWLEDGED_LIMIT: usize = 200;
-/// How many ended sessions the host has recorded the core keeps per owner,
-/// newest first, so a product that watches one again after the host recorded
-/// it still learns how it ended.
-const RECORDED_PER_OWNER: usize = 64;
+/// How many ended sessions the host has recorded the core keeps in full per
+/// owner, newest first. Older ones are compacted into the session pack.
+pub(crate) const RECORDED_PER_OWNER: usize = 64;
 /// Format of the stored sessions blob, which leads it as a `u16`. The stored
 /// enums pin their SCALE indexes, so variants added later decode alongside
 /// the ones a blob was written with. A blob that leads with another format is
 /// set aside rather than read.
 const SESSIONS_FORMAT: u16 = 1;
+/// Format of the stored session pack, which leads it as a `u16`, read like
+/// the sessions blob.
+const PACK_FORMAT: u16 = 1;
 /// How many unreadable blobs [`CoreStorageKey::FundingSessionsUnreadable`]
 /// keeps, oldest dropped first, so repeated bad writes cannot grow it without
 /// bound. The core never reads them back: they are kept for diagnosis only.
 const UNREADABLE_LIMIT: usize = 8;
+
+/// An ended session the host recorded, compacted once newer recorded sessions
+/// of its owner pushed it out of the full record. It keeps what history needs,
+/// so its owner can still read how it ended and the host can still list it;
+/// the pack is never trimmed.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingSessionSummary {
+	/// The session's identifier.
+	pub intent: String,
+	/// Product that opened the session, `None` when the host did.
+	pub owner_product_id: Option<String>,
+	/// Which way value crossed the boundary.
+	pub direction: FundingDirection,
+	/// Amount sought, in the user's payment balance units.
+	pub amount: Option<u128>,
+	/// How the session ended, with what moved and when.
+	pub stage: FundingStage,
+	/// When the session was opened, in Unix milliseconds.
+	pub opened_at_ms: u64,
+}
+
+impl From<FundingSession> for FundingSessionSummary {
+	fn from(session: FundingSession) -> Self {
+		Self {
+			intent: session.intent,
+			owner_product_id: session.owner_product_id,
+			direction: session.direction,
+			amount: session.amount,
+			stage: session.stage,
+			opened_at_ms: session.opened_at_ms,
+		}
+	}
+}
+
+impl FundingSessionSummary {
+	/// The terminal item a subscriber receives.
+	pub fn wire_item(&self) -> HostFundingStatusSubscribeItem {
+		self.stage.wire_item(None)
+	}
+
+	/// When the session ended.
+	pub fn settled_at_ms(&self) -> Option<u64> {
+		self.stage.settled_at_ms()
+	}
+}
 
 /// What the core knows about one session, independent of any host surface.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -93,6 +141,35 @@ pub enum FundingStage {
 	},
 }
 
+impl FundingStage {
+	/// When the session ended, if it has.
+	fn settled_at_ms(&self) -> Option<u64> {
+		match self {
+			Self::Open => None,
+			Self::Failed { settled_at_ms, .. } |
+			Self::Delivered { settled_at_ms, .. } |
+			Self::Released { settled_at_ms, .. } => Some(*settled_at_ms),
+		}
+	}
+
+	/// The wire item subscribers receive for this stage; an open stage
+	/// reports `expires_at`.
+	fn wire_item(&self, expires_at: Option<u64>) -> HostFundingStatusSubscribeItem {
+		match self {
+			Self::Open => HostFundingStatusSubscribeItem::InProgress { expires_at },
+			Self::Failed { reason, .. } => {
+				HostFundingStatusSubscribeItem::Failed { reason: reason.clone(), moved: 0 }
+			},
+			Self::Delivered { credited, .. } => {
+				HostFundingStatusSubscribeItem::Delivered { credited: *credited }
+			},
+			Self::Released { debited, .. } => {
+				HostFundingStatusSubscribeItem::Released { debited: *debited }
+			},
+		}
+	}
+}
+
 impl FundingSession {
 	/// Open a session that expires one window from `now_ms`.
 	pub fn new(
@@ -133,30 +210,12 @@ impl FundingSession {
 
 	/// When the session ended, if it has.
 	pub fn settled_at_ms(&self) -> Option<u64> {
-		match self.stage {
-			FundingStage::Open => None,
-			FundingStage::Failed { settled_at_ms, .. } |
-			FundingStage::Delivered { settled_at_ms, .. } |
-			FundingStage::Released { settled_at_ms, .. } => Some(settled_at_ms),
-		}
+		self.stage.settled_at_ms()
 	}
 
 	/// Project the current stage onto the wire item subscribers receive.
 	pub fn wire_item(&self) -> HostFundingStatusSubscribeItem {
-		match (&self.stage, self.direction) {
-			(FundingStage::Open, _) => {
-				HostFundingStatusSubscribeItem::InProgress { expires_at: Some(self.deadline_ms) }
-			},
-			(FundingStage::Failed { reason, .. }, _) => {
-				HostFundingStatusSubscribeItem::Failed { reason: reason.clone(), moved: 0 }
-			},
-			(FundingStage::Delivered { credited, .. }, _) => {
-				HostFundingStatusSubscribeItem::Delivered { credited: *credited }
-			},
-			(FundingStage::Released { debited, .. }, _) => {
-				HostFundingStatusSubscribeItem::Released { debited: *debited }
-			},
-		}
+		self.stage.wire_item(Some(self.deadline_ms))
 	}
 
 	/// End the session with `reason`, unless it already ended. Returns whether
@@ -193,12 +252,13 @@ impl From<FundingSessionError> for GenericError {
 	}
 }
 
-/// The sessions worth keeping: every open one, the ended ones the host has
-/// not recorded yet, newest first up to a fixed bound, and the newest ended
-/// ones it has recorded, up to a fixed bound per owner. The host owns the
-/// history; a recorded session is kept only so its owner can still read how it
-/// ended.
-pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<FundingSession> {
+/// Split `sessions` into those kept in full and the recorded ones to compact.
+/// Kept in full: every open one, the ended ones the host has not recorded yet,
+/// newest first up to a fixed bound, and the newest ended ones it has recorded,
+/// up to a fixed bound per owner. Older recorded ones go to the pack.
+pub fn retained(
+	sessions: impl IntoIterator<Item = FundingSession>,
+) -> (Vec<FundingSession>, Vec<FundingSessionSummary>) {
 	let (mut open, ended): (Vec<_>, Vec<_>) =
 		sessions.into_iter().partition(|session| !session.is_terminal());
 	let (mut unrecorded, mut recorded): (Vec<_>, Vec<_>) =
@@ -213,42 +273,62 @@ pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<Fundi
 			.then_with(|| b.settled_at_ms().cmp(&a.settled_at_ms()))
 	});
 	open.append(&mut unrecorded);
+	let mut owner: Option<Option<String>> = None;
 	let mut owner_run = 0;
-	for session in recorded {
-		let same_owner = open
-			.last()
-			.is_some_and(|kept| kept.owner_product_id == session.owner_product_id);
-		owner_run = if same_owner { owner_run + 1 } else { 1 };
-		if owner_run <= RECORDED_PER_OWNER {
-			open.push(session);
+	let (newest, older): (Vec<_>, Vec<_>) = recorded.into_iter().partition(|session| {
+		if owner.as_ref() == Some(&session.owner_product_id) {
+			owner_run += 1;
+		} else {
+			owner = Some(session.owner_product_id.clone());
+			owner_run = 1;
 		}
-	}
-	open
+		owner_run <= RECORDED_PER_OWNER
+	});
+	open.extend(newest);
+	(open, older.into_iter().map(FundingSessionSummary::from).collect())
 }
 
 /// Read every persisted session.
 ///
-/// A blob that does not decode is appended to the list kept under
-/// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as no sessions, so
-/// one bad write cannot disable funding for good, the next store cannot
-/// overwrite sessions it never read, and a later bad blob does not replace an
-/// earlier one. If it cannot be set aside, loading fails and the blob stays
-/// where it is.
+/// A blob that does not decode is set aside and reads as no sessions; see
+/// [`load_versioned`].
 pub async fn load_sessions(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<FundingSession>, FundingSessionError> {
+	load_versioned(storage, CoreStorageKey::FundingSessions, SESSIONS_FORMAT).await
+}
+
+/// Read the session pack, in no particular order.
+///
+/// A blob that does not decode is set aside and reads as an empty pack; see
+/// [`load_versioned`].
+pub async fn load_pack(
+	storage: &(impl CoreStorage + ?Sized),
+) -> Result<Vec<FundingSessionSummary>, FundingSessionError> {
+	load_versioned(storage, CoreStorageKey::FundingSessionPack, PACK_FORMAT).await
+}
+
+/// Read the list stored under `key`, which leads with `format`.
+///
+/// A blob that does not decode is appended to the list kept under
+/// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as an empty list,
+/// so one bad write cannot disable funding for good, the next store cannot
+/// overwrite records it never read, and a later bad blob does not replace an
+/// earlier one. If it cannot be set aside, loading fails and the blob stays
+/// where it is.
+async fn load_versioned<T: Decode>(
+	storage: &(impl CoreStorage + ?Sized),
+	key: CoreStorageKey,
+	format: u16,
+) -> Result<Vec<T>, FundingSessionError> {
 	let storage_error = |err: GenericError| FundingSessionError::Storage { reason: err.reason };
-	let Some(blob) = storage
-		.read_core_storage(CoreStorageKey::FundingSessions)
-		.await
-		.map_err(storage_error)?
-	else {
+	let Some(blob) = storage.read_core_storage(key.clone()).await.map_err(storage_error)? else {
 		return Ok(Vec::new());
 	};
-	if let Some(sessions) = decode_sessions(&blob) {
-		return Ok(sessions);
+	if let Some(records) = decode_versioned(&blob, format) {
+		return Ok(records);
 	}
-	error!(bytes = blob.len(), "funding sessions do not decode; keeping them aside");
+	error!(?key, bytes = blob.len(), "funding records do not decode; keeping them aside");
 	let mut aside = match storage
 		.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)
 		.await
@@ -268,15 +348,15 @@ pub async fn load_sessions(
 	Ok(Vec::new())
 }
 
-/// Decode a stored sessions blob of any version this core reads, or `None`
-/// when it is not one.
-fn decode_sessions(blob: &[u8]) -> Option<Vec<FundingSession>> {
+/// Decode a stored list that leads with `format`, or `None` when the blob is
+/// not one.
+fn decode_versioned<T: Decode>(blob: &[u8], format: u16) -> Option<Vec<T>> {
 	let input = &mut &blob[..];
-	let sessions = match u16::decode(input).ok()? {
-		SESSIONS_FORMAT => Vec::<FundingSession>::decode(input).ok()?,
-		_ => return None,
-	};
-	input.is_empty().then_some(sessions)
+	if u16::decode(input).ok()? != format {
+		return None;
+	}
+	let records = Vec::<T>::decode(input).ok()?;
+	input.is_empty().then_some(records)
 }
 
 /// Replace the persisted set with `sessions`, clearing the slot when empty.
@@ -284,15 +364,36 @@ pub async fn store_sessions(
 	storage: &(impl CoreStorage + ?Sized),
 	sessions: &[&FundingSession],
 ) -> Result<(), FundingSessionError> {
-	let written = if sessions.is_empty() {
-		storage.clear_core_storage(CoreStorageKey::FundingSessions).await
+	store_versioned(storage, CoreStorageKey::FundingSessions, SESSIONS_FORMAT, sessions).await
+}
+
+/// Encode `pack` as [`store_pack`] writes it.
+pub fn pack_blob<'a>(pack: impl IntoIterator<Item = &'a FundingSessionSummary>) -> Vec<u8> {
+	(PACK_FORMAT, pack.into_iter().collect::<Vec<_>>()).encode()
+}
+
+/// Replace the persisted pack with `blob`, built by [`pack_blob`].
+pub async fn store_pack(
+	storage: &(impl CoreStorage + ?Sized),
+	blob: Vec<u8>,
+) -> Result<(), FundingSessionError> {
+	storage
+		.write_core_storage(CoreStorageKey::FundingSessionPack, blob)
+		.await
+		.map_err(|err| FundingSessionError::Storage { reason: err.reason })
+}
+
+/// Write `records` under `key`, led by `format`, clearing the slot when empty.
+async fn store_versioned<T: Encode>(
+	storage: &(impl CoreStorage + ?Sized),
+	key: CoreStorageKey,
+	format: u16,
+	records: &[&T],
+) -> Result<(), FundingSessionError> {
+	let written = if records.is_empty() {
+		storage.clear_core_storage(key).await
 	} else {
-		storage
-			.write_core_storage(
-				CoreStorageKey::FundingSessions,
-				(SESSIONS_FORMAT, sessions).encode(),
-			)
-			.await
+		storage.write_core_storage(key, (format, records).encode()).await
 	};
 	written.map_err(|err| FundingSessionError::Storage { reason: err.reason })
 }
@@ -325,10 +426,10 @@ mod tests {
 		}
 	}
 
-	// Recorded sessions are kept only so their owner can read how they ended,
-	// so each owner keeps its newest ones and no owner can crowd out another.
+	// Each owner keeps its newest recorded sessions in full, so no owner can
+	// crowd out another, and its older ones are compacted rather than dropped.
 	#[test]
-	fn recorded_sessions_keep_the_newest_per_owner() {
+	fn recorded_sessions_keep_the_newest_per_owner_and_compact_the_rest() {
 		let recorded = |intent: String, owner: &str, settled_at_ms: u64| FundingSession {
 			acknowledged: true,
 			owner_product_id: Some(owner.to_string()),
@@ -340,7 +441,7 @@ mod tests {
 		sessions.push(recorded("b_0".to_string(), "b.dot", NOW));
 		sessions.push(session(FundingDirection::In));
 
-		let kept = retained(sessions);
+		let (kept, compacted) = retained(sessions);
 		let count = |owner: &str| {
 			kept.iter()
 				.filter(|session| session.owner_product_id.as_deref() == Some(owner))
@@ -353,8 +454,18 @@ mod tests {
 				count("b.dot"),
 				kept.iter().any(|session| session.intent == "a_0" || session.intent == "a_1"),
 				kept.iter().any(|session| !session.is_terminal()),
+				compacted,
 			),
-			(RECORDED_PER_OWNER, 1, false, true)
+			(
+				RECORDED_PER_OWNER,
+				1,
+				false,
+				true,
+				vec![
+					FundingSessionSummary::from(recorded("a_1".to_string(), "a.dot", NOW + 1)),
+					FundingSessionSummary::from(recorded("a_0".to_string(), "a.dot", NOW)),
+				]
+			)
 		);
 	}
 
@@ -407,6 +518,7 @@ mod tests {
 		let unrecorded = (100..101 + UNACKNOWLEDGED_LIMIT).map(|index| ended(index, false));
 
 		let kept: Vec<String> = retained(recorded.chain(unrecorded).chain([open]))
+			.0
 			.into_iter()
 			.map(|session| session.intent)
 			.collect();
@@ -493,6 +605,45 @@ mod tests {
 			.expect("written");
 
 		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
+		assert_eq!(
+			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
+			Ok(Some(vec![blob].encode()))
+		);
+	}
+
+	// A compacted session answers with the same terminal item it had in full.
+	#[test]
+	fn a_summary_reads_as_the_session_ended() {
+		let delivered = FundingSession {
+			stage: FundingStage::Delivered { credited: 90, settled_at_ms: NOW + 1 },
+			..session(FundingDirection::In)
+		};
+		let summary = FundingSessionSummary::from(delivered.clone());
+
+		assert_eq!(
+			(summary.wire_item(), summary.settled_at_ms()),
+			(delivered.wire_item(), Some(NOW + 1))
+		);
+	}
+
+	#[test]
+	fn the_pack_round_trips_through_core_storage() {
+		let storage = stub_platform();
+		let pack = vec![FundingSessionSummary::from(expired("fs_2", NOW))];
+
+		block_on(store_pack(storage.as_ref(), pack_blob(&pack))).expect("stored");
+
+		assert_eq!(block_on(load_pack(storage.as_ref())).expect("loaded"), pack);
+	}
+
+	#[test]
+	fn an_undecodable_pack_is_kept_aside_and_reads_as_empty() {
+		let storage = stub_platform();
+		let blob = vec![0xff, 0x01];
+		block_on(storage.write_core_storage(CoreStorageKey::FundingSessionPack, blob.clone()))
+			.expect("written");
+
+		assert_eq!(block_on(load_pack(storage.as_ref())), Ok(Vec::new()));
 		assert_eq!(
 			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
 			Ok(Some(vec![blob].encode()))

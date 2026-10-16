@@ -1541,9 +1541,9 @@ impl Funding for ProductRuntimeHost {
 			return Subscription::interrupted(CallError::HostFailure { reason: error.to_string() });
 		}
 		// Another product's session reads as absent, so ids reveal nothing.
-		let owned = registry.get(&intent).is_some_and(|session| {
-			session.owner_product_id.as_deref() == Some(self.product.product_id.as_str())
-		});
+		let owned = registry
+			.owner(&intent)
+			.is_some_and(|owner| owner.as_deref() == Some(self.product.product_id.as_str()));
 		match owned.then(|| registry.subscribe(&intent)).flatten() {
 			Some(stream) => {
 				Subscription::new(Box::pin(stream.map(move |item| {

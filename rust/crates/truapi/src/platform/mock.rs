@@ -738,6 +738,7 @@ fn core_key(key: &CoreStorageKey) -> String {
 		},
 		CoreStorageKey::FundingSessions => "core:funding-sessions".to_string(),
 		CoreStorageKey::FundingSessionsUnreadable => "core:funding-sessions-unreadable".to_string(),
+		CoreStorageKey::FundingSessionPack => "core:funding-session-pack".to_string(),
 		CoreStorageKey::AllowanceKeys { session_id } => {
 			format!("core:allowance-keys:{session_id}")
 		},
