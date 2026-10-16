@@ -397,7 +397,10 @@ worker need not run.
   stores the message `Preparing`, stages, then marks it `Sent` and publishes `MessagePosted`. A rejection or a time-out
   marks the message `Failed`, with retry and delete.
 - The product receives a preimage item and fetches its bytes with `Preimage::lookup_subscribe` when it needs them.
-- Without the flag, the host keeps the 1 MiB inline rule.
+- Without the flag, the host keeps the 1 MiB inline rule. A host can make an attachment above the bound smaller
+  before it refuses it: the iOS host encodes a photo again as JPEG and scales it down, and exports a video at 640x480.
+  A product that encrypts its files keeps the flag off, takes the inline item, and stores the ciphertext itself with
+  `Preimage::submit`, as the verbosity chat does.
 
 ### Search
 
