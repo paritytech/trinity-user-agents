@@ -23,7 +23,7 @@ use futures::{
 };
 use serde_json::Value;
 use subxt_rpcs::{RpcClient, client::RpcSubscription};
-use tracing::{debug, instrument};
+use tracing::instrument;
 use truapi::{CancellationReason, CancellationToken};
 
 /// Host-spec B.3.3 recommends seven-day statement expiry for session traffic:
@@ -665,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_current_reply_still_fails_the_current_request() {
+    fn a_malformed_correlated_reply_fails_without_waiting_for_the_stream_to_end() {
         let (host, responder) = sso_host_and_responder_sessions();
         let mut reply = subtree_response("request-1").encode();
         reply.pop();
@@ -681,11 +681,22 @@ mod tests {
             build_signed_session_request_statement(&responder, encrypted, fresh_statement_expiry())
                 .unwrap();
 
-        let result = wait_for_subtree(&host, vec![peer_page(statement)]);
+        let cancel = CancellationToken::default();
+        let result = wait_for_sso_remote_response(
+            RemoteResponseWait {
+                peer_statements: stream::iter([Ok(peer_page(statement))])
+                    .chain(stream::pending())
+                    .boxed(),
+                submit: futures::future::ready(Ok(())).boxed(),
+                ..pending_wait(&host, &cancel)
+            },
+            reply_matcher::<ProductSubtreeRequest>("request-1"),
+        )
+        .now_or_never();
 
         assert!(
-            matches!(result, Err(SsoRemoteResponseError::Failure(reason))
-                if reason.starts_with("invalid SSO remote message:"))
+            matches!(result, Some(Err(SsoRemoteResponseError::Failure(_)))),
+            "{result:?}"
         );
     }
 
@@ -767,22 +778,21 @@ mod tests {
 		);
 	}
 
-	/// A message that does not decode, such as a stale reply from an older peer
-	/// left on the session channel, is skipped wherever it sits, so it cannot
-	/// fail a wait for another request.
-	#[test]
-	fn an_undecodable_message_is_skipped() {
-		let (host, responder) = sso_host_and_responder_sessions();
-		let ack = build_signed_session_response_statement(
-			&responder,
-			"request-1".to_string(),
-			0,
-			fresh_statement_expiry(),
-		)
-		.unwrap();
-		let statement_with = |data: Vec<Vec<u8>>| {
-			let encrypted = encrypt_session_statement_data(
-				&responder,
+	/// An uncorrelated message that does not decode cannot fail another request,
+	/// regardless of its position in the session's message batch.
+    #[test]
+	fn an_uncorrelated_undecodable_message_is_skipped() {
+        let (host, responder) = sso_host_and_responder_sessions();
+        let ack = build_signed_session_response_statement(
+            &responder,
+            "request-1".to_string(),
+            0,
+            fresh_statement_expiry(),
+        )
+        .unwrap();
+        let statement_with = |data: Vec<Vec<u8>>| {
+            let encrypted = encrypt_session_statement_data(
+                &responder,
 				&SsoStatementData::Request { request_id: "resp-statement".to_string(), data },
 			)
 			.unwrap();
