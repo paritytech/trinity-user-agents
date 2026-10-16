@@ -501,6 +501,9 @@ person who shares the link and the host of the person who opens it.
 - The core asks for any room of the product, needs no declaration, and answers `NotAvailable` itself for a room the
   product does not have. It refuses an empty payload or one above the bound with `Unknown`, and refuses an answer that
   names an invalid room.
+- Keep a link short. iOS cuts a link that another app or the system opens at 2,047 bytes, so a payload that makes the
+  link longer arrives cut. A product that needs more puts a short reference in the payload, such as a username, and
+  gives the long form another way, for example as text the user pastes.
 - An opened link is the user's choice, but the link can come from anyone. A product treats the payload as untrusted
   input, and asks the user before it acts on it with an effect the user did not ask for, such as a connection.
 - A host scanner that reads a room link of a product, in either form, gives it to the link pipeline of the app, so a
