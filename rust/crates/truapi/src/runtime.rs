@@ -114,7 +114,7 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-	AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
+	AccountAccessReview, ChatFieldError, CrossProductSignatureKind,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
 	normalize_chat_identifier, normalize_product_identifier, validate_chat_icon,

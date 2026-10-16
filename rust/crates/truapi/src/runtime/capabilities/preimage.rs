@@ -24,7 +24,6 @@ use web_time::Instant;
 use super::from_latest_error;
 use crate::{
 	host_internal::bulletin::preimage_key,
-    platform::{PreimageSubmitReview, UserConfirmationReview},
 	runtime::{
 		PERMISSION_DENIED_REASON, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 		PREIMAGE_SUBMIT_TIMEOUT, ProductRuntimeHost, bulletin_allowance_error_reason,

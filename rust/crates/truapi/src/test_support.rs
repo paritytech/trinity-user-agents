@@ -261,6 +261,7 @@ pub struct StubPlatform {
     pub notification_id: u32,
     pub pushed_notifications: Arc<Mutex<Vec<v01::HostPushNotificationRequest>>>,
     pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
+    pub notification_activations: Option<v01::NotificationActivations>,
     pub receiving_authority: parking_lot::Mutex<Option<crate::platform::ReceivingAuthority>>,
     pub receiving_consent: AtomicBool,
     pub receiving_prompts: AtomicUsize,
