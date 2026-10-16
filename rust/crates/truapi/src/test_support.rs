@@ -163,6 +163,8 @@ pub struct StubPlatform {
         Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Every `ResourceAllocation` review passed to `confirm_user_action`, in order.
     pub resource_allocation_reviews: Arc<Mutex<Vec<ResourceAllocationReview>>>,
+    pub preimage_submit_denied: bool,
+    pub preimage_submit_reviews: Arc<parking_lot::Mutex<Vec<crate::platform::PreimageSubmitReview>>>,
     pub session_blob: Option<Vec<u8>>,
     pub session_storage: Mutex<Option<Option<Vec<u8>>>>,
     pub session_error: Option<&'static str>,
@@ -2097,12 +2099,18 @@ impl UserConfirmation for StubPlatform {
 				}
 				(self.resource_allocation_error, self.resource_allocation_confirmed)
 			},
-			UserConfirmationReview::ProductSubtree(review) => {
-				self.product_subtree_reviews
-					.lock()
-					.expect("product subtree review list mutex poisoned")
-					.push(review);
-				(None, !self.product_subtree_denied)
+            UserConfirmationReview::PreimageSubmit(review) => {
+                self.preimage_submit_reviews
+                    .lock()
+                    .push(review);
+                (None, !self.preimage_submit_denied)
+            },
+            UserConfirmationReview::ProductSubtree(review) => {
+                self.product_subtree_reviews
+                    .lock()
+                    .expect("product subtree review list mutex poisoned")
+                    .push(review);
+                (None, !self.product_subtree_denied)
 			},
 		};
 		if let Some(reason) = error {

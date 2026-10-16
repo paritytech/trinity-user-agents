@@ -547,6 +547,9 @@ describe("createWasmRawCallbacks", () => {
                 return (
                   review.value.resources[0]?.tag === "StatementStoreAllowance"
                 );
+              case "PreimageSubmit":
+                calls.push(["confirmUserAction:PreimageSubmit", review.value.size]);
+                return review.value.size === 42n;
               default:
                 return false;
             }
@@ -687,6 +690,14 @@ describe("createWasmRawCallbacks", () => {
         }),
       ),
     ).toBe(true);
+    expect(
+      await raw.confirmUserAction?.(
+        UserConfirmationReview.enc({
+          tag: "PreimageSubmit",
+          value: { size: 42n },
+        }),
+      ),
+    ).toBe(true);
 
     await settle();
 
@@ -699,6 +710,7 @@ describe("createWasmRawCallbacks", () => {
       ],
       ["writeCoreStorage", { tag: "AuthSession", value: undefined }, [3, 2, 1]],
       ["clearCoreStorage", { tag: "AuthSession", value: undefined }],
+      ["confirmUserAction:PreimageSubmit", 42n],
     ]);
 
     disposePreimages?.();

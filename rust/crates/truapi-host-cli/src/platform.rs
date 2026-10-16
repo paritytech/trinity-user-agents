@@ -1229,6 +1229,10 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "allocate resources",
             "A product requested host-managed resources.".to_string(),
         ),
+        UserConfirmationReview::PreimageSubmit(review) => (
+            "submit preimage",
+            format!("A product requested submission of a {}-byte preimage.", review.size),
+        ),
         UserConfirmationReview::AccountAccess(review) => (
             "access another product account",
             format!(
@@ -2259,6 +2263,18 @@ mod tests {
 			)])
 		);
 	}
+
+    #[test]
+    fn approval_summaries_are_concise_and_do_not_dump_payloads() {
+        let review =
+            UserConfirmationReview::PreimageSubmit(truapi::platform::PreimageSubmitReview {
+                size: 4_096,
+            });
+        let (action, detail) = approval_summary(&review);
+        assert_eq!(action, "submit preimage");
+        assert_eq!(detail, "A product requested submission of a 4096-byte preimage.");
+        assert!(!detail.contains("["));
+    }
 
 	/// Both products by name, because a signature made with an account the
 	/// caller does not own is the thing the user has to be able to see.

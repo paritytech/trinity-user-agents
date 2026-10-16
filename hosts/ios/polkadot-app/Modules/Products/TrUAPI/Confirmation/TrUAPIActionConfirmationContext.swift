@@ -3,6 +3,7 @@ import Products
 import TrUAPIHost
 
 enum TrUAPIActionConfirmationRequest: Equatable, Sendable {
+    case preimageSubmit(productId: ProductId, size: UInt64)
     case productSubtree(productId: ProductId)
 }
 

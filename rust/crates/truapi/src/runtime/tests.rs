@@ -7188,19 +7188,18 @@ fn preimage_submit_requires_remote_permission_before_backend_call() {
 		other => panic!("expected preimage permission denial, got {other:?}"),
 	}
 	assert!(platform.sent_rpc.lock().expect("rpc list mutex poisoned").is_empty());
+    assert!(platform.preimage_submit_reviews.lock().is_empty());
 }
 
-/// A product that backs up in the background must not ask again once the user
-/// allows `PreimageSubmit` always, or the user either approves a task they did
-/// not start or dismisses it and the backups stop. `AllowOnce` covers a single
-/// upload.
+/// A remote permission grant does not replace approval of each upload's size.
 #[test]
-fn a_preimage_grant_covers_uploads_without_a_per_upload_prompt() {
+fn a_preimage_grant_still_requires_each_upload_review() {
 	use crate::platform::PermissionDecision::{AllowAlways, AllowOnce};
 
 	#[derive(Debug, PartialEq)]
 	struct Outcome {
 		permission_prompts: usize,
+        upload_review_sizes: Vec<u64>,
 		uploads_authorized: usize,
 	}
 
@@ -7239,6 +7238,8 @@ fn a_preimage_grant_covers_uploads_without_a_per_upload_prompt() {
 			}
 			Outcome {
 				permission_prompts: platform.remote_permission_requests.lock().unwrap().len(),
+                upload_review_sizes: platform.preimage_submit_reviews
+                    .lock().iter().map(|review| review.size).collect(),
 				uploads_authorized,
 			}
 		},
@@ -7247,10 +7248,35 @@ fn a_preimage_grant_covers_uploads_without_a_per_upload_prompt() {
 	assert_eq!(
 		outcomes,
 		[
-			Outcome { permission_prompts: 1, uploads_authorized: 3 },
-			Outcome { permission_prompts: 2, uploads_authorized: 2 },
+            Outcome { permission_prompts: 1, upload_review_sizes: vec![3; 3], uploads_authorized: 3 },
+            Outcome { permission_prompts: 2, upload_review_sizes: vec![3; 2], uploads_authorized: 2 },
 		]
 	);
+}
+
+#[test]
+fn rejecting_an_upload_review_stops_before_backend_calls() {
+    let platform = Arc::new(StubPlatform {
+        preimage_submit_denied: true,
+        ..Default::default()
+    });
+    let host = ProductRuntimeHost::new_compat_with_bulletin(platform.clone(), test_spawner());
+    install_pairing_session(&host, session_info());
+    let result = futures::executor::block_on(Preimage::submit(
+        &host,
+        &CallContext::default(),
+        RemotePreimageSubmitRequest::V1(vec![1, 2, 3]),
+    ));
+    assert!(matches!(
+        result,
+        Err(CallError::Domain(RemotePreimageSubmitError::V1(
+            v01::PreimageSubmitError::Unknown { reason },
+        ))) if reason == "User rejected preimage submission"
+    ));
+    let reviews = platform.preimage_submit_reviews.lock();
+    assert_eq!(reviews.len(), 1);
+    assert_eq!(reviews[0].size, 3);
+    assert!(platform.sent_rpc.lock().unwrap().is_empty());
 }
 
 fn broadcast_request() -> RemoteChainTransactionBroadcastRequest {

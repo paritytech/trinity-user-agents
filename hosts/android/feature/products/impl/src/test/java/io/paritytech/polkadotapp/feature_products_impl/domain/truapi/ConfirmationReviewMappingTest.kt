@@ -27,6 +27,7 @@ import uniffi.truapi.VrfTranscriptItem
 import uniffi.truapi.AccountAccessReview
 import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.IdentityDisclosureReview
+import uniffi.truapi.PreimageSubmitReview
 import uniffi.truapi.ProductSubtreeReview
 import uniffi.truapi.ProfileDisclosureReview
 import uniffi.truapi.ResourceAllocationReview
@@ -308,6 +309,15 @@ class ConfirmationReviewMappingTest {
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.IdentityDisclosure
 
         assertEquals("discloser.dot", confirmation.requesterProductId)
+    }
+
+    @Test
+    fun `preimage submit carries its size`() {
+        val review = UserConfirmationReview.PreimageSubmit(PreimageSubmitReview(size = 4096uL))
+
+        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.PreimageSubmit
+
+        assertEquals(4096L, confirmation.sizeBytes)
     }
 
     @Test

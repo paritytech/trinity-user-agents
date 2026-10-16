@@ -3649,30 +3649,39 @@ pub struct ProductSubtreeReview {
 	pub product_id: ProductId,
 }
 
+/// Review shown before a preimage is submitted.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PreimageSubmitReview {
+    /// Size of the preimage in bytes.
+    pub size: u64,
+}
+
 /// Review shown before a user-confirmed core action continues.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum UserConfirmationReview {
-	/// Sign a SCALE payload with a product or legacy account.
-	SignPayload(SignPayloadReview),
-	/// Sign raw bytes with a product or legacy account.
-	SignRaw(SignRawReview),
-	/// Sign a Statement Store proof payload with a product account.
-	StatementStoreProductSign(StatementStoreProductSignReview),
-	/// Create a transaction with a product or legacy account.
-	CreateTransaction(CreateTransactionReview),
-	/// Allow a product to derive a contextual alias for a ring.
-	AccountAlias(AccountAliasReview),
-	/// Allow a product to create a ring-VRF proof for a ring.
-	CreateProof(CreateProofReview),
-	/// Allow a product to learn the user's primary identity.
-	IdentityDisclosure(IdentityDisclosureReview),
-	/// Allocate resources for the requesting product.
-	ResourceAllocation(ResourceAllocationReview),
-	// Index 8 stays unused so a host whose codec is older or newer than the
-	// core cannot decode one review as another.
-	/// Allow a product to access another product account.
+    /// Sign a SCALE payload with a product or legacy account.
+    SignPayload(SignPayloadReview),
+    /// Sign raw bytes with a product or legacy account.
+    SignRaw(SignRawReview),
+    /// Sign a Statement Store proof payload with a product account.
+    StatementStoreProductSign(StatementStoreProductSignReview),
+    /// Create a transaction with a product or legacy account.
+    CreateTransaction(CreateTransactionReview),
+    /// Allow a product to derive a contextual alias for a ring.
+    AccountAlias(AccountAliasReview),
+    /// Allow a product to create a ring-VRF proof for a ring.
+    CreateProof(CreateProofReview),
+    /// Allow a product to learn the user's primary identity.
+    IdentityDisclosure(IdentityDisclosureReview),
+    /// Allocate resources for the requesting product.
+    ResourceAllocation(ResourceAllocationReview),
+    /// Submit a preimage to the host-selected backend.
+    #[codec(index = 8)]
+    PreimageSubmit(PreimageSubmitReview),
+    /// Allow a product to access another product account.
 	#[codec(index = 9)]
 	AccountAccess(AccountAccessReview),
 	/// Sign an RFC-0023 VRF transcript with a product account.
