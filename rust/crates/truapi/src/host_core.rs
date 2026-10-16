@@ -418,7 +418,6 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
 		self.pairing_host.disconnect().await;
-		clear_signed_out_auth_tokens(&self.services).await;
 	}
 
 	/// Log out, drop the auth tokens products kept, and discard the old
@@ -523,7 +522,6 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
 	pub async fn reset_session_state(&self) {
 		self.pairing_host.reset_session_state().await;
-		clear_signed_out_auth_tokens(&self.services).await;
 	}
 
 	/// Start or join the pairing-host login flow for one product.
@@ -1256,7 +1254,6 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
 		self.signing_host.disconnect().await;
-		clear_signed_out_auth_tokens(&self.services).await;
 	}
 
 	/// Revoke one product's grants from the current local activation, and drop
@@ -1465,15 +1462,6 @@ impl SigningHostRuntime {
 				SsoRequestOutcome::Ignored
 			},
 		}
-	}
-}
-
-/// Drop every product's auth tokens once the user has signed out. The session
-/// is already gone, so a failure is only logged: the tokens are keyed to the
-/// account, and the next user cannot read them either way.
-async fn clear_signed_out_auth_tokens(services: &RuntimeServices) {
-	if let Err(error) = services.clear_auth_tokens(None).await {
-		warn!(reason = %error.reason, "auth tokens were not dropped on sign-out");
 	}
 }
 
@@ -2697,6 +2685,7 @@ mod tests {
 		async fn store_auth_token(
 			&self,
 			_product_id: &str,
+			_account: &str,
 			_key: &str,
 			_token: truapi::latest::AuthToken,
 		) -> Result<(), v01::GenericError> {
@@ -2719,7 +2708,11 @@ mod tests {
 			Ok(())
 		}
 
-		async fn auth_token_count(&self, _product_id: &str) -> Result<u32, v01::GenericError> {
+		async fn auth_token_count(
+			&self,
+			_product_id: &str,
+			_account: &str,
+		) -> Result<u32, v01::GenericError> {
 			Ok(0)
 		}
 
@@ -2745,18 +2738,36 @@ mod tests {
 		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
 		let keeper = Arc::new(ClearRecorder::default());
 		assert!(runtime.set_auth_token_platform(keeper.clone()));
+		let clears = || {
+			keeper
+				.clears
+				.lock()
+				.expect("clears mutex poisoned")
+				.drain(..)
+				.collect::<Vec<_>>()
+		};
 
-		futures::executor::block_on(async {
-			runtime.clear_product_state("myapp.dot").await.expect("product state cleared");
-			runtime.disconnect_session().await;
-			runtime.reset_session_state().await;
-			runtime.logout().await.expect("logged out");
-		});
+		futures::executor::block_on(runtime.clear_product_state("myapp.dot"))
+			.expect("product state cleared");
+		assert_eq!(clears(), vec![Some("myapp.dot".to_string())], "clear_product_state");
 
-		assert_eq!(
-			*keeper.clears.lock().expect("clears mutex poisoned"),
-			vec![Some("myapp.dot".to_string()), None, None, None]
-		);
+		futures::executor::block_on(runtime.disconnect_session());
+		assert_eq!(clears(), vec![None], "disconnect_session");
+
+		futures::executor::block_on(runtime.reset_session_state());
+		assert_eq!(clears(), vec![None], "reset_session_state");
+
+		let admin = runtime.product_admin(product_context("myapp.dot").expect("product id"));
+		futures::executor::block_on(admin.disconnect_session());
+		assert_eq!(clears(), vec![None], "HostAdmin::disconnect_session");
+
+		install_session_after_boot(&runtime, &platform, crate::test_support::sso_session_info());
+		futures::executor::block_on(runtime.pairing_host.peer_disconnected_for_test());
+		assert_eq!(clears(), vec![None], "the wallet ending the session");
+
+		// Logout also reports a failed clear, so it clears once more itself.
+		futures::executor::block_on(runtime.logout()).expect("logged out");
+		assert_eq!(clears(), vec![None, None], "logout");
 	}
 
 	#[test]

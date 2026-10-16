@@ -334,16 +334,18 @@ pub trait NativeGameCallbacks: Send + Sync {
 /// without leaves every AuthTokens call answering `Unsupported`.
 ///
 /// The host keeps each token in Keychain or Keystore under the opaque `key`
-/// the core hands it, tagged with `product_id` so it can count and clear one
-/// product's tokens. See [`crate::platform::AuthTokenPlatform`] for the full
-/// contract.
+/// the core hands it, tagged with `product_id` and the opaque `account` so it
+/// can count one account's tokens for a product and clear one product's. See
+/// [`crate::platform::AuthTokenPlatform`] for the full contract.
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeAuthTokenCallbacks: Send + Sync {
-	/// Keep `token` under `key` for `product_id`, replacing any kept under it.
+	/// Keep `token` under `key` for `product_id` and `account`, replacing any
+	/// kept under it.
 	async fn store_auth_token(
 		&self,
 		product_id: String,
+		account: String,
 		key: String,
 		token: v01::AuthToken,
 	) -> Result<(), HostRejection>;
@@ -359,8 +361,12 @@ pub trait NativeAuthTokenCallbacks: Send + Sync {
 	async fn remove_auth_token(&self, product_id: String, key: String)
 	-> Result<(), HostRejection>;
 
-	/// How many tokens are kept for `product_id`.
-	async fn auth_token_count(&self, product_id: String) -> Result<u32, HostRejection>;
+	/// How many tokens are kept for `product_id` under `account`.
+	async fn auth_token_count(
+		&self,
+		product_id: String,
+		account: String,
+	) -> Result<u32, HostRejection>;
 
 	/// Drop every token kept for `product_id`, or every token when it is
 	/// `None`.

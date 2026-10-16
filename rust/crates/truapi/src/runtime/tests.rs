@@ -10240,11 +10240,20 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 }
 
 /// A token keeper holding tokens by the key the core hands it, as a host's
-/// secure storage does, and counting every call it gets.
+/// secure storage does, and counting every call it gets. Its count yields
+/// once before answering, as a real keeper's storage read would, so two
+/// stores can interleave between a count and a write.
 #[derive(Default)]
 struct MemoryAuthTokens {
-	tokens: Mutex<std::collections::HashMap<String, (String, v01::AuthToken)>>,
+	tokens: Mutex<std::collections::HashMap<String, KeptAuthToken>>,
 	calls: Mutex<usize>,
+}
+
+/// One token the test keeper holds, with the product and account it is for.
+struct KeptAuthToken {
+	product_id: String,
+	account: String,
+	token: v01::AuthToken,
 }
 
 impl MemoryAuthTokens {
@@ -10258,9 +10267,24 @@ impl MemoryAuthTokens {
 
 	fn tokens(
 		&self,
-	) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, (String, v01::AuthToken)>> {
+	) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, KeptAuthToken>> {
 		self.tokens.lock().expect("tokens mutex poisoned")
 	}
+}
+
+/// Pending once, then ready, so whatever else is being polled gets a turn.
+async fn yield_once() {
+	let mut yielded = false;
+	futures::future::poll_fn(|cx| {
+		if yielded {
+			core::task::Poll::Ready(())
+		} else {
+			yielded = true;
+			cx.waker().wake_by_ref();
+			core::task::Poll::Pending
+		}
+	})
+	.await;
 }
 
 #[truapi::async_trait]
@@ -10268,11 +10292,17 @@ impl crate::platform::AuthTokenPlatform for MemoryAuthTokens {
 	async fn store_auth_token(
 		&self,
 		product_id: &str,
+		account: &str,
 		key: &str,
 		token: v01::AuthToken,
 	) -> Result<(), v01::GenericError> {
 		self.record_call();
-		self.tokens().insert(key.to_string(), (product_id.to_string(), token));
+		let kept = KeptAuthToken {
+			product_id: product_id.to_string(),
+			account: account.to_string(),
+			token,
+		};
+		self.tokens().insert(key.to_string(), kept);
 		Ok(())
 	}
 
@@ -10282,7 +10312,7 @@ impl crate::platform::AuthTokenPlatform for MemoryAuthTokens {
 		key: &str,
 	) -> Result<Option<v01::AuthToken>, v01::GenericError> {
 		self.record_call();
-		Ok(self.tokens().get(key).map(|(_, token)| token.clone()))
+		Ok(self.tokens().get(key).map(|kept| kept.token.clone()))
 	}
 
 	async fn remove_auth_token(
@@ -10295,16 +10325,25 @@ impl crate::platform::AuthTokenPlatform for MemoryAuthTokens {
 		Ok(())
 	}
 
-	async fn auth_token_count(&self, product_id: &str) -> Result<u32, v01::GenericError> {
+	async fn auth_token_count(
+		&self,
+		product_id: &str,
+		account: &str,
+	) -> Result<u32, v01::GenericError> {
 		self.record_call();
-		let count = self.tokens().values().filter(|(owner, _)| owner == product_id).count();
+		let count = self
+			.tokens()
+			.values()
+			.filter(|kept| kept.product_id == product_id && kept.account == account)
+			.count();
+		yield_once().await;
 		Ok(count as u32)
 	}
 
 	async fn clear_auth_tokens(&self, product_id: Option<&str>) -> Result<(), v01::GenericError> {
 		self.record_call();
 		match product_id {
-			Some(product_id) => self.tokens().retain(|_, (owner, _)| owner != product_id),
+			Some(product_id) => self.tokens().retain(|_, kept| kept.product_id != product_id),
 			None => self.tokens().clear(),
 		}
 		Ok(())
@@ -10440,6 +10479,77 @@ fn a_product_keeps_tokens_for_a_bounded_number_of_services() {
 	);
 }
 
+// The cap is per account: tokens another account left for the same product,
+// such as one whose clear failed on sign-out, must not use up the next
+// account's services.
+#[test]
+fn the_service_cap_counts_only_the_signed_in_account() {
+	let services = payment_services();
+	assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
+	let alice = payment_host(&services, "wallet.dot", true);
+	let (host_config, product) = runtime_config("wallet.dot");
+	let bob = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		PairingHost::new(services.clone(), host_config),
+		product,
+	);
+	install_pairing_session(&bob, SessionInfo { public_key: [0xb0; 32], ..session_info() });
+	let max = crate::host_logic::auth_tokens::MAX_SERVICES_PER_PRODUCT;
+	for index in 0..max {
+		store_auth_token(&alice, &format!("service-{index}"), onramp_token())
+			.expect("a token within the limit is kept");
+	}
+
+	assert_eq!(
+		store_auth_token(&bob, "onramp", onramp_token()),
+		Ok(truapi::versioned::auth_tokens::HostAuthTokensStoreResponse::V1)
+	);
+}
+
+// Two stores for new services racing at the last free slot must not both get
+// in: the count check and the write happen under one lock, so the second
+// sees the first's token.
+#[test]
+fn concurrent_stores_cannot_pass_the_service_cap() {
+	let services = payment_services();
+	let keeper = Arc::new(MemoryAuthTokens::default());
+	assert!(services.install_auth_token_platform(keeper.clone()));
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let max = crate::host_logic::auth_tokens::MAX_SERVICES_PER_PRODUCT;
+	for index in 0..max - 1 {
+		store_auth_token(&wallet, &format!("service-{index}"), onramp_token())
+			.expect("a token within the limit is kept");
+	}
+
+	let cx = CallContext::default();
+	let store = |service: &'static str| {
+		truapi::api::AuthTokens::store(
+			&wallet,
+			&cx,
+			truapi::versioned::auth_tokens::HostAuthTokensStoreRequest::V1(
+				v01::HostAuthTokensStoreRequest {
+					service: service.to_string(),
+					token: onramp_token(),
+				},
+			),
+		)
+	};
+	let (first, second) =
+		futures::executor::block_on(futures::future::join(store("racer-one"), store("racer-two")));
+
+	assert_eq!(
+		(first.is_ok(), second, keeper.tokens().len() as u32),
+		(
+			true,
+			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensStoreError::V1(
+				v01::HostAuthTokensStoreError::TooManyServices { max }
+			))),
+			max,
+		)
+	);
+}
+
 // The worker signs in again when it finds no token, so a removed token has to
 // read as absent, and removing it twice is not an error.
 #[test]
@@ -10459,9 +10569,9 @@ fn a_removed_token_reads_as_absent() {
 	);
 }
 
-// The host builds storage keys from the service id and keeps tokens in secure
-// storage meant for small secrets, so the core refuses a bad id or an
-// oversized token before the host sees either.
+// The service id goes into the storage key the core derives, and the host
+// keeps tokens in secure storage meant for small secrets, so the core
+// refuses a bad id or an oversized token before the host sees either.
 #[test]
 fn a_bad_service_or_oversized_token_is_refused_before_the_host_sees_it() {
 	let services = payment_services();

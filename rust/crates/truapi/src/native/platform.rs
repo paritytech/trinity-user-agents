@@ -694,11 +694,12 @@ impl crate::platform::AuthTokenPlatform for AuthTokenCallbackPlatform {
 	async fn store_auth_token(
 		&self,
 		product_id: &str,
+		account: &str,
 		key: &str,
 		token: v01::AuthToken,
 	) -> Result<(), v01::GenericError> {
 		self.tokens
-			.store_auth_token(product_id.to_string(), key.to_string(), token)
+			.store_auth_token(product_id.to_string(), account.to_string(), key.to_string(), token)
 			.await
 			.map_err(v01::GenericError::from)
 	}
@@ -725,9 +726,13 @@ impl crate::platform::AuthTokenPlatform for AuthTokenCallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
-	async fn auth_token_count(&self, product_id: &str) -> Result<u32, v01::GenericError> {
+	async fn auth_token_count(
+		&self,
+		product_id: &str,
+		account: &str,
+	) -> Result<u32, v01::GenericError> {
 		self.tokens
-			.auth_token_count(product_id.to_string())
+			.auth_token_count(product_id.to_string(), account.to_string())
 			.await
 			.map_err(v01::GenericError::from)
 	}

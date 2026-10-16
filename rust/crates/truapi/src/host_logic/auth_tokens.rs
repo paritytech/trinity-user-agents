@@ -12,7 +12,7 @@ pub const MAX_SERVICE_CHARS: usize = 64;
 /// Keystore entries are meant for credentials, not documents.
 pub const MAX_TOKEN_BYTES: u32 = 8192;
 
-/// Most services one product may keep a token for.
+/// Most services one product may keep a token for, per account.
 pub const MAX_SERVICES_PER_PRODUCT: u32 = 16;
 
 /// The key the host keeps `product_id`'s token for `service` under, for the
@@ -23,6 +23,13 @@ pub fn storage_key(owner: &[u8; 32], product_id: &str, service: &str) -> String 
 	hex::encode(sp_crypto_hashing::blake2_256(
 		&(b"truapi/auth-token", owner, product_id, service).encode(),
 	))
+}
+
+/// The opaque tag of the account `owner` the host files a token under, so it
+/// can count one account's tokens without learning the account. It is 64
+/// lowercase hex characters.
+pub fn account_tag(owner: &[u8; 32]) -> String {
+	hex::encode(sp_crypto_hashing::blake2_256(&(b"truapi/auth-token-account", owner).encode()))
 }
 
 /// Whether `service` is 1 to [`MAX_SERVICE_CHARS`] characters of `a-z`,
@@ -129,6 +136,19 @@ mod tests {
 		assert!(keys.iter().all(|key| {
 			key.len() == 64 && key.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 		}));
+	}
+
+	// The host counts by this tag, so it has to tell accounts apart, and it
+	// must not be the storage key of any token, which would let a host link a
+	// key to its account.
+	#[test]
+	fn account_tags_separate_accounts_and_differ_from_storage_keys() {
+		let alice = [1; 32];
+		let bob = [2; 32];
+
+		assert_ne!(account_tag(&alice), account_tag(&bob));
+		assert_ne!(account_tag(&alice), storage_key(&alice, "wallet.dot", "onramp"));
+		assert_eq!(account_tag(&alice).len(), 64);
 	}
 
 	#[test]

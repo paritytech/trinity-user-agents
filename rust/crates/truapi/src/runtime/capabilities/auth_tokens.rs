@@ -20,24 +20,33 @@ use truapi::{
 use super::from_latest_error;
 use crate::{
 	host_logic::auth_tokens::{
-		MAX_SERVICES_PER_PRODUCT, check_store, is_valid_service, storage_key,
+		MAX_SERVICES_PER_PRODUCT, account_tag, check_store, is_valid_service, storage_key,
 	},
 	platform::AuthTokenPlatform,
 	runtime::ProductRuntimeHost,
 };
 
 impl ProductRuntimeHost {
-	/// The host's token keeper and the key `service` is kept under, for a
+	/// The host's token keeper, where `service`'s token is kept, for a
 	/// product with a session. Tokens belong to the signed-in account, so
 	/// without a session there is nobody to keep them for.
-	fn auth_token_slot<E>(
-		&self,
-		service: &str,
-	) -> Result<(Arc<dyn AuthTokenPlatform>, String), CallError<E>> {
+	fn auth_token_slot<E>(&self, service: &str) -> Result<AuthTokenSlot, CallError<E>> {
 		let platform = self.services.auth_token_platform().ok_or(CallError::Unsupported)?;
 		let session = self.authority.current_session().ok_or(CallError::Denied)?;
-		Ok((platform, storage_key(&session.public_key, &self.product.product_id, service)))
+		Ok(AuthTokenSlot {
+			platform,
+			account: account_tag(&session.public_key),
+			key: storage_key(&session.public_key, &self.product.product_id, service),
+		})
 	}
+}
+
+/// The host's token keeper with the signed-in account's tag and the key one
+/// service's token is kept under.
+struct AuthTokenSlot {
+	platform: Arc<dyn AuthTokenPlatform>,
+	account: String,
+	key: String,
 }
 
 /// The host's reason for a failure, as the product's catch-all for a get or
@@ -53,7 +62,9 @@ fn store_failure(error: latest::GenericError) -> CallError<latest::HostAuthToken
 #[truapi::async_trait]
 impl AuthTokens for ProductRuntimeHost {
 	/// A service the product has no token for yet only gets one while the
-	/// product keeps fewer than [`MAX_SERVICES_PER_PRODUCT`].
+	/// product keeps fewer than [`MAX_SERVICES_PER_PRODUCT`] for the signed-in
+	/// account. The count check and the write hold one lock, so concurrent
+	/// stores cannot pass the cap together.
 	#[instrument(skip_all, fields(runtime.method = "auth_tokens.store"))]
 	async fn store(
 		&self,
@@ -63,19 +74,23 @@ impl AuthTokens for ProductRuntimeHost {
 		let version = request.version();
 		let latest::HostAuthTokensStoreRequest { service, token } = request.into_latest();
 		let result = async {
-			let (platform, key) = self.auth_token_slot(&service)?;
+			let AuthTokenSlot { platform, account, key } = self.auth_token_slot(&service)?;
 			check_store(&service, &token).map_err(CallError::Domain)?;
 			let product_id = self.product.product_id.as_str();
+			let _writes = self.services.auth_token_writes().await;
 			let replacing = platform.auth_token(product_id, &key).await.map_err(store_failure)?;
 			if replacing.is_none() &&
-				platform.auth_token_count(product_id).await.map_err(store_failure)? >=
+				platform.auth_token_count(product_id, &account).await.map_err(store_failure)? >=
 					MAX_SERVICES_PER_PRODUCT
 			{
 				return Err(CallError::Domain(latest::HostAuthTokensStoreError::TooManyServices {
 					max: MAX_SERVICES_PER_PRODUCT,
 				}));
 			}
-			platform.store_auth_token(product_id, &key, token).await.map_err(store_failure)
+			platform
+				.store_auth_token(product_id, &account, &key, token)
+				.await
+				.map_err(store_failure)
 		}
 		.await;
 		result
@@ -92,7 +107,7 @@ impl AuthTokens for ProductRuntimeHost {
 		let version = request.version();
 		let latest::HostAuthTokensGetRequest { service } = request.into_latest();
 		let result = async {
-			let (platform, key) = self.auth_token_slot(&service)?;
+			let AuthTokenSlot { platform, key, .. } = self.auth_token_slot(&service)?;
 			if !is_valid_service(&service) {
 				return Err(CallError::Domain(latest::HostAuthTokensLookupError::InvalidService));
 			}
@@ -117,7 +132,7 @@ impl AuthTokens for ProductRuntimeHost {
 		let version = request.version();
 		let latest::HostAuthTokensRemoveRequest { service } = request.into_latest();
 		let result = async {
-			let (platform, key) = self.auth_token_slot(&service)?;
+			let AuthTokenSlot { platform, key, .. } = self.auth_token_slot(&service)?;
 			if !is_valid_service(&service) {
 				return Err(CallError::Domain(latest::HostAuthTokensLookupError::InvalidService));
 			}

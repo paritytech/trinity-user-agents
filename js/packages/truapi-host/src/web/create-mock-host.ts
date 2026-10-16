@@ -850,6 +850,10 @@ function hex(bytes: Uint8Array): string {
  * Build an in-memory mock host. The returned `callbacks` implement every
  * `RequiredHostCallbacks` capability; the accessor methods expose what the core
  * did.
+ *
+ * The test host keeps no auth tokens: the browser host callbacks carry no
+ * token keeper, so every `authTokens` call a product makes answers
+ * `Unsupported`, as it does in the browser host.
  */
 export function createMockHost(config: MockHostConfig = {}): MockHost {
   const {
