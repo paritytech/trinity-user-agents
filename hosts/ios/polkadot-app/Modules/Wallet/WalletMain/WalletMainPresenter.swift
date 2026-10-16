@@ -26,7 +26,7 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
     }
 
     func showPocketCard(_ card: PocketCardViewModel) {
-        wireframe.showPocketCard(card)
+        wireframe.showPocketCard(card, from: view)
     }
 
     /// Confirmed first: a long press is easy to make by accident, and the card

@@ -540,9 +540,11 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   `ConvertingToCash`; out, `TransactionInitiated`, then after release
   `ConvertingTo { asset }` on crypto or `PreparingPayout`, and `RetryingPayout`
   while the provider's latest word is that it retries the payout), `Retrying`, and
-  `TakingLonger` once the provider has been silent for longer than the
-  chosen quote's `eta_secs` (`longer_at_ms` says when, so the host reads the
-  progress again then); ended, `ToppedUp`, `Sent`, `Refunded`,
+  `TakingLonger` once the provider holds the user's payment (inbound, once
+  money moved; outbound, once released) and has been silent for longer than
+  the chosen quote's `eta_secs` (`longer_at_ms` says when, so the host reads
+  the progress again then; `None` while the session waits on the user's
+  payment); ended, `ToppedUp`, `Sent`, `Refunded`,
   `PayoutFailed { refunded }` or `Failed { reason }`. An inbound payment
   the provider returned ends as `Failed { Refunded }`, one the user's bank or
   card issuer refused as `Failed { Declined }`.
