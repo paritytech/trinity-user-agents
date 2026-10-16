@@ -65,7 +65,7 @@ struct WalletMainPocketTests {
         let screen = CollectiblesScreen(tld: StubDotNsTldProvider(tld: network))
 
         screen.presenter.setup()
-        try await settle()
+        try await screen.view.waitForCollectibles()
         screen.presenter.showCollectibles()
 
         #expect(screen.view.showsCollectibles)
@@ -81,7 +81,6 @@ struct WalletMainPocketTests {
         let screen = CollectiblesScreen(tld: tld, collectiblesEnabled: false)
 
         screen.presenter.setup()
-        try await settle()
 
         #expect(!screen.view.showsCollectibles)
         #expect(tld.reads == 0)
@@ -94,10 +93,7 @@ struct WalletMainPocketTests {
         let screen = CollectiblesScreen(tld: LateTld())
 
         screen.presenter.setup()
-        let deadline = ContinuousClock.now + .seconds(10)
-        while !screen.view.showsCollectibles, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(100))
-        }
+        try await screen.view.waitForCollectibles(within: .seconds(10))
 
         #expect(screen.view.showsCollectibles)
     }
@@ -189,9 +185,32 @@ private struct CollectiblesScreen {
 
 private final class RecordingWalletView: UIViewController, WalletMainViewProtocol {
     private(set) var showsCollectibles = false
+    private let availability: AsyncStream<Bool>
+    private let continuation: AsyncStream<Bool>.Continuation
+
+    init() {
+        (availability, continuation) = AsyncStream<Bool>.makeStream()
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
 
     func didReceive(isCollectiblesAvailable: Bool) {
         showsCollectibles = isCollectiblesAvailable
+        continuation.yield(isCollectiblesAvailable)
+    }
+
+    /// Returns once the collectibles card has been offered, failing rather than hanging if it never is.
+    func waitForCollectibles(within limit: Duration = .seconds(5)) async throws {
+        try await withTimeout(limit) { [availability] in
+            for await isAvailable in availability where isAvailable {
+                return
+            }
+            throw CancellationError()
+        }
     }
 
     func didReceive(pocketCards _: [PocketCardViewModel]) {}
