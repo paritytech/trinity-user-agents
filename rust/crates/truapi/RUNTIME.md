@@ -423,7 +423,7 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   overlay is installed.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
-  `funding_session`, `funding_progress`, `funding_sessions`, `funding_session_pack`,
+  `funding_session`, `funding_progress`, `funding_sessions`, `funding_history`,
   `set_funding_providers`,
   `funding_candidates`, `funding_countries`, `funding_amount_limits`,
   `detected_funding_country`, `get_funding_quote`, `stop_funding_quotes`,
