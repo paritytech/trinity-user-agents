@@ -412,14 +412,17 @@ pub fn country_support(
 				countries.len() - 1
 			},
 		};
+		// A refusal only records the country; one provider serving it is
+		// enough to make it supported, at the lowest minimum any declares.
+		if !supported {
+			return;
+		}
 		let support = &mut countries[index].support;
-		*support = match (support.clone(), supported) {
-			(FundingCountrySupport::Supported { min: known }, true) => {
-				FundingCountrySupport::Supported { min: lowest(known, min) }
-			},
-			(FundingCountrySupport::Unsupported, true) => FundingCountrySupport::Supported { min },
-			(kept, false) => kept,
+		let min = match support {
+			FundingCountrySupport::Supported { min: known } => lowest(*known, min),
+			FundingCountrySupport::Unsupported => min,
 		};
+		*support = FundingCountrySupport::Supported { min };
 	};
 	for (provider_id, manifest) in providers {
 		let routes = manifest

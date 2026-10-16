@@ -177,9 +177,11 @@ impl FundingQuotes {
 impl RuntimeServices {
 	/// Ask every funding provider to price `ask` for session `intent`. Each
 	/// provider's row is first `Pending`, then `Quoted` or `Unavailable`. The
-	/// ask's direction is the session's, and an ask naming no country takes
-	/// the one the host detected. Empty for a session the core does not know
-	/// or that ended.
+	/// stream ends once every provider has answered or run out of time, and
+	/// never errors. Dropping it withdraws the asks still open and lets the
+	/// providers' workers go. The ask's direction is the session's, and an
+	/// ask naming no country takes the one the host detected. Empty for a
+	/// session the core does not know or that ended.
 	pub fn get_funding_quote(
 		self: &Arc<Self>,
 		intent: &str,
@@ -267,9 +269,12 @@ impl RuntimeServices {
 
 	/// [`Self::get_funding_quote`] as the host's list, under the returned
 	/// request id: the rows so far with the best quote marked, again after
-	/// each answer, and a new round of asks every minute. Lists stop, mid
-	/// round too, once the session is handed to a provider or ends, or a
-	/// newer request or [`FundingQuotes::stop_watching`] replaces this one.
+	/// each answer, and a new round of asks every minute. Each list is
+	/// complete and replaces the one before. Lists stop, mid round too, once
+	/// the session is handed to a provider or ends, or a newer request or
+	/// [`FundingQuotes::stop_watching`] replaces this one. Nothing is sent
+	/// as an error: a provider that fails or runs out of time shows as
+	/// `Unavailable` in its row.
 	pub fn watch_funding_quotes(
 		self: &Arc<Self>,
 		intent: &str,
