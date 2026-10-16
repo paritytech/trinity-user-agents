@@ -88,10 +88,52 @@ extension FundingRecord {
     }
 }
 
+extension FundingRecord {
+    /// The record for a session the core recorded, from its summary. The
+    /// summary keeps no rail, provider or payment details, so those stay empty.
+    init?(summary: FundingSessionSummary) {
+        guard let settled = Settled(stage: summary.stage) else { return nil }
+
+        intent = summary.intent
+        direction = summary.direction
+        rail = nil
+        asset = nil
+        providerId = nil
+        requestedAmount = summary.amount
+        settledAmount = settled.amount
+        paidAmount = nil
+        paidAsset = nil
+        paidDecimals = nil
+        paidNetwork = nil
+        outcome = settled.outcome
+        payout = nil
+        refundedAmount = nil
+        transactionId = nil
+        reference = nil
+        openedAt = Date(milliseconds: summary.openedAtMs)
+        settledAt = Date(milliseconds: settled.atMs)
+    }
+}
+
 private struct Settled {
     let outcome: FundingRecord.Outcome
     let amount: U128?
     let atMs: UInt64
+}
+
+private extension Settled {
+    init?(stage: FundingStage) {
+        switch stage {
+        case .open:
+            return nil
+        case let .delivered(credited, settledAtMs):
+            self.init(outcome: .delivered, amount: credited, atMs: settledAtMs)
+        case let .released(debited, settledAtMs):
+            self.init(outcome: .released, amount: debited, atMs: settledAtMs)
+        case let .failed(reason, settledAtMs):
+            self.init(outcome: reason == .refunded ? .refunded : .failed(reason), amount: nil, atMs: settledAtMs)
+        }
+    }
 }
 
 private extension FundingDeposit {

@@ -20,6 +20,7 @@ final class FundingActivityCenter {
 
     private var records: [String: FundingRecord] = [:]
     private let store: FundingHistoryStoring
+    private let rebuilder: FundingHistoryRebuilder
     private var refreshTask: Task<Void, Never>?
     /// Reads the sessions again when one turns to taking longer.
     private var longerTask: Task<Void, Never>?
@@ -27,6 +28,7 @@ final class FundingActivityCenter {
 
     init(store: FundingHistoryStoring) {
         self.store = store
+        rebuilder = FundingHistoryRebuilder(store: store)
     }
 
     /// The runtime is built off the main thread, so it and its overlay are
@@ -100,6 +102,7 @@ private extension FundingActivityCenter {
             .filter { !Self.isInFlight($0.session, progress: $0.progress) }
             .compactMap { FundingRecord(session: $0.session, progress: $0.progress) }
         await settle(ended, runtime: runtime)
+        await rebuilder.rebuildOnce(reading: runtime.fundingHistory)
         await loadStored(coreSessions: ended)
     }
 

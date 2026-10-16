@@ -7,6 +7,7 @@ protocol FundingRuntime: AnyObject, Sendable {
     func fundingSession(intent: String) -> FundingSession?
     func fundingProgress(intent: String) -> FundingProgress?
     func fundingSessions() -> [FundingSession]
+    func fundingHistory() -> [FundingSessionSummary]
     func fundingInProgress() async throws -> Bool
     func fundingCandidates(intent: String) -> [FundingCandidate]
     @discardableResult
