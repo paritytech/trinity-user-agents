@@ -67,6 +67,14 @@ use host_calls::{Answers, HostCommand, worker_ended};
 /// [`WasmWorker::with_fuel_per_entry`] changes it.
 pub const DEFAULT_FUEL_PER_ENTRY: u64 = 20_000_000_000;
 
+/// How the engine compiles a module. A product worker is large (several MB,
+/// most of it SQLite and crypto that a start does not run), and lazy
+/// compilation compiles and validates a function only before its first call.
+/// Thus a worker starts without a compilation of the whole module. A function
+/// that is not valid traps at its first call, and the trap ends the worker as
+/// any other trap does.
+const COMPILATION_MODE: wasmi::CompilationMode = wasmi::CompilationMode::Lazy;
+
 /// Default limit of the linear memory of a worker: 256 MiB. The engine
 /// gets memory only when the worker grows it, so a high limit costs nothing.
 /// [`WasmWorker::with_memory_limit`] changes it.
@@ -379,6 +387,12 @@ struct GuestState {
 	/// Payload of the event being delivered, until the guest reads it.
 	event_payload: Vec<u8>,
 	finished: Option<Result<(), String>>,
+	/// The fuel that the entries before the current one used.
+	fuel_used: u64,
+	/// The fuel of each entry.
+	fuel_per_entry: u64,
+	/// Put the fuel used so far before each log line of the guest.
+	log_fuel: bool,
 }
 
 struct Exports {
@@ -454,8 +468,16 @@ impl WasmWorker {
 	) -> Result<Self, WasmWorkerError> {
 		let mut config = Config::default();
 		config.consume_fuel(true);
+		config.compilation_mode(COMPILATION_MODE);
 		let engine = Engine::new(&config);
+		let compiling = std::time::Instant::now();
 		let module = Module::new(&engine, wasm).map_err(invalid_module)?;
+		tracing::debug!(
+			target: "truapi::wasm_worker",
+			bytes = wasm.len(),
+			millis = compiling.elapsed().as_millis() as u64,
+			"wasm module compiled"
+		);
 		let linker = link(&engine, &module, &env.methods)?;
 
 		let state = GuestState {
@@ -467,6 +489,9 @@ impl WasmWorker {
 			commands: Vec::new(),
 			event_payload: Vec::new(),
 			finished: None,
+			fuel_used: 0,
+			fuel_per_entry: DEFAULT_FUEL_PER_ENTRY,
+			log_fuel: false,
 		};
 		let mut store = Store::new(&engine, state);
 		store.limiter(|state| &mut state.limits);
@@ -553,6 +578,16 @@ impl WasmWorker {
 	/// [`DEFAULT_FUEL_PER_ENTRY`]. An entry that uses all of it traps.
 	pub fn with_fuel_per_entry(mut self, fuel: u64) -> Self {
 		self.fuel_per_entry = fuel;
+		self.store.data_mut().fuel_per_entry = fuel;
+		self
+	}
+
+	/// With `on`, each log line of the guest starts with `fuel=<n> `, where
+	/// `<n>` is the fuel that the worker used since it started. The fuel
+	/// counts the executed instructions, so it measures the work of the
+	/// guest independently of the load of the machine.
+	pub fn with_fuel_in_log(mut self, on: bool) -> Self {
+		self.store.data_mut().log_fuel = on;
 		self
 	}
 
@@ -578,7 +613,9 @@ impl WasmWorker {
 			return Err(WasmWorkerError::Stopped);
 		}
 		self.store.set_fuel(self.fuel_per_entry)?;
-		self.exports.start.call(&mut self.store, ())?;
+		let started = self.exports.start.call(&mut self.store, ());
+		self.count_fuel();
+		started?;
 		loop {
 			self.apply_commands();
 			if let Some(outcome) = self.store.data_mut().finished.take() {
@@ -763,8 +800,16 @@ impl WasmWorker {
 		self.store.data_mut().event_payload = payload;
 		self.store.set_fuel(self.fuel_per_entry)?;
 		let entered = entry(&mut self.store);
+		self.count_fuel();
 		self.store.data_mut().event_payload.clear();
 		Ok(entered?)
+	}
+
+	/// Add the fuel of the entry that just ended to the fuel used.
+	fn count_fuel(&mut self) {
+		let left = self.store.get_fuel().unwrap_or(0);
+		let state = self.store.data_mut();
+		state.fuel_used = state.fuel_used.saturating_add(state.fuel_per_entry.saturating_sub(left));
 	}
 }
 
@@ -946,7 +991,15 @@ fn read_event(mut caller: Caller<'_, GuestState>, pointer: u32) -> Result<(), wa
 
 fn log(caller: Caller<'_, GuestState>, pointer: u32, length: u32) -> Result<(), wasmi::Error> {
 	let line = read_guest_text(&caller, pointer, length)?;
-	(caller.data().log)(&line);
+	let state = caller.data();
+	if state.log_fuel {
+		let used = state
+			.fuel_used
+			.saturating_add(state.fuel_per_entry.saturating_sub(caller.get_fuel()?));
+		(state.log)(&format!("fuel={used} {line}"));
+	} else {
+		(state.log)(&line);
+	}
 	Ok(())
 }
 

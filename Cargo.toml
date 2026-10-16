@@ -131,6 +131,18 @@ panic = "abort"
 strip = "symbols"
 debug = false
 
+# The wasm interpreter runs every instruction of a product worker. Built for
+# size, it runs the worker slower; built for speed, it adds little to the size
+# of the host.
+[profile.release.package.wasmi]
+opt-level = 3
+[profile.release.package.wasmi_core]
+opt-level = 3
+[profile.release.package.wasmi_ir]
+opt-level = 3
+[profile.release.package.wasmi_collections]
+opt-level = 3
+
 # UniFFI binding generation scans the host cdylib's exported metadata symbols.
 # `release` strips them (`strip = "symbols"`), so uniffi-bindgen finds nothing
 # and emits no bindings. This profile inherits release but keeps symbols, and is
