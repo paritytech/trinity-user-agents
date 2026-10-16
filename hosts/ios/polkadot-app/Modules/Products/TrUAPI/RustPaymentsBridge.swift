@@ -45,6 +45,7 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
             notify: { [target] key, status in
                 target.runtime?.notifyTopUpStatus(productId: key.productId, id: key.id, status: status)
             },
+            pending: .detecting,
             logger: logger
         )
         paymentStatuses = EngineStatusFollowers(
@@ -57,6 +58,7 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
             notify: { [target] key, status in
                 target.runtime?.notifyPaymentStatus(productId: key.productId, id: key.id, status: status)
             },
+            pending: .processing,
             logger: logger
         )
     }
@@ -232,8 +234,9 @@ struct EngineStatusKey: Hashable, Sendable {
 /// Limits of ``EngineStatusFollowers``, which as a generic type cannot hold them.
 enum EngineStatusFollowing {
     /// How long a status read waits for the engine's first answer on an id nobody follows yet. The
-    /// read is synchronous on the core's thread; the engines answer from their stores.
-    static let firstStatusTimeout: TimeInterval = 5
+    /// read is synchronous on the core's thread, so it waits briefly and then answers the pending
+    /// status, pushing the real one when the engine sends it.
+    static let firstStatusTimeout: TimeInterval = 1
     /// How many ids' final statuses are kept.
     static let finalCapacity = 512
 }
@@ -241,6 +244,9 @@ enum EngineStatusFollowing {
 /// Follows an engine's status streams, at most one per id, remembering each id's latest status so
 /// the core's synchronous "current status" read can be answered. A final status is kept, for the
 /// most recent ``EngineStatusFollowing/finalCapacity`` ids, so reading it again answers at once.
+/// A read that finds no status yet waits at most the timeout, then answers `pending`; the engine's
+/// statuses are pushed as they arrive. When the engine then reports the id unknown, the entry is
+/// dropped, so the core's next read answers `nil`.
 final class EngineStatusFollowers<Status>: @unchecked Sendable {
     /// A stream of statuses, each with whether it is final.
     typealias Statuses = (EngineStatusKey) async throws -> AnyAsyncSequence<(Status, Bool)>
@@ -256,8 +262,10 @@ final class EngineStatusFollowers<Status>: @unchecked Sendable {
     private let statuses: Statuses
     private let isNotFound: (Error) -> Bool
     private let notify: (EngineStatusKey, Status) -> Void
+    private let pending: Status
     private let logger: LoggerProtocol
     private let timeout: TimeInterval
+    private let finalCapacity: Int
 
     private let condition = NSCondition()
     private var entries: [EngineStatusKey: Entry] = [:]
@@ -267,14 +275,18 @@ final class EngineStatusFollowers<Status>: @unchecked Sendable {
         statuses: @escaping Statuses,
         isNotFound: @escaping (Error) -> Bool,
         notify: @escaping (EngineStatusKey, Status) -> Void,
+        pending: Status,
         logger: LoggerProtocol,
-        timeout: TimeInterval = EngineStatusFollowing.firstStatusTimeout
+        timeout: TimeInterval = EngineStatusFollowing.firstStatusTimeout,
+        finalCapacity: Int = EngineStatusFollowing.finalCapacity
     ) {
         self.statuses = statuses
         self.isNotFound = isNotFound
         self.notify = notify
+        self.pending = pending
         self.logger = logger
         self.timeout = timeout
+        self.finalCapacity = finalCapacity
     }
 
     /// Start following `key` unless it already is.
@@ -282,10 +294,10 @@ final class EngineStatusFollowers<Status>: @unchecked Sendable {
         _ = entry(for: key)
     }
 
-    /// The latest status of `key`, following it when nobody does and waiting for the engine's first
-    /// answer if none arrived yet. `nil` when the engine holds no such id. An engine that fails, or
-    /// does not answer in time, is reported as the status being unavailable; the reason is logged,
-    /// never handed to the product.
+    /// The latest status of `key`, following it when nobody does. With no status yet it waits at most
+    /// the timeout for the engine's first answer, then answers `pending`. `nil` when the engine holds
+    /// no such id. An engine that fails is reported as the status being unavailable; the reason is
+    /// logged, never handed to the product.
     func current(_ key: EngineStatusKey) throws -> Status? {
         let entry = entry(for: key)
 
@@ -294,15 +306,19 @@ final class EngineStatusFollowers<Status>: @unchecked Sendable {
 
         let deadline = Date(timeIntervalSinceNow: timeout)
         while !entry.settled {
-            guard condition.wait(until: deadline) else {
-                logger.error("[truapi] no status within \(timeout)s")
-                throw HostRejection.Rejected(reason: "status is unavailable")
-            }
+            guard condition.wait(until: deadline) else { return pending }
         }
 
         if let latest = entry.latest { return latest }
         if entry.failed { throw HostRejection.Rejected(reason: "status is unavailable") }
         return nil
+    }
+
+    /// Whether `key` is followed, or its final status kept.
+    func isFollowing(_ key: EngineStatusKey) -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        return entries[key] != nil
     }
 }
 
@@ -364,7 +380,7 @@ private extension EngineStatusFollowers {
 
         if entry.isFinal {
             finalKeys.append(key)
-            if finalKeys.count > EngineStatusFollowing.finalCapacity {
+            if finalKeys.count > finalCapacity {
                 entries[finalKeys.removeFirst()] = nil
             }
         } else {
