@@ -12,7 +12,8 @@ struct ChatExtensionRoomMetadataTests {
     private let bot = StubRoomBot()
 
     /// The host places Jollity before its worker runs, so the worker's own `createRoom` always
-    /// finds the room. That call is the only time the product says what its room looks like.
+    /// finds the room. That call is the only time the product says what its room looks like, and
+    /// the placed row is adopted as `new` so the product's first-boot welcome still runs.
     @Test
     func anExistingRoomTakesTheNameAndIconTheProductRegisters() async throws {
         let context = makeContext()
@@ -20,12 +21,23 @@ struct ChatExtensionRoomMetadataTests {
 
         let status = try await context.createRoom(for: bot, roomId: roomId, name: "Jollity", icon: pngIcon)
 
-        #expect(status == .exists)
+        #expect(status == .new)
         #expect(try await storedRoom()?.roomMetadata == Chat.RoomMetadata(
             chatRelativeId: roomId,
             name: "Jollity",
             icon: pngIcon
         ))
+    }
+
+    /// Once the product has registered its own room, a later start finds it as it is.
+    @Test
+    func aRegisteredRoomAnswersExists() async throws {
+        let context = makeContext()
+        _ = try await context.createRoom(for: bot, roomId: roomId, name: "Jollity", icon: pngIcon)
+
+        let status = try await context.createRoom(for: bot, roomId: roomId, name: "Jollity", icon: pngIcon)
+
+        #expect(status == .exists)
     }
 
     /// The refresh rewrites the room alone, so the chat keeps the messages it already holds.
