@@ -21,7 +21,6 @@ use url::Url;
 
 use crate::platform::{CoreStorage, CoreStorageKey};
 
-
 /// How long a session may stay open before it expires.
 const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
 /// How many ended sessions the host has not recorded yet the core keeps,
@@ -1125,9 +1124,7 @@ pub async fn store_sessions(
 
 #[cfg(test)]
 mod tests {
-	use super::{
-		*,
-	};
+	use super::*;
 
 	use futures::executor::block_on;
 
@@ -1560,7 +1557,7 @@ mod tests {
 	#[test]
 	fn an_offer_that_changed_since_the_user_saw_it_is_not_accepted() {
 		let mut session = served(FundingDirection::In);
-		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
+		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true, mismatch: None }]);
 		cancelled(&mut session);
 		reported(&mut session, &[offer(5, 95, None), offer(20, 80, None)]);
 
@@ -1584,7 +1581,7 @@ mod tests {
 	#[test]
 	fn accepting_an_inbound_offer_after_the_credit_started_is_too_late() {
 		let mut session = served(FundingDirection::In);
-		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
+		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true, mismatch: None }]);
 		cancelled(&mut session);
 		reported(&mut session, &[offer(5, 95, None)]);
 		session.record_start([1; 32], 100);
@@ -1607,7 +1604,7 @@ mod tests {
 	#[test]
 	fn an_offer_must_fit_the_session() {
 		let mut over = served(FundingDirection::In);
-		reported(&mut over, &[FundingUpdate::PaymentReceived { finalized: true }]);
+		reported(&mut over, &[FundingUpdate::PaymentReceived { finalized: true, mismatch: None }]);
 		cancelled(&mut over);
 		let mut crediting = over.clone();
 		crediting.record_start([1; 32], 100);
