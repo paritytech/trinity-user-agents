@@ -18,7 +18,7 @@ struct LocalStateEraserTests {
         settings.set(value: "USD", for: SettingsKey.selectedCurrencyCode.rawValue)
         settings.set(value: true, for: SettingsKey.playerTooltipShown.rawValue)
 
-        try? authTokens.set(Data("jwt".utf8), key: "k1", productId: "wallet.dot")
+        try? authTokens.set(Data("jwt".utf8), key: "k1", productId: "wallet.dot", account: "alice")
 
         LocalStateEraser(settingsManager: settings, authTokens: authTokens, logger: StubLogger()).eraseUserState()
 

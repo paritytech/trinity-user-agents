@@ -331,13 +331,15 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
 ///
 /// Each token is kept under the opaque `key` the core hands over, 64
 /// lowercase hex characters that already separate accounts, products and
-/// services, tagged with `productId` so one product's tokens can be counted
-/// and cleared. Installed once on the runtime with
+/// services, tagged with `productId` and the opaque `account` so one
+/// account's tokens for a product can be counted and one product's cleared.
+/// The core makes one store call at a time. Installed once on the runtime with
 /// ``TrUAPIHostRuntime/setAuthTokens(_:)``. A runtime without one answers
 /// every `authTokens` call with `Unsupported`.
 public protocol AuthTokenHostBridge: AnyObject, Sendable {
-    /// Keep `token` under `key` for `productId`, replacing any kept under it.
-    func storeAuthToken(productId: String, key: String, token: AuthToken) async throws
+    /// Keep `token` under `key` for `productId` and `account`, replacing any
+    /// kept under it.
+    func storeAuthToken(productId: String, account: String, key: String, token: AuthToken) async throws
 
     /// The token kept under `key`, or `nil`.
     func authToken(productId: String, key: String) async throws -> AuthToken?
@@ -345,8 +347,8 @@ public protocol AuthTokenHostBridge: AnyObject, Sendable {
     /// Drop the token kept under `key`. Dropping none succeeds.
     func removeAuthToken(productId: String, key: String) async throws
 
-    /// How many tokens are kept for `productId`.
-    func authTokenCount(productId: String) async throws -> UInt32
+    /// How many tokens are kept for `productId` under `account`.
+    func authTokenCount(productId: String, account: String) async throws -> UInt32
 
     /// Drop every token kept for `productId`, or every token when it is `nil`.
     func clearAuthTokens(productId: String?) async throws
@@ -515,9 +517,9 @@ private final class AuthTokenCallbackAdapter: NativeAuthTokenCallbacks, @uncheck
         self.bridge = bridge
     }
 
-    func storeAuthToken(productId: String, key: String, token: AuthToken) async throws {
+    func storeAuthToken(productId: String, account: String, key: String, token: AuthToken) async throws {
         try await withHostRejection {
-            try await bridge.storeAuthToken(productId: productId, key: key, token: token)
+            try await bridge.storeAuthToken(productId: productId, account: account, key: key, token: token)
         }
     }
 
@@ -529,8 +531,8 @@ private final class AuthTokenCallbackAdapter: NativeAuthTokenCallbacks, @uncheck
         try await withHostRejection { try await bridge.removeAuthToken(productId: productId, key: key) }
     }
 
-    func authTokenCount(productId: String) async throws -> UInt32 {
-        try await withHostRejection { try await bridge.authTokenCount(productId: productId) }
+    func authTokenCount(productId: String, account: String) async throws -> UInt32 {
+        try await withHostRejection { try await bridge.authTokenCount(productId: productId, account: account) }
     }
 
     func clearAuthTokens(productId: String?) async throws {

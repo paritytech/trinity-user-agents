@@ -7,10 +7,10 @@ import TrUAPIHost
 /// An in-memory ``AuthTokenKeychain`` keyed the way the Keychain store keys its items.
 final class InMemoryAuthTokenKeychain: AuthTokenKeychain, @unchecked Sendable {
     private let lock = NSLock()
-    private var items: [String: (productId: String, data: Data)] = [:]
+    private var items: [String: (productId: String, account: String, data: Data)] = [:]
 
-    func set(_ data: Data, key: String, productId: String) throws {
-        lock.withLock { items[key] = (productId, data) }
+    func set(_ data: Data, key: String, productId: String, account: String) throws {
+        lock.withLock { items[key] = (productId, account, data) }
     }
 
     func data(key: String) throws -> Data? {
@@ -21,8 +21,8 @@ final class InMemoryAuthTokenKeychain: AuthTokenKeychain, @unchecked Sendable {
         lock.withLock { _ = items.removeValue(forKey: key) }
     }
 
-    func count(productId: String) throws -> Int {
-        lock.withLock { items.values.filter { $0.productId == productId }.count }
+    func count(productId: String, account: String) throws -> Int {
+        lock.withLock { items.values.filter { $0.productId == productId && $0.account == account }.count }
     }
 
     func deleteAll(productId: String?) throws {
@@ -40,19 +40,30 @@ struct AuthTokenKeychainStoreTests {
     func keptTokenReadsBack() async throws {
         let store = AuthTokenKeychainStore(keychain: keychain)
 
-        try await store.storeAuthToken(productId: "wallet.dot", key: "k1", token: token)
-        try await store.storeAuthToken(productId: "shop.dot", key: "k2", token: token)
+        try await store.storeAuthToken(productId: "wallet.dot", account: "alice", key: "k1", token: token)
+        try await store.storeAuthToken(productId: "shop.dot", account: "alice", key: "k2", token: token)
 
         #expect(try await store.authToken(productId: "wallet.dot", key: "k1") == token)
         #expect(try await store.authToken(productId: "wallet.dot", key: "missing") == nil)
-        #expect(try await store.authTokenCount(productId: "wallet.dot") == 1)
+        #expect(try await store.authTokenCount(productId: "wallet.dot", account: "alice") == 1)
+    }
+
+    @Test("the count covers one account, so another account's tokens never fill the cap")
+    func countIsPerAccount() async throws {
+        let store = AuthTokenKeychainStore(keychain: keychain)
+        try await store.storeAuthToken(productId: "wallet.dot", account: "alice", key: "k1", token: token)
+        try await store.storeAuthToken(productId: "wallet.dot", account: "bob", key: "k2", token: token)
+        try await store.storeAuthToken(productId: "wallet.dot", account: "bob", key: "k3", token: token)
+
+        #expect(try await store.authTokenCount(productId: "wallet.dot", account: "alice") == 1)
+        #expect(try await store.authTokenCount(productId: "wallet.dot", account: "bob") == 2)
     }
 
     @Test("clearing one product keeps the others, and clearing everything leaves none")
     func clearingDropsOneProductOrAll() async throws {
         let store = AuthTokenKeychainStore(keychain: keychain)
-        try await store.storeAuthToken(productId: "wallet.dot", key: "k1", token: token)
-        try await store.storeAuthToken(productId: "shop.dot", key: "k2", token: token)
+        try await store.storeAuthToken(productId: "wallet.dot", account: "alice", key: "k1", token: token)
+        try await store.storeAuthToken(productId: "shop.dot", account: "alice", key: "k2", token: token)
 
         try await store.clearAuthTokens(productId: "wallet.dot")
         let afterProduct = try await (
@@ -69,9 +80,9 @@ struct AuthTokenKeychainStoreTests {
     @Test("an item that no longer decodes reads as absent and is dropped")
     func undecodableItemReadsAsAbsent() async throws {
         let store = AuthTokenKeychainStore(keychain: keychain)
-        try keychain.set(Data("not a token".utf8), key: "k1", productId: "wallet.dot")
+        try keychain.set(Data("not a token".utf8), key: "k1", productId: "wallet.dot", account: "alice")
 
         #expect(try await store.authToken(productId: "wallet.dot", key: "k1") == nil)
-        #expect(try keychain.count(productId: "wallet.dot") == 0)
+        #expect(try keychain.count(productId: "wallet.dot", account: "alice") == 0)
     }
 }

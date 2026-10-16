@@ -18,8 +18,10 @@ import javax.inject.Singleton
  * the opaque key the core derives from the signed-in account, the product and its service, so no
  * lookup here reaches another account's or product's token.
  *
- * Preferences cannot be listed, so an encrypted index maps each key to its product for counting
- * and clearing. The core clears tokens on sign-out and when a product's state is cleared.
+ * Preferences cannot be listed, so an encrypted index maps each key to its product and account
+ * for counting and clearing. A key enters the index before its token is written and leaves it if
+ * the write fails, so clearing always finds every token. The core clears tokens whenever a session
+ * ends and when a product's state is cleared.
  */
 @Singleton
 class EncryptedAuthTokenStore @Inject constructor(
@@ -29,10 +31,15 @@ class EncryptedAuthTokenStore @Inject constructor(
 ) : AuthTokenHostBridge {
     private val indexLock = Mutex()
 
-    override suspend fun storeAuthToken(productId: String, key: String, token: AuthToken) = io {
+    override suspend fun storeAuthToken(productId: String, account: String, key: String, token: AuthToken) = io {
         indexLock.withLock {
-            write(entryField(key), gson.toJson(StoredAuthToken(token)))
-            writeIndex(readIndex() + (key to productId))
+            val index = readIndex()
+            writeIndex(index + (key to IndexRow(productId, account)))
+            runCatching { write(entryField(key), gson.toJson(StoredAuthToken(token))) }.onFailure {
+                if (key !in index) writeIndex(index)
+                throw it
+            }
+            Unit
         }
     }
 
@@ -49,25 +56,25 @@ class EncryptedAuthTokenStore @Inject constructor(
         }
     }
 
-    override suspend fun authTokenCount(productId: String): UInt = io {
-        indexLock.withLock { readIndex().values.count { it == productId }.toUInt() }
+    override suspend fun authTokenCount(productId: String, account: String): UInt = io {
+        indexLock.withLock { readIndex().values.count { it == IndexRow(productId, account) }.toUInt() }
     }
 
     override suspend fun clearAuthTokens(productId: String?) = io {
         indexLock.withLock {
             val index = readIndex()
-            val dropped = index.filterValues { productId == null || it == productId }.keys
+            val dropped = index.filterValues { productId == null || it.productId == productId }.keys
             dropped.forEach { preferences.removeKey(entryField(it)) }
             writeIndex(index - dropped)
         }
     }
 
-    private fun readIndex(): Map<String, String> =
+    private fun readIndex(): Map<String, IndexRow> =
         preferences.getDecryptedString(INDEX_FIELD)
-            ?.let { runCatching { gson.fromJson<Map<String, String>>(it, INDEX_TYPE) }.getOrNull() }
+            ?.let { runCatching { gson.fromJson<Map<String, IndexRow>>(it, INDEX_TYPE) }.getOrNull() }
             .orEmpty()
 
-    private fun writeIndex(index: Map<String, String>) {
+    private fun writeIndex(index: Map<String, IndexRow>) {
         if (index.isEmpty()) preferences.removeKey(INDEX_FIELD) else write(INDEX_FIELD, gson.toJson(index))
     }
 
@@ -86,9 +93,12 @@ class EncryptedAuthTokenStore @Inject constructor(
     private companion object {
         const val ENTRY_PREFIX = "truapi/auth-token/"
         const val INDEX_FIELD = "truapi/auth-token-index"
-        val INDEX_TYPE = object : TypeToken<Map<String, String>>() {}.type
+        val INDEX_TYPE = object : TypeToken<Map<String, IndexRow>>() {}.type
     }
 }
+
+/** Whose a kept token is: the product and the core's opaque account tag. */
+private data class IndexRow(val productId: String, val account: String)
 
 /** The stored form of an [AuthToken]. Its [toString] never shows either secret. */
 private class StoredAuthToken(

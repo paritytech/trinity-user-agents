@@ -3,51 +3,57 @@ import Security
 import TrUAPIHost
 
 /// Keychain operations the auth token store needs: items under an opaque key, each tagged with the
-/// product it belongs to so one product's items can be counted and dropped.
+/// product and the opaque account it belongs to, so one account's items for a product can be counted
+/// and one product's dropped.
 protocol AuthTokenKeychain: Sendable {
-    func set(_ data: Data, key: String, productId: String) throws
+    func set(_ data: Data, key: String, productId: String, account: String) throws
     func data(key: String) throws -> Data?
     func delete(key: String) throws
-    func count(productId: String) throws -> Int
+    func count(productId: String, account: String) throws -> Int
     func deleteAll(productId: String?) throws
 }
 
 /// ``AuthTokenHostBridge`` over the Keychain: one item per token, under the opaque key the core
 /// derives from the signed-in account, the product and its service, so no lookup here can reach
-/// another account's or product's token. The core clears tokens on sign-out and when a product's
-/// state is cleared.
+/// another account's or product's token. The core clears tokens whenever a session ends and when a
+/// product's state is cleared. Every Keychain call runs under one lock, so a count never sees a
+/// write half done.
 final class AuthTokenKeychainStore: AuthTokenHostBridge, @unchecked Sendable {
     private let keychain: AuthTokenKeychain
+    private let lock = NSLock()
 
     init(keychain: AuthTokenKeychain = SecAuthTokenKeychain()) {
         self.keychain = keychain
     }
 
-    func storeAuthToken(productId: String, key: String, token: AuthToken) async throws {
-        try keychain.set(JSONEncoder().encode(StoredAuthToken(token)), key: key, productId: productId)
+    func storeAuthToken(productId: String, account: String, key: String, token: AuthToken) async throws {
+        let data = try JSONEncoder().encode(StoredAuthToken(token))
+        try lock.withLock { try keychain.set(data, key: key, productId: productId, account: account) }
     }
 
     /// An item that no longer decodes is dropped and reads as absent, so the product signs in again
     /// instead of failing on every read.
     func authToken(productId _: String, key: String) async throws -> AuthToken? {
-        guard let data = try keychain.data(key: key) else { return nil }
-        guard let stored = try? JSONDecoder().decode(StoredAuthToken.self, from: data) else {
-            try keychain.delete(key: key)
-            return nil
+        try lock.withLock {
+            guard let data = try keychain.data(key: key) else { return nil }
+            guard let stored = try? JSONDecoder().decode(StoredAuthToken.self, from: data) else {
+                try keychain.delete(key: key)
+                return nil
+            }
+            return stored.authToken
         }
-        return stored.authToken
     }
 
     func removeAuthToken(productId _: String, key: String) async throws {
-        try keychain.delete(key: key)
+        try lock.withLock { try keychain.delete(key: key) }
     }
 
-    func authTokenCount(productId: String) async throws -> UInt32 {
-        try UInt32(clamping: keychain.count(productId: productId))
+    func authTokenCount(productId: String, account: String) async throws -> UInt32 {
+        try lock.withLock { try UInt32(clamping: keychain.count(productId: productId, account: account)) }
     }
 
     func clearAuthTokens(productId: String?) async throws {
-        try keychain.deleteAll(productId: productId)
+        try lock.withLock { try keychain.deleteAll(productId: productId) }
     }
 }
 
@@ -70,12 +76,17 @@ private struct StoredAuthToken: Codable {
 
 /// Generic-password items in this app's Keychain. Readable once the device has been unlocked after
 /// a restart, so a provider worker resuming in the background can read its token, and never
-/// migrated to another device.
+/// migrated to another device. The product is the item's label and the account tag its generic
+/// attribute.
 struct SecAuthTokenKeychain: AuthTokenKeychain {
     static let service = "io.parity.truapi.auth-token"
 
-    func set(_ data: Data, key: String, productId: String) throws {
-        let attributes: [String: Any] = [kSecValueData as String: data, kSecAttrLabel as String: productId]
+    func set(_ data: Data, key: String, productId: String, account: String) throws {
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrLabel as String: productId,
+            kSecAttrGeneric as String: Data(account.utf8)
+        ]
         let status = SecItemUpdate(Self.query(key: key) as CFDictionary, attributes as CFDictionary)
         guard status == errSecItemNotFound else {
             return try Self.check(status, "update")
@@ -103,7 +114,7 @@ struct SecAuthTokenKeychain: AuthTokenKeychain {
         try Self.check(status, "delete")
     }
 
-    func count(productId: String) throws -> Int {
+    func count(productId: String, account: String) throws -> Int {
         var query = Self.query(productId: productId)
         query[kSecReturnAttributes as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitAll
@@ -111,7 +122,10 @@ struct SecAuthTokenKeychain: AuthTokenKeychain {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return 0 }
         try Self.check(status, "count")
-        return (result as? [[String: Any]])?.count ?? 0
+        let accountData = Data(account.utf8)
+        return (result as? [[String: Any]])?
+            .filter { $0[kSecAttrGeneric as String] as? Data == accountData }
+            .count ?? 0
     }
 
     func deleteAll(productId: String?) throws {

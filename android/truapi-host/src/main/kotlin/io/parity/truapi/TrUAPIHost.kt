@@ -750,15 +750,17 @@ private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : Na
  *
  * Each token is kept under the opaque `key` the core hands over, 64 lowercase
  * hex characters that already separate accounts, products and services,
- * tagged with `productId` so one product's tokens can be counted and cleared.
+ * tagged with `productId` and the opaque `account` so one account's tokens for
+ * a product can be counted and one product's cleared. The core makes one
+ * store call at a time.
  * [AuthToken] is a generated data class whose `toString()` prints both
  * secrets, so never log one. Install with [TrUAPIHostRuntime.setAuthTokens];
  * a runtime without one answers every `authTokens` call with `Unsupported`.
  */
 interface AuthTokenHostBridge {
-    /** Keep [token] under [key] for [productId], replacing any kept under it. */
+    /** Keep [token] under [key] for [productId] and [account], replacing any kept under it. */
     @Throws(HostRejection::class)
-    suspend fun storeAuthToken(productId: String, key: String, token: AuthToken)
+    suspend fun storeAuthToken(productId: String, account: String, key: String, token: AuthToken)
 
     /** The token kept under [key], or `null`. */
     @Throws(HostRejection::class)
@@ -768,9 +770,9 @@ interface AuthTokenHostBridge {
     @Throws(HostRejection::class)
     suspend fun removeAuthToken(productId: String, key: String)
 
-    /** How many tokens are kept for [productId]. */
+    /** How many tokens are kept for [productId] under [account]. */
     @Throws(HostRejection::class)
-    suspend fun authTokenCount(productId: String): UInt
+    suspend fun authTokenCount(productId: String, account: String): UInt
 
     /** Drop every token kept for [productId], or every token when it is `null`. */
     @Throws(HostRejection::class)
@@ -778,8 +780,8 @@ interface AuthTokenHostBridge {
 }
 
 private class AuthTokenCallbackAdapter(private val bridge: AuthTokenHostBridge) : NativeAuthTokenCallbacks {
-    override suspend fun storeAuthToken(productId: String, key: String, token: AuthToken) =
-        withHostRejection { bridge.storeAuthToken(productId, key, token) }
+    override suspend fun storeAuthToken(productId: String, account: String, key: String, token: AuthToken) =
+        withHostRejection { bridge.storeAuthToken(productId, account, key, token) }
 
     override suspend fun authToken(productId: String, key: String): AuthToken? =
         withHostRejection { bridge.authToken(productId, key) }
@@ -787,8 +789,8 @@ private class AuthTokenCallbackAdapter(private val bridge: AuthTokenHostBridge) 
     override suspend fun removeAuthToken(productId: String, key: String) =
         withHostRejection { bridge.removeAuthToken(productId, key) }
 
-    override suspend fun authTokenCount(productId: String): UInt =
-        withHostRejection { bridge.authTokenCount(productId) }
+    override suspend fun authTokenCount(productId: String, account: String): UInt =
+        withHostRejection { bridge.authTokenCount(productId, account) }
 
     override suspend fun clearAuthTokens(productId: String?) =
         withHostRejection { bridge.clearAuthTokens(productId) }
