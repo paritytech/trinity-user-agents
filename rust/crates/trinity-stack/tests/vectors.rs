@@ -299,7 +299,7 @@ fn document_cases() -> Vec<DocumentCase> {
 		plain(
 			"sequence-out-of-range",
 			with(|value| value["sequence"] = json!(1u64 << 32)),
-			"sequence-out-of-range",
+			"malformed",
 		),
 		plain("sequence-at-maximum", with(|value| value["sequence"] = json!(u32::MAX)), "ok"),
 		raw(
@@ -309,8 +309,8 @@ fn document_cases() -> Vec<DocumentCase> {
 		),
 		plain(
 			"asset-id-out-of-range",
-			with(|value| value["assets"][0]["id"] = json!(1u64 << 53)),
-			"number-out-of-range",
+			with(|value| value["assets"][0]["id"] = json!(1u64 << 32)),
+			"malformed",
 		),
 		raw(
 			"noncharacter-in-name",
