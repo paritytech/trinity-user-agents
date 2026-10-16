@@ -982,43 +982,6 @@ impl SigningHostRuntime {
         product_subtree_public_key(self.signing_host.as_ref(), product_id, timeout_ms).await
     }
 
-    /// Read a stored permission authorization status without prompting.
-    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
-    pub async fn permission_authorization_status(
-        &self,
-        product_id: &str,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-        self.product_admin(product_context(product_id)?)
-            .permission_authorization_status(request)
-            .await
-    }
-
-    /// Read stored permission authorization statuses without prompting.
-    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
-    pub async fn permission_authorization_statuses(
-        &self,
-        product_id: &str,
-        requests: Vec<PermissionAuthorizationRequest>,
-    ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-        self.product_admin(product_context(product_id)?)
-            .permission_authorization_statuses(requests)
-            .await
-    }
-
-    /// Update one stored permission authorization status.
-    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
-    pub async fn set_permission_authorization_status(
-        &self,
-        product_id: &str,
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus,
-    ) -> Result<(), v01::GenericError> {
-        self.product_admin(product_context(product_id)?)
-            .set_permission_authorization_status(request, status)
-            .await
-    }
-
     /// Activate a wallet-local session from host-held secret material (raw
     /// BIP-39 entropy).
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
@@ -1362,6 +1325,7 @@ pub struct ConnectionAdapters {
     pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
     pub game_platform: Option<Arc<dyn GamePlatform>>,
+    pub scanner_platform: Option<Arc<dyn ScannerPlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
     pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
@@ -1380,6 +1344,7 @@ impl ConnectionAdapters {
             pocket_platform: services.pocket_platform(),
             expanded_card: None,
             game_platform: services.game_platform(),
+            scanner_platform: services.scanner_platform(),
         }
     }
 }
