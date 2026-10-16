@@ -1,6 +1,39 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "cancel.cameTooLate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your cancel came too late, the payout went through."
+          }
+        }
+      }
+    },
+    "offer.changed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider changed its offer. Review the new terms."
+          }
+        }
+      }
+    },
+    "offer.tooLate" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider already started, so it is too late to cancel."
+          }
+        }
+      }
+    },
     "activity.converting" : {
       "extractionState" : "manual",
       "localizations" : {

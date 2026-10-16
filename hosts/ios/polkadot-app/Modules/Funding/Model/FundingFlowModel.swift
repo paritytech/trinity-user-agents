@@ -256,15 +256,18 @@ extension FundingFlowModel {
         progress.map { FundingCancelPresentation.cancelTitle($0.status) } ?? String(localized: .Funding.depositCancel)
     }
 
-    /// Answers the provider's cancel offer.
-    func answerCancelOffer(accept: Bool) {
+    /// Answers the provider's cancel offer: `terms` are the ones the user
+    /// accepted, as shown, or `nil` to keep going. The core accepts only terms
+    /// that still match the offer.
+    func answerCancelOffer(accepting terms: CancelTerms?) {
         guard !isAnsweringOffer else { return }
 
         isAnsweringOffer = true
         Task {
             defer { isAnsweringOffer = false }
             do {
-                let answer = try await runtime.confirmFundingCancel(intent: intent, accept: accept)
+                let answer = try await runtime.confirmFundingCancel(intent: intent, terms: terms)
+                if answer == .accepted { FundingAcceptedCancels.remember(intent) }
                 toast = FundingCancelPresentation.after(answer)
             } catch {
                 Logger.shared.error("[funding] \(intent): answering the cancel offer failed: \(error)")

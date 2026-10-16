@@ -1115,11 +1115,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.cancelFunding(intent: intent)
     }
 
-    /// Answer the provider's cancel offer on session `intent`, shown from the
-    /// session's `cancel`.
+    /// Answer the provider's cancel offer on session `intent`: the terms the
+    /// user accepted, as they were shown, or `nil` to decline. Terms that no
+    /// longer match the offer accept nothing and answer `.changed`.
     @discardableResult
-    public func confirmFundingCancel(intent: String, accept: Bool) async throws -> CancelConfirmation {
-        try await inner.confirmFundingCancel(intent: intent, accept: accept)
+    public func confirmFundingCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation {
+        try await inner.confirmFundingCancel(intent: intent, terms: terms)
     }
 
     /// Record that the host wrote ended session `intent` into its own

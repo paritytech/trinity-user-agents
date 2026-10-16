@@ -167,7 +167,7 @@ private final class FakeFundingRuntime: FundingRuntime, @unchecked Sendable {
     func detectedFundingCountry() async -> String? { nil }
     func selectFundingProvider(intent _: String, providerId _: String, quoteId _: String?) async throws -> Bool { true }
     func cancelFunding(intent _: String) async throws -> CancelOutcome { .ended }
-    func confirmFundingCancel(intent _: String, accept _: Bool) async throws -> CancelConfirmation { .declined }
+    func confirmFundingCancel(intent _: String, terms _: CancelTerms?) async throws -> CancelConfirmation { .declined }
     func acknowledgeFundingSession(intent _: String) async throws -> Bool { true }
     func openFunding(direction _: FundingDirection, amount _: U128?) async throws -> String? { nil }
 }

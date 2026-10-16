@@ -29,7 +29,16 @@ enum FundingCancelPresentation {
         case .declined: nil
         case .lapsed: String(localized: .Funding.offerLapsed)
         case .noOffer: String(localized: .Funding.offerNone)
+        case .changed: String(localized: .Funding.offerChanged)
+        case .tooLate: String(localized: .Funding.offerTooLate)
         }
+    }
+
+    /// Whether a withdrawal whose cancel the user accepted was paid out
+    /// anyway: the payout landed before the provider could stop it.
+    static func cancelCameTooLate(_ status: FundingStatus, accepted: Bool) -> Bool {
+        guard accepted, case .sent = status else { return false }
+        return true
     }
 
     /// The line for a session whose cancel is with the provider, and whether

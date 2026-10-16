@@ -86,6 +86,11 @@ private extension FundingProgressView {
         if let status = model.progress?.status, let line = FundingCancelPresentation.line(for: status) {
             return (line.text, line.isWarning ? .fgWarning : .fgSecondary)
         }
+        if let status = model.progress?.status,
+           FundingCancelPresentation
+           .cancelCameTooLate(status, accepted: FundingAcceptedCancels.contains(model.intent)) {
+            return (String(localized: .Funding.cancelCameTooLate), .fgWarning)
+        }
         if isRetrying { return (String(localized: .Funding.activityRetrying), .fgWarning) }
         if isDelayed { return (String(localized: .Funding.activityDelayed), .fgWarning) }
         if model.direction == .in, model.rail == .bank, !model.hasReached(.payment) {
@@ -440,10 +445,10 @@ struct FundingCancelOfferView: View {
                 style: .destructive,
                 isLoading: model.isAnsweringOffer
             ) {
-                model.answerCancelOffer(accept: true)
+                model.answerCancelOffer(accepting: CancelTerms(fee: fee, refund: refund))
             }
             FundingPrimaryButton(title: String(localized: .Funding.offerKeepGoing)) {
-                model.answerCancelOffer(accept: false)
+                model.answerCancelOffer(accepting: nil)
             }
         }
         .padding(DSSpacings.medium)

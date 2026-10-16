@@ -73,7 +73,8 @@ extension SPAConfiguration {
     var productId: ProductId {
         switch contentSource {
         case .dotNs,
-             .directURL:
+             .directURL,
+             .bundled:
             page.host.toDotDomain()
         #if DEBUG
             case let .devServer(_, productId):

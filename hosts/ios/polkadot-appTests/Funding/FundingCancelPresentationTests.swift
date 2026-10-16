@@ -43,6 +43,19 @@ struct FundingCancelPresentationTests {
     }
 
     @Test
+    func anOfferThatChangedOrCameTooLateSaysSo() {
+        #expect(FundingCancelPresentation.after(CancelConfirmation.changed) == String(localized: .Funding.offerChanged))
+        #expect(FundingCancelPresentation.after(CancelConfirmation.tooLate) == String(localized: .Funding.offerTooLate))
+    }
+
+    @Test
+    func aPayoutAfterAnAcceptedCancelSaysTheCancelCameTooLate() {
+        #expect(FundingCancelPresentation.cancelCameTooLate(.sent, accepted: true))
+        #expect(!FundingCancelPresentation.cancelCameTooLate(.sent, accepted: false))
+        #expect(!FundingCancelPresentation.cancelCameTooLate(.cancelling, accepted: true))
+    }
+
+    @Test
     func aCancelWithTheProviderShowsWhereItStands() throws {
         let requested = try #require(FundingCancelPresentation.line(for: .cancelRequested))
         let offered = try #require(FundingCancelPresentation.line(for: .cancelOffered(
