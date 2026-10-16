@@ -14,6 +14,8 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     private let startupWindow: Duration
     private let entered = AsyncStream<Void>.makeStream()
     private let gate = AsyncStream<Void>.makeStream()
+    private let deliveredSignal: AsyncStream<Void>.Continuation
+    private var deliveredSignals: AsyncStream<Void>.AsyncIterator
 
     /// What the handlers asked for, so a test can see a request that was taken
     /// and never given back.
@@ -22,6 +24,9 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     private(set) var demands: [(productId: ProductId, transition: WorkerTransition)] = []
 
     init(references: StubWorkerReferences = StubWorkerReferences(), startupWindow: Duration = .seconds(1)) {
+        let (delivered, continuation) = AsyncStream.makeStream(of: Void.self)
+        deliveredSignal = continuation
+        deliveredSignals = delivered.makeAsyncIterator()
         self.references = references
         self.startupWindow = startupWindow
     }
@@ -61,6 +66,14 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
         subject.send(executions)
     }
 
+    /// Returns once one more value has reached a follower of `executions(of:)`,
+    /// counting the value a new follower starts from. A follower takes the next
+    /// value only after handling the last, so an arrival proves the value before
+    /// it was handled. Counts every follower, `ensureWorker` included.
+    func awaitExecutionsDelivered() async {
+        _ = await deliveredSignals.next()
+    }
+
     func demandChanged(productId: ProductId, transition: WorkerTransition) {
         demands.append((productId, transition))
     }
@@ -76,8 +89,10 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     }
 
     func executions(of productId: ProductId) -> AnyAsyncSequence<TrUAPIProductExecutionProtocol?> {
-        subject
+        let delivered = deliveredSignal
+        return subject
             .map { $0[productId] }
+            .handleEvents(onElement: { _ in delivered.yield() })
             .eraseToAnyAsyncSequence()
     }
 
