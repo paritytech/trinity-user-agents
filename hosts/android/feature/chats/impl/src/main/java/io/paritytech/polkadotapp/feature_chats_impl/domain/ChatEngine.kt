@@ -132,7 +132,7 @@ class ChatEngine @Inject constructor(
             is ChatVariant.Contact -> contactsRepository.subscribeContact(variant.contactAccountId)
                 .map { contact ->
                     Result.success(contact)
-                        .requireNotNull { error("Contact with accountId=${variant.contactAccountId} not found") }
+                        .requireNotNull { IllegalStateException("Contact with accountId=${variant.contactAccountId} not found") }
                         .map(::getContactChatDisplay)
                 }
 

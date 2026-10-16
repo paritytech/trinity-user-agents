@@ -1,9 +1,9 @@
 //! In-core Bulletin preimage submission over the shared Subxt client.
 //!
 //! One submission at a time: build + sign the `TransactionStorage.store`
-//! extrinsic using current best-block metadata and nonce with a finalized
-//! mortality anchor, dry-run it via Subxt's typed transaction validation, then
-//! submit through Subxt's transaction watch and classify the
+//! extrinsic with finalized mortality and best-block metadata and nonce,
+//! dry-run it at the best block via Subxt's typed transaction
+//! validation, then submit through Subxt's transaction watch and classify the
 //! dispatch outcome from the inclusion block's events.
 
 use std::sync::Mutex as StdMutex;
@@ -12,26 +12,31 @@ use std::time::{Duration, Instant};
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 
-use crate::chain_runtime::{ChainRuntime, RuntimeFailure};
-use crate::host_internal::bulletin::{
-    MORTAL_PERIOD_BLOCKS, STORE_PALLET_NAME, allowance_signer, build_signed_store_transaction,
-    preimage_key,
+use crate::{
+	chain_runtime::{ChainRuntime, RuntimeFailure},
+	host_internal::{
+		bulletin::{
+			MORTAL_PERIOD_BLOCKS, STORE_PALLET_NAME, allowance_signer,
+			build_signed_store_transaction, preimage_key,
+		},
+		extrinsic::Sr25519Signer,
+	},
+	runtime::BulletinAllowanceKey,
 };
-use crate::host_internal::extrinsic::Sr25519Signer;
-use crate::runtime::BulletinAllowanceKey;
 use futures::{FutureExt, pin_mut};
-use subxt::OnlineClient;
-use subxt::client::{Block, Blocks, OnlineClientAtBlockImpl};
-use subxt::config::HashFor;
-use subxt::config::substrate::SubstrateConfig;
-use subxt::error::{
+use subxt::{
+	OnlineClient,
+	client::{Block, Blocks, OnlineClientAtBlockImpl},
+	config::{HashFor, substrate::SubstrateConfig},
+	error::{
     DispatchError, TransactionEventsError, TransactionProgressError, TransactionStatusError,
-};
-use subxt::extrinsics::ExtrinsicEvents;
-use subxt::metadata::ArcMetadata;
-use subxt::tx::{
+	},
+	extrinsics::ExtrinsicEvents,
+	metadata::ArcMetadata,
+	tx::{
     SubmittableTransaction, TransactionInBlock, TransactionInvalid, TransactionStatus,
     TransactionUnknown, ValidationResult,
+	},
 };
 use tracing::{instrument, warn};
 use truapi::CallContext;
@@ -180,12 +185,14 @@ impl BulletinSubmitError {
     fn is_broadcast_outcome_unknown(&self, phase: SubmissionPhase) -> bool {
         match self {
             Self::Subxt(_) if phase == SubmissionPhase::Watch => !self.is_node_rejection(),
-            Self::Subxt(error) if phase == SubmissionPhase::Events => matches!(
+			Self::Subxt(error) if phase == SubmissionPhase::Events => {
+				matches!(
                 error.as_ref(),
                 subxt::Error::TransactionEventsError(
                     TransactionEventsError::CannotFindTransactionInBlock { .. }
                 )
-            ),
+				)
+			},
             _ => false,
         }
     }
@@ -301,17 +308,11 @@ impl BulletinRpc {
             _ = lock_cancelled => return Err(BulletinSubmitError::Cancelled),
         };
 
-        // The Preimage::submit boundary owns one absolute chain deadline across
-        // the initial submission and an optional refreshed-allowance retry.
-        // The context is used only for cancellation. Dropping the flow on
-        // timeout/cancel drops its in-flight chain work.
         let mut attempt = 0;
         loop {
             attempt += 1;
             let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-                return Err(BulletinSubmitError::Timeout {
-                    phase: self.current_phase(),
-                });
+				return Err(BulletinSubmitError::Timeout { phase: self.current_phase() });
             };
             let flow = self.submit_flow(allowance, value).fuse();
             let timeout = futures_timer::Delay::new(remaining).fuse();
@@ -329,7 +330,7 @@ impl BulletinRpc {
                         reason = %err,
                         "Bulletin broadcast rejected by the node; rebuilding and retrying"
                     );
-                }
+				},
                 result => return result,
             }
         }
@@ -358,7 +359,7 @@ impl BulletinRpc {
         let signer =
             allowance_signer(allowance).map_err(BulletinSubmitError::InvalidAllowanceKey)?;
         let signed = self
-            .build_signed_and_dry_run(&mut best_blocks, head, &signer, value)
+			.build_signed_and_dry_run(&mut best_blocks, head, &signer, value)
             .await?;
         drop(best_blocks);
 
@@ -372,7 +373,7 @@ impl BulletinRpc {
                         Ok(()) => break,
                         Err(error) => (error, SubmissionPhase::Events),
                     }
-                }
+				},
                 Err(error) => (error, SubmissionPhase::Watch),
             };
 
@@ -394,9 +395,7 @@ impl BulletinRpc {
             }
 
             if rebroadcast_bounced {
-                return Err(BulletinSubmitError::RebroadcastRejected {
-                    reason: error.to_string(),
-                });
+				return Err(BulletinSubmitError::RebroadcastRejected { reason: error.to_string() });
             }
             if broadcasts >= MAX_IDENTICAL_BROADCASTS {
                 return Err(error);
@@ -503,10 +502,10 @@ impl BulletinRpc {
                             return Err(BulletinSubmitError::AllowanceRejected {
                                 phase: AllowanceRejectionPhase::DryRun,
                             });
-                        }
+						},
                         result => result?,
                     };
-                }
+				},
             }
         }
     }
@@ -521,9 +520,9 @@ impl BulletinRpc {
             // variants. The runtime does not publish stable Custom codes, so
             // narrowing Custom would bypass the bounded refresh path.
             ValidationResult::Invalid(
-                TransactionInvalid::Payment
-                | TransactionInvalid::Custom(_)
-                | TransactionInvalid::BadSigner,
+				TransactionInvalid::Payment |
+				TransactionInvalid::Custom(_) |
+				TransactionInvalid::BadSigner,
             ) => Ok(DryRunStatus::AllowanceRejected),
             ValidationResult::Invalid(other) => Err(BulletinSubmitError::InvalidTransaction(other)),
             ValidationResult::Unknown(other) => Err(BulletinSubmitError::UnknownTransaction(other)),
@@ -600,25 +599,25 @@ async fn watch_until_included(
         match status {
             TransactionStatus::InBestBlock(block) | TransactionStatus::InFinalizedBlock(block) => {
                 return Ok(block);
-            }
+			},
             TransactionStatus::Invalid { message } => {
                 return Err(BulletinSubmitError::Subxt(Box::new(
                     TransactionStatusError::Invalid(message).into(),
                 )));
-            }
+			},
             TransactionStatus::Dropped { message } => {
                 return Err(BulletinSubmitError::Subxt(Box::new(
                     TransactionStatusError::Dropped(message).into(),
                 )));
-            }
+			},
             TransactionStatus::Error { message } => {
                 return Err(BulletinSubmitError::Subxt(Box::new(
                     TransactionStatusError::Error(message).into(),
                 )));
-            }
-            TransactionStatus::Validated
-            | TransactionStatus::Broadcasted
-            | TransactionStatus::NoLongerInBestBlock => {}
+			},
+			TransactionStatus::Validated |
+			TransactionStatus::Broadcasted |
+			TransactionStatus::NoLongerInBestBlock => {},
         }
     }
     Err(BulletinSubmitError::Subxt(Box::new(
@@ -649,7 +648,7 @@ async fn finalized_inclusion_outcome(
         Err(error) => {
             warn!(%error, "Bulletin inclusion re-check could not stream finalized blocks");
             return None;
-        }
+		},
     };
     for _ in 0..INCLUSION_RECHECK_BLOCKS {
         let timeout = futures_timer::Delay::new(INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT).fuse();
@@ -668,11 +667,11 @@ async fn finalized_inclusion_outcome(
         };
         match block_inclusion_outcome(&block, target_hash).await {
             Ok(Some(outcome)) => return Some(outcome),
-            Ok(None) => {}
+			Ok(None) => {},
             Err(error) => {
                 warn!(%error, "Bulletin inclusion re-check could not inspect a finalized block");
                 return None;
-            }
+			},
         }
     }
     None
@@ -690,21 +689,14 @@ async fn block_inclusion_outcome(
     target_hash: HashFor<SubstrateConfig>,
 ) -> Result<Option<Result<(), BulletinSubmitError>>, Box<subxt::Error>> {
     let at_block = block.at().await.map_err(boxed_subxt_error)?;
-    let extrinsics = at_block
-        .extrinsics()
-        .fetch()
-        .await
-        .map_err(boxed_subxt_error)?;
+	let extrinsics = at_block.extrinsics().fetch().await.map_err(boxed_subxt_error)?;
     for extrinsic in extrinsics.iter() {
         let extrinsic = extrinsic.map_err(boxed_subxt_error)?;
         if extrinsic.hash() != target_hash {
             continue;
         }
         let events = extrinsic.events().await.map_err(boxed_subxt_error)?;
-        return Ok(Some(dispatch_outcome_from_events(
-            &events,
-            at_block.metadata(),
-        )));
+		return Ok(Some(dispatch_outcome_from_events(&events, at_block.metadata())));
     }
     Ok(None)
 }
@@ -758,7 +750,7 @@ async fn require_dispatch_success(
                 }
             }
             Err(BulletinSubmitError::DispatchOutcomeMissing)
-        }
+		},
         Err(TransactionEventsError::ExtrinsicFailed(error)) => Err(classify_dispatch_error(error)),
         Err(other) => Err(BulletinSubmitError::Subxt(Box::new(other.into()))),
     }
@@ -772,16 +764,14 @@ fn classify_dispatch_error(error: DispatchError) -> BulletinSubmitError {
     };
     match module_error.details() {
         Ok(details) => {
-            if details.pallet.name() == STORE_PALLET_NAME
-                && ALLOWANCE_REJECTED_MODULE_ERRORS.contains(&details.variant.name.as_str())
+			if details.pallet.name() == STORE_PALLET_NAME &&
+				ALLOWANCE_REJECTED_MODULE_ERRORS.contains(&details.variant.name.as_str())
             {
-                BulletinSubmitError::AllowanceRejected {
-                    phase: AllowanceRejectionPhase::Dispatch,
-                }
+				BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::Dispatch }
             } else {
                 BulletinSubmitError::Subxt(Box::new(TransactionEventsError::from(error).into()))
             }
-        }
+		},
         Err(_) => BulletinSubmitError::Subxt(Box::new(TransactionEventsError::from(error).into())),
     }
 }
@@ -845,9 +835,7 @@ mod tests {
         assert!(!inconsistent_inclusion.is_broadcast_outcome_unknown(SubmissionPhase::DryRun));
 
         assert!(
-            !BulletinSubmitError::Timeout {
-                phase: SubmissionPhase::Watch
-            }
+			!BulletinSubmitError::Timeout { phase: SubmissionPhase::Watch }
             .is_broadcast_outcome_unknown(SubmissionPhase::Watch)
         );
     }
@@ -885,9 +873,7 @@ mod tests {
     fn dispatch_errors_classify_allowance_rejections() {
         assert!(matches!(
             classify_dispatch_error(module_error("AuthorizationNotFound")),
-            BulletinSubmitError::AllowanceRejected {
-                phase: AllowanceRejectionPhase::Dispatch
-            }
+			BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::Dispatch }
         ));
 
         let other = non_allowance_error_name();
@@ -904,9 +890,7 @@ mod tests {
     #[test]
     fn error_reason_strings_are_stable() {
         assert_eq!(
-            BulletinSubmitError::AllowanceRejected {
-                phase: AllowanceRejectionPhase::DryRun
-            }
+			BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::DryRun }
             .to_string(),
             "allowance rejected: dry-run"
         );
@@ -915,17 +899,11 @@ mod tests {
             "invalid: Future"
         );
         assert_eq!(
-            BulletinSubmitError::Timeout {
-                phase: SubmissionPhase::Watch
-            }
-            .to_string(),
+			BulletinSubmitError::Timeout { phase: SubmissionPhase::Watch }.to_string(),
             "timeout: watch, inclusion unverified"
         );
         assert_eq!(
-            BulletinSubmitError::Timeout {
-                phase: SubmissionPhase::Connect
-            }
-            .to_string(),
+			BulletinSubmitError::Timeout { phase: SubmissionPhase::Connect }.to_string(),
             "timeout: connect"
         );
         assert_eq!(
@@ -936,10 +914,7 @@ mod tests {
             "subxt: The transaction is not valid: bad nonce"
         );
         assert_eq!(
-            BulletinSubmitError::RebroadcastRejected {
-                reason: "stale".to_string()
-            }
-            .to_string(),
+			BulletinSubmitError::RebroadcastRejected { reason: "stale".to_string() }.to_string(),
             "inclusion unverified: re-broadcast rejected: stale"
         );
     }
@@ -958,7 +933,7 @@ mod tests {
         use futures::StreamExt;
         use futures::channel::mpsc;
         use futures::stream::BoxStream;
-        use parity_scale_codec::{Compact, Encode};
+        use parity_scale_codec::{Compact, Decode, Encode};
         use parking_lot::Mutex;
         use schnorrkel::{PublicKey, Signature};
         use serde_json::{Value as JsonValue, json};
@@ -966,7 +941,7 @@ mod tests {
         use std::sync::Arc;
         use subxt::config::DefaultExtrinsicParamsBuilder;
         use subxt::ext::scale_value::Value as ScaleValue;
-        use subxt::utils::H256;
+        use subxt::utils::{Era, H256};
 
         const FOLLOW_ID: &str = "bulletin-follow";
         const BLOCK_HASH: &str =
@@ -1044,6 +1019,15 @@ mod tests {
                 }
             }
 
+			fn with_best_blocks(self, count: usize) -> Self {
+				{
+					let mut state = self.state.lock();
+					state.next_best_block = count;
+					state.current_best_hash = scripted_block_hash(count);
+				}
+				self
+			}
+
             fn with_failed_events(mut self) -> Self {
                 self.events = format!("0x{}", hex::encode(failed_events()));
                 self
@@ -1084,8 +1068,7 @@ mod tests {
                                     .and_then(JsonValue::as_str)
                                     .map(ToOwned::to_owned)
                             })
-                            .as_deref()
-                            == Some(method)
+							.as_deref() == Some(method)
                     })
                     .count()
             }
@@ -1095,13 +1078,27 @@ mod tests {
                     .iter()
                     .filter_map(|request| {
                         let value: JsonValue = serde_json::from_str(request).ok()?;
-                        (value.get("method").and_then(JsonValue::as_str)
-                            == Some("transactionWatch_v1_submitAndWatch"))
+						(value.get("method").and_then(JsonValue::as_str) ==
+							Some("transactionWatch_v1_submitAndWatch"))
                         .then(|| value["params"][0].as_str().map(ToOwned::to_owned))
                         .flatten()
                     })
                     .collect()
             }
+
+			fn runtime_call_blocks(&self, runtime_method: &str) -> Vec<H256> {
+				self.sent
+					.lock()
+					.unwrap()
+					.iter()
+					.filter_map(|request| {
+						let request: JsonValue = serde_json::from_str(request).unwrap();
+						(request["method"] == "chainHead_v1_call" &&
+							request["params"][2] == runtime_method)
+							.then(|| request["params"][1].as_str().unwrap().parse().unwrap())
+					})
+					.collect()
+			}
 
             fn runtime_call_count(&self, runtime_method: &str) -> usize {
                 self.sent.lock()
@@ -1110,8 +1107,8 @@ mod tests {
                         serde_json::from_str::<JsonValue>(request)
                             .ok()
                             .and_then(|value| {
-                                (value.get("method").and_then(JsonValue::as_str)
-                                    == Some("chainHead_v1_call"))
+								(value.get("method").and_then(JsonValue::as_str) ==
+									Some("chainHead_v1_call"))
                                 .then(|| {
                                     value
                                         .get("params")
@@ -1121,8 +1118,7 @@ mod tests {
                                 })
                                 .flatten()
                             })
-                            .as_deref()
-                            == Some(runtime_method)
+							.as_deref() == Some(runtime_method)
                     })
                     .count()
             }
@@ -1202,45 +1198,45 @@ mod tests {
                             "finalizedBlockRuntime": null
                         })),
                     ];
-                    if state.best_block_number.is_some() {
-                        frames.push(follow_event(json!({
-                            "event": "newBlock",
-                            "blockHash": state.current_best_hash,
-                            "parentBlockHash": BLOCK_HASH,
-                            "newRuntime": null
-                        })));
-                        frames.push(follow_event(json!({
-                            "event": "bestBlockChanged",
-                            "bestBlockHash": state.current_best_hash
-                        })));
-                    }
-                    frames
-                }
-                "chainHead_v1_header" if state.stall_headers => Vec::new(),
-                "chainHead_v1_header" => {
-                    let number = if request["params"][1] == BLOCK_HASH {
-                        1
-                    } else {
-                        state.best_block_number.unwrap_or(1)
-                    };
-                    vec![response(json!(encoded_header(number)))]
-                }
+					let mut parent_hash = BLOCK_HASH.to_string();
+					for index in 1..=state.next_best_block {
+						let block_hash = scripted_block_hash(index);
+						frames.push(follow_event(json!({
+							"event": "newBlock", "blockHash": block_hash,
+							"parentBlockHash": parent_hash, "newRuntime": null
+						})));
+						parent_hash = block_hash;
+					}
+					frames.push(follow_event(json!({
+						"event": "bestBlockChanged", "bestBlockHash": state.current_best_hash
+					})));
+					frames
+				},
+				"chainHead_v1_header" if state.stall_headers => Vec::new(),
+				"chainHead_v1_header" => {
+					let hash = request["params"][1].as_str().unwrap();
+					let number = if hash == BLOCK_HASH || hash == INCLUDED_HASH {
+						1
+					} else if let Some(number) = state.best_block_number {
+						number
+					} else {
+						u32::from_str_radix(hash.trim_start_matches("0x"), 16).unwrap() + 1
+					};
+					vec![response(json!(encoded_header(number)))]
+				},
                 "chainHead_v1_call" => {
                     state.next_operation += 1;
                     let operation_id = format!("call-{}", state.next_operation);
                     let runtime_method = request["params"][2].as_str().unwrap();
-                    let validation_outcome =
-                        if runtime_method == "TaggedTransactionQueue_validate_transaction" {
-                            state
-                                .validation_outcomes
-                                .pop_front()
-                                .unwrap_or(ValidationOutcome::Valid)
+					let validation_outcome = if runtime_method ==
+						"TaggedTransactionQueue_validate_transaction"
+					{
+						state.validation_outcomes.pop_front().unwrap_or(ValidationOutcome::Valid)
                         } else {
                             ValidationOutcome::Valid
                         };
-                    let output = if runtime_method == "AccountNonceApi_account_nonce"
-                        && state.best_block_number.is_some()
-                        && request["params"][1] == state.current_best_hash
+					let output = if runtime_method == "AccountNonceApi_account_nonce" &&
+						request["params"][1] != BLOCK_HASH
                     {
                         7u32.encode()
                     } else {
@@ -1254,8 +1250,8 @@ mod tests {
                             "output": format!("0x{}", hex::encode(output))
                         })),
                     ];
-                    if validation_outcome == ValidationOutcome::AllowanceRejected
-                        && state.advance_best_block_after_rejection
+					if validation_outcome == ValidationOutcome::AllowanceRejected &&
+						state.advance_best_block_after_rejection
                     {
                         state.next_best_block += 1;
                         let block_hash = scripted_block_hash(state.next_best_block);
@@ -1273,7 +1269,7 @@ mod tests {
                         })));
                     }
                     frames
-                }
+				},
                 "transactionWatch_v1_submitAndWatch" => {
                     state.next_transaction += 1;
                     state.last_transaction = request["params"][0].as_str().map(ToOwned::to_owned);
@@ -1283,29 +1279,31 @@ mod tests {
                         .pop_front()
                         .expect("scripted transaction outcome");
                     let status = match outcome {
-                        TransactionOutcome::Included => json!({
+						TransactionOutcome::Included => {
+							json!({
                             "event": "bestChainBlockIncluded",
                             "block": {"hash": INCLUDED_HASH, "index": "0"}
-                        }),
+							})
+						},
                         TransactionOutcome::IncludedWithMissingBody => {
                             state.omit_transaction_from_next_body = true;
                             json!({
                                 "event": "bestChainBlockIncluded",
                                 "block": {"hash": INCLUDED_HASH, "index": "0"}
                             })
-                        }
-                        TransactionOutcome::Invalid
-                        | TransactionOutcome::InvalidWithMissingBody => {
+						},
+						TransactionOutcome::Invalid |
+						TransactionOutcome::InvalidWithMissingBody => {
                             if matches!(outcome, TransactionOutcome::InvalidWithMissingBody) {
                                 state.omit_transaction_from_next_body = true;
                             }
                             json!({"event": "invalid", "error": "scripted invalid"})
-                        }
+						},
                         TransactionOutcome::Dropped => {
                             json!({"event": "dropped", "error": "scripted dropped"})
-                        }
-                        TransactionOutcome::FollowStop
-                        | TransactionOutcome::FollowStopWithMissingBody => {
+						},
+						TransactionOutcome::FollowStop |
+						TransactionOutcome::FollowStopWithMissingBody => {
                             // The chainHead follow dies mid-watch instead of the
                             // watch reporting a transaction status.
                             if matches!(outcome, TransactionOutcome::FollowStopWithMissingBody) {
@@ -1315,7 +1313,7 @@ mod tests {
                                 response(json!(subscription_id)),
                                 follow_event(json!({"event": "stop"})),
                             ];
-                        }
+						},
                     };
                     vec![
                         response(json!(subscription_id)),
@@ -1326,14 +1324,12 @@ mod tests {
                         })
                         .to_string(),
                     ]
-                }
+				},
                 "chainHead_v1_body" => {
                     state.next_operation += 1;
                     let operation_id = format!("body-{}", state.next_operation);
-                    let transaction = state
-                        .last_transaction
-                        .clone()
-                        .expect("submitted transaction available");
+					let transaction =
+						state.last_transaction.clone().expect("submitted transaction available");
                     let transactions = if std::mem::take(&mut state.omit_transaction_from_next_body)
                     {
                         vec![]
@@ -1348,7 +1344,7 @@ mod tests {
                             "value": transactions
                         })),
                     ]
-                }
+				},
                 "chainHead_v1_storage" => {
                     state.next_operation += 1;
                     let operation_id = format!("storage-{}", state.next_operation);
@@ -1365,24 +1361,31 @@ mod tests {
                             "operationId": operation_id
                         })),
                     ]
-                }
+				},
                 "chainHead_v1_unpin" | "chainHead_v1_unfollow" | "transactionWatch_v1_unwatch" => {
                     vec![response(JsonValue::Null)]
-                }
+				},
                 other => {
-                    vec![json!({
+					vec![
+						json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "error": {"code": -32601, "message": format!("unexpected method {other}")}
                 })
-                .to_string()]
-                }
+						.to_string(),
+					]
+				},
             }
         }
 
         fn encoded_header(number: u32) -> String {
-            let mut bytes = Vec::new();
-            [0u8; 32].encode_to(&mut bytes);
+			let parent: H256 = match number {
+				1 => H256::zero(),
+				2 => BLOCK_HASH.parse().unwrap(),
+				_ => scripted_block_hash((number - 2) as usize).parse().unwrap(),
+			};
+			let mut bytes = Vec::new();
+			parent.encode_to(&mut bytes);
             Compact(number).encode_to(&mut bytes);
             [0u8; 32].encode_to(&mut bytes);
             [0u8; 32].encode_to(&mut bytes);
@@ -1410,12 +1413,12 @@ mod tests {
                     64u64.encode_to(&mut output);
                     true.encode_to(&mut output);
                     output
-                }
+				},
                 "TaggedTransactionQueue_validate_transaction" => {
                     // Result::Err(TransactionValidityError::Invalid(
                     // TransactionInvalid::Payment)).
                     vec![1, 0, 1]
-                }
+				},
                 other => panic!("unexpected runtime call {other}"),
             }
         }
@@ -1447,11 +1450,85 @@ mod tests {
             .with_allowance_block_wait_timeout(Duration::from_millis(25))
         }
 
+		fn store_signature_verifies_at(transaction: &[u8], value: &[u8], block_hash: H256) -> bool {
+			let (account, signature, tail) = split_v4(transaction);
+			let mut extra = &tail[..];
+			let Era::Mortal { period, phase } = Era::decode(&mut extra).unwrap() else {
+				panic!("store transaction must expire")
+			};
+			let nonce = Compact::<u64>::decode(&mut extra).unwrap().0;
+			let state = OfflineChainState {
+				genesis_hash: [0x42; 32],
+				spec_version: 1,
+				..bulletin_chain_state()
+			};
+			let client = state.client_at(phase).unwrap();
+			let payload = subxt::dynamic::tx(
+				"TransactionStorage",
+				"store",
+				vec![subxt::dynamic::Value::from_bytes(value)],
+			);
+			let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
+				.nonce(nonce)
+				.mortal_from_unchecked(period, phase, block_hash)
+				.build();
+			let signer_payload = client
+				.tx()
+				.create_v4_signable_offline(&payload, params)
+				.unwrap()
+				.signer_payload()
+				.unwrap();
+			PublicKey::from_bytes(&account)
+				.unwrap()
+				.verify_simple(
+					SR25519_SIGNING_CONTEXT,
+					&signer_payload,
+					&Signature::from_bytes(&signature).unwrap(),
+				)
+				.is_ok()
+		}
+
+		#[test]
+		fn submit_preimage_anchors_mortality_at_finalized_but_uses_best_state() {
+			let provider = Arc::new(
+				BulletinScriptedProvider::new([TransactionOutcome::Included]).with_best_blocks(5),
+			);
+			let finalized_hash = BLOCK_HASH.parse().unwrap();
+			let best_hash = scripted_block_hash(5).parse().unwrap();
+			let value = b"fork mortality reproduction";
+
+			futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+				&CallContext::default(),
+				Instant::now() + Duration::from_secs(2),
+				&allowance_fixture(),
+				value,
+			))
+			.unwrap();
+
+			let transactions = provider.submitted_transactions();
+			let transaction = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
+			let (_, _, tail) = split_v4(&transaction);
+			let mut extra = &tail[..];
+			let era = Era::decode(&mut extra).unwrap();
+			let nonce = Compact::<u64>::decode(&mut extra).unwrap().0;
+
+			assert_eq!(era, Era::mortal(64, 1));
+			assert_eq!(nonce, 7);
+			assert!(store_signature_verifies_at(&transaction, value, finalized_hash));
+			assert!(!store_signature_verifies_at(&transaction, value, best_hash));
+			assert_eq!(
+				provider.runtime_call_blocks("AccountNonceApi_account_nonce"),
+				vec![best_hash]
+			);
+			assert_eq!(
+				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
+				vec![best_hash]
+			);
+		}
+
         #[test]
         fn submit_preimage_drives_subxt_happy_path() {
-            let provider = Arc::new(BulletinScriptedProvider::new([
-                TransactionOutcome::Included,
-            ]));
+			let provider = Arc::new(BulletinScriptedProvider::new([TransactionOutcome::Included]));
             let value = b"scripted bulletin happy path";
             let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
                 &CallContext::default(),
@@ -1466,10 +1543,7 @@ mod tests {
                 provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
                 1
             );
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                1
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
             assert_eq!(provider.method_count("chainHead_v1_storage"), 1);
         }
 
@@ -1561,10 +1635,7 @@ mod tests {
             .unwrap();
 
             assert_eq!(result, preimage_key(value));
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                2
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 2);
         }
 
         #[test]
@@ -1584,10 +1655,7 @@ mod tests {
             assert_eq!(result, preimage_key(value));
             // The reported inclusion block was inconsistent, but the re-check
             // finds the transaction on chain: no re-broadcast happens.
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                1
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
             assert_eq!(provider.method_count("chainHead_v1_body"), 2);
         }
 
@@ -1607,10 +1675,7 @@ mod tests {
             .unwrap();
 
             assert_eq!(result, preimage_key(value));
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                1
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
             assert!(provider.method_count("chainHead_v1_body") >= 1);
         }
 
@@ -1637,10 +1702,7 @@ mod tests {
             ));
             // The transaction is on chain; a failed dispatch must never
             // trigger a re-broadcast.
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                1
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
         }
 
         #[test]
@@ -1684,10 +1746,7 @@ mod tests {
             assert_eq!(result, preimage_key(value));
             // The bounce triggers one more re-check, which finds the first
             // broadcast on chain; the invalid verdict never surfaces.
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                2
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 2);
         }
 
         #[test]
@@ -1704,18 +1763,12 @@ mod tests {
             ))
             .unwrap_err();
 
-            assert!(matches!(
-                error,
-                BulletinSubmitError::RebroadcastRejected { .. }
-            ));
+			assert!(matches!(error, BulletinSubmitError::RebroadcastRejected { .. }));
             assert!(error.to_string().starts_with("inclusion unverified"));
             // A bounced re-broadcast must never trigger a rebuilt signing:
             // the first broadcast may be on chain out of the re-check's
             // reach, and a fresh nonce would double-store.
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                2
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 2);
         }
 
         #[test]
@@ -1740,10 +1793,7 @@ mod tests {
                 subxt::Error::TransactionStatusError(TransactionStatusError::Invalid(message))
                     if message == "scripted invalid"
             ));
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                2
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 2);
             assert_eq!(
                 provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
                 2
@@ -1755,10 +1805,7 @@ mod tests {
             let provider = Arc::new(
                 BulletinScriptedProvider::new([TransactionOutcome::Invalid])
                     .with_validation_outcomes(
-                        [
-                            ValidationOutcome::Valid,
-                            ValidationOutcome::AllowanceRejected,
-                        ],
+						[ValidationOutcome::Valid, ValidationOutcome::AllowanceRejected],
                         false,
                     ),
             );
@@ -1772,14 +1819,9 @@ mod tests {
 
             assert!(matches!(
                 error,
-                BulletinSubmitError::AllowanceRejected {
-                    phase: AllowanceRejectionPhase::DryRun,
-                }
+				BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::DryRun }
             ));
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                1
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
             assert_eq!(
                 provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
                 2
@@ -1799,9 +1841,7 @@ mod tests {
 
             assert!(matches!(
                 &error,
-                BulletinSubmitError::Timeout {
-                    phase: SubmissionPhase::Connect
-                }
+				BulletinSubmitError::Timeout { phase: SubmissionPhase::Connect }
             ));
             assert_eq!(error.to_string(), "timeout: connect");
         }
@@ -1811,10 +1851,7 @@ mod tests {
             let provider = Arc::new(
                 BulletinScriptedProvider::new([TransactionOutcome::Included])
                     .with_validation_outcomes(
-                        [
-                            ValidationOutcome::AllowanceRejected,
-                            ValidationOutcome::Valid,
-                        ],
+						[ValidationOutcome::AllowanceRejected, ValidationOutcome::Valid],
                         true,
                     ),
             );
@@ -1832,10 +1869,7 @@ mod tests {
                 provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
                 2
             );
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                1
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
         }
 
         #[test]
@@ -1854,14 +1888,9 @@ mod tests {
 
             assert!(matches!(
                 error,
-                BulletinSubmitError::AllowanceRejected {
-                    phase: AllowanceRejectionPhase::DryRun,
-                }
+				BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::DryRun }
             ));
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                0
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 0);
         }
 
         #[test]
@@ -1895,10 +1924,7 @@ mod tests {
                 provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
                 rejections_past_old_limit + 1
             );
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                1
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
         }
 
         #[test]
@@ -1924,18 +1950,13 @@ mod tests {
 
             assert!(matches!(
                 error,
-                BulletinSubmitError::AllowanceRejected {
-                    phase: AllowanceRejectionPhase::DryRun,
-                }
+				BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::DryRun }
             ));
             assert_eq!(
                 provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
                 1
             );
-            assert_eq!(
-                provider.method_count("transactionWatch_v1_submitAndWatch"),
-                0
-            );
+			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 0);
         }
     }
 }

@@ -41,6 +41,32 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 - return a decode error instead of trapping when subscription helpers receive a
   request descriptor
 
+## [0.25.0] - 2026-10-13
+
+### Added
+
+- show the truapi-host version beside the TrUAPI Runtime switch (#1375)
+- chat modality on the shared TrUAPI core, with a local e2e launcher (#989)
+- enable deeplinking to pocket collection or specific card (#1325)
+- let products scan codes with the app's scanner (#1319)
+- let products scan codes with the host's viewfinder (#1307)
+- let a Pocket card's page hide or show the face above it (#1321)
+- route an expanded card's face request to its native host (#1293)
+
+### Changed
+
+- port generic durability service to rust (#1301)
+- describe chat messages with alt, and show product icons in iOS chats (#1340)
+- let a product set what a chat room shows below its messages (#1341)
+- @parity/truapi 0.24.0, @parity/truapi-host 0.24.0, @parity/ios-host 0.24.0, @parity/android-host 0.24.0 (#1326)
+
+### Fixed
+
+- serve the host surface from a signing worker host (#1358)
+- draw renderer images in chat cards (#1339)
+- skip an undecodable peer message instead of failing the wait (#1055)
+- draw Pocket card faces in the default theme (#1343)
+
 ## [0.24.0] - 2026-10-07
 
 ### Added
@@ -54,6 +80,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.24.0, @parity/truapi-host 0.24.0, @parity/truapi-debugger 0.1.11, @parity/ios-host 0.24.0, @parity/android-host 0.24.0 (#1323)
 - read, screen and store Pocket cards through the core (#1116)
 - disable the native DIM2 weekly game bot (#1211)
 - backport 6 commits into hosts/ios (#1188)

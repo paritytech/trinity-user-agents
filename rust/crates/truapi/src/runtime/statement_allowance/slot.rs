@@ -10,13 +10,10 @@ use parity_scale_codec::{Decode, DecodeAll, Encode};
 use sp_crypto_hashing::{blake2_256, twox_128};
 use thiserror::Error;
 
-use super::StatementAllowanceError;
-use super::collection::PersonhoodCollection;
-use super::extension::Metadata;
-use super::key_hash::blake2_128_concat;
-use super::proof::vrf_error;
-use super::rpc::RpcClient;
-use super::view;
+use super::{
+	StatementAllowanceError, collection::PersonhoodCollection, extension::Metadata,
+	key_hash::blake2_128_concat, proof::vrf_error, rpc::RpcClient, view,
+};
 
 /// StatementStore allowance period: one UTC day, in seconds.
 pub const STATEMENT_STORE_PERIOD_SECONDS: u64 = 86_400;
@@ -245,13 +242,8 @@ async fn alias_in_context(
     name: &'static str,
 ) -> Result<[u8; 32], StatementAllowanceError> {
     let vrf = crate::runtime::vrf::load().await.map_err(vrf_error)?;
-    vrf.alias(&entropy, context).map_err(|err| {
-        SlotError::AliasInContext {
-            context: name,
-            error: err.to_string(),
-        }
-        .into()
-    })
+	vrf.alias(&entropy, context)
+		.map_err(|err| SlotError::AliasInContext { context: name, error: err.to_string() }.into())
 }
 
 /// `Resources.StatementStoreAllowances[period][alias]` storage key.
@@ -363,19 +355,11 @@ pub fn replaceable_slot(
 
 /// `Timestamp.Now` storage key.
 pub(super) fn timestamp_now_key() -> Vec<u8> {
-    [
-        twox_128(b"Timestamp").as_slice(),
-        twox_128(b"Now").as_slice(),
-    ]
-    .concat()
+	[twox_128(b"Timestamp").as_slice(), twox_128(b"Now").as_slice()].concat()
 }
 
 fn network_suffix_key() -> Vec<u8> {
-    [
-        twox_128(b"NetworkSuffix").as_slice(),
-        twox_128(b"NetworkSuffix").as_slice(),
-    ]
-    .concat()
+	[twox_128(b"NetworkSuffix").as_slice(), twox_128(b"NetworkSuffix").as_slice()].concat()
 }
 
 /// Read the runtime-wide suffix used for product-scoped proof contexts.
@@ -481,15 +465,8 @@ pub async fn scan_slot_excluding(
     metadata: &Metadata,
     scan: SlotScan<'_>,
 ) -> Result<SlotSelection, StatementAllowanceError> {
-    let SlotScan {
-        collection,
-        entropy,
-        network_suffix,
-        period,
-        target,
-        excluded,
-        reuse_existing,
-    } = scan;
+	let SlotScan { collection, entropy, network_suffix, period, target, excluded, reuse_existing } =
+		scan;
     let max = max_slots(rpc, metadata, collection).await?;
     let mut keys = Vec::with_capacity(max as usize);
     for seq in 0..max {
@@ -508,7 +485,7 @@ pub async fn scan_slot_excluding(
                 } else if first_free.is_none() {
                     first_free = Some(seq);
                 }
-            }
+			},
             Some(bytes) => {
                 let Some(entry) = decode_entry(&bytes) else {
                     continue;
@@ -521,7 +498,7 @@ pub async fn scan_slot_excluding(
                     account_id: entry.account_id,
                     since: entry.since,
                 });
-            }
+			},
         }
     }
     Ok(match (first_free, excluded_free) {
@@ -657,8 +634,12 @@ pub mod testing {
             .iter()
             .enumerate()
             .filter_map(|(seq, entry)| {
-                let alias =
-                    futures::executor::block_on(slot_alias(entropy, network_suffix, period, seq as u32))
+				let alias = futures::executor::block_on(slot_alias(
+					entropy,
+					network_suffix,
+					period,
+					seq as u32,
+				))
                         .unwrap();
                 let key = hex::encode(statement_store_allowance_key(period, &alias));
                 Some(format!(r#"["0x{key}",{}]"#, entry.as_ref()?))
@@ -672,9 +653,10 @@ pub mod testing {
 mod tests {
     use subxt_rpcs::RpcClient as HostRpcClient;
 
-    use super::super::rpc::testing::ScriptedRpc;
-    use super::super::test_fixtures;
-    use super::*;
+	use super::{
+		super::{rpc::testing::ScriptedRpc, test_fixtures},
+		*,
+	};
 
     /// Fixture metadata captured from paseo-next-v2; its
     /// `LiteStmtStoreSlotsPerPeriod` is 10.
@@ -694,11 +676,7 @@ mod tests {
 
     /// An occupied-slot candidate for the replacement rule.
     fn occupied(seq: u32, account_id: [u8; 32], since: u64) -> OccupiedSlot {
-        OccupiedSlot {
-            seq,
-            account_id,
-            since,
-        }
+		OccupiedSlot { seq, account_id, since }
     }
 
     /// Run `scan_slot_excluding` for `[0x22; 32]` against a scripted period
@@ -737,14 +715,8 @@ mod tests {
     fn the_asset_hub_fixture_declares_a_daily_pgas_budget_per_collection() {
         let metadata = test_fixtures::asset_hub();
 
-        assert_eq!(
-            max_pgas_claims(metadata, PersonhoodCollection::People).unwrap(),
-            100,
-        );
-        assert_eq!(
-            max_pgas_claims(metadata, PersonhoodCollection::LitePeople).unwrap(),
-            40,
-        );
+		assert_eq!(max_pgas_claims(metadata, PersonhoodCollection::People).unwrap(), 100,);
+		assert_eq!(max_pgas_claims(metadata, PersonhoodCollection::LitePeople).unwrap(), 40,);
     }
 
     #[test]
@@ -813,9 +785,8 @@ mod tests {
     #[test]
     fn the_scan_reports_each_occupied_slots_age() {
         let metadata = test_fixtures::people();
-        let entries: Vec<String> = (0..SLOTS)
-            .map(|seq| entry_with_since([0x99; 32], 1_000 + seq as u64))
-            .collect();
+		let entries: Vec<String> =
+			(0..SLOTS).map(|seq| entry_with_since([0x99; 32], 1_000 + seq as u64)).collect();
         let scripted = ScriptedRpc::new(entries.iter().map(String::as_str).collect::<Vec<_>>());
         let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
@@ -853,20 +824,14 @@ mod tests {
             occupied(2, [0x98; 32], 2_000),
         ];
 
-        assert_eq!(
-            replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]),
-            Some(2),
-        );
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]), Some(2),);
     }
 
     #[test]
     fn a_slot_inside_its_cooldown_is_not_replaceable() {
         let candidates = [occupied(0, [0x99; 32], 9_990)];
 
-        assert_eq!(
-            replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]),
-            None,
-        );
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]), None,);
     }
 
     /// The runtime requires `now > since + cooldown`, so a slot at exactly the
@@ -894,50 +859,29 @@ mod tests {
         let scripted = ScriptedRpc::new(vec![r#""0x60ea000000000000""#]);
         let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
-        assert_eq!(
-            futures::executor::block_on(read_chain_now_seconds(&rpc)).unwrap(),
-            60,
-        );
+		assert_eq!(futures::executor::block_on(read_chain_now_seconds(&rpc)).unwrap(), 60,);
     }
 
     #[test]
     fn a_table_of_only_the_targets_own_and_cooling_slots_yields_nothing() {
-        let candidates = [
-            occupied(0, [0x22; 32], 1_000),
-            occupied(1, [0x99; 32], 9_999),
-        ];
+		let candidates = [occupied(0, [0x22; 32], 1_000), occupied(1, [0x99; 32], 9_999)];
 
-        assert_eq!(
-            replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]),
-            None,
-        );
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]), None,);
     }
 
     #[test]
     fn an_excluded_slot_is_skipped_so_a_failed_replacement_moves_on() {
-        let candidates = [
-            occupied(0, [0x99; 32], 1_000),
-            occupied(1, [0x98; 32], 2_000),
-        ];
+		let candidates = [occupied(0, [0x99; 32], 1_000), occupied(1, [0x98; 32], 2_000)];
 
-        assert_eq!(
-            replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[0]),
-            Some(1),
-        );
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[0]), Some(1),);
     }
 
     /// Equal ages resolve to the lowest seq, so retries do not oscillate.
     #[test]
     fn equal_ages_break_to_the_lowest_seq() {
-        let candidates = [
-            occupied(5, [0x99; 32], 1_000),
-            occupied(2, [0x98; 32], 1_000),
-        ];
+		let candidates = [occupied(5, [0x99; 32], 1_000), occupied(2, [0x98; 32], 1_000)];
 
-        assert_eq!(
-            replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]),
-            Some(2),
-        );
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]), Some(2),);
     }
 
     /// A pass that registers several targets protects the slots it has already
@@ -952,20 +896,11 @@ mod tests {
         ];
 
         // Nothing claimed yet: the oldest goes.
-        assert_eq!(
-            replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]),
-            Some(0),
-        );
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]), Some(0),);
         // Having claimed 0 and 1 earlier in the pass, only 2 is available.
-        assert_eq!(
-            replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[0, 1]),
-            Some(2),
-        );
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[0, 1]), Some(2),);
         // Once every slot is one this pass claimed, the honest answer is none.
-        assert_eq!(
-            replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[0, 1, 2]),
-            None,
-        );
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[0, 1, 2]), None,);
     }
 
     /// Excluding a slot because a submission for it is in flight must not read as
@@ -1007,7 +942,8 @@ mod tests {
         const DAY: u32 = 20678;
 
         // Slots 0-2 are claimed; 3 is free. The batch of ten is answered key by key.
-        let answers: Vec<&str> = (0..10).map(|slot| if slot < 3 { r#""0x""# } else { "null" }).collect();
+		let answers: Vec<&str> =
+			(0..10).map(|slot| if slot < 3 { r#""0x""# } else { "null" }).collect();
         let scripted = ScriptedRpc::new(answers);
         let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
 
@@ -1107,8 +1043,8 @@ mod tests {
         assert_eq!(
             [
                 derive_slot_context(b"paseo", 100, 3) != derive_slot_context(b"polkadot", 100, 3),
-                derive_long_term_storage_context(b"paseo", 100, 3)
-                    != derive_long_term_storage_context(b"polkadot", 100, 3),
+				derive_long_term_storage_context(b"paseo", 100, 3) !=
+					derive_long_term_storage_context(b"polkadot", 100, 3),
                 derive_pgas_context(b"paseo", 100, 3) != derive_pgas_context(b"polkadot", 100, 3),
             ],
             [true; 3],
@@ -1141,9 +1077,7 @@ mod tests {
 
         assert!(matches!(
             futures::executor::block_on(read_network_suffix(&rpc)),
-            Err(StatementAllowanceError::Slot(
-                SlotError::MissingNetworkSuffix
-            )),
+			Err(StatementAllowanceError::Slot(SlotError::MissingNetworkSuffix)),
         ));
     }
 
@@ -1154,9 +1088,7 @@ mod tests {
 
         assert!(matches!(
             futures::executor::block_on(read_network_suffix(&malformed_rpc)),
-            Err(StatementAllowanceError::Slot(
-                SlotError::NetworkSuffixDecode(_)
-            )),
+			Err(StatementAllowanceError::Slot(SlotError::NetworkSuffixDecode(_))),
         ));
     }
 
@@ -1167,9 +1099,7 @@ mod tests {
 
         assert!(matches!(
             futures::executor::block_on(read_network_suffix(&empty_rpc)),
-            Err(StatementAllowanceError::Slot(
-                SlotError::InvalidNetworkSuffixLength { len: 0 }
-            )),
+			Err(StatementAllowanceError::Slot(SlotError::InvalidNetworkSuffixLength { len: 0 })),
         ));
     }
 
@@ -1181,9 +1111,7 @@ mod tests {
 
         assert!(matches!(
             futures::executor::block_on(read_network_suffix(&oversized_rpc)),
-            Err(StatementAllowanceError::Slot(
-                SlotError::InvalidNetworkSuffixLength { len: 17 }
-            )),
+			Err(StatementAllowanceError::Slot(SlotError::InvalidNetworkSuffixLength { len: 17 })),
         ));
     }
 
@@ -1195,10 +1123,7 @@ mod tests {
                 .try_into()
                 .unwrap();
 
-        assert_eq!(
-            derive_long_term_storage_context(NETWORK_SUFFIX, 100, 3),
-            expected,
-        );
+		assert_eq!(derive_long_term_storage_context(NETWORK_SUFFIX, 100, 3), expected,);
     }
 
     #[test]
@@ -1246,30 +1171,17 @@ mod tests {
 
     #[test]
     fn long_term_storage_period_uses_chain_duration() {
-        assert_eq!(
-            current_long_term_storage_period(1_209_600 * 20 + 5, 1_209_600).unwrap(),
-            20,
-        );
+		assert_eq!(current_long_term_storage_period(1_209_600 * 20 + 5, 1_209_600).unwrap(), 20,);
     }
 
     #[test]
     fn allowance_entry_matches_runtime_field_codec() {
-        let entry = StatementStoreAllowanceEntry {
-            account_id: [0x42; 32],
-            seq: 7,
-            since: 99,
-        };
+		let entry = StatementStoreAllowanceEntry { account_id: [0x42; 32], seq: 7, since: 99 };
         let encoded = entry.encode();
 
         assert_eq!(encoded, (entry.account_id, entry.seq, entry.since).encode());
-        assert_eq!(
-            decode_entry(&encoded).map(|e| e.account_id),
-            Some(entry.account_id)
-        );
-        assert_eq!(
-            StatementStoreAllowanceEntry::decode(&mut encoded.as_slice()).unwrap(),
-            entry
-        );
+		assert_eq!(decode_entry(&encoded).map(|e| e.account_id), Some(entry.account_id));
+		assert_eq!(StatementStoreAllowanceEntry::decode(&mut encoded.as_slice()).unwrap(), entry);
     }
 
     #[test]

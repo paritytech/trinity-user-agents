@@ -40,11 +40,15 @@ use std::sync::{Arc, Weak};
 
 use parity_scale_codec::{Decode, Encode};
 
-use crate::platform::{
-    BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, DevicePermissionStatus,
-    PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-    PermissionStatusHost, Permissions, ProductContext, has_trusted_remote_permissions,
-    is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
+use crate::{
+	host_internal::product_manifest::bare_product_label,
+	platform::{
+		BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, CrossProductSignatureKind,
+		DevicePermissionStatus, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+		PermissionDecision, PermissionStatusHost, Permissions, ProductContext,
+		has_trusted_remote_permissions, is_valid_remote_domain_pattern, normalize_remote_domain,
+		remote_domain_candidates,
+	},
 };
 use truapi::latest::{
     GenericError, HostDevicePermissionRequest, RemotePermission, RemotePermissionRequest,
@@ -86,11 +90,7 @@ fn requested_domains(request: &RemotePermissionRequest) -> Option<&[String]> {
 
 /// A domain bundle as a request, for the key that answers it as a whole.
 fn remote_bundle_request(domains: &[String]) -> RemotePermissionRequest {
-    RemotePermissionRequest {
-        permission: RemotePermission::Remote {
-            domains: domains.to_vec(),
-        },
-    }
+	RemotePermissionRequest { permission: RemotePermission::Remote { domains: domains.to_vec() } }
 }
 
 /// What the stored per-domain decisions alone say about a bundle.
@@ -229,11 +229,30 @@ impl PermissionScope {
     }
 }
 
+/// The key a cross-product signature approval is granted under. Both products
+/// are reduced to their bare label, as the manifest grant files them, so one
+/// approval covers every account of the owning product.
+pub fn cross_product_signature_key(
+	product_id: &str,
+	target_product_id: &str,
+	kind: CrossProductSignatureKind,
+) -> CoreStorageKey {
+	CoreStorageKey::PermissionAuthorization {
+		product_id: bare_product_label(product_id).to_string(),
+		request: PermissionAuthorizationRequest::CrossProductSignature {
+			target_product_id: bare_product_label(target_product_id).to_string(),
+			kind,
+		},
+    }
+}
+
 /// Permission prompts and one-use grants shared by a product execution's connections.
 #[derive(Default)]
 pub struct TemporaryPermissions {
     authorization: futures::lock::Mutex<()>,
     grants: parking_lot::Mutex<HashSet<Vec<u8>>>,
+    /// Serialize signature prompts without blocking submissions.
+    signature_prompt: futures::lock::Mutex<()>,
 }
 
 impl TemporaryPermissions {
@@ -241,7 +260,14 @@ impl TemporaryPermissions {
         self.grants.lock().clear();
     }
 
-    fn authorize(&self, key: &CoreStorageKey, consume: bool) -> bool {
+	/// Wait until no signature prompt is open, and keep others from opening
+	/// until the returned guard is dropped.
+	pub async fn signature_prompt(&self) -> futures::lock::MutexGuard<'_, ()> {
+		self.signature_prompt.lock().await
+	}
+
+	/// Whether a grant covers `key`, consuming it when `consume` is set.
+	pub fn authorize(&self, key: &CoreStorageKey, consume: bool) -> bool {
         self.authorize_all(core::slice::from_ref(key), consume)
     }
 
@@ -263,7 +289,8 @@ impl TemporaryPermissions {
         self.grants.lock().remove(&key.encode());
     }
 
-    fn grant(&self, key: CoreStorageKey) {
+    /// Grant `key` until it is consumed or the product execution closes.
+    pub fn grant(&self, key: CoreStorageKey) {
         self.grants.lock().insert(key.encode());
     }
 }
@@ -379,7 +406,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             // whether this exact set has already been refused.
             BundleResolution::Undecided(undecided) => {
                 authorization_status(self.storage, self.bundle_key(&undecided)).await
-            }
+			},
         }
     }
 
@@ -388,10 +415,8 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         &self,
         domains: &[String],
     ) -> Result<(BundleResolution, Vec<CoreStorageKey>), GenericError> {
-        if domains.is_empty()
-            || domains
-                .iter()
-                .any(|domain| !is_valid_remote_domain_pattern(domain))
+		if domains.is_empty() ||
+			domains.iter().any(|domain| !is_valid_remote_domain_pattern(domain))
         {
             return Ok((BundleResolution::Denied, Vec::new()));
         }
@@ -409,9 +434,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             match status {
                 PermissionAuthorizationStatus::Denied => {
                     return Ok((BundleResolution::Denied, Vec::new()));
-                }
+				},
                 PermissionAuthorizationStatus::NotDetermined => undecided.push(domain.clone()),
-                PermissionAuthorizationStatus::Authorized => {}
+				PermissionAuthorizationStatus::Authorized => {},
             }
             if let Some(key) = temporary_key {
                 temporary_keys.push(key);
@@ -514,7 +539,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         match request {
             PermissionAuthorizationRequest::Device(permission) => {
                 self.peek_device(permission).await
-            }
+			},
             PermissionAuthorizationRequest::Remote(request) => self.peek_remote(request).await,
             PermissionAuthorizationRequest::IdentityDisclosure
             | PermissionAuthorizationRequest::AccountAccess { .. } => {
@@ -533,6 +558,18 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                     },
                 )
             }
+			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
+				Ok(
+					if self.temporary_permissions.authorize(
+						&cross_product_signature_key(self.product_id(), target_product_id, *kind),
+						false,
+					) {
+						PermissionAuthorizationStatus::Authorized
+					} else {
+						PermissionAuthorizationStatus::NotDetermined
+					},
+				)
+			},
         }
     }
 
@@ -634,7 +671,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         let key = match request {
             PermissionAuthorizationRequest::Device(permission) => {
                 CoreStorageKey::device_permission_authorization(self.product_id(), permission)
-            }
+			},
             PermissionAuthorizationRequest::Remote(request) => {
                 // This is the host's per-domain surface: it names the patterns it
                 // means, so it writes each one. It also writes the set-shaped
@@ -654,10 +691,10 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                     return Ok(());
                 }
                 CoreStorageKey::remote_permission_authorization(self.product_id(), request)
-            }
+			},
             PermissionAuthorizationRequest::IdentityDisclosure => {
                 CoreStorageKey::identity_disclosure_authorization(self.product_id())
-            }
+			},
             PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
                 authorization_key(
                     self.product_id(),
@@ -665,7 +702,18 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                         target_product_id: target_product_id.clone(),
                     },
                 )
+			},
+			// Held in memory for the execution only, so nothing is stored. A
+			// denial is not kept either, like a refusal at the prompt.
+			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
+				let key = cross_product_signature_key(self.product_id(), target_product_id, *kind);
+				if status == PermissionAuthorizationStatus::Authorized {
+					self.temporary_permissions.grant(key);
+				} else {
+					self.temporary_permissions.revoke(&key);
             }
+				return Ok(());
+			},
         };
         self.temporary_permissions.revoke(&key);
         set_authorization_status(self.storage, key, status).await
@@ -714,7 +762,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             return Ok(PermissionAuthorizationStatus::Denied);
         }
         match self.cached_authorization(&key, consume).await? {
-            PermissionAuthorizationStatus::NotDetermined => {}
+			PermissionAuthorizationStatus::NotDetermined => {},
             decided => return Ok(decided),
         }
         // Only a genuine user authorization is persisted. A prompt-callback
@@ -770,7 +818,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         let Some(domains) = requested_domains(&request).map(<[String]>::to_vec) else {
             let key = CoreStorageKey::remote_permission_authorization(self.product_id(), &request);
             match self.cached_remote_authorization(&key, consume).await? {
-                PermissionAuthorizationStatus::NotDetermined => {}
+				PermissionAuthorizationStatus::NotDetermined => {},
                 decided => return Ok(decided),
             }
             // See `check_or_prompt_device`: persist only a genuine user decision;
@@ -793,10 +841,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 
         let (resolution, temporary_keys) = self.resolve_domains(&domains).await?;
         let authorize = || {
-            if self
-                .temporary_permissions
-                .authorize_all(&temporary_keys, consume)
-            {
+			if self.temporary_permissions.authorize_all(&temporary_keys, consume) {
                 PermissionAuthorizationStatus::Authorized
             } else {
                 PermissionAuthorizationStatus::NotDetermined
@@ -844,12 +889,11 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                     .await?;
                 }
                 Ok(authorize())
-            }
+			},
             // A denial answers only the question that was asked.
             PermissionDecision::Deny => {
-                self.persist_decision(bundle_key, StoredAuthorizationStatus::Denied)
-                    .await
-            }
+				self.persist_decision(bundle_key, StoredAuthorizationStatus::Denied).await
+			},
         }
     }
 
@@ -865,15 +909,13 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                     self.temporary_permissions.grant(key);
                 }
                 Ok(PermissionAuthorizationStatus::Authorized)
-            }
+			},
             PermissionDecision::AllowAlways => {
-                self.persist_decision(key, StoredAuthorizationStatus::Authorized)
-                    .await
-            }
+				self.persist_decision(key, StoredAuthorizationStatus::Authorized).await
+			},
             PermissionDecision::Deny => {
-                self.persist_decision(key, StoredAuthorizationStatus::Denied)
-                    .await
-            }
+				self.persist_decision(key, StoredAuthorizationStatus::Denied).await
+			},
         }
     }
 
@@ -883,9 +925,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         key: CoreStorageKey,
         authorization: StoredAuthorizationStatus,
     ) -> Result<PermissionAuthorizationStatus, GenericError> {
-        self.storage
-            .write_core_storage(key, authorization.encode())
-            .await?;
+		self.storage.write_core_storage(key, authorization.encode()).await?;
         Ok(authorization.into())
     }
 }
@@ -940,6 +980,9 @@ pub(crate) fn authorization_key(
                 bare_product_label(product),
                 bare_product_label(target_product_id),
             )
+        }
+        PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
+            cross_product_signature_key(product, target_product_id, *kind)
         }
     }
 }
@@ -1006,12 +1049,14 @@ fn status_into_stored(status: PermissionAuthorizationStatus) -> StoredAuthorizat
 mod tests {
     use super::*;
     use futures::lock::Mutex;
-    use std::collections::HashMap;
-    use std::sync::LazyLock;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use truapi::latest::RemotePermission;
-    use truapi::v01;
-    use truapi::v01::GenericError;
+	use std::{
+		collections::HashMap,
+		sync::{
+			LazyLock,
+			atomic::{AtomicUsize, Ordering},
+		},
+	};
+	use truapi::{latest::RemotePermission, v01, v01::GenericError};
 
     static PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
         ProductContext::new("product.dot".to_string()).expect("product id is valid")
@@ -1065,9 +1110,7 @@ mod tests {
         futures::executor::block_on(async {
             for request in [
                 remote_domains(&["cdn.example.com"]),
-                RemotePermissionRequest {
-                    permission: RemotePermission::WebRtc,
-                },
+				RemotePermissionRequest { permission: RemotePermission::WebRtc },
             ] {
                 for (decision, first_status, second_status, calls) in [
                     (
@@ -1122,14 +1165,8 @@ mod tests {
     fn concurrent_device_operations_reuse_a_persisted_decision() {
         futures::executor::block_on(async {
             for (decision, expected) in [
-                (
-                    PermissionDecision::AllowAlways,
-                    PermissionAuthorizationStatus::Authorized,
-                ),
-                (
-                    PermissionDecision::Deny,
-                    PermissionAuthorizationStatus::Denied,
-                ),
+				(PermissionDecision::AllowAlways, PermissionAuthorizationStatus::Authorized),
+				(PermissionDecision::Deny, PermissionAuthorizationStatus::Denied),
             ] {
                 let storage = MemStorage::default();
                 let prompt =
@@ -1182,10 +1219,7 @@ mod tests {
             drop(cancelled);
             drop(pending_answer);
             assert_eq!(
-                (
-                    waiting.await.unwrap(),
-                    prompt.remote_calls.load(Ordering::SeqCst)
-                ),
+				(waiting.await.unwrap(), prompt.remote_calls.load(Ordering::SeqCst)),
                 (PermissionAuthorizationStatus::Authorized, 2),
             );
         });
@@ -1249,10 +1283,7 @@ mod tests {
                 );
                 let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
                 let granted = remote_domains(&["api.example.com"]);
-                service
-                    .check_or_prompt_remote(granted.clone())
-                    .await
-                    .unwrap();
+				service.check_or_prompt_remote(granted.clone()).await.unwrap();
                 if !prompt_denial {
                     service
                         .set_authorization_status(
@@ -1302,11 +1333,7 @@ mod tests {
                 service.authorize_remote(remote_domains(&["deeper.deep.b.example.com"])),
             );
             assert_eq!(
-                (
-                    first.unwrap(),
-                    second.unwrap(),
-                    prompt.remote_calls.load(Ordering::SeqCst)
-                ),
+				(first.unwrap(), second.unwrap(), prompt.remote_calls.load(Ordering::SeqCst)),
                 (
                     PermissionAuthorizationStatus::Authorized,
                     PermissionAuthorizationStatus::Denied,
@@ -1381,26 +1408,15 @@ mod tests {
             let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
             let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
             let wildcard = remote_domains(&["*"]);
-            service
-                .check_or_prompt_remote(wildcard.clone())
-                .await
-                .unwrap();
+			service.check_or_prompt_remote(wildcard.clone()).await.unwrap();
             let blessed = service
                 .authorize_remote(remote_domains(&[BLESSED_REMOTE_DOMAINS[0]]))
                 .await
                 .unwrap();
             let still_available = service.peek_remote(&wildcard).await.unwrap();
-            let other = service
-                .authorize_remote(remote_domains(&["other.com"]))
-                .await
-                .unwrap();
+			let other = service.authorize_remote(remote_domains(&["other.com"])).await.unwrap();
             assert_eq!(
-                (
-                    blessed,
-                    still_available,
-                    other,
-                    service.peek_remote(&wildcard).await.unwrap()
-                ),
+				(blessed, still_available, other, service.peek_remote(&wildcard).await.unwrap()),
                 (
                     PermissionAuthorizationStatus::Authorized,
                     PermissionAuthorizationStatus::Authorized,
@@ -1451,10 +1467,7 @@ mod tests {
             let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
             let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
             let request = remote_domains(&["api.example.com"]);
-            service
-                .check_or_prompt_remote(request.clone())
-                .await
-                .unwrap();
+			service.check_or_prompt_remote(request.clone()).await.unwrap();
             service
                 .set_authorization_status(
                     &PermissionAuthorizationRequest::Remote(request.clone()),
@@ -1482,11 +1495,7 @@ mod tests {
     impl ScriptedPrompt {
         fn new(device_answers: Vec<bool>, remote_answers: Vec<bool>) -> Self {
             let decision = |granted| {
-                if granted {
-                    PermissionDecision::AllowAlways
-                } else {
-                    PermissionDecision::Deny
-                }
+				if granted { PermissionDecision::AllowAlways } else { PermissionDecision::Deny }
             };
             Self::decisions(
                 device_answers.into_iter().map(decision).collect(),
@@ -1560,30 +1569,18 @@ mod tests {
 
     impl ScriptedStatus {
         fn always(status: DevicePermissionStatus) -> Self {
-            Self {
-                answers: Vec::new(),
-                fallback: Some(status),
-                asked: Mutex::new(Vec::new()),
-            }
+			Self { answers: Vec::new(), fallback: Some(status), asked: Mutex::new(Vec::new()) }
         }
 
         fn per_capability(
             answers: Vec<(HostDevicePermissionRequest, DevicePermissionStatus)>,
             fallback: DevicePermissionStatus,
         ) -> Self {
-            Self {
-                answers,
-                fallback: Some(fallback),
-                asked: Mutex::new(Vec::new()),
-            }
+			Self { answers, fallback: Some(fallback), asked: Mutex::new(Vec::new()) }
         }
 
         fn failing() -> Self {
-            Self {
-                answers: Vec::new(),
-                fallback: None,
-                asked: Mutex::new(Vec::new()),
-            }
+			Self { answers: Vec::new(), fallback: None, asked: Mutex::new(Vec::new()) }
         }
 
         fn asked(&self) -> Vec<HostDevicePermissionRequest> {
@@ -1598,10 +1595,8 @@ mod tests {
             request: HostDevicePermissionRequest,
         ) -> Result<DevicePermissionStatus, GenericError> {
             self.asked.lock().await.push(request);
-            if let Some((_, status)) = self
-                .answers
-                .iter()
-                .find(|(capability, _)| *capability == request)
+			if let Some((_, status)) =
+				self.answers.iter().find(|(capability, _)| *capability == request)
             {
                 return Ok(*status);
             }
@@ -1656,9 +1651,7 @@ mod tests {
         let prompt = ScriptedPrompt::new(vec![], vec![false]);
         let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
 
-        let request = RemotePermissionRequest {
-            permission: RemotePermission::ChainSubmit,
-        };
+		let request = RemotePermissionRequest { permission: RemotePermission::ChainSubmit };
         let first =
             futures::executor::block_on(service.check_or_prompt_remote(request.clone())).unwrap();
         let second = futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap();
@@ -1717,11 +1710,7 @@ mod tests {
         )
         .unwrap();
 
-        for covered in [
-            "api.example.com",
-            "deep.api.example.com",
-            "deeper.deep.api.example.com",
-        ] {
+		for covered in ["api.example.com", "deep.api.example.com", "deeper.deep.api.example.com"] {
             assert_eq!(
                 futures::executor::block_on(service.peek_remote(&remote_domains(&[covered])))
                     .unwrap(),
@@ -1865,10 +1854,7 @@ mod tests {
         assert_eq!(
             prompt.domains_asked(),
             vec![
-                vec![
-                    "api.coingecko.com".to_string(),
-                    "analytics.vendor.com".to_string(),
-                ],
+				vec!["api.coingecko.com".to_string(), "analytics.vendor.com".to_string(),],
                 vec!["api.coingecko.com".to_string()],
             ],
         );
@@ -1911,11 +1897,7 @@ mod tests {
 
         // Enforcement normalizes a live URL host the same way the grant was
         // keyed, so no spelling of the same site opens a second prompt.
-        for spelling in [
-            "bücher.example",
-            "xn--bcher-kva.example",
-            "XN--BCHER-KVA.example.",
-        ] {
+		for spelling in ["bücher.example", "xn--bcher-kva.example", "XN--BCHER-KVA.example."] {
             assert_eq!(
                 futures::executor::block_on(service.peek_remote(&remote_domains(&[spelling])))
                     .unwrap(),
@@ -2042,9 +2024,7 @@ mod tests {
 
     fn every_remote_permission() -> Vec<RemotePermission> {
         vec![
-            RemotePermission::Remote {
-                domains: vec!["example.com".to_string()],
-            },
+			RemotePermission::Remote { domains: vec!["example.com".to_string()] },
             RemotePermission::WebRtc,
             RemotePermission::ChainSubmit,
             RemotePermission::PreimageSubmit,
@@ -2099,10 +2079,7 @@ mod tests {
         let prompt = ScriptedPrompt::new(vec![], vec![]);
         let service = trusted_service(&storage, &prompt);
 
-        for request in [
-            remote(RemotePermission::ChainSubmit),
-            remote_domains(&["a.com"]),
-        ] {
+		for request in [remote(RemotePermission::ChainSubmit), remote_domains(&["a.com"])] {
             assert_eq!(
                 futures::executor::block_on(
                     service.authorization_status(&PermissionAuthorizationRequest::Remote(request))
@@ -2138,10 +2115,7 @@ mod tests {
         let prompt = ScriptedPrompt::new(vec![], vec![]);
         let service = trusted_service(&storage, &prompt);
 
-        for request in [
-            remote(RemotePermission::ChainSubmit),
-            remote_domains(&["a.com"]),
-        ] {
+		for request in [remote(RemotePermission::ChainSubmit), remote_domains(&["a.com"])] {
             futures::executor::block_on(service.set_authorization_status(
                 &PermissionAuthorizationRequest::Remote(request.clone()),
                 PermissionAuthorizationStatus::Denied,
@@ -2187,13 +2161,7 @@ mod tests {
         let storage = MemStorage::default();
         let prompt = ScriptedPrompt::new(vec![], vec![]);
 
-        for product_id in [
-            "peopl.dot",
-            "peopl.paseo",
-            "peopl.testnet",
-            "dim2.dot",
-            "stash.dot",
-        ] {
+		for product_id in ["peopl.dot", "peopl.paseo", "peopl.testnet", "dim2.dot", "stash.dot"] {
             let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
             let service = PermissionsService::new(&storage, &prompt, &product);
             assert_eq!(
@@ -2498,9 +2466,7 @@ mod tests {
             _product: &ProductContext,
             _request: HostDevicePermissionRequest,
         ) -> Result<PermissionDecision, GenericError> {
-            Err(GenericError {
-                reason: "boom".into(),
-            })
+			Err(GenericError { reason: "boom".into() })
         }
 
         async fn remote_permission(
@@ -2508,9 +2474,7 @@ mod tests {
             _product: &ProductContext,
             _request: RemotePermissionRequest,
         ) -> Result<PermissionDecision, GenericError> {
-            Err(GenericError {
-                reason: "boom".into(),
-            })
+			Err(GenericError { reason: "boom".into() })
         }
     }
 
@@ -2524,21 +2488,13 @@ mod tests {
             service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
         )
         .unwrap();
-        assert_eq!(
-            device_decision,
-            PermissionAuthorizationStatus::NotDetermined
-        );
+		assert_eq!(device_decision, PermissionAuthorizationStatus::NotDetermined);
 
-        let remote_request = RemotePermissionRequest {
-            permission: RemotePermission::ChainSubmit,
-        };
+		let remote_request = RemotePermissionRequest { permission: RemotePermission::ChainSubmit };
         let remote_decision =
             futures::executor::block_on(service.check_or_prompt_remote(remote_request.clone()))
                 .unwrap();
-        assert_eq!(
-            remote_decision,
-            PermissionAuthorizationStatus::NotDetermined
-        );
+		assert_eq!(remote_decision, PermissionAuthorizationStatus::NotDetermined);
 
         // A transient callback error is not cached, so peek still sees no
         // authorization and the next request re-prompts rather than
@@ -2599,23 +2555,17 @@ mod tests {
             &self,
             _key: CoreStorageKey,
         ) -> Result<Option<Vec<u8>>, v01::GenericError> {
-            Err(v01::GenericError {
-                reason: "read failed".into(),
-            })
+			Err(v01::GenericError { reason: "read failed".into() })
         }
         async fn write_core_storage(
             &self,
             _key: CoreStorageKey,
             _value: Vec<u8>,
         ) -> Result<(), v01::GenericError> {
-            Err(v01::GenericError {
-                reason: "write failed".into(),
-            })
+			Err(v01::GenericError { reason: "write failed".into() })
         }
         async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), v01::GenericError> {
-            Err(v01::GenericError {
-                reason: "clear failed".into(),
-            })
+			Err(v01::GenericError { reason: "clear failed".into() })
         }
     }
 
@@ -2870,10 +2820,7 @@ mod tests {
         // reaches the status host would move the denial to the microphone.
         let prompt = ScriptedPrompt::new(vec![], vec![]);
         let status = ScriptedStatus::per_capability(
-            vec![(
-                HostDevicePermissionRequest::Camera,
-                DevicePermissionStatus::Denied,
-            )],
+			vec![(HostDevicePermissionRequest::Camera, DevicePermissionStatus::Denied)],
             DevicePermissionStatus::Granted,
         );
         let service =
@@ -2895,10 +2842,7 @@ mod tests {
         );
         assert_eq!(
             status.asked(),
-            vec![
-                HostDevicePermissionRequest::Camera,
-                HostDevicePermissionRequest::Microphone,
-            ],
+			vec![HostDevicePermissionRequest::Camera, HostDevicePermissionRequest::Microphone,],
         );
     }
 
@@ -3053,10 +2997,54 @@ mod tests {
         .unwrap();
         assert_eq!(
             (requested, read),
-            (
-                PermissionAuthorizationStatus::Denied,
-                PermissionAuthorizationStatus::Denied,
+			(PermissionAuthorizationStatus::Denied, PermissionAuthorizationStatus::Denied,)
+		);
+	}
+
+	/// A host can see and take back a signature approval through the
+	/// administration API. It reaches the key the runtime checks, and nothing
+	/// is stored, because the approval ends when the product closes.
+	#[test]
+	fn a_signature_approval_is_administered_in_memory_only() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let grants = Arc::new(TemporaryPermissions::default());
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT)
+			.with_temporary_permissions(Arc::clone(&grants));
+		let request = PermissionAuthorizationRequest::CrossProductSignature {
+			target_product_id: "dim2.dot".to_string(),
+			kind: CrossProductSignatureKind::Payload,
+		};
+		let checked_by_runtime = cross_product_signature_key(
+			"product.dot",
+			"dim2.dot",
+			CrossProductSignatureKind::Payload,
+		);
+
+		futures::executor::block_on(
+			service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
             )
+		.unwrap();
+		assert_eq!(
+			(
+				futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+				grants.authorize(&checked_by_runtime, false),
+			),
+			(PermissionAuthorizationStatus::Authorized, true),
+		);
+
+		futures::executor::block_on(
+			service
+				.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined),
+		)
+		.unwrap();
+		assert_eq!(
+			(
+				futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+				grants.authorize(&checked_by_runtime, false),
+				futures::executor::block_on(storage.inner.lock()).is_empty(),
+			),
+			(PermissionAuthorizationStatus::NotDetermined, false, true),
         );
     }
 }
