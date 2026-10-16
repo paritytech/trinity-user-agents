@@ -2,7 +2,8 @@
 ///
 /// Each variant is one rule of the RFC. [`Error::code`] gives the stable name the conformance
 /// vectors use, so a vector fails on the wrong reason as well as on the wrong verdict.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum Error {
 	/// The bytes are not valid UTF-8 JSON.
 	#[error("not JSON: {0}")]
@@ -16,8 +17,8 @@ pub enum Error {
 	/// A known field is missing or has the wrong type.
 	#[error("malformed: {0}")]
 	Malformed(String),
-	/// `sequence` is above 2^53 - 1.
-	#[error("sequence {0} is above 2^53 - 1")]
+	/// `sequence` is above 2^32 - 1.
+	#[error("sequence {0} is above 2^32 - 1")]
 	SequenceOutOfRange(u64),
 	/// Another number is above 2^53 - 1, which I-JSON readers cannot hold exactly.
 	#[error("{0} is above 2^53 - 1")]
@@ -122,44 +123,34 @@ pub enum Error {
 }
 
 impl Error {
-	/// The stable name of the rule, as the conformance vectors spell it.
+	/// The stable name of the rule, as the conformance vectors spell it: the variant in kebab
+	/// case. Renaming a variant changes its code, so pin the old one with `#[strum(serialize)]`.
 	pub fn code(&self) -> &'static str {
-		match self {
-			Self::NotJson(_) => "not-json",
-			Self::DuplicateMember(_) => "duplicate-member",
-			Self::UnsupportedVersion(_) => "unsupported-version",
-			Self::Malformed(_) => "malformed",
-			Self::SequenceOutOfRange(_) => "sequence-out-of-range",
-			Self::NumberOutOfRange(_) => "number-out-of-range",
-			Self::ForkSignedWithSourceKey => "fork-signed-with-source-key",
-			Self::InvalidTld(_) => "invalid-tld",
-			Self::Empty(_) => "empty",
-			Self::DuplicateChainRole(_) => "duplicate-chain-role",
-			Self::DuplicateServiceKind(_) => "duplicate-service-kind",
-			Self::DuplicateAssetRole(_) => "duplicate-asset-role",
-			Self::RelayCount(_) => "relay-count",
-			Self::ParaId(_) => "para-id",
-			Self::UnknownChainRole(_) => "unknown-chain-role",
-			Self::InvalidTime(_) => "invalid-time",
-			Self::InvalidHex { .. } => "invalid-hex",
-			Self::InvalidUrl(_) => "invalid-url",
-			Self::ServiceUrlNotBase(_) => "service-url-not-base",
-			Self::ChainId => "chain-id",
-			Self::ForkedAt => "forked-at",
-			Self::InvalidBase64 => "invalid-base64",
-			Self::EnvelopeVersionMismatch { .. } => "envelope-version-mismatch",
-			Self::NonCanonicalKey => "non-canonical-key",
-			Self::SmallOrderKey => "small-order-key",
-			Self::NonCanonicalR => "non-canonical-r",
-			Self::SmallOrderR => "small-order-r",
-			Self::NonCanonicalS => "non-canonical-s",
-			Self::BadSignature => "bad-signature",
-			Self::Unsigned => "unsigned",
-			Self::InvalidLink(_) => "invalid-link",
-			Self::Unreachable => "unreachable",
-			Self::SpecDigest => "spec-digest",
-			Self::SpecGenesis(_) => "spec-genesis",
-			Self::MalformedSpec(_) => "malformed-spec",
+		self.into()
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// Codes are a published contract: readers in other languages match on them.
+	#[test]
+	fn codes_keep_their_published_spelling() {
+		let codes = [
+			(Error::NotJson(String::new()), "not-json"),
+			(Error::InvalidBase64, "invalid-base64"),
+			(Error::NonCanonicalR, "non-canonical-r"),
+			(Error::ParaId(String::new()), "para-id"),
+			(Error::InvalidHex { field: "f", bytes: 1 }, "invalid-hex"),
+			(
+				Error::EnvelopeVersionMismatch { envelope: 1, payload: 2 },
+				"envelope-version-mismatch",
+			),
+			(Error::ForkSignedWithSourceKey, "fork-signed-with-source-key"),
+		];
+		for (error, code) in codes {
+			assert_eq!(error.code(), code);
 		}
 	}
 }
