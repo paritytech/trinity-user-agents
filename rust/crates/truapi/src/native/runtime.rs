@@ -380,6 +380,10 @@ impl NativeTrUApiHostRuntime {
 	/// `chat_callbacks` installs the host's Chat adapter; hosts without the
 	/// Chat modality pass `None`. `pocket_callbacks` does the same for the
 	/// card collection. `game_callbacks` does the same for game reminders.
+	///
+	/// UniFFI parses `execution_config.product_id` before this runs. The
+	/// `Result` makes a failed parse throw in Swift and Kotlin instead of
+	/// crashing the app.
 	pub fn open_product_execution(
 		&self,
 		callbacks: Arc<dyn HostCallbacks>,
@@ -388,13 +392,12 @@ impl NativeTrUApiHostRuntime {
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
 		execution_config: ProductExecutionConfig,
 	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
-		let product: ProductContext = execution_config.try_into()?;
 		Ok(self.open_product_execution_with_callbacks(
 			callbacks,
 			chat_callbacks,
 			pocket_callbacks,
 			game_callbacks,
-			product,
+			execution_config.into(),
 		))
 	}
 

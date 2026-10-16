@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use crate::platform::{
-	HostInfo, PlatformInfo, ProductContext, ProductExecutionKind, RuntimeConfigValidationError,
-	SigningHostConfig,
+	HostInfo, PlatformInfo, ProductContext, ProductExecutionKind, ProductId,
+	RuntimeConfigValidationError, SigningHostConfig,
 };
 use truapi::latest::HostPlatform;
 
@@ -57,7 +57,7 @@ pub struct HostRuntimeConfig {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ProductExecutionConfig {
 	/// Canonical product identifier used for policy, storage, and derivation.
-	pub product_id: String,
+	pub product_id: ProductId,
 	/// Trusted executable kind selected before product code starts.
 	pub execution_kind: ProductExecutionKind,
 }
@@ -163,15 +163,12 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 
 impl From<&ProductContext> for ProductExecutionConfig {
 	fn from(product: &ProductContext) -> Self {
-		Self { product_id: product.product_id.to_string(), execution_kind: product.execution_kind }
+		Self { product_id: product.product_id.clone(), execution_kind: product.execution_kind }
 	}
 }
 
-impl TryFrom<ProductExecutionConfig> for ProductContext {
-	type Error = NativeRuntimeConfigError;
-
-	fn try_from(config: ProductExecutionConfig) -> Result<Self, Self::Error> {
-		ProductContext::new_with_execution(config.product_id, config.execution_kind)
-			.map_err(NativeRuntimeConfigError::from)
+impl From<ProductExecutionConfig> for ProductContext {
+	fn from(config: ProductExecutionConfig) -> Self {
+		ProductContext::from_parts(config.product_id, config.execution_kind)
 	}
 }

@@ -190,7 +190,7 @@ pub struct EventCallbacks {
 	pub permission_confirmation_result: PermissionDecision,
 	/// Counts prompts across the execution's separate connections.
 	pub remote_permission_calls: std::sync::atomic::AtomicUsize,
-	pub remote_permission_products: Mutex<Vec<(String, ProductExecutionKind)>>,
+	pub remote_permission_products: Mutex<Vec<(ProductId, ProductExecutionKind)>>,
 	/// Counts device permission prompts.
 	pub device_permission_calls: std::sync::atomic::AtomicUsize,
 }
@@ -581,7 +581,7 @@ pub fn native_execution_config(
 	product_id: &str,
 	execution_kind: ProductExecutionKind,
 ) -> ProductExecutionConfig {
-	ProductExecutionConfig { product_id: product_id.to_string(), execution_kind }
+	ProductExecutionConfig { product_id: ProductId::for_test(product_id), execution_kind }
 }
 
 pub fn native_product_execution(
@@ -1758,18 +1758,18 @@ fn runtime_config_rejects_a_network_suffix_that_is_not_a_bare_tld() {
 	);
 }
 
+/// The app passes a product id as a string, and UniFFI parses it while
+/// converting the call's arguments, so an execution can only open under a
+/// valid id.
 #[test]
-fn product_execution_config_rejects_empty_product_id() {
-	let err = ProductContext::try_from(ProductExecutionConfig {
-		product_id: " ".to_string(),
-		..native_execution_config("app.dot", ProductExecutionKind::App)
-	})
-	.unwrap_err();
+fn a_product_id_from_the_app_is_parsed_when_the_call_is_converted() {
+	let lift = |product_id: &str| {
+		let mut wire = Vec::new();
+		<String as uniffi::Lower<crate::UniFfiTag>>::write(product_id.to_string(), &mut wire);
+		<ProductId as uniffi::Lift<crate::UniFfiTag>>::try_read(&mut wire.as_slice()).ok()
+	};
 
-	assert_eq!(
-		err,
-		NativeRuntimeConfigError::Invalid { reason: "product_id must not be empty".to_string() }
-	);
+	assert_eq!((lift("App.DOT"), lift(" ")), (Some(ProductId::for_test("app.dot")), None));
 }
 
 #[test]
@@ -2550,7 +2550,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 			futures::executor::block_on(execution.authorize_remote_permission(request)).unwrap();
 		assert_eq!(
 			(response, callbacks.remote_permission_products.lock().unwrap().clone()),
-			(granted, vec![("fetch.dot".to_string(), ProductExecutionKind::Worker)]),
+			(granted, vec![(ProductId::for_test("fetch.dot"), ProductExecutionKind::Worker)]),
 		);
 	}
 }

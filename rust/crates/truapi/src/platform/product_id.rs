@@ -223,8 +223,9 @@ impl Decode for ProductId {
 	}
 }
 
-// Only Rust hands a `ProductId` to the app. Ids from the app stay `String`: a
-// failed lift is an internal error, and a trap in a non-throwing Swift call.
+// A `ProductId` from the app is parsed while UniFFI converts the call's
+// arguments. Take one only in a call that returns a `Result`: a failed parse is
+// an internal error, and a crash in a non-throwing Swift call.
 #[cfg(not(target_arch = "wasm32"))]
 uniffi::custom_type!(ProductId, String, {
 	lower: |product_id| product_id.0,
