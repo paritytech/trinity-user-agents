@@ -10418,6 +10418,31 @@ fn each_host_answer_reaches_the_product_as_its_own_result() {
 }
 
 #[test]
+fn a_connection_scanner_stays_scoped_while_other_products_use_the_shared_scanner() {
+	let unscoped = scanner_host(None);
+	let services = unscoped.services.clone();
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.scanner_platform = Some(StubScannerPlatform::answering(HostScan::Dismissed));
+	let (_, product) = runtime_config("scoped.dot");
+	let scoped = ProductRuntimeHost::from_services(
+		services.clone(),
+		adapters,
+		unscoped.authority.clone(),
+		product,
+	);
+
+	assert_eq!(scan(&scoped), Ok(v01::ScanOutcome::Dismissed));
+	assert_eq!(scan(&unscoped), Err(CallError::Unsupported));
+
+	services.install_scanner_platform(StubScannerPlatform::answering(HostScan::CameraUnavailable));
+	assert_eq!(
+		scan(&unscoped),
+		Err(CallError::Domain(v01::HostScannerScanError::CameraUnavailable))
+	);
+	assert_eq!(scan(&scoped), Ok(v01::ScanOutcome::Dismissed));
+}
+
+#[test]
 fn the_host_is_told_the_product_and_never_sees_an_invalid_request() {
 	// The host titles the viewfinder with the product id, and no session is
 	// needed. A request the product could not make never opens a viewfinder.

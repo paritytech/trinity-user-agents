@@ -1089,7 +1089,6 @@ mod tests {
 			fn runtime_call_blocks(&self, runtime_method: &str) -> Vec<H256> {
 				self.sent
 					.lock()
-					.unwrap()
 					.iter()
 					.filter_map(|request| {
 						let request: JsonValue = serde_json::from_str(request).unwrap();
