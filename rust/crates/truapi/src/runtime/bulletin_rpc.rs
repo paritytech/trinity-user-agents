@@ -1,8 +1,8 @@
 //! In-core Bulletin preimage submission over the shared Subxt client.
 //!
 //! One submission at a time: build + sign the `TransactionStorage.store`
-//! extrinsic with finalized mortality and best-block metadata and nonce,
-//! dry-run it at the best block via Subxt's typed transaction
+//! extrinsic at a best block no older than the finalized block its mortality is
+//! anchored to, dry-run it at that best block via Subxt's typed transaction
 //! validation, then submit through Subxt's transaction watch and classify the
 //! dispatch outcome from the inclusion block's events.
 
@@ -68,11 +68,13 @@ const INCLUSION_RECHECK_BLOCKS: usize = 3;
 const INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(test)]
 const INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_millis(25);
-/// Budget for the best-block stream to replay the current chain head.
+/// Bound on each wait for the next block while picking the head: the first
+/// replayed block, and each block read on until the head reaches finality.
 const INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Quiet window after which the newest replayed block is taken as the head.
-/// The replay delivers the initialized finalized block first and any known
-/// best block right after; active chains never need the full window.
+/// The replay delivers the initialized finalized blocks first, oldest first,
+/// and any known best block right after; active chains never need the full
+/// window.
 #[cfg(not(test))]
 const BEST_BLOCK_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(test)]
@@ -348,7 +350,7 @@ impl BulletinRpc {
 			.stream_best_blocks()
 			.await
 			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-		let head = initial_best_block(&mut best_blocks).await?;
+		let head = initial_best_block(&mut best_blocks, finalized.block_number()).await?;
 
 		self.enter_phase(SubmissionPhase::Build);
 		let signer =
@@ -517,13 +519,16 @@ impl BulletinRpc {
 }
 
 /// Take the stream's replayed view of the current chain head: the initialized
-/// finalized block arrives first, followed by the newest known best block.
-/// Returns the newest block seen during one bounded [`BEST_BLOCK_TIMEOUT`]
-/// replay window; falling back to the finalized block is safe for cold starts.
-/// The deadline is absolute so a continuously advancing best-block stream
-/// cannot keep initialization alive forever.
+/// finalized blocks arrive first, oldest first, followed by the newest known
+/// best block. Returns the newest block seen during one bounded
+/// [`BEST_BLOCK_TIMEOUT`] replay window, read on until it reaches
+/// `finalized_number`. The transaction is anchored at that finalized block, and
+/// a head behind it would validate against an earlier birth block and read a
+/// stale nonce. The window's deadline is absolute so a continuously advancing
+/// best-block stream cannot keep initialization alive forever.
 async fn initial_best_block(
 	blocks: &mut Blocks<SubstrateConfig>,
+	finalized_number: u64,
 ) -> Result<Block<SubstrateConfig>, BulletinSubmitError> {
 	let mut block =
 		next_best_block(blocks, INITIALIZATION_TIMEOUT, SubmissionPhase::Connect).await?;
@@ -540,9 +545,13 @@ async fn initial_best_block(
 				}
 				None => return Err(BulletinSubmitError::BestBlockStreamEnded),
 			},
-			() = replay_deadline => return Ok(block),
+			() = replay_deadline => break,
 		}
 	}
+	while block.number() < finalized_number {
+		block = next_best_block(blocks, INITIALIZATION_TIMEOUT, SubmissionPhase::Connect).await?;
+	}
+	Ok(block)
 }
 
 async fn next_best_block(
@@ -956,6 +965,8 @@ mod tests {
 			current_best_hash: String,
 			advance_best_block_after_rejection: bool,
 			stall_headers: bool,
+			replayed_finalized_blocks: usize,
+			replay_header_delay: Option<Duration>,
 			last_transaction: Option<String>,
 			omit_transaction_from_next_body: bool,
 		}
@@ -988,6 +999,8 @@ mod tests {
 						current_best_hash: BLOCK_HASH.to_string(),
 						advance_best_block_after_rejection: false,
 						stall_headers,
+						replayed_finalized_blocks: 0,
+						replay_header_delay: None,
 						last_transaction: None,
 						omit_transaction_from_next_body: false,
 					})),
@@ -1002,6 +1015,19 @@ mod tests {
 				{
 					let mut state = self.state.lock().unwrap();
 					state.next_best_block = count;
+					state.current_best_hash = scripted_block_hash(count);
+				}
+				self
+			}
+
+			/// The follow subscription initializes with `count` finalized blocks after
+			/// the first, whose headers answer only after `delay`, so the best-block
+			/// replay can close on an older finalized block than the latest one.
+			fn with_lagging_finalized_replay(self, count: usize, delay: Duration) -> Self {
+				{
+					let mut state = self.state.lock().unwrap();
+					state.replayed_finalized_blocks = count;
+					state.replay_header_delay = Some(delay);
 					state.current_best_hash = scripted_block_hash(count);
 				}
 				self
@@ -1110,12 +1136,28 @@ mod tests {
 		impl JsonRpcConnection for BulletinScriptedConnection {
 			fn send(&self, request: String) {
 				self.sent.lock().unwrap().push(request.clone());
-				let frames =
-					scripted_frames(&request, &self.events, &mut self.state.lock().unwrap());
-				if let Some(sender) = self.sender.lock().unwrap().as_ref() {
+				let mut state = self.state.lock().unwrap();
+				let delay = state.replay_header_delay.filter(|_| {
+					let request: JsonValue = serde_json::from_str(&request).unwrap();
+					request["method"] == "chainHead_v1_header" && request["params"][1] != BLOCK_HASH
+				});
+				let frames = scripted_frames(&request, &self.events, &mut state);
+				drop(state);
+				let Some(sender) = self.sender.lock().unwrap().clone() else { return };
+				let deliver = move || {
+					// A delayed frame can outlive the test that requested it.
 					for frame in frames {
-						sender.unbounded_send(frame).unwrap();
+						let _ = sender.unbounded_send(frame);
 					}
+				};
+				match delay {
+					Some(delay) => {
+						std::thread::spawn(move || {
+							std::thread::sleep(delay);
+							deliver();
+						});
+					},
+					None => deliver(),
 				}
 			}
 
@@ -1166,7 +1208,9 @@ mod tests {
 						response(json!(FOLLOW_ID)),
 						follow_event(json!({
 							"event": "initialized",
-							"finalizedBlockHashes": [BLOCK_HASH],
+							"finalizedBlockHashes": std::iter::once(BLOCK_HASH.to_string())
+								.chain((1..=state.replayed_finalized_blocks).map(scripted_block_hash))
+								.collect::<Vec<_>>(),
 							"finalizedBlockRuntime": null
 						})),
 					];
@@ -1493,6 +1537,36 @@ mod tests {
 			assert_eq!(
 				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
 				vec![best_hash]
+			);
+		}
+
+		#[test]
+		fn submit_preimage_builds_at_the_finalized_anchor_when_the_replay_lags_it() {
+			let provider = Arc::new(
+				BulletinScriptedProvider::new([TransactionOutcome::Included])
+					.with_lagging_finalized_replay(3, Duration::from_millis(50)),
+			);
+			let finalized_hash: H256 = scripted_block_hash(3).parse().unwrap();
+			let value = b"lagging replay";
+
+			futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+				&CallContext::default(),
+				Instant::now() + Duration::from_secs(5),
+				&allowance_fixture(),
+				value,
+			))
+			.unwrap();
+
+			let transactions = provider.submitted_transactions();
+			let transaction = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
+			assert!(store_signature_verifies_at(&transaction, value, finalized_hash));
+			assert_eq!(
+				provider.runtime_call_blocks("AccountNonceApi_account_nonce"),
+				vec![finalized_hash]
+			);
+			assert_eq!(
+				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
+				vec![finalized_hash]
 			);
 		}
 
