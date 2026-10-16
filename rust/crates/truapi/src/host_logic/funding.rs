@@ -139,6 +139,11 @@ pub struct FundingProgress {
 	/// What arrived when it differs from what was asked, from the latest
 	/// `PaymentReceived`.
 	pub mismatch: Option<FundingReceived>,
+	/// Whether money moved: the provider started or named a top-up or
+	/// payment, or holds the user's payment. Until then a second cancel ends
+	/// the session; from then on a cancel is a request the provider answers,
+	/// and only the provider can end the session.
+	pub money_moved: bool,
 }
 
 /// One step of a session's progress.
@@ -495,6 +500,7 @@ impl FundingSession {
 					_ => None,
 				})
 				.flatten(),
+			money_moved: self.money_moved(),
 		}
 	}
 
@@ -1503,7 +1509,10 @@ mod tests {
 	#[test]
 	fn a_decline_stops_repeating_once_the_provider_carries_on() {
 		let mut session = served(FundingDirection::In);
-		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true, mismatch: None }]);
+		reported(
+			&mut session,
+			&[FundingUpdate::PaymentReceived { finalized: true, mismatch: None }],
+		);
 		cancelled(&mut session);
 		reported(&mut session, &[offer(5, 95, None)]);
 		session.confirm_cancel(None, NOW);
@@ -1894,6 +1903,22 @@ mod tests {
 	// A bank payment is approved once it can no longer be reversed, a card
 	// payment has no such step, and a step the provider skipped takes the
 	// time of the first later one, so the bar never shows a gap behind it.
+	// Hosts decide from this whether a second cancel can still end the
+	// session, so it must say exactly what the core's own rule says.
+	#[test]
+	fn progress_reports_money_moved_as_the_core_rules_it() {
+		let fresh = served(FundingDirection::In);
+		let mut paid = served(FundingDirection::In);
+		reported(&mut paid, &[FundingUpdate::PaymentReceived { finalized: false, mismatch: None }]);
+		let mut started = served(FundingDirection::Out);
+		assert!(started.record_start([7; 32], 100));
+
+		let states = [&fresh, &paid, &started]
+			.map(|session| (session.progress().money_moved, session.money_moved()));
+
+		assert_eq!(states, [(false, false), (true, true), (true, true)]);
+	}
+
 	#[test]
 	fn progress_follows_the_rail_and_fills_skipped_steps() {
 		let mut bank = chosen(FundingDirection::In, FundingRail::Bank);
