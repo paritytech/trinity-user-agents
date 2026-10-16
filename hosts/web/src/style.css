@@ -40,16 +40,15 @@
 
 body {
   --menu-col: var(--menu-width);
-  --side-col: 0px;
   margin: 0;
   height: 100dvh;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--side-col) var(--menu-col);
+  grid-template-columns: minmax(0, 1fr) var(--menu-col);
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
-    "appbar appbar appbar"
-    "stage stage menu"
-    "inspector inspector menu";
+    "appbar appbar"
+    "stage menu"
+    "inspector menu";
   background: var(--bg);
   color: var(--text);
 }
@@ -61,28 +60,6 @@ body[data-menu="closed"] {
 body[data-menu="closed"] .menu,
 body[data-inspector="closed"] .inspector {
   display: none;
-}
-
-/*
- * A portrait product rectangle is tall and narrow, so the inspector sits
- * beside it rather than under it, which would shrink the rectangle. This is a
- * grid placement only: neither the frame nor the inspector is re-created.
- */
-body[data-dock="side"] {
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas:
-    "appbar appbar appbar"
-    "stage inspector menu";
-}
-
-body[data-dock="side"][data-inspector="open"] {
-  --side-col: min(40vw, 480px);
-}
-
-body[data-dock="side"] .inspector {
-  height: auto;
-  border-top: none;
-  border-left: 1px solid var(--border);
 }
 
 h1,
@@ -2004,10 +1981,6 @@ body[data-product="open"] .stage-loading {
 .inspector-resize:hover::after,
 .inspector-resize:focus-visible::after {
   background: var(--accent);
-}
-
-body[data-dock="side"] .inspector-resize {
-  display: none;
 }
 
 .inspector .panel-head {

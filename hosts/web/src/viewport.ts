@@ -81,8 +81,6 @@ export interface ViewportElements {
   scale: HTMLElement;
   area: HTMLElement;
   frame: HTMLElement;
-  /** Receives `data-dock`: `side` beside a portrait rectangle, else `bottom`. */
-  root: HTMLElement;
   /** True on a screen too small to simulate another one: the product fills it. */
   fills: MediaQueryList;
   /** The width and height fields, shown only for the custom size. */
@@ -111,7 +109,7 @@ export interface ViewportElements {
  * follows the pointer; the fields set an exact size, up to the bounds.
  */
 export function bindViewport(elements: ViewportElements): void {
-  const { select, scale, area, frame, root, fills, custom, handle } = elements;
+  const { select, scale, area, frame, fills, custom, handle } = elements;
   select.replaceChildren(
     ...VIEWPORTS.map(
       (viewport, index) => new Option(viewport.label, String(index)),
@@ -153,11 +151,9 @@ export function bindViewport(elements: ViewportElements): void {
       frame.style.transform = "";
       frame.classList.remove("sized");
       scale.textContent = "";
-      root.dataset.dock = "bottom";
       return;
     }
     frame.classList.add("sized");
-    root.dataset.dock = viewport.height > viewport.width ? "side" : "bottom";
     frame.style.width = `${viewport.width}px`;
     frame.style.height = `${viewport.height}px`;
     const factor =

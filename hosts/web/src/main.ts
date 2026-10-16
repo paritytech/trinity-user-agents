@@ -289,7 +289,6 @@ bindViewport({
   scale: element("viewport-scale"),
   area: element("viewport-area"),
   frame: productFrame,
-  root: document.body,
   fills: window.matchMedia("(max-width: 900px)"),
   custom: {
     group: element("viewport-custom"),

@@ -7,8 +7,7 @@ const KEY_STEP = 24;
  *
  * The height is one CSS variable on the inspector, so nothing is moved or
  * re-created and the product frame keeps running. The stylesheet clamps the
- * result to the space the window has. The handle is hidden when the inspector
- * sits beside the product, where a height means nothing.
+ * result to the space the window has.
  */
 export function bindDockResize(
   handle: HTMLElement,

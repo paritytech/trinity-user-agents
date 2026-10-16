@@ -405,8 +405,9 @@ product is not reloaded and the session is untouched.
 
 **Simulating another screen.** The size menu (Fill, Phone, Tablet, Desktop) resizes only the product rectangle. It is a
 plain rectangle with no device frame, clock or status bar. The product lays out at exactly the chosen CSS size (393 ×
-852 for Phone) and the rectangle is shrunk to fit. The host's own menu and inspector stay at desktop size. The size is
-kept for the tab. On a narrow screen the control is hidden and the product fills the screen.
+852 for Phone) and the rectangle is shrunk to fit. The host's own menu and inspector stay at desktop size, and the
+inspector stays docked under the product whatever size is chosen: dragging its top edge trades its height for the
+product's. The size is kept for the tab. On a narrow screen the control is hidden and the product fills the screen.
 
 **Inspector.** It is `createInAppDebugger` from `@parity/truapi-debugger`. The page taps the frames it relays between
 the product and the core, in both directions, and the debugger groups and decodes them. Decoding is gated on the core's
@@ -578,6 +579,11 @@ opens, so the light client reaches no chain. It checks that:
   Widget, not its app, and opens it again as the Widget after a wallet switch; and one with neither opens nothing and
   says why.
 
+Two narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
+outside loopback refused, and checks that on a wide window the inspector is docked under a Phone-sized product across
+the width the menu leaves, for both inspector views, that its top edge sets its height, and that a narrow window keeps
+it a bottom sheet. `browser/chat-diagnostics.spec.ts` mounts the inspector's Chat view alone on made-up events.
+
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
 
@@ -607,7 +613,7 @@ and layout on narrow screens.
 - `src/archive/`: CAR, UnixFS and CID verification and unpacking.
 - `src/sandbox/`, `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The plugin
   bundles them as static files, which the build emits and the dev server also answers.
-- `browser/`: the browser smoke test and its fixtures.
+- `browser/`: the browser smoke test, the inspector dock and Chat view tests, and their fixtures.
 
 ## Not supported
 
