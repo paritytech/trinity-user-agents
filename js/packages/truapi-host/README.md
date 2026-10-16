@@ -12,7 +12,7 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `@parity/truapi-host`                | Shared runtime types plus generated typed host callback contracts.                                                  |
 | `@parity/truapi-host/web`            | Browser pairing host: `createIframeHost` (iframe MessageChannel handshake) and `createWebWorkerPairingHostRuntime`. |
-| `@parity/truapi-host/node`           | Node pairing host: `createNodePairingHostRuntime` (core in a worker thread) and `createHeadlessHostCallbacks`. |
+| `@parity/truapi-host/node`           | Node pairing host: `createNodePairingHostRuntime` (core in a worker thread) and `createHeadlessHostCallbacks`.      |
 | `@parity/truapi-host/worker-runtime` | Web Worker entrypoint (import with your bundler's `?worker` suffix) so the WASM core runs off the page main thread. |
 | `@parity/truapi-host/wasm/web`       | The raw browser `wasm-bindgen` glue, if you need to instantiate the core yourself.                                  |
 | `@parity/truapi-host/testing`        | `createMockHost`: the in-memory host seam a product is tested against.                                              |
@@ -360,6 +360,9 @@ answer with fixed values. The host still passes `userConfirmation` and
 disclose the product subtree, and `signRaw` asks for the `ChainSubmit`
 permission and a signing review. A CLI asks at its prompt. A host with a UI
 passes the full callback set instead, exactly as on the web.
+
+`./node` loads the production bundle, which has no signing host, so it runs
+pairing hosts only: `role: "signing"` is refused.
 
 Call `runtime.dispose()` when done: the core's thread keeps the process alive
 until then. Install the package rather than bundling `./node` into a single
