@@ -284,7 +284,7 @@ host.set_app_foreground(true); // `Start` for chat.dot reaches `worker_demand_ch
 host.set_app_foreground(false); // `Stop`, unless a room screen or a wake still holds it
 ```
 
-On iOS a worker installed by hand declares it in `Products/<host>/ChatExtension/manifest.json` beside `index.wasm`. In the background nothing keeps the worker; a start on a statement for the product needs the notification wake and a push relay (Worker Lifecycle, "Foreground").
+On iOS a worker installed by hand declares it in `Products/<host>/ChatExtension/manifest.json` beside `index.wasm`. In the background nothing keeps the worker. A worker that names its topics with `truapi::worker::set_wake_watches` is started by a push of the host's relay when a new statement comes on one of them, for a wake of 30 s ([Push wakes](push-wake.md)); `rust/guests/chat-echo` does it for `/wake <text>`.
 
 ## Open questions
 

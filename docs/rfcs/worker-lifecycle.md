@@ -84,7 +84,9 @@ foreground:
 - **Faults.** A worker that ends on a fault stays stopped while the hold stays. The next return to the foreground
   starts it again, so a worker that faults at each start does not loop.
 - **No background work.** The hold does not keep a worker in the background. A worker that must learn of a statement
-  while the app is in the background needs the notification wake below, which needs a push relay.
+  while the app is in the background names its topics with `worker.setWakeWatches`. A new statement on one of them
+  reaches the device as a push from the host's push relay, and the core takes a notification wake for the room of the
+  watch ([Push wakes](../design/push-wake.md)). No relay with APNs or FCM credentials exists yet.
 
 ### Stopping
 
@@ -104,5 +106,7 @@ foreground:
   The manifest field makes the cost visible per product, and a host may refuse it (for example on low memory) as it may
   stop any worker.
 - Considered for the foreground: a start when a statement arrives for the product (the notification wake). It needs
-  the core to watch the product's topics while the worker sleeps and a relay to push to a suspended app, so it is the
-  background complement of the foreground hold, not a replacement.
+  the core to keep the product's topics while the worker sleeps and a relay to push to a suspended app, so it is the
+  background complement of the foreground hold, not a replacement. The core side and a reference relay exist
+  ([Push wakes](../design/push-wake.md)); `worker.setWakeWatches` is the one product call it adds, so requirement 4
+  holds for the reference holders only.
