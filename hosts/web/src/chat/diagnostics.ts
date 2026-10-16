@@ -10,6 +10,8 @@
  * {@link DIAGNOSTICS_LIMIT} of them, and cleared when the session changes.
  */
 
+import { ACKNOWLEDGED } from "./protocol.js";
+
 export type ChatEventBody =
   | {
       type: "lifecycle";
@@ -106,6 +108,7 @@ export function sanitizeReason(reason: string): string {
 export class ChatDiagnostics {
   private events: ChatEvent[] = [];
   private seq = 0;
+  private evicted = 0;
   private readonly listeners = new Set<() => void>();
 
   constructor(
@@ -115,8 +118,11 @@ export class ChatDiagnostics {
 
   readonly record: ChatEventSink = (event) => {
     this.events.push({ ...event, seq: ++this.seq, at: this.now() });
-    if (this.events.length > this.limit)
-      this.events.splice(0, this.events.length - this.limit);
+    if (this.events.length > this.limit) {
+      const over = this.events.length - this.limit;
+      this.events.splice(0, over);
+      this.evicted += over;
+    }
     this.notify();
   };
 
@@ -125,8 +131,14 @@ export class ChatDiagnostics {
     return this.events;
   }
 
+  /** Events dropped to keep the limit since the list was last cleared. */
+  dropped(): number {
+    return this.evicted;
+  }
+
   clear(): void {
     this.events = [];
+    this.evicted = 0;
     this.notify();
   }
 
@@ -198,4 +210,337 @@ export function describeEvent(event: ChatEventBody): string {
     case "action-failed":
       return `${event.action}: ${event.reason}`;
   }
+}
+
+/** A short name for each event type. */
+export const EVENT_TYPE_LABELS: Record<ChatEventBody["type"], string> = {
+  lifecycle: "engine",
+  subscription: "subscribe",
+  "set-aside": "set aside",
+  request: "request",
+  lookup: "lookup",
+  session: "session",
+  submit: "submit",
+  "action-failed": "failed",
+};
+
+/**
+ * Where an event's data went: received from the statement store, sent to
+ * it, read from chain storage, or the engine's own state.
+ */
+export type EventDirection = "in" | "out" | "read" | "engine";
+
+export function eventDirection(event: ChatEventBody): EventDirection {
+  switch (event.type) {
+    case "request":
+    case "session":
+    case "set-aside":
+      return "in";
+    case "submit":
+      return "out";
+    case "lookup":
+      return "read";
+    default:
+      return "engine";
+  }
+}
+
+/**
+ * How an event ended: `ok` for a success, `warning` for data set aside or a
+ * refusal, `error` for a failure, and `info` for an event that reports
+ * neither.
+ */
+export type EventOutcome = "ok" | "info" | "warning" | "error";
+
+export function eventOutcome(event: ChatEventBody): EventOutcome {
+  switch (event.type) {
+    case "lifecycle":
+      if (event.state === "failed") return "error";
+      return event.state === "listening" ? "ok" : "info";
+    case "set-aside":
+      return "warning";
+    case "action-failed":
+      return "error";
+    case "request":
+      return event.problem !== undefined ? "warning" : "info";
+    case "lookup":
+      if (event.outcome === "found") return "ok";
+      return event.outcome === "error" ? "error" : "warning";
+    case "submit":
+      if (event.result === "stored") return "ok";
+      return event.result === "error" ? "error" : "warning";
+    case "session":
+      return answersOurs(event) ? "ok" : "info";
+    case "subscription":
+      return "info";
+  }
+}
+
+const answersOurs = (event: ChatEventBody): boolean =>
+  event.type === "session" &&
+  event.data === "response" &&
+  event.matched === true &&
+  event.code === ACKNOWLEDGED;
+
+/** Whether an event is a warning or an error. */
+export const isProblem = (event: ChatEventBody): boolean => {
+  const outcome = eventOutcome(event);
+  return outcome === "warning" || outcome === "error";
+};
+
+/** One or two words for an event's outcome, or null when it reports none. */
+export function outcomeWord(event: ChatEventBody): string | null {
+  if (eventOutcome(event) === "info") return null;
+  switch (event.type) {
+    case "lifecycle":
+      return event.state;
+    case "set-aside":
+      return "set aside";
+    case "action-failed":
+      return "failed";
+    case "request":
+      return "problem";
+    case "lookup":
+      return event.outcome;
+    case "submit":
+      return event.result;
+    case "session":
+      return "acknowledged";
+    case "subscription":
+      return null;
+  }
+}
+
+/** Names of the message content kinds in `protocol.ts`. */
+const KIND_LABELS: Record<number, string> = {
+  0: "text",
+  1: "push token",
+  7: "reply",
+  14: "chat accepted",
+  15: "rich text",
+  17: "device added",
+  18: "device removed",
+  20: "device chat accepted",
+};
+
+/** A message content kind's name, keeping its number: `device added (17)`. */
+export function kindLabel(kind: number | null): string {
+  if (kind === null) return "unreadable";
+  const name = KIND_LABELS[kind];
+  return name === undefined ? `kind ${kind}` : `${name} (${kind})`;
+}
+
+/** Consecutive messages of the same kind, counted. */
+export function kindRuns(
+  kinds: readonly (number | null)[],
+): { kind: number | null; count: number }[] {
+  const runs: { kind: number | null; count: number }[] = [];
+  for (const kind of kinds) {
+    const last = runs.at(-1);
+    if (last !== undefined && last.kind === kind) last.count += 1;
+    else runs.push({ kind, count: 1 });
+  }
+  return runs;
+}
+
+const describeKinds = (kinds: readonly (number | null)[]): string =>
+  kindRuns(kinds)
+    .map(({ kind, count }) =>
+      count === 1 ? kindLabel(kind) : `${kindLabel(kind)} ×${count}`,
+    )
+    .join(", ");
+
+const responseCode = (code: number): string =>
+  code === ACKNOWLEDGED ? `acknowledged (${code})` : `code ${code}`;
+
+const plural = (count: number, noun: string): string =>
+  `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+const FREE_TEXT = new Set(["reason", "problem", "status"]);
+
+/** The event with its free text shortened again, as a backstop. */
+function withTextSanitized<Event extends ChatEventBody>(event: Event): Event {
+  const copy: Record<string, unknown> = { ...event };
+  for (const key of FREE_TEXT)
+    if (typeof copy[key] === "string")
+      copy[key] = sanitizeReason(copy[key] as string);
+  return copy as Event;
+}
+
+/** One line describing an event, with message kinds and answer codes named. */
+export function eventSummary(event: ChatEventBody): string {
+  if (event.type !== "session") return describeEvent(withTextSanitized(event));
+  return join([
+    `${event.data} ${event.requestId ?? ""} from ${event.peer}`.replace(
+      /\s+/g,
+      " ",
+    ),
+    event.kinds !== undefined &&
+      `${plural(event.kinds.length, "message")}: ${describeKinds(event.kinds)}`,
+    event.duplicates !== undefined &&
+      event.duplicates > 0 &&
+      `${event.duplicates} already seen`,
+    event.code !== undefined && responseCode(event.code),
+    event.matched !== undefined &&
+      (event.matched ? "matches ours" : "not ours"),
+  ]);
+}
+
+/** What links events to each other: the shortened account or id they carry. */
+export type RelatedBy = "account" | "id";
+
+/** The shortened account and request id an event names, if any. */
+export function relatedKeys(
+  event: ChatEventBody,
+): Partial<Record<RelatedBy, string>> {
+  switch (event.type) {
+    case "request":
+    case "submit":
+    case "session":
+      return {
+        account: event.peer,
+        ...(event.requestId !== undefined ? { id: event.requestId } : {}),
+      };
+    case "lookup":
+      return { account: event.account };
+    default:
+      return {};
+  }
+}
+
+/** One labelled value of an event, for its detail view. */
+export interface EventField {
+  label: string;
+  value: string;
+  /** Set when other events can be found by this value. */
+  related?: RelatedBy;
+}
+
+const field = (
+  label: string,
+  value: string | number | undefined,
+  related?: RelatedBy,
+): EventField[] =>
+  value === undefined
+    ? []
+    : [{ label, value: String(value), ...(related ? { related } : {}) }];
+
+/** A field of free text, shortened again like {@link eventRecord} does. */
+const textField = (label: string, value: string | undefined): EventField[] =>
+  field(label, value === undefined ? undefined : sanitizeReason(value));
+
+/** The event's own values, labelled. Message kinds are left to the caller. */
+export function eventFields(event: ChatEventBody): EventField[] {
+  switch (event.type) {
+    case "lifecycle":
+      return [
+        ...field("State", event.state),
+        ...textField("Reason", event.reason),
+        ...field(
+          "Retry in",
+          event.retryInMs !== undefined
+            ? `${event.retryInMs / 1000} s`
+            : undefined,
+        ),
+      ];
+    case "subscription":
+      return [
+        ...field("Stream", event.stream),
+        ...field("Action", event.action),
+        ...field("Topics", event.topics),
+      ];
+    case "set-aside":
+      return [
+        ...field("Stream", event.stream),
+        ...textField("Reason", event.reason),
+      ];
+    case "request":
+      return [
+        ...field("Request id", event.requestId, "id"),
+        ...field("From", event.peer, "account"),
+        ...field("Version", `v${event.version}`),
+        ...field("Outcome", event.outcome),
+        ...textField("Problem", event.problem),
+      ];
+    case "lookup":
+      return [
+        ...field("Account", event.account, "account"),
+        ...field("Outcome", event.outcome),
+        ...field(
+          "Chat key on",
+          event.from === undefined
+            ? undefined
+            : event.from.length === 0
+              ? "no chain"
+              : event.from.join(" and "),
+        ),
+        ...textField("Reason", event.reason),
+      ];
+    case "session":
+      return [
+        ...field("Data", event.data),
+        ...field("From", event.peer, "account"),
+        ...field("Request id", event.requestId, "id"),
+        ...field("Messages", event.kinds?.length),
+        ...field("Already seen", event.duplicates),
+        ...field(
+          "Answer",
+          event.code === undefined ? undefined : responseCode(event.code),
+        ),
+        ...field(
+          "Answers our request",
+          event.matched === undefined
+            ? undefined
+            : event.matched
+              ? "yes"
+              : "no",
+        ),
+      ];
+    case "submit":
+      return [
+        ...field("Purpose", event.purpose),
+        ...field("To", event.peer, "account"),
+        ...field("Request id", event.requestId, "id"),
+        ...field("Messages", event.messages),
+        ...field("Result", event.result),
+        ...textField("Store status", event.status),
+        ...textField("Reason", event.reason),
+      ];
+    case "action-failed":
+      return [
+        ...field("Action", event.action),
+        ...textField("Reason", event.reason),
+      ];
+  }
+}
+
+/** Lowercase text that a search of the event view matches against. */
+export function eventSearchText(event: ChatEventBody): string {
+  return [
+    EVENT_TYPE_LABELS[event.type],
+    eventDirection(event),
+    eventOutcome(event),
+    eventSummary(event),
+    describeEvent(event),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+/**
+ * An event as plain data for copying. It holds the event's metadata only,
+ * and free text goes through {@link sanitizeReason} again.
+ */
+export function eventRecord(event: ChatEvent): Record<string, unknown> {
+  const { seq, at, ...body } = withTextSanitized(event);
+  return {
+    seq,
+    time: new Date(at).toISOString(),
+    direction: eventDirection(event),
+    outcome: eventOutcome(event),
+    ...(event.type === "session" && event.kinds !== undefined
+      ? { kindNames: event.kinds.map(kindLabel) }
+      : {}),
+    event: body,
+  };
 }
