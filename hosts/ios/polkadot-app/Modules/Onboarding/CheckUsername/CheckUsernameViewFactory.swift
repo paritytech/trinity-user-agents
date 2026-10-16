@@ -8,7 +8,7 @@ enum CheckUsernameViewFactory {
     static func createView(with observer: RootStateObserving) -> CheckUsernameViewProtocol? {
         let chainRegistry = ChainRegistryFacade.sharedRegistry
         let operationQueue = OperationManagerFacade.sharedDefaultQueue
-        let chainId = AppConfig.Chains.usernameChain
+        let chainId = AppConfig.Chains.assethubChain
 
         let identityService = IdentityService(
             chainRegistry: chainRegistry,

@@ -179,15 +179,15 @@ Don't inject a service's `CoroutineScope` into a ViewModel just to start a flow.
 
 ```kotlin
 // ✗
-class VideoGameVotingViewModel @Inject constructor(
-    private val serviceScope: VideoGameServiceScope,  // — ugh
+class CallControlsViewModel @Inject constructor(
+    private val serviceScope: CallServiceScope,  // — ugh
 ) {
     init { serviceScope.launch { ... } }
 }
 
 // ✓
-class VideoGameVotingViewModel @Inject constructor(
-    private val reader: VideoGameStateReader,
+class CallControlsViewModel @Inject constructor(
+    private val reader: CallStateReader,
 ) {
     override val state = reader.observeState().map { ... }.stateIn(viewModelScope, ...)
 }

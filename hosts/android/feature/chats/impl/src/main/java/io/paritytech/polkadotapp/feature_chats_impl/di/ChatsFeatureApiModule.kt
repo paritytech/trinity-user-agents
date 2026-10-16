@@ -72,8 +72,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealMessageR
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealProcessedChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealRemovedChatsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RemovedChatsRepository
-import io.paritytech.polkadotapp.feature_chats_impl.data.storage.AskedFaqQuestionsStorage
-import io.paritytech.polkadotapp.feature_chats_impl.data.storage.RealAskedFaqQuestionsStorage
+import io.paritytech.polkadotapp.feature_chats_impl.data.worker.ChatRequestRenewalScheduler
 import io.paritytech.polkadotapp.feature_chats_impl.deeplink.RealChatDeeplinkMapper
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatActiveTrackerInternal
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
@@ -95,6 +94,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealIncom
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealIncomingChatRequestService
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealIncomingChatRequestVerifier
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealOutgoingChatRequestService
+import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.delivery.ChatRequestDeliveryService
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.ChatRequestTransport
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.RealChatRequestTransport
 import io.paritytech.polkadotapp.feature_chats_impl.domain.deviceLifecycle.DeviceLifecycleMessageProcessor
@@ -162,6 +162,14 @@ internal interface ChatsFeatureApiModule {
     fun bindContactDeviceFanOutService(impl: ContactDeviceFanOutService): AppInitializer
 
     @Binds
+    @IntoSet
+    fun bindChatRequestDeliveryService(impl: ChatRequestDeliveryService): AppInitializer
+
+    @Binds
+    @IntoSet
+    fun bindChatRequestRenewalScheduler(impl: ChatRequestRenewalScheduler): AppInitializer
+
+    @Binds
     fun bindChatBroadcastUseCase(impl: RealChatBroadcastUseCase): ChatBroadcastUseCase
 
     @Binds
@@ -203,9 +211,6 @@ internal interface ChatsFeatureApiModule {
 
     @Binds
     fun bindMessageSender(chatEngine: ChatEngine): ChatMessageSender
-
-    @Binds
-    fun bindClickedFaqQuestionsStorage(real: RealAskedFaqQuestionsStorage): AskedFaqQuestionsStorage
 
     @Binds
     fun bindMessageRevisionRepository(impl: RealMessageRevisionRepository): MessageRevisionRepository

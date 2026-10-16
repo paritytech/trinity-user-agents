@@ -110,6 +110,14 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   rather than importing a concrete protocol version. Runtime code may use
   `truapi::versioned::*` for wire envelopes, but should unwrap them into latest
   payloads immediately.
+- In `rust/crates/truapi/src/runtime/capabilities/`, capture
+  `request.version()` before calling `request.into_latest()`. Handle requests
+  using `latest` payloads, and convert responses, subscription items, and domain
+  errors with `FromLatest::from_latest(value, version)` at the capability
+  boundary, including early-return paths. Keep framework errors unchanged.
+  Internal helpers use latest payloads and errors. Add missing canonical types
+  to `truapi::latest`; do not match or construct `V1`/`V2` envelopes in capability
+  logic. Preserve this pattern when adding or refactoring methods.
 - Inter-host SSO uses `#[sso_service]` as described
   in the [macro guide](rust/crates/truapi-macros/README.md). Keep per-variant pairing,
   dispatch, and correlation in that macro; do not add manual per-variant catalogs.
@@ -337,8 +345,7 @@ belongs to an existing type rather than adding another free-standing export.
 Preserve the local style. Do not add semicolons to `return`, `break` or
 `continue` where the file omits them, do not add braces to match arms or
 `if`/`else` written without them, and do not move operators between the end of
-one line and the start of the next. Format with `cargo +$(cat nightly-toolchain) fmt`, and keep
-it to the lines you touched.
+one line and the start of the next, except where the repository formatter requires it. Format with `make fmt`; it uses the pinned nightly and includes the runtime module tree. Keep formatting limited to files you changed.
 
 ## Rust style
 
@@ -419,7 +426,7 @@ Move the date in that one file, and in `truapi.rustNightly` in
 
 ```bash
 cargo build --workspace
-cargo +$(cat nightly-toolchain) fmt --check
+make fmt-check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```

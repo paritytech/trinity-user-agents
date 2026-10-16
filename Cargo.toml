@@ -104,6 +104,10 @@ zeroize = { version = "1", default-features = false }
 missing_docs = "warn"
 unsafe_code = "deny"
 
+[workspace.lints.clippy]
+complexity = "warn"
+correctness = "warn"
+
 # Line tables carry the file and line a failing test's backtrace needs, without
 # the variable-level DWARF only an attached debugger reads. Measured on a cold
 # `cargo test -p truapi --all-features --lib`: 41.7s and 1.9G of

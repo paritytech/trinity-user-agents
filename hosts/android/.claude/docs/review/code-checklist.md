@@ -172,12 +172,11 @@ This code is bad. Please refactor.
 
 Good:
 ```
-**blocking** `feature/videogame/impl/.../WeeklyGameBot.kt:107` —
+**blocking** `<file>:<line>` —
 Renderer state held inside the bot. (`architecture/chat-extension.md § Bot rules`)
 
-Fix: move pill state to `WeeklyGamePillStateHolder @Singleton` and have
-`WeeklyGamePillOverlayRenderer` host its own `WeeklyGamePillOverlayViewModel`
-that reads from the holder.
+Fix: move the overlay state to a `@Singleton` state holder and have the
+overlay renderer host its own `*OverlayViewModel` that reads from the holder.
 ```
 
 Always:

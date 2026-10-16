@@ -23,16 +23,16 @@ mod time;
 mod testing;
 
 pub use engine::{
-    DurableDeps, DurableRequest, DurableSubmission, DurableTxEngine, DurableWorkObserver,
-    EmptyRequest, RecoveryError, RegistrationError,
+	DurableDeps, DurableRequest, DurableSubmission, DurableTxEngine, DurableWorkObserver,
+	EmptyRequest, RecoveryError, RegistrationError,
 };
 pub use model::{
-    DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, FailureKind, GroupId,
-    HeadKind, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan, Verdict,
+	DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, FailureKind, GroupId,
+	HeadKind, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan, Verdict,
 };
 pub use oracle::{
-    CompletionOracle, DurableRegistry, LedgerView, Monotone, MonotoneEffect, PassScope,
-    Unobservable,
+	CompletionOracle, DurableRegistry, LedgerView, Monotone, MonotoneEffect, PassScope,
+	Unobservable,
 };
 pub use policy::{PolicyError, Preparation, SubmissionPolicy};
 pub use time::{RealTimer, Timer};
