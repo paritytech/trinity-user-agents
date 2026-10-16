@@ -1602,14 +1602,11 @@ mod tests {
 			..Default::default()
 		};
 
-		let started = block_on(registry.commit(&failing, NOW, |_| {
-			registry.lock_presenting().remove("fs_1");
-			((), vec!["fs_1".to_string()])
-		}));
-		// Another commit stores before the failed start is discarded.
+		let started = block_on(registry.start(&failing, NOW, "fs_1"));
 		insert(&registry, storage.as_ref(), session("fs_2", NOW));
 
 		assert!(started.is_err());
+		assert_eq!(registry.get("fs_1"), None);
 		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(vec![session("fs_2", NOW)]));
 	}
 

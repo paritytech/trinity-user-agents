@@ -35,10 +35,15 @@ const TOP_UP_LIMIT: usize = 3;
 /// cannot hold the session and its worker for good. A bank transfer can take
 /// days, so this is longer than the unassigned window.
 const PROVIDER_SILENCE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
-/// Version of the stored sessions blob, which leads it as a `u16`. A change
-/// to how [`FundingSession`] encodes bumps it, and [`decode_sessions`] keeps
-/// reading every earlier version, so an upgrade keeps the sessions in flight.
-const SESSIONS_FORMAT: u16 = 3;
+/// Format of the stored sessions blob, which leads it as a `u16`. The stored
+/// enums pin their SCALE indexes, so variants added later decode alongside
+/// the ones a blob was written with. A blob that leads with another format is
+/// set aside rather than read.
+const SESSIONS_FORMAT: u16 = 1;
+/// How many unreadable blobs [`CoreStorageKey::FundingSessionsUnreadable`]
+/// keeps, oldest dropped first, so repeated bad writes cannot grow it without
+/// bound.
+const UNREADABLE_LIMIT: usize = 8;
 
 /// What the core knows about one session, independent of any host surface.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -182,8 +187,10 @@ pub enum Settlement {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingStage {
 	/// In flight.
+	#[codec(index = 0)]
 	Open,
 	/// Ended without success.
+	#[codec(index = 1)]
 	Failed {
 		/// Why it ended.
 		reason: FundingFailure,
@@ -191,6 +198,7 @@ pub enum FundingStage {
 		settled_at_ms: u64,
 	},
 	/// Inbound success.
+	#[codec(index = 2)]
 	Delivered {
 		/// Amount credited, which may differ from the amount requested.
 		credited: u128,
@@ -198,6 +206,7 @@ pub enum FundingStage {
 		settled_at_ms: u64,
 	},
 	/// Outbound success.
+	#[codec(index = 3)]
 	Released {
 		/// Amount debited.
 		debited: u128,
@@ -750,11 +759,12 @@ pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<Fundi
 
 /// Read every persisted session.
 ///
-/// A blob that does not decode is moved to
+/// A blob that does not decode is appended to the list kept under
 /// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as no sessions, so
-/// one bad write cannot disable funding for good and the next store cannot
-/// overwrite sessions it never read. If it cannot be moved, loading fails and
-/// the blob stays where it is.
+/// one bad write cannot disable funding for good, the next store cannot
+/// overwrite sessions it never read, and a later bad blob does not replace an
+/// earlier one. If it cannot be set aside, loading fails and the blob stays
+/// where it is.
 pub async fn load_sessions(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<FundingSession>, FundingSessionError> {
@@ -770,105 +780,36 @@ pub async fn load_sessions(
 		return Ok(sessions);
 	}
 	error!(bytes = blob.len(), "funding sessions do not decode; keeping them aside");
+	let mut aside = match storage
+		.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)
+		.await
+		.map_err(storage_error)?
+	{
+		Some(kept) => Vec::<Vec<u8>>::decode(&mut &kept[..]).unwrap_or_else(|_| vec![kept]),
+		None => Vec::new(),
+	};
+	aside.push(blob);
+	if aside.len() > UNREADABLE_LIMIT {
+		aside.drain(..aside.len() - UNREADABLE_LIMIT);
+	}
 	storage
-		.write_core_storage(CoreStorageKey::FundingSessionsUnreadable, blob)
+		.write_core_storage(CoreStorageKey::FundingSessionsUnreadable, aside.encode())
 		.await
 		.map_err(storage_error)?;
 	Ok(Vec::new())
 }
 
-/// Decode a stored sessions blob of any version this core reads, or `None`
-/// when it is not one.
+/// Decode a stored sessions blob of the current format, or `None` when it is
+/// not one.
 fn decode_sessions(blob: &[u8]) -> Option<Vec<FundingSession>> {
 	let input = &mut &blob[..];
-	let sessions = match u16::decode(input).ok()? {
-		1 => Vec::<SessionV1>::decode(input)
-			.ok()?
-			.into_iter()
-			.map(FundingSession::from)
-			.collect(),
-		2 => Vec::<SessionV2>::decode(input)
-			.ok()?
-			.into_iter()
-			.map(FundingSession::from)
-			.collect(),
-		SESSIONS_FORMAT => Vec::<FundingSession>::decode(input).ok()?,
-		_ => return None,
-	};
+	if u16::decode(input).ok()? != SESSIONS_FORMAT {
+		return None;
+	}
+	let sessions = Vec::<FundingSession>::decode(input).ok()?;
 	input.is_empty().then_some(sessions)
 }
 
-/// A session as stored in format 1, before providers served sessions.
-#[derive(Encode, Decode)]
-struct SessionV1 {
-	intent: String,
-	owner_product_id: Option<String>,
-	direction: FundingDirection,
-	amount: Option<u128>,
-	stage: FundingStage,
-	opened_at_ms: u64,
-	deadline_ms: u64,
-	acknowledged: bool,
-}
-
-impl From<SessionV1> for FundingSession {
-	fn from(session: SessionV1) -> Self {
-		Self {
-			intent: session.intent,
-			owner_product_id: session.owner_product_id,
-			direction: session.direction,
-			amount: session.amount,
-			stage: session.stage,
-			opened_at_ms: session.opened_at_ms,
-			deadline_ms: session.deadline_ms,
-			acknowledged: session.acknowledged,
-			provider_id: None,
-			assigned_at_ms: None,
-			cancel: None,
-			updates: Vec::new(),
-			started: Vec::new(),
-		}
-	}
-}
-
-/// A session as stored in format 2, before a cancel could be answered with
-/// an offer.
-#[derive(Encode, Decode)]
-struct SessionV2 {
-	intent: String,
-	owner_product_id: Option<String>,
-	direction: FundingDirection,
-	amount: Option<u128>,
-	stage: FundingStage,
-	opened_at_ms: u64,
-	deadline_ms: u64,
-	acknowledged: bool,
-	provider_id: Option<String>,
-	assigned_at_ms: Option<u64>,
-	cancel_requested: bool,
-	updates: Vec<FundingUpdateRecord>,
-	started: Vec<StartedFunds>,
-}
-
-impl From<SessionV2> for FundingSession {
-	fn from(session: SessionV2) -> Self {
-		Self {
-			intent: session.intent,
-			owner_product_id: session.owner_product_id,
-			direction: session.direction,
-			amount: session.amount,
-			stage: session.stage,
-			opened_at_ms: session.opened_at_ms,
-			deadline_ms: session.deadline_ms,
-			acknowledged: session.acknowledged,
-			provider_id: session.provider_id,
-			assigned_at_ms: session.assigned_at_ms,
-			cancel: session.cancel_requested.then_some(FundingCancel::Requested),
-			updates: session.updates,
-			started: session.started,
-		}
-	}
-}
 
 /// Replace the persisted set with `sessions`, clearing the slot when empty.
 pub async fn store_sessions(
@@ -1537,72 +1478,24 @@ mod tests {
 		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
 		assert_eq!(
 			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
-			Ok(Some(blob))
+			Ok(Some(vec![blob].encode()))
 		);
 	}
 
 	#[test]
-	fn sessions_stored_before_providers_served_them_still_load() {
+	fn a_second_unreadable_blob_is_kept_alongside_the_first() {
 		let storage = stub_platform();
-		let stored = SessionV1 {
-			intent: "fs_1".to_string(),
-			owner_product_id: Some("wallet.dot".to_string()),
-			direction: FundingDirection::In,
-			amount: Some(100),
-			stage: FundingStage::Open,
-			opened_at_ms: NOW,
-			deadline_ms: NOW + SESSION_WINDOW_MS,
-			acknowledged: false,
-		};
-		block_on(
-			storage
-				.write_core_storage(CoreStorageKey::FundingSessions, (1u16, vec![stored]).encode()),
-		)
-		.expect("written");
-
-		let loaded = block_on(load_sessions(storage.as_ref())).expect("loaded");
+		let first = vec![0xff, 0x01];
+		let second = vec![0xff, 0x02];
+		for blob in [&first, &second] {
+			block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
+				.expect("written");
+			assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
+		}
 
 		assert_eq!(
-			loaded,
-			vec![FundingSession::new(
-				"fs_1".to_string(),
-				Some("wallet.dot".to_string()),
-				FundingDirection::In,
-				Some(100),
-				NOW,
-			)]
-		);
-	}
-
-	#[test]
-	fn a_cancel_pending_in_format_2_is_still_with_the_provider() {
-		let storage = stub_platform();
-		let stored = SessionV2 {
-			intent: "fs_1".to_string(),
-			owner_product_id: None,
-			direction: FundingDirection::In,
-			amount: Some(100),
-			stage: FundingStage::Open,
-			opened_at_ms: NOW,
-			deadline_ms: NOW + SESSION_WINDOW_MS,
-			acknowledged: false,
-			provider_id: Some(PROVIDER.to_string()),
-			assigned_at_ms: Some(NOW),
-			cancel_requested: true,
-			updates: Vec::new(),
-			started: Vec::new(),
-		};
-		block_on(
-			storage
-				.write_core_storage(CoreStorageKey::FundingSessions, (2u16, vec![stored]).encode()),
-		)
-		.expect("written");
-
-		let loaded = block_on(load_sessions(storage.as_ref())).expect("loaded");
-
-		assert_eq!(
-			loaded.iter().map(|session| session.cancel.clone()).collect::<Vec<_>>(),
-			vec![Some(FundingCancel::Requested)]
+			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
+			Ok(Some(vec![first, second].encode()))
 		);
 	}
 
@@ -1616,7 +1509,7 @@ mod tests {
 		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
 		assert_eq!(
 			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
-			Ok(Some(blob))
+			Ok(Some(vec![blob].encode()))
 		);
 	}
 
