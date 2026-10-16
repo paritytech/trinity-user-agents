@@ -1108,6 +1108,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingSessions()
     }
 
+    /// Every session the host recorded, as summaries newest first, for
+    /// rebuilding the host's history when it was lost.
+    public func fundingHistory() -> [FundingSessionSummary] {
+        inner.fundingHistory()
+    }
+
     /// Cancel session `intent` at the user's request. Before money moved the
     /// provider is asked to stop, and asking again ends the session; after,
     /// the provider answers with an offer the user confirms, or a refusal.

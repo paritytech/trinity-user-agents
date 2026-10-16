@@ -143,6 +143,7 @@ private final class FakeFundingRuntime: FundingRuntime, @unchecked Sendable {
     func fundingSession(intent _: String) -> FundingSession? { nil }
     func fundingProgress(intent _: String) -> FundingProgress? { nil }
     func fundingSessions() -> [FundingSession] { [] }
+    func fundingHistory() -> [FundingSessionSummary] { [] }
     func fundingInProgress() async throws -> Bool { false }
     func fundingCandidates(intent _: String) -> [FundingCandidate] { candidates }
 
