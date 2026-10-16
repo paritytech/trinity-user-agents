@@ -1964,7 +1964,7 @@ pub enum CoreStorageKey {
 	/// The host-channel keys this wallet's contacts handed over in a Chat
 	/// bootstrap frame, one per peer (seity `doc/HOST_CHANNEL_PLAN.md`).
 	/// Public keys only; the pair secret is derived on use.
-	#[codec(index = 20)]
+    #[codec(index = 22)]
 	HostChannelPeers {
 		/// Wallet whose contacts sent the keys.
 		root_public_key: [u8; 32],
