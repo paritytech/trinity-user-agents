@@ -138,7 +138,8 @@ private extension FundingActivityStatusTests {
             payout: payout,
             refunded: refunded,
             status: status,
-            longerAtMs: nil
+            longerAtMs: nil,
+            moneyMoved: false
         )
     }
 }

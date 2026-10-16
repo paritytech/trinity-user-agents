@@ -247,8 +247,8 @@ extension FundingFlowModel {
     /// cancel is with the provider or no money moved yet, when a second cancel
     /// ends the session. The core says when it is too late.
     var canRequestCancel: Bool {
-        guard hasStarted, let status = progress?.status, status.isInFlight else { return false }
-        return FundingCancelPresentation.canCancel(status, moneyMoved: session?.moneyMoved ?? false)
+        guard hasStarted, let progress, progress.status.isInFlight else { return false }
+        return FundingCancelPresentation.canCancel(progress.status, moneyMoved: progress.moneyMoved)
     }
 
     /// The cancel action's title for the session's status.

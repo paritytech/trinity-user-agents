@@ -69,9 +69,10 @@ enum FundingCancelPresentation {
         }
     }
 
-    /// Whether the user can cancel a session in `status`. Before money moved a
-    /// second cancel ends the session, so a provider that went silent cannot hold
-    /// it; after, a cancel already with the provider waits for its answer.
+    /// Whether the user can cancel a session in `status`, given the core's
+    /// `FundingProgress.moneyMoved`. Before money moved a second cancel ends the
+    /// session, so a provider that went silent cannot hold it; after, a cancel
+    /// already with the provider waits for its answer.
     static func canCancel(_ status: FundingStatus, moneyMoved: Bool) -> Bool {
         switch status {
         case .cancelRequested: !moneyMoved
@@ -90,29 +91,6 @@ enum FundingCancelPresentation {
             String(localized: .Funding.cancelAnyway)
         } else {
             String(localized: .Funding.depositCancel)
-        }
-    }
-}
-
-extension FundingSession {
-    /// Whether money moved for the session: the provider started or named funds,
-    /// or saw the user's payment. The core's rule is the same; from then on only
-    /// the provider ends the session.
-    var moneyMoved: Bool {
-        !started.isEmpty || updates.contains { $0.update.movesMoney }
-    }
-}
-
-private extension FundingUpdate {
-    var movesMoney: Bool {
-        switch self {
-        case .paymentReceived,
-             .crediting,
-             .collecting,
-             .refunding:
-            true
-        default:
-            false
         }
     }
 }
