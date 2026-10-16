@@ -16,8 +16,10 @@ use parity_scale_codec::{Decode, Encode};
 use unicode_normalization::UnicodeNormalization;
 
 pub use async_trait::async_trait;
-pub use truapi_provider::ProviderError;
-pub use truapi_provider::platform::{ChainProvider, JsonRpcConnection};
+pub use truapi_provider::{
+	ProviderError,
+	platform::{ChainProvider, JsonRpcConnection},
+};
 
 use truapi::Bytes32;
 
@@ -25,23 +27,27 @@ use truapi::Bytes32;
 #[cfg(feature = "mock")]
 pub mod mock;
 
-use truapi::latest::{
+use truapi::{
+	latest::{
     AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, DerivationIndex, GenericError,
+    DerivationIndex, HostNativeChatAttachmentMetadata,
+		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, GenericError,
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-    HostChatRegisterBotResponse, HostDevicePermissionRequest, HostFeatureSupportedRequest,
-    HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-    HostNativeChatAttachmentMetadata, HostNavigateToError, HostPlatform,
-    HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
-    HostPushNotificationRequest, HostPushNotificationResponse, HostSignPayloadRequest,
-    HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-    HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, HostWorkerBeginOperationResponse,
-    HostWorkerOperationError, LegacyAccountTxPayload, ProductAccountId, ProductAccountTxPayload,
-    ProductProofContext, RemotePermission, RemotePermissionRequest, RingLocation,
+		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostDevicePermissionRequest,
+		HostFeatureSupportedRequest, HostFeatureSupportedResponse, HostLocalStorageChangeItem,
+		HostLocaleSubscribeItem, HostNavigateToError, HostPlatform, HostPocketListSubscribeItem,
+		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
+		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
+		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
+		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
+		ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
+		RemotePermissionRequest, RingLocation,
+	},
+	v01::HostAccountSignVrfRequest,
 };
-use truapi::v01::HostAccountSignVrfRequest;
 use url::{Host, Url};
 
 /// Role-neutral host identity supplied by the embedding host.
@@ -192,10 +198,7 @@ impl HostIdentity {
                 });
             }
         }
-        Ok(Self {
-            host_info,
-            platform_info,
-        })
+		Ok(Self { host_info, platform_info })
     }
 }
 
@@ -272,10 +275,7 @@ impl ProductContext {
         product_id: String,
         execution_kind: ProductExecutionKind,
     ) -> Result<Self, RuntimeConfigValidationError> {
-        Ok(Self {
-            product_id: normalize_product_identifier(&product_id)?,
-            execution_kind,
-        })
+		Ok(Self { product_id: normalize_product_identifier(&product_id)?, execution_kind })
     }
 
     /// Whether this is the game product, Jollity, on any dotNS network. A
@@ -315,9 +315,7 @@ pub const DOTNS_TLDS: &[&str] = &["dot", "paseo", "testnet"];
 /// Whether `normalized` ends in one of [`DOTNS_TLDS`]. Expects an
 /// already-lowercased host with no trailing root dot.
 pub fn has_dotns_tld(normalized: &str) -> bool {
-    normalized
-        .rsplit_once('.')
-        .is_some_and(|(_, tld)| DOTNS_TLDS.contains(&tld))
+	normalized.rsplit_once('.').is_some_and(|(_, tld)| DOTNS_TLDS.contains(&tld))
 }
 
 /// Blessed product labels across every network in [`DOTNS_TLDS`].
@@ -428,9 +426,7 @@ pub fn normalize_product_identifier(
     if has_dotns_tld(&normalized) && !reserves_localhost {
         Ok(normalized)
     } else {
-        Err(RuntimeConfigValidationError::InvalidProductId {
-            product_id: product_id.to_string(),
-        })
+		Err(RuntimeConfigValidationError::InvalidProductId { product_id: product_id.to_string() })
     }
 }
 
@@ -441,13 +437,13 @@ pub fn normalize_product_identifier(
 /// because a cross-product call takes this string from the wire where it is
 /// self-asserted:
 ///
-/// - An empty label. `dim2..dot` and `.dot` both reduce to `""`, so distinct ids
-///   collapse onto one grant key and one manifest cache entry.
-/// - Control and format characters. A NUL or a right-to-left override survives
-///   into [`AccountAccessReview`], which renders the id verbatim in the only
-///   consent prompt this design has, and into every log line carrying it.
-/// - Whitespace and path separators, which let one product's id render like
-///   another's anywhere the comparison is not byte-exact.
+/// - An empty label. `dim2..dot` and `.dot` both reduce to `""`, so distinct ids collapse onto one
+///   grant key and one manifest cache entry.
+/// - Control and format characters. A NUL or a right-to-left override survives into
+///   [`AccountAccessReview`], which renders the id verbatim in the only consent prompt this design
+///   has, and into every log line carrying it.
+/// - Whitespace and path separators, which let one product's id render like another's anywhere the
+///   comparison is not byte-exact.
 ///
 /// Deliberately not an ASCII allowlist: dotNS names are internationalized, so
 /// `tést.dot` is a real id. What is rejected is the class of characters that
@@ -464,12 +460,12 @@ fn has_well_formed_labels(normalized: &str) -> bool {
             | '\u{feff}')
     }
     let label_ok = |label: &str| {
-        !label.is_empty()
-            && !label.chars().any(|c| {
-                c.is_control()
-                    || c.is_whitespace()
-                    || is_invisible_format(c)
-                    || matches!(c, '/' | '\\')
+		!label.is_empty() &&
+			!label.chars().any(|c| {
+				c.is_control() ||
+					c.is_whitespace() ||
+					is_invisible_format(c) ||
+					matches!(c, '/' | '\\')
             })
     };
     if normalized == "localhost" {
@@ -491,13 +487,8 @@ pub const CHAT_ICON_MAX_BYTES: usize = 64 * 1024;
 
 /// Inline image media types a chat icon may carry. SVG is excluded: it can
 /// carry script.
-const ALLOWED_ICON_DATA_TYPES: [&str; 5] = [
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "image/webp",
-    "image/avif",
-];
+const ALLOWED_ICON_DATA_TYPES: [&str; 5] =
+	["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"];
 
 /// Normalize a product-supplied chat room or bot identifier.
 ///
@@ -529,10 +520,7 @@ pub fn validate_chat_name(field: &'static str, name: &str) -> Result<String, Cha
 fn normalize_chat_text(field: &'static str, value: &str) -> Result<String, ChatFieldError> {
     let normalized = value.trim().nfc().collect::<String>();
     if normalized.len() > CHAT_FIELD_MAX_BYTES {
-        return Err(ChatFieldError::TooLong {
-            field,
-            limit: CHAT_FIELD_MAX_BYTES,
-        });
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_FIELD_MAX_BYTES });
     }
     if normalized.chars().any(is_display_unsafe) {
         return Err(ChatFieldError::UnsafeCharacter { field });
@@ -572,46 +560,32 @@ pub fn validate_chat_message_content(
 ) -> Result<ChatMessageContent, ChatFieldError> {
     use ChatMessageContent as Content;
     Ok(match content {
-        Content::Text { text } => Content::Text {
-            text: validate_chat_body("text", &text)?,
-        },
+		Content::Text { text } => Content::Text { text: validate_chat_body("text", &text)? },
         Content::RichText(rich) => Content::RichText(ChatRichText {
-            text: rich
-                .text
-                .map(|t| validate_chat_body("text", &t))
-                .transpose()?,
+			text: rich.text.map(|t| validate_chat_body("text", &t)).transpose()?,
             media: validate_chat_media("media", rich.media)?,
         }),
         Content::Actions(actions) => {
             if actions.actions.len() > CHAT_ACTIONS_MAX {
-                return Err(ChatFieldError::TooMany {
-                    field: "actions",
-                    limit: CHAT_ACTIONS_MAX,
-                });
+				return Err(ChatFieldError::TooMany { field: "actions", limit: CHAT_ACTIONS_MAX });
             }
             Content::Actions(ChatActions {
-                text: actions
-                    .text
-                    .map(|t| validate_chat_body("text", &t))
-                    .transpose()?,
+				text: actions.text.map(|t| validate_chat_body("text", &t)).transpose()?,
                 actions: validate_chat_actions(actions.actions)?,
                 layout: actions.layout,
             })
-        }
+		},
         Content::File(file) => Content::File(ChatFile {
             url: validate_chat_url("url", &file.url)?,
             file_name: validate_chat_file_name("fileName", &file.file_name)?,
             mime_type: validate_chat_name("mimeType", &file.mime_type)?,
             size_bytes: file.size_bytes,
-            text: file
-                .text
-                .map(|t| validate_chat_body("text", &t))
-                .transpose()?,
+			text: file.text.map(|t| validate_chat_body("text", &t)).transpose()?,
         }),
         Content::Reaction(reaction) => Content::Reaction(validate_chat_reaction(reaction)?),
         Content::ReactionRemoved(reaction) => {
             Content::ReactionRemoved(validate_chat_reaction(reaction)?)
-        }
+		},
         Content::Custom(custom) => {
             if custom.payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
                 return Err(ChatFieldError::TooLong {
@@ -623,7 +597,7 @@ pub fn validate_chat_message_content(
                 message_type: normalize_chat_identifier("messageType", &custom.message_type)?,
                 payload: custom.payload,
             })
-        }
+		},
     })
 }
 
@@ -638,10 +612,10 @@ fn validate_chat_file_name(field: &'static str, name: &str) -> Result<String, Ch
     if validated.is_empty() {
         return Err(ChatFieldError::Empty { field });
     }
-    if validated.contains(['/', '\\', ':'])
-        || validated == ".."
-        || validated == "."
-        || validated.starts_with("..")
+	if validated.contains(['/', '\\', ':']) ||
+		validated == ".." ||
+		validated == "." ||
+		validated.starts_with("..")
     {
         return Err(ChatFieldError::PathComponent { field });
     }
@@ -663,10 +637,7 @@ fn validate_chat_actions(actions: Vec<ChatAction>) -> Result<Vec<ChatAction>, Ch
             if !seen.insert(action_id.clone()) {
                 return Err(ChatFieldError::Duplicate { field: "actionId" });
             }
-            Ok(ChatAction {
-                action_id,
-                title: validate_chat_name("title", &action.title)?,
-            })
+			Ok(ChatAction { action_id, title: validate_chat_name("title", &action.title)? })
         })
         .collect()
 }
@@ -685,18 +656,11 @@ fn validate_chat_media(
     media: Vec<ChatMedia>,
 ) -> Result<Vec<ChatMedia>, ChatFieldError> {
     if media.len() > CHAT_MEDIA_MAX {
-        return Err(ChatFieldError::TooMany {
-            field,
-            limit: CHAT_MEDIA_MAX,
-        });
+		return Err(ChatFieldError::TooMany { field, limit: CHAT_MEDIA_MAX });
     }
     media
         .into_iter()
-        .map(|item| {
-            Ok(ChatMedia {
-                url: validate_chat_url("url", &item.url)?,
-            })
-        })
+		.map(|item| Ok(ChatMedia { url: validate_chat_url("url", &item.url)? }))
         .collect()
 }
 
@@ -708,10 +672,7 @@ fn validate_chat_media(
 /// indentation in a code block survives.
 fn validate_chat_body(field: &'static str, value: &str) -> Result<String, ChatFieldError> {
     if value.len() > CHAT_BODY_MAX_BYTES {
-        return Err(ChatFieldError::TooLong {
-            field,
-            limit: CHAT_BODY_MAX_BYTES,
-        });
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_BODY_MAX_BYTES });
     }
     if value.chars().any(is_body_unsafe) {
         return Err(ChatFieldError::UnsafeCharacter { field });
@@ -723,10 +684,7 @@ fn validate_chat_body(field: &'static str, value: &str) -> Result<String, ChatFi
 fn validate_chat_emoji(field: &'static str, value: &str) -> Result<String, ChatFieldError> {
     let normalized = value.trim().nfc().collect::<String>();
     if normalized.len() > CHAT_FIELD_MAX_BYTES {
-        return Err(ChatFieldError::TooLong {
-            field,
-            limit: CHAT_FIELD_MAX_BYTES,
-        });
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_FIELD_MAX_BYTES });
     }
     if normalized.chars().any(is_emoji_unsafe) {
         return Err(ChatFieldError::UnsafeCharacter { field });
@@ -790,13 +748,10 @@ fn validate_chat_url(field: &'static str, url: &str) -> Result<String, ChatField
         // would leave `data:` accepted but too small to carry an image.
         Some("data") if is_allowed_icon_data_url(trimmed) => {
             if trimmed.len() > CHAT_ICON_MAX_BYTES {
-                return Err(ChatFieldError::TooLong {
-                    field,
-                    limit: CHAT_ICON_MAX_BYTES,
-                });
+				return Err(ChatFieldError::TooLong { field, limit: CHAT_ICON_MAX_BYTES });
             }
             Ok(trimmed.to_string())
-        }
+		},
         _ => Err(ChatFieldError::RejectedScheme { field }),
     }
 }
@@ -812,10 +767,7 @@ pub fn validate_chat_icon(field: &'static str, icon: &str) -> Result<String, Cha
         return Ok(String::new());
     }
     if trimmed.len() > CHAT_ICON_MAX_BYTES {
-        return Err(ChatFieldError::TooLong {
-            field,
-            limit: CHAT_ICON_MAX_BYTES,
-        });
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_ICON_MAX_BYTES });
     }
     if trimmed.chars().any(is_display_unsafe) {
         return Err(ChatFieldError::UnsafeCharacter { field });
@@ -836,8 +788,8 @@ fn icon_scheme(candidate: &str) -> Option<String> {
         .filter(|character| !character.is_whitespace() && *character != '\u{0}')
         .collect();
     let (scheme, _) = stripped.split_once(':')?;
-    if scheme.is_empty()
-        || !scheme
+	if scheme.is_empty() ||
+		!scheme
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
     {
@@ -900,8 +852,8 @@ fn is_emoji_unsafe(character: char) -> bool {
 
 /// Control characters and bidi overrides let two distinct values render alike.
 fn is_display_unsafe(character: char) -> bool {
-    character.is_control()
-        || matches!(
+	character.is_control() ||
+		matches!(
             character,
             '\u{200b}'
                 | '\u{061c}'
@@ -1050,10 +1002,7 @@ impl ProductStorageKey {
         product_id: &str,
         key: impl Into<String>,
     ) -> Result<Self, RuntimeConfigValidationError> {
-        Ok(Self {
-            product_id: normalize_product_identifier(product_id)?,
-            key: key.into(),
-        })
+		Ok(Self { product_id: normalize_product_identifier(product_id)?, key: key.into() })
     }
 
     /// Decode the opaque key passed through [`ProductStorage`].
@@ -1237,6 +1186,32 @@ pub enum PermissionAuthorizationRequest {
         /// `None` selects the legacy allowance account; `Some` selects a product account.
         derivation_index: Option<DerivationIndex>,
     },
+	/// Product-scoped approval to make one kind of signature with another
+	/// product's accounts. It is held in memory only and ends when the product
+	/// execution closes.
+	CrossProductSignature {
+		/// Product whose accounts sign.
+		target_product_id: String,
+		/// Kind of signature the user approved.
+		kind: CrossProductSignatureKind,
+	},
+}
+
+/// A kind of signature a product makes with another product's account.
+///
+/// The user approves each kind separately: approving one never lets another
+/// through without a prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum CrossProductSignatureKind {
+	/// `sign_payload`.
+	Payload,
+	/// `create_transaction` naming no contacts.
+	Transaction,
+	/// Watermarked `sign_raw`.
+	Raw,
+	/// A Statement Store product proof.
+	StatementProof,
 }
 
 /// Authorization status for a permission request.
@@ -1952,7 +1927,7 @@ pub fn describe_core_storage_key(
         CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
         CoreStorageKey::PermissionAuthorization { product_id, .. } => {
             ("PermissionAuthorization", Some(product_id))
-        }
+		},
         CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
         CoreStorageKey::LastProcessedPairingStatement => ("LastProcessedPairingStatement", None),
         CoreStorageKey::AutoSigningKey { product_id } => ("AutoSigningKey", Some(product_id)),
@@ -2009,9 +1984,7 @@ impl CoreStorageKey {
         Self::remote_permission_authorization(
             product_id,
             &RemotePermissionRequest {
-                permission: RemotePermission::Remote {
-                    domains: vec![domain.to_string()],
-                },
+				permission: RemotePermission::Remote { domains: vec![domain.to_string()] },
             },
         )
     }
@@ -2092,10 +2065,10 @@ pub fn is_valid_remote_domain_pattern(domain: &str) -> bool {
     let host = normalized.strip_prefix("*.").unwrap_or(&normalized);
     match Host::parse(host) {
         Ok(Host::Domain(domain)) => {
-            !domain.contains('*')
-                && domain.split('.').all(|label| !label.is_empty())
-                && (!wildcard || domain.contains('.'))
-        }
+			!domain.contains('*') &&
+				domain.split('.').all(|label| !label.is_empty()) &&
+				(!wildcard || domain.contains('.'))
+		},
         Ok(_) => !wildcard,
         Err(_) => false,
     }
@@ -2131,14 +2104,12 @@ fn canonical_remote_request(request: &RemotePermissionRequest) -> RemotePermissi
             // spelling or duplicate entries must canonicalize to one key (no
             // spurious re-prompt), under the same rule enforcement applies to a
             // single host.
-            let mut canonical: Vec<String> = domains
-                .iter()
-                .map(|domain| normalize_remote_domain(domain))
-                .collect();
+			let mut canonical: Vec<String> =
+				domains.iter().map(|domain| normalize_remote_domain(domain)).collect();
             canonical.sort();
             canonical.dedup();
             RemotePermission::Remote { domains: canonical }
-        }
+		},
         other => other.clone(),
     };
     RemotePermissionRequest { permission }
@@ -2203,9 +2174,7 @@ mod tests {
 
         assert_eq!(
             signing_host_config(""),
-            Err(RuntimeConfigValidationError::EmptyField {
-                field: "network_suffix"
-            })
+			Err(RuntimeConfigValidationError::EmptyField { field: "network_suffix" })
         );
         for malformed in [
             "pasoe",
@@ -2299,46 +2268,30 @@ mod tests {
         let too_many = ChatMessageContent::Actions(ChatActions {
             text: None,
             actions: (0..CHAT_ACTIONS_MAX + 1)
-                .map(|index| ChatAction {
-                    action_id: format!("a{index}"),
-                    title: "go".to_string(),
-                })
+				.map(|index| ChatAction { action_id: format!("a{index}"), title: "go".to_string() })
                 .collect(),
             layout: truapi::latest::ChatActionLayout::Column,
         });
         assert_eq!(
             validate_chat_message_content(too_many),
-            Err(ChatFieldError::TooMany {
-                field: "actions",
-                limit: CHAT_ACTIONS_MAX,
-            })
+			Err(ChatFieldError::TooMany { field: "actions", limit: CHAT_ACTIONS_MAX })
         );
 
-        let too_long = ChatMessageContent::Text {
-            text: "x".repeat(CHAT_BODY_MAX_BYTES + 1),
-        };
+		let too_long = ChatMessageContent::Text { text: "x".repeat(CHAT_BODY_MAX_BYTES + 1) };
         assert_eq!(
             validate_chat_message_content(too_long),
-            Err(ChatFieldError::TooLong {
-                field: "text",
-                limit: CHAT_BODY_MAX_BYTES,
-            })
+			Err(ChatFieldError::TooLong { field: "text", limit: CHAT_BODY_MAX_BYTES })
         );
 
         let too_much_media = ChatMessageContent::RichText(ChatRichText {
             text: None,
             media: (0..CHAT_MEDIA_MAX + 1)
-                .map(|_| ChatMedia {
-                    url: "https://example.invalid/m".to_string(),
-                })
+				.map(|_| ChatMedia { url: "https://example.invalid/m".to_string() })
                 .collect(),
         });
         assert_eq!(
             validate_chat_message_content(too_much_media),
-            Err(ChatFieldError::TooMany {
-                field: "media",
-                limit: CHAT_MEDIA_MAX,
-            })
+			Err(ChatFieldError::TooMany { field: "media", limit: CHAT_MEDIA_MAX })
         );
     }
 
@@ -2348,12 +2301,8 @@ mod tests {
         // and the bytes must survive so a product can echo-compare them.
         let markdown = "# Report\n\n| a | b |\n| - | - |\n\tindented\n";
         assert_eq!(
-            validate_chat_message_content(ChatMessageContent::Text {
-                text: markdown.to_string(),
-            }),
-            Ok(ChatMessageContent::Text {
-                text: markdown.to_string(),
-            })
+			validate_chat_message_content(ChatMessageContent::Text { text: markdown.to_string() }),
+			Ok(ChatMessageContent::Text { text: markdown.to_string() })
         );
 
         // Neither trimmed nor NFC-normalized.
@@ -2362,9 +2311,7 @@ mod tests {
             validate_chat_message_content(ChatMessageContent::Text {
                 text: unnormalized.to_string(),
             }),
-            Ok(ChatMessageContent::Text {
-                text: unnormalized.to_string(),
-            })
+			Ok(ChatMessageContent::Text { text: unnormalized.to_string() })
         );
 
         // The bidi and zero-width screen still applies.
@@ -2405,9 +2352,7 @@ mod tests {
         // One case per screen, so removing any single one fails a test.
         let media = ChatMessageContent::RichText(ChatRichText {
             text: None,
-            media: vec![ChatMedia {
-                url: "javascript:alert(1)".to_string(),
-            }],
+			media: vec![ChatMedia { url: "javascript:alert(1)".to_string() }],
         });
         assert_eq!(
             validate_chat_message_content(media),
@@ -2445,9 +2390,7 @@ mod tests {
         });
         assert_eq!(
             validate_chat_message_content(custom_type),
-            Err(ChatFieldError::Empty {
-                field: "messageType"
-            })
+			Err(ChatFieldError::Empty { field: "messageType" })
         );
 
         let payload = ChatMessageContent::Custom(ChatCustomMessage {
@@ -2456,10 +2399,7 @@ mod tests {
         });
         assert_eq!(
             validate_chat_message_content(payload),
-            Err(ChatFieldError::TooLong {
-                field: "payload",
-                limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES,
-            })
+			Err(ChatFieldError::TooLong { field: "payload", limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES })
         );
 
         let emoji = ChatMessageContent::Reaction(ChatReaction {
@@ -2569,10 +2509,7 @@ mod tests {
         assert!(padded.len() <= CHAT_URL_MAX_BYTES);
         assert_eq!(
             validate_chat_message_content(file_with_url(&padded)),
-            Err(ChatFieldError::TooLong {
-                field: "url",
-                limit: CHAT_URL_MAX_BYTES,
-            })
+			Err(ChatFieldError::TooLong { field: "url", limit: CHAT_URL_MAX_BYTES })
         );
     }
 
@@ -2583,14 +2520,8 @@ mod tests {
         let colliding = ChatMessageContent::Actions(ChatActions {
             text: None,
             actions: vec![
-                ChatAction {
-                    action_id: "approve".to_string(),
-                    title: "Approve".to_string(),
-                },
-                ChatAction {
-                    action_id: " approve ".to_string(),
-                    title: "Reject".to_string(),
-                },
+				ChatAction { action_id: "approve".to_string(), title: "Approve".to_string() },
+				ChatAction { action_id: " approve ".to_string(), title: "Reject".to_string() },
             ],
             layout: truapi::latest::ChatActionLayout::Column,
         });
@@ -2603,14 +2534,8 @@ mod tests {
         let repeated = ChatMessageContent::Actions(ChatActions {
             text: None,
             actions: vec![
-                ChatAction {
-                    action_id: "approve".to_string(),
-                    title: "Approve".to_string(),
-                },
-                ChatAction {
-                    action_id: "approve".to_string(),
-                    title: "Reject".to_string(),
-                },
+				ChatAction { action_id: "approve".to_string(), title: "Approve".to_string() },
+				ChatAction { action_id: "approve".to_string(), title: "Reject".to_string() },
             ],
             layout: truapi::latest::ChatActionLayout::Column,
         });
@@ -2654,33 +2579,22 @@ mod tests {
         let icon = format!("https://icons.invalid/{long_path}");
         assert!(icon.len() <= CHAT_ICON_MAX_BYTES, "arrives inside its cap");
         assert!(
-            Url::parse(&icon)
-                .expect("a parsable https url")
-                .to_string()
-                .len()
-                > CHAT_ICON_MAX_BYTES,
+			Url::parse(&icon).expect("a parsable https url").to_string().len() >
+				CHAT_ICON_MAX_BYTES,
             "resolves past it"
         );
 
         assert_eq!(
             validate_chat_icon("icon", &icon),
-            Err(ChatFieldError::TooLong {
-                field: "icon",
-                limit: CHAT_ICON_MAX_BYTES,
-            })
+			Err(ChatFieldError::TooLong { field: "icon", limit: CHAT_ICON_MAX_BYTES })
         );
 
-        let message_url = format!(
-            "https://files.invalid/{}",
-            "\u{00e9}".repeat(CHAT_URL_MAX_BYTES / 4)
-        );
+		let message_url =
+			format!("https://files.invalid/{}", "\u{00e9}".repeat(CHAT_URL_MAX_BYTES / 4));
         assert!(message_url.len() <= CHAT_URL_MAX_BYTES);
         assert_eq!(
             validate_chat_url("url", &message_url),
-            Err(ChatFieldError::TooLong {
-                field: "url",
-                limit: CHAT_URL_MAX_BYTES,
-            })
+			Err(ChatFieldError::TooLong { field: "url", limit: CHAT_URL_MAX_BYTES })
         );
     }
 
@@ -2796,14 +2710,8 @@ mod tests {
         let context =
             ProductContext::new_with_execution("app.dot".to_string(), ProductExecutionKind::Worker)
                 .expect("product id is valid");
-        assert_eq!(
-            context.encode(),
-            [28, b'a', b'p', b'p', b'.', b'd', b'o', b't', 2]
-        );
-        assert_eq!(
-            ProductContext::decode(&mut context.encode().as_slice()),
-            Ok(context)
-        );
+		assert_eq!(context.encode(), [28, b'a', b'p', b'p', b'.', b'd', b'o', b't', 2]);
+		assert_eq!(ProductContext::decode(&mut context.encode().as_slice()), Ok(context));
     }
 
     #[test]
@@ -2905,27 +2813,15 @@ mod tests {
         // Both the UniFFI and wasm exports answer through this, and a host
         // holds an id in whatever spelling it received rather than the
         // normalized form the core passes internally.
-        for product_id in [
-            "peopl.dot",
-            "PEOPL.DOT",
-            "  peopl.dot  ",
-            "dim2.paseo",
-            " DIM2.TESTNET ",
-            "stash.dot",
-        ] {
+		for product_id in
+			["peopl.dot", "PEOPL.DOT", "  peopl.dot  ", "dim2.paseo", " DIM2.TESTNET ", "stash.dot"]
+		{
             assert!(
                 normalizes_to_trusted_remote_permissions(product_id),
                 "{product_id} is a first-party product in any accepted spelling"
             );
         }
-        for product_id in [
-            "app.peopl.dot",
-            "peopl",
-            "notpeopl.dot",
-            "localhost:3000",
-            "",
-            "   ",
-        ] {
+		for product_id in ["app.peopl.dot", "peopl", "notpeopl.dot", "localhost:3000", "", "   "] {
             assert!(
                 !normalizes_to_trusted_remote_permissions(product_id),
                 "{product_id} must not be read as trusted"
@@ -2988,10 +2884,7 @@ mod tests {
         // The rejection above is a hazard list, not an ASCII allowlist: dotNS
         // names are internationalized and these are real ids.
         for id in ["Tést.DOT", "münchen.dot", "dim2-two.dot", "localhost:3000"] {
-            assert!(
-                normalize_product_identifier(id).is_ok(),
-                "{id:?} is a legitimate product id"
-            );
+			assert!(normalize_product_identifier(id).is_ok(), "{id:?} is a legitimate product id");
         }
     }
 
@@ -3010,10 +2903,7 @@ mod tests {
         // A huge id alone would pass with the cap off by any amount.
         let at_cap = format!("{}.dot", "a".repeat(PRODUCT_ID_MAX_BYTES - 4));
         assert_eq!(at_cap.len(), PRODUCT_ID_MAX_BYTES);
-        assert!(
-            is_product_identifier(&at_cap),
-            "an id exactly at the cap is still valid"
-        );
+		assert!(is_product_identifier(&at_cap), "an id exactly at the cap is still valid");
     }
 
     #[test]
@@ -3032,48 +2922,26 @@ mod tests {
         );
         for (key, kind, product_id) in [
             (CoreStorageKey::AuthSession, "AuthSession", None),
+			(CoreStorageKey::PairingDeviceIdentity, "PairingDeviceIdentity", None),
             (
-                CoreStorageKey::PairingDeviceIdentity,
-                "PairingDeviceIdentity",
-                None,
-            ),
-            (
-                CoreStorageKey::AllowanceKeys {
-                    session_id: "session".to_string(),
-                },
+				CoreStorageKey::AllowanceKeys { session_id: "session".to_string() },
                 "AllowanceKeys",
                 None,
             ),
+			(CoreStorageKey::LastProcessedPairingStatement, "LastProcessedPairingStatement", None),
             (
-                CoreStorageKey::LastProcessedPairingStatement,
-                "LastProcessedPairingStatement",
-                None,
-            ),
-            (
-                CoreStorageKey::AutoSigningKey {
-                    product_id: "product.dot".to_string(),
-                },
+				CoreStorageKey::AutoSigningKey { product_id: "product.dot".to_string() },
                 "AutoSigningKey",
                 Some("product.dot"),
             ),
             (CoreStorageKey::AutoSigningKeys, "AutoSigningKeys", None),
             (
-                CoreStorageKey::RingVrfRegistry {
-                    root_public_key: [0x42; 32],
-                },
+				CoreStorageKey::RingVrfRegistry { root_public_key: [0x42; 32] },
                 "RingVrfRegistry",
                 None,
             ),
-            (
-                CoreStorageKey::StatementRenewalTargets,
-                "StatementRenewalTargets",
-                None,
-            ),
-            (
-                CoreStorageKey::DeviceEncryptionKey,
-                "DeviceEncryptionKey",
-                None,
-            ),
+			(CoreStorageKey::StatementRenewalTargets, "StatementRenewalTargets", None),
+			(CoreStorageKey::DeviceEncryptionKey, "DeviceEncryptionKey", None),
             (
                 CoreStorageKey::SsoResponderRequestLedger {
                     root_public_key: [0x11; 32],
@@ -3117,9 +2985,7 @@ mod tests {
         );
         let remote = CoreStorageKey::remote_permission_authorization(
             "product.dot",
-            &RemotePermissionRequest {
-                permission: RemotePermission::ChainSubmit,
-            },
+			&RemotePermissionRequest { permission: RemotePermission::ChainSubmit },
         );
         let identity = CoreStorageKey::identity_disclosure_authorization("product.dot");
         let other_product_identity = CoreStorageKey::identity_disclosure_authorization("other.dot");
@@ -3149,35 +3015,21 @@ mod tests {
         );
         assert_eq!(
             remote_domain_candidates("deep.api.example.com"),
-            [
-                "deep.api.example.com",
-                "*.api.example.com",
-                "*.example.com",
-                "*"
-            ]
+			["deep.api.example.com", "*.api.example.com", "*.example.com", "*"]
         );
-        assert_eq!(
-            remote_domain_candidates("example.com"),
-            ["example.com", "*"]
-        );
+		assert_eq!(remote_domain_candidates("example.com"), ["example.com", "*"]);
         assert_eq!(remote_domain_candidates("wallet.dot"), ["wallet.dot", "*"]);
         // A single-label host has no parent to wildcard over.
         assert_eq!(remote_domain_candidates("localhost"), ["localhost", "*"]);
         // A stored pattern resolves to itself, not to a duplicated entry.
-        assert_eq!(
-            remote_domain_candidates("*.example.com"),
-            ["*.example.com", "*"]
-        );
+		assert_eq!(remote_domain_candidates("*.example.com"), ["*.example.com", "*"]);
         assert_eq!(remote_domain_candidates("*"), ["*"]);
         assert_eq!(remote_domain_candidates("*.com"), ["*.com", "*"]);
         assert_eq!(
             remote_domain_candidates("*.api.example.com"),
             ["*.api.example.com", "*.example.com", "*"]
         );
-        assert_eq!(
-            remote_domain_candidates("example.co.uk"),
-            ["example.co.uk", "*.co.uk", "*"]
-        );
+		assert_eq!(remote_domain_candidates("example.co.uk"), ["example.co.uk", "*.co.uk", "*"]);
         assert_eq!(remote_domain_candidates("127.0.0.1"), ["127.0.0.1", "*"]);
         assert_eq!(remote_domain_candidates("[::1]"), ["[::1]", "*"]);
         assert_eq!(
@@ -3220,20 +3072,11 @@ mod tests {
         }
         // IDNA: a non-ASCII host and its punycode spelling are one site, so
         // they must be one slot and one prompt.
-        assert_eq!(
-            normalize_remote_domain("Bücher.example"),
-            "xn--bcher-kva.example"
-        );
-        assert_eq!(
-            normalize_remote_domain("xn--bcher-kva.example"),
-            "xn--bcher-kva.example"
-        );
+		assert_eq!(normalize_remote_domain("Bücher.example"), "xn--bcher-kva.example");
+		assert_eq!(normalize_remote_domain("xn--bcher-kva.example"), "xn--bcher-kva.example");
         // The wildcard marker is not part of the host and survives untouched.
         assert_eq!(normalize_remote_domain("*.Example.COM"), "*.example.com");
-        assert_eq!(
-            normalize_remote_domain("*.Bücher.example"),
-            "*.xn--bcher-kva.example"
-        );
+		assert_eq!(normalize_remote_domain("*.Bücher.example"), "*.xn--bcher-kva.example");
         assert_eq!(normalize_remote_domain("*"), "*");
         // A canonicalized bundle keys the same as the candidate list built from
         // a live host, which is what makes the grant visible to enforcement.
@@ -3322,9 +3165,7 @@ mod tests {
             CoreStorageKey::remote_permission_authorization("product.dot", &benign_same_set);
         assert_ne!(injecting_key, benign_key);
 
-        let webrtc = RemotePermissionRequest {
-            permission: RemotePermission::WebRtc,
-        };
+		let webrtc = RemotePermissionRequest { permission: RemotePermission::WebRtc };
         assert_ne!(
             injecting_key,
             CoreStorageKey::remote_permission_authorization("product.dot", &webrtc)
@@ -3340,6 +3181,25 @@ mod tests {
             CoreStorageKey::remote_permission_authorization("product.dot", &injecting_reordered)
         );
     }
+
+	/// A host decodes reviews with its own codec. If a discriminant moves, a
+	/// host one version apart shows the user a different consent prompt from
+	/// the one its answer approves.
+	#[test]
+	fn review_discriminants_do_not_move() {
+		let discriminants = [
+			UserConfirmationReview::AccountAccess(AccountAccessReview {
+				requesting_product_id: "caller.dot".to_string(),
+				target_product_id: "target.dot".to_string(),
+			}),
+			UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+				product_id: "caller.dot".to_string(),
+			}),
+		]
+		.map(|review| review.encode()[0]);
+
+		assert_eq!(discriminants, [9, 11]);
+	}
 }
 
 /// Host-private persistence for core-owned state.
@@ -3650,14 +3510,6 @@ pub struct ProductSubtreeReview {
     pub product_id: String,
 }
 
-/// Review shown before a preimage is submitted.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
-pub struct PreimageSubmitReview {
-    /// Size of the preimage in bytes.
-    pub size: u64,
-}
-
 /// Review shown before a user-confirmed core action continues.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -3679,13 +3531,16 @@ pub enum UserConfirmationReview {
     IdentityDisclosure(IdentityDisclosureReview),
     /// Allocate resources for the requesting product.
     ResourceAllocation(ResourceAllocationReview),
-    /// Submit a preimage to the host-selected backend.
-    PreimageSubmit(PreimageSubmitReview),
+	// Index 8 stays unused so a host whose codec is older or newer than the
+	// core cannot decode one review as another.
     /// Allow a product to access another product account.
+	#[codec(index = 9)]
     AccountAccess(AccountAccessReview),
     /// Sign an RFC-0023 VRF transcript with a product account.
+	#[codec(index = 10)]
     SignVrf(SignVrfReview),
     /// Resolve a product's own account subtree over SSO.
+	#[codec(index = 11)]
     ProductSubtree(ProductSubtreeReview),
     /// Allow a product to bind and use wallet-held Chat identity authority.
     ChatAuthority(ChatAuthorityReview),
@@ -3776,9 +3631,9 @@ pub trait PreimageHost: Send + Sync {
 /// answered `Unsupported`. See [`OptionalPlatform`].
 ///
 /// The core bounds and screens the product-supplied fields it forwards. Ids,
-/// names and icons on `create_chat_room`, `register_chat_bot` and
-/// `post_chat_message` are NFC-normalized and rejected for control and bidi
-/// characters. Message bodies are bounded and screened but pass through
+/// names and icons on `create_chat_room`, `register_chat_bot`,
+/// `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and
+/// bidi characters. Message bodies are bounded and screened but pass through
 /// byte-for-byte, keeping line breaks and tabs, so a product reads back the
 /// bytes it sent. Counts and byte budgets are enforced, and any URL a host may
 /// fetch or open is restricted to `https` or an inline raster image and
@@ -3819,6 +3674,16 @@ pub trait ChatPlatform: Send + Sync {
         product: &ProductContext,
         request: HostChatPostMessageRequest,
     ) -> Result<HostChatPostMessageResponse, HostChatPostMessageError>;
+
+	/// Set what a product-scoped room shows below its messages, for the room
+	/// as it is now and every later time it is shown. The core has already
+	/// checked the product created the room. A room the product never set a
+	/// footer on shows the text input.
+	async fn set_chat_room_footer(
+		&self,
+		product: &ProductContext,
+		request: HostChatSetRoomFooterRequest,
+	) -> Result<(), GenericError>;
 
     /// Emit the current product-scoped room list and later replacements.
     fn subscribe_chat_rooms(
@@ -4078,6 +3943,48 @@ pub trait ContactsPlatform: Send + Sync {
     }
 }
 
+/// How the host's scanner ended.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostScan {
+	/// The user scanned a code the request accepts.
+	Scanned {
+		/// The code's content.
+		text: String,
+		/// The code's format.
+		format: CodeFormat,
+	},
+	/// The user closed the viewfinder without scanning.
+	Dismissed,
+	/// The device has no camera, or the user refused the host application one.
+	/// The host has already told the user how to turn it on.
+	CameraUnavailable,
+	/// The requesting App or Widget is not the screen the user sees, so the
+	/// host opened nothing. A Worker's request was already checked by the core
+	/// and is never answered this way.
+	NotVisible,
+}
+
+/// Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
+/// Kotlin bridges and the JS `scanner` callbacks follow the same rules.
+///
+/// - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
+/// - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
+///   scanned link.
+/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on screen. A Worker reaching
+///   the host already passed the core's tap check.
+/// - Close the viewfinder when the core drops the future, and close any still open before opening
+///   another. A JS host is not told about a drop.
+#[async_trait]
+pub trait ScannerPlatform: Send + Sync {
+	/// Open the viewfinder on behalf of `product` and wait for the user.
+	async fn scan_code(
+		&self,
+		product: &ProductContext,
+		request: &HostScannerScanRequest,
+	) -> Result<HostScan, GenericError>;
+}
+
 /// Combined platform interface. A host must provide every capability trait
 /// listed here. Optional capabilities are declared separately in
 /// [`OptionalPlatform`].
@@ -4132,6 +4039,7 @@ pub trait OptionalPlatform:
     + IdentityBackendHost
     + CoinageWalletHost
     + GamePlatform
+	+ ScannerPlatform
 {
 }
 
@@ -4143,5 +4051,6 @@ impl<T> OptionalPlatform for T where
         + IdentityBackendHost
         + CoinageWalletHost
         + GamePlatform
+		+ ScannerPlatform
 {
 }

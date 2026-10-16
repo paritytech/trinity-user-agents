@@ -11,47 +11,63 @@
 //! same seam browser hosts use for their confirmation modals; a headless host
 //! implements it with its approval policy.
 
-use std::collections::{HashSet, VecDeque};
-use std::sync::Arc;
-use std::time::Instant;
+use std::{
+	collections::{HashSet, VecDeque},
+	sync::Arc,
+	time::Instant,
+};
 
 use core::future::Future;
 
-use futures::future::{Fuse, FusedFuture};
-use futures::{FutureExt, Stream, StreamExt, pin_mut};
+use futures::{
+	FutureExt, Stream, StreamExt,
+	future::{Fuse, FusedFuture},
+	pin_mut,
+};
 use parity_scale_codec::Encode;
 use tracing::{debug, instrument, warn};
-use truapi::v01;
+use truapi::latest as api;
 
-use super::sso_replay::{ReplayExecution, SsoReplayScope, execute_once};
-use super::{SigningHost, SigningHostSsoService};
-use crate::chain_runtime::RuntimeFailure;
-use crate::host_internal::sso_messages::{
+use super::{
+	SigningHost, SigningHostSsoService,
+	sso_replay::{ReplayExecution, SsoReplayScope, execute_once},
+};
+use crate::{
+	chain_runtime::RuntimeFailure,
+	host_internal::{
+		sso_messages::{
     IncomingSsoRequest, OnExistingAllowancePolicy, RemoteMessage, RemoteMessageData,
-    SsoResponseCode, build_outgoing_request_statement, build_signed_session_response_statement,
-    decode_incoming_sso_request, v1,
-};
-use crate::host_internal::sso_wire::ResponseOutcome;
-use crate::host_logic::entropy::root_entropy_source;
-use crate::host_logic::product_account::derive_sr25519_hard_path;
-use crate::host_logic::product_account::{
+			SsoResponseCode, build_outgoing_request_statement,
+			build_signed_session_response_statement, decode_incoming_sso_request, v1,
+		},
+		sso_wire::ResponseOutcome,
+	},
+	host_logic::{
+		entropy::root_entropy_source,
+		product_account::{
     ProductAccountError, derive_identity_keypair, derive_root_keypair_from_entropy,
+			derive_sr25519_hard_path,
+		},
+		session::SsoSessionInfo,
+		sso::pairing::{
+			ResponderIdentity, VersionedHandshakeProposal, bootstrap_topic,
+			decode_pairing_deeplink, derive_identity_chat_private_key,
+			derive_x25519_keypair_from_entropy, encrypt_v2_handshake_response,
+			establish_responder_session_info, v2, x25519_public_key,
+		},
+		statement_store::{build_signed_statement, parse_new_statements_result},
+	},
+	runtime::{
+		authority::{AuthorityError, AuthoritySession},
+		services::RuntimeServices,
+		sso_remote::{fresh_statement_expiry, sso_message_id},
+		sso_service::{Dispatch, SsoWithdrawals},
+		statement_allowance::StatementAllowanceError,
+		statement_store_rpc,
+		statement_store_rpc::StatementStoreRpcClientError,
+	},
+	unix_time::current_unix_secs as statement_current_unix_secs,
 };
-use crate::host_logic::session::SsoSessionInfo;
-use crate::host_logic::sso::pairing::{
-    ResponderIdentity, VersionedHandshakeProposal, bootstrap_topic, decode_pairing_deeplink,
-    derive_identity_chat_private_key, derive_x25519_keypair_from_entropy,
-    encrypt_v2_handshake_response, establish_responder_session_info, v2, x25519_public_key,
-};
-use crate::host_logic::statement_store::{build_signed_statement, parse_new_statements_result};
-use crate::runtime::authority::{AuthorityError, AuthoritySession};
-use crate::runtime::services::RuntimeServices;
-use crate::runtime::sso_remote::{fresh_statement_expiry, sso_message_id};
-use crate::runtime::sso_service::{Dispatch, SsoWithdrawals};
-use crate::runtime::statement_allowance::StatementAllowanceError;
-use crate::runtime::statement_store_rpc;
-use crate::runtime::statement_store_rpc::StatementStoreRpcClientError;
-use crate::unix_time::current_unix_secs as statement_current_unix_secs;
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
 const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
@@ -89,10 +105,7 @@ struct DecodeFailureRequestIds {
 
 impl DecodeFailureRequestIds {
     fn new() -> Self {
-        Self {
-            seen: HashSet::new(),
-            order: VecDeque::new(),
-        }
+		Self { seen: HashSet::new(), order: VecDeque::new() }
     }
 
     /// Record `request_id`, returning `true` if it was not already served.
@@ -102,8 +115,8 @@ impl DecodeFailureRequestIds {
             return false;
         }
         self.order.push_back(request_id);
-        if self.order.len() > MAX_DECODE_FAILURE_REQUEST_IDS
-            && let Some(evicted) = self.order.pop_front()
+		if self.order.len() > MAX_DECODE_FAILURE_REQUEST_IDS &&
+			let Some(evicted) = self.order.pop_front()
         {
             self.seen.remove(&evicted);
         }
@@ -212,7 +225,7 @@ impl PairingProposal {
                 v2::MetadataKey::HostIcon => metadata.host_icon = value,
                 v2::MetadataKey::PlatformType => metadata.platform_type = value,
                 v2::MetadataKey::PlatformVersion => metadata.platform_version = value,
-                v2::MetadataKey::Custom(_) => {}
+				v2::MetadataKey::Custom(_) => {},
             }
         }
         Ok(Self {
@@ -236,8 +249,8 @@ fn sanitize_pairing_metadata(value: String) -> Option<String> {
         .trim()
         .chars()
         .filter(|character| {
-            !character.is_control()
-                && !matches!(
+			!character.is_control() &&
+				!matches!(
                     character,
                     '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
                 )
@@ -313,13 +326,7 @@ pub async fn respond_to_pairing(
     deeplink: &str,
 ) -> Result<ResponderExit, String> {
     let established = establish_pairing_session(&services, &signing_host, deeplink).await?;
-    serve_session(
-        services,
-        signing_host,
-        established.session,
-        established.replay_scope,
-    )
-    .await
+	serve_session(services, signing_host, established.session, established.replay_scope).await
 }
 
 /// Answer a pairing host's handshake without entering its long-lived serve loop.
@@ -360,14 +367,7 @@ async fn establish_pairing_session(
         device_enc_pub_key,
         root_entropy_source: root_entropy_source(&entropy),
     }));
-    submit_handshake_answer(
-        services,
-        &session,
-        peer,
-        &success,
-        "sso-responder handshake",
-    )
-    .await?;
+	submit_handshake_answer(services, &session, peer, &success, "sso-responder handshake").await?;
     debug!("answered pairing handshake");
     // The submit is the earliest point the peer could read the answer.
     if let Some(observer) = services.device_pairing_observer() {
@@ -430,10 +430,7 @@ pub async fn disconnect_paired_host(
         vec![message],
         fresh_statement_expiry(),
     )?;
-    services
-        .statement_store
-        .submit_sso(statement, "sso-responder disconnect")
-        .await
+	services.statement_store.submit_sso(statement, "sso-responder disconnect").await
 }
 
 fn responder_session(
@@ -481,12 +478,7 @@ async fn submit_handshake_answer(
         .map_err(|error| error.to_string())
 }
 
-/// The identity and peer a pairing notice went out under.
-///
-/// Carries the responder secret rather than re-deriving it, because the signer
-/// this host is allocating under can rotate between the two notices: the
-/// account that sent the first one is the one already holding an allowance to
-/// send the second.
+/// Keep the responder identity and peer for both pairing notices.
 // No `Debug`: it holds the responder statement secret.
 pub struct AnnouncedPairing {
     identity: ResponderIdentity,
@@ -575,7 +567,7 @@ async fn serve_session(
                 Ok(value) => {
                     read_statements(services, session, &mut decode_failure_request_ids, &value)
                         .await
-                }
+				},
                 Err(err) => Err(format!("sso-responder subscription failed: {err}")),
             };
             Some((page, (subscription, decode_failure_request_ids)))
@@ -584,14 +576,7 @@ async fn serve_session(
     // Boxed as a trait object so the hosts that await a session need not
     // lay out this future or prove it `Send`.
     serve_pages(pages, signing_host.sso_withdrawals(), |incoming| {
-        serve_statement(
-            services,
-            &signing_host,
-            &service,
-            session,
-            replay_scope,
-            incoming,
-        )
+		serve_statement(services, &signing_host, &service, session, replay_scope, incoming)
     })
     .boxed()
     .await
@@ -617,8 +602,8 @@ where
     let mut queue = VecDeque::new();
     let mut failure = None;
     loop {
-        if serving.is_terminated()
-            && let Some(incoming) = queue.pop_front()
+		if serving.is_terminated() &&
+			let Some(incoming) = queue.pop_front()
         {
             serving.set(serve(incoming).fuse());
         }
@@ -659,8 +644,8 @@ where
     }
     // The running request has been acked and recorded as started, so it is
     // answered before the loop stops, whatever stopped it.
-    if !serving.is_terminated()
-        && let Some(exit) = serving.await?
+	if !serving.is_terminated() &&
+		let Some(exit) = serving.await?
     {
         return Ok(exit);
     }
@@ -701,8 +686,8 @@ async fn read_statements(
                     statement_prefix = %prefix,
                     "ignoring undecodable SSO session statement"
                 );
-                if let Some(request_id) = error.request_id
-                    && decode_failure_request_ids.insert(request_id.clone())
+				if let Some(request_id) = error.request_id &&
+					decode_failure_request_ids.insert(request_id.clone())
                 {
                     let ack = build_signed_session_response_statement(
                         session,
@@ -716,7 +701,7 @@ async fn read_statements(
                         .await?;
                 }
                 continue;
-            }
+			},
         };
         requests.push(incoming);
     }
@@ -752,7 +737,7 @@ fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
         .map(|message| match &message.data {
             RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
                 Some(withdrawal.message_id.as_str())
-            }
+			},
             _ => None,
         })
         .collect()
@@ -784,7 +769,7 @@ async fn serve_statement(
         ReplayExecution::Duplicate => {
             acknowledge_request(services, session, &request_id).await?;
             duplicate_exit
-        }
+		},
         ReplayExecution::Executed(exit) => exit,
     })
 }
@@ -807,16 +792,16 @@ async fn serve_request(
             Dispatch::Disconnected => {
                 debug!("pairing host disconnected the SSO session");
                 return Ok(Some(ResponderExit::PeerDisconnected));
-            }
+			},
             Dispatch::NotARequest(name) => {
                 warn!(name, "peer sent a response variant as a request");
                 continue;
-            }
+			},
             Dispatch::Withdraw(_) => continue,
             Dispatch::Withdrawn => {
                 debug!(%responding_to, "pairing host withdrew the SSO request");
                 continue;
-            }
+			},
         };
         let response_message_id = response.message_id.clone();
         let statement_request_id = format!("resp:{response_message_id}");
@@ -826,10 +811,8 @@ async fn serve_request(
             vec![response],
             fresh_statement_expiry(),
         )?;
-        let publish_result = services
-            .statement_store
-            .submit_sso(statement, "sso-responder response")
-            .await;
+		let publish_result =
+			services.statement_store.submit_sso(statement, "sso-responder response").await;
         let elapsed_ms = started.elapsed().as_millis();
         match publish_result {
             Ok(()) => {
@@ -855,12 +838,10 @@ async fn serve_request(
                     reason = outcome.reason.as_deref().unwrap_or_default(),
                     elapsed_ms = elapsed_ms as u64,
                 );
-            }
+			},
             Err(reason) => {
-                let failure = ResponseOutcome {
-                    outcome: "publish_failed",
-                    reason: Some(reason.clone()),
-                };
+				let failure =
+					ResponseOutcome { outcome: "publish_failed", reason: Some(reason.clone()) };
                 let cli_summary = response_cli_summary(
                     "SSO response failed",
                     request_name,
@@ -884,7 +865,7 @@ async fn serve_request(
                     elapsed_ms = elapsed_ms as u64,
                 );
                 return Err(reason);
-            }
+			},
         }
     }
     Ok(None)
@@ -901,10 +882,7 @@ async fn acknowledge_request(
         SsoResponseCode::Success as u8,
         fresh_statement_expiry(),
     )?;
-    services
-        .statement_store
-        .submit_sso(ack, "sso-responder ack")
-        .await
+	services.statement_store.submit_sso(ack, "sso-responder ack").await
 }
 
 fn duplicate_request_exit(incoming: &IncomingSsoRequest) -> Option<ResponderExit> {
@@ -912,10 +890,7 @@ fn duplicate_request_exit(incoming: &IncomingSsoRequest) -> Option<ResponderExit
         .messages
         .iter()
         .any(|message| {
-            matches!(
-                &message.data,
-                RemoteMessageData::V1(v1::RemoteMessage::Disconnected)
-            )
+			matches!(&message.data, RemoteMessageData::V1(v1::RemoteMessage::Disconnected))
         })
         .then_some(ResponderExit::PeerDisconnected)
 }
@@ -948,6 +923,7 @@ pub struct StatementStoreAllocation {
     pub period: u32,
 }
 
+/// Issue a statement allowance with the period actually found or registered.
 pub async fn allocate_statement_store_allowance(
     services: &RuntimeServices,
     signing_host: &SigningHost,
@@ -991,7 +967,7 @@ pub(super) async fn allocate_product_statement_store_allowance(
     signing_host: &SigningHost,
     session: &AuthoritySession,
     product_id: &str,
-    derivation_index: &v01::DerivationIndex,
+    derivation_index: &api::DerivationIndex,
     policy: OnExistingAllowancePolicy,
 ) -> Result<(), AllowanceAllocationError> {
     signing_host.require_current_session(session)?;
@@ -1000,7 +976,7 @@ pub(super) async fn allocate_product_statement_store_allowance(
         return Ok(());
     }
     let target = signing_host
-        .product_keypair(&v01::ProductAccountId {
+        .product_keypair(&api::ProductAccountId {
             dot_ns_identifier: product_id.to_string(),
             derivation_index: derivation_index.clone(),
         })?
@@ -1026,10 +1002,7 @@ async fn register_statement_store_target(
 
     signing_host.require_current_session(session)?;
     let candidates = signing_host.reserved_person_collection_candidates(session)?;
-    let client = services
-        .statement_store
-        .chain_client("statement-store allowance")
-        .await?;
+	let client = services.statement_store.chain_client("statement-store allowance").await?;
     let rpc = client.rpc();
     let chain = services.chain_context.get(&client).await?;
     let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
@@ -1080,9 +1053,7 @@ async fn register_statement_store_target(
                 period,
                 network_suffix: &network_suffix,
                 reuse_existing,
-                // Connecting a product must not revoke another product's allowance.
-                // A full period is reported as exhaustion; reclaiming space is the
-                // renewal pass's job, which only ever replaces for its own ledger.
+			// Only renewal may reclaim slots belonging to its own ledger.
                 allow_eviction: false,
                 protected: &[],
             },
@@ -1103,7 +1074,7 @@ async fn register_statement_store_target(
                     %collection,
                     "registered statement-store allowance"
                 );
-            }
+		},
             statement_allowance::RegistrationOutcome::AlreadyAllocated { seq, collection } => {
                 debug!(
                     %product_id,
@@ -1111,13 +1082,14 @@ async fn register_statement_store_target(
                     %collection,
                     "statement-store allowance already allocated"
                 );
-            }
+		},
         }
     }
     signing_host.require_current_session(session)?;
     Ok(period)
 }
 
+/// Issue the product's Bulletin allowance key.
 pub async fn allocate_bulletin_allowance(
     services: &RuntimeServices,
     signing_host: &SigningHost,
@@ -1125,10 +1097,9 @@ pub async fn allocate_bulletin_allowance(
     product_id: &str,
     policy: OnExistingAllowancePolicy,
 ) -> Result<Vec<u8>, AllowanceAllocationError> {
-    use crate::runtime::statement_allowance::collection::PersonhoodCollection;
     use crate::runtime::statement_allowance::{
-        self, claim_long_term_storage, fetch_bulletin_allowance, find_including_rings,
-        wait_bulletin_authorization,
+		self, claim_long_term_storage, collection::PersonhoodCollection, fetch_bulletin_allowance,
+		find_including_rings, wait_bulletin_authorization,
     };
 
     signing_host.require_current_session(session)?;
@@ -1141,48 +1112,34 @@ pub async fn allocate_bulletin_allowance(
     let target = allowance.public.to_bytes();
 
     let bulletin_rpc = statement_allowance::rpc::RpcClient::new(
-        services
-            .bulletin
-            .client("bulletin allowance")
-            .await
-            .map_err(|source| AllowanceAllocationError::ChainRpcClient {
+		services.bulletin.client("bulletin allowance").await.map_err(|source| {
+			AllowanceAllocationError::ChainRpcClient {
                 context: "bulletin allowance client",
                 source,
+			}
             })?,
     );
     let current_allowance = fetch_bulletin_allowance(&bulletin_rpc, &target).await?;
-    if matches!(policy, OnExistingAllowancePolicy::Ignore)
-        && current_allowance.is_some_and(|allowance| allowance.available())
+	if matches!(policy, OnExistingAllowancePolicy::Ignore) &&
+		current_allowance.is_some_and(|allowance| allowance.available())
     {
         signing_host.require_current_session(session)?;
         return Ok(allowance.secret.to_bytes().to_vec());
     }
 
-    let people_client = services
-        .statement_store
-        .chain_client("bulletin allowance claim")
-        .await?;
+	let people_client = services.statement_store.chain_client("bulletin allowance claim").await?;
     let people_rpc = people_client.rpc();
     let chain = services.chain_context.get(&people_client).await?;
     let network_suffix = statement_allowance::slot::read_network_suffix(people_rpc).await?;
     let candidates = signing_host.reserved_person_collection_candidates(session)?;
-    // Statement-store slots and PGAS claims are each bounded by a per-collection
-    // constant, so their budgets are meant to be spent per collection. Long-term
-    // storage is bounded by `Resources.LongTermStorageClaimsPerPeriod` alone, with
-    // no per-collection variant, so the budget reads as per person. Its spent
-    // counters are still keyed by a collection-scoped alias, which means changing
-    // collection silently restarts the count at zero. Staying in the light
-    // collection keeps one person to one count; full personhood is the fallback
-    // for a device without light personhood.
+	// Prefer light membership so switching collections cannot reset the person's budget.
     let memberships =
         find_including_rings(people_rpc, &chain.metadata, &candidates, u32::MAX).await?;
     let membership = memberships
         .iter()
         .find(|membership| membership.collection() == PersonhoodCollection::LitePeople)
         .or_else(|| memberships.first())
-        .ok_or(AllowanceAllocationError::MissingPersonhoodMembership {
-            resource: "Bulletin",
-        })?;
+		.ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "Bulletin" })?;
     let period_duration =
         statement_allowance::slot::long_term_storage_period_duration(&chain.metadata)?;
     let period = statement_allowance::slot::current_long_term_storage_period(
@@ -1204,11 +1161,8 @@ pub async fn allocate_bulletin_allowance(
         || signing_host.require_current_session(session).is_ok(),
     )
     .await?;
-    let statement_allowance::LongTermStorageOutcome::Claimed {
-        block_hash,
-        counter,
-        ring_index,
-    } = outcome;
+	let statement_allowance::LongTermStorageOutcome::Claimed { block_hash, counter, ring_index } =
+		outcome;
     debug!(
         %product_id,
         %block_hash,
@@ -1250,19 +1204,21 @@ pub async fn allocate_smart_contract_allowance(
     signing_host: &SigningHost,
     session: &AuthoritySession,
     product_id: &str,
-    derivation_index: v01::DerivationIndex,
+	derivation_index: api::DerivationIndex,
     policy: OnExistingAllowancePolicy,
 ) -> Result<(), AllowanceAllocationError> {
     use truapi::latest::ChainIdentifier;
 
-    use crate::host_logic::features;
-    use crate::runtime::statement_allowance::{self, ChainClient, find_including_rings, pgas};
+	use crate::{
+		host_logic::features,
+		runtime::statement_allowance::{self, ChainClient, find_including_rings, pgas},
+	};
 
     signing_host.require_current_session(session)?;
 
     // PGAS credits the product account the caller named.
     let target = signing_host
-        .product_keypair(&v01::ProductAccountId {
+		.product_keypair(&api::ProductAccountId {
             dot_ns_identifier: product_id.to_string(),
             derivation_index,
         })?
@@ -1276,23 +1232,20 @@ pub async fn allocate_smart_contract_allowance(
         .ok_or(AllowanceAllocationError::ChainNotServed { chain: "Asset Hub" })?;
     let asset_hub_client = ChainClient::new(
         statement_allowance::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(
-            services
-                .chain
-                .rpc_client("PGAS allowance", &asset_hub_genesis)
-                .await
-                .map_err(|source| AllowanceAllocationError::ChainRpcClient {
+			services.chain.rpc_client("PGAS allowance", &asset_hub_genesis).await.map_err(
+				|source| AllowanceAllocationError::ChainRpcClient {
                     context: "Asset Hub PGAS client",
                     source,
-                })?,
+				},
+			)?,
         )),
         asset_hub_genesis,
     );
     let asset_hub = services.chain_context.get(&asset_hub_client).await?;
 
-    // A claim spends one of the day's slots, so honour a caller that asked to leave
-    // an existing allowance alone rather than topping up an already-warm account.
-    if matches!(policy, OnExistingAllowancePolicy::Ignore)
-        && pgas::holds_a_full_claim(asset_hub_client.rpc(), &asset_hub.metadata, &target).await?
+	// Reusing a funded account preserves the person's daily claim slots.
+	if matches!(policy, OnExistingAllowancePolicy::Ignore) &&
+		pgas::holds_a_full_claim(asset_hub_client.rpc(), &asset_hub.metadata, &target).await?
     {
         debug!(%product_id, "PGAS allowance already funded; leaving it alone");
         signing_host.require_current_session(session)?;
@@ -1301,16 +1254,12 @@ pub async fn allocate_smart_contract_allowance(
     let network_suffix =
         statement_allowance::slot::read_network_suffix(asset_hub_client.rpc()).await?;
 
-    let people_client = services
-        .statement_store
-        .chain_client("PGAS allowance ring")
-        .await?;
+	let people_client = services.statement_store.chain_client("PGAS allowance ring").await?;
     let people_rpc = people_client.rpc();
     let people = services.chain_context.get(&people_client).await?;
 
     let candidates = signing_host.reserved_person_collection_candidates(session)?;
-    // A single claim needs one collection, so take the strongest membership the
-    // person actually holds rather than assuming light personhood.
+	// A PGAS claim uses the strongest available membership.
     let membership = find_including_rings(people_rpc, &people.metadata, &candidates, u32::MAX)
         .await?
         .into_iter()
@@ -1341,10 +1290,7 @@ pub async fn allocate_smart_contract_allowance(
     Ok(())
 }
 
-/// Wall-clock seconds since the UNIX epoch, used to pick the allowance period.
-///
-/// `std::time::SystemTime` compiles for wasm32 but panics when read, so the
-/// browser takes its clock from `web-time` instead.
+/// Allowance period clock, using web-time on browsers to avoid SystemTime panics.
 pub fn current_unix_secs() -> Result<u64, AllowanceAllocationError> {
     #[cfg(not(target_arch = "wasm32"))]
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1359,14 +1305,17 @@ pub fn current_unix_secs() -> Result<u64, AllowanceAllocationError> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::LocalActivation;
-    use super::*;
-    use crate::host_internal::sso_messages::{
+	use super::{super::LocalActivation, *};
+	use crate::{
+		host_internal::{
+			sso_messages::{
         self, GetAccountAliasResponse, RemoteMessage, RingVrfError, SsoAllocatedResource,
         SsoAllocationOutcome,
+			},
+			sso_wire::ResponseOutcome,
+		},
+		host_logic::product_account::derive_ring_vrf_domain_entropy,
     };
-    use crate::host_internal::sso_wire::ResponseOutcome;
-    use crate::host_logic::product_account::derive_ring_vrf_domain_entropy;
 
     /// The key a host advertises on chain must be the one it serves over
     /// pairing. These derive independently, so a test that asks only one of
@@ -1394,11 +1343,12 @@ mod tests {
             "the advertised chat key is not the one served over pairing"
         );
     }
-    use crate::host_logic::statement_store::decode_verified_statement_data;
-    use crate::platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig};
-    use crate::runtime::authority::ProductAuthority;
-    use crate::runtime::services::RuntimeServices;
-    use crate::test_support::{StubPlatform, test_spawner};
+	use crate::{
+		host_logic::statement_store::decode_verified_statement_data,
+		platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig},
+		runtime::{authority::ProductAuthority, services::RuntimeServices},
+		test_support::{StubPlatform, test_spawner},
+	};
     use std::sync::Arc;
     use truapi::latest as api;
 
@@ -1455,10 +1405,12 @@ mod tests {
     fn repeated_implicit_provisioning_reuses_existing_allowance_without_submission() {
         use futures::FutureExt;
 
-        use crate::host_logic::product_account::{
+		use crate::{
+			host_logic::product_account::{
             derive_full_person_ring_vrf_entropy, derive_sr25519_hard_path,
+			},
+			runtime::statement_allowance::slot,
         };
-        use crate::runtime::statement_allowance::slot;
 
         let product_id = "myapp.dot";
         let allowance =
@@ -1483,41 +1435,23 @@ mod tests {
                     "state_getRuntimeVersion",
                     r#"{"specVersion":1000000,"transactionVersion":1}"#.to_string(),
                 ),
-                (
-                    "chain_getBlockHash",
-                    format!(r#""0x{}""#, hex::encode([0u8; 32])),
-                ),
+				("chain_getBlockHash", format!(r#""0x{}""#, hex::encode([0u8; 32]))),
                 (
                     "Metadata_metadata_at_version",
-                    format!(
-                        r#""0x{}""#,
-                        hex::encode(Some(PEOPLE_METADATA.to_vec()).encode()),
-                    ),
+					format!(r#""0x{}""#, hex::encode(Some(PEOPLE_METADATA.to_vec()).encode()),),
                 ),
                 // The scan bound, read through the `Resources` view functions.
                 (
                     "RuntimeViewFunction_execute_view_function",
-                    format!(
-                        r#""0x{}""#,
-                        hex::encode(Ok::<Vec<u8>, ()>(20u32.encode()).encode()),
-                    ),
+					format!(r#""0x{}""#, hex::encode(Ok::<Vec<u8>, ()>(20u32.encode()).encode()),),
                 ),
                 (
                     "RuntimeViewFunction_execute_view_function",
-                    format!(
-                        r#""0x{}""#,
-                        hex::encode(Ok::<Vec<u8>, ()>(10u32.encode()).encode()),
-                    ),
+					format!(r#""0x{}""#, hex::encode(Ok::<Vec<u8>, ()>(10u32.encode()).encode()),),
                 ),
                 // The network suffix, read once before the scan.
-                (
-                    "state_getStorage",
-                    format!(r#""0x{}""#, hex::encode(b"paseo".to_vec().encode())),
-                ),
-                (
-                    "state_queryStorageAt",
-                    people_row,
-                ),
+				("state_getStorage", format!(r#""0x{}""#, hex::encode(b"paseo".to_vec().encode()))),
+				("state_queryStorageAt", people_row),
                 // The LitePeople row, read alongside People's, is empty.
                 (
                     "state_queryStorageAt",
@@ -1587,17 +1521,12 @@ mod tests {
         // `find_including_rings` opens with `chain_getFinalizedHead`, so none of
         // these means no ring was resolved.
         assert_eq!(
-            methods
-                .iter()
-                .filter(|method| *method == "chain_getFinalizedHead")
-                .count(),
+			methods.iter().filter(|method| *method == "chain_getFinalizedHead").count(),
             0,
             "a ring was resolved for an allowance already in place: {methods:?}"
         );
         assert!(
-            !methods
-                .iter()
-                .any(|method| method.starts_with("author_submit")),
+			!methods.iter().any(|method| method.starts_with("author_submit")),
             "an extrinsic was submitted for an allowance already in place: {methods:?}"
         );
     }
@@ -1605,21 +1534,14 @@ mod tests {
     #[test]
     fn responder_advertises_and_signs_with_the_local_uid_identity() {
         let (_services, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-        let local_identity = signing_host
-            .current_session()
-            .unwrap()
-            .identity_account_id
-            .unwrap();
+		let local_identity = signing_host.current_session().unwrap().identity_account_id.unwrap();
         let (identity, _) = derive_responder_identity(&ENTROPY, NETWORK_SUFFIX).unwrap();
         assert_eq!(identity.statement_public_key, local_identity);
         // The statement identity is the network's `uid.<suffix>` account, the
         // one the pairing host resolves a username for; a `.dot` account has
         // no lite record on a test network.
         assert_ne!(
-            derive_responder_identity(&ENTROPY, "dot")
-                .unwrap()
-                .0
-                .statement_public_key,
+			derive_responder_identity(&ENTROPY, "dot").unwrap().0.statement_public_key,
             local_identity
         );
 
@@ -1679,10 +1601,8 @@ mod tests {
             v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation),
             v2::EncryptedResponse::Failed("no free StatementStore slot".to_string()),
         ] {
-            let VersionedHandshakeResponse::V2 {
-                encrypted_message,
-                public_key,
-            } = encrypt_v2_handshake_response(peer.encryption_public_key, &response).unwrap();
+			let VersionedHandshakeResponse::V2 { encrypted_message, public_key } =
+				encrypt_v2_handshake_response(peer.encryption_public_key, &response).unwrap();
 
             assert_eq!(
                 decrypt_v2_handshake_response(
@@ -1702,15 +1622,9 @@ mod tests {
                 statement_account_id: peer.statement_account_id,
                 encryption_public_key: peer.encryption_public_key,
             },
-            metadata: vec![v2::MetadataEntry(
-                v2::MetadataKey::HostName,
-                "paired host".to_string(),
-            )],
+			metadata: vec![v2::MetadataEntry(v2::MetadataKey::HostName, "paired host".to_string())],
         });
-        format!(
-            "polkadotapp://pair?handshake={}",
-            hex::encode(proposal.encode())
-        )
+		format!("polkadotapp://pair?handshake={}", hex::encode(proposal.encode()))
     }
 
     #[derive(Default)]
@@ -1720,19 +1634,13 @@ mod tests {
 
     impl RecordingPairingObserver {
         fn paired(&self) -> Vec<PairedSsoPeer> {
-            self.paired
-                .lock()
-                .expect("paired device list mutex poisoned")
-                .clone()
+			self.paired.lock().expect("paired device list mutex poisoned").clone()
         }
     }
 
     impl DevicePairingObserver for RecordingPairingObserver {
         fn device_paired(&self, device: PairedSsoPeer) {
-            self.paired
-                .lock()
-                .expect("paired device list mutex poisoned")
-                .push(device);
+			self.paired.lock().expect("paired device list mutex poisoned").push(device);
         }
     }
 
@@ -1835,10 +1743,7 @@ mod tests {
                 v2::MetadataEntry(v2::MetadataKey::Custom("seat".to_string()), "3".to_string()),
             ],
         });
-        let deeplink = format!(
-            "polkadotapp://pair?handshake={}",
-            hex::encode(proposal.encode())
-        );
+		let deeplink = format!("polkadotapp://pair?handshake={}", hex::encode(proposal.encode()));
 
         assert_eq!(
             PairingProposal::from_deeplink(&deeplink)
@@ -1865,22 +1770,13 @@ mod tests {
                 statement_account_id: [0x31; 32],
                 encryption_public_key: [0x42; 32],
             },
-            metadata: vec![v2::MetadataEntry(
-                v2::MetadataKey::HostName,
-                "paired host".to_string(),
-            )],
+			metadata: vec![v2::MetadataEntry(v2::MetadataKey::HostName, "paired host".to_string())],
         });
-        let deeplink = format!(
-            "polkadotapp://pair?handshake={}",
-            hex::encode(proposal.encode())
-        );
+		let deeplink = format!("polkadotapp://pair?handshake={}", hex::encode(proposal.encode()));
 
         assert_eq!(
             PairedSsoPeer::from_deeplink(&deeplink).unwrap(),
-            PairedSsoPeer {
-                statement_account_id: [0x31; 32],
-                encryption_public_key: [0x42; 32],
-            }
+			PairedSsoPeer { statement_account_id: [0x31; 32], encryption_public_key: [0x42; 32] }
         );
     }
 
@@ -1926,10 +1822,7 @@ mod tests {
         };
 
         assert_eq!(
-            (
-                duplicate_request_exit(&disconnect),
-                duplicate_request_exit(&ordinary)
-            ),
+			(duplicate_request_exit(&disconnect), duplicate_request_exit(&ordinary)),
             (Some(ResponderExit::PeerDisconnected), None)
         );
     }
@@ -1959,30 +1852,20 @@ mod tests {
         let dispatch = |data| {
             futures::executor::block_on(service.dispatch(
                 None,
-                RemoteMessage {
-                    message_id: "m-1".to_string(),
-                    data: RemoteMessageData::V1(data),
-                },
+				RemoteMessage { message_id: "m-1".to_string(), data: RemoteMessageData::V1(data) },
             ))
         };
 
+		assert_eq!(dispatch(v1::RemoteMessage::Disconnected), Dispatch::Disconnected);
         assert_eq!(
-            dispatch(v1::RemoteMessage::Disconnected),
-            Dispatch::Disconnected
-        );
-        assert_eq!(
-            dispatch(v1::RemoteMessage::ProductSubtreeResponse(
-                sso_messages::Response {
+			dispatch(v1::RemoteMessage::ProductSubtreeResponse(sso_messages::Response {
                     responding_to: "m-1".to_string(),
                     payload: Ok([7; 32]),
-                }
-            )),
+			})),
             Dispatch::NotARequest("ProductSubtreeResponse"),
         );
         let Dispatch::Response(answer) = dispatch(v1::RemoteMessage::ProductSubtreeRequest(
-            sso_messages::ProductSubtreeRequest {
-                product_id: "myapp.dot".to_string(),
-            },
+			sso_messages::ProductSubtreeRequest { product_id: "myapp.dot".to_string() },
         )) else {
             panic!("expected a disconnected error response");
         };
@@ -1992,10 +1875,7 @@ mod tests {
             panic!("expected the request's response variant");
         };
         assert_eq!(response.responding_to, "m-1");
-        assert_eq!(
-            response.payload,
-            Err("signing host session is not active".to_string())
-        );
+		assert_eq!(response.payload, Err("signing host session is not active".to_string()));
     }
 
     #[test]
@@ -2218,9 +2098,8 @@ mod tests {
 
     #[test]
     fn response_summary_reports_protocol_errors_without_multiline_output() {
-        let payload: GetAccountAliasResponse = Err(RingVrfError::Unknown {
-            reason: "chain RPC\ntimed out".to_string(),
-        });
+		let payload: GetAccountAliasResponse =
+			Err(RingVrfError::Unknown { reason: "chain RPC\ntimed out".to_string() });
 
         let result = ResponseOutcome::from_payload(&payload);
         let summary = response_cli_summary(
@@ -2286,11 +2165,7 @@ mod tests {
         assert_eq!(answer.outcome.outcome, "partial");
         let reason = answer.outcome.reason.as_deref().unwrap();
         assert!(reason.starts_with("1 of 3 requested resources allocated; 2 unavailable"));
-        assert_eq!(
-            reason.matches("allocation node unavailable").count(),
-            2,
-            "{reason}"
-        );
+		assert_eq!(reason.matches("allocation node unavailable").count(), 2, "{reason}");
         assert!(!reason.contains(['\r', '\n']));
         let cli = response_cli_summary(
             "SSO response sent",
@@ -2322,10 +2197,7 @@ mod tests {
                         product_id: "other.dot".to_string(),
                         suffix: api::DerivationIndex::Index(0),
                     },
-                    ring_location: api::RingLocation {
-                        chain_id: [0; 32],
-                        junctions: vec![],
-                    },
+					ring_location: api::RingLocation { chain_id: [0; 32], junctions: vec![] },
                 },
             }),
         );
@@ -2354,10 +2226,7 @@ mod tests {
         let v1::RemoteMessage::ResourceAllocationResponse(response) = response else {
             panic!("expected resource allocation response");
         };
-        assert_eq!(
-            response.payload.unwrap(),
-            vec![SsoAllocationOutcome::Rejected]
-        );
+		assert_eq!(response.payload.unwrap(), vec![SsoAllocationOutcome::Rejected]);
 
         // The confirmation review names the beneficiary product so the user
         // knows which product receives the delegated allowance key.
@@ -2398,12 +2267,10 @@ mod tests {
         };
         assert_eq!(
             response.payload.unwrap(),
-            vec![SsoAllocationOutcome::Allocated(
-                SsoAllocatedResource::AutoSigning {
+			vec![SsoAllocationOutcome::Allocated(SsoAllocatedResource::AutoSigning {
                     product_root_private_key: expected_secret,
                     ring_vrf_domain_entropy: expected_ring_vrf_domain_entropy,
-                }
-            )]
+			})]
         );
     }
 
@@ -2431,10 +2298,7 @@ mod tests {
             let answer = service.answer(message);
             futures::pin_mut!(answer);
             assert!(answer.as_mut().now_or_never().is_none());
-            assert_eq!(
-                platform.resource_allocation_reviews.lock().unwrap().len(),
-                1
-            );
+			assert_eq!(platform.resource_allocation_reviews.lock().unwrap().len(), 1);
 
             signing_host.disconnect().await;
             if let Some(entropy) = replacement {
@@ -2451,10 +2315,7 @@ mod tests {
                 panic!("expected an allocation response");
             };
             assert_eq!(response.responding_to, "alloc-stale");
-            assert!(
-                response.payload.is_err(),
-                "stale consent must not release keys"
-            );
+			assert!(response.payload.is_err(), "stale consent must not release keys");
             assert!(platform.sent_rpc.lock().unwrap().is_empty());
         });
     }
@@ -2506,16 +2367,8 @@ mod tests {
             .expect("a withdrawn request stops waiting on its prompt");
 
         assert_eq!(
-            (
-                withdrawal,
-                allocation,
-                platform.sent_rpc.lock().unwrap().len()
-            ),
-            (
-                Dispatch::Withdraw("alloc-1".to_string()),
-                Dispatch::Withdrawn,
-                0
-            )
+			(withdrawal, allocation, platform.sent_rpc.lock().unwrap().len()),
+			(Dispatch::Withdraw("alloc-1".to_string()), Dispatch::Withdrawn, 0)
         );
     }
 
@@ -2534,13 +2387,7 @@ mod tests {
         let allocation = futures::executor::block_on(service.answer(allocation_request("alloc-1")));
 
         assert_eq!(allocation, Dispatch::Withdrawn);
-        assert!(
-            platform
-                .resource_allocation_reviews
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
+		assert!(platform.resource_allocation_reviews.lock().unwrap().is_empty());
     }
 
     fn statement(request_id: &str, message: RemoteMessage) -> Vec<IncomingSsoRequest> {
@@ -2576,10 +2423,7 @@ mod tests {
             .unbounded_send(Ok(statement("stmt-2", cancel("cancel-1", "alloc-1"))))
             .unwrap();
 
-        assert_eq!(
-            serving.as_mut().now_or_never(),
-            Some(Ok(ResponderExit::PeerDisconnected))
-        );
+		assert_eq!(serving.as_mut().now_or_never(), Some(Ok(ResponderExit::PeerDisconnected)));
     }
 
     /// The request being served has been acked and recorded as started, so
@@ -2606,9 +2450,7 @@ mod tests {
         futures::pin_mut!(serving);
         assert!(serving.as_mut().now_or_never().is_none());
 
-        pages
-            .unbounded_send(Err("subscription failed".to_string()))
-            .unwrap();
+		pages.unbounded_send(Err("subscription failed".to_string())).unwrap();
         let before_the_request_finished = serving.as_mut().now_or_never();
         let once_it_finished = before_the_request_finished.is_none().then(|| {
             let _ = release.send(());
@@ -2672,10 +2514,7 @@ mod tests {
         // The identity key is accepted, so the request gets as far as reading
         // the runtime metadata.
         let error = response.payload.expect_err("fixture has no chain metadata");
-        assert!(
-            format!("{error:?}").contains("cannot load chain metadata"),
-            "{error:?}"
-        );
+		assert!(format!("{error:?}").contains("cannot load chain metadata"), "{error:?}");
     }
 
     #[test]

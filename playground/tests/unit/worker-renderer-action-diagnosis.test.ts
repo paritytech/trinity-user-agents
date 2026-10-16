@@ -95,6 +95,7 @@ test("worker diagnosis completes after !diagnose alone, without a renderer actio
         });
       },
       listSubscribe: () => chatRooms.observable,
+      setRoomFooter: () => okAsync<undefined, never>(undefined),
       postMessage(request: HostChatPostMessageRequest) {
         postMessageCalls.push(request);
         const payload: ChatMessageContent = request.payload;

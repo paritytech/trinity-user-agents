@@ -1,5 +1,4 @@
-//! The signing host's answers to paired hosts: consent prompts, then the
-//! local authority.
+//! Incoming SSO requests, consent prompts and wallet authority calls.
 
 use std::sync::Arc;
 
@@ -13,11 +12,13 @@ use futures::{FutureExt, pin_mut};
 use tracing::warn;
 use truapi::latest as api;
 
-use super::SigningHost;
-use super::sso_responder::{
-    AllowanceAllocationError, allocate_bulletin_allowance,
-    allocate_product_statement_store_allowance, allocate_smart_contract_allowance,
+use super::{
+	SigningHost,
+	sso_responder::{
+		AllowanceAllocationError, allocate_bulletin_allowance,
+		allocate_product_statement_store_allowance, allocate_smart_contract_allowance,
     allocate_statement_store_allowance,
+	},
 };
 use crate::host_internal::permissions::{ChatAuthorityConsent, PermissionsService};
 use crate::host_internal::sso_messages::{
@@ -79,7 +80,7 @@ impl SigningHostSsoService {
             Dispatch::Withdraw(target) => {
                 withdrawals.withdraw(&target);
                 Dispatch::Withdraw(target)
-            }
+			},
             Dispatch::Response(_) if request.cancel.is_cancelled() => Dispatch::Withdrawn,
             dispatch => dispatch,
         }
@@ -92,11 +93,7 @@ impl SigningHostSsoService {
         cx: &SsoRequestContext,
         review: UserConfirmationReview,
     ) -> Option<Result<bool, api::GenericError>> {
-        let answer = self
-            .signing_host
-            .platform
-            .confirm_user_action(review)
-            .fuse();
+		let answer = self.signing_host.platform.confirm_user_action(review).fuse();
         let withdrawn = cx.call.cancel().cancelled().fuse();
         pin_mut!(answer, withdrawn);
         futures::select_biased! {
@@ -148,15 +145,14 @@ impl SigningHostSsoService {
                     )
                     .await
                     .map_err(|err| err.to_string())
-            }
+			},
             SignRequest::Raw(request) => self.serve_sign_raw(cx, request, true).await,
             SignRequest::RawUnwatermarkedDeprecated(request) => {
                 self.serve_sign_raw(cx, request, false).await
-            }
+			},
             SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request) => {
-                self.serve_sign_raw_with_legacy_account(cx, request, false)
-                    .await
-            }
+				self.serve_sign_raw_with_legacy_account(cx, request, false).await
+			},
         }
     }
 
@@ -226,8 +222,7 @@ impl SigningHostSsoService {
         review: CreateTransactionReview,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<Vec<u8>, String> {
-        self.confirm(cx, UserConfirmationReview::CreateTransaction(review))
-            .await?;
+		self.confirm(cx, UserConfirmationReview::CreateTransaction(review)).await?;
         self.signing_host
             .create_transaction(&cx.call, &cx.session, None, request)
             .await
@@ -259,7 +254,7 @@ impl SigningHostSsoService {
                         slot_account_key: allocation.secret,
                     })
                 })
-            }
+			},
             api::AllocatableResource::BulletinAllowance => allocate_bulletin_allowance(
                 services,
                 signing_host,
@@ -286,7 +281,7 @@ impl SigningHostSsoService {
                 .map(|()| {
                     SsoAllocationOutcome::Allocated(SsoAllocatedResource::SmartContractAllowance)
                 })
-            }
+			},
             api::AllocatableResource::AutoSigning => {
                 let product_root_private_key = signing_host
                     .product_subtree_secret(calling_product_id)
@@ -296,13 +291,11 @@ impl SigningHostSsoService {
                     derive_ring_vrf_domain_entropy(&root_entropy, calling_product_id)
                         .map_err(super::product_authority_error)
                         .map_err(AllowanceAllocationError::Authority)?;
-                Ok(SsoAllocationOutcome::Allocated(
-                    SsoAllocatedResource::AutoSigning {
+				Ok(SsoAllocationOutcome::Allocated(SsoAllocatedResource::AutoSigning {
                         product_root_private_key,
                         ring_vrf_domain_entropy,
+				}))
                     },
-                ))
-            }
             api::AllocatableResource::ProductStatementStoreAllowance(index) => {
                 allocate_product_statement_store_allowance(
                     services,
@@ -347,11 +340,8 @@ fn resource_allocation_outcome(
     let outcomes = match payload {
         Ok(outcomes) => outcomes,
         Err(reason) => {
-            return ResponseOutcome {
-                outcome: "error",
-                reason: Some(reason.clone()),
-            };
-        }
+			return ResponseOutcome { outcome: "error", reason: Some(reason.clone()) };
+		},
     };
     let total = outcomes.len();
     let count = |wanted: fn(&SsoAllocationOutcome) -> bool| {
@@ -361,10 +351,7 @@ fn resource_allocation_outcome(
     let rejected = count(|outcome| matches!(outcome, SsoAllocationOutcome::Rejected));
     let unavailable = count(|outcome| matches!(outcome, SsoAllocationOutcome::NotAvailable));
     if allocated == total {
-        return ResponseOutcome {
-            outcome: "ok",
-            reason: None,
-        };
+		return ResponseOutcome { outcome: "ok", reason: None };
     }
     if allocated > 0 {
         let mut reason = format!("{allocated} of {total} requested resources allocated");
@@ -374,10 +361,7 @@ fn resource_allocation_outcome(
         if unavailable > 0 {
             reason.push_str(&format!("; {unavailable} unavailable"));
         }
-        return ResponseOutcome {
-            outcome: "partial",
-            reason: Some(reason),
-        };
+		return ResponseOutcome { outcome: "partial", reason: Some(reason) };
     }
     if rejected > 0 {
         let reason = if rejected == total {
@@ -389,10 +373,7 @@ fn resource_allocation_outcome(
         } else {
             format!("No resources allocated; {rejected} rejected; {unavailable} unavailable")
         };
-        return ResponseOutcome {
-            outcome: "rejected",
-            reason: Some(reason),
-        };
+		return ResponseOutcome { outcome: "rejected", reason: Some(reason) };
     }
     ResponseOutcome {
         outcome: "not_available",
@@ -433,9 +414,7 @@ impl SigningHostSsoService {
         cx: &SsoRequestContext,
         request: ProductRequest<api::HostAccountGetAliasRequest>,
     ) -> GetAccountAliasResponse {
-        self.signing_host
-            .account_alias(&cx.call, &cx.session, request)
-            .await
+		self.signing_host.account_alias(&cx.call, &cx.session, request).await
     }
 
     /// Allocate SSO-backed resources for a product.
@@ -451,13 +430,10 @@ impl SigningHostSsoService {
                 resources: request.resources.clone(),
             });
             match self.prompt(cx, review).await {
-                Some(Ok(true)) => {}
+				Some(Ok(true)) => {},
                 Some(Ok(false)) => {
-                    return Ok(vec![
-                        SsoAllocationOutcome::Rejected;
-                        request.resources.len()
-                    ]);
-                }
+					return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
+				},
                 Some(Err(err)) => return Err(format!("confirmation failed: {}", err.reason)),
                 None => return Err(WITHDRAWN.to_string()),
             }
@@ -510,10 +486,7 @@ impl SigningHostSsoService {
         let payload = payload.into_product_payload();
         self.serve_create_transaction(
             cx,
-            CreateTransactionReview::Product {
-                calling_product_id: None,
-                payload: payload.clone(),
-            },
+			CreateTransactionReview::Product { calling_product_id: None, payload: payload.clone() },
             CreateTransactionAuthorityRequest::Product(payload),
         )
         .await
@@ -551,9 +524,7 @@ impl SigningHostSsoService {
         cx: &SsoRequestContext,
         request: ProductRequest<api::HostAccountCreateProofRequest>,
     ) -> CreateAccountProofResponse {
-        self.signing_host
-            .create_proof(&cx.call, &cx.session, request)
-            .await
+		self.signing_host.create_proof(&cx.call, &cx.session, request).await
     }
 
     /// Sign an RFC-0023 VRF transcript.
@@ -592,9 +563,7 @@ impl SigningHostSsoService {
         cx: &SsoRequestContext,
         request: ProductRequest<api::HostAccountRegisterRingVrfKeyRequest>,
     ) -> RegisterRingVrfKeyResponse {
-        self.signing_host
-            .register_ring_vrf_key(&cx.call, &cx.session, request)
-            .await
+		self.signing_host.register_ring_vrf_key(&cx.call, &cx.session, request).await
     }
 
     /// List registered ring-VRF keys.
@@ -603,9 +572,7 @@ impl SigningHostSsoService {
         cx: &SsoRequestContext,
         request: ProductRequest<api::HostAccountListRingVrfKeysRequest>,
     ) -> ListRingVrfKeysResponse {
-        self.signing_host
-            .list_ring_vrf_keys(&cx.call, &cx.session, request)
-            .await
+		self.signing_host.list_ring_vrf_keys(&cx.call, &cx.session, request).await
     }
 
     /// Sign bytes directly with a registered ring-VRF key.
@@ -614,9 +581,7 @@ impl SigningHostSsoService {
         cx: &SsoRequestContext,
         request: ProductRequest<api::HostAccountRingVrfSignRequest>,
     ) -> RingVrfSignResponse {
-        self.signing_host
-            .ring_vrf_sign(&cx.call, &cx.session, request)
-            .await
+		self.signing_host.ring_vrf_sign(&cx.call, &cx.session, request).await
     }
     /// Sign a canonical unsigned Statement Store payload with a product account.
     async fn statement_store_product_sign(
@@ -772,10 +737,7 @@ mod tests {
         ]));
         assert_eq!(
             (result.outcome, result.reason.as_deref()),
-            (
-                "partial",
-                Some("1 of 3 requested resources allocated; 1 rejected; 1 unavailable")
-            )
+			("partial", Some("1 of 3 requested resources allocated; 1 rejected; 1 unavailable"))
         );
 
         let result = resource_allocation_outcome(&Ok(vec![SsoAllocationOutcome::NotAvailable]));
@@ -794,10 +756,7 @@ mod tests {
 
         assert_eq!(
             (result.outcome, result.reason.as_deref()),
-            (
-                "rejected",
-                Some("No resources allocated; 1 rejected; 1 unavailable")
-            )
+			("rejected", Some("No resources allocated; 1 rejected; 1 unavailable"))
         );
     }
 

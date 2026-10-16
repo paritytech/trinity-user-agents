@@ -40,9 +40,7 @@ impl SsoError for String {
 
 impl SsoError for RingVrfError {
     fn not_connected() -> Self {
-        Self::Unknown {
-            reason: String::not_connected(),
-        }
+		Self::Unknown { reason: String::not_connected() }
     }
 }
 
@@ -79,14 +77,8 @@ impl ResponseOutcome {
     /// Classify a plain payload: `ok`, or `error` with the failure's reason.
     pub fn from_payload<T, E: Display>(payload: &Result<T, E>) -> Self {
         match payload {
-            Ok(_) => Self {
-                outcome: "ok",
-                reason: None,
-            },
-            Err(err) => Self {
-                outcome: "error",
-                reason: Some(err.to_string()),
-            },
+			Ok(_) => Self { outcome: "ok", reason: None },
+			Err(err) => Self { outcome: "error", reason: Some(err.to_string()) },
         }
     }
 }
@@ -100,10 +92,7 @@ impl RemoteMessage {
 
     /// Outgoing request carrying `request` under `message_id`.
     pub fn request<R: SsoRequest>(message_id: String, request: R) -> Self {
-        Self {
-            message_id,
-            data: RemoteMessageData::V1(request.into_message()),
-        }
+		Self { message_id, data: RemoteMessageData::V1(request.into_message()) }
     }
 }
 
@@ -117,10 +106,7 @@ mod tests {
 
     #[test]
     fn identical_payloads_keep_their_request_specific_response_variants() {
-        let response = Response {
-            responding_to: "m-1".to_string(),
-            payload: Ok(vec![7]),
-        };
+		let response = Response { responding_to: "m-1".to_string(), payload: Ok(vec![7]) };
         let transaction = CreateTransactionRequest::response_into_message(response.clone());
         assert_eq!(transaction.name(), "CreateTransactionResponse");
         assert_eq!(

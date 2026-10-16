@@ -1,6 +1,8 @@
 use clap::ValueEnum;
-use truapi::latest::ChainIdentifier;
-use truapi::platform::{HostChainEntry, HostChainSet};
+use truapi::{
+	latest::ChainIdentifier,
+	platform::{HostChainEntry, HostChainSet},
+};
 
 /// Supported live network presets for the headless hosts.
 ///
@@ -180,8 +182,6 @@ pub struct NetworkConfig {
     pub network_suffix: &'static str,
     pub identity_backend_base: &'static str,
     pub people_ws: &'static str,
-    // Read only by tests; production routing goes through `live_chain_endpoints`.
-    #[allow(dead_code)]
     pub bulletin_ws: &'static str,
     /// Asset Hub RPC, where PGAS allowances are claimed.
     pub asset_hub_ws: &'static str,
@@ -299,10 +299,7 @@ mod tests {
             let config = network.config();
             for entry in config.host_chain_set().chains {
                 let expected_ws = config.url_for_role(entry.identifier).unwrap_or_else(|| {
-                    panic!(
-                        "{} serves {:?} with no preset URL",
-                        config.id, entry.identifier
-                    )
+					panic!("{} serves {:?} with no preset URL", config.id, entry.identifier)
                 });
                 let endpoint = config
                     .live_chain_endpoints
@@ -369,11 +366,7 @@ mod tests {
 
             assert_eq!(
                 served,
-                vec![
-                    ChainIdentifier::People,
-                    ChainIdentifier::Bulletin,
-                    ChainIdentifier::AssetHub,
-                ],
+				vec![ChainIdentifier::People, ChainIdentifier::Bulletin, ChainIdentifier::AssetHub,],
                 "{} serves an unexpected role set",
                 config.id
             );
@@ -456,9 +449,7 @@ mod tests {
 
             for route in routes {
                 assert!(
-                    TEST_NETWORK_MARKERS
-                        .iter()
-                        .any(|marker| route.contains(marker)),
+					TEST_NETWORK_MARKERS.iter().any(|marker| route.contains(marker)),
                     "preset `{}` routes to a host that is not a recognised test \
                      network: {route}",
                     config.id,
@@ -532,7 +523,7 @@ mod tests {
                     Err(err) => {
                         unreachable.push(format!("{:?} at {ws}: {err}", entry.identifier));
                         continue;
-                    }
+					},
                 };
 
                 checked += 1;
@@ -547,10 +538,7 @@ mod tests {
                     ChainIdentifier::AssetHub => &["Asset Hub"],
                     ChainIdentifier::Relay => &["Relay"],
                 };
-                if !expected_in_name
-                    .iter()
-                    .any(|expected| chain_name.contains(expected))
-                {
+				if !expected_in_name.iter().any(|expected| chain_name.contains(expected)) {
                     drifted.push(format!(
                         "{} serves {:?} from {ws}, which calls itself \
                          {chain_name:?} and names none of {expected_in_name:?}",
@@ -600,10 +588,7 @@ mod tests {
         // failing it. Non-emptiness is asserted separately: `--ignored` runs this
         // without the anchor test, and an empty served set would otherwise make
         // both the loop and its count trivially agree on zero.
-        assert!(
-            expected_checks > 0,
-            "no preset serves any chain, so this test proved nothing"
-        );
+		assert!(expected_checks > 0, "no preset serves any chain, so this test proved nothing");
         assert_eq!(
             checked, expected_checks,
             "every served role must be probed; anything else means the loop \

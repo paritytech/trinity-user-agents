@@ -42,7 +42,11 @@ public enum ProductPermission: Equatable, Sendable {
     /// that trust.
     public var isRemoteAccess: Bool {
         switch self {
-        case .networkAccess, .networkAccessBundle, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
+        case .networkAccess,
+             .networkAccessBundle,
+             .webRtcAccess,
+             .chainSubmitAccess,
+             .preimageSubmitAccess,
              .statementSubmitAccess:
             true
         case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess,

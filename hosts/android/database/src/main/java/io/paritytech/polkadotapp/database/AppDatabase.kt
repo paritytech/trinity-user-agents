@@ -32,7 +32,6 @@ import io.paritytech.polkadotapp.database.dao.DurableTxDao
 import io.paritytech.polkadotapp.database.dao.ExternalPaymentDao
 import io.paritytech.polkadotapp.database.dao.FileDownloadDao
 import io.paritytech.polkadotapp.database.dao.FileUploadDao
-import io.paritytech.polkadotapp.database.dao.GamePlayersDao
 import io.paritytech.polkadotapp.database.dao.MessageNotificationSentDao
 import io.paritytech.polkadotapp.database.dao.MessageRevisionDao
 import io.paritytech.polkadotapp.database.dao.MetaAccountDao
@@ -55,10 +54,6 @@ import io.paritytech.polkadotapp.database.dao.StorageDao
 import io.paritytech.polkadotapp.database.dao.TokenBalanceDao
 import io.paritytech.polkadotapp.database.dao.TokenPriceDao
 import io.paritytech.polkadotapp.database.dao.TrackedExtrinsicDao
-import io.paritytech.polkadotapp.database.dao.VideoGameBannedPlayerDao
-import io.paritytech.polkadotapp.database.dao.VideoGameConnectionAttemptDao
-import io.paritytech.polkadotapp.database.dao.VideoGameVoteDao
-import io.paritytech.polkadotapp.database.dao.VouchersDao
 import io.paritytech.polkadotapp.database.migrations.ChatMessageContentMigration
 import io.paritytech.polkadotapp.database.migrations.Migration10To11
 import io.paritytech.polkadotapp.database.migrations.Migration12To13
@@ -93,6 +88,7 @@ import io.paritytech.polkadotapp.database.migrations.Migration62To63
 import io.paritytech.polkadotapp.database.migrations.Migration63To64
 import io.paritytech.polkadotapp.database.migrations.Migration65To66
 import io.paritytech.polkadotapp.database.migrations.Migration68To69
+import io.paritytech.polkadotapp.database.migrations.Migration69To70Spec
 import io.paritytech.polkadotapp.database.model.BrowserTabLocal
 import io.paritytech.polkadotapp.database.model.ChatBotStateLocal
 import io.paritytech.polkadotapp.database.model.ChatDraftLocal
@@ -116,7 +112,6 @@ import io.paritytech.polkadotapp.database.model.DurableTxLocal
 import io.paritytech.polkadotapp.database.model.ExternalPaymentLocal
 import io.paritytech.polkadotapp.database.model.FileDownloadLocal
 import io.paritytech.polkadotapp.database.model.FileUploadLocal
-import io.paritytech.polkadotapp.database.model.GamePlayersLocal
 import io.paritytech.polkadotapp.database.model.MessageNotificationSentLocal
 import io.paritytech.polkadotapp.database.model.MessageRevisionLocal
 import io.paritytech.polkadotapp.database.model.MetaAccountLocal
@@ -141,10 +136,6 @@ import io.paritytech.polkadotapp.database.model.StorageEntryLocal
 import io.paritytech.polkadotapp.database.model.TokenBalanceLocal
 import io.paritytech.polkadotapp.database.model.TokenPriceLocal
 import io.paritytech.polkadotapp.database.model.TrackedExtrinsicLocal
-import io.paritytech.polkadotapp.database.model.VideoGameBannedPlayerLocal
-import io.paritytech.polkadotapp.database.model.VideoGameConnectionAttemptLocal
-import io.paritytech.polkadotapp.database.model.VideoGameVoteLocal
-import io.paritytech.polkadotapp.database.model.VoucherLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainAssetLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainExplorerLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainExternalApiLocal
@@ -153,7 +144,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 69,
+    version = 70,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -175,13 +166,10 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         ChatMessageProcessingLocal::class,
         ChatMessageReactionLocal::class,
         ChatBotStateLocal::class,
-        VideoGameVoteLocal::class,
-        VoucherLocal::class,
         SsoSessionLocal::class,
         SsoSessionMetadataLocal::class,
         MessageRevisionLocal::class,
         MessageNotificationSentLocal::class,
-        GamePlayersLocal::class,
         ProductLocal::class,
         ChatRequestLocal::class,
         ChatRequestSyncStateLocal::class,
@@ -189,10 +177,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         RecyclerVoucherLocal::class,
         ChatRoomLocal::class,
         ProductPermissionGrantLocal::class,
-        VideoGameBannedPlayerLocal::class,
         ProductIntegrationLocal::class,
         FileUploadLocal::class,
-        VideoGameConnectionAttemptLocal::class,
         FileDownloadLocal::class,
         ExternalPaymentLocal::class,
         StatementStoreSlotAllocationLocal::class,
@@ -295,6 +281,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 66, to = 67),
         // Add chat_messages.sortOrder (local storage order) and its indices
         AutoMigration(from = 67, to = 68),
+        // Drop the video game and privacy voucher tables
+        AutoMigration(from = 69, to = 70, spec = Migration69To70Spec::class),
     ]
 )
 @TypeConverters(
@@ -382,17 +370,11 @@ abstract class AppDatabase : RoomDatabase() {
 
     abstract fun messageReactionsDao(): ChatMessageReactionDao
 
-    abstract fun videoGameVoteDao(): VideoGameVoteDao
-
-    abstract fun vouchersDao(): VouchersDao
-
     abstract fun chatBotStateDao(): ChatBotStateDao
 
     abstract fun ssoSessionDao(): SsoSessionDao
 
     abstract fun messageRevisionDao(): MessageRevisionDao
-
-    abstract fun gamePlayersDao(): GamePlayersDao
 
     abstract fun messageNotificationSentDao(): MessageNotificationSentDao
 
@@ -414,8 +396,6 @@ abstract class AppDatabase : RoomDatabase() {
 
     abstract fun productPermissionGrantDao(): ProductPermissionGrantDao
 
-    abstract fun videoGameBannedPlayerDao(): VideoGameBannedPlayerDao
-
     abstract fun productIntegrationDao(): ProductIntegrationDao
 
     abstract fun chatRoomDao(): ChatRoomDao
@@ -423,8 +403,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun fileUploadDao(): FileUploadDao
 
     abstract fun fileDownloadDao(): FileDownloadDao
-
-    abstract fun videoGameConnectionAttemptDao(): VideoGameConnectionAttemptDao
 
     abstract fun externalPaymentDao(): ExternalPaymentDao
 

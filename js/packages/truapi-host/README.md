@@ -196,6 +196,7 @@ const callbacks: HostCallbacks = {
   pocket, // optional: serves the host's Pocket card collection
   game, // optional: holds the host's game reminders
   contacts, // optional: leave it out and contacts calls get `Unsupported`
+  scanner, // optional: draws the host's QR and barcode viewfinder
 };
 ```
 
@@ -348,6 +349,11 @@ has no enumeration API. Directory reads share native commit gates, and native st
 cached handles. A browser adapter must also cancel pending picker/lookup work when its wallet, network, provider or
 directory generation changes. Provider-scoped `contacts` callbacks control that provider's UI; absent overrides inherit
 the runtime-wide Contacts adapter. Keep the runtime-wide source alive for host-owned rendering until the owner closes.
+
+`scanner.scanCode(product, request)` opens the host's viewfinder. The rules it
+follows are on `ScannerPlatform` in the generated callbacks. The mock test host
+serves a scanner only when created with `createMockHost({ scanner: answer })`,
+and `setScanAnswer(answer)` changes the next answer.
 
 ## Generated WASM artefacts
 

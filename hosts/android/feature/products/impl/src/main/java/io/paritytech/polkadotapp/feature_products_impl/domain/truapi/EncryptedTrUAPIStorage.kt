@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import uniffi.truapi.HostRejection
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
 import java.text.Normalizer
 
 /**

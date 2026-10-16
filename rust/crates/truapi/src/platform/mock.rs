@@ -8,40 +8,48 @@
 //! `truapi`, a `MockPlatform` wired into the core yields a faithful host
 //! whose only mocked surface is the OS-primitive seam.
 //!
-//! Behavior is a [`MockConfig`](crate::platform::mock::MockConfig) read on every call: per-capability permission
-//! policy, feature support, theme, confirmation answer, [`ChainBehavior`](crate::platform::mock::ChainBehavior), and
+//! Behavior is a [`MockConfig`](crate::platform::mock::MockConfig) read on every call:
+//! per-capability permission policy, feature support, theme, confirmation answer,
+//! [`ChainBehavior`](crate::platform::mock::ChainBehavior), and
 //! [`MockFaults`](crate::platform::mock::MockFaults) error injection. Recordings (`navigations`,
 //! `pushed_notifications`, `confirmations`, `auth_states`, `sent_rpc`, …) are
 //! the test oracles.
 //!
 //! Signing and login require a paired wallet answering over the statement-store
-//! channel. With [`ChainBehavior::Silent`](crate::platform::mock::ChainBehavior::Silent) the chain connection records
-//! outbound requests and never answers, so those flows park; use
-//! [`ChainBehavior::Scripted`](crate::platform::mock::ChainBehavior::Scripted) to feed canned response frames.
+//! channel. With [`ChainBehavior::Silent`](crate::platform::mock::ChainBehavior::Silent) the chain
+//! connection records outbound requests and never answers, so those flows park; use
+//! [`ChainBehavior::Scripted`](crate::platform::mock::ChainBehavior::Scripted) to feed canned
+//! response frames.
 //!
 //! Preimage submission is core-owned on current core (the core builds, signs,
 //! and submits the Bulletin `TransactionStorage.store` transaction itself), so
 //! the mock only implements host-side content retrieval via `lookup_preimage`.
-//! Seed retrievable content with [`MockPlatform::insert_preimage`](crate::platform::mock::MockPlatform::insert_preimage).
+//! Seed retrievable content with
+//! [`MockPlatform::insert_preimage`](crate::platform::mock::MockPlatform::insert_preimage).
 
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::{
+	collections::{BTreeMap, HashMap},
+	sync::{
+		Arc, Mutex,
+		atomic::{AtomicBool, AtomicU32, Ordering},
+	},
+};
 
-use futures::StreamExt;
-use futures::channel::mpsc;
-use futures::stream::{self, BoxStream};
+use futures::{
+	StreamExt,
+	channel::mpsc,
+	stream::{self, BoxStream},
+};
 
 use truapi::latest;
 
-use crate::platform::async_trait;
 use crate::platform::{
     AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
     HopProvider, JsonRpcConnection, LocaleHost, NativeChatFileExportRequest,
     NativeChatFilePickRequest, NativeChatFilesHost, NativeChatPickedFile, Navigation,
-    Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext,
-    ProductOperations, ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+    HostScan, ScannerPlatform, Notifications, PermissionDecision, Permissions, PreimageHost,
+    ProductContext, ProductOperations, ProductStorage, ProviderError, ThemeHost,
+    UserConfirmation, UserConfirmationReview, async_trait,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -77,8 +85,6 @@ pub enum ConfirmKind {
     CreateProof,
     /// [`UserConfirmationReview::ResourceAllocation`].
     ResourceAllocation,
-    /// [`UserConfirmationReview::PreimageSubmit`].
-    PreimageSubmit,
     /// [`UserConfirmationReview::IdentityDisclosure`].
     IdentityDisclosure,
     /// [`UserConfirmationReview::AccountAccess`].
@@ -104,12 +110,11 @@ impl ConfirmKind {
             UserConfirmationReview::AccountAlias(_) => ConfirmKind::AccountAlias,
             UserConfirmationReview::CreateProof(_) => ConfirmKind::CreateProof,
             UserConfirmationReview::ResourceAllocation(_) => ConfirmKind::ResourceAllocation,
-            UserConfirmationReview::PreimageSubmit(_) => ConfirmKind::PreimageSubmit,
             UserConfirmationReview::IdentityDisclosure(_) => ConfirmKind::IdentityDisclosure,
             UserConfirmationReview::AccountAccess(_) => ConfirmKind::AccountAccess,
             UserConfirmationReview::StatementStoreProductSign(_) => {
                 ConfirmKind::StatementStoreProductSign
-            }
+			},
             UserConfirmationReview::SignVrf(_) => ConfirmKind::SignVrf,
             UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
             UserConfirmationReview::ChatAuthority(_) => ConfirmKind::ChatAuthority,
@@ -171,18 +176,17 @@ pub struct ChatMessageRecord {
     pub room_id: String,
     /// What was posted.
     pub payload: latest::ChatMessageContent,
+	/// The product's one-line description of the message.
+	pub alt: Option<String>,
 }
 
 /// How the mock's chain connection behaves.
 #[derive(Debug, Clone, Default)]
 pub enum ChainBehavior {
-    /// Record outbound requests, never answer. Whether a flow parks turns on
-    /// what it needs from the chain rather than on whether it signs:
-    /// `sign_raw` completes hermetically, while `create_transaction` and
-    /// `sign_payload` park because `build_local_transaction` needs chain
-    /// metadata. Login and the statement store park for the same reason. Drive
-    /// any test that reaches a parking flow under a timeout; use
-    /// [`ChainBehavior::Closed`] to make a disconnect observable instead.
+	/// Record outbound requests without replying. Local transaction creation
+	/// needs chain metadata; login and statement-store operations also wait
+	/// for chain replies. Run those flows under a timeout or use
+	/// [`ChainBehavior::Closed`] to observe a disconnect.
     #[default]
     Silent,
     /// Record outbound requests and replay these response frames in order,
@@ -299,6 +303,8 @@ pub struct MockPlatform {
     /// Current theme. Seeded from the config and replaced by `set_theme`.
     theme: Arc<Mutex<latest::ThemeVariant>>,
     theme_subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostThemeSubscribeItem>>>>,
+	/// What the next scan answers. Starts as a dismissal.
+	scan_answer: Arc<Mutex<HostScan>>,
     storage_subscribers:
         Arc<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<latest::HostLocalStorageChangeItem>>>>>,
     chain_status: Arc<Mutex<ChainStatus>>,
@@ -345,6 +351,7 @@ impl MockPlatform {
             open_operations: Arc::new(Mutex::new(Vec::new())),
             theme: Arc::new(Mutex::new(theme)),
             theme_subscribers: Arc::new(Mutex::new(Vec::new())),
+			scan_answer: Arc::new(Mutex::new(HostScan::Dismissed)),
             storage_subscribers: Arc::new(Mutex::new(HashMap::new())),
             chain_status: Arc::new(Mutex::new(ChainStatus::Idle)),
             chain_disconnectors: Arc::new(Mutex::new(Vec::new())),
@@ -353,26 +360,17 @@ impl MockPlatform {
 
     /// URLs the core asked the host to open, in order.
     pub fn navigations(&self) -> Vec<String> {
-        self.navigations
-            .lock()
-            .expect("navigations poisoned")
-            .clone()
+		self.navigations.lock().expect("navigations poisoned").clone()
     }
 
     /// Notifications the core asked the host to show, in order.
     pub fn pushed_notifications(&self) -> Vec<latest::HostPushNotificationRequest> {
-        self.notifications
-            .lock()
-            .expect("notifications poisoned")
-            .clone()
+		self.notifications.lock().expect("notifications poisoned").clone()
     }
 
     /// Notification ids the core asked the host to cancel, in order.
     pub fn cancelled_notifications(&self) -> Vec<u32> {
-        self.cancelled_notifications
-            .lock()
-            .expect("cancellations poisoned")
-            .clone()
+		self.cancelled_notifications.lock().expect("cancellations poisoned").clone()
     }
 
     /// Full confirmation reviews the core requested, in order.
@@ -399,10 +397,7 @@ impl MockPlatform {
 
     /// Permission answers the mock gave, in order.
     pub fn permission_log(&self) -> Vec<PermissionLogEntry> {
-        self.permission_log
-            .lock()
-            .expect("permission log poisoned")
-            .clone()
+		self.permission_log.lock().expect("permission log poisoned").clone()
     }
 
     /// Permissions with an explicit grant, in `Display` order.
@@ -471,28 +466,18 @@ impl MockPlatform {
         self.permission_log
             .lock()
             .expect("permission log poisoned")
-            .push(PermissionLogEntry {
-                tag: permission,
-                approved: granted,
-                kind,
-            });
+			.push(PermissionLogEntry { tag: permission, approved: granted, kind });
         granted
     }
 
     /// Operations a product began and has not ended, in the order they began.
     pub fn open_operations(&self) -> Vec<OpenOperation> {
-        self.open_operations
-            .lock()
-            .expect("open operations poisoned")
-            .clone()
+		self.open_operations.lock().expect("open operations poisoned").clone()
     }
 
     /// Auth state transitions the core emitted, in order.
     pub fn auth_states(&self) -> Vec<AuthState> {
-        self.auth_states
-            .lock()
-            .expect("auth states poisoned")
-            .clone()
+		self.auth_states.lock().expect("auth states poisoned").clone()
     }
 
     /// Raw JSON-RPC requests the core sent over the chain connection.
@@ -510,31 +495,19 @@ impl MockPlatform {
     /// the core looks it up under.
     pub fn insert_preimage(&self, value: Vec<u8>) -> Vec<u8> {
         let key = preimage_key(&value);
-        self.preimages
-            .lock()
-            .expect("preimages poisoned")
-            .insert(key.clone(), value);
+		self.preimages.lock().expect("preimages poisoned").insert(key.clone(), value);
         key
     }
 
     /// Drop the recorded navigations.
     pub fn clear_navigations(&self) {
-        self.navigations
-            .lock()
-            .expect("navigations poisoned")
-            .clear();
+		self.navigations.lock().expect("navigations poisoned").clear();
     }
 
     /// Drop the recorded shown and cancelled notifications.
     pub fn clear_notifications(&self) {
-        self.notifications
-            .lock()
-            .expect("notifications poisoned")
-            .clear();
-        self.cancelled_notifications
-            .lock()
-            .expect("cancellations poisoned")
-            .clear();
+		self.notifications.lock().expect("notifications poisoned").clear();
+		self.cancelled_notifications.lock().expect("cancellations poisoned").clear();
     }
 
     /// Drop the recorded confirmation reviews.
@@ -544,27 +517,18 @@ impl MockPlatform {
 
     /// Drop the recorded permission answers, keeping explicit grants.
     pub fn clear_permission_log(&self) {
-        self.permission_log
-            .lock()
-            .expect("permission log poisoned")
-            .clear();
+		self.permission_log.lock().expect("permission log poisoned").clear();
     }
 
     /// Drop every explicit permission grant and denial, restoring policy
     /// fallback for all permissions.
     pub fn clear_permission_decisions(&self) {
-        self.permission_decisions
-            .lock()
-            .expect("permission decisions poisoned")
-            .clear();
+		self.permission_decisions.lock().expect("permission decisions poisoned").clear();
     }
 
     /// Drop the recorded auth-state transitions.
     pub fn clear_auth_states(&self) {
-        self.auth_states
-            .lock()
-            .expect("auth states poisoned")
-            .clear();
+		self.auth_states.lock().expect("auth states poisoned").clear();
     }
 
     /// Drop the recorded outbound JSON-RPC requests.
@@ -597,8 +561,7 @@ impl MockPlatform {
             .expect("storage poisoned")
             .iter()
             .filter_map(|(key, value)| {
-                key.strip_prefix(&prefix)
-                    .map(|bare| (bare.to_string(), value.clone()))
+				key.strip_prefix(&prefix).map(|bare| (bare.to_string(), value.clone()))
             })
             .collect();
         entries.sort_by(|(left, _), (right, _)| left.cmp(right));
@@ -623,13 +586,15 @@ impl MockPlatform {
         *self.theme.lock().expect("theme poisoned")
     }
 
+	/// Set what the next product scan answers.
+	pub fn set_scan_answer(&self, answer: HostScan) {
+		*self.scan_answer.lock().expect("scan answer poisoned") = answer;
+	}
+
     /// Replace the reported theme and push it to every live subscriber.
     pub fn set_theme(&self, variant: latest::ThemeVariant) {
         *self.theme.lock().expect("theme poisoned") = variant;
-        let item = latest::HostThemeSubscribeItem {
-            name: latest::ThemeName::Default,
-            variant,
-        };
+		let item = latest::HostThemeSubscribeItem { name: latest::ThemeName::Default, variant };
         self.theme_subscribers
             .lock()
             .expect("theme subscribers poisoned")
@@ -647,10 +612,7 @@ impl MockPlatform {
         *self.chain_status.lock().expect("chain status poisoned") = ChainStatus::Disconnected;
         // Dropping each sender completes the `take_until` future on that
         // connection's response stream, which is what ends it.
-        self.chain_disconnectors
-            .lock()
-            .expect("chain disconnectors poisoned")
-            .clear();
+		self.chain_disconnectors.lock().expect("chain disconnectors poisoned").clear();
     }
 
     /// Allow `connect` to succeed again after a simulated disconnect.
@@ -663,30 +625,17 @@ impl MockPlatform {
 
     /// Chat rooms the product registered, in room-id order.
     pub fn chat_rooms(&self) -> Vec<latest::ChatRoom> {
-        self.chat_rooms
-            .lock()
-            .expect("chat rooms poisoned")
-            .values()
-            .cloned()
-            .collect()
+		self.chat_rooms.lock().expect("chat rooms poisoned").values().cloned().collect()
     }
 
     /// Chat bots the product registered, in bot-id order.
     pub fn chat_bots(&self) -> Vec<latest::HostChatRegisterBotRequest> {
-        self.chat_bots
-            .lock()
-            .expect("chat bots poisoned")
-            .values()
-            .cloned()
-            .collect()
+		self.chat_bots.lock().expect("chat bots poisoned").values().cloned().collect()
     }
 
     /// Messages the product posted, in order, with the ids the mock assigned.
     pub fn posted_chat_messages(&self) -> Vec<ChatMessageRecord> {
-        self.chat_messages
-            .lock()
-            .expect("chat messages poisoned")
-            .clone()
+		self.chat_messages.lock().expect("chat messages poisoned").clone()
     }
 
     /// Drop the registered rooms and bots and the posted-message log.
@@ -696,19 +645,14 @@ impl MockPlatform {
     pub fn clear_chat_state(&self) {
         self.chat_rooms.lock().expect("chat rooms poisoned").clear();
         self.chat_bots.lock().expect("chat bots poisoned").clear();
-        self.chat_messages
-            .lock()
-            .expect("chat messages poisoned")
-            .clear();
+		self.chat_messages.lock().expect("chat messages poisoned").clear();
         self.publish_chat_rooms();
     }
 
     /// Send the current room list to every live subscriber, dropping the ones
     /// whose stream has been closed.
     fn publish_chat_rooms(&self) {
-        let item = latest::HostChatListSubscribeItem {
-            rooms: self.chat_rooms(),
-        };
+		let item = latest::HostChatListSubscribeItem { rooms: self.chat_rooms() };
         self.chat_room_subscribers
             .lock()
             .expect("chat subscribers poisoned")
@@ -718,10 +662,8 @@ impl MockPlatform {
     /// Push a product key's new value to every live subscriber of that key.
     fn publish_storage(&self, key: &str, value: Option<Vec<u8>>) {
         let item = latest::HostLocalStorageChangeItem { value };
-        let mut subscribers = self
-            .storage_subscribers
-            .lock()
-            .expect("storage subscribers poisoned");
+		let mut subscribers =
+			self.storage_subscribers.lock().expect("storage subscribers poisoned");
         let Some(senders) = subscribers.get_mut(key) else {
             return;
         };
@@ -752,10 +694,7 @@ impl MockPlatform {
         self.set_enforce_permissions(false);
         self.next_notification_id.store(1, Ordering::SeqCst);
         self.next_chat_message_id.store(0, Ordering::SeqCst);
-        self.open_operations
-            .lock()
-            .expect("open operations poisoned")
-            .clear();
+		self.open_operations.lock().expect("open operations poisoned").clear();
         self.next_operation_id.store(0, Ordering::SeqCst);
     }
 }
@@ -775,33 +714,33 @@ fn core_key(key: &CoreStorageKey) -> String {
     match key {
         CoreStorageKey::AuthSession => "core:auth-session".to_string(),
         CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
-        CoreStorageKey::PermissionAuthorization {
-            product_id,
-            request,
-        } => format!("core:permission:{product_id}:{request:?}"),
+		CoreStorageKey::PermissionAuthorization { product_id, request } => {
+			format!("core:permission:{product_id}:{request:?}")
+		},
         CoreStorageKey::AutoSigningKey { product_id } => {
             format!("core:auto-signing-key:{product_id}")
-        }
+		},
         CoreStorageKey::AutoSigningKeys => "core:auto-signing-keys".to_string(),
         CoreStorageKey::RingVrfRegistry { root_public_key } => {
             format!("core:ring-vrf-registry:{}", hex_key(root_public_key))
-        }
+		},
         CoreStorageKey::StatementRenewalTargets => "core:statement-renewal-targets".to_string(),
         CoreStorageKey::DeviceEncryptionKey => "core:device-encryption-key".to_string(),
-        CoreStorageKey::ProductSubtree {
-            session_id,
-            product_id,
-        } => format!("core:product-subtree:{session_id}:{product_id}"),
+		CoreStorageKey::ProductSubtree { session_id, product_id } => {
+			format!("core:product-subtree:{session_id}:{product_id}")
+		},
         CoreStorageKey::SsoResponderRequestLedger {
             root_public_key,
             peer_statement_account_id,
             peer_encryption_public_key,
-        } => format!(
+		} => {
+			format!(
             "core:sso-responder-ledger:{}:{}:{}",
             hex_key(root_public_key),
             hex_key(peer_statement_account_id),
             hex_key(peer_encryption_public_key)
-        ),
+            )
+        },
         CoreStorageKey::MainPurseCoinage {
             root_public_key,
             genesis_hash,
@@ -841,13 +780,13 @@ fn core_key(key: &CoreStorageKey) -> String {
         ),
         CoreStorageKey::ProductManifest { product_id } => {
             format!("core:product-manifest:{product_id}")
-        }
+		},
         CoreStorageKey::AllowanceKeys { session_id } => {
             format!("core:allowance-keys:{session_id}")
-        }
+		},
         CoreStorageKey::LastProcessedPairingStatement => {
             "core:last-processed-pairing-statement".to_string()
-        }
+		},
     }
 }
 
@@ -868,16 +807,9 @@ impl ProductStorage for MockPlatform {
         key: String,
     ) -> Result<Option<Vec<u8>>, truapi::v01::HostLocalStorageReadError> {
         if let Some(reason) = &self.config.faults.storage_error {
-            return Err(truapi::v01::HostLocalStorageReadError::Unknown {
-                reason: reason.clone(),
-            });
+			return Err(truapi::v01::HostLocalStorageReadError::Unknown { reason: reason.clone() });
         }
-        Ok(self
-            .storage
-            .lock()
-            .expect("storage poisoned")
-            .get(&product_key(&key))
-            .cloned())
+		Ok(self.storage.lock().expect("storage poisoned").get(&product_key(&key)).cloned())
     }
 
     async fn write(
@@ -886,9 +818,7 @@ impl ProductStorage for MockPlatform {
         value: Vec<u8>,
     ) -> Result<(), truapi::v01::HostLocalStorageReadError> {
         if let Some(reason) = &self.config.faults.storage_error {
-            return Err(truapi::v01::HostLocalStorageReadError::Unknown {
-                reason: reason.clone(),
-            });
+			return Err(truapi::v01::HostLocalStorageReadError::Unknown { reason: reason.clone() });
         }
         self.storage
             .lock()
@@ -900,14 +830,9 @@ impl ProductStorage for MockPlatform {
 
     async fn clear(&self, key: String) -> Result<(), truapi::v01::HostLocalStorageReadError> {
         if let Some(reason) = &self.config.faults.storage_error {
-            return Err(truapi::v01::HostLocalStorageReadError::Unknown {
-                reason: reason.clone(),
-            });
+			return Err(truapi::v01::HostLocalStorageReadError::Unknown { reason: reason.clone() });
         }
-        self.storage
-            .lock()
-            .expect("storage poisoned")
-            .remove(&product_key(&key));
+		self.storage.lock().expect("storage poisoned").remove(&product_key(&key));
         self.publish_storage(&key, None);
         Ok(())
     }
@@ -946,16 +871,9 @@ impl CoreStorage for MockPlatform {
         key: CoreStorageKey,
     ) -> Result<Option<Vec<u8>>, latest::GenericError> {
         if let Some(reason) = &self.config.faults.storage_error {
-            return Err(latest::GenericError {
-                reason: reason.clone(),
-            });
+			return Err(latest::GenericError { reason: reason.clone() });
         }
-        Ok(self
-            .storage
-            .lock()
-            .expect("storage poisoned")
-            .get(&core_key(&key))
-            .cloned())
+		Ok(self.storage.lock().expect("storage poisoned").get(&core_key(&key)).cloned())
     }
 
     async fn write_core_storage(
@@ -964,27 +882,17 @@ impl CoreStorage for MockPlatform {
         value: Vec<u8>,
     ) -> Result<(), latest::GenericError> {
         if let Some(reason) = &self.config.faults.storage_error {
-            return Err(latest::GenericError {
-                reason: reason.clone(),
-            });
+			return Err(latest::GenericError { reason: reason.clone() });
         }
-        self.storage
-            .lock()
-            .expect("storage poisoned")
-            .insert(core_key(&key), value);
+		self.storage.lock().expect("storage poisoned").insert(core_key(&key), value);
         Ok(())
     }
 
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), latest::GenericError> {
         if let Some(reason) = &self.config.faults.storage_error {
-            return Err(latest::GenericError {
-                reason: reason.clone(),
-            });
+			return Err(latest::GenericError { reason: reason.clone() });
         }
-        self.storage
-            .lock()
-            .expect("storage poisoned")
-            .remove(&core_key(&key));
+		self.storage.lock().expect("storage poisoned").remove(&core_key(&key));
         Ok(())
     }
 }
@@ -993,14 +901,9 @@ impl CoreStorage for MockPlatform {
 impl Navigation for MockPlatform {
     async fn navigate_to(&self, url: String) -> Result<(), latest::HostNavigateToError> {
         if let Some(reason) = &self.config.faults.navigate_error {
-            return Err(latest::HostNavigateToError::Unknown {
-                reason: reason.clone(),
-            });
+			return Err(latest::HostNavigateToError::Unknown { reason: reason.clone() });
         }
-        self.navigations
-            .lock()
-            .expect("navigations poisoned")
-            .push(url);
+		self.navigations.lock().expect("navigations poisoned").push(url);
         Ok(())
     }
 }
@@ -1012,23 +915,15 @@ impl Notifications for MockPlatform {
         notification: latest::HostPushNotificationRequest,
     ) -> Result<latest::HostPushNotificationResponse, latest::GenericError> {
         if let Some(reason) = &self.config.faults.notification_error {
-            return Err(latest::GenericError {
-                reason: reason.clone(),
-            });
+			return Err(latest::GenericError { reason: reason.clone() });
         }
-        self.notifications
-            .lock()
-            .expect("notifications poisoned")
-            .push(notification);
+		self.notifications.lock().expect("notifications poisoned").push(notification);
         let id = self.next_notification_id.fetch_add(1, Ordering::SeqCst);
         Ok(latest::HostPushNotificationResponse { id })
     }
 
     async fn cancel_notification(&self, id: u32) -> Result<(), latest::GenericError> {
-        self.cancelled_notifications
-            .lock()
-            .expect("cancellations poisoned")
-            .push(id);
+		self.cancelled_notifications.lock().expect("cancellations poisoned").push(id);
         Ok(())
     }
 }
@@ -1108,11 +1003,7 @@ fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str 
 /// A mock policy is two-valued, so a grant is durable and a refusal is durable.
 /// `AllowOnce` is a host answer the mock has no knob to ask for.
 fn decision(granted: bool) -> PermissionDecision {
-    if granted {
-        PermissionDecision::AllowAlways
-    } else {
-        PermissionDecision::Deny
-    }
+	if granted { PermissionDecision::AllowAlways } else { PermissionDecision::Deny }
 }
 
 #[async_trait]
@@ -1123,9 +1014,7 @@ impl Permissions for MockPlatform {
         request: latest::HostDevicePermissionRequest,
     ) -> Result<PermissionDecision, latest::GenericError> {
         if let Some(reason) = &self.config.faults.permission_error {
-            return Err(latest::GenericError {
-                reason: reason.clone(),
-            });
+			return Err(latest::GenericError { reason: reason.clone() });
         }
         Ok(decision(self.decide_permission(
             PermissionKind::Device,
@@ -1140,9 +1029,7 @@ impl Permissions for MockPlatform {
         request: latest::RemotePermissionRequest,
     ) -> Result<PermissionDecision, latest::GenericError> {
         if let Some(reason) = &self.config.faults.permission_error {
-            return Err(latest::GenericError {
-                reason: reason.clone(),
-            });
+			return Err(latest::GenericError { reason: reason.clone() });
         }
         Ok(decision(self.decide_permission(
             PermissionKind::Remote,
@@ -1158,9 +1045,7 @@ impl Features for MockPlatform {
         &self,
     ) -> Result<crate::platform::HostChainSet, latest::GenericError> {
         if let Some(reason) = &self.config.faults.feature_error {
-            return Err(latest::GenericError {
-                reason: reason.clone(),
-            });
+			return Err(latest::GenericError { reason: reason.clone() });
         }
         Ok(self.config.supported_chains.clone())
     }
@@ -1170,13 +1055,9 @@ impl Features for MockPlatform {
         _request: latest::HostFeatureSupportedRequest,
     ) -> Result<latest::HostFeatureSupportedResponse, latest::GenericError> {
         if let Some(reason) = &self.config.faults.feature_error {
-            return Err(latest::GenericError {
-                reason: reason.clone(),
-            });
+			return Err(latest::GenericError { reason: reason.clone() });
         }
-        Ok(latest::HostFeatureSupportedResponse {
-            supported: self.config.feature_supported,
-        })
+		Ok(latest::HostFeatureSupportedResponse { supported: self.config.feature_supported })
     }
 }
 
@@ -1199,11 +1080,8 @@ impl JsonRpcConnection for MockConnection {
             None => Box::pin(stream::pending()),
             Some(frames) => Box::pin(stream::iter(frames.clone())),
         };
-        let Some(disconnected) = self
-            .disconnected
-            .lock()
-            .expect("disconnect signal poisoned")
-            .take()
+		let Some(disconnected) =
+			self.disconnected.lock().expect("disconnect signal poisoned").take()
         else {
             // Only the first stream carries the signal; later ones behave as
             // before, which is enough for the single-stream core.
@@ -1224,14 +1102,10 @@ impl ChainProvider for MockPlatform {
         _genesis_hash: [u8; 32],
     ) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
         if self.chain_status() == ChainStatus::Disconnected {
-            return Err(ProviderError::Host {
-                reason: "mock chain is disconnected".to_string(),
-            });
+			return Err(ProviderError::Host { reason: "mock chain is disconnected".to_string() });
         }
         if let ChainBehavior::ConnectError(reason) = &self.config.chain {
-            return Err(ProviderError::Host {
-                reason: reason.clone(),
-            });
+			return Err(ProviderError::Host { reason: reason.clone() });
         }
         let responses = match &self.config.chain {
             ChainBehavior::Silent => None,
@@ -1255,10 +1129,7 @@ impl ChainProvider for MockPlatform {
 
 impl AuthPresenter for MockPlatform {
     fn auth_state_changed(&self, state: AuthState) {
-        self.auth_states
-            .lock()
-            .expect("auth states poisoned")
-            .push(state);
+		self.auth_states.lock().expect("auth states poisoned").push(state);
     }
 }
 
@@ -1270,9 +1141,7 @@ impl UserConfirmation for MockPlatform {
     ) -> Result<bool, latest::GenericError> {
         self.reviews.lock().expect("reviews poisoned").push(review);
         if let Some(reason) = &self.config.faults.confirmation_error {
-            return Err(latest::GenericError {
-                reason: reason.clone(),
-            });
+			return Err(latest::GenericError { reason: reason.clone() });
         }
         Ok(self.config.confirm_user_actions)
     }
@@ -1291,10 +1160,7 @@ impl ThemeHost for MockPlatform {
                 variant: self.theme(),
             })
             .expect("a fresh receiver is open");
-        self.theme_subscribers
-            .lock()
-            .expect("theme subscribers poisoned")
-            .push(sender);
+		self.theme_subscribers.lock().expect("theme subscribers poisoned").push(sender);
         Box::pin(receiver.map(Ok))
     }
 }
@@ -1323,18 +1189,12 @@ impl PreimageHost for MockPlatform {
         &self,
         key: Vec<u8>,
     ) -> BoxStream<'static, Result<Option<Vec<u8>>, latest::GenericError>> {
-        let found = self
-            .preimages
-            .lock()
-            .expect("preimages poisoned")
-            .get(&key)
-            .cloned();
+		let found = self.preimages.lock().expect("preimages poisoned").get(&key).cloned();
         // Emit the current value/miss, then stay open — a live subscription that
         // never ends, matching `subscribe_theme`, the trait doc, and the JS mock.
         Box::pin(
-            stream::once(async move { Ok(found) }).chain(stream::pending::<
-                Result<Option<Vec<u8>>, latest::GenericError>,
-            >()),
+			stream::once(async move { Ok(found) })
+				.chain(stream::pending::<Result<Option<Vec<u8>>, latest::GenericError>>()),
         )
     }
 }
@@ -1350,11 +1210,7 @@ impl ProductOperations for MockPlatform {
         self.open_operations
             .lock()
             .expect("open operations poisoned")
-            .push(OpenOperation {
-                product_id: product.product_id.clone(),
-                id,
-                label,
-            });
+			.push(OpenOperation { product_id: product.product_id.clone(), id, label });
         Ok(latest::HostWorkerBeginOperationResponse { id })
     }
 
@@ -1435,6 +1291,17 @@ fn native_chat_files_unavailable() -> latest::GenericError {
 }
 
 #[async_trait]
+impl ScannerPlatform for MockPlatform {
+	async fn scan_code(
+		&self,
+		_product: &ProductContext,
+		_request: &latest::HostScannerScanRequest,
+	) -> Result<HostScan, latest::GenericError> {
+		Ok(self.scan_answer.lock().expect("scan answer poisoned").clone())
+    }
+}
+
+#[async_trait]
 impl ChatPlatform for MockPlatform {
     async fn create_chat_room(
         &self,
@@ -1442,9 +1309,7 @@ impl ChatPlatform for MockPlatform {
         request: latest::HostChatCreateRoomRequest,
     ) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
         if let Some(reason) = &self.config.faults.chat_error {
-            return Err(latest::HostChatCreateRoomError::Unknown {
-                reason: reason.clone(),
-            });
+			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
         }
         let status = {
             let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
@@ -1475,9 +1340,7 @@ impl ChatPlatform for MockPlatform {
         request: latest::HostChatRegisterBotRequest,
     ) -> Result<latest::HostChatRegisterBotResponse, latest::HostChatRegisterBotError> {
         if let Some(reason) = &self.config.faults.chat_error {
-            return Err(latest::HostChatRegisterBotError::Unknown {
-                reason: reason.clone(),
-            });
+			return Err(latest::HostChatRegisterBotError::Unknown { reason: reason.clone() });
         }
         let mut bots = self.chat_bots.lock().expect("chat bots poisoned");
         let status = if bots.contains_key(&request.bot_id) {
@@ -1495,9 +1358,7 @@ impl ChatPlatform for MockPlatform {
         request: latest::HostChatPostMessageRequest,
     ) -> Result<latest::HostChatPostMessageResponse, latest::HostChatPostMessageError> {
         if let Some(reason) = &self.config.faults.chat_error {
-            return Err(latest::HostChatPostMessageError::Unknown {
-                reason: reason.clone(),
-            });
+			return Err(latest::HostChatPostMessageError::Unknown { reason: reason.clone() });
         }
         // Posting to a room the product never registered is a product bug, and
         // a mock that silently accepted it would hide one.
@@ -1511,10 +1372,8 @@ impl ChatPlatform for MockPlatform {
                 reason: format!("unknown chat room {}", request.room_id),
             });
         }
-        let message_id = format!(
-            "mock-message:{}",
-            self.next_chat_message_id.fetch_add(1, Ordering::SeqCst)
-        );
+		let message_id =
+			format!("mock-message:{}", self.next_chat_message_id.fetch_add(1, Ordering::SeqCst));
         self.chat_messages
             .lock()
             .expect("chat messages poisoned")
@@ -1522,9 +1381,21 @@ impl ChatPlatform for MockPlatform {
                 message_id: message_id.clone(),
                 room_id: request.room_id,
                 payload: request.payload,
+				alt: request.alt,
             });
         Ok(latest::HostChatPostMessageResponse { message_id })
     }
+
+	async fn set_chat_room_footer(
+		&self,
+		_product: &ProductContext,
+		_request: latest::HostChatSetRoomFooterRequest,
+	) -> Result<(), latest::GenericError> {
+		match &self.config.faults.chat_error {
+			Some(reason) => Err(latest::GenericError { reason: reason.clone() }),
+			None => Ok(()),
+		}
+	}
 
     fn subscribe_chat_rooms(
         &self,
@@ -1534,17 +1405,13 @@ impl ChatPlatform for MockPlatform {
         // reports it too rather than handing back a stream that looks healthy
         // and never carries the rooms a failing host would refuse to list.
         if let Some(reason) = &self.config.faults.chat_error {
-            return Box::pin(stream::iter([Err(latest::GenericError {
-                reason: reason.clone(),
-            })]));
+			return Box::pin(stream::iter([Err(latest::GenericError { reason: reason.clone() })]));
         }
         let (sender, receiver) = mpsc::unbounded();
         // Seed the current list before registering, so a subscriber that never
         // sees a change still sees the state it subscribed to.
         sender
-            .unbounded_send(latest::HostChatListSubscribeItem {
-                rooms: self.chat_rooms(),
-            })
+			.unbounded_send(latest::HostChatListSubscribeItem { rooms: self.chat_rooms() })
             .expect("a fresh receiver is open");
         self.chat_room_subscribers
             .lock()
@@ -1557,8 +1424,7 @@ impl ChatPlatform for MockPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::FutureExt;
-    use futures::executor::block_on;
+	use futures::{FutureExt, executor::block_on};
 
     /// Decode a lowercase hex string into bytes.
     fn hex_bytes(hex: &str) -> Vec<u8> {
@@ -1603,10 +1469,7 @@ mod tests {
             Some(vec![7])
         );
         block_on(p.clear_core_storage(CoreStorageKey::AuthSession)).unwrap();
-        assert_eq!(
-            block_on(p.read_core_storage(CoreStorageKey::AuthSession)).unwrap(),
-            None
-        );
+		assert_eq!(block_on(p.read_core_storage(CoreStorageKey::AuthSession)).unwrap(), None);
     }
 
     #[test]
@@ -1669,9 +1532,7 @@ mod tests {
         assert_eq!(
             block_on(p.remote_permission(
                 &mock_product(),
-                latest::RemotePermissionRequest {
-                    permission: latest::RemotePermission::WebRtc
-                }
+				latest::RemotePermissionRequest { permission: latest::RemotePermission::WebRtc }
             ))
             .unwrap(),
             PermissionDecision::Deny
@@ -1696,9 +1557,7 @@ mod tests {
         assert_eq!(
             block_on(p.remote_permission(
                 &mock_product(),
-                latest::RemotePermissionRequest {
-                    permission: latest::RemotePermission::WebRtc
-                }
+				latest::RemotePermissionRequest { permission: latest::RemotePermission::WebRtc }
             ))
             .unwrap(),
             PermissionDecision::Deny
@@ -1714,9 +1573,7 @@ mod tests {
         assert_eq!(
             block_on(p.remote_permission(
                 &mock_product(),
-                latest::RemotePermissionRequest {
-                    permission: latest::RemotePermission::WebRtc
-                }
+				latest::RemotePermissionRequest { permission: latest::RemotePermission::WebRtc }
             ))
             .unwrap(),
             PermissionDecision::AllowAlways
@@ -1731,10 +1588,7 @@ mod tests {
         assert_eq!(p.navigations(), vec!["a".to_string(), "b".to_string()]);
 
         let p2 = MockPlatform::with_config(MockConfig {
-            faults: MockFaults {
-                navigate_error: Some("blocked".into()),
-                ..Default::default()
-            },
+			faults: MockFaults { navigate_error: Some("blocked".into()), ..Default::default() },
             ..Default::default()
         });
         assert!(block_on(p2.navigate_to("c".into())).is_err());
@@ -1761,10 +1615,7 @@ mod tests {
     #[test]
     fn notification_error_injected() {
         let p = MockPlatform::with_config(MockConfig {
-            faults: MockFaults {
-                notification_error: Some("denied".into()),
-                ..Default::default()
-            },
+			faults: MockFaults { notification_error: Some("denied".into()), ..Default::default() },
             ..Default::default()
         });
         let request = latest::HostPushNotificationRequest {
@@ -1787,11 +1638,7 @@ mod tests {
         assert_eq!(next_value(&mut stream), Some(Some(vec![1])), "seeded value");
 
         block_on(p.write("k".into(), vec![2])).expect("write succeeds");
-        assert_eq!(
-            next_value(&mut stream),
-            Some(Some(vec![2])),
-            "write reaches"
-        );
+		assert_eq!(next_value(&mut stream), Some(Some(vec![2])), "write reaches");
 
         block_on(p.clear("k".into())).expect("clear succeeds");
         assert_eq!(next_value(&mut stream), Some(None), "clear reaches");
@@ -1821,11 +1668,7 @@ mod tests {
         assert_eq!(next_value(&mut stream), Some(None), "seeded value");
 
         block_on(p.write("other".into(), vec![9])).expect("write succeeds");
-        assert_eq!(
-            next_value(&mut stream),
-            None,
-            "a write to another key woke this subscription"
-        );
+		assert_eq!(next_value(&mut stream), None, "a write to another key woke this subscription");
     }
 
     #[test]
@@ -1834,9 +1677,7 @@ mod tests {
         let mine = mock_product();
         let theirs = ProductContext::new("other.dot".to_string()).expect("product id is valid");
 
-        let id = block_on(p.begin_operation(&mine, "sync".into()))
-            .expect("begin succeeds")
-            .id;
+		let id = block_on(p.begin_operation(&mine, "sync".into())).expect("begin succeeds").id;
         assert_eq!(
             p.open_operations(),
             vec![OpenOperation {
@@ -1860,10 +1701,7 @@ mod tests {
     #[test]
     fn storage_error_injected() {
         let p = MockPlatform::with_config(MockConfig {
-            faults: MockFaults {
-                storage_error: Some("disk".into()),
-                ..Default::default()
-            },
+			faults: MockFaults { storage_error: Some("disk".into()), ..Default::default() },
             ..Default::default()
         });
         assert!(block_on(p.read("k".into())).is_err());
@@ -1889,11 +1727,9 @@ mod tests {
             feature_supported: false,
             ..Default::default()
         });
-        let response = block_on(
-            p.feature_supported(latest::HostFeatureSupportedRequest::Chain {
+		let response = block_on(p.feature_supported(latest::HostFeatureSupportedRequest::Chain {
                 genesis_hash: vec![0; 32],
-            }),
-        )
+		}))
         .unwrap();
         assert!(!response.supported);
     }
@@ -1902,10 +1738,7 @@ mod tests {
     fn theme_emits_configured_variant_then_stays_open() {
         let p = MockPlatform::new();
         let mut stream = p.subscribe_theme();
-        assert_eq!(
-            block_on(stream.next()).unwrap().unwrap().variant,
-            latest::ThemeVariant::Dark
-        );
+		assert_eq!(block_on(stream.next()).unwrap().unwrap().variant, latest::ThemeVariant::Dark);
         // A live subscription does not end after the current value.
         assert!(stream.next().now_or_never().is_none());
     }
@@ -1917,10 +1750,7 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            block_on(p.subscribe_theme().next())
-                .unwrap()
-                .unwrap()
-                .variant,
+			block_on(p.subscribe_theme().next()).unwrap().unwrap().variant,
             latest::ThemeVariant::Light
         );
     }
@@ -1944,9 +1774,7 @@ mod tests {
         let found = block_on(p.lookup_preimage(key).next()).unwrap().unwrap();
         assert_eq!(found, Some(vec![1, 2, 3]));
         // An unknown key misses.
-        let miss = block_on(p.lookup_preimage(vec![9; 32]).next())
-            .unwrap()
-            .unwrap();
+		let miss = block_on(p.lookup_preimage(vec![9; 32]).next()).unwrap().unwrap();
         assert_eq!(miss, None);
     }
 
@@ -1996,9 +1824,7 @@ mod tests {
     fn auth_states_record_in_order() {
         let p = MockPlatform::new();
         p.auth_state_changed(AuthState::Disconnected);
-        p.auth_state_changed(AuthState::Pairing {
-            deeplink: "dl".into(),
-        });
+		p.auth_state_changed(AuthState::Pairing { deeplink: "dl".into() });
         assert_eq!(p.auth_states().len(), 2);
     }
 
@@ -2018,17 +1844,16 @@ mod tests {
     }
 
     fn device_request(p: &MockPlatform, request: latest::HostDevicePermissionRequest) -> bool {
-        block_on(p.device_permission(&mock_product(), request)).expect("device permission answers")
-            == PermissionDecision::AllowAlways
+		block_on(p.device_permission(&mock_product(), request)).expect("device permission answers") ==
+			PermissionDecision::AllowAlways
     }
 
     fn remote_request(p: &MockPlatform, permission: latest::RemotePermission) -> bool {
-        block_on(p.remote_permission(
-            &mock_product(),
-            latest::RemotePermissionRequest { permission },
-        ))
-        .expect("remote permission answers")
-            == PermissionDecision::AllowAlways
+		block_on(
+			p.remote_permission(&mock_product(), latest::RemotePermissionRequest { permission }),
+		)
+		.expect("remote permission answers") ==
+			PermissionDecision::AllowAlways
     }
 
     #[test]
@@ -2062,20 +1887,11 @@ mod tests {
             device_permissions: PermissionPolicy::DenyAll,
             ..MockConfig::default()
         });
-        assert!(!device_request(
-            &p,
-            latest::HostDevicePermissionRequest::Camera
-        ));
+		assert!(!device_request(&p, latest::HostDevicePermissionRequest::Camera));
         p.grant_permission("Camera");
-        assert!(device_request(
-            &p,
-            latest::HostDevicePermissionRequest::Camera
-        ));
+		assert!(device_request(&p, latest::HostDevicePermissionRequest::Camera));
         // The grant is per permission, not a policy flip.
-        assert!(!device_request(
-            &p,
-            latest::HostDevicePermissionRequest::Microphone
-        ));
+		assert!(!device_request(&p, latest::HostDevicePermissionRequest::Microphone));
         assert_eq!(p.granted_permissions(), vec!["Camera".to_string()]);
     }
 
@@ -2100,14 +1916,8 @@ mod tests {
             "enforcing must not fall back to the allow-all policy",
         );
         p.grant_permission("Camera");
-        assert!(device_request(
-            &p,
-            latest::HostDevicePermissionRequest::Camera
-        ));
-        assert!(!device_request(
-            &p,
-            latest::HostDevicePermissionRequest::Location
-        ));
+		assert!(device_request(&p, latest::HostDevicePermissionRequest::Camera));
+		assert!(!device_request(&p, latest::HostDevicePermissionRequest::Location));
     }
 
     #[test]
@@ -2145,16 +1955,10 @@ mod tests {
         // the grant below silently miss.
         let p = MockPlatform::new();
         p.revoke_permission("Camera");
-        assert!(!device_request(
-            &p,
-            latest::HostDevicePermissionRequest::Camera
-        ));
+		assert!(!device_request(&p, latest::HostDevicePermissionRequest::Camera));
 
         p.grant_permission("Camera");
-        assert!(device_request(
-            &p,
-            latest::HostDevicePermissionRequest::Camera
-        ));
+		assert!(device_request(&p, latest::HostDevicePermissionRequest::Camera));
 
         // A grant that keyed on `Display` would read "access to a.example",
         // so it could never be issued before knowing the domains asked for,
@@ -2162,9 +1966,7 @@ mod tests {
         p.revoke_permission("Remote");
         assert!(!remote_request(
             &p,
-            latest::RemotePermission::Remote {
-                domains: vec!["a.example".to_string()],
-            }
+			latest::RemotePermission::Remote { domains: vec!["a.example".to_string()] }
         ));
         assert!(!remote_request(
             &p,
@@ -2200,9 +2002,8 @@ mod tests {
             &mock_product(),
             latest::HostChatPostMessageRequest {
                 room_id: room_id.to_string(),
-                payload: latest::ChatMessageContent::Text {
-                    text: body.to_string(),
-                },
+				payload: latest::ChatMessageContent::Text { text: body.to_string() },
+				alt: None,
             },
         ))
     }
@@ -2210,14 +2011,8 @@ mod tests {
     #[test]
     fn registering_a_room_twice_reports_the_second_as_existing() {
         let p = MockPlatform::new();
-        assert_eq!(
-            create_room(&p, "lobby"),
-            latest::ChatRoomRegistrationStatus::New
-        );
-        assert_eq!(
-            create_room(&p, "lobby"),
-            latest::ChatRoomRegistrationStatus::Exists
-        );
+		assert_eq!(create_room(&p, "lobby"), latest::ChatRoomRegistrationStatus::New);
+		assert_eq!(create_room(&p, "lobby"), latest::ChatRoomRegistrationStatus::Exists);
         // The repeat must not duplicate the room.
         assert_eq!(p.chat_rooms().len(), 1);
         assert_eq!(p.chat_rooms()[0].room_id, "lobby");
@@ -2236,9 +2031,7 @@ mod tests {
         assert_eq!(posted[0].message_id, first.message_id);
         assert_eq!(
             posted[0].payload,
-            latest::ChatMessageContent::Text {
-                text: "hello".to_string()
-            }
+			latest::ChatMessageContent::Text { text: "hello".to_string() }
         );
         assert_eq!(posted[1].message_id, second.message_id);
     }
@@ -2258,10 +2051,7 @@ mod tests {
     #[test]
     fn an_injected_chat_error_refuses_every_chat_entry_point() {
         let p = MockPlatform::with_config(MockConfig {
-            faults: MockFaults {
-                chat_error: Some("chat down".into()),
-                ..Default::default()
-            },
+			faults: MockFaults { chat_error: Some("chat down".into()), ..Default::default() },
             ..Default::default()
         });
         let product = mock_product();
@@ -2352,11 +2142,7 @@ mod tests {
             .expect("registering a room must deliver a replacement list")
             .expect("a replacement item")
             .expect("chat rooms stream is infallible here");
-        let ids: Vec<String> = replacement
-            .rooms
-            .into_iter()
-            .map(|room| room.room_id)
-            .collect();
+		let ids: Vec<String> = replacement.rooms.into_iter().map(|room| room.room_id).collect();
         assert_eq!(ids, vec!["first".to_string(), "second".to_string()]);
     }
 
@@ -2561,9 +2347,6 @@ mod tests {
         assert_eq!(block_on(p.read("k".into())).unwrap(), None);
         // Enforcement and the explicit denial are both gone, so the allow-all
         // policy answers again.
-        assert!(device_request(
-            &p,
-            latest::HostDevicePermissionRequest::Camera
-        ));
+		assert!(device_request(&p, latest::HostDevicePermissionRequest::Camera));
     }
 }

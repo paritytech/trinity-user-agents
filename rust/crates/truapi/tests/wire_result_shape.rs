@@ -10,35 +10,79 @@
 //! with a platform whose `Features` impl returns `Ok(supported = true)` and
 //! asserts:
 //!
-//! - A `system_feature_supported` request produces a response frame with
-//!   `messageType = Response` whose payload begins with `0x00` (Result::Ok),
-//!   `0x00` (the response wrapper's own V1 tag), followed by the encoded
-//!   `HostFeatureSupportedResponse`.
-//! - A `local_storage_read` request whose stub returns
-//!   `Err(HostLocalStorageReadError::Full)` produces a response frame with
-//!   `messageType = Response` whose payload begins with `0x01`
-//!   (Result::Err), `0x00` (CallError::Domain), `0x00` (the error wrapper's
-//!   own V1 tag), followed by the encoded `HostLocalStorageReadError::Full`.
+//! - A `system_feature_supported` request produces a response frame with `messageType = Response`
+//!   whose payload begins with `0x00` (Result::Ok), `0x00` (the response wrapper's own V1 tag),
+//!   followed by the encoded `HostFeatureSupportedResponse`.
+//! - A `local_storage_read` request whose stub returns `Err(HostLocalStorageReadError::Full)`
+//!   produces a response frame with `messageType = Response` whose payload begins with `0x01`
+//!   (Result::Err), `0x00` (CallError::Domain), `0x00` (the error wrapper's own V1 tag), followed
+//!   by the encoded `HostLocalStorageReadError::Full`.
 //!
 //! Both halves prove the wire layout stays in lockstep with the TS
 //! `S.Result(okCodec, S.CallError(errCodec))` composition the generated
 //! client decodes a `Response` frame's payload through.
 
-use std::sync::Arc;
+use std::{
+	sync::{Arc, Condvar, Mutex},
+	time::{Duration, Instant},
+};
 
 use parity_scale_codec::{Decode, Encode};
 
 use truapi::{CallError, v01, versioned::account};
 
-use truapi::TrUApiCore;
-use truapi::frame::{
+use truapi::{
+	TrUApiCore,
+	frame::{
     MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_START,
-    PROTOCOL_ERROR_METHOD_ID, PROTOCOL_ERROR_TRAIT_ID, Payload, ProtocolErrorV1, ProtocolMessage,
-    VersionedProtocolError, request_ids, subscription_ids,
+		PROTOCOL_ERROR_METHOD_ID, PROTOCOL_ERROR_TRAIT_ID, Payload, ProtocolErrorV1,
+		ProtocolMessage, VersionedProtocolError, request_ids, subscription_ids,
+	},
 };
 
 mod common;
-use common::{RecordingTransport, WireShapePlatform, test_runtime_config, test_spawner};
+use common::{WireShapePlatform, test_runtime_config, test_spawner};
+use truapi::transport::Transport;
+
+/// Transport stub that records every frame sent through it, for asserting
+/// what the core emits during a dispatch.
+#[derive(Default)]
+struct RecordingTransport {
+	/// Frames captured in send order.
+	sent: Mutex<Vec<ProtocolMessage>>,
+	recorded: Condvar,
+}
+
+impl RecordingTransport {
+	/// Wait until at least `count` frames have been recorded, or `timeout`
+	/// elapses. A subscription's frames are produced by the spawner, so a
+	/// dispatch that starts one returns before they are sent.
+	fn wait_for(&self, count: usize, timeout: Duration) {
+		let deadline = Instant::now() + timeout;
+		let mut sent = self.sent.lock().unwrap();
+		while sent.len() < count {
+			let now = Instant::now();
+			if now >= deadline {
+				break;
+			}
+			let (guard, _) = self.recorded.wait_timeout(sent, deadline - now).unwrap();
+			sent = guard;
+		}
+	}
+}
+
+impl Transport for RecordingTransport {
+	fn send(&self, message: ProtocolMessage) {
+		self.sent.lock().unwrap().push(message);
+		self.recorded.notify_all();
+	}
+	fn on_message(
+		&self,
+		_handler: Box<dyn Fn(ProtocolMessage) + Send + Sync>,
+	) -> Box<dyn FnOnce()> {
+		Box::new(|| {})
+	}
+}
 
 const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
 
@@ -52,9 +96,7 @@ fn dispatch(core: &TrUApiCore, frame: ProtocolMessage) -> ProtocolMessage {
 #[test]
 fn feature_supported_ok_response_uses_ok_discriminant() {
     let core = make_core();
-    let request = v01::HostFeatureSupportedRequest::Chain {
-        genesis_hash: vec![0u8; 32],
-    };
+	let request = v01::HostFeatureSupportedRequest::Chain { genesis_hash: vec![0u8; 32] };
     let ids = request_ids("system_feature_supported").expect("known request method");
     let frame = ProtocolMessage {
         request_id: "p:1".into(),
@@ -86,9 +128,7 @@ fn feature_supported_ok_response_uses_ok_discriminant() {
 #[test]
 fn get_chain_info_ok_response_round_trips_over_the_wire() {
     let core = make_core();
-    let request = v01::RemoteChainInfoRequest {
-        chain: v01::ChainIdentifier::AssetHub,
-    };
+	let request = v01::RemoteChainInfoRequest { chain: v01::ChainIdentifier::AssetHub };
     let ids = request_ids("chain_get_chain_info").expect("known request method");
     let frame = ProtocolMessage {
         request_id: "p:9".into(),
@@ -108,22 +148,18 @@ fn get_chain_info_ok_response_round_trips_over_the_wire() {
     let expected: Result<
         truapi::versioned::chain::RemoteChainInfoResponse,
         CallError<truapi::versioned::chain::RemoteChainInfoError>,
-    > = Ok(truapi::versioned::chain::RemoteChainInfoResponse::V1(
-        v01::RemoteChainInfoResponse {
+	> = Ok(truapi::versioned::chain::RemoteChainInfoResponse::V1(v01::RemoteChainInfoResponse {
             network: "paseo".to_string(),
             chain: v01::ChainIdentifier::AssetHub,
             genesis_hash: [0xaa; 32],
-        },
-    ));
+	}));
     assert_eq!(response.payload.value, expected.encode());
 }
 
 #[test]
 fn get_chain_info_unserved_chain_uses_err_discriminant() {
     let core = make_core();
-    let request = v01::RemoteChainInfoRequest {
-        chain: v01::ChainIdentifier::Bulletin,
-    };
+	let request = v01::RemoteChainInfoRequest { chain: v01::ChainIdentifier::Bulletin };
     let ids = request_ids("chain_get_chain_info").expect("known request method");
     let frame = ProtocolMessage {
         request_id: "p:10".into(),
@@ -150,9 +186,7 @@ fn get_chain_info_unserved_chain_uses_err_discriminant() {
 #[test]
 fn local_storage_read_err_response_uses_err_discriminant() {
     let core = make_core();
-    let request = v01::HostLocalStorageReadRequest {
-        key: "missing".to_string(),
-    };
+	let request = v01::HostLocalStorageReadRequest { key: "missing".to_string() };
     let ids = request_ids("local_storage_read").expect("known request method");
     let frame = ProtocolMessage {
         request_id: "p:2".into(),
@@ -224,10 +258,7 @@ fn assert_request_returns_domain_error<Wrapper: Encode>(
     assert_eq!(response.payload.trait_id, ids.trait_id);
     assert_eq!(response.payload.method_id, ids.method_id);
     assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
-    assert_eq!(
-        response.payload.value,
-        versioned_result_err_payload(wrapped_error)
-    );
+	assert_eq!(response.payload.value, versioned_result_err_payload(wrapped_error));
 }
 
 fn assert_subscription_start_interrupts_error<Wrapper: Encode>(
@@ -260,10 +291,7 @@ fn assert_subscription_start_interrupts_error<Wrapper: Encode>(
     assert_eq!(sent[0].payload.trait_id, ids.trait_id);
     assert_eq!(sent[0].payload.method_id, ids.method_id);
     assert_eq!(sent[0].payload.message_type, MESSAGE_TYPE_INTERRUPT);
-    assert_eq!(
-        sent[0].payload.value,
-        versioned_interrupt_err_payload(wrapped_error)
-    );
+	assert_eq!(sent[0].payload.value, versioned_interrupt_err_payload(wrapped_error));
 }
 
 #[test]
@@ -320,7 +348,7 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
     // assertion would race the dispatch. That the grant is what refuses a
     // foreign handle is asserted in
     // `runtime::signing_host::tests::a_foreign_proof_is_refused_when_the_owner_granted_nothing`
-    // and end to end by `make e2e-cross-product-ringvrf`.
+	// and end to end by `make e2e-cross-product SCENARIO=ringvrf`.
     let expected =
         versioned_result_err_payload(truapi::versioned::account::HostAccountCreateProofError::V1(
             v01::HostAccountCreateProofError::Rejected,
@@ -331,11 +359,7 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 #[test]
 fn deferred_payment_requests_return_dotli_not_implemented_errors() {
     let core = make_core();
-    let request = v01::HostPaymentRequest {
-        from: None,
-        amount: 1,
-        destination: [0u8; 32],
-    };
+	let request = v01::HostPaymentRequest { from: None, amount: 1, destination: [0u8; 32] };
 
     assert_request_returns_domain_error(
         &core,
@@ -362,9 +386,7 @@ fn deferred_payment_subscriptions_interrupt_dotli_not_implemented_errors() {
         ),
     );
 
-    let status = v01::HostPaymentStatusSubscribeRequest {
-        payment_id: "payment-id".to_string(),
-    };
+	let status = v01::HostPaymentStatusSubscribeRequest { payment_id: "payment-id".to_string() };
     assert_subscription_start_interrupts_error(
         &core,
         "p:status",
@@ -390,9 +412,7 @@ fn statement_store_subscribe_topic_limit_interrupts_with_typed_error() {
         truapi::versioned::statement_store::RemoteStatementStoreSubscribeRequest::V1(request)
             .encode(),
         truapi::versioned::statement_store::RemoteStatementStoreSubscribeError::V1(
-            v01::GenericError {
-                reason: "MatchAny has 129 topics, maximum is 128".to_string(),
-            },
+			v01::GenericError { reason: "MatchAny has 129 topics, maximum is 128".to_string() },
         ),
     );
 }
@@ -424,11 +444,7 @@ fn malformed_result_subscription_start_interrupts_with_malformed_frame() {
     assert_eq!(sent[0].payload.method_id, ids.method_id);
     assert_eq!(sent[0].payload.message_type, MESSAGE_TYPE_INTERRUPT);
     assert_eq!(sent[0].payload.value.first(), Some(&0x01), "Result::Err");
-    assert_eq!(
-        sent[0].payload.value.get(1),
-        Some(&0x03),
-        "CallError::MalformedFrame"
-    );
+	assert_eq!(sent[0].payload.value.get(1), Some(&0x03), "CallError::MalformedFrame");
 
     let mut payload = &sent[0].payload.value[..];
     let interrupt = Result::<
@@ -549,10 +565,7 @@ fn a_chain_follow_that_cannot_start_interrupts_with_the_failure() {
     let ids = subscription_ids("chain_follow_head_subscribe").expect("known subscription method");
     let transport = Arc::new(RecordingTransport::default());
     let value = truapi::versioned::chain::RemoteChainHeadFollowRequest::V1(
-        v01::RemoteChainHeadFollowRequest {
-            genesis_hash: vec![0u8; 32],
-            with_runtime: false,
-        },
+		v01::RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
     )
     .encode();
 
@@ -581,11 +594,8 @@ fn a_chain_follow_that_cannot_start_interrupts_with_the_failure() {
     assert!(payload.is_empty());
     match interrupt {
         Err(CallError::HostFailure { reason }) => {
-            assert!(
-                reason.contains("remote_chain_head_follow"),
-                "unexpected reason: {reason}"
-            );
-        }
+			assert!(reason.contains("remote_chain_head_follow"), "unexpected reason: {reason}");
+		},
         other => panic!("expected the follow failure, got {other:?}"),
     }
 }
@@ -661,8 +671,7 @@ fn unknown_wire_discriminant_returns_correlated_protocol_error() {
 #[test]
 fn subscription_start_receive_stop_through_wire_boundary() {
     use std::time::{Duration, Instant};
-    use truapi::frame::MESSAGE_TYPE_STOP;
-    use truapi::transport::Transport;
+	use truapi::{frame::MESSAGE_TYPE_STOP, transport::Transport};
 
     let core = make_core();
     let transport = Arc::new(RecordingTransport::default());
@@ -688,14 +697,8 @@ fn subscription_start_receive_stop_through_wire_boundary() {
         assert!(Instant::now() < deadline, "no initial _receive frame");
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert_eq!(
-        transport.sent.lock().unwrap()[0].payload.trait_id,
-        ids.trait_id
-    );
-    assert_eq!(
-        transport.sent.lock().unwrap()[0].payload.method_id,
-        ids.method_id
-    );
+	assert_eq!(transport.sent.lock().unwrap()[0].payload.trait_id, ids.trait_id);
+	assert_eq!(transport.sent.lock().unwrap()[0].payload.method_id, ids.method_id);
 
     // Stop the subscription, then push a session change. A live subscription
     // would emit a Connected `_receive`; a stopped one must stay silent.
@@ -711,8 +714,7 @@ fn subscription_start_receive_stop_through_wire_boundary() {
     futures::executor::block_on(core.dispatch(stop, dyn_transport));
     std::thread::sleep(Duration::from_millis(50));
 
-    core.session_state()
-        .set_session(truapi::host_logic::session::SessionInfo {
+	core.session_state().set_session(truapi::host_logic::session::SessionInfo {
             public_key: [7u8; 32],
             sso: None,
             root_entropy_source: None,
@@ -736,9 +738,7 @@ fn subscription_start_receive_stop_through_wire_boundary() {
 #[test]
 fn coin_payment_request_reports_unsupported_on_the_wire() {
     let core = make_core();
-    let request = v01::HostCoinPaymentQueryPurseRequest {
-        purse: v01::MAIN_PURSE,
-    };
+	let request = v01::HostCoinPaymentQueryPurseRequest { purse: v01::MAIN_PURSE };
     let ids = request_ids("coin_payment_query_purse").expect("known request method");
     let frame = ProtocolMessage {
         request_id: "p:coin".into(),

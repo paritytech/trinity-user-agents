@@ -143,7 +143,7 @@ Rules:
    the user reviews the raw bytes before approving, so the "never fall back to raw
    silently" rule (which guards the actual signing path) does not apply to this display.
    Statement signing
-   uses the statement-sign prompt router, identity/preimage/account-access/alias reviews
+   uses the statement-sign prompt router, identity/account-access/alias reviews
    reuse the permission prompt (prompt-only — nothing is persisted, the core owns
    permission memory), and proof/allowance/VRF reviews reuse their native prompt routers.
    Rust-side cancellation of a pending confirmation resolves false immediately; an

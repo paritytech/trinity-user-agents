@@ -11,10 +11,7 @@ use super::account::DerivationIndex;
 /// first submission. `AutoSigning` must be requested explicitly through this
 /// call.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum AllocatableResource {
     /// Statement Store slot allowance for the product's own allowance account.
     StatementStoreAllowance,

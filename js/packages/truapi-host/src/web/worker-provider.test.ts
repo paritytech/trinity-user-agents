@@ -282,6 +282,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
         coinageWallet: false,
         game: false,
         contacts: false,
+        scanner: false,
       },
       // Null under `bun test`: the `import.meta.env.DEV` gate reads undefined,
       // so no dial resolves and the worker builds no tap.
@@ -460,6 +461,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       coinageWallet: false,
       game: false,
       contacts: false,
+      scanner: false,
     });
   });
 
@@ -485,6 +487,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       coinageWallet: false,
       game: false,
       contacts: false,
+      scanner: false,
     });
   });
 
@@ -767,6 +770,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       identityBackend: false,
       coinageWallet: false,
       contacts: false,
+      scanner: false,
     });
   });
 

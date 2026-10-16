@@ -2,16 +2,15 @@
 
 use super::*;
 use crate::test_support::statement;
-use truapi::api::StatementStore;
-use truapi::versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedRequest;
+use truapi::{
+	api::StatementStore,
+	versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedRequest,
+};
 
 /// A platform that approves the allocation, so a refusal below is the
 /// withholding rather than a declined confirmation.
 fn granting_platform() -> Arc<StubPlatform> {
-    Arc::new(StubPlatform {
-        resource_allocation_confirmed: true,
-        ..StubPlatform::default()
-    })
+	Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() })
 }
 
 /// Ask for `resources` and return the per-resource outcomes.
@@ -50,10 +49,7 @@ fn a_withheld_resource_is_refused_while_the_others_are_granted() {
                 v01::AllocatableResource::StatementStoreAllowance,
             ],
         ),
-        vec![
-            v01::AllocationOutcome::Rejected,
-            v01::AllocationOutcome::Allocated,
-        ],
+		vec![v01::AllocationOutcome::Rejected, v01::AllocationOutcome::Allocated,],
     );
 }
 
@@ -126,10 +122,7 @@ fn a_later_set_replaces_the_earlier_one() {
                 v01::AllocatableResource::BulletinAllowance,
             ],
         ),
-        vec![
-            v01::AllocationOutcome::Allocated,
-            v01::AllocationOutcome::Rejected,
-        ],
+		vec![v01::AllocationOutcome::Allocated, v01::AllocationOutcome::Rejected,],
     );
 }
 
