@@ -5586,11 +5586,14 @@ dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
  "hex",
+ "js-sys",
+ "qrcode",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 1.0.69",
  "url",
+ "wasm-bindgen",
 ]
 
 [[package]]

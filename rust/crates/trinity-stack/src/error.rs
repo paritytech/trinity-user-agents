@@ -119,6 +119,9 @@ pub enum Error {
 	/// A spec is not a chain spec this crate can read.
 	#[error("malformed spec: {0}")]
 	MalformedSpec(String),
+	/// The text does not fit in a QR code.
+	#[error("cannot draw a QR code: {0}")]
+	QrCode(String),
 }
 
 impl Error {
@@ -160,6 +163,7 @@ impl Error {
 			Self::SpecDigest => "spec-digest",
 			Self::SpecGenesis(_) => "spec-genesis",
 			Self::MalformedSpec(_) => "malformed-spec",
+			Self::QrCode(_) => "qr-code",
 		}
 	}
 }
