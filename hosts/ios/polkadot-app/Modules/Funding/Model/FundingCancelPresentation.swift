@@ -36,15 +36,19 @@ enum FundingCancelPresentation {
 
     /// Whether a withdrawal whose cancel the user accepted was paid out
     /// anyway: the payout landed before the provider could stop it.
-    static func cancelCameTooLate(_ status: FundingStatus, accepted: Bool) -> Bool {
-        guard accepted, case .sent = status else { return false }
-        return true
+    static func cancelCameTooLate(_ status: FundingStatus) -> Bool {
+        if case .paidOutAfterCancel = status { return true }
+        return false
     }
 
     /// The line for a session whose cancel is with the provider, and whether
     /// it reads as a warning. `compact` leaves out a refusal's reason, for a
     /// list row.
-    static func line(for status: FundingStatus, compact: Bool = false) -> (text: String, isWarning: Bool)? {
+    static func line(
+        for status: FundingStatus,
+        direction: FundingDirection = .in,
+        compact: Bool = false
+    ) -> (text: String, isWarning: Bool)? {
         switch status {
         case .cancelRequested:
             (String(localized: .Funding.activityCancelRequested), false)
@@ -54,7 +58,9 @@ enum FundingCancelPresentation {
             if compact {
                 (String(localized: .Funding.activityCancelRefused), true)
             } else {
-                (String(localized: .Funding.cancelRefusedNote(reason: reason)), true)
+                direction == .out
+                    ? (String(localized: .Funding.cancelRefusedWithdrawal(reason: reason)), true)
+                    : (String(localized: .Funding.cancelRefusedTopUp(reason: reason)), true)
             }
         case .cancelling:
             (String(localized: .Funding.activityCancelling), false)

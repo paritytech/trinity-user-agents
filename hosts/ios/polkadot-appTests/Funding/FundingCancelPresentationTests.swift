@@ -50,9 +50,9 @@ struct FundingCancelPresentationTests {
 
     @Test
     func aPayoutAfterAnAcceptedCancelSaysTheCancelCameTooLate() {
-        #expect(FundingCancelPresentation.cancelCameTooLate(.sent, accepted: true))
-        #expect(!FundingCancelPresentation.cancelCameTooLate(.sent, accepted: false))
-        #expect(!FundingCancelPresentation.cancelCameTooLate(.cancelling, accepted: true))
+        #expect(FundingCancelPresentation.cancelCameTooLate(.paidOutAfterCancel))
+        #expect(!FundingCancelPresentation.cancelCameTooLate(.sent))
+        #expect(!FundingCancelPresentation.cancelCameTooLate(.cancelling))
     }
 
     @Test

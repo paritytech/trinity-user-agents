@@ -29,7 +29,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The provider already started, so it is too late to cancel."
+            "value" : "Too late to cancel. Your CASH is already on its way."
           }
         }
       }
@@ -1184,7 +1184,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Too late to cancel, your payment is on its way"
+            "value" : "This can't be cancelled right now"
           }
         }
       }
@@ -1987,7 +1987,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The provider can cancel. Review the offer"
+            "value" : "Cancel offer waiting for you"
           }
         }
       }
@@ -1998,7 +1998,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The provider couldn't cancel"
+            "value" : "The provider can't cancel"
           }
         }
       }
@@ -2031,7 +2031,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "We'll ask the provider to stop. If your payment is already on its way, the provider may offer to cancel for a fee."
+            "value" : "We'll ask the provider to stop. If your payment is already on its way, the provider decides whether it can still cancel, and may charge a fee."
           }
         }
       }
@@ -2042,18 +2042,40 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This top-up already reached your balance and can no longer be cancelled."
+            "value" : "Too late to cancel. Your CASH is already on its way."
           }
         }
       }
     },
-    "cancel.refusedNote" : {
+    "cancel.refusedTopUp" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The provider can't cancel: %1$(reason)@. Your session continues."
+            "value" : "The provider can't cancel this: %1$(reason)@. Your top-up continues."
+          }
+        }
+      }
+    },
+    "cancel.refusedWithdrawal" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider can't cancel this: %1$(reason)@. Your withdrawal continues."
+          }
+        }
+      }
+    },
+    "offer.titleWithdraw" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel this withdrawal?"
           }
         }
       }
@@ -2064,7 +2086,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Cancel on these terms?"
+            "value" : "Cancel this top-up?"
           }
         }
       }
@@ -2075,7 +2097,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The provider can still cancel. It keeps a fee and returns the rest to your balance."
+            "value" : "The provider can still cancel. It keeps a fee and returns the rest to you."
           }
         }
       }
@@ -2086,7 +2108,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Provider fee"
+            "value" : "Fee"
           }
         }
       }
@@ -2097,7 +2119,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Back to your balance"
+            "value" : "You get back"
           }
         }
       }
@@ -2141,7 +2163,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "The offer expired. Your session continues."
+            "value" : "The offer expired before you accepted it."
           }
         }
       }
@@ -2152,7 +2174,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "There's no cancel offer to answer anymore."
+            "value" : "There's no offer to accept right now."
           }
         }
       }

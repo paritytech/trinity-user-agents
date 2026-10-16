@@ -267,7 +267,6 @@ extension FundingFlowModel {
             defer { isAnsweringOffer = false }
             do {
                 let answer = try await runtime.confirmFundingCancel(intent: intent, terms: terms)
-                if answer == .accepted { FundingAcceptedCancels.remember(intent) }
                 toast = FundingCancelPresentation.after(answer)
             } catch {
                 Logger.shared.error("[funding] \(intent): answering the cancel offer failed: \(error)")
