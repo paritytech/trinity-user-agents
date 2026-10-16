@@ -449,3 +449,68 @@ fn the_host_stops_a_render_and_the_worker_drops_its_task() {
 		})
 	);
 }
+
+#[test]
+fn a_stopped_worker_writes_what_it_holds_before_it_ends() {
+	let host = Arc::new(TestHost::default());
+	let worker = WasmWorker::new(env(host.clone()), &guest("stop_flush")).unwrap();
+	let stop = worker.stopper();
+	let lines = Arc::default();
+	let running = spawn(worker, &lines);
+	wait_for_line(&lines, "running");
+	std::thread::sleep(std::time::Duration::from_millis(50));
+
+	stop.stop();
+
+	let outcome = running.join().unwrap();
+	assert!(matches!(outcome, Err(WasmWorkerError::Stopped)), "{outcome:?}");
+	let lines = lines.lock().unwrap().clone();
+	let flushed: u32 = lines
+		.iter()
+		.find_map(|line| line.strip_prefix("flushed "))
+		.unwrap_or_else(|| panic!("no flush: {lines:?}"))
+		.parse()
+		.unwrap();
+	assert!(flushed > 0, "{lines:?}");
+	let stored = host.storage.lock().unwrap().get("count").cloned().unwrap();
+	assert_eq!(u32::from_le_bytes(stored.try_into().unwrap()), flushed);
+}
+
+#[test]
+fn a_stop_ends_the_worker_at_the_end_of_its_grace_time() {
+	let host = Arc::new(TestHost::default());
+	host.storage.lock().unwrap().insert("hold".to_string(), vec![1]);
+	let worker = WasmWorker::new(env(host.clone()), &guest("stop_flush"))
+		.unwrap()
+		.with_stop_grace(std::time::Duration::from_millis(200));
+	let stop = worker.stopper();
+	let lines = Arc::default();
+	let running = spawn(worker, &lines);
+	wait_for_line(&lines, "running");
+
+	let stopped = std::time::Instant::now();
+	stop.stop();
+
+	let outcome = running.join().unwrap();
+	let elapsed = stopped.elapsed();
+	assert!(matches!(outcome, Err(WasmWorkerError::Stopped)), "{outcome:?}");
+	assert!(elapsed >= std::time::Duration::from_millis(200), "{elapsed:?}");
+	assert!(elapsed < truapi::DEFAULT_STOP_GRACE, "{elapsed:?}");
+	let lines = lines.lock().unwrap().clone();
+	assert!(lines.contains(&"stopping".to_string()), "{lines:?}");
+	assert!(!host.storage.lock().unwrap().contains_key("count"));
+}
+
+#[test]
+fn a_worker_stopped_before_it_runs_does_not_start() {
+	let worker = WasmWorker::new(env(TestHost::default()), &guest("stop_flush")).unwrap();
+	let stop = truapi::WorkerStop::new();
+	let worker = worker.with_stopper(stop.clone());
+	stop.stop();
+	let lines = Arc::default();
+
+	let outcome = spawn(worker, &lines).join().unwrap();
+
+	assert!(matches!(outcome, Err(WasmWorkerError::Stopped)), "{outcome:?}");
+	assert!(lines.lock().unwrap().is_empty());
+}

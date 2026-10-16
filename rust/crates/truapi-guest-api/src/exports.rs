@@ -8,6 +8,10 @@
 //! is woken. When the host stops a call, the executor drops its task. When the
 //! entry point returns, the executor reports the outcome to the host and polls
 //! nothing again.
+//!
+//! When the host stops the worker, one more task runs the handlers of
+//! [`on_stop_handler`], one after the other, and then ends the worker. The
+//! other tasks continue meanwhile, so the handlers can wait for them.
 
 use core::{
 	cell::{Cell, RefCell},
@@ -44,7 +48,13 @@ thread_local! {
 	static ENDED: Cell<bool> = const { Cell::new(false) };
 	/// The task that answers each call the host started and did not stop.
 	static HOST_CALLS: RefCell<HashMap<u32, u64>> = RefCell::new(HashMap::new());
+	/// The handlers that run when the host stops the worker.
+	static STOP_HANDLERS: RefCell<Vec<StopHandler>> = const { RefCell::new(Vec::new()) };
+	/// The task that runs the stop handlers, after the host stopped the worker.
+	static STOP_TASK: Cell<Option<u64>> = const { Cell::new(None) };
 }
+
+type StopHandler = Box<dyn FnOnce() -> Task>;
 
 /// Tasks woken and not yet polled, in the order of their wakes.
 static WOKEN: Mutex<VecDeque<u64>> = Mutex::new(VecDeque::new());
@@ -103,6 +113,37 @@ pub fn start(entry: impl Future<Output = Result<(), Error>> + 'static) {
 		}
 	};
 	insert(ENTRY, Box::pin(entry));
+	run_woken();
+}
+
+/// Run `handler` when the host stops the worker. See [`on_stop`].
+pub fn on_stop_handler<Handler, Done>(handler: Handler)
+where
+	Handler: FnOnce() -> Done + 'static,
+	Done: Future<Output = ()> + 'static,
+{
+	if ENDED.get() || STOP_TASK.get().is_some() {
+		return;
+	}
+	STOP_HANDLERS.with_borrow_mut(|handlers| {
+		handlers.push(Box::new(move || -> Task { Box::pin(handler()) }));
+	});
+}
+
+/// The host stops the worker: run the stop handlers in a new task, then end
+/// the worker. The other tasks run until then.
+pub fn on_stop() {
+	if ENDED.get() || STOP_TASK.get().is_some() {
+		return;
+	}
+	let handlers = STOP_HANDLERS.with_borrow_mut(core::mem::take);
+	let task = spawn_task(Box::pin(async move {
+		for handler in handlers {
+			handler().await;
+		}
+		imports::finish(1, core::ptr::null(), 0);
+	}));
+	STOP_TASK.set(Some(task));
 	run_woken();
 }
 
@@ -175,7 +216,7 @@ fn run_woken() {
 		let waker = Waker::from(waker);
 		if future.as_mut().poll(&mut Context::from_waker(&waker)).is_ready() {
 			WAKERS.with_borrow_mut(|wakers| wakers.remove(&task));
-			if task == ENTRY {
+			if task == ENTRY || STOP_TASK.get() == Some(task) {
 				end();
 				return;
 			}
