@@ -2,6 +2,7 @@ import type {
   AuthState,
   ChatPlatform,
   PermissionDecision,
+  PocketPlatform,
   ProductContext,
   RequiredHostCallbacks,
 } from "@parity/truapi-host";
@@ -35,6 +36,8 @@ export interface HostCallbackOptions {
   onPermissionDecided?: () => void;
   /** Where product workers' chat rooms and messages go. Without it, Chat is `Unsupported`. */
   chat?: Required<ChatPlatform>;
+  /** The Pocket cards each product sees. Without it, Pocket is `Unsupported`. */
+  pocket?: Required<PocketPlatform>;
 }
 
 const DECISIONS: PromptChoice<PermissionDecision>[] = [
@@ -47,9 +50,9 @@ const DECISIONS: PromptChoice<PermissionDecision>[] = [
  * The host side of the core: storage, chain access, and the prompts through
  * which the user answers what a product asks for.
  *
- * Contacts, Pocket and live OS permission status are left out, so the core
- * answers those product calls `Unsupported`. Chat is served when `chat` is
- * given.
+ * Contacts and live OS permission status are left out, so the core answers
+ * those product calls `Unsupported`. Chat and Pocket are served when `chat`
+ * and `pocket` are given.
  */
 export function createHostCallbacks(
   options: HostCallbackOptions,
@@ -63,6 +66,7 @@ export function createHostCallbacks(
     onNetworkAsked,
     onPermissionDecided,
     chat,
+    pocket,
   } = options;
   const knownGenesis = new Set(
     network.supportedChains.chains.map((chain) =>
@@ -196,6 +200,7 @@ export function createHostCallbacks(
       endOperation: () => Promise.resolve(),
     },
     ...(chat ? { chat } : {}),
+    ...(pocket ? { pocket } : {}),
   };
 }
 

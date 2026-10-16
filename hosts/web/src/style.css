@@ -1048,6 +1048,47 @@ body[data-surface="pocket"] .stage-empty {
   color: var(--pocket-secondary);
 }
 
+/* A card its product backs opens on a press, and its live face covers the bundled one. */
+.pocket-product[role="button"] {
+  cursor: pointer;
+}
+
+.pocket-product:focus-visible {
+  outline: 2px solid var(--pocket-primary);
+  outline-offset: 2px;
+}
+
+.pocket-face[hidden] {
+  display: none;
+}
+
+.pocket-live {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* The face fills the card, as the native card frame sizes it. */
+.pocket-live > .pr-root {
+  height: 100%;
+}
+
+.pocket-live > .pr-root > * {
+  flex: 1 0 auto;
+  box-sizing: border-box;
+}
+
+.pocket-status {
+  margin: 0;
+  padding: 0 20px 16px;
+  font: 400 14px/20px var(--pocket-body-font);
+  color: var(--pocket-secondary);
+}
+
+.pocket-status:empty {
+  display: none;
+}
+
 /*
  * The Chat screen, laid out like the Polkadot app's chat list and feed: the
  * large "Chats" title, 20 px bubbles with a 6 px inner corner, incoming on the
@@ -1601,7 +1642,41 @@ body[data-surface="chat"] .stage-empty {
   color: var(--chat-danger);
 }
 
-/* What a product's renderer tree draws: host tokens only. */
+/*
+ * What a product's renderer tree draws: host tokens only. Each host screen
+ * that draws trees sets the --pr-* tokens; Chat and Pocket both use the dark
+ * Berlin Night values, the theme the Pocket RFC fixes for card faces.
+ */
+.chat-screen {
+  --pr-bg: var(--chat-bg);
+  --pr-surface: var(--chat-surface);
+  --pr-surface-raised: var(--chat-surface-raised);
+  --pr-line: var(--chat-line);
+  --pr-primary: var(--chat-primary);
+  --pr-secondary: var(--chat-secondary);
+  --pr-tertiary: var(--chat-tertiary);
+  --pr-success: var(--chat-success);
+  --pr-danger: var(--chat-danger);
+  --pr-warning: var(--chat-warning);
+  --pr-title-font: var(--chat-title-font);
+  --pr-body-font: var(--chat-body-font);
+}
+
+.pocket-screen {
+  --pr-bg: var(--pocket-bg);
+  --pr-surface: #17181c;
+  --pr-surface-raised: #22232a;
+  --pr-line: #2a2b33;
+  --pr-primary: var(--pocket-primary);
+  --pr-secondary: var(--pocket-secondary);
+  --pr-tertiary: #5d606a;
+  --pr-success: #4ade80;
+  --pr-danger: #ff8f8f;
+  --pr-warning: #ffd37f;
+  --pr-title-font: var(--pocket-title-font);
+  --pr-body-font: var(--pocket-body-font);
+}
+
 .pr-root {
   display: flex;
   flex-direction: column;
@@ -1638,39 +1713,39 @@ body[data-surface="chat"] .stage-empty {
 }
 
 .pr-type-headline {
-  font: 700 24px/32px var(--chat-title-font);
+  font: 700 24px/32px var(--pr-title-font);
 }
 
 .pr-type-title {
-  font: 600 16px/22px var(--chat-title-font);
+  font: 600 16px/22px var(--pr-title-font);
 }
 
 .pr-type-body-large {
-  font: 400 16px/22px var(--chat-body-font);
+  font: 400 16px/22px var(--pr-body-font);
 }
 
 .pr-type-body {
-  font: 400 14px/20px var(--chat-body-font);
+  font: 400 14px/20px var(--pr-body-font);
 }
 
 .pr-type-body-small {
-  font: 400 12px/16px var(--chat-body-font);
+  font: 400 12px/16px var(--pr-body-font);
 }
 
 .pr-button {
   min-height: 36px;
   padding: 0 16px;
-  border: 1px solid var(--chat-line);
+  border: 1px solid var(--pr-line);
   border-radius: 999px;
   background: transparent;
-  color: var(--chat-primary);
-  font: 600 14px/1 var(--chat-body-font);
+  color: var(--pr-primary);
+  font: 600 14px/1 var(--pr-body-font);
   cursor: pointer;
 }
 
 .pr-button-primary {
-  border-color: var(--chat-primary);
-  background: var(--chat-primary);
+  border-color: var(--pr-primary);
+  background: var(--pr-primary);
   color: #0b0c0f;
 }
 
@@ -1690,15 +1765,15 @@ body[data-surface="chat"] .stage-empty {
 
 .pr-field-label {
   font-size: 12px;
-  color: var(--chat-secondary);
+  color: var(--pr-secondary);
 }
 
 .pr-input {
   padding: 8px 12px;
-  border: 1px solid var(--chat-line);
+  border: 1px solid var(--pr-line);
   border-radius: 12px;
-  background: var(--chat-surface);
-  color: var(--chat-primary);
+  background: var(--pr-surface);
+  color: var(--pr-primary);
   font: inherit;
 }
 

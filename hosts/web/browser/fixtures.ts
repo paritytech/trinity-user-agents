@@ -334,9 +334,17 @@ export async function serveNames(
  * A worker that chats, built from `browser/chat-worker.ts` into the one
  * module a worker archive holds. It reaches the host only through TrUAPI.
  */
-export async function buildChatWorker(): Promise<string> {
+export function buildChatWorker(): Promise<string> {
+  return buildFixture("chat-worker.ts");
+}
+
+/**
+ * One of this directory's product fixtures, such as `pocket-worker.ts`,
+ * built into a single module that reaches the host only through TrUAPI.
+ */
+export async function buildFixture(file: string): Promise<string> {
   const built = await Bun.build({
-    entrypoints: [fileURLToPath(new URL("./chat-worker.ts", import.meta.url))],
+    entrypoints: [fileURLToPath(new URL(`./${file}`, import.meta.url))],
     format: "esm",
     target: "browser",
     minify: false,

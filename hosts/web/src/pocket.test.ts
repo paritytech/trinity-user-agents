@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { COINAGE_MISSING, POCKET_TITLE, pocketCards } from "./pocket.js";
+import {
+  COINAGE_MISSING,
+  POCKET_TITLE,
+  cardLaunchPath,
+  pinnedCards,
+  pocketCards,
+  pocketPlatform,
+} from "./pocket.js";
 
 describe("pocketCards", () => {
   // The native list is the balance card first, then the pinned Humanity card.
@@ -27,9 +34,55 @@ describe("pocketCards", () => {
     expect(pocketCards()[1]).toEqual({
       kind: "product",
       id: "humanity",
+      product: "peopl",
       title: "Humanity",
       subtitle: "Proof of personhood",
       pinned: true,
     });
+  });
+});
+
+describe("the pinned Humanity card", () => {
+  // The native apps back it with the reserved personhood product of the
+  // network they run on.
+  test("belongs to peopl on the network's TLD", () => {
+    expect(pinnedCards("paseo")).toEqual([
+      { productId: "peopl.paseo", cardId: "humanity" },
+    ]);
+    expect(pinnedCards("testnet")).toEqual([
+      { productId: "peopl.testnet", cardId: "humanity" },
+    ]);
+  });
+
+  test("opens its Widget at the card named in the query", () => {
+    expect(cardLaunchPath("humanity")).toBe("/?card=humanity");
+    expect(cardLaunchPath("a b&c")).toBe("/?card=a%20b%26c");
+  });
+
+  // Each product sees only its own cards, and no product removes a pinned one.
+  test("is the personhood product's only card, and cannot be removed", async () => {
+    const pocket = pocketPlatform("paseo");
+    const first = async (productId: string) => {
+      for await (const item of pocket.subscribePocketCards({
+        productId,
+        executionKind: "Worker",
+      }))
+        return item._unsafeUnwrap();
+    };
+    expect(await first("peopl.paseo")).toEqual({
+      cards: [{ cardId: "humanity", privileged: true }],
+    });
+    expect(await first("other.paseo")).toEqual({ cards: [] });
+    await expect(
+      pocket.removePocketCard(
+        { productId: "peopl.paseo", executionKind: "Worker" },
+        { cardId: "humanity" },
+      ),
+    ).rejects.toThrow("Privileged");
+    // Removing a card that is not there succeeds.
+    await pocket.removePocketCard(
+      { productId: "other.paseo", executionKind: "Worker" },
+      { cardId: "humanity" },
+    );
   });
 });

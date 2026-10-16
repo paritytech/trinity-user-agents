@@ -72,6 +72,16 @@ import {
   type ProductDestination,
 } from "./shell.js";
 import { drawPocket } from "./pocket-screen.js";
+import {
+  cardKey,
+  cardLaunchPath,
+  pinnedCards,
+  pocketPlatform,
+} from "./pocket.js";
+import { PocketFaces, type PocketCardKey } from "./pocket-faces.js";
+import { bindProductCard } from "./pocket-card-view.js";
+import { bulletinImageUrl } from "./product-render.js";
+import { resolveWidget } from "./widget.js";
 import { ChatScreen } from "./chat-screen.js";
 import { ProductChat, productChatKey } from "./product-chat.js";
 import { ProductWorkers } from "./product-workers.js";
@@ -163,6 +173,10 @@ const productDetails = element("product-details");
 const productFrame = element("product-frame");
 const productSlot = element("product-slot");
 const pocketScreen = element("pocket-screen");
+/** What Pocket says about a card it could not open. */
+const pocketStatus = document.createElement("p");
+pocketStatus.className = "pocket-status";
+pocketStatus.setAttribute("role", "status");
 const chatBadge = document.querySelector<HTMLElement>(
   '#dock [data-destination="chat"] [data-badge]',
 );
@@ -183,6 +197,12 @@ const productWorkers = new ProductWorkers({
     runtime === null
       ? undefined
       : createFrameTap(inspector, channel, runtime.coreWireSchemaHash),
+  log,
+});
+/** The faces of Pocket's cards, drawn by the workers of the products behind them. */
+const pocketFaces = new PocketFaces({
+  workers: productWorkers,
+  storage: localStorage,
   log,
 });
 const chatScreen = new ChatScreen(
@@ -636,7 +656,29 @@ function renderHostScreens(): void {
   document.body.dataset.surface = surface;
   pocketScreen.hidden = surface !== "pocket";
   if (surface === "pocket" && pocketScreen.childElementCount === 0)
-    pocketScreen.replaceChildren(...drawPocket());
+    pocketScreen.replaceChildren(
+      ...drawPocket({
+        productCard(card, root, bundled) {
+          const key = cardKey(card, activeNetwork.networkSuffix);
+          bindProductCard(root, bundled, {
+            key,
+            title: card.title,
+            faces: pocketFaces,
+            image: (source) =>
+              source.tag === "Archive"
+                ? productWorkers.archiveImage(key.productId, source.value)
+                : bulletinImageUrl(
+                    source.value,
+                    activeNetwork.dotns.contentGateway,
+                  ),
+            open: () => void openPocketCard(key),
+            log,
+          });
+        },
+      }),
+      pocketStatus,
+    );
+  pocketFaces.setShown(surface === "pocket");
   chatScreen.show(surface === "chat");
 }
 
@@ -645,6 +687,7 @@ function syncChatSession(): void {
   const access = chainAccess;
   const wallet = activeWallet;
   if (lastAuthState.tag !== "Connected" || access === null || wallet === null) {
+    pocketFaces.setSession(null);
     productWorkers.setSession(null);
     productChat.setScope(null);
     chatScreen.setSession(null);
@@ -652,6 +695,11 @@ function syncChatSession(): void {
   }
   productChat.setScope(productChatKey(activeNetwork.id, wallet.id));
   productWorkers.setSession({ walletId: wallet.id, network: activeNetwork });
+  pocketFaces.setSession({
+    walletId: wallet.id,
+    networkId: activeNetwork.id,
+    cards: pinnedCards(activeNetwork.networkSuffix),
+  });
   const { identityAccountId, chatPublicKey, fullUsername, liteUsername } =
     lastAuthState.value;
   chatScreen.setSession({
@@ -1318,6 +1366,7 @@ async function openTarget(
   productId: string,
   entered: boolean,
   scope: string,
+  executionKind: "App" | "Widget" = "App",
 ): Promise<void> {
   closeProduct();
   const op = loading.begin("Loading…");
@@ -1333,6 +1382,7 @@ async function openTarget(
       productSlot,
       {
         mounted: target.via === "name",
+        executionKind,
         tap: createFrameTap(inspector, productId, runtime.coreWireSchemaHash),
         onFrameLoad(count) {
           if (count < documentsBeforeProduct(target.via)) return;
@@ -1366,24 +1416,28 @@ async function openTarget(
     overrideOrigin = entered ? scope : null;
     addressInput.value = displayAddress(target.address, activeNetwork);
     renderProduct();
-    recents.record(
-      recentScope(),
-      { address: target.address, productId, entered },
-      activeNetwork.id,
-    );
-    recentsMenu.refresh();
-    rememberFront();
-    if (isProductDestination(destination))
-      dockAddresses = saveAddress(
-        localStorage,
+    // A Widget opens only from its card: the address, typed or reloaded,
+    // would open the product's App instead.
+    if (executionKind === "App") {
+      recents.record(
+        recentScope(),
+        { address: target.address, productId, entered },
         activeNetwork.id,
-        destination,
-        target.address,
       );
+      recentsMenu.refresh();
+      rememberFront();
+      if (isProductDestination(destination))
+        dockAddresses = saveAddress(
+          localStorage,
+          activeNetwork.id,
+          destination,
+          target.address,
+        );
+    }
     renderProduct();
     log(
       target.via === "name"
-        ? `opened ${target.address} as ${productId} from ${target.url.href}`
+        ? `opened ${target.address} as ${productId} (${executionKind}) from ${target.url.href}`
         : `opened ${target.url.href} as ${productId}`,
     );
   } catch (error) {
@@ -1391,6 +1445,71 @@ async function openTarget(
     productStatus.textContent = `Could not open ${target.url.href} as ${productId}: ${errorText(error)}`;
     log(productStatus.textContent);
   }
+}
+
+/**
+ * Open a Pocket card: its product's Widget, at the card named in the query,
+ * in front of Pocket. The Widget runs as the product, so it shares the
+ * worker's and the app's storage, accounts and grants. Which content runs is
+ * `findWidget`'s rule; Pocket stays in front, and says why, when there is
+ * none to run. Choosing Pocket in the dock ends the Widget.
+ */
+function openPocketCard(key: PocketCardKey): Promise<void> {
+  return serial(async (runtime) => {
+    pocketStatus.textContent = `Looking up ${key.productId}'s widget…`;
+    let widget: Awaited<ReturnType<typeof resolveWidget>>;
+    try {
+      requireSecureHost(window.isSecureContext, window.location.origin);
+      widget = await resolveWidget(key.productId, activeNetwork);
+    } catch (error) {
+      pocketStatus.textContent = errorText(error);
+      log(`pocket: ${key.cardId} not opened: ${errorText(error)}`);
+      return;
+    }
+    if (destination !== "pocket") {
+      pocketStatus.textContent = "";
+      return;
+    }
+    pocketStatus.textContent = "";
+    if (widget.fromBaseName)
+      log(
+        `pocket: ${key.productId} publishes no widget; its base name's content runs as the Widget, as the iOS host serves it`,
+      );
+    leaveFront();
+    destination = null;
+    sessionStorage.removeItem(tabProductKey(activeNetwork.id));
+    const start = cardLaunchPath(key.cardId);
+    const scope = mountScope(BASE, {
+      walletId: activeWallet?.id ?? "signed-out",
+      productId: key.productId,
+      cid: widget.cid,
+      network: activeNetwork.id,
+    });
+    await openTarget(
+      runtime,
+      {
+        address: `${key.productId}${start}`,
+        via: "name",
+        cid: widget.cid,
+        kind: widget.kind,
+        mount: scope,
+        record: widget.record,
+        skipped: [],
+        url: loaderUrl({
+          base: BASE,
+          origin: window.location.origin,
+          scope,
+          gateway: activeNetwork.dotns.contentGateway,
+          kind: widget.kind,
+          start,
+        }),
+      },
+      key.productId,
+      false,
+      key.productId,
+      "Widget",
+    );
+  });
 }
 
 /**
@@ -1632,6 +1751,7 @@ async function boot(): Promise<void> {
     },
     onPermissionDecided: refreshPermissionsSoon,
     chat: productChat.platform,
+    pocket: pocketPlatform(connection.networkSuffix),
   });
   const worker = new Worker(new URL("./core-worker.ts", import.meta.url), {
     type: "module",

@@ -31,6 +31,7 @@ import {
   type UrlProduct,
   TEST_MNEMONIC,
   buildChatWorker,
+  buildFixture,
   productHtml,
   publishApp,
   serveName,
@@ -901,6 +902,321 @@ describe("product worker chat", () => {
             hasText: "hi there",
           })
           .waitFor();
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+});
+
+describe("Pocket's Humanity card", () => {
+  const PRODUCT = "peopl.paseo";
+  const WORKER = JSON.stringify({
+    $v: 1,
+    kind: "worker",
+    appVersion: [0, 1, 0],
+    entrypoint: "index.js",
+    includes: { chat: false, pocket: true },
+    pocket: {
+      cards: [{ id: "humanity", title: "Humanity", preview: "face.json" }],
+    },
+  });
+  const WIDGET = JSON.stringify({
+    $v: 1,
+    kind: "widget",
+    appVersion: [0, 1, 0],
+    dimensions: { height: [8] },
+  });
+  const APP = JSON.stringify({ $v: 1, kind: "app", appVersion: [0, 1, 0] });
+  const APP_HTML = "<!doctype html><title>app</title><p>the product's app</p>";
+  const ROOT = JSON.stringify({
+    $v: 1,
+    displayName: "Humanity",
+    description: "A synthetic personhood product.",
+    icon: { cid: "bafkfixtureicon", format: "png" },
+  });
+
+  /** A Widget built from `browser/pocket-widget.ts`. */
+  async function publishWidget() {
+    return publishApp({
+      "index.html":
+        '<!doctype html><title>widget</title><script type="module" src="./widget.js"></script>',
+      "widget.js": await buildFixture("pocket-widget.ts"),
+    });
+  }
+
+  /** What the Widget page saw, once it has asked the core. */
+  async function widgetSeen(frame: Frame): Promise<unknown> {
+    await frame.waitForFunction(() => "__widget" in window);
+    return frame.evaluate(
+      () => (window as unknown as { __widget: unknown }).__widget,
+    );
+  }
+
+  /**
+   * A browser profile with no way out: every socket is closed, so the light
+   * client reaches no chain, and every request beyond this host and the
+   * stood-in Asset Hub and gateway is refused and listed.
+   */
+  async function offlineContext(
+    records: Parameters<typeof serveNames>[1],
+  ): Promise<{ context: BrowserContext; blocked: string[] }> {
+    const context = await browser.newContext();
+    context.setDefaultTimeout(STEP_MS);
+    await context.routeWebSocket(/.*/, (socket) => socket.close());
+    const blocked: string[] = [];
+    await context.route(
+      (url) => url.origin !== host.origin,
+      (route) => {
+        blocked.push(route.request().url());
+        return route.abort();
+      },
+    );
+    await serveNames(context, records);
+    return { context, blocked };
+  }
+
+  const humanity = (page: Page) =>
+    page.locator('.pocket-product[data-card="humanity"]');
+
+  async function frameWhere(
+    page: Page,
+    matches: (url: string) => boolean,
+  ): Promise<Frame> {
+    const deadline = Date.now() + STEP_MS;
+    while (Date.now() < deadline) {
+      const frame = page.frames().find((candidate) => matches(candidate.url()));
+      if (frame) return frame;
+      await page.waitForTimeout(200);
+    }
+    throw new Error("no such frame appeared");
+  }
+
+  test(
+    "draws the face the worker streams, sends presses back, and opens the product's Widget",
+    async () => {
+      const worker = publishApp({
+        "index.js": await buildFixture("pocket-worker.ts"),
+      });
+      const widget = await publishWidget();
+      const app = publishApp({ "index.html": APP_HTML });
+      const { context, blocked } = await offlineContext([
+        {
+          record: `worker.${PRODUCT}`,
+          app: worker,
+          text: { executable: WORKER },
+        },
+        {
+          record: `widget.${PRODUCT}`,
+          app: widget,
+          text: { executable: WIDGET },
+        },
+        { record: `app.${PRODUCT}`, app, text: { executable: APP } },
+        { record: PRODUCT, app, text: { manifest: ROOT } },
+      ]);
+      try {
+        const page = await openHost(context);
+        await signIn(page);
+        // Nothing runs for Pocket before Pocket is shown.
+        expect(await page.locator("#worker-frames iframe").count()).toBe(0);
+
+        await page.click('#dock [data-destination="pocket"]');
+        const card = humanity(page);
+        expect(await card.getAttribute("data-face")).toBe("bundled");
+        expect(await card.innerText()).toContain("Proof of personhood");
+        // The worker draws the face once it has booted; the host asks again
+        // until it does.
+        await card
+          .locator(".pr-text", { hasText: "fixture face, taps 0" })
+          .waitFor();
+        expect(await card.getAttribute("data-face")).toBe("live");
+        expect(await card.locator(".pocket-face").isHidden()).toBe(true);
+
+        // A press inside the face goes to the worker and opens nothing.
+        await card.locator("button", { hasText: "tap" }).click();
+        await card.locator(".pr-text", { hasText: "taps 1" }).waitFor();
+        expect(await page.locator("#product-slot iframe").count()).toBe(0);
+        const workerFrame = await frameWhere(page, (url) =>
+          url.includes("__truapi-worker.html"),
+        );
+        const seenByWorker = (await workerFrame.evaluate(
+          () =>
+            (window as unknown as { __pocketWorker: unknown }).__pocketWorker,
+        )) as { account: string };
+        expect(seenByWorker).toMatchObject({
+          cards: ["humanity:pinned"],
+          renders: ["humanity"],
+          actions: ["PocketCard:tap"],
+          errors: [],
+        });
+
+        // Pressing the card opens the product's Widget at the card, as the
+        // product: the worker's account and storage, and a Widget execution.
+        await card.click({ position: { x: 24, y: 120 } });
+        const widgetFrame = await frameWhere(
+          page,
+          (url) =>
+            url.includes(`/${widget.contentCid}/`) &&
+            url.includes("card=humanity"),
+        );
+        expect(await widgetSeen(widgetFrame)).toEqual({
+          card: "humanity",
+          account: seenByWorker.account,
+          stored: "0x776f726b6572",
+          faceShown: "Unsupported",
+          errors: [],
+        });
+        expect(await widgetFrame.title()).toBe("widget");
+        expect(await page.locator("#pocket-screen").isHidden()).toBe(true);
+
+        // Choosing Pocket ends the Widget, and the face is still live.
+        await page.click('#dock [data-destination="pocket"]');
+        await page.waitForFunction(
+          () => document.querySelectorAll("#product-slot iframe").length === 0,
+        );
+        await card.locator(".pr-text", { hasText: "taps 1" }).waitFor();
+
+        // The worker's frames are TrUAPI frames, so the inspector decodes them.
+        await page.click("#inspector-toggle");
+        const traces = await page.locator("#inspector-mount").innerText();
+        for (const operation of [
+          "renderer.render",
+          "renderer.actionSubscribe",
+          "pocket.listSubscribe",
+        ])
+          expect(traces).toContain(operation);
+        await page.click("#inspector-toggle");
+
+        // The face is kept for this wallet on this network only.
+        expect(
+          await page.evaluate(() =>
+            Object.keys(localStorage).filter((key) =>
+              key.includes(":pocket-faces:"),
+            ),
+          ),
+        ).toEqual([expect.stringContaining(":network:paseo:pocket-faces:")]);
+
+        // Signing out stops the worker and puts the bundled face back.
+        await openMenu(page);
+        await page.click("#sign-out");
+        await page.waitForFunction(
+          () => document.querySelectorAll("#worker-frames iframe").length === 0,
+        );
+        expect(await card.getAttribute("data-face")).toBe("bundled");
+
+        // Another wallet sees no face kept by the first.
+        await signInWith(page, SYNTHETIC_MNEMONIC);
+        expect(await card.getAttribute("data-face")).toBe("bundled");
+        await card.locator(".pr-text", { hasText: "taps 0" }).waitFor();
+
+        // Back on the first wallet, its kept face is drawn before the worker
+        // answers, then the worker's own.
+        await signIn(page);
+        await page
+          .locator('.pocket-product[data-card="humanity"][data-face="kept"]')
+          .waitFor();
+        expect(await card.innerText()).toContain("taps 1");
+        await card.locator(".pr-text", { hasText: "taps 0" }).waitFor();
+        expect(await card.getAttribute("data-face")).toBe("live");
+
+        expect(blocked).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  /** A worker that offers another card, so Pocket does not start it for Humanity. */
+  async function otherCardWorker() {
+    return {
+      record: `worker.${PRODUCT}`,
+      app: publishApp({ "index.js": await buildFixture("pocket-worker.ts") }),
+      text: {
+        executable: JSON.stringify({
+          ...JSON.parse(WORKER),
+          pocket: {
+            cards: [{ id: "other", title: "Other", preview: "o.json" }],
+          },
+        }),
+      },
+    };
+  }
+
+  test(
+    "opens the base name's content as the Widget when the product publishes no widget, as iOS does",
+    async () => {
+      const base = await publishWidget();
+      const app = publishApp({ "index.html": APP_HTML });
+      const { context, blocked } = await offlineContext([
+        await otherCardWorker(),
+        { record: `app.${PRODUCT}`, app, text: { executable: APP } },
+        { record: PRODUCT, app: base, text: { manifest: ROOT } },
+      ]);
+      try {
+        const page = await openHost(context);
+        await signIn(page);
+        await page.click('#dock [data-destination="pocket"]');
+        // A worker that draws no humanity card is not started for it.
+        await page
+          .locator("#log")
+          .filter({ hasText: "draws no humanity card" })
+          .waitFor({ state: "attached" });
+        expect(await page.locator("#worker-frames iframe").count()).toBe(0);
+        const card = humanity(page);
+        expect(await card.getAttribute("data-face")).toBe("bundled");
+
+        // The base name's content, not the app's, runs as the Widget at the card.
+        await card.click();
+        const frame = await frameWhere(
+          page,
+          (url) =>
+            url.includes(`/${base.contentCid}/`) &&
+            url.includes("card=humanity"),
+        );
+        expect(await widgetSeen(frame)).toMatchObject({
+          card: "humanity",
+          faceShown: "Unsupported",
+          errors: [],
+        });
+        expect(
+          page.frames().some((other) => other.url().includes(app.contentCid)),
+        ).toBe(false);
+        await page
+          .locator("#log")
+          .filter({ hasText: `${PRODUCT} publishes no widget; its base name` })
+          .waitFor({ state: "attached" });
+
+        expect(blocked).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "opens nothing, and says why, when neither a widget nor the base name has content",
+    async () => {
+      const app = publishApp({ "index.html": APP_HTML });
+      const { context, blocked } = await offlineContext([
+        await otherCardWorker(),
+        { record: `app.${PRODUCT}`, app, text: { executable: APP } },
+        { record: PRODUCT, text: { manifest: ROOT } },
+      ]);
+      try {
+        const page = await openHost(context);
+        await signIn(page);
+        await page.click('#dock [data-destination="pocket"]');
+        await humanity(page).click();
+        await page
+          .locator(".pocket-status")
+          .filter({ hasText: "publishes no widget and has no content" })
+          .waitFor();
+        expect(await page.locator("#product-slot iframe").count()).toBe(0);
+        expect(await page.locator("#pocket-screen").isVisible()).toBe(true);
+        expect(blocked).toEqual([]);
       } finally {
         await context.close();
       }

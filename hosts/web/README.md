@@ -217,18 +217,63 @@ an ordinary product opened the way the address bar opens it. Chat and Pocket are
   destination's product resumes that destination instead of running a second copy. Any other `http` or `https` address
   goes to the browser, and anything else is refused.
 - **The Pocket screen.** The host draws it, laid out as the native Pocket is (the Android `PocketScreen`): a large title
-  over two stacked cards, the digital dollar and then Humanity. It reads nothing and signs nothing.
-  - **Humanity:** the card the native host pins, drawn from the same bundled face, a title and "Proof of personhood".
-    The face is fixed text, not a reading of the wallet's personhood.
+  over two stacked cards, the digital dollar and then Humanity. The host itself reads nothing and signs nothing for it.
+  - **Humanity:** the card the native host pins, backed by the personhood product `peopl.<tld>` (`peopl.paseo` on
+    Paseo). See [Humanity](#humanity).
   - **Digital dollar:** the native card shows the balance of the wallet's Coinage coins. This host has no Coinage engine
     yet, so the amount slot reads "Unavailable" and says why on hover. No amount is shown, and nothing stands in for
-    one.
-  - **Not drawn yet:** a card takes no press. The native card opens a details page, which needs the Humanity product or
-    the coin balance behind it. Tilt shine, the collectibles strip and removing a card are not here either.
+    one. It takes no press.
+  - **Not here:** tilt shine, the collectibles strip, adding a card, and removing one.
   - The artwork and texture are the native drawables, and the fonts are bundled, so nothing is fetched.
   - `payment.balanceSubscribe` still answers `Unsupported`, so a product sees no balance either. See
     [Not supported](#not-supported).
 - **The Chat screen.** See [Chat](#chat).
+
+### Humanity
+
+The Humanity card follows the Pocket RFC (`docs/rfcs/pocket-modality.md`) and the native hosts. Its face is whatever the
+personhood product draws. It is not a check of the wallet's personhood, and this host adds nothing to it.
+
+- **The face.** The card shows the face bundled with the host, a title and "Proof of personhood", until a face arrives.
+  The first time Pocket is shown in a session, the host reads `worker.peopl.<tld>`. When that worker serves Pocket
+  (`includes.pocket`) and lists the `humanity` card in `pocket.cards`, the host runs it as described in
+  [Product chats](#product-chats), and asks it to render `RenderContext::PocketCard { cardId: "humanity" }`. Each tree
+  replaces the face. A press or an edit inside the face goes back to the worker as a renderer action on the same
+  context. A worker that does not offer the card is not started for it, and the card keeps its face.
+- **Retries.** The host asks a worker that has just started again every 250 ms for 10 seconds, while it boots. A stream
+  that ends after that is opened again after 1 second, doubling up to 30 seconds. A worker that restarts gets a new
+  stream.
+- **The kept face.** The newest face is kept per network and wallet in `localStorage`
+  (`truapi-web-signing-host:network:<id>:pocket-faces:<wallet>:v1`), at most every 2 seconds and once more when the
+  session ends. The next session shows it at once, before the worker answers. A face over 256 KiB is drawn but not kept.
+- **Lifetime.** The worker runs from the first time Pocket is shown in a session until the session ends: sign-out, a
+  wallet or network switch, or a reload. The native hosts start it with the session; this host waits until the user
+  looks at Pocket. If Chat lists the same product, one worker serves both.
+- **Pressing the card** opens the product's Widget, in front of Pocket, at `/?card=humanity`. Which content runs as the
+  Widget follows the iOS host (`ProductResolver` and `ResolvedProduct.contentId(for: .widget)`):
+  - The base name's `manifest` text record is read first. When it is present and not a valid root manifest (`$v` 1, a
+    `displayName`, a `description`, and an icon with a `cid` and a `format`), nothing opens and Pocket says why.
+  - With a valid root manifest, `widget.peopl.<tld>` is read. A valid widget manifest (`$v` 1, `kind` `widget`, at least
+    one `dimensions.height`) serves its own `contenthash`.
+  - A product that publishes no widget manifest, or no root manifest, has its base name's `contenthash` run as the
+    Widget. `app.peopl.<tld>` is never read. On Paseo, `peopl.paseo` publishes no widget, so its base name's content
+    runs.
+  - When that record has no content, nothing opens and Pocket says why.
+  - Stricter than iOS: a `widget.<name>` manifest that is present but not valid is refused with the reason. iOS skips it
+    and serves the base name.
+
+  The content is fetched and verified like a product opened by name. The frame runs as the product's `Widget` execution
+  under the product id `peopl.<tld>`, so it shares the worker's and the app's storage, accounts and grants. Choosing
+  Pocket in the dock ends the Widget. A reload does not open it again, and it is not added to the address history.
+
+- **The core's Pocket calls.** A product's `pocket.listSubscribe` lists the pinned cards it backs, so `peopl.<tld>` sees
+  `humanity` as privileged and every other product sees none. `pocket.removeCard` refuses a pinned card; the core's web
+  bridge reports that refusal as `Unknown` with the reason, not as `Privileged`.
+- **Not here yet.** The native hosts draw the face above an opened Widget, and the Widget can move it with
+  `expandedCard.setFaceShown`. This host draws no face there, so that call answers `Unsupported`. The opened Widget is
+  not kept loaded after it closes.
+- **Trust.** The worker and the Widget run on this host's origin, as any product opened by name does (see
+  [Trust model](#trust-model)).
 
 ### Chat
 
@@ -293,18 +338,20 @@ the worker's calls reach the core as frames, which the inspector's **TrUAPI** vi
   kept per network and wallet in `localStorage` (`truapi-web-signing-host:network:<id>:product-chat:<wallet>:v1`).
 - **Custom messages.** A custom message is drawn by asking the worker to render it (`RenderContext::ChatMessage`); each
   tree the worker sends replaces the card. `src/product-render.ts` draws the tree as DOM: text as text, never markup,
-  sizes clamped, colors and type from the host's tokens. Images are shown from the worker's verified archive or from the
-  network's Bulletin gateway by CID, and from no other address. An archive image is read from the copy in the worker
-  frame's own storage: that frame is `credentialless` in Chrome, so the page's storage does not hold it, and the worker
-  can write that copy too. A button press and a text field change go back to the worker as renderer actions. A tree
-  deeper than 48 or larger than 2000 nodes is not drawn. A text field loses focus when the worker sends a new tree.
+  sizes clamped, colors and type from the host's `--pr-*` tokens, which Chat and Pocket set to the same dark values.
+  Images are shown from the worker's verified archive or from the network's Bulletin gateway by CID, and from no other
+  address. An archive image is read from the copy in the worker frame's own storage: that frame is `credentialless` in
+  Chrome, so the page's storage does not hold it, and the worker can write that copy too. A button press and a text
+  field change go back to the worker as renderer actions. A tree deeper than 48 or larger than 2000 nodes is not drawn.
+  A text field loses focus when the worker sends a new tree.
 - **The room's text input.** A room whose footer is `TextInput` shows a composer. What the user types is kept in the
   room and sent to the worker as a `MessagePosted` chat action from the peer `native`, as the iOS host names the user.
 - **Trust.** A worker runs on this host's origin, as a product opened by name does, and is trusted like one: it can
   reach the page and the saved wallets. Its own requests follow the browser. Its notifications, permission requests and
   navigation go through the same callbacks as an app's.
-- **Not served yet.** Pocket and input surfaces of a worker, worker demand from the core (a worker runs whenever its
-  wallet is signed in), bot registration, and the core's `beginOperation` lifetime hints.
+- **Not served yet.** Input surfaces of a worker, worker demand from the core (a worker runs whenever its wallet is
+  signed in), bot registration, and the core's `beginOperation` lifetime hints. Pocket is served for the pinned Humanity
+  card only; see [Humanity](#humanity).
 
 ### Differences from the native hosts
 
@@ -513,7 +560,14 @@ opens, so the light client reaches no chain. It checks that:
 - a product worker, built from `browser/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs from its
   manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws the card
   when its button is pressed, answers what the user types, makes no request outside this host, shows in the inspector,
-  stops at sign-out, is not seen by another wallet, and starts again when its wallet signs back in.
+  stops at sign-out, is not seen by another wallet, and starts again when its wallet signs back in;
+- the Humanity card, with every socket closed and every request outside this host, the stood-in Asset Hub and the
+  gateway refused: a worker built from `browser/pocket-worker.ts` starts only once Pocket is shown, draws the face after
+  it boots, and gets the face's button press; a press on the card opens the Widget built from
+  `browser/pocket-widget.ts`, not the app, at `?card=humanity`, as a `Widget` execution with the worker's account and
+  storage; choosing Pocket ends it; the face is kept for that wallet only and drawn at once on its next sign-in; and a
+  worker that does not offer the card is not started; a product with no widget runs its base name's content as the
+  Widget, not its app; and one with neither opens nothing and says why.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -530,7 +584,9 @@ and layout on narrow screens.
   `src/network-config.ts`, `src/network-choice.ts`: the light client, the networks it serves and the per-tab choice.
 - `src/dotns.ts`, `src/address.ts`: name lookup and the address bar's grammar.
 - `src/shell.ts`: the dock's destinations and saved addresses, and what a product's `navigateTo` turns into.
-  `src/pocket.ts`, `src/pocket-screen.ts`: the Pocket cards and how the screen draws them.
+  `src/pocket.ts`, `src/pocket-screen.ts`: the Pocket cards, the Pocket the core's calls see, and how the screen draws
+  them. `src/pocket-faces.ts`, `src/pocket-card-view.ts`: a card's kept and live faces, and drawing them on the card.
+  `src/widget.ts`: finding the Widget an opened card runs.
 - `src/chat/`: the chat engine. `gate.ts` refuses the public development phrase, `keys.ts` derives the keys,
   `protocol.ts` and `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC, `directory.ts` the chain
   reads, `store.ts` the saved conversations and `engine.ts` ties them together, and `diagnostics.ts` holds its events.
@@ -550,15 +606,15 @@ and layout on narrow screens.
 - Gating of a product's own network, device or media requests. They follow the browser.
 - Byte-range requests and non-UTF-8 HTML from a name's archive.
 - Versioned hosted releases of this host, which would let a product be tested against a chosen TrUAPI version.
-- Contacts, a Coinage engine, and Chat beyond one device and text. The Pocket screen has no digital dollar balance and
-  opens no card. The host passes no `contacts`, `pocket` or payment callbacks, so the core answers those calls
-  `Unsupported`. Chat has no phone pairing, history sync, multi-device envelopes, attachments, reactions or calls. A
-  contact picker needs `ContactsPlatform` (`contacts` and `pickContact`) and a list of contacts the host owns. Live OS
+- Contacts, a Coinage engine, and Chat beyond one device and text. The Pocket screen has no digital dollar balance, and
+  holds only the pinned Humanity card. The host passes no `contacts` or payment callbacks, so the core answers those
+  calls `Unsupported`. Chat has no phone pairing, history sync, multi-device envelopes, attachments, reactions or calls.
+  A contact picker needs `ContactsPlatform` (`contacts` and `pickContact`) and a list of contacts the host owns. Live OS
   permission status is not provided either.
 - Several products in front at once. One product is in front, and the others run hidden behind it.
 - Keeping held products across a reload or a session change.
-- Worker products beyond chat. A product opened in the address bar runs as `App`; a worker runs only from the Chat
-  screen's **Workers**, and only for chat.
+- Worker products beyond Chat and the Humanity card. A product opened in the address bar runs as `App`; a worker runs
+  from the Chat screen's **Workers** for chat, or for Humanity's face, and a `Widget` runs only from the Humanity card.
 - Preimage lookup. Every lookup is a miss. The core submits preimages to Bulletin itself.
 - Dialling an external wire debugger. `VITE_TRUAPI_DEBUGGER_URL` connects and receives no frames, because the signing
   core's product runtime does not install the debug tap the dial reads. The in-page inspector does not depend on it.
