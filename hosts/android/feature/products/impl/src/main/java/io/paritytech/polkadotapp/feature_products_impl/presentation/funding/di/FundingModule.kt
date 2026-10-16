@@ -22,7 +22,7 @@ object FundingModule {
     ): FundingOverlayContext {
         val intent = requireNotNull(savedStateHandle.get<String>(FundingBottomSheet.INTENT)) { "Funding sheet opened without a session" }
         return requireNotNull(contexts.get(intent)) {
-            "FundingOverlayContext is not set. The funding sheet was likely restored after process death."
+            "No overlay context for this session: FundingBottomSheet closes before building its view model when it has none"
         }
     }
 
@@ -35,7 +35,7 @@ object FundingModule {
             "Funding provider screen opened without a session"
         }
         return requireNotNull(frames.get(intent)) {
-            "FundingFrameContext is not set. The provider screen was likely restored after process death."
+            "No frame context for this call: FundingProviderFrameBottomSheet closes before building its view model when it has none"
         }
     }
 }

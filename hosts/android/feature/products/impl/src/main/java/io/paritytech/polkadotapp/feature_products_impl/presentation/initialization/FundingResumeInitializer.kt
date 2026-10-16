@@ -14,8 +14,9 @@ import javax.inject.Inject
  *
  * The core resumes funding when it starts: it reloads the sessions, takes their providers' workers and follows their
  * top-ups and payments again. Left to a screen or product to start the core, a session could sit where it stopped
- * until the user happened to open one. The answer is recorded again once the core is up, from what it stored, and on
- * every session change after that, so a launch that finds nothing left to resume stops starting the core early.
+ * until the user happened to open one. The in-progress flag is written again once the core is up, from the sessions
+ * it stored, and on every session change after that, so once nothing is left to resume a launch no longer starts
+ * the core early.
  */
 class FundingResumeInitializer @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,

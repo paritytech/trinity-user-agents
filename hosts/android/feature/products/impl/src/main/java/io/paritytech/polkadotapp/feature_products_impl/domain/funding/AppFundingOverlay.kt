@@ -26,11 +26,10 @@ import javax.inject.Inject
  * Shows each session the core opens in the funding sheet, and answers once the user started or left it. A
  * provider's own screen opens over the sheet.
  *
- * A started session runs on without its screens, so leaving one only hides it. A provider takes a frame that
- * answers before the user acted on it as the user giving up, so a hidden frame stays unanswered and the CASH
- * card can show it again. It answers `Closed` when the user says they sent a bank transfer, or once the host
- * sees the provider's part done: the payment seen or the session over. An external page answers `Returned`
- * once it reaches its return URL.
+ * A started session runs on without its screens, so leaving one only hides it. A hidden frame is not answered,
+ * because a provider reads an early answer as the user giving up; the CASH card can show the frame again. A frame
+ * answers `Closed` when the user says they sent a bank transfer, or once the provider's part is done: the payment
+ * seen or the session over. An external page answers `Returned` once it reaches its return URL.
  *
  * The core drops a call when its product or worker goes away. The sheet or frame it showed then closes, rather than
  * staying up with nothing to answer.

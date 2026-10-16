@@ -41,10 +41,17 @@ class AppFundingHostBridge @Inject constructor(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
-    /** Emits the intent of every session whose status changed. */
+    /**
+     * Emits the intent of every session whose status changed. It never completes and replays nothing, and a
+     * collector that falls more than [EVENT_BUFFER] events behind loses the oldest ones, so a collector reads the
+     * session itself rather than relying on seeing every event.
+     */
     fun changedSessions(): SharedFlow<String> = changedSessions.asSharedFlow()
 
-    /** Emits every quote list the core sends: again as each provider answers, and at every refresh. */
+    /**
+     * Emits every quote list the core sends: again as each provider answers, and at every refresh. It never
+     * completes and replays nothing; a list a slow collector misses is replaced by the next one.
+     */
     fun quoteLists(): SharedFlow<FundingQuoteListUpdate> = quoteLists.asSharedFlow()
 
     override suspend fun presentFunding(
