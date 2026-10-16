@@ -11,7 +11,6 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use trinity_stack::{DEFAULT_LINK_BASE, Document, Fetched, Pointer, Status, accept, qr_terminal};
 use zeroize::Zeroizing;
 
@@ -217,7 +216,10 @@ fn render(
 	model.insert("$v".into(), trinity_stack::VERSION.into());
 	model.insert("generation".into(), generation.into());
 	model.insert("sequence".into(), 0.into());
-	let content_hash = format!("0x{}", hex::encode(Sha256::digest(serde_json::to_vec(&model)?)));
+	// The crate's hash, the one `@parity/trinity-stack`'s `publish` keeps, so a state file means
+	// the same thing to both.
+	let unsequenced = Document::parse(&serde_json::to_vec(&model)?).map_err(refused)?;
+	let content_hash = format!("0x{}", hex::encode(unsequenced.descriptor().content_hash()));
 	let sequence = match state {
 		Some(state) if state.content_hash == content_hash => state.sequence,
 		Some(state) => (state.sequence + 1).max(now),
@@ -366,6 +368,14 @@ mod tests {
 		assert_eq!(again.sequence, 1_000, "republishing the same content keeps sequence");
 		let (_, new_generation) = render(model(), "g2", Some(again), 900).unwrap();
 		assert_eq!(new_generation.sequence, 1_001, "a clock behind the state still moves forward");
+	}
+
+	#[test]
+	fn the_content_hash_is_the_crates() {
+		let (descriptor, state) = render(model(), "g1", None, 1_000).unwrap();
+		let parsed = Document::parse(&descriptor).unwrap();
+		let expected = format!("0x{}", hex::encode(parsed.descriptor().content_hash()));
+		assert_eq!(state.content_hash, expected, "the npm package's publish keeps the same hash");
 	}
 
 	#[test]
