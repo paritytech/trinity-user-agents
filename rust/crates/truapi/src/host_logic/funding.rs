@@ -169,7 +169,7 @@ pub struct FundingProgress {
 	pub status: FundingStatus,
 	/// When the status turns to [`FundingStatus::TakingLonger`] unless the
 	/// provider reports first, in Unix milliseconds, so the host reads the
-	/// progress again then. `None` while the session waits on the user's
+	/// progress again then. `None` while a top-up waits on the user's
 	/// payment.
 	pub longer_at_ms: Option<u64>,
 	/// Whether money moved: the provider started or named a top-up or
@@ -210,8 +210,9 @@ pub enum FundingStatus {
 	/// Inbound: the provider is retrying, with another top-up after one
 	/// claimed only part of the amount.
 	Retrying,
-	/// The provider holds the user's payment and nothing came from it for
-	/// longer than its quote said the session takes.
+	/// Nothing came from the provider for longer than its quote said the
+	/// session takes; on a top-up, only once the provider holds the user's
+	/// payment.
 	TakingLonger,
 	/// Inbound, ended: the balance was credited.
 	ToppedUp,
@@ -729,10 +730,10 @@ impl FundingSession {
 
 	/// When a session the provider still works on counts as taking longer:
 	/// its chosen quote's time after the provider's latest report, or after
-	/// it was assigned. `None` without a quoted time, before the provider
-	/// holds the user's payment, or once it ended.
+	/// it was assigned. `None` without a quoted time, while a top-up waits on
+	/// the user's payment, or once it ended.
 	fn longer_at_ms(&self) -> Option<u64> {
-		if !self.serves_provider() || !self.holds_payment() {
+		if !self.serves_provider() || self.awaits_users_payment() {
 			return None;
 		}
 		let eta_ms = self.choice.as_ref()?.quote.eta_secs?.saturating_mul(1_000);
@@ -740,14 +741,11 @@ impl FundingSession {
 		Some(heard_at_ms.saturating_add(eta_ms))
 	}
 
-	/// Whether the provider holds the user's payment: inbound, once money
-	/// moved; outbound, once the withdrawal is released. Until then the
-	/// session waits on the user, not the provider.
-	fn holds_payment(&self) -> bool {
-		match self.direction {
-			FundingDirection::In => self.money_moved(),
-			FundingDirection::Out => matches!(self.stage, FundingStage::Released { .. }),
-		}
+	/// Whether a top-up still waits on the user's payment, which can take
+	/// days by bank: until money moved. A withdrawal never does, so its
+	/// clock runs from the quote as soon as it is assigned.
+	fn awaits_users_payment(&self) -> bool {
+		self.direction == FundingDirection::In && !self.money_moved()
 	}
 
 	/// Whether the provider is retrying: it named another top-up after a
@@ -2638,11 +2636,13 @@ mod tests {
 		);
 	}
 
-	// Until the provider holds the payment the session waits on the user: a
+	// Until the provider holds the payment a top-up waits on the user: a
 	// transfer or deposit that takes days is not the provider taking longer,
 	// so the waiting status stays and the host has no time to read again at.
+	// A withdrawal keeps its clock from the quote, so by then it is taking
+	// longer (and the moment, already past, is not given again).
 	#[test]
-	fn a_session_waiting_on_the_users_payment_is_never_taking_longer() {
+	fn a_top_up_waiting_on_the_users_payment_is_never_taking_longer() {
 		let quoted = |direction, rail| {
 			let mut session = chosen(direction, rail);
 			if let Some(choice) = session.choice.as_mut() {
@@ -2673,7 +2673,7 @@ mod tests {
 				(FundingStatus::WaitingForTransfer, None),
 				(FundingStatus::WaitingForDeposit, None),
 				(FundingStatus::WaitingForPayment, None),
-				(FundingStatus::TransactionInitiated, None),
+				(FundingStatus::TakingLonger, None),
 			]
 		);
 	}
