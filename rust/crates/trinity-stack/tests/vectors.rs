@@ -17,8 +17,12 @@ use trinity_stack::{Fetched, Pointer, accept, open, public_key, sign};
 const SECRET: [u8; 32] = [7; 32];
 const OTHER_SECRET: [u8; 32] = [9; 32];
 const URL: &str = "https://previewnet.substrate.dev/.well-known/trinity-stack.json";
-const NOW: &str = "2026-10-15T12:00:00Z";
-const NOW_UNIX: i64 = 1_792_065_600;
+/// 2026-10-15T12:00:00Z, the time every reader case is judged at.
+const NOW: i64 = 1_792_065_600;
+/// Times relative to `NOW`, in Unix seconds.
+const TWO_HOURS_AGO: i64 = NOW - 7_200;
+const ONE_HOUR_AGO: i64 = NOW - 3_600;
+const YESTERDAY: i64 = NOW - 86_400;
 
 /// Previewnet's genesis hashes, as the provider catalog has them.
 const RELAY: &str = "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92";
@@ -97,7 +101,7 @@ fn signed(value: &Value) -> Vec<u8> {
 /// A fork of the stack `SECRET` signs, as its spawner would publish it.
 fn fork() -> Value {
 	with(|value| {
-		value["fork"] = json!({ "of": { "url": URL, "key": key() }, "at": "2026-10-15T10:00:00Z" });
+		value["fork"] = json!({ "of": { "url": URL, "key": key() }, "at": TWO_HOURS_AGO });
 		for (index, chain) in value["chains"].as_array_mut().unwrap().iter_mut().enumerate() {
 			chain["forkedAt"] = json!({ "number": 1735 + index, "hash": hex(&[index as u8; 32]) });
 		}
@@ -382,9 +386,14 @@ fn document_cases() -> Vec<DocumentCase> {
 			"unknown-chain-role",
 		),
 		plain(
-			"time-with-offset",
-			with(|value| value["validUntil"] = json!("2026-10-14T00:00:00+00:00")),
-			"invalid-time",
+			"time-as-string",
+			with(|value| value["validUntil"] = json!("2026-10-14T00:00:00Z")),
+			"malformed",
+		),
+		plain(
+			"time-out-of-range",
+			with(|value| value["expiresAt"] = json!(1u64 << 32)),
+			"malformed",
 		),
 		plain(
 			"genesis-hash-uppercase",
@@ -455,9 +464,7 @@ fn document_cases() -> Vec<DocumentCase> {
 		),
 		plain(
 			"fork-without-forked-at",
-			with(|value| {
-				value["fork"] = json!({ "of": { "url": URL }, "at": "2026-10-15T10:00:00Z" })
-			}),
+			with(|value| value["fork"] = json!({ "of": { "url": URL }, "at": TWO_HOURS_AGO })),
 			"forked-at",
 		),
 		plain(
@@ -631,13 +638,13 @@ fn reader_cases() -> Vec<ReaderCase> {
 		case(
 			"stale",
 			None,
-			Some(at(42, &|value| value["validUntil"] = json!("2026-10-14T00:00:00Z"))),
+			Some(at(42, &|value| value["validUntil"] = json!(YESTERDAY))),
 			json!({ "status": "updated", "keeps": "fetched", "newGeneration": false, "stale": true, "expired": false }),
 		),
 		case(
 			"expired",
 			None,
-			Some(at(42, &|value| value["expiresAt"] = json!("2026-10-15T11:00:00Z"))),
+			Some(at(42, &|value| value["expiresAt"] = json!(ONE_HOUR_AGO))),
 			json!({ "status": "updated", "keeps": "fetched", "newGeneration": false, "stale": false, "expired": true }),
 		),
 	]
@@ -786,7 +793,7 @@ fn every_vector_gets_its_verdict() {
 			&pointer_of(case),
 			stored.as_deref(),
 			fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document),
-			NOW_UNIX,
+			case["now"].as_i64().unwrap(),
 		);
 		let outcome = match outcome {
 			Err(error) => json!({ "error": error.code() }),

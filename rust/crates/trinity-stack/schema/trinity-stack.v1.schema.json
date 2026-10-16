@@ -7,7 +7,7 @@
   "required": ["$v", "sequence", "generation", "id", "name", "network", "tld", "chains", "services"],
   "properties": {
     "$v": { "const": 1 },
-    "sequence": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "sequence": { "$ref": "#/$defs/time" },
     "generation": { "type": "string", "minLength": 1 },
     "id": { "type": "string" },
     "name": { "type": "string" },
@@ -55,10 +55,7 @@
   "$defs": {
     "integer": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
     "hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
-    "time": {
-      "type": "string",
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
-    },
+    "time": { "description": "Unix seconds", "type": "integer", "minimum": 0, "maximum": 4294967295 },
     "webUrl": { "type": "string", "pattern": "^(https|wss|http|ws)://" },
     "specFile": {
       "type": "object",
