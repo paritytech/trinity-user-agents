@@ -1,9 +1,10 @@
 //! The recovery pass: one evaluation of every live transaction no submission
 //! watch owns.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
+use itertools::Itertools;
 use subxt::utils::H256;
 use tracing::warn;
 
@@ -11,7 +12,7 @@ use super::DurableTxEngine;
 use super::verdict::write_verdict;
 use crate::chain_runtime::RuntimeFailure;
 use crate::durable::dao;
-use crate::durable::ladder::{PinnedView, RuleOutcome, evaluate_ladder};
+use crate::durable::ladder::{PinnedView, RecordedCanonicity, RuleOutcome, evaluate_ladder};
 use crate::durable::model::{DomainId, DurableTxEntry, DurableTxId, Verdict};
 use crate::durable::oracle::{CompletionOracle, LedgerView};
 use crate::durable::search::PinnedChain;
@@ -53,26 +54,28 @@ impl DurableTxEngine {
     }
 
     /// Groups `domains` by the chain their oracle names, so each chain's
-    /// heads are read once. A domain with no oracle has no chain and is
-    /// skipped.
+    /// heads are read once.
     fn group_domains_by_chain(
         &self,
         domains: Vec<DomainId>,
-    ) -> BTreeMap<H256, Vec<LiveDomain<'_>>> {
-        let mut by_chain: BTreeMap<H256, Vec<LiveDomain<'_>>> = BTreeMap::new();
-        for domain in domains {
-            match self.registry.oracle(&domain) {
-                Some(oracle) => by_chain
-                    .entry(oracle.chain())
-                    .or_default()
-                    .push(LiveDomain { domain, oracle }),
-                None => warn!(
-                    domain = domain.as_str(),
-                    "durable recovery pass skips a domain with no oracle"
-                ),
-            }
-        }
-        by_chain
+    ) -> HashMap<H256, Vec<LiveDomain<'_>>> {
+        domains
+            .into_iter()
+            .filter_map(|domain| self.live_domain(domain))
+            .into_group_map_by(|live| live.oracle.chain())
+    }
+
+    /// `domain` with its oracle. A domain with no oracle has no chain and is
+    /// skipped.
+    fn live_domain(&self, domain: DomainId) -> Option<LiveDomain<'_>> {
+        let Some(oracle) = self.registry.oracle(&domain) else {
+            warn!(
+                domain = domain.as_str(),
+                "durable recovery pass skips a domain with no oracle"
+            );
+            return None;
+        };
+        Some(LiveDomain { domain, oracle })
     }
 
     /// Pins the chain with `genesis` and decides each of its domains.
@@ -131,8 +134,11 @@ impl DurableTxEngine {
 
         let mut written = 0;
         for tx in &decidable {
-            let outcome =
-                evaluate_ladder(tx, scope.as_ref(), view, canonical.get(&tx.id).copied()).await;
+            let recorded = canonical
+                .get(&tx.id)
+                .copied()
+                .unwrap_or(RecordedCanonicity::Unknown);
+            let outcome = evaluate_ladder(tx, scope.as_ref(), view, recorded).await;
             if let RuleOutcome::Decided(verdict) = outcome
                 && self.write_if_changed(tx, verdict).await
             {
@@ -168,8 +174,7 @@ impl DurableTxEngine {
         let scan_moved = verdict
             .scanned_to
             .is_some_and(|scanned| Some(scanned) != tx.scanned_to);
-        let restated =
-            verdict.status == tx.status && verdict.success_detected_at == tx.success_detected_at;
+        let restated = verdict.status == tx.status;
         if restated && !scan_moved {
             return false;
         }
@@ -183,24 +188,30 @@ impl DurableTxEngine {
     }
 
     /// Whether each recorded success block is still canonical. A failed read
-    /// leaves its transactions out, so Rule 0 stays undecided instead of
+    /// leaves its transactions out, so they count as
+    /// [`RecordedCanonicity::Unknown`] and Rule 0 stays undecided instead of
     /// discarding a record on a transport error.
     async fn recorded_canonicity(
         &self,
         genesis: H256,
         transactions: &[DurableTxEntry],
-    ) -> HashMap<DurableTxId, bool> {
+    ) -> HashMap<DurableTxId, RecordedCanonicity> {
         let heights = transactions
             .iter()
-            .filter_map(|tx| tx.success_detected_at.map(|block| block.number));
+            .filter_map(|tx| tx.status.success_block().map(|block| block.number));
         let hashes = self.canonical_hashes(genesis, heights).await;
         transactions
             .iter()
             .filter_map(|tx| {
-                let recorded = tx.success_detected_at?;
+                let recorded = tx.status.success_block()?;
                 // A chain shorter than the record no longer has its block.
                 let hash = hashes.get(&recorded.number)?;
-                Some((tx.id, *hash == Some(recorded.hash)))
+                let canonicity = if *hash == Some(recorded.hash) {
+                    RecordedCanonicity::Canonical
+                } else {
+                    RecordedCanonicity::Reorged
+                };
+                Some((tx.id, canonicity))
             })
             .collect()
     }
@@ -232,7 +243,7 @@ mod tests {
     use super::*;
     use crate::chain::{DispatchOutcome, HashAndNumber, Heads};
     use crate::chain_runtime::RuntimeFailure;
-    use crate::durable::model::{DurableTxStatus, HeadKind};
+    use crate::durable::model::{DurableTxStatus, FailureKind, HeadKind};
     use crate::durable::oracle::{DurableRegistry, PassScope, Unobservable};
     use crate::durable::testing::{
         FakeChain, GENESIS, ScriptedScope, block, engine_with, extrinsic, insert,
@@ -326,7 +337,10 @@ mod tests {
 
         block_on(engine.run_pass());
 
-        assert_eq!(status(&engine.db, id), DurableTxStatus::FinalizedSuccess);
+        assert_eq!(
+            status(&engine.db, id),
+            DurableTxStatus::FinalizedSuccess { at: None }
+        );
     }
 
     /// A watch is following the transaction right now and will decide it
@@ -384,7 +398,8 @@ mod tests {
         // finalized status, as coinage infers a minter from its consumer.
         let oracle = ScriptedOracle::new(|ledger: &LedgerView| {
             let mut completed = vec![SUCCESSOR];
-            if ledger.status_of(SUCCESSOR) == Some(DurableTxStatus::FinalizedSuccess) {
+            let successor = ledger.status_of(SUCCESSOR);
+            if matches!(successor, Some(DurableTxStatus::FinalizedSuccess { .. })) {
                 completed.push(PREDECESSOR);
             }
             Box::new(CompletedAtFinalized(completed)) as Box<dyn PassScope>
@@ -405,11 +420,11 @@ mod tests {
 
         assert_eq!(
             status(&engine.db, PREDECESSOR),
-            DurableTxStatus::FinalizedSuccess
+            DurableTxStatus::FinalizedSuccess { at: None }
         );
         assert_eq!(
             status(&engine.db, SUCCESSOR),
-            DurableTxStatus::FinalizedSuccess
+            DurableTxStatus::FinalizedSuccess { at: None }
         );
     }
 
@@ -486,7 +501,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(entry.status, DurableTxStatus::Pending);
-        assert_eq!(entry.success_detected_at, None);
     }
 
     /// The node cannot serve the hash at the recorded height, for example after
@@ -504,7 +518,10 @@ mod tests {
 
         block_on(engine.run_pass());
 
-        assert_eq!(status(&engine.db, id), DurableTxStatus::PendingSuccess);
+        assert_eq!(
+            status(&engine.db, id),
+            DurableTxStatus::PendingSuccess { at: block(160) }
+        );
     }
 
     /// A reorg replaced the branch with a shorter one that does not reach the
@@ -542,8 +559,12 @@ mod tests {
         let entry = block_on(engine.db.read(move |conn| dao::entry(conn, id)))
             .unwrap()
             .unwrap();
-        assert_eq!(entry.status, DurableTxStatus::FinalizedSuccess);
-        assert_eq!(entry.success_detected_at, Some(block(120)));
+        assert_eq!(
+            entry.status,
+            DurableTxStatus::FinalizedSuccess {
+                at: Some(block(120))
+            }
+        );
     }
 
     /// Finality stalls while best blocks keep coming. The era has passed on the
@@ -573,7 +594,10 @@ mod tests {
 
         block_on(engine.run_pass());
 
-        assert_eq!(status(&engine.db, id), DurableTxStatus::Failure);
+        assert_eq!(
+            status(&engine.db, id),
+            DurableTxStatus::Failure(FailureKind::Expired)
+        );
     }
 
     /// Recovery runs on every finalized head while a transaction stays
@@ -602,12 +626,7 @@ mod tests {
             dao::compare_and_set(
                 tx,
                 &observed,
-                &crate::durable::model::Verdict {
-                    status: DurableTxStatus::PendingSuccess,
-                    success_detected_at: Some(at),
-                    failure: None,
-                    scanned_to: None,
-                },
+                &DurableTxStatus::PendingSuccess { at }.into(),
             )?;
             Ok(())
         }))

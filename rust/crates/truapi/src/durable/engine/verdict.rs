@@ -11,8 +11,6 @@ use crate::store::DbError;
 /// The verdict that hands a transaction back to its policy to be built again.
 const BACK_TO_POLICY: Verdict = Verdict {
     status: DurableTxStatus::PendingSubmission,
-    success_detected_at: None,
-    failure: None,
     scanned_to: None,
 };
 
@@ -46,7 +44,7 @@ async fn retry_or_keep(
     observed: &DurableTxEntry,
     verdict: Verdict,
 ) -> Result<Verdict, DbError> {
-    let Some(failure) = failure_kind(&verdict) else {
+    let DurableTxStatus::Failure(failure) = verdict.status else {
         return Ok(verdict);
     };
     let id = observed.id;
@@ -82,14 +80,6 @@ async fn policy_retries(
     registered
         .can_retry(observed, &plan.params, failure)
         .await
-}
-
-/// Why `verdict` fails its transaction, when it does and the reason is known.
-fn failure_kind(verdict: &Verdict) -> Option<FailureKind> {
-    match verdict.status {
-        DurableTxStatus::Failure => verdict.failure,
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -157,13 +147,8 @@ mod tests {
         block_on(fixture.engine.status(id)).unwrap()
     }
 
-    fn failure(kind: Option<FailureKind>) -> Verdict {
-        Verdict {
-            status: DurableTxStatus::Failure,
-            success_detected_at: None,
-            failure: kind,
-            scanned_to: None,
-        }
+    fn failure(kind: FailureKind) -> Verdict {
+        DurableTxStatus::Failure(kind).into()
     }
 
     fn write(fixture: &Fixture, observed: &DurableTxEntry, verdict: Verdict) -> bool {
@@ -176,7 +161,7 @@ mod tests {
     fn a_failure_the_policy_retries_goes_back_to_be_built() {
         let fixture = fixture(RetryAnswer::Retry);
         let observed = retryable(&fixture);
-        let dispatch_failed = failure(Some(FailureKind::DispatchFailed));
+        let dispatch_failed = failure(FailureKind::DispatchFailed);
 
         assert!(write(&fixture, &observed, dispatch_failed));
 
@@ -200,9 +185,12 @@ mod tests {
         let id = insert(&fixture.engine.db, &test_domain(), extrinsic(1, 100, 64));
         let observed = entry(&fixture, id);
 
-        write(&fixture, &observed, failure(Some(FailureKind::Expired)));
+        write(&fixture, &observed, failure(FailureKind::Expired));
 
-        assert_eq!(status(&fixture, id), Some(DurableTxStatus::Failure));
+        assert_eq!(
+            status(&fixture, id),
+            Some(DurableTxStatus::Failure(FailureKind::Expired))
+        );
         assert_eq!(fixture.policy.retry_questions(), vec![]);
     }
 
@@ -211,11 +199,11 @@ mod tests {
         let fixture = fixture(RetryAnswer::Final);
         let observed = retryable(&fixture);
 
-        write(&fixture, &observed, failure(Some(FailureKind::Rejected)));
+        write(&fixture, &observed, failure(FailureKind::Rejected));
 
         assert_eq!(
             status(&fixture, observed.id),
-            Some(DurableTxStatus::Failure)
+            Some(DurableTxStatus::Failure(FailureKind::Rejected))
         );
     }
 
@@ -226,46 +214,25 @@ mod tests {
         let fixture = fixture_without_policy();
         let observed = retryable(&fixture);
 
-        write(&fixture, &observed, failure(Some(FailureKind::Expired)));
+        write(&fixture, &observed, failure(FailureKind::Expired));
 
         assert_eq!(
             status(&fixture, observed.id),
-            Some(DurableTxStatus::Failure)
+            Some(DurableTxStatus::Failure(FailureKind::Expired))
         );
-    }
-
-    /// A failure whose reason is unknown gives the policy nothing to judge.
-    #[test]
-    fn a_failure_without_a_kind_stays_final_without_asking_the_policy() {
-        let fixture = fixture(RetryAnswer::Retry);
-        let observed = retryable(&fixture);
-
-        write(&fixture, &observed, failure(None));
-
-        assert_eq!(
-            status(&fixture, observed.id),
-            Some(DurableTxStatus::Failure)
-        );
-        assert_eq!(fixture.policy.retry_questions(), vec![]);
     }
 
     #[test]
     fn a_success_is_written_without_asking_the_policy() {
         let fixture = fixture(RetryAnswer::Retry);
         let observed = retryable(&fixture);
-        let success = Verdict {
-            status: DurableTxStatus::FinalizedSuccess,
-            success_detected_at: Some(block(120)),
-            failure: None,
-            scanned_to: None,
+        let finalized = DurableTxStatus::FinalizedSuccess {
+            at: Some(block(120)),
         };
 
-        write(&fixture, &observed, success);
+        write(&fixture, &observed, finalized.into());
 
-        assert_eq!(
-            status(&fixture, observed.id),
-            Some(DurableTxStatus::FinalizedSuccess)
-        );
+        assert_eq!(status(&fixture, observed.id), Some(finalized));
         assert_eq!(fixture.policy.retry_questions(), vec![]);
     }
 
@@ -285,7 +252,7 @@ mod tests {
         }))
         .unwrap();
 
-        let expired = failure(Some(FailureKind::Expired));
+        let expired = failure(FailureKind::Expired);
         let written = block_on(write_verdict(&fixture.engine, &observed, expired));
 
         assert!(written.is_err());

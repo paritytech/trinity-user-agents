@@ -3,7 +3,7 @@
 use super::super::backoff::{INITIAL_BACKOFF, MAX_BACKOFF, REBUILD_COOLDOWN};
 use super::*;
 use crate::durable::engine::verdict::write_verdict;
-use crate::durable::model::Verdict;
+use crate::durable::model::FailureKind;
 
 /// Waits for the first attempt of row `id` to start, then hands it back to
 /// its policy, as a retried failure does.
@@ -13,12 +13,7 @@ fn hand_back_first_attempt(fixture: &Fixture, id: DurableTxId) {
     wait_until(watch_waits, "the first attempt's watch waits");
     let read = fixture.engine.db.read(move |conn| dao::entry(conn, id));
     let attempt = block_on(read).unwrap().unwrap();
-    let back = Verdict {
-        status: DurableTxStatus::PendingSubmission,
-        success_detected_at: None,
-        failure: None,
-        scanned_to: None,
-    };
+    let back = DurableTxStatus::PendingSubmission.into();
     block_on(write_verdict(&fixture.engine, &attempt, back)).unwrap();
 }
 
@@ -134,12 +129,7 @@ fn a_finalized_row_leaves_no_attempt_count_behind() {
     fixture.wait_for(id, DurableTxStatus::Pending);
     let read = fixture.engine.db.read(move |conn| dao::entry(conn, id));
     let attempt = block_on(read).unwrap().unwrap();
-    let finalized = Verdict {
-        status: DurableTxStatus::FinalizedSuccess,
-        success_detected_at: None,
-        failure: None,
-        scanned_to: None,
-    };
+    let finalized = DurableTxStatus::FinalizedSuccess { at: None }.into();
 
     block_on(write_verdict(&fixture.engine, &attempt, finalized)).unwrap();
 
@@ -155,7 +145,7 @@ fn a_row_given_up_after_a_rebuild_leaves_no_attempt_count_behind() {
 
     fixture.timer.advance(REBUILD_COOLDOWN);
 
-    fixture.wait_for(id, DurableTxStatus::Failure);
+    fixture.wait_for(id, DurableTxStatus::Failure(FailureKind::Abandoned));
     assert_eq!(remembered_attempts(&fixture, id), None);
 }
 

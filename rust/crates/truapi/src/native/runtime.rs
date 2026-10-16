@@ -13,6 +13,7 @@ use super::reject_undecodable_deeplink;
 use super::renderer::observe_renderer;
 use super::renderer::{NativeRendererObserver, NativeRendererSubscription};
 use super::ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError};
+use crate::durable::RecoveryError;
 use crate::host_internal::permissions::TemporaryPermissions;
 use crate::host_internal::sso_messages::SsoRequestOutcome;
 use crate::host_internal::sso_messages::{
@@ -26,18 +27,18 @@ use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks,
+    NativePocketCallbacks, NativeScannerCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
     ProductExecutionConfig,
 };
-use super::errors::{HostRejection, NativeCoreDatabaseError, NativeDurableRecoveryError};
+use super::errors::{HostRejection, NativeCoreDatabaseError};
 use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
     CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
-    PocketCallbackPlatform,
+    PocketCallbackPlatform, ScannerCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -141,6 +142,7 @@ impl NativeTrUApiHostRuntime {
         });
         let permission_status: Arc<dyn crate::platform::PermissionStatusHost> =
             callback_platform.clone();
+        let expanded_card: Arc<dyn crate::platform::ExpandedCardHost> = callback_platform.clone();
         let platform: Arc<dyn crate::platform::Platform> = callback_platform;
         let chat: Option<Arc<dyn crate::platform::ChatPlatform>> =
             chat_callbacks.map(|chat| -> Arc<dyn crate::platform::ChatPlatform> {
@@ -168,6 +170,7 @@ impl NativeTrUApiHostRuntime {
             pocket,
             game,
             permission_status,
+            expanded_card,
             permission_grants: Arc::new(TemporaryPermissions::default()),
             events,
             shared_events: self.events.clone(),
@@ -278,6 +281,13 @@ impl NativeTrUApiHostRuntime {
             .set_contacts_platform(Arc::new(ContactsCallbackPlatform {
                 contacts: callbacks,
             }))
+    }
+
+    /// Install the host's scanner before opening any product execution.
+    /// Set-once: answers whether this call installed it.
+    pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
+        self.runtime
+            .set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
     }
 
     /// Tell the core the host's contacts changed. Call it whenever a contact
@@ -562,11 +572,8 @@ impl NativeTrUApiHostRuntime {
     /// [`HostCallbacks::durable_work_changed`] asks for; an error means
     /// recovery stopped early and the task should be retried. Dropping the
     /// future stops it.
-    pub async fn run_durable_recovery(&self) -> Result<(), NativeDurableRecoveryError> {
-        self.runtime
-            .run_durable_recovery()
-            .await
-            .map_err(Into::into)
+    pub async fn run_durable_recovery(&self) -> Result<(), RecoveryError> {
+        self.runtime.run_durable_recovery().await
     }
 
     /// Answer one decrypted SSO remote message from a wallet-managed
@@ -628,6 +635,8 @@ pub struct NativeProductExecution {
     /// The same `CallbackPlatform` as `platform`, kept separately because
     /// `Arc<dyn Platform>` cannot be downcast to the optional capability.
     permission_status: Arc<dyn crate::platform::PermissionStatusHost>,
+    /// The same `CallbackPlatform`, so a Widget's call reaches this execution's callbacks.
+    expanded_card: Arc<dyn crate::platform::ExpandedCardHost>,
     /// One-use grants follow this execution across its product and admin connections.
     permission_grants: Arc<TemporaryPermissions>,
     events: Arc<NativeEventBus>,
@@ -662,6 +671,7 @@ impl NativeProductExecution {
             chat: self.chat_connection.clone(),
             renderer: self.renderer_connection.clone(),
             pocket_platform: self.pocket.clone(),
+            expanded_card: Some(self.expanded_card.clone()),
             game_platform: self.game.clone(),
         }
     }
@@ -1190,6 +1200,55 @@ mod tests {
             panic!("expected a renderer action item")
         };
         assert_eq!(delivered, published);
+        // The scanner checks taps on a connection, while hosts publish them here.
+        assert!(admin.product_runtime().recently_tapped());
+    }
+
+    #[test]
+    fn an_expanded_card_face_request_reaches_only_the_execution_that_made_it() {
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            native_host_runtime_config(),
+        )
+        .expect("host runtime config should be valid");
+        let open_widget = |product_id: &str| {
+            let callbacks = Arc::new(EventCallbacks::new());
+            let execution = host
+                .open_product_execution(
+                    callbacks.clone(),
+                    None,
+                    None,
+                    None,
+                    native_execution_config(product_id, ProductExecutionKind::Widget),
+                )
+                .expect("Widget execution should open");
+            (execution, callbacks)
+        };
+        let (card, card_callbacks) = open_widget("card.dot");
+        let (_other, other_callbacks) = open_widget("other.dot");
+
+        let admin = card.admin();
+        let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_face_shown(
+            admin.product_runtime().as_ref(),
+            &truapi::CallContext::default(),
+            truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest::V1(
+                v01::HostExpandedCardSetFaceShownRequest { shown: false },
+            ),
+        ));
+
+        assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
+        assert_eq!(
+            *card_callbacks.face_requests.lock().expect("face requests"),
+            [false]
+        );
+        assert!(
+            other_callbacks
+                .face_requests
+                .lock()
+                .expect("face requests")
+                .is_empty(),
+            "another product's card must not be asked to move its face"
+        );
     }
 
     #[test]

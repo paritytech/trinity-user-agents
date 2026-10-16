@@ -346,9 +346,10 @@ withdrawn before it reaches the host, the absence of any permission prompt, and
 host failures.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
-"Host-drawn scanner"). No host serves it yet, so the runtime
-answers `Unsupported`, and the battery and the playground's Diagnosis both skip
-the service.
+"Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
+it from `TRUAPI_SCAN_TEXT`, or with a dismissal when it is unset, so the
+battery runs it. The playground's
+Diagnosis skips it, since dot.li has no viewfinder and answers `Unsupported`.
 
 To run the playground locally in a plain browser tab, against a signing host on
 your own machine:
@@ -678,6 +679,29 @@ make ios-chat-host-playground-run
 ```
 
 Run both integrations with one iOS build using `make ios-chat-all`.
+
+The Android twin of that launcher runs the same TrUAPI Playground worker
+against the shared core inside a headless emulator, and writes its report to
+`playground/test-results/android-chat/diagnosis-report.md`:
+
+```bash
+cd hosts/android && ./gradlew :app:assembleVanillaDebug && cd -
+make android-chat-playground-run
+```
+
+Prerequisites:
+
+- an Android SDK on `ANDROID_HOME`, with the `truapi-chat-e2e` AVD created
+- the Rust Android targets (`make android-jni`, which needs `cargo-ndk` and the NDK)
+- a `python` on `PATH`, which the rust-android-gradle linker wrapper shells out to
+- a stub `hosts/android/app/google-services.json`
+- a debug keystore configured in `hosts/android/local.properties`
+- the debug `applicationId` `com.example.polkadot.debug`; a fork that renames it
+  must pass `TRUAPI_ANDROID_E2E_PACKAGE`
+
+The `TRUAPI_ANDROID_E2E_*` environment variables override every default
+(device, APK, product, room, message, username, URL, report path); they
+mirror the iOS `TRUAPI_IOS_E2E_*` ones.
 
 ## Regenerate the TypeScript client
 

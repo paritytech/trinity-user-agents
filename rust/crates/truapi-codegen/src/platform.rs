@@ -14,7 +14,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::rustdoc::{
     Crate, Item, NameContext, TypeDef, TypeDefKind, TypeRef, VariantFields, clean_docs,
-    extract_enum, extract_struct, resolve_type, summarize_json,
+    extract_enum, extract_struct, protocol_name_context, resolve_type, summarize_json,
 };
 
 /// Top-level extracted shape of the platform surface.
@@ -164,7 +164,7 @@ fn in_platform_module(path: &[String]) -> bool {
 /// Walk one crate's `platform` module and extract every public trait + its methods.
 fn extract(krate: &Crate) -> Result<PlatformDefinition> {
     let trait_ids = collect_local_trait_ids(krate);
-    let names = NameContext::default();
+    let names = protocol_name_context(krate);
 
     let mut traits = Vec::new();
     let mut super_trait = None;

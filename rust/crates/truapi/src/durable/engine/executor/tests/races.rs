@@ -7,6 +7,7 @@ use parking_lot::Mutex;
 use super::*;
 use crate::chain::{DispatchOutcome, WatchEvent};
 use crate::durable::engine::DurableSubmission;
+use crate::durable::model::FailureKind;
 use crate::durable::testing::{block_hash, rebuild_plan};
 use crate::store::DbError;
 
@@ -69,7 +70,7 @@ fn a_build_for_a_row_that_changed_meanwhile_starts_no_attempt() {
     let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
 
     wait_until(|| fixture.timer.sleeps() == 1, "the bucket backs off");
-    assert_eq!(fixture.status(id), DurableTxStatus::Failure);
+    assert_eq!(fixture.status(id), DurableTxStatus::Failure(FailureKind::Abandoned));
     assert_eq!(fixture.submitted(), vec![]);
     assert!(!fixture.engine.ownership.is_owned(id));
 }
@@ -119,7 +120,7 @@ fn a_watched_failure_without_a_policy_is_never_rebuilt() {
 
     fail_on_chain(&fixture, &events, &presigned);
 
-    fixture.wait_for(id, DurableTxStatus::Failure);
+    fixture.wait_for(id, DurableTxStatus::Failure(FailureKind::DispatchFailed));
     fixture.settle();
     assert_eq!(policy.batches(), Vec::<Vec<DurableTxId>>::new());
     assert_eq!(fixture.submitted(), vec![presigned.extrinsic]);

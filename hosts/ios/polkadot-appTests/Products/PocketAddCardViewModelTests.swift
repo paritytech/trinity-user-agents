@@ -3,6 +3,7 @@ import AsyncExtensions
 import PolkadotUI
 import Products
 import Testing
+import UIKit
 @testable import polkadot_app
 
 /// The sheet shows the card as it will look, so what it draws has to be what
@@ -13,16 +14,18 @@ struct PocketAddCardViewModelTests {
     @Test
     func drawsTheOfferedProductsOwnImages() async throws {
         let asked = Recorder()
+        let picture = try writeTestPicture(size: CGSize(width: 3, height: 2))
+        defer { try? FileManager.default.removeItem(at: picture) }
         let viewModel = PocketAddCardViewModel(
             productId: "game.paseo",
             cardId: PocketCardId(value: "loyalty"),
             interactor: makeAddCardInteractor(published: [loyalty]),
             images: { productId in
                 asked.note(productId)
-                return PocketImageResolver(
+                return ProductImageResolver(
                     contentId: { productId },
                     archive: ProductWorkerArchive(
-                        dotNsResolver: StubArchiveRoot(),
+                        dotNsResolver: StubArchiveRoot(root: picture.deletingLastPathComponent()),
                         cachedRoot: { _ in nil }
                     ),
                     ipfsUrl: { _ in nil }
@@ -30,10 +33,10 @@ struct PocketAddCardViewModelTests {
             }
         )
 
-        let resolved = await viewModel.resolveImage?(.archive(path: "logo.png"))
+        let resolved = await viewModel.resolveImage?(.archive(path: picture.lastPathComponent))
 
         #expect(asked.products == ["game.paseo"])
-        #expect(resolved?.lastPathComponent == "logo.png")
+        #expect(resolved?.size == CGSize(width: 3, height: 2))
     }
 
     /// A card that could not be stored must not dismiss the sheet as approved:
@@ -94,8 +97,10 @@ private final class Recorder {
 }
 
 private struct StubArchiveRoot: DotNsResolverProtocol {
+    let root: URL
+
     func resolveToLocalURL(dotNsName _: String) async throws -> URL {
-        FileManager.default.temporaryDirectory
+        root
     }
 
     func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }

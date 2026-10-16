@@ -78,7 +78,7 @@ impl GroupId {
     }
 }
 
-/// Where a transaction stands.
+/// Where a transaction stands, with the evidence for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DurableTxStatus {
     /// Waiting for its policy to build an attempt. Live, but nothing on chain
@@ -87,22 +87,37 @@ pub enum DurableTxStatus {
     /// Submitted or about to be, with no evidence either way.
     Pending,
     /// Took effect at a block that is not finalized yet.
-    PendingSuccess,
+    PendingSuccess {
+        /// The block it was seen at.
+        at: HashAndNumber,
+    },
     /// Took effect at a finalized block. Terminal.
-    FinalizedSuccess,
+    FinalizedSuccess {
+        /// The block it was seen at, when the proof named one.
+        at: Option<HashAndNumber>,
+    },
     /// Can no longer take effect. Terminal.
-    Failure,
+    Failure(FailureKind),
 }
 
 impl DurableTxStatus {
     /// Whether a recovery pass or a submission watch may still decide it.
     pub fn awaits_verdict(self) -> bool {
-        matches!(self, Self::Pending | Self::PendingSuccess)
+        matches!(self, Self::Pending | Self::PendingSuccess { .. })
+    }
+
+    /// The block its success was seen at, if it has one.
+    pub fn success_block(self) -> Option<HashAndNumber> {
+        match self {
+            Self::PendingSuccess { at } => Some(at),
+            Self::FinalizedSuccess { at } => at,
+            Self::PendingSubmission | Self::Pending | Self::Failure(_) => None,
+        }
     }
 
     /// Whether nothing will ever change it again.
     pub fn is_final(self) -> bool {
-        matches!(self, Self::FinalizedSuccess | Self::Failure)
+        matches!(self, Self::FinalizedSuccess { .. } | Self::Failure(_))
     }
 }
 
@@ -115,6 +130,8 @@ pub enum FailureKind {
     DispatchFailed,
     /// The node refused it before it reached the pool.
     Rejected,
+    /// It waited to be built and its policy will never build it.
+    Abandoned,
 }
 
 /// Which head a question is asked at.
@@ -141,8 +158,6 @@ pub struct DurableTxEntry {
     pub mortality: Mortality,
     /// Where it stands.
     pub status: DurableTxStatus,
-    /// The block its success was seen at, while that is still the evidence.
-    pub success_detected_at: Option<HashAndNumber>,
     /// Every block from birth through this one was searched and does not
     /// include the attempt. Only finalized blocks are searched, so no reorg
     /// can undo it.
@@ -177,11 +192,17 @@ pub struct DurableTxState {
 pub struct Verdict {
     /// The status to write.
     pub status: DurableTxStatus,
-    /// The block the success was seen at, if any.
-    pub success_detected_at: Option<HashAndNumber>,
-    /// Why it failed, for a [`DurableTxStatus::Failure`].
-    pub failure: Option<FailureKind>,
     /// How far the search has now read without finding the attempt. `None`
     /// keeps the recorded [`DurableTxEntry::scanned_to`].
     pub scanned_to: Option<u64>,
+}
+
+impl From<DurableTxStatus> for Verdict {
+    /// A verdict that leaves the recorded search cursor as it is.
+    fn from(status: DurableTxStatus) -> Self {
+        Self {
+            status,
+            scanned_to: None,
+        }
+    }
 }

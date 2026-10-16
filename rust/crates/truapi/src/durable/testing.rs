@@ -75,7 +75,6 @@ pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
         tx_hash: H256::repeat_byte(id.0 as u8),
         mortality: Mortality::new(block(birth), period).unwrap(),
         status: DurableTxStatus::Pending,
-        success_detected_at: None,
         scanned_to: None,
     }
 }

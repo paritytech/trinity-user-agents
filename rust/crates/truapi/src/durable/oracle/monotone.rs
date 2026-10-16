@@ -88,8 +88,8 @@ mod tests {
     use futures::executor::block_on;
 
     use super::*;
-    use crate::durable::ladder::{RuleOutcome, SearchResult, evaluate_ladder};
-    use crate::durable::model::DurableTxStatus;
+    use crate::durable::ladder::{RecordedCanonicity, RuleOutcome, SearchResult, evaluate_ladder};
+    use crate::durable::model::{DurableTxStatus, FailureKind};
     use crate::durable::testing::{FakeView, entry};
 
     const BIRTH: u64 = 100;
@@ -157,7 +157,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            match evaluate_ladder(&transactions[0], scope.as_ref(), &view, None).await {
+            match evaluate_ladder(&transactions[0], scope.as_ref(), &view, RecordedCanonicity::Unknown).await {
                 RuleOutcome::Decided(verdict) => verdict.status,
                 RuleOutcome::Undecided => panic!("expected a decision"),
             }
@@ -172,7 +172,7 @@ mod tests {
     fn a_value_present_at_finalized_finalizes() {
         assert_eq!(
             evaluate(ListMembership::new(&[(FINALIZED, ID)]), FINALIZED, ABSENT),
-            DurableTxStatus::FinalizedSuccess
+            DurableTxStatus::FinalizedSuccess { at: None }
         );
     }
 
@@ -181,7 +181,9 @@ mod tests {
     fn a_value_present_only_at_best_is_optimistic_success() {
         assert_eq!(
             evaluate(ListMembership::new(&[(BEST, ID)]), FINALIZED, ABSENT),
-            DurableTxStatus::PendingSuccess
+            DurableTxStatus::PendingSuccess {
+                at: crate::durable::testing::block(BEST)
+            }
         );
     }
 
@@ -189,7 +191,7 @@ mod tests {
     fn an_absent_value_after_the_era_fails() {
         assert_eq!(
             evaluate(ListMembership::new(&[]), DEATH + 1, ABSENT),
-            DurableTxStatus::Failure
+            DurableTxStatus::Failure(FailureKind::Expired)
         );
     }
 
@@ -235,7 +237,9 @@ mod tests {
                     outcome: Some(crate::chain::DispatchOutcome::Succeeded),
                 }
             ),
-            DurableTxStatus::FinalizedSuccess
+            DurableTxStatus::FinalizedSuccess {
+                at: Some(crate::durable::testing::block(110))
+            }
         );
     }
 

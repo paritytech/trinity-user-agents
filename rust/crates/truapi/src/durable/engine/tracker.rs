@@ -93,7 +93,8 @@ impl DurableTxEngine {
             ?reason,
             "durable transaction refused before submission"
         );
-        self.propose(attempt, failure(FailureKind::Rejected)).await;
+        self.propose(attempt, DurableTxStatus::Failure(FailureKind::Rejected).into())
+            .await;
         false
     }
 
@@ -149,22 +150,22 @@ impl DurableTxEngine {
     /// not final, so it proposes nothing.
     async fn on_best_block(&self, attempt: Attempt, hash: &H256) {
         if let Some((block, DispatchOutcome::Succeeded)) = self.outcome_at(attempt, *hash).await {
-            self.propose(attempt, success(DurableTxStatus::PendingSuccess, block))
-                .await;
+            let success = DurableTxStatus::PendingSuccess { at: block };
+            self.propose(attempt, success.into()).await;
         }
     }
 
     /// Settles the transaction from its finalized block, when the outcome
     /// can be read there. The watch ends either way.
     async fn on_finalized_block(&self, attempt: Attempt, hash: H256) -> ControlFlow<()> {
-        let verdict = match self.outcome_at(attempt, hash).await {
+        let status = match self.outcome_at(attempt, hash).await {
             Some((block, DispatchOutcome::Succeeded)) => {
-                success(DurableTxStatus::FinalizedSuccess, block)
+                DurableTxStatus::FinalizedSuccess { at: Some(block) }
             }
-            Some((_, DispatchOutcome::Failed)) => failure(FailureKind::DispatchFailed),
+            Some((_, DispatchOutcome::Failed)) => DurableTxStatus::Failure(FailureKind::DispatchFailed),
             None => return ControlFlow::Break(()),
         };
-        self.propose(attempt, verdict).await;
+        self.propose(attempt, status.into()).await;
         ControlFlow::Break(())
     }
 
@@ -199,14 +200,9 @@ impl DurableTxEngine {
         let Ok(Some(entry)) = self.db.read(move |conn| dao::entry(conn, id)).await else {
             return;
         };
-        if entry.success_detected_at.map(|block| block.hash) == Some(retracted) {
-            let demoted = Verdict {
-                status: DurableTxStatus::Pending,
-                success_detected_at: None,
-                failure: None,
-                scanned_to: None,
-            };
-            self.propose(attempt, demoted).await;
+        let recorded = entry.status.success_block();
+        if recorded.map(|block| block.hash) == Some(retracted) {
+            self.propose(attempt, DurableTxStatus::Pending.into()).await;
         }
     }
 
@@ -236,24 +232,6 @@ impl DurableTxEngine {
             Ok(None) => false,
             Err(_) => true,
         }
-    }
-}
-
-fn success(status: DurableTxStatus, block: HashAndNumber) -> Verdict {
-    Verdict {
-        status,
-        success_detected_at: Some(block),
-        failure: None,
-        scanned_to: None,
-    }
-}
-
-fn failure(kind: FailureKind) -> Verdict {
-    Verdict {
-        status: DurableTxStatus::Failure,
-        success_detected_at: None,
-        failure: Some(kind),
-        scanned_to: None,
     }
 }
 
@@ -371,8 +349,7 @@ mod tests {
             .unbounded_send(WatchEvent::InBestBlock(block_hash(135)))
             .unwrap();
 
-        fixture.wait_for(DurableTxStatus::PendingSuccess);
-        assert_eq!(fixture.entry().success_detected_at, Some(block(135)));
+        fixture.wait_for(DurableTxStatus::PendingSuccess { at: block(135) });
     }
 
     /// Not finalized, so a failed dispatch there proposes nothing.
@@ -406,9 +383,10 @@ mod tests {
             .unbounded_send(WatchEvent::InFinalizedBlock(block_hash(125)))
             .unwrap();
 
-        fixture.wait_for(DurableTxStatus::FinalizedSuccess);
+        fixture.wait_for(DurableTxStatus::FinalizedSuccess {
+            at: Some(block(125)),
+        });
         fixture.wait_released();
-        assert_eq!(fixture.entry().success_detected_at, Some(block(125)));
         assert!(!fixture.nudged());
     }
 
@@ -423,7 +401,7 @@ mod tests {
             .unbounded_send(WatchEvent::InFinalizedBlock(block_hash(125)))
             .unwrap();
 
-        fixture.wait_for(DurableTxStatus::Failure);
+        fixture.wait_for(DurableTxStatus::Failure(FailureKind::DispatchFailed));
     }
 
     /// The node rejects the extrinsic during validation, for example because
@@ -436,7 +414,7 @@ mod tests {
             None
         });
 
-        fixture.wait_for(DurableTxStatus::Failure);
+        fixture.wait_for(DurableTxStatus::Failure(FailureKind::Rejected));
         fixture.wait_released();
         assert_eq!(fixture.chain.state().submitted.len(), 0);
         assert!(!fixture.nudged());
@@ -491,14 +469,13 @@ mod tests {
         events
             .unbounded_send(WatchEvent::InBestBlock(block_hash(135)))
             .unwrap();
-        fixture.wait_for(DurableTxStatus::PendingSuccess);
+        fixture.wait_for(DurableTxStatus::PendingSuccess { at: block(135) });
 
         events
             .unbounded_send(WatchEvent::NoLongerInBestBlock)
             .unwrap();
 
         fixture.wait_for(DurableTxStatus::Pending);
-        assert_eq!(fixture.entry().success_detected_at, None);
     }
 
     /// The extrinsic moves to a block whose outcome cannot be read, and that
@@ -513,7 +490,7 @@ mod tests {
         events
             .unbounded_send(WatchEvent::InBestBlock(block_hash(135)))
             .unwrap();
-        fixture.wait_for(DurableTxStatus::PendingSuccess);
+        fixture.wait_for(DurableTxStatus::PendingSuccess { at: block(135) });
         fixture
             .chain
             .state()
@@ -529,8 +506,10 @@ mod tests {
         drop(events);
 
         fixture.wait_released();
-        assert_eq!(fixture.entry().status, DurableTxStatus::PendingSuccess);
-        assert_eq!(fixture.entry().success_detected_at, Some(block(135)));
+        assert_eq!(
+            fixture.entry().status,
+            DurableTxStatus::PendingSuccess { at: block(135) }
+        );
     }
 
     /// The connection closes mid-watch. The transaction stays pending with its

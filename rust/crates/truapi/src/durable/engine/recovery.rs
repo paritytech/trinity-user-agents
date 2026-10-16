@@ -1,5 +1,6 @@
 //! The recovery loop: passes on every head and wake until nothing is live.
 
+use core::ops::ControlFlow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -21,9 +22,9 @@ use crate::store::DbError;
 enum Trigger {
     /// Something may have changed: run another pass.
     Pass,
-    /// The loop can no longer follow the new blocks of the chain with this
-    /// genesis, for the given reason.
-    ChainLost(H256, String),
+    /// The loop can no longer follow the new blocks of the chain with
+    /// `genesis`.
+    HeadsLost { genesis: H256, reason: String },
 }
 
 type Triggers = BoxStream<'static, Trigger>;
@@ -37,25 +38,28 @@ impl LostChains {
         self.0.contains_key(&genesis)
     }
 
-    /// Fails for the first lost chain that still has live transactions, so
-    /// the host retries for it.
-    fn result_for(&self, live_chains: &BTreeSet<H256>) -> Result<(), RecoveryError> {
-        let lost_with_live = self
+    /// Whether recovery lost the heads of every chain in `chains`.
+    fn contains_all(&self, chains: &BTreeSet<H256>) -> bool {
+        chains.iter().all(|genesis| self.contains(*genesis))
+    }
+
+    /// The [`RecoveryError::HeadsLost`] of the first lost chain in
+    /// `live_chains`, or `None` when no lost chain has live transactions.
+    fn heads_lost_error(&self, live_chains: &BTreeSet<H256>) -> Option<RecoveryError> {
+        let (genesis, reason) = self
             .0
             .iter()
-            .find(|(genesis, _)| live_chains.contains(genesis));
-        match lost_with_live {
-            Some((genesis, reason)) => Err(RecoveryError::HeadsLost {
-                genesis: *genesis,
-                reason: reason.clone(),
-            }),
-            None => Ok(()),
-        }
+            .find(|(genesis, _)| live_chains.contains(genesis))?;
+        Some(RecoveryError::HeadsLost {
+            genesis: *genesis,
+            reason: reason.clone(),
+        })
     }
 }
 
 /// Why recovery stopped while transactions were still live. The host retries.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+#[uniffi(flat_error)]
 pub enum RecoveryError {
     /// The runtime has no core database, so there is nothing to recover.
     #[error("no core database configured")]
@@ -95,15 +99,15 @@ impl DurableTxEngine {
         let wakes = self.recovery_wakes.subscribe();
         let mut lost = LostChains::default();
         self.run_pass().await;
-        if let Some(result) = self.settled(&lost).await {
-            return result;
+        if let ControlFlow::Break(ended) = self.after_pass(&lost).await {
+            return ended;
         }
         let mut triggers = self.triggers(wakes).await;
         loop {
             next_trigger(&mut triggers, &mut lost).await;
             self.run_pass().await;
-            if let Some(result) = self.settled(&lost).await {
-                return result;
+            if let ControlFlow::Break(ended) = self.after_pass(&lost).await {
+                return ended;
             }
         }
     }
@@ -120,34 +124,49 @@ impl DurableTxEngine {
     }
 
     /// One trigger per head of the chain with `genesis`, ending in
-    /// [`Trigger::ChainLost`] when the node's head subscription cannot open
+    /// [`Trigger::HeadsLost`] when the node's head subscription cannot open
     /// or ends.
     async fn head_triggers(&self, genesis: H256) -> Triggers {
         let heads = match self.heads.head_events(genesis).await {
             Ok(heads) => heads,
-            Err(error) => return chain_lost(genesis, error.to_string()),
+            Err(error) => return heads_lost(genesis, error.to_string()),
         };
         heads
             .filter_map(move |head| ready(as_trigger(genesis, head)))
-            .chain(chain_lost(genesis, "head events ended".into()))
+            .chain(heads_lost(genesis, "head events ended".into()))
             .boxed()
     }
 
-    /// How recovery ends, or `None` while a transaction some registered
-    /// domain can decide is live on a chain recovery still follows, or one
-    /// waits to be built. Rows of a domain without an oracle stay as they
-    /// are: no pass could decide them. An unreadable ledger counts as live:
-    /// abandoning transactions is far worse than one more pass.
-    async fn settled(&self, lost: &LostChains) -> Option<Result<(), RecoveryError>> {
-        let live_chains = match self.read_live_chains().await {
-            Ok(chains) => chains?,
+    /// Whether recovery goes on after a pass. It goes on while a transaction
+    /// waits to be built, or while one some registered domain can decide is
+    /// live on a chain whose heads it still receives. Rows of a domain
+    /// without an oracle do not count: no pass could decide them. Once it
+    /// stops, it fails if a chain whose heads were lost still has live
+    /// transactions.
+    async fn after_pass(&self, lost: &LostChains) -> ControlFlow<Result<(), RecoveryError>> {
+        let Some(live_chains) = self.readable_live_chains().await else {
+            return ControlFlow::Continue(());
+        };
+        if !lost.contains_all(&live_chains) {
+            return ControlFlow::Continue(());
+        }
+        match lost.heads_lost_error(&live_chains) {
+            Some(error) => ControlFlow::Break(Err(error)),
+            None => ControlFlow::Break(Ok(())),
+        }
+    }
+
+    /// The chains with live transactions, or `None` while recovery has to go
+    /// on whatever their heads do. An unreadable ledger keeps recovery
+    /// running: abandoning transactions is far worse than one more pass.
+    async fn readable_live_chains(&self) -> Option<BTreeSet<H256>> {
+        match self.read_live_chains().await {
+            Ok(chains) => chains,
             Err(error) => {
                 warn!(%error, "durable recovery could not read the ledger");
-                return None;
+                None
             }
-        };
-        let followed_live = live_chains.iter().any(|genesis| !lost.contains(*genesis));
-        (!followed_live).then(|| lost.result_for(&live_chains))
+        }
     }
 
     /// The chains live transactions are on, or `None` while one waits to be
@@ -182,8 +201,8 @@ fn as_trigger(genesis: H256, head: Result<HeadEvent, RuntimeFailure>) -> Option<
     }
 }
 
-fn chain_lost(genesis: H256, reason: String) -> Triggers {
-    stream::once(ready(Trigger::ChainLost(genesis, reason))).boxed()
+fn heads_lost(genesis: H256, reason: String) -> Triggers {
+    stream::once(ready(Trigger::HeadsLost { genesis, reason })).boxed()
 }
 
 /// Waits for the next trigger, then takes every one already queued behind
@@ -197,7 +216,7 @@ async fn next_trigger(triggers: &mut Triggers, lost: &mut LostChains) {
 }
 
 fn record(trigger: Trigger, lost: &mut LostChains) {
-    if let Trigger::ChainLost(genesis, reason) = trigger {
+    if let Trigger::HeadsLost { genesis, reason } = trigger {
         warn!(?genesis, %reason, "durable recovery lost a chain's heads");
         lost.0.insert(genesis, reason);
     }
@@ -215,7 +234,7 @@ mod tests {
     use super::*;
     use crate::chain::{HeadEvent, Heads};
     use crate::chain_runtime::RuntimeFailure;
-    use crate::durable::model::{DomainId, DurableTxEntry, DurableTxStatus, HeadKind};
+    use crate::durable::model::{DomainId, DurableTxEntry, DurableTxStatus, FailureKind, HeadKind};
     use crate::durable::oracle::{CompletionOracle, DurableRegistry, LedgerView, PassScope};
     use crate::durable::policy::Preparation;
     use crate::durable::testing::{
@@ -446,7 +465,7 @@ mod tests {
         ));
         assert_eq!(
             block_on(engine.status(other)).unwrap(),
-            Some(DurableTxStatus::FinalizedSuccess)
+            Some(DurableTxStatus::FinalizedSuccess { at: None })
         );
     }
 
@@ -502,7 +521,10 @@ mod tests {
         let fixture = fixture(1);
         block_on(fixture.engine.db.close()).unwrap();
 
-        assert!(block_on(fixture.engine.settled(&LostChains::default())).is_none());
+        assert_eq!(
+            block_on(fixture.engine.after_pass(&LostChains::default())),
+            ControlFlow::Continue(())
+        );
     }
 
     /// Nothing could decide a domain without an oracle, so its rows must not
@@ -620,7 +642,8 @@ mod tests {
         give_up.store(true, Ordering::SeqCst);
         wait_until(|| fixture.timer.sleeps() == 1, "the bucket backs off");
         fixture.timer.advance(Duration::from_secs(2));
-        let failed = || block_on(fixture.engine.status(id)).unwrap() == Some(DurableTxStatus::Failure);
+        let abandoned = Some(DurableTxStatus::Failure(FailureKind::Abandoned));
+        let failed = || block_on(fixture.engine.status(id)).unwrap() == abandoned;
         wait_until(failed, "the policy gives up");
         finalize(&fixture.heads, 132);
 

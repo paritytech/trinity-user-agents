@@ -13,7 +13,8 @@ use futures::future::{pending, ready};
 use super::*;
 use crate::chain::{EncodedExtrinsic, MortalExtrinsic};
 use crate::durable::engine::DurableRequest;
-use crate::durable::model::{DomainId, DurableTxId, DurableTxStatus, GroupId, PolicyId, PolicyParams,
+use crate::durable::model::{
+    DomainId, DurableTxId, DurableTxStatus, FailureKind, GroupId, PolicyId, PolicyParams,
     SubmissionPlan,
 };
 use crate::durable::oracle::{DurableRegistry, Unobservable};
@@ -175,7 +176,7 @@ fn a_policy_that_gives_up_fails_the_transaction_without_broadcasting() {
 
     let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
 
-    fixture.wait_for(id, DurableTxStatus::Failure);
+    fixture.wait_for(id, DurableTxStatus::Failure(FailureKind::Abandoned));
     assert_eq!(fixture.submitted(), vec![]);
 }
 
@@ -196,8 +197,8 @@ fn rows_nothing_can_build_are_abandoned() {
 
     fixture.engine.ensure_submissions_started();
 
-    fixture.wait_for(unknown_policy, DurableTxStatus::Failure);
-    fixture.wait_for(unknown_domain, DurableTxStatus::Failure);
+    fixture.wait_for(unknown_policy, DurableTxStatus::Failure(FailureKind::Abandoned));
+    fixture.wait_for(unknown_domain, DurableTxStatus::Failure(FailureKind::Abandoned));
     assert_eq!(policy.batches(), Vec::<Vec<DurableTxId>>::new());
 }
 

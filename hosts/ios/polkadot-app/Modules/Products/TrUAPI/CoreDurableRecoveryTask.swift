@@ -1,6 +1,7 @@
 import BackgroundExecution
 import BackgroundTasks
 import Foundation
+import os
 import TrUAPIHost
 
 /// Keeps the core's durable recovery running while it has transactions
@@ -19,10 +20,13 @@ final class CoreDurableRecoveryTask: @unchecked Sendable {
 
     static let shared = CoreDurableRecoveryTask()
 
-    private let lock = NSLock()
-    private var runtimeProvider: TrUAPIHostRuntimeProviding?
-    private var pendingTask: CoreDurableRecoveryRun?
-    private var foreground: CoreDurableForegroundRecovery?
+    private struct State {
+        var runtimeProvider: TrUAPIHostRuntimeProviding?
+        var pendingTask: CoreDurableRecoveryRun?
+        var foreground: CoreDurableForegroundRecovery?
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
 
     private init() {}
 
@@ -37,12 +41,14 @@ final class CoreDurableRecoveryTask: @unchecked Sendable {
     /// run holds its background time through, and starts a task that arrived
     /// before them.
     func attach(_ runtimeProvider: TrUAPIHostRuntimeProviding, executor: BackgroundExecuting) {
-        lock.lock()
-        self.runtimeProvider = runtimeProvider
-        foreground = CoreDurableForegroundRecovery(runtimeProvider: runtimeProvider, executor: executor)
-        let pending = pendingTask
-        pendingTask = nil
-        lock.unlock()
+        let foreground = CoreDurableForegroundRecovery(runtimeProvider: runtimeProvider, executor: executor)
+        let pending = state.withLock { state in
+            state.runtimeProvider = runtimeProvider
+            state.foreground = foreground
+            let pending = state.pendingTask
+            state.pendingTask = nil
+            return pending
+        }
 
         pending?.start(on: runtimeProvider)
     }
@@ -58,23 +64,21 @@ final class CoreDurableRecoveryTask: @unchecked Sendable {
     /// Starts a run in-process. Ignored before ``attach(_:executor:)``, when
     /// no runtime exists to have work.
     func runInForeground() {
-        lock.lock()
-        let foreground = self.foreground
-        lock.unlock()
-
+        let foreground = state.withLock { $0.foreground }
         foreground?.request()
     }
 }
 
 private extension CoreDurableRecoveryTask {
     func handle(_ run: CoreDurableRecoveryRun) {
-        lock.lock()
-        let provider = runtimeProvider
-        let replaced = provider == nil ? pendingTask : nil
-        if provider == nil {
-            pendingTask = run
+        let (provider, replaced): (TrUAPIHostRuntimeProviding?, CoreDurableRecoveryRun?) = state.withLock { state in
+            guard let provider = state.runtimeProvider else {
+                let replaced = state.pendingTask
+                state.pendingTask = run
+                return (nil, replaced)
+            }
+            return (provider, nil)
         }
-        lock.unlock()
 
         replaced?.finish(success: false)
         if let provider {
@@ -90,9 +94,12 @@ private extension CoreDurableRecoveryTask {
 private final class CoreDurableRecoveryRun: @unchecked Sendable {
     private let task: BGTask
     private let reschedule: () -> Void
-    private let lock = NSLock()
-    private var finished = false
-    private var work: Task<Void, Never>?
+    private struct State {
+        var finished = false
+        var work: Task<Void, Never>?
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
 
     init(task: BGTask, reschedule: @escaping () -> Void) {
         self.task = task
@@ -112,17 +119,18 @@ private final class CoreDurableRecoveryRun: @unchecked Sendable {
                 finish(success: false)
             }
         }
-        lock.lock()
-        work = run
-        lock.unlock()
+        state.withLock { $0.work = run }
     }
 
     /// Completes the system task once; a failed run asks for the next one.
+    /// Drops the work it holds, which holds this run in turn.
     func finish(success: Bool) {
-        lock.lock()
-        let first = !finished
-        finished = true
-        lock.unlock()
+        let first = state.withLock { state in
+            let first = !state.finished
+            state.finished = true
+            state.work = nil
+            return first
+        }
 
         guard first else {
             return
@@ -136,10 +144,7 @@ private final class CoreDurableRecoveryRun: @unchecked Sendable {
 
 private extension CoreDurableRecoveryRun {
     func expire() {
-        lock.lock()
-        let run = work
-        lock.unlock()
-
+        let run = state.withLock { $0.work }
         run?.cancel()
         finish(success: false)
     }
@@ -152,9 +157,22 @@ private extension CoreDurableRecoveryRun {
 private final class CoreDurableForegroundRecovery: @unchecked Sendable {
     private let runtimeProvider: TrUAPIHostRuntimeProviding
     private let executor: BackgroundExecuting
-    private let lock = NSLock()
-    private var running = false
-    private var requested = false
+    private struct State {
+        var running = false
+        var requested = false
+
+        /// Whether the caller starts the requested run.
+        mutating func claimRun() -> Bool {
+            guard requested, !running else {
+                return false
+            }
+            requested = false
+            running = true
+            return true
+        }
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
 
     init(runtimeProvider: TrUAPIHostRuntimeProviding, executor: BackgroundExecuting) {
         self.runtimeProvider = runtimeProvider
@@ -162,10 +180,10 @@ private final class CoreDurableForegroundRecovery: @unchecked Sendable {
     }
 
     func request() {
-        lock.lock()
-        requested = true
-        let starts = claimRun()
-        lock.unlock()
+        let starts = state.withLock { state in
+            state.requested = true
+            return state.claimRun()
+        }
 
         if starts {
             start()
@@ -174,16 +192,6 @@ private final class CoreDurableForegroundRecovery: @unchecked Sendable {
 }
 
 private extension CoreDurableForegroundRecovery {
-    /// Called with the lock held: whether the caller starts the requested run.
-    func claimRun() -> Bool {
-        guard requested, !running else {
-            return false
-        }
-        requested = false
-        running = true
-        return true
-    }
-
     /// A failed run needs no retry here: the scheduled background task
     /// covers it.
     func start() {
@@ -196,10 +204,10 @@ private extension CoreDurableForegroundRecovery {
     }
 
     func finish() {
-        lock.lock()
-        running = false
-        let starts = claimRun()
-        lock.unlock()
+        let starts = state.withLock { state in
+            state.running = false
+            return state.claimRun()
+        }
 
         if starts {
             start()

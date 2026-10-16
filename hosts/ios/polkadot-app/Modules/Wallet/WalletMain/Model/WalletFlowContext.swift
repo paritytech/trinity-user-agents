@@ -10,7 +10,6 @@ protocol WalletFlowContextProtocol {
     var fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol { get }
     var coinageService: CoinageServicing { get }
     var coinageBackupSyncService: CoinageBackupSyncServicing { get }
-    var personDataStore: DetermineStatePersonDataStore { get }
     var networkStatusService: NetworkStatusProviding { get }
     var flowState: SPAFlowState { get }
 }
@@ -21,7 +20,6 @@ final class WalletFlowContext: WalletFlowContextProtocol {
     let fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol
     let coinageService: CoinageServicing
     let coinageBackupSyncService: CoinageBackupSyncServicing
-    let personDataStore: DetermineStatePersonDataStore
     let networkStatusService: NetworkStatusProviding
     let flowState: SPAFlowState
 
@@ -31,7 +29,6 @@ final class WalletFlowContext: WalletFlowContextProtocol {
         fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol,
         coinageService: CoinageServicing,
         coinageBackupSyncService: CoinageBackupSyncServicing,
-        personDataStore: DetermineStatePersonDataStore,
         networkStatusService: NetworkStatusProviding,
         flowState: SPAFlowState
     ) {
@@ -40,7 +37,6 @@ final class WalletFlowContext: WalletFlowContextProtocol {
         self.fiatOnrampTrackingService = fiatOnrampTrackingService
         self.coinageService = coinageService
         self.coinageBackupSyncService = coinageBackupSyncService
-        self.personDataStore = personDataStore
         self.networkStatusService = networkStatusService
         self.flowState = flowState
     }
