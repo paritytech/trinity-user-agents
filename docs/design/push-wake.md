@@ -48,6 +48,10 @@ truapi::worker::set_wake_watches(HostWorkerSetWakeWatchesRequest {
 - The answer is `Push` when the host's relay took the topics, and `Unavailable { reason }` when the host has no relay or
   the relay refused them. The core keeps the watches in both cases.
 - Call it again when the topics change. Each call also refreshes the registration at the relay.
+- A wake shows nothing by itself. The worker sends a notification with the room link as deeplink for what it read,
+  as it does while it runs in the foreground; the host shows it by the "Room notifications" rule of
+  [Chat Extension v2 additions](../rfcs/chat-extension-v2-additions.md). A worker that sends one notification for each
+  event that it applies, once, shows each event once, whether a wake or the foreground worker reads it first.
 
 ## The core
 

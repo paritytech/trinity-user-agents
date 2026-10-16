@@ -366,6 +366,23 @@ Mute and archive are the user's choices for a product room, kept by the host. Th
 - Person chats and host-placed rooms are not changed by this RFC. On a host without `mute_archive` nothing changes and
   the product never receives the event.
 
+### Room notifications
+
+A notification of a product whose deeplink is a room link of the same product (`/-/chat/<room_id>`) is a notification
+of that room. The host shows it as it shows a notification of a person chat:
+
+- The title is the name of the room. The text is the text of the notification, so a product sends the message
+  alone, not the sender name before it. A notification that opens no room of the product that the host knows keeps
+  the title of other product notifications.
+- While the app is in the foreground, the host shows it as its in-app banner, except while that room is on screen or
+  where the host also hides person chat notifications (on iOS, the chat list). In the background the operating
+  system shows it.
+- A tap opens the room, as the room link does.
+- A muted room shows nothing (see Mute and archive).
+
+So a product sends a notification for each event that the user must know about, also while its worker runs in the
+foreground, and does not follow which room is on screen.
+
 ### Preimage attachments
 
 A room that declares `preimage_attachments` lets the user send an attachment above the inline bound. The host stores it
