@@ -375,7 +375,8 @@ public protocol PaymentHostBridge: AnyObject, Sendable {
 /// `Unsupported`.
 public protocol BalanceHostBridge: AnyObject, Sendable {
     /// The current balance of `purse` (`nil` for the main purse), a decimal
-    /// string of CASH units. Report every change with
+    /// string of CASH units. The balance is the user's, the same for every
+    /// product; `productId` only names who is asking. Report every change with
     /// ``TrUAPIHostRuntime/notifyBalance(purse:available:)``.
     func balance(productId: String, purse: UInt32?) async throws -> U128
 }
