@@ -153,6 +153,24 @@ class ProductFeedApplierTest {
         coVerify(exactly = 0) { chatMessageRepository.updateMessageStatus(any(), any()) }
     }
 
+    // As on iOS: the product tells the user when it sent the message on, when the other side has it, and a failure.
+    @Test
+    fun `a status change of a message of the user is the status that the user sees`() = runBlocking<Unit> {
+        withStoredMessage(message("u1", room, ChatMessageOrigin.User))
+
+        for ((status, stored) in listOf(
+            ProductMessageStatusModel.SENT to ChatMessage.Status.IS_SENT,
+            ProductMessageStatusModel.DELIVERED to ChatMessage.Status.IS_READ,
+            ProductMessageStatusModel.READ to ChatMessage.Status.IS_READ,
+            ProductMessageStatusModel.FAILED to ChatMessage.Status.DELIVERY_FAILED,
+            ProductMessageStatusModel.PREPARING to ChatMessage.Status.NEW,
+        )) {
+            assertSuccess(apply(ProductFeedUpdateModel.StatusChanged("u1", status)))
+            coVerify { chatMessageRepository.updateMessageStatus("u1", stored) }
+        }
+        assertEquals(emptySet<String>(), preparing.observe(room).first())
+    }
+
     @Test
     fun `a delete removes the meta of the message`() = runBlocking<Unit> {
         withStoredMessage(productStored("m1"))
