@@ -163,7 +163,7 @@
       }
     },
     {
-      "expect": "sequence-out-of-range",
+      "expect": "malformed",
       "file": "documents/sequence-out-of-range.json",
       "name": "sequence-out-of-range",
       "pointer": {
@@ -190,7 +190,7 @@
       }
     },
     {
-      "expect": "number-out-of-range",
+      "expect": "malformed",
       "file": "documents/asset-id-out-of-range.json",
       "name": "asset-id-out-of-range",
       "pointer": {

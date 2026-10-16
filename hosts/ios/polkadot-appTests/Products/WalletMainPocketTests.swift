@@ -1,5 +1,6 @@
 import Foundation
 import AsyncExtensions
+import os
 import ChainRegistry
 import PolkadotUI
 import Products
@@ -53,6 +54,52 @@ struct WalletMainPocketTests {
 
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == false)
     }
+
+    /// The collectibles page is the stash product, named under each network's
+    /// own suffix, so a fixed suffix opens a page that exists on one network
+    /// only. It reads the collection over the host's chain connection, which it
+    /// gets only when opened as a product.
+    @Test(arguments: ["paseo", "testnet"])
+    func viewingCollectiblesOpensStashOnTheActiveNetworkAsAProduct(network: String) async throws {
+        let screen = CollectiblesScreen(tld: StubDotNsTldProvider(tld: network))
+
+        screen.presenter.setup()
+        try await settle()
+        screen.presenter.showCollectibles()
+
+        #expect(screen.view.showsCollectibles)
+        #expect(screen.wireframe.openedProduct == "stash.\(network)")
+    }
+
+    /// The remote switch pulls the card from every installed app without a
+    /// release. A switched-off app must not read the chain either, since the
+    /// suffix read is retried for as long as it goes unanswered.
+    @Test
+    func theRemoteSwitchPullsTheCollectiblesCardWithoutReadingTheChain() async throws {
+        let tld = LateTld()
+        let screen = CollectiblesScreen(tld: tld, collectiblesEnabled: false)
+
+        screen.presenter.setup()
+        try await settle()
+
+        #expect(!screen.view.showsCollectibles)
+        #expect(tld.reads == 0)
+    }
+
+    /// The tab asks once, often before the chain has answered, and giving up
+    /// then would hide the card until the app restarts.
+    @Test
+    func showsTheCollectiblesCardOnceALateNetworkSuffixArrives() async throws {
+        let screen = CollectiblesScreen(tld: LateTld())
+
+        screen.presenter.setup()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !screen.view.showsCollectibles, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        #expect(screen.view.showsCollectibles)
+    }
 }
 
 // MARK: - Fixtures
@@ -74,17 +121,25 @@ private func settle() async throws {
 
 @MainActor
 private func makeInteractor(
-    collection: InMemoryPocketCardStore,
-    presenter: RecordingPresenter,
-    warmDelay: Duration = .zero
+    collection: InMemoryPocketCardStore = InMemoryPocketCardStore(),
+    presenter: RecordingPresenter? = nil,
+    warmDelay: Duration = .zero,
+    tld: DotNsTldProviding = StubDotNsTldProvider(tld: nil),
+    collectiblesEnabled: Bool = false
 ) -> WalletMainInteractor {
+    let remoteConfig = MockRemoteConfigManager()
+    remoteConfig.collectiblesEnabled = collectiblesEnabled
+
     let interactor = WalletMainInteractor(
         networkStatusObserver: StubNetworkStatusObserver(),
         pocketPrewarmer: PocketPrewarmer(
             products: StubProductResolver(),
             dotNsResolver: SlowArchives(delay: warmDelay)
         ),
-        pocket: ProductPocketService(collection: collection)
+        pocket: ProductPocketService(collection: collection),
+        tldProvider: tld,
+        hostProvider: ProductHostFactory(tldProvider: tld),
+        remoteConfig: remoteConfig
     )
     interactor.presenter = presenter
     return interactor
@@ -95,10 +150,80 @@ private final class RecordingPresenter: WalletMainInteractorOutputProtocol {
     private(set) var pocketCards: [[PocketCardViewModel]] = []
 
     func didReceive(networkStatus _: NetworkStatus) {}
+    func didReceiveCollectibles(page _: ProductPage) {}
 
     func didReceive(pocketCards: [PocketCardViewModel]) {
         self.pocketCards.append(pocketCards)
     }
+}
+
+/// The Wallet tab from its presenter down, with the screen and the navigation
+/// it would reach recorded.
+@MainActor
+private struct CollectiblesScreen {
+    let view = RecordingWalletView()
+    let wireframe = RecordingWireframe()
+    let presenter: WalletMainPresenter
+
+    init(tld: DotNsTldProviding, collectiblesEnabled: Bool = true) {
+        let interactor = makeInteractor(tld: tld, collectiblesEnabled: collectiblesEnabled)
+        presenter = WalletMainPresenter(
+            interactor: interactor,
+            wireframe: wireframe,
+            titleViewModelFactory: NetworkStatusTitleViewModelFactory(screenTitle: "")
+        )
+        interactor.presenter = presenter
+        presenter.view = view
+    }
+}
+
+private final class RecordingWalletView: UIViewController, WalletMainViewProtocol {
+    private(set) var showsCollectibles = false
+
+    func didReceive(isCollectiblesAvailable: Bool) {
+        showsCollectibles = isCollectiblesAvailable
+    }
+
+    func didReceive(pocketCards _: [PocketCardViewModel]) {}
+    func didReceive(titleViewModel _: NetworkStatusTitleView.ViewModel) {}
+    func frame(of _: PocketCardKey) -> CGRect? { nil }
+    func setOpenCard(_: PocketCardKey?) {}
+}
+
+@MainActor
+private final class RecordingWireframe: WalletMainWireframeProtocol {
+    private(set) var openedProduct: String?
+
+    func showProduct(page: ProductPage) {
+        openedProduct = page.host.toDotDomain()
+    }
+
+    func showPocketCard(_: PocketCardViewModel, from _: WalletMainViewProtocol?) {}
+    func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm _: @escaping () -> Void) {}
+}
+
+/// A chain that has not answered the tab's first read, then does.
+private final class LateTld: DotNsTldProviding {
+    private let readCount = OSAllocatedUnfairLock(initialState: 0)
+
+    var reads: Int {
+        readCount.withLock { $0 }
+    }
+
+    func currentTld() -> String? {
+        readCount.withLock { count in
+            defer { count += 1 }
+            return count == 0 ? nil : "paseo"
+        }
+    }
+
+    func resolveTld() async throws -> String {
+        readCount.withLock { $0 += 1 }
+        throw DotNsTldError.unavailable
+    }
+
+    func refresh() {}
+    func reset() {}
 }
 
 private final class StubNetworkStatusObserver: NetworkStatusObserving {

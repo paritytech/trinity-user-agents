@@ -14,15 +14,9 @@ pub enum Error {
 	/// `$v` names a format this reader does not know.
 	#[error("unsupported format version {0}")]
 	UnsupportedVersion(u64),
-	/// A known field is missing or has the wrong type.
+	/// A known field is missing, has the wrong type, or holds a number outside its range.
 	#[error("malformed: {0}")]
 	Malformed(String),
-	/// `sequence` is above 2^32 - 1.
-	#[error("sequence {0} is above 2^32 - 1")]
-	SequenceOutOfRange(u64),
-	/// Another number is above 2^53 - 1, which I-JSON readers cannot hold exactly.
-	#[error("{0} is above 2^53 - 1")]
-	NumberOutOfRange(&'static str),
 	/// A fork is signed with the key of the stack it was forked from.
 	#[error("a fork must not be signed with its source's key")]
 	ForkSignedWithSourceKey,

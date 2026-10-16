@@ -12,9 +12,6 @@ use std::collections::{BTreeMap, HashSet};
 /// The only format version this crate reads and writes.
 pub const VERSION: u64 = 1;
 
-/// The largest integer every JSON reader holds exactly, 2^53 - 1. `sequence` is a `u32`.
-const MAX_EXACT: u64 = (1 << 53) - 1;
-
 /// The service kinds `$v: 1` defines. Readers drop entries of any other kind before validating.
 pub const SERVICE_KINDS: &[&str] =
 	&["dub", "turn", "stun", "ipfs-gateway", "hop", "eth-rpc", "storage-provider", "faucet"];
@@ -25,6 +22,9 @@ pub const SERVICE_KINDS: &[&str] =
 /// The I-JSON checks need the bytes as served: read those with [`Document::parse`].
 ///
 /// [`Document::parse`]: crate::Document::parse
+// A plain derive would generate the `Deserialize` impl itself, skipping validation. With
+// `remote = "Self"` the derives become inherent functions, and the trait impls below call them,
+// adding `from_json`'s checks on the way in.
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(remote = "Self", rename_all = "camelCase")]
@@ -109,7 +109,7 @@ pub struct SpecFile {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Block {
 	/// Block number.
-	pub number: u64,
+	pub number: u32,
 	/// 0x-prefixed block hash.
 	pub hash: String,
 }
@@ -125,7 +125,7 @@ pub struct Service {
 	pub urls: Vec<String>,
 	/// The EVM chain id; set on `eth-rpc` only.
 	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
-	pub chain_id: Option<u64>,
+	pub chain_id: Option<u32>,
 }
 
 /// An asset readers treat specially.
@@ -138,7 +138,7 @@ pub struct Asset {
 	/// Pallet that holds it.
 	pub pallet: String,
 	/// Its id in that pallet.
-	pub id: u64,
+	pub id: u32,
 }
 
 /// Where the Coinage pallet runs.
@@ -147,7 +147,7 @@ pub struct Coinage {
 	/// Role of the chain that runs it.
 	pub chain: String,
 	/// Its instance.
-	pub instance: u64,
+	pub instance: u32,
 }
 
 /// The stack a fork was made from.
@@ -184,11 +184,6 @@ impl Descriptor {
 				service.get("kind").and_then(|kind| kind.as_str()).is_none_or(is_known_kind)
 			});
 		}
-		if let Some(sequence) = document.get("sequence").and_then(|value| value.as_u64()) &&
-			sequence > u64::from(u32::MAX)
-		{
-			return Err(Error::SequenceOutOfRange(sequence));
-		}
 		let descriptor =
 			Self::deserialize(document).map_err(|error| Error::Malformed(error.to_string()))?;
 		descriptor.validate()?;
@@ -217,33 +212,10 @@ impl Descriptor {
 		if !is_label(&self.tld) {
 			return Err(Error::InvalidTld(self.tld.clone()));
 		}
-		self.validate_numbers()?;
 		self.validate_chains()?;
 		self.validate_services()?;
 		self.validate_extras()?;
 		self.validate_fork()
-	}
-
-	/// I-JSON readers hold numbers as doubles, so every integer must be exact in one.
-	fn validate_numbers(&self) -> Result<(), Error> {
-		let numbers = self
-			.assets
-			.iter()
-			.flatten()
-			.map(|asset| ("assets[].id", asset.id))
-			.chain(self.services.iter().filter_map(|service| Some(("chainId", service.chain_id?))))
-			.chain(
-				self.chains.iter().filter_map(|chain| {
-					Some(("forkedAt.number", chain.forked_at.as_ref()?.number))
-				}),
-			)
-			.chain(self.coinage.iter().map(|coinage| ("coinage.instance", coinage.instance)));
-		for (field, number) in numbers {
-			if number > MAX_EXACT {
-				return Err(Error::NumberOutOfRange(field));
-			}
-		}
-		Ok(())
 	}
 
 	fn validate_chains(&self) -> Result<(), Error> {
