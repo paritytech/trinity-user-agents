@@ -264,7 +264,8 @@ personhood product draws. It is not a check of the wallet's personhood, and this
 
   The content is fetched and verified like a product opened by name. The frame runs as the product's `Widget` execution
   under the product id `peopl.<tld>`, so it shares the worker's and the app's storage, accounts and grants. Choosing
-  Pocket in the dock ends the Widget. A reload does not open it again, and it is not added to the address history.
+  Pocket in the dock ends the Widget. A session change, such as the first username sync, opens it again as the Widget. A
+  reload does not open it again, and it is not added to the address history.
 
 - **The core's Pocket calls.** A product's `pocket.listSubscribe` lists the pinned cards it backs, so `peopl.<tld>` sees
   `humanity` as privileged and every other product sees none. `pocket.removeCard` refuses a pinned card; the core's web
@@ -574,7 +575,8 @@ opens, so the light client reaches no chain. It checks that:
   `browser/pocket-widget.ts`, not the app, at `?card=humanity`, as a `Widget` execution with the worker's account and
   storage; choosing Pocket ends it; the face is kept for that wallet only and drawn at once on its next sign-in; and a
   worker that does not offer the card is not started; a product with no widget runs its base name's content as the
-  Widget, not its app; and one with neither opens nothing and says why.
+  Widget, not its app, and opens it again as the Widget after a wallet switch; and one with neither opens nothing and
+  says why.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).

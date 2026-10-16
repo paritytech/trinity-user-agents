@@ -1188,6 +1188,23 @@ describe("Pocket's Humanity card", () => {
           .filter({ hasText: `${PRODUCT} publishes no widget; its base name` })
           .waitFor({ state: "attached" });
 
+        // A session change closes the card's product and opens it again, as
+        // the Widget it was, not as the product's App.
+        await signInWith(page, SYNTHETIC_MNEMONIC);
+        await page.waitForFunction(
+          () => document.querySelectorAll("#product-slot iframe").length === 1,
+        );
+        expect(frame.isDetached()).toBe(true);
+        const reopened = await frameWhere(
+          page,
+          (url) =>
+            url.includes(`/${base.contentCid}/`) &&
+            url.includes("card=humanity"),
+        );
+        expect(await widgetSeen(reopened)).toMatchObject({
+          card: "humanity",
+          faceShown: "Unsupported",
+        });
         expect(blocked).toEqual([]);
       } finally {
         await context.close();
