@@ -1431,51 +1431,6 @@ fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
     directory.join(format!("{slug}--{}.json", hex::encode(digest)))
 }
 
-<<<<<<< HEAD
-=======
-/// Extension appended to a storage file that could not be read, so its contents
-/// survive for manual recovery.
-const UNREADABLE_SUFFIX: &str = "unreadable";
-
-/// Load a storage file, treating an unreadable one as empty.
-///
-/// `read_string_map` collects into a `Result`, so one undecodable value fails the
-/// whole file. Returning an empty map on that would be silently destructive: the
-/// caller's next write persists the empty map over the file, taking every intact
-/// entry with it — including keys this run never touched. So the file is first
-/// moved aside to `<name>.unreadable`, which keeps the data recoverable and makes
-/// the warning actionable.
-fn load_string_map(path: &Path) -> HashMap<String, Vec<u8>> {
-    match read_string_map(path) {
-        Ok(values) => values,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
-        Err(err) => {
-            let preserved = path.with_extension(UNREADABLE_SUFFIX);
-            match fs::rename(path, &preserved) {
-				Ok(()) => {
-					tracing::warn!(
-                    path = %path.display(),
-                    preserved = %preserved.display(),
-                    %err,
-                    "could not read CLI storage; moved it aside and started empty"
-					)
-				},
-				Err(rename_err) => {
-					tracing::warn!(
-                    path = %path.display(),
-                    %err,
-                    %rename_err,
-                    "could not read CLI storage, and could not move it aside; \
-                     the next write will overwrite it"
-					)
-				},
-            }
-            HashMap::new()
-		},
-    }
-}
-
->>>>>>> integrate/host-channel-20261016-709
 fn read_string_map(path: &Path) -> std::io::Result<HashMap<String, Vec<u8>>> {
     let text = fs::read_to_string(path)?;
     let json = serde_json::from_str::<JsonMap>(&text)
@@ -1863,13 +1818,8 @@ mod tests {
         std::fs::create_dir_all(&state_dir).expect("state dir");
         let core_path = state_dir.join("core-storage.json");
 
-<<<<<<< HEAD
         let original = r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#;
         std::fs::write(&core_path, original).expect("seed core storage");
-=======
-		std::fs::write(&core_path, r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#)
-        .expect("seed core storage");
->>>>>>> integrate/host-channel-20261016-709
 
         let platform = CliPlatform::new(
             test_network(),
@@ -1878,37 +1828,18 @@ mod tests {
             None,
         );
 
-<<<<<<< HEAD
         assert!(
             platform
                 .read_core_storage(CoreStorageKey::AuthSession)
                 .await
                 .is_err()
-=======
-        // Nothing loaded: the good entries went with the bad one.
-        assert_eq!(
-			platform.read_core_storage(CoreStorageKey::AuthSession).await.expect("read"),
-            None,
-            "AuthSession should have loaded but the file was discarded"
->>>>>>> integrate/host-channel-20261016-709
         );
         assert!(
             platform
                 .write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
                 .await
-<<<<<<< HEAD
                 .is_err()
         );
-=======
-            .expect("write");
-
-        let after = std::fs::read_to_string(&core_path).expect("read back");
-		assert!(after.contains("42"), "the new AuthSession value should be persisted: {after}");
-
-        // The unreadable original is preserved beside it, so nothing is lost.
-        let preserved = std::fs::read_to_string(core_path.with_extension(UNREADABLE_SUFFIX))
-            .expect("the unreadable file should have been moved aside");
->>>>>>> integrate/host-channel-20261016-709
         assert!(
             platform
                 .clear_core_storage(CoreStorageKey::AuthSession)
