@@ -830,8 +830,9 @@ interface PaymentHostBridge {
  */
 interface BalanceHostBridge {
     /**
-     * The balance of [purse] (`null` for the main purse) for [productId], as a
-     * decimal string of CASH units: what a payment request can spend now.
+     * The user's balance in [purse] (`null` for the main purse), as a decimal
+     * string of CASH units: what a payment request can spend now. It is the same
+     * for every product; [productId] only names the one asking.
      */
     @Throws(HostPaymentBalanceSubscribeException::class)
     suspend fun balance(productId: String, purse: UInt?): String

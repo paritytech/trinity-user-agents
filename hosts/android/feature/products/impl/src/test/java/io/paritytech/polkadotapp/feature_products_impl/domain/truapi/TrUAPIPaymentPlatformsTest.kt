@@ -268,7 +268,7 @@ class TrUAPIPaymentPlatformsTest {
     @Test
     fun `a payment the balance cannot cover is reported as insufficient`() = runBlocking<Unit> {
         coEvery {
-            requestPaymentUseCase.requestPayment(product, paymentId, planks(25), any(), ShortfallDisclosure.CALLER)
+            requestPaymentUseCase.requestPayment(product, paymentId, planks(25), any(), ShortfallDisclosure.MASKED_BY_CORE)
         } returns Result.failure(PaymentRequestError.InsufficientBalance())
 
         val error = runCatching { platforms.requestPayment(product.value, paymentRequest()) }.exceptionOrNull()

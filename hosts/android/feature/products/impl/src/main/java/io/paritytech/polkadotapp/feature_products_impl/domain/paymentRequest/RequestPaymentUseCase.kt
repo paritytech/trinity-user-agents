@@ -24,13 +24,13 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import javax.inject.Inject
 
-/** Who decides whether a product may learn that the balance cannot cover its payment. */
+/** Which side hides a short balance from a product that lacks BalanceAccess. */
 enum class ShortfallDisclosure {
-    /** The host: a product without BalanceAccess is told only that the payment was rejected. */
-    HOST_BALANCE_ACCESS,
+    /** This host checks BalanceAccess, and reports a short balance as a plain rejection to a product without it. */
+    MASKED_BY_HOST,
 
-    /** The caller, which owns BalanceAccess itself: a shortfall is always reported as one. */
-    CALLER,
+    /** The TrUAPI core checks BalanceAccess and hides the shortfall itself, so it is reported here as it is. */
+    MASKED_BY_CORE,
 }
 
 interface RequestPaymentUseCase {
@@ -40,7 +40,7 @@ interface RequestPaymentUseCase {
         id: ProductPaymentRequestId,
         amount: Balance,
         destination: AccountId,
-        shortfallDisclosure: ShortfallDisclosure = ShortfallDisclosure.HOST_BALANCE_ACCESS,
+        shortfallDisclosure: ShortfallDisclosure = ShortfallDisclosure.MASKED_BY_HOST,
     ): Result<Unit>
 
     fun subscribeStatus(productId: ProductId, id: ProductPaymentRequestId): Flow<PaymentStatus>
@@ -131,13 +131,13 @@ class RealRequestPaymentUseCase @Inject constructor(
     /**
      * Checked with `check`, not `requestPermission`, so the user is never prompted for BalanceAccess just to be
      * told the payment cannot happen. Without it the product learns nothing about the balance: a rejection is
-     * all it gets. A caller that owns BalanceAccess itself makes that call on its side.
+     * all it gets. With [ShortfallDisclosure.MASKED_BY_CORE] the core makes that call instead.
      */
     private suspend fun insufficientBalanceError(
         productId: ProductId,
         shortfallDisclosure: ShortfallDisclosure,
     ): PaymentRequestError =
-        if (shortfallDisclosure == ShortfallDisclosure.CALLER ||
+        if (shortfallDisclosure == ShortfallDisclosure.MASKED_BY_CORE ||
             permissionGuard.check(productId, ProductPermission.BalanceAccess)
         ) {
             PaymentRequestError.InsufficientBalance()

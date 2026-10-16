@@ -63,9 +63,9 @@ internal interface TrUAPIPaymentSink {
 }
 
 /**
- * Serves the core's top-up, payment and balance platforms from the engines the
- * legacy host calls use. The core owns BalanceAccess, so nothing here prompts
- * for it.
+ * Serves the core's top-up, payment and balance platforms from the same top-up,
+ * payment and balance engines the app's other product calls use. The core owns
+ * BalanceAccess, so nothing here prompts for it.
  *
  * The core asks for an operation's current status once and expects every later
  * one pushed, so a start, or the first ask after a restart, forwards that
@@ -136,7 +136,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         val product = ProductId.fromStoredValue(productId)
         val id = startTopUp(product, request).getOrElse { throw it }
 
-        topUps.forward(productId, request.id) { topUpService.status(product, id) }
+        topUps.follow(productId, request.id) { topUpService.status(product, id) }
     }
 
     private suspend fun startTopUp(product: ProductId, request: HostPaymentTopUpRequest): Result<PaymentTopUpId> {
@@ -164,7 +164,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         val product = ProductId.fromStoredValue(productId)
         val id = startPayment(product, request).getOrElse { throw it }
 
-        payments.forward(productId, request.id) { requestPaymentUseCase.subscribeStatus(product, id) }
+        payments.follow(productId, request.id) { requestPaymentUseCase.subscribeStatus(product, id) }
     }
 
     private suspend fun startPayment(product: ProductId, request: HostPaymentRequest): Result<ProductPaymentRequestId> {
@@ -179,7 +179,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
             id = id,
             amount = amount,
             destination = request.destination.intoAccountId(),
-            shortfallDisclosure = ShortfallDisclosure.CALLER,
+            shortfallDisclosure = ShortfallDisclosure.MASKED_BY_CORE,
         ).fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asPaymentException()) })
     }
 
@@ -264,22 +264,17 @@ internal class StatusForwarder<S : Any>(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, S>) = size > SETTLED_KEPT
     }
 
-    fun forward(productId: String, id: ByteArray, statuses: () -> Flow<S>) {
-        follow(productId, id, statuses)
-    }
-
     /** `null` when the engine knows no such operation. */
     fun current(productId: String, id: ByteArray, statuses: () -> Flow<S>): S? {
         synchronized(settled) { settled[keyOf(productId, id)] }?.let { return it }
 
-        val run = follow(productId, id, statuses)
+        val run = runFor(productId, id, statuses)
         val latest = run.value.takeIf { it !is Latest.Pending } ?: runBlocking {
             withTimeoutOrNull(FIRST_STATUS_WAIT_MS) { run.first { it !is Latest.Pending } }
         } ?: Latest.Pending
 
-        @Suppress("UNCHECKED_CAST")
         return when (latest) {
-            is Latest.Known<*> -> latest.status as S
+            is Latest.Known -> latest.status
             Latest.NotFound -> null
             // The run logged the engine's error; the core passes this reason on to the product.
             is Latest.Failed -> throw HostRejection.Rejected(STATUS_UNAVAILABLE)
@@ -287,9 +282,17 @@ internal class StatusForwarder<S : Any>(
         }
     }
 
-    private fun keyOf(productId: String, id: ByteArray) = Key(productId, id.copyOf().toDataByteArray())
+    private fun keyOf(productId: String, id: ByteArray) = Key(productId, id.toDataByteArray())
 
-    private fun follow(productId: String, id: ByteArray, statuses: () -> Flow<S>): MutableStateFlow<Latest<S>> {
+    /**
+     * Forwards the operation's statuses unless a run for it is already going. The run ends at the first terminal
+     * status, or when [statuses] fails or completes.
+     */
+    fun follow(productId: String, id: ByteArray, statuses: () -> Flow<S>) {
+        runFor(productId, id, statuses)
+    }
+
+    private fun runFor(productId: String, id: ByteArray, statuses: () -> Flow<S>): MutableStateFlow<Latest<S>> {
         val key = keyOf(productId, id)
         val fresh = MutableStateFlow<Latest<S>>(Latest.Pending)
         runs.putIfAbsent(key, fresh)?.let { return it }
@@ -330,9 +333,10 @@ internal class StatusForwarder<S : Any>(
 /** The amount as planks, or `null` when it is not a positive whole number. */
 private fun String.toPlanksOrNull(): Balance? = toBigIntegerOrNull()?.takeIf { it.signum() > 0 }?.intoBalance()
 
+private const val PAYMENTS_LOG_TAG = "truapi.payments"
+
 // Products see these fixed reasons. The engine's own text, which can name internals or a short balance the
 // core would otherwise mask, only reaches the log.
-private const val PAYMENTS_LOG_TAG = "truapi.payments"
 private const val TOP_UP_FAILED = "top-up could not be registered"
 private const val PAYMENT_FAILED = "payment could not be started"
 private const val PAYMENT_DID_NOT_COMPLETE = "payment did not complete"
