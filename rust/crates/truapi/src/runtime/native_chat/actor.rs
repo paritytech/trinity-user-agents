@@ -4,6 +4,7 @@
 
 mod files;
 mod history;
+mod host_channel;
 mod profile;
 mod receive;
 #[cfg(test)]
@@ -114,6 +115,19 @@ impl Peer {
 	fn ready(&self) -> bool {
 		self.established && self.revocation_acked && self.devices.iter().any(|device| device.active)
 	}
+	/// Check our pending device swap against the peer's current devices. An
+	/// acknowledgement from a device the peer still lists keeps counting, and
+	/// every device now active must have acknowledged.
+	fn refresh_revocation_acked(&mut self) {
+		let devices = &self.devices;
+		self.revocation_acks
+			.retain(|account| devices.iter().any(|device| device.account == *account));
+		self.revocation_acked = self.revocation_request.is_some() &&
+			self.devices
+				.iter()
+				.filter(|device| device.active)
+				.all(|device| self.revocation_acks.contains(&device.account));
+	}
 	fn payment_devices(&self) -> impl Iterator<Item = PeerDevice> + '_ {
 		self.devices.iter().filter_map(|device| {
 			if !device.active || !self.revocation_acks.contains(&device.account) {
@@ -153,6 +167,8 @@ enum OutgoingKind {
 	ProfileReference([u8; 32]),
 	/// Personal grants never replace an app scope's pending frame.
 	PersonalProfileReference([u8; 32]),
+	/// This host's half of the host channel, sent once per peer per session.
+	HostChannelBootstrap,
 }
 
 impl OutgoingKind {
@@ -410,6 +426,10 @@ pub(super) struct NativeChatActor {
 	file_transfer_gate: futures::lock::Mutex<()>,
 	file_export_gate: futures::lock::Mutex<()>,
 	file_cursor: AtomicUsize,
+	/// Peers this session already queued a host-channel bootstrap for. Not
+	/// persisted: a restart sends again, and a later frame replaces the
+	/// earlier one on the peer's side.
+	host_channel_bootstrapped: std::sync::Mutex<std::collections::HashSet<[u8; 32]>>,
 }
 
 impl NativeChatActor {
@@ -475,6 +495,7 @@ impl NativeChatActor {
 			file_transfer_gate: futures::lock::Mutex::new(()),
 			file_export_gate: futures::lock::Mutex::new(()),
 			file_cursor: AtomicUsize::new(0),
+			host_channel_bootstrapped: std::sync::Mutex::new(std::collections::HashSet::new()),
 		});
 		actor.store.read(|state| actor.validate_state(state)).await??;
 		Ok(actor)
@@ -708,7 +729,8 @@ impl NativeChatActor {
 								entry.kind,
 								OutgoingKind::Payment(_) |
 									OutgoingKind::Rich(_) | OutgoingKind::ProfileReference(_) |
-									OutgoingKind::PersonalProfileReference(_)
+									OutgoingKind::PersonalProfileReference(_) |
+									OutgoingKind::HostChannelBootstrap
 							)
 					})
 					.filter(|entry| {

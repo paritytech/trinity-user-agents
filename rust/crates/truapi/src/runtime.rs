@@ -23,6 +23,7 @@ mod coinage_chain;
 mod coinage_store;
 pub mod contacts;
 mod dotns_lookup;
+mod host_channel;
 mod identity;
 pub mod login_failure;
 mod native_chat;

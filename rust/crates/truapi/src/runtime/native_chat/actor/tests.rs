@@ -974,6 +974,95 @@ fn prepare_rejects_injected_keys_and_requires_authenticated_revocation_ack() {
 	});
 }
 
+/// Both hosts swap devices when a chat is accepted, so a contact's own swap
+/// can land while ours is still unacknowledged. That must not lose ours: the
+/// contact becomes ready once every device it then lists has acknowledged.
+#[test]
+fn a_contacts_device_change_keeps_our_pending_swap() {
+	block_on(async {
+		for acknowledged_first in [false, true] {
+			let fixture = Fixture::new();
+			let actor = fixture.actor().await;
+			let registry = NativeChatRegistry::default();
+			let identity = IdentityFixture::new();
+			let peer = DeviceFixture::new(1);
+			let second = DeviceFixture::new(2);
+			seed_peer(&actor, &identity, &[&peer]).await;
+			let swap = [
+				wire::encode_device_added_message(
+					"own-device",
+					fixture.timestamp,
+					&actor.public.account_id,
+					&actor.public.chat_public_key,
+				)
+				.unwrap(),
+				wire::encode_device_removed_message(
+					"legacy-device",
+					fixture.timestamp,
+					&actor.legacy_account,
+				)
+				.unwrap(),
+			];
+			actor
+				.prepare(
+					&fixture.context,
+					identity.account,
+					HostNativeChatRoute::Device,
+					wire::encode_transport_request_plaintext("retire-legacy", &swap).unwrap(),
+				)
+				.await
+				.unwrap();
+			let ready =
+				|| async { actor.store.read(|state| state.peers[0].ready()).await.unwrap() };
+			let acknowledge = |device: &DeviceFixture| {
+				acknowledgment(&actor, &identity, device, "retire-legacy", false)
+			};
+			let contacts_device_change = native_packet(
+				&actor,
+				&identity,
+				&peer,
+				&wire::encode_transport_request_plaintext(
+					"peer-device",
+					&[wire::encode_device_added_message(
+						"second-device",
+						fixture.timestamp,
+						&second.account(),
+						&second.public_key(),
+					)
+					.unwrap()],
+				)
+				.unwrap(),
+				false,
+				false,
+			);
+
+			if acknowledged_first {
+				actor
+					.open_statement(&fixture.context, &registry, acknowledge(&peer))
+					.await
+					.unwrap();
+				assert!(ready().await, "the only device acknowledged");
+			}
+			actor
+				.open_statement(&fixture.context, &registry, contacts_device_change)
+				.await
+				.unwrap();
+			if !acknowledged_first {
+				actor
+					.open_statement(&fixture.context, &registry, acknowledge(&peer))
+					.await
+					.unwrap();
+			}
+			assert!(!ready().await, "the contact's new device has not acknowledged yet");
+			actor
+				.open_statement(&fixture.context, &registry, acknowledge(&second))
+				.await
+				.unwrap();
+			assert!(ready().await, "every device the contact lists has acknowledged");
+		}
+	});
+}
+
 #[test]
 fn payment_ack_survives_wallet_failure_and_actor_store_reopen() {
 	block_on(async {
@@ -2297,6 +2386,15 @@ async fn lapse_profile_references(actor: &Arc<NativeChatActor>) {
 		.unwrap();
 }
 
+/// The profile frames a response hands the product, beside whatever else
+/// the outbox holds for it.
+fn profile_frames(prepared: &[HostNativeChatPrepared]) -> Vec<&HostNativeChatPrepared> {
+	prepared
+		.iter()
+		.filter(|entry| entry.request_id.starts_with("profile-"))
+		.collect()
+}
+
 #[test]
 fn an_unacknowledged_reference_is_resent_a_bounded_number_of_times_per_disclosure() {
 	block_on(async {
@@ -2314,14 +2412,15 @@ fn an_unacknowledged_reference_is_resent_a_bounded_number_of_times_per_disclosur
 		let registry = NativeChatRegistry::default();
 		assert!(actor.publish_profile_reference(&fixture.context).await.unwrap());
 		let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
-		let mut request_ids = vec![view.prepared[0].request_id.clone()];
+		let mut request_ids = vec![profile_frames(&view.prepared)[0].request_id.clone()];
 
 		for attempt in 2..=profile::MAX_PROFILE_ATTEMPTS {
 			lapse_profile_references(&actor).await;
 			actor.reconcile(&fixture.context, &registry).await.unwrap();
 			let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
-			assert_eq!(view.prepared.len(), 1, "attempt {attempt} is offered");
-			let resent = &view.prepared[0];
+			let frames = profile_frames(&view.prepared);
+			assert_eq!(frames.len(), 1, "attempt {attempt} is offered");
+			let resent = frames[0];
 			assert!(!request_ids.contains(&resent.request_id), "attempt {attempt} is a new frame");
 			assert!(
 				resent
@@ -2336,7 +2435,10 @@ fn an_unacknowledged_reference_is_resent_a_bounded_number_of_times_per_disclosur
 		lapse_profile_references(&actor).await;
 		actor.reconcile(&fixture.context, &registry).await.unwrap();
 		let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
-		assert!(view.prepared.is_empty(), "the last attempt is dropped, not re-signed");
+		assert!(
+			profile_frames(&view.prepared).is_empty(),
+			"the last attempt is dropped, not re-signed"
+		);
 		assert!(
 			!actor.publish_profile_reference(&fixture.context).await.unwrap(),
 			"and nothing is queued again while the disclosure is unchanged"
@@ -2384,9 +2486,9 @@ fn a_reconcile_sends_a_reference_no_trigger_queued() {
 		disclose_for(&fixture).await;
 		actor.reconcile(&fixture.context, &NativeChatRegistry::default()).await.unwrap();
 		let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
-		assert_eq!(view.prepared.len(), 1);
-		assert_eq!(view.prepared[0].peer_identity, identity.account);
-		assert!(view.prepared[0].request_id.starts_with("profile-"));
+		let peers: Vec<[u8; 32]> =
+			profile_frames(&view.prepared).iter().map(|frame| frame.peer_identity).collect();
+		assert_eq!(peers, vec![identity.account]);
 	});
 }
 
@@ -2451,13 +2553,15 @@ fn a_peer_that_becomes_ready_is_sent_the_disclosure_in_that_request() {
 			)
 			.await
 			.unwrap();
+		let peers: Vec<[u8; 32]> = profile_frames(&opened.prepared)
+			.iter()
+			.map(|frame| frame.peer_identity)
+			.collect();
 		assert_eq!(
-			opened.prepared.len(),
-			1,
+			peers,
+			vec![identity.account],
 			"the acknowledgement that makes it ready brings the reference"
 		);
-		assert_eq!(opened.prepared[0].peer_identity, identity.account);
-		assert!(opened.prepared[0].request_id.starts_with("profile-"));
 	});
 }
 
@@ -3052,5 +3156,288 @@ fn personal_pending_shares_are_removed_while_unready_and_withdrawn_when_ready() 
 		lapse_profile_references(&actor).await;
 		assert!(!actor.publish_profile_reference(&fixture.context).await.unwrap());
 		assert!(queued_profile_contents(&fixture, &actor, &identity, &device).await.is_empty());
+	});
+}
+
+// ---- host channel bootstrap (seity doc/HOST_CHANNEL_PLAN.md, steps 3-4) ----
+
+#[test]
+fn a_ready_peer_gets_one_host_channel_bootstrap_per_session() {
+	block_on(async {
+		let fixture = Fixture::new();
+		set_product_grants(
+			&fixture.platform,
+			PRODUCT,
+			crate::platform::PermissionAuthorizationStatus::Authorized,
+		)
+		.await;
+		let actor = fixture.actor().await;
+		let identity = IdentityFixture::new();
+		let peer = DeviceFixture::new(1);
+		seed_peer(&actor, &identity, &[&peer]).await;
+
+		assert!(
+			actor.publish_host_channel_bootstraps(&fixture.context).await.unwrap(),
+			"a ready peer is bootstrapped"
+		);
+		assert!(
+			!actor.publish_host_channel_bootstraps(&fixture.context).await.unwrap(),
+			"and only once per session"
+		);
+		let packets: Vec<Outgoing> = actor
+			.store
+			.read(|state| {
+				state
+					.outbox
+					.iter()
+					.filter(|entry| entry.kind == OutgoingKind::HostChannelBootstrap)
+					.cloned()
+					.collect()
+			})
+			.await
+			.unwrap();
+		assert_eq!(packets.len(), 1);
+		let packet = &packets[0];
+		assert!(packet.request_id.starts_with("hostchan-"));
+		let wire::V2StatementTransportData::MultiRequest(native) =
+			open_output(&actor, &identity, &packet.statement, false, false)
+		else {
+			panic!("a bootstrap is a native multi-device request")
+		};
+		let body = open_body(&actor, &peer, &native.encrypted_request, &native.devices_info);
+		let decoded = wire::decode_message_exchange_request_plaintext(&body).unwrap();
+		assert_eq!(decoded.messages.len(), 1);
+		let message = wire::decode_message(&decoded.messages[0]).unwrap();
+		let expected = crate::host_logic::host_channel::ChannelKey::derive(
+			&fixture.context.entropy,
+			&fixture.context.genesis_hash,
+			&identity.account,
+		)
+		.public();
+		assert_eq!(
+			message.content,
+			wire::V2ChatMessageContent::HostChannelBootstrap {
+				version: 1,
+				channel_public_key: expected,
+			}
+		);
+		// The relay sends it alongside the profile frames.
+		let fixture2 = Fixture::new();
+		set_product_grants(
+			&fixture2.platform,
+			PRODUCT,
+			crate::platform::PermissionAuthorizationStatus::Authorized,
+		)
+		.await;
+		let actor2 = fixture2.actor().await;
+		seed_peer(&actor2, &identity, &[&peer]).await;
+		actor2.relay_profile_reference(&fixture2.context).await;
+		assert!(
+			actor2
+				.store
+				.read(|state| state
+					.outbox
+					.iter()
+					.any(|entry| entry.kind == OutgoingKind::HostChannelBootstrap))
+				.await
+				.unwrap()
+		);
+	});
+}
+
+/// The Chat product submits what the response's `prepared` list hands it,
+/// so a bootstrap the outbox holds but that list omits never reaches the
+/// peer.
+#[test]
+fn a_queued_host_channel_bootstrap_is_handed_to_the_product() {
+	block_on(async {
+		let fixture = Fixture::new();
+		set_product_grants(
+			&fixture.platform,
+			PRODUCT,
+			crate::platform::PermissionAuthorizationStatus::Authorized,
+		)
+		.await;
+		let actor = fixture.actor().await;
+		let identity = IdentityFixture::new();
+		let peer = DeviceFixture::new(1);
+		seed_peer(&actor, &identity, &[&peer]).await;
+		assert!(actor.publish_host_channel_bootstraps(&fixture.context).await.unwrap());
+		let packet = outgoing(&actor, OutgoingKind::HostChannelBootstrap).await;
+
+		let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
+		let handed: Vec<String> =
+			view.prepared.iter().map(|prepared| prepared.request_id.clone()).collect();
+		assert_eq!(handed, vec![packet.request_id]);
+	});
+}
+
+/// Seed `other` as a ready contact of `actor`, with the keys `other` really has.
+async fn seed_actor_peer(actor: &NativeChatActor, other: &NativeChatActor) {
+	let peer = Peer {
+		identity: other.public.identity_account_id,
+		root_key: other.public.identity_chat_public_key,
+		username: None,
+		devices: vec![DeviceRecord {
+			account: other.public.account_id,
+			key: Some(other.public.chat_public_key),
+			active: true,
+			timestamp: 0,
+			message_id: "authenticated-fixture".into(),
+		}],
+		invitation: None,
+		invitation_timestamp: None,
+		invitation_text: None,
+		established: true,
+		revocation_request: None,
+		revocation_acked: true,
+		revocation_acks: vec![other.public.account_id],
+		revision: 1,
+	};
+	actor
+		.store
+		.update(move |state| {
+			state.peers.push(peer);
+			Ok(())
+		})
+		.await
+		.unwrap();
+}
+
+/// Two hosts that are each other's ready contacts send their host-channel keys
+/// through Chat and open each other's: both then derive the same pair, so the
+/// topic one posts on is the topic the other watches.
+#[test]
+fn two_hosts_exchange_host_channel_keys_over_chat_and_meet_on_one_topic() {
+	block_on(async {
+		let alice = Fixture::new();
+		let mut bob = Fixture::new();
+		bob.context.entropy = Zeroizing::new(vec![0x55; 16]);
+		bob.context.session.public_key = [9; 32];
+		for fixture in [&alice, &bob] {
+			set_product_grants(
+				&fixture.platform,
+				PRODUCT,
+				crate::platform::PermissionAuthorizationStatus::Authorized,
+			)
+			.await;
+		}
+		let alice_actor = alice.actor().await;
+		let bob_actor = bob.actor().await;
+		seed_actor_peer(&alice_actor, &bob_actor).await;
+		seed_actor_peer(&bob_actor, &alice_actor).await;
+
+		for (sender_fixture, sender, receiver_fixture, receiver) in
+			[(&alice, &alice_actor, &bob, &bob_actor), (&bob, &bob_actor, &alice, &alice_actor)]
+		{
+			assert!(sender.publish_host_channel_bootstraps(&sender_fixture.context).await.unwrap());
+			let packet = outgoing(sender, OutgoingKind::HostChannelBootstrap).await;
+			receiver
+				.open_statement(
+					&receiver_fixture.context,
+					&NativeChatRegistry::default(),
+					packet.statement,
+				)
+				.await
+				.unwrap();
+		}
+
+		let held = |fixture: &Fixture, peer: [u8; 32]| {
+			let platform = fixture.platform.clone();
+			let owner = profile::profile_owner(&fixture.context);
+			async move {
+				crate::runtime::host_channel::read_peers(platform.as_ref(), owner)
+					.await
+					.unwrap()
+					.into_iter()
+					.find(|held| held.peer_identity == peer)
+					.map(|held| held.channel_public_key)
+					.expect("the contact's channel key is stored")
+			}
+		};
+		let pair = |fixture: &Fixture, peer: [u8; 32], key: [u8; 32]| {
+			crate::host_logic::host_channel::ChannelKey::derive(
+				&fixture.context.entropy,
+				&fixture.context.genesis_hash,
+				&peer,
+			)
+			.pair(&key)
+			.unwrap()
+		};
+		let bob_identity = bob_actor.public.identity_account_id;
+		let alice_identity = alice_actor.public.identity_account_id;
+		let alice_pair = pair(&alice, bob_identity, held(&alice, bob_identity).await);
+		let bob_pair = pair(&bob, alice_identity, held(&bob, alice_identity).await);
+		assert_eq!(alice_pair.topic(), bob_pair.topic());
+	});
+}
+
+async fn open_bootstrap_frame(
+	fixture: &Fixture,
+	actor: &Arc<NativeChatActor>,
+	identity: &IdentityFixture,
+	peer: &DeviceFixture,
+	request_id: &str,
+	timestamp: u64,
+	key: &[u8; 32],
+) {
+	let frame =
+		wire::encode_host_channel_bootstrap_message(&format!("{request_id}-frame"), timestamp, key)
+			.unwrap();
+	let plaintext = wire::encode_transport_request_plaintext(request_id, &[frame]).unwrap();
+	let packet = native_packet(actor, identity, peer, &plaintext, false, false);
+	actor
+		.open_statement(&fixture.context, &NativeChatRegistry::default(), packet)
+		.await
+		.unwrap();
+}
+
+async fn held_channel_key(fixture: &Fixture, identity: &IdentityFixture) -> Option<[u8; 32]> {
+	crate::runtime::host_channel::read_peers(
+		fixture.platform.as_ref(),
+		profile::profile_owner(&fixture.context),
+	)
+	.await
+	.unwrap()
+	.into_iter()
+	.find(|held| held.peer_identity == identity.account)
+	.map(|held| held.channel_public_key)
+}
+
+#[test]
+fn a_received_bootstrap_stores_the_peers_key_and_a_later_one_replaces_it() {
+	block_on(async {
+		let fixture = Fixture::new();
+		let actor = fixture.actor().await;
+		let identity = IdentityFixture::new();
+		let peer = DeviceFixture::new(1);
+		seed_peer(&actor, &identity, &[&peer]).await;
+		assert_eq!(held_channel_key(&fixture, &identity).await, None);
+
+		let first = wire::x25519_public_key(&[0x51; 32]);
+		open_bootstrap_frame(
+			&fixture,
+			&actor,
+			&identity,
+			&peer,
+			"boot-1",
+			fixture.timestamp,
+			&first,
+		)
+		.await;
+		assert_eq!(held_channel_key(&fixture, &identity).await, Some(first));
+
+		let second = wire::x25519_public_key(&[0x52; 32]);
+		open_bootstrap_frame(
+			&fixture,
+			&actor,
+			&identity,
+			&peer,
+			"boot-2",
+			fixture.timestamp + 1,
+			&second,
+		)
+		.await;
+		assert_eq!(held_channel_key(&fixture, &identity).await, Some(second));
 	});
 }
