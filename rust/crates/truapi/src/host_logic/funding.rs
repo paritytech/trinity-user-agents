@@ -169,7 +169,8 @@ pub struct FundingProgress {
 	pub status: FundingStatus,
 	/// When the status turns to [`FundingStatus::TakingLonger`] unless the
 	/// provider reports first, in Unix milliseconds, so the host reads the
-	/// progress again then.
+	/// progress again then. `None` while the session waits on the user's
+	/// payment.
 	pub longer_at_ms: Option<u64>,
 	/// Whether money moved: the provider started or named a top-up or
 	/// payment, or holds the user's payment. Until then a second cancel ends
@@ -209,8 +210,8 @@ pub enum FundingStatus {
 	/// Inbound: the provider is retrying, with another top-up after one
 	/// claimed only part of the amount.
 	Retrying,
-	/// Nothing came from the provider for longer than its quote said the
-	/// session takes.
+	/// The provider holds the user's payment and nothing came from it for
+	/// longer than its quote said the session takes.
 	TakingLonger,
 	/// Inbound, ended: the balance was credited.
 	ToppedUp,
@@ -728,14 +729,25 @@ impl FundingSession {
 
 	/// When a session the provider still works on counts as taking longer:
 	/// its chosen quote's time after the provider's latest report, or after
-	/// it was assigned. `None` without a quoted time or once it ended.
+	/// it was assigned. `None` without a quoted time, before the provider
+	/// holds the user's payment, or once it ended.
 	fn longer_at_ms(&self) -> Option<u64> {
-		if !self.serves_provider() {
+		if !self.serves_provider() || !self.holds_payment() {
 			return None;
 		}
 		let eta_ms = self.choice.as_ref()?.quote.eta_secs?.saturating_mul(1_000);
 		let heard_at_ms = self.updates.last().map(|record| record.at_ms).or(self.assigned_at_ms)?;
 		Some(heard_at_ms.saturating_add(eta_ms))
+	}
+
+	/// Whether the provider holds the user's payment: inbound, once money
+	/// moved; outbound, once the withdrawal is released. Until then the
+	/// session waits on the user, not the provider.
+	fn holds_payment(&self) -> bool {
+		match self.direction {
+			FundingDirection::In => self.money_moved(),
+			FundingDirection::Out => matches!(self.stage, FundingStage::Released { .. }),
+		}
 	}
 
 	/// Whether the provider is retrying: it named another top-up after a
@@ -2597,27 +2609,72 @@ mod tests {
 		);
 	}
 
-	// A provider that stays silent past the time its quote gave is taking a
-	// little longer, which the host learns to read again for; a report starts
-	// the clock again.
+	// A provider that holds the payment and stays silent past the time its
+	// quote gave is taking a little longer, which the host learns to read
+	// again for; a report starts the clock again.
 	#[test]
 	fn a_session_past_its_quoted_time_is_taking_longer() {
 		let mut session = chosen(FundingDirection::In, FundingRail::Card);
 		if let Some(choice) = session.choice.as_mut() {
 			choice.quote.eta_secs = Some(60);
 		}
+		report_at(
+			&mut session,
+			FundingUpdate::PaymentReceived { finalized: false, mismatch: None },
+			NOW,
+		);
 		let before = session.progress(NOW + 59_999);
 		let after = session.status(NOW + 60_000);
-		report_at(&mut session, FundingUpdate::AwaitingPayment, NOW + 60_001);
+		report_at(&mut session, FundingUpdate::Converting, NOW + 60_001);
 
 		assert_eq!(
 			(before.status, before.longer_at_ms, after, session.status(NOW + 60_002)),
 			(
-				FundingStatus::WaitingForPayment,
+				FundingStatus::ConvertingToCash,
 				Some(NOW + 60_000),
 				FundingStatus::TakingLonger,
-				FundingStatus::WaitingForPayment,
+				FundingStatus::ConvertingToCash,
 			)
+		);
+	}
+
+	// Until the provider holds the payment the session waits on the user: a
+	// transfer or deposit that takes days is not the provider taking longer,
+	// so the waiting status stays and the host has no time to read again at.
+	#[test]
+	fn a_session_waiting_on_the_users_payment_is_never_taking_longer() {
+		let quoted = |direction, rail| {
+			let mut session = chosen(direction, rail);
+			if let Some(choice) = session.choice.as_mut() {
+				choice.quote.eta_secs = Some(60);
+			}
+			session
+		};
+		let mut withdrawal = quoted(FundingDirection::Out, FundingRail::Bank);
+		report_at(
+			&mut withdrawal,
+			FundingUpdate::Collecting { payment_id: [2; 32], amount: 100 },
+			NOW,
+		);
+		let later = NOW + 600_000;
+		let waiting = |session: &FundingSession| {
+			let progress = session.progress(later);
+			(progress.status, progress.longer_at_ms)
+		};
+
+		assert_eq!(
+			[
+				waiting(&quoted(FundingDirection::In, FundingRail::Bank)),
+				waiting(&quoted(FundingDirection::In, FundingRail::Crypto)),
+				waiting(&quoted(FundingDirection::In, FundingRail::Card)),
+				waiting(&withdrawal),
+			],
+			[
+				(FundingStatus::WaitingForTransfer, None),
+				(FundingStatus::WaitingForDeposit, None),
+				(FundingStatus::WaitingForPayment, None),
+				(FundingStatus::TransactionInitiated, None),
+			]
 		);
 	}
 

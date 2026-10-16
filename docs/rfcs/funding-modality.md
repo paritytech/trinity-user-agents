@@ -267,8 +267,10 @@ after the payout and any refund.
   working on it, and asks the provider to stop unless money moved.
 - **One status per session.** The host words a typed status: waiting for the transfer, payment or deposit by rail,
   converting, initiated, converting to the asset or preparing the payout, retrying the top-up or the payout, taking
-  longer once the provider has been silent past the chosen quote's `eta_secs`, the user's cancel while it is open
-  (requested, offered, refused, cancelling), and how it ended, including cancelled with what the refund returned.
+  longer once the provider holds the user's payment and has been silent past the chosen quote's `eta_secs`, the
+  user's cancel while it is open (requested, offered, refused, cancelling), and how it ended, including cancelled
+  with what the refund returned. Before the provider holds the payment the session waits on the user, so it keeps
+  the waiting status however long that takes.
 - **Ids are scoped.** The core hashes the provider's product into every top-up and payment id it hands the host, and
   follows them under the same id.
 
