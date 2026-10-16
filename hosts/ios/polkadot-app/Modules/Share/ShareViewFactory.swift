@@ -18,7 +18,8 @@ enum ShareViewFactory {
         let interactor = ShareInteractor(
             chatContactDataProviderFactory: ChatContactDataProviderFactory(),
             messageSender: messageFactory,
-            composer: composer
+            composer: composer,
+            productRooms: RootDependencyLocator.getDependency() as ShareProductRooms?
         )
 
         let presenter = SharePresenter(

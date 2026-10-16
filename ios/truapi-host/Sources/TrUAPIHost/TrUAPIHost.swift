@@ -521,6 +521,16 @@ public protocol ScannerHostBridge: AnyObject, Sendable {
     ) async throws -> HostScan
 }
 
+/// Draws the share sheet for `share.share`, following the rules on the core's
+/// `SharePlatform`. Closes it when the task is cancelled.
+public protocol ShareHostBridge: AnyObject, Sendable {
+    func shareText(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostShareRequest
+    ) async throws -> HostShare
+}
+
 /// The push relay client of the host. The core gives it the wake topics of
 /// every product and the key of the device; the host adds what identifies the
 /// device to its relay (the push token and the app id) and sends the
@@ -826,6 +836,26 @@ private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked S
     }
 }
 
+/// Adapter that bridges the public `ShareHostBridge` to the generated UniFFI
+/// `NativeShareCallbacks` protocol.
+private final class ShareCallbackAdapter: NativeShareCallbacks, @unchecked Sendable {
+    private let bridge: ShareHostBridge
+
+    init(bridge: ShareHostBridge) {
+        self.bridge = bridge
+    }
+
+    func shareText(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostShareRequest
+    ) async throws -> HostShare {
+        try await withHostRejection {
+            try await bridge.shareText(productId: productId, executionKind: executionKind, request: request)
+        }
+    }
+}
+
 /// Adapter that bridges the public `HostBridge` to the generated UniFFI
 /// `HostCallbacks` protocol. Kept private so the generated names never
 /// leak into consumers.
@@ -1060,6 +1090,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
     private var scannerRetainer: NativeScannerCallbacks?
+    private var shareRetainer: NativeShareCallbacks?
     private let wakeRelayLock = NSLock()
     private var wakeRelayAdapter: NativeWakeRelayCallbacks?
 
@@ -1117,6 +1148,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         let adapter = ScannerCallbackAdapter(bridge: scanner)
         scannerRetainer = adapter
         return inner.setScannerCallbacks(callbacks: adapter)
+    }
+
+    /// Install the host's share sheet before opening any product execution.
+    /// Set-once: answers whether this call installed it.
+    @discardableResult
+    public func setShare(_ share: ShareHostBridge) -> Bool {
+        let adapter = ShareCallbackAdapter(bridge: share)
+        shareRetainer = adapter
+        return inner.setShareCallbacks(callbacks: adapter)
     }
 
     /// Install the host's push relay client, or remove it with `nil`. The core
@@ -1487,6 +1527,10 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
         _ request: ProductChatSearchQueryRequest,
         timeout: Duration
     ) async throws -> ProductChatSearchQueryItem
+    func chatOpenLink(
+        _ request: ProductChatOpenLinkRequest,
+        timeout: Duration
+    ) async throws -> ProductChatOpenLinkItem
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
@@ -1552,6 +1596,21 @@ public extension TrUAPIProductExecutionProtocol {
         try await chatSearchQuery(request, timeout: ChatQueryTimeout.search)
     }
 
+    func chatOpenLink(
+        _ request: ProductChatOpenLinkRequest
+    ) async throws -> ProductChatOpenLinkItem {
+        try await chatOpenLink(request, timeout: ChatQueryTimeout.openLink)
+    }
+
+    /// An execution that does not give links answers that the product does
+    /// not take them.
+    func chatOpenLink(
+        _: ProductChatOpenLinkRequest,
+        timeout _: Duration
+    ) async throws -> ProductChatOpenLinkItem {
+        throw ChatQueryError.refused(.notAvailable)
+    }
+
     /// An execution that does not ask searches answers that search is not
     /// available.
     func chatSearchQuery(
@@ -1575,6 +1634,9 @@ public enum ChatQueryTimeout {
     public static let lookup: Duration = .seconds(5)
     /// The messages that match a search.
     public static let search: Duration = .seconds(10)
+    /// A room link that the user opened. The product can be starting, so the
+    /// host waits longer, and it does not block the screen.
+    public static let openLink: Duration = .seconds(90)
 
     /// The timeout of one user action.
     public static func timeout(for action: ChatUserAction) -> Duration {
@@ -1746,6 +1808,18 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
             try inner.chatSearchQuery(request: request, observer: observer)
         } answer: { answer in
             if case let .search(page) = answer { page } else { nil }
+        }
+    }
+
+    /// Give the product the payload of a room link that the user opened.
+    public func chatOpenLink(
+        _ request: ProductChatOpenLinkRequest,
+        timeout: Duration
+    ) async throws -> ProductChatOpenLinkItem {
+        try await chatQuery(timeout: timeout) { observer in
+            try inner.chatOpenLink(request: request, observer: observer)
+        } answer: { answer in
+            if case let .openLink(answer) = answer { answer } else { nil }
         }
     }
 

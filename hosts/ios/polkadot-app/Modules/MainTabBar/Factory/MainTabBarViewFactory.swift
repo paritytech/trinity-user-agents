@@ -168,7 +168,11 @@ enum MainTabBarViewFactory {
             let productHandlers: [URLHandlingServiceProtocol] = [
                 ChatRoomLinkService(
                     storageFacade: UserDataStorageFacade.shared,
-                    moduleNavigator: moduleNavigator
+                    moduleNavigator: moduleNavigator,
+                    linkOpener: ProductRoomLinkOpener(
+                        registry: flowState.extensionsRegistry,
+                        moduleNavigator: moduleNavigator
+                    )
                 ),
                 PocketOpenService.makeDefault(
                     flowState: flowState.flowState,
