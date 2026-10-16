@@ -326,22 +326,47 @@ private func makeManager(
 }
 
 private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
-    private(set) var built: [ProductId] = []
+    /// Boots run on concurrent tasks while the test reads and flips these, so
+    /// every field sits behind the one lock.
+    private struct State {
+        var built: [ProductId] = []
+        var executions: [ProductId: MockProductExecution] = [:]
+        var cardsWhenTheEngineBooted: [PocketCard] = []
+        var bridge: ProductPocketHostBridge?
+        var cannotBuild: Bool
+        var engineFails: Bool
+        var buildCount = 0
+    }
+
+    private let state: OSAllocatedUnfairLock<State>
+    var built: [ProductId] { state.withLock { $0.built } }
     /// The executions built so far, by product, so a test can read what the core
     /// was told through them.
-    private(set) var executions: [ProductId: MockProductExecution] = [:]
+    var executions: [ProductId: MockProductExecution] { state.withLock { $0.executions } }
     /// What the bridge would have answered the moment the worker's engine came
     /// up, which is when its script subscribes to the card list.
-    private(set) var cardsWhenTheEngineBooted: [PocketCard] = []
+    private(set) var cardsWhenTheEngineBooted: [PocketCard] {
+        get { state.withLock { $0.cardsWhenTheEngineBooted } }
+        set { state.withLock { $0.cardsWhenTheEngineBooted = newValue } }
+    }
+
     /// The bridge of the worker built last, so a test can read the slice the
     /// core is being served after the collection moves.
-    private(set) var bridge: ProductPocketHostBridge?
+    var bridge: ProductPocketHostBridge? { state.withLock { $0.bridge } }
     /// Advances only when a test resumes a sleep, so the pauses inside a boot
     /// are placed by the test rather than by the wall clock.
     let clock = ManualClock()
 
-    var cannotBuild: Bool
-    var engineFails: Bool
+    var cannotBuild: Bool {
+        get { state.withLock { $0.cannotBuild } }
+        set { state.withLock { $0.cannotBuild = newValue } }
+    }
+
+    var engineFails: Bool {
+        get { state.withLock { $0.engineFails } }
+        set { state.withLock { $0.engineFails = newValue } }
+    }
+
     private let buildDelay: Duration
     /// The only product whose build waits on `buildDelay`, so a barrier product never waits.
     private let slowProduct: ProductId
@@ -352,7 +377,6 @@ private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
     /// in for an archive fetch that never comes back.
     private let stalledProduct: ProductId?
     private let stall = AsyncStream<Void>.makeStream()
-    private var buildCount = 0
 
     init(
         cannotBuild: Bool = false,
@@ -362,8 +386,7 @@ private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
         firstStartFailsAfter: Duration? = nil,
         stalledProduct: ProductId? = nil
     ) {
-        self.cannotBuild = cannotBuild
-        self.engineFails = engineFails
+        state = OSAllocatedUnfairLock(initialState: State(cannotBuild: cannotBuild, engineFails: engineFails))
         self.buildDelay = buildDelay
         self.slowProduct = slowProduct
         self.firstStartFailsAfter = firstStartFailsAfter
@@ -382,18 +405,22 @@ private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
     ) async throws -> TrUAPIWorkerRuntime {
         if cannotBuild { throw TrUAPIWorkerError.noWorker(productId) }
 
-        bridge = pocket
-        built.append(productId)
         let execution = MockProductExecution()
-        executions[productId] = execution
+        state.withLock {
+            $0.bridge = pocket
+            $0.built.append(productId)
+            $0.executions[productId] = execution
+        }
 
         if productId == slowProduct, buildDelay > .zero { try await clock.sleep(for: buildDelay) }
         if productId == stalledProduct {
             for await _ in stall.stream {}
         }
 
-        buildCount += 1
-        let isFirstBuild = buildCount == 1
+        let isFirstBuild = state.withLock {
+            $0.buildCount += 1
+            return $0.buildCount == 1
+        }
         let firstStartFailsAfter = firstStartFailsAfter
         let engineFails = engineFails
         let clock = clock
