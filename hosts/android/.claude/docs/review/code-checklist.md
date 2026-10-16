@@ -145,7 +145,8 @@ Walk this for every file the diff touches. Cite the rule's doc and section. Tag 
 - **blocking** — Removing / reordering / retyping fields or inserting an enum variant in the middle without a SCALE migration.
 - **blocking** — Editing existing hex in a SCALE conformance test.
 - **blocking** — Room schema bump without a corresponding `Migration(N, N+1)` and schema test.
-- **major** — New SCALE type added without a conformance test.
+- **major** — New persisted SCALE schema, or wire shape shared with iOS, added without a conformance test.
+- **minor** — Encode-then-decode round-trip test of a derived encoding. It only re-runs the codec.
 - **major** — Manual binary encoder when `BinaryScale` would work.
 - **major** — Repository accessing `Preferences` directly instead of via a typed `XxxStorage` interface.
 - **major** — Feature-specific entity in shared `database/.../entity/` without a feature-prefixed class name.
