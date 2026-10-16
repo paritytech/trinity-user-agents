@@ -124,11 +124,16 @@ pub fn same_stack(
 	Ok(pointer.same_stack(&other))
 }
 
-/// The 0x-prefixed content hash of a plain descriptor: everything but `sequence`.
+/// The 0x-prefixed content hash of a plain descriptor: its canonical form but for `sequence`.
 #[wasm_bindgen(js_name = contentHash)]
 pub fn content_hash(descriptor: &[u8]) -> Result<String, JsValue> {
-	let document = Document::parse(descriptor).map_err(throw)?;
-	Ok(format::to_hex(&document.descriptor().content_hash()))
+	Ok(format::to_hex(&crate::content_hash(descriptor).map_err(throw)?))
+}
+
+/// A plain descriptor in its canonical form: sorted keys, unknown members kept.
+#[wasm_bindgen]
+pub fn canonical(descriptor: &[u8]) -> Result<Vec<u8>, JsValue> {
+	crate::canonical(descriptor).map_err(throw)
 }
 
 /// What identifies a pointer's stack; readers key what they store by it.

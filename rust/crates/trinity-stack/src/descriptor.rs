@@ -6,7 +6,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 // `unwrap_or_skip` reads a field that may be left out but, when present, holds a value: `null`
 // is not absent.
 use serde_with::{rust::unwrap_or_skip, skip_serializing_none};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 /// The only format version this crate reads and writes.
@@ -194,15 +193,6 @@ impl Descriptor {
 		Ok(descriptor)
 	}
 
-	/// SHA-256 of everything but `sequence`, in this crate's field order. Two publishes compare it
-	/// to keep `sequence` while nothing changed; it does not depend on how the source JSON ordered
-	/// its keys, so every publisher built on this crate agrees on it.
-	pub fn content_hash(&self) -> [u8; 32] {
-		let unsequenced = Self { sequence: 0, ..self.clone() };
-		let bytes = serde_json::to_vec(&unsequenced).expect("a descriptor always serialises");
-		Sha256::digest(bytes).into()
-	}
-
 	/// The chain with this role.
 	pub fn chain(&self, role: &str) -> Option<&Chain> {
 		self.chains.iter().find(|chain| chain.role == role)
@@ -366,24 +356,7 @@ fn is_known_kind(kind: &str) -> bool {
 mod tests {
 	use super::*;
 
-	fn parse(text: &str) -> Descriptor {
-		Descriptor::from_json(serde_json::from_str(text).unwrap()).unwrap()
-	}
-
 	const RELAY: &str = r#"[{"role":"Relay","genesisHash":"0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92","rpc":["ws://127.0.0.1:9944"]}]"#;
-
-	#[test]
-	fn content_hash_ignores_sequence_and_key_order_but_not_content() {
-		let one = parse(&format!(
-			r#"{{"$v":1,"sequence":1,"generation":"g","id":"a","name":"A","network":"n","tld":"t","services":[],"chains":{RELAY}}}"#
-		));
-		let reordered = parse(&format!(
-			r#"{{"chains":{RELAY},"services":[],"tld":"t","network":"n","name":"A","id":"a","generation":"g","sequence":9,"$v":1}}"#
-		));
-		assert_eq!(one.content_hash(), reordered.content_hash());
-		let renamed = Descriptor { name: "B".into(), ..one.clone() };
-		assert_ne!(one.content_hash(), renamed.content_hash());
-	}
 
 	#[test]
 	fn deserialising_directly_applies_the_same_rules() {
