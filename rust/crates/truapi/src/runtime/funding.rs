@@ -398,19 +398,23 @@ impl FundingRegistry {
 		sessions
 	}
 
-	/// Recorded sessions compacted into the pack, for the host's history:
-	/// newest first, each held once.
-	pub fn pack(&self) -> Vec<FundingSessionSummary> {
-		let mut pack: Vec<_> = {
+	/// Every ended session the host recorded, held in full or compacted into
+	/// the pack, as summaries newest first, each once: what a host rebuilds
+	/// its own history from when that history was lost.
+	pub fn history(&self) -> Vec<FundingSessionSummary> {
+		let mut history: Vec<_> = {
 			let sessions = self.lock_sessions();
-			self.lock_pack()
+			let recorded = sessions
 				.values()
-				.filter(|summary| !sessions.contains_key(&summary.intent))
-				.cloned()
-				.collect()
+				.filter(|session| session.is_terminal() && session.acknowledged)
+				.map(FundingSession::summary);
+			let pack = self.lock_pack();
+			let compacted =
+				pack.values().filter(|summary| !sessions.contains_key(&summary.intent)).cloned();
+			recorded.chain(compacted).collect()
 		};
-		pack.sort_by_key(|summary| core::cmp::Reverse(summary.settled_at_ms()));
-		pack
+		history.sort_by_key(|summary| core::cmp::Reverse(summary.settled_at_ms()));
+		history
 	}
 
 	/// Who opened session `intent`, held in full or in the pack: `None` when
@@ -1900,7 +1904,7 @@ mod tests {
 
 	// A recorded session pushed out by newer ones of its owner is compacted,
 	// not dropped: after a restart its owner still reads how it ended, and
-	// the host lists it as history.
+	// the host can rebuild its history from every recorded session.
 	#[test]
 	fn a_compacted_session_still_answers_its_owner_after_a_restart() {
 		let storage = stub_platform();
@@ -1927,15 +1931,18 @@ mod tests {
 				after.get("fs_0"),
 				block_on(replay.collect::<Vec<_>>()),
 				after.owner("fs_0"),
-				after.pack(),
 				after.get("fs_1").is_some(),
+				after.history(),
 			),
 			(
 				None,
 				vec![HostFundingStatusSubscribeItem::Delivered { credited: 1 }],
 				Some(Some("wallet.dot".to_string())),
-				vec![FundingSessionSummary::from(recorded(0))],
 				true,
+				(0..=RECORDED_PER_OWNER as u64)
+					.rev()
+					.map(|n| recorded(n).summary())
+					.collect::<Vec<_>>(),
 			)
 		);
 	}

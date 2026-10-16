@@ -85,6 +85,20 @@ impl From<FundingSession> for FundingSessionSummary {
 	}
 }
 
+impl FundingSession {
+	/// The session as history keeps it, leaving the session as it is.
+	pub fn summary(&self) -> FundingSessionSummary {
+		FundingSessionSummary {
+			intent: self.intent.clone(),
+			owner_product_id: self.owner_product_id.clone(),
+			direction: self.direction,
+			amount: self.amount,
+			stage: self.stage.clone(),
+			opened_at_ms: self.opened_at_ms,
+		}
+	}
+}
+
 impl FundingSessionSummary {
 	/// The terminal item a subscriber receives.
 	pub fn wire_item(&self) -> HostFundingStatusSubscribeItem {
