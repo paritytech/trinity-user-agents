@@ -437,6 +437,8 @@ extension ProductPermission {
             return [try .statementStoreAllowance(derivationIndex: derivationIndex?.toSelector())]
         case let .accountAccess(targetProductId):
             return [.accountAccess(targetProductId: bareProductLabel(targetProductId))]
+        case .crossProductSignature:
+            return []
         }
     }
 
