@@ -424,6 +424,8 @@ extension ProductPermission {
             return [.userIdentityAccess]
         case let .accountAccess(targetProductId):
             return [.accountAccess(targetProductId: bareProductLabel(targetProductId))]
+        case .crossProductSignature:
+            return []
         }
     }
 
