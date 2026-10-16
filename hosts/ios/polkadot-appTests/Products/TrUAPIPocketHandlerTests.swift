@@ -1,5 +1,3 @@
-import Foundation
-import AsyncExtensions
 import Products
 import StructuredConcurrency
 import Testing
@@ -22,6 +20,7 @@ struct TrUAPIPocketHandlerTests {
         let streams = makeStreams(workers: workers)
 
         let drawing = Task { for try await _ in streams.renderFaces(for: loyalty) {} }
+        defer { drawing.cancel() }
 
         workers.publish(["game.paseo": execution])
         try await withTimeout(.seconds(5)) { await execution.awaitRenderRequest() }
@@ -32,7 +31,6 @@ struct TrUAPIPocketHandlerTests {
         replacement.keepsRenderStreamOpen = true
         workers.publish(["game.paseo": replacement])
         try await withTimeout(.seconds(5)) { await replacement.awaitRenderRequest() }
-        drawing.cancel()
 
         #expect(execution.renderRequests.count == 1)
     }

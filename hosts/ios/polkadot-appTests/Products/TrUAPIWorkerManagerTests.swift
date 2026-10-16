@@ -226,6 +226,7 @@ struct TrUAPIWorkerManagerTests {
     @Test
     func aStalledBootDoesNotHoldUpAnotherProduct() async throws {
         let builder = StubBuilder(stalledProduct: "stalled.paseo")
+        defer { builder.releaseTheStalledBoot() }
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
         manager.demandChanged(productId: "stalled.paseo", transition: .start)
@@ -233,8 +234,6 @@ struct TrUAPIWorkerManagerTests {
         try await execution(of: "game.paseo", in: manager)
 
         #expect(manager.currentExecution(of: "stalled.paseo") == nil)
-
-        builder.releaseTheStalledBoot()
     }
 
     /// A worker already running is told about a card added later because its
@@ -291,10 +290,12 @@ private func execution(
 
 /// Waits for the product's worker to be cleared, failing rather than hanging if it never is.
 private func noExecution(of productId: ProductId, in manager: TrUAPIWorkerManager) async throws {
+    struct StreamEnded: Error {}
     try await withTimeout(.seconds(5)) {
         for try await execution in manager.executions(of: productId) where execution == nil {
             return
         }
+        throw StreamEnded()
     }
 }
 
@@ -369,7 +370,7 @@ private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
 
     private let buildDelay: Duration
     /// The only product whose build waits on `buildDelay`, so a barrier product never waits.
-    private let slowProduct: ProductId
+    private let slowProduct: ProductId = "game.paseo"
     /// How long the first worker sits inside `start()` before failing. The
     /// window a stop and a restart have to land in.
     private let firstStartFailsAfter: Duration?
@@ -382,13 +383,11 @@ private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
         cannotBuild: Bool = false,
         engineFails: Bool = false,
         buildDelay: Duration = .zero,
-        slowProduct: ProductId = "game.paseo",
         firstStartFailsAfter: Duration? = nil,
         stalledProduct: ProductId? = nil
     ) {
         state = OSAllocatedUnfairLock(initialState: State(cannotBuild: cannotBuild, engineFails: engineFails))
         self.buildDelay = buildDelay
-        self.slowProduct = slowProduct
         self.firstStartFailsAfter = firstStartFailsAfter
         self.stalledProduct = stalledProduct
     }
