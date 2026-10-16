@@ -20,6 +20,14 @@ protocol TrUAPILocalStoring: AnyObject, Sendable {
 /// that wrote it reads back nothing. Values that an earlier build stored in
 /// `UserDefaults` are read from there until they move to files (see
 /// ``migrateLegacyProductValues(defaults:directory:)``).
+///
+/// The product files are not in device backups (`isExcludedFromBackup` on
+/// `directory`), as the web `localStorage` of a product is not. A product
+/// can keep secret state that must never go back to an earlier value, for
+/// example the ratchet state of a chat. A restored backup gives the earlier
+/// value and its rollback checkpoint together, so the product cannot see the
+/// rollback, and it uses message keys a second time. A restore thus gives a
+/// product no data, and the product starts again from its account.
 final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
     private static let productKeyPrefix = "io.polkadotapp.truapi.product.store"
     private static let coreKeyPrefix = "io.polkadotapp.truapi.core"
@@ -63,6 +71,7 @@ final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
         defaults: UserDefaults = .standard,
         directory: URL = defaultProductDirectory
     ) -> TrUAPILocalStorage {
+        excludeFromBackup(directory)
         migrateLegacyProductValues(defaults: defaults, directory: directory)
         let ownPrefix = "\(productKeyPrefix).\(productId)"
         let ownId = ProductStorageKey.normalize(productId)
@@ -92,6 +101,10 @@ final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
         guard let directory else {
             defaults.set(value, forKey: storageKey(key))
             return
+        }
+        // A directory that went away comes back out of device backups too.
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            Self.excludeFromBackup(directory)
         }
         try Self.writeFile(Self.fileURL(directory, prefix: keyPrefix, key: key), value)
         // A value of an earlier build must not show again after a clear.
@@ -154,6 +167,21 @@ final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
     }
 
     // MARK: - Files
+
+    /// Creates `directory` when it is not there, and removes it and its files
+    /// from device backups. A failure keeps the files in backups, and the next
+    /// storage of a product tries again.
+    static func excludeFromBackup(_ directory: URL) {
+        var directory = directory
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try directory.setResourceValues(values)
+        } catch {
+            return
+        }
+    }
 
     /// `<directory>/<SHA-256 of the store prefix>/<SHA-256 of the key>`: the
     /// names hold no product id or key in clear, and any key fits.
