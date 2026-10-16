@@ -45,7 +45,15 @@ extension ChatProductRoomPresenter {
 
     /// Makes the attachment inline, or stages it, and sends it as a message of the user. In a room that the host
     /// stores, the product receives `MessagePosted`. In a room that the product keeps, it receives `NewMessage`.
+    ///
+    /// In a room that does not stage attachments, a video above the inline limit is exported at 640x480 first
+    /// (``ProductVideoCompressor``). A video that is still too large is refused with its size.
     func sendAttachment(_ picked: PickedAttachment) {
+        if case let .video(data, _) = picked, !stagesAttachments, data.count > ProductAttachmentEncoder.inlineLimit {
+            compressAndSend(data)
+            return
+        }
+
         let route: ProductAttachmentRoute
         do {
             route = try ProductAttachmentEncoder.route(
@@ -73,6 +81,27 @@ extension ChatProductRoomPresenter {
         case let .staged(attachment):
             confirmPublicStorage { [weak self] in
                 self?.stage(attachment)
+            }
+        }
+    }
+
+    private func compressAndSend(_ data: Data) {
+        mark("video", "compress \(data.count)")
+        Task { [weak self] in
+            do {
+                let smaller = try await ProductVideoCompressor.compress(
+                    data,
+                    limit: ProductAttachmentEncoder.inlineLimit
+                )
+                self?.mark("video", "compressed \(data.count) to \(smaller.count)")
+                self?.sendAttachment(.video(smaller, mimeType: "video/mp4"))
+            } catch let ProductVideoCompressor.Failure.tooLarge(bytes, limit) {
+                self?.mark("failure", "video too large \(bytes) max=\(limit)")
+                self?.view?.showActionFailure(String(localized: .ChatExtension.attachmentVideoTooLarge(
+                    limit: ByteCountFormatter.string(fromByteCount: Int64(limit), countStyle: .binary)
+                )))
+            } catch {
+                self?.view?.showActionFailure(String(localized: .ChatExtension.attachmentUnreadable))
             }
         }
     }

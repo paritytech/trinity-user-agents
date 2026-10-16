@@ -320,6 +320,17 @@
         }
       }
     },
+    "attachment.video.too.large": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This video is too long to send. Made smaller to 640x480, it is still larger than %1$(limit)@, the most that this room can send. Send a shorter video."
+          }
+        }
+      }
+    },
     "attachment.unreadable": {
       "extractionState": "manual",
       "localizations": {
