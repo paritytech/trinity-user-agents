@@ -897,6 +897,7 @@ impl NativeProductExecution {
             pocket_platform: self.pocket.clone(),
             expanded_card: Some(self.expanded_card.clone()),
             game_platform: self.game.clone(),
+            scanner_platform: None,
         }
     }
 

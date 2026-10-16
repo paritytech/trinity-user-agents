@@ -849,6 +849,7 @@ fn connection_adapters_from_js(
         status_host,
         pocket_platform,
         game_platform,
+        scanner_platform,
     } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
     Ok(Some(crate::host_core::ConnectionAdapters {
         platform,
@@ -859,6 +860,7 @@ fn connection_adapters_from_js(
         permission_grants: Arc::default(),
         pocket_platform,
         game_platform,
+        scanner_platform,
         expanded_card: None,
         chat: Arc::new(crate::runtime::ActionChannel::chat()),
         renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
