@@ -39,8 +39,8 @@ data class FundingRecord(
                 FundingStage.Open -> return null
                 is FundingStage.Delivered -> Triple(FundingRecordOutcome.Delivered, stage.credited, stage.settledAtMs)
                 is FundingStage.Released -> Triple(
-                    // A cancel the user accepted stands unless the payout went through first; then it was sent.
-                    if (session.cancel is FundingCancel.Accepted && progress?.payout != FundingPayout.PaidOut) {
+                    // A cancel the user accepted stands; the core marks one the payout overtook, which was sent.
+                    if (session.cancel is FundingCancel.Accepted) {
                         FundingRecordOutcome.Cancelled
                     } else {
                         FundingRecordOutcome.Released

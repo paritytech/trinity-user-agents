@@ -99,6 +99,7 @@ fun FundingSheetScreen(viewModel: FundingViewModel) {
                         FundingCancelOfferScreen(
                             modifier = contentModifier,
                             offer = offer,
+                            withdraw = current.data.deposit.withdraw,
                             isAnswering = current.data.deposit.isCancelling,
                             onBack = viewModel::onBack,
                             onAccept = viewModel::onAcceptCancelOffer,

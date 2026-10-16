@@ -339,7 +339,7 @@ private fun FundingCancel.toUi(cash: FundingCash): FundingCancelUiState? = when 
         expiresAtMs = expiresAt?.toLong(),
     )
     is FundingCancel.Accepted -> FundingCancelUiState.Cancelling
-    FundingCancel.Declined -> null
+    FundingCancel.Declined, is FundingCancel.Overtaken -> null
 }
 
 private fun shortened(address: String): String =

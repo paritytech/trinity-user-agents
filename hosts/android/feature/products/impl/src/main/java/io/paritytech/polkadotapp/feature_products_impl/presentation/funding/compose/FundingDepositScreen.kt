@@ -273,6 +273,7 @@ private fun PendingLine(text: String) {
 @Composable
 fun FundingCancelOfferScreen(
     offer: FundingCancelUiState.Offered,
+    withdraw: Boolean,
     isAnswering: Boolean,
     onBack: () -> Unit,
     onAccept: () -> Unit,
@@ -286,7 +287,9 @@ fun FundingCancelOfferScreen(
     ) {
         FundingHeader(title = "", onBack = onBack)
         NovaText(
-            text = stringResource(RCommon.string.funding_cancel_offer_title),
+            text = stringResource(
+                if (withdraw) RCommon.string.funding_cancel_offer_title_withdrawal else RCommon.string.funding_cancel_offer_title,
+            ),
             style = PolkadotTheme.typography.headline.medium,
             color = PolkadotTheme.colors.fg.primary,
         )

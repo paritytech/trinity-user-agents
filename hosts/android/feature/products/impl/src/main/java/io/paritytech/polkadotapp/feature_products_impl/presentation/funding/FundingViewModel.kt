@@ -42,10 +42,10 @@ import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCancel
-import uniffi.truapi.FundingPayout
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
+import uniffi.truapi.FundingStatus
 import java.math.BigDecimal
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
@@ -346,7 +346,7 @@ class FundingViewModel @Inject constructor(
         val ended = stage?.isOpen == false
         if (start.value.started && ended && failure == null) {
             // The user accepted a cancel, but the payout had already gone through, so the withdrawal stands.
-            if (session?.cancel is FundingCancel.Accepted && progress.value?.payout == FundingPayout.PaidOut) {
+            if (progress.value?.status == FundingStatus.PaidOutAfterCancel) {
                 showMessage(RCommon.string.funding_cancel_came_too_late)
             }
             closeSheet()

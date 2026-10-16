@@ -158,9 +158,9 @@ class FundingActivityCenterTest {
             "out",
             FundingDirection.OUT,
             FundingStage.Released("50", settledAtMs = 1uL),
-            cancel = FundingCancel.Accepted(fee = "5", refund = "45"),
+            cancel = FundingCancel.Overtaken(fee = "5", refund = "45"),
         )
-        serve(paidOut to progress(FundingStatus.Sent, payout = FundingPayout.PaidOut))
+        serve(paidOut to progress(FundingStatus.PaidOutAfterCancel, payout = FundingPayout.PaidOut))
 
         center.observe().first()
 

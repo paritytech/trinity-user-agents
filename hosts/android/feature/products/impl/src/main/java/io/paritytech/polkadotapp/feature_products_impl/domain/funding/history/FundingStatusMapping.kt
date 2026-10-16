@@ -20,7 +20,7 @@ internal fun FundingStatus.toActivityStatus(): FundingActivityStatus = when (thi
 
     FundingStatus.TakingLonger -> inProgress(FundingActivityStep.TakingLonger)
     FundingStatus.ToppedUp -> FundingActivityStatus.ToppedUp
-    FundingStatus.Sent -> FundingActivityStatus.Sent
+    FundingStatus.Sent, FundingStatus.PaidOutAfterCancel -> FundingActivityStatus.Sent
     FundingStatus.Refunded -> FundingActivityStatus.Refunded
     is FundingStatus.PayoutFailed -> FundingActivityStatus.PayoutFailed(refunded?.toBalance())
     is FundingStatus.Failed -> FundingActivityStatus.Failed(reason.toReason())
