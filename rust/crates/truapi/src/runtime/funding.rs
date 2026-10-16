@@ -36,8 +36,8 @@ use super::services::RuntimeServices;
 use crate::{
 	host_logic::funding::{
 		CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
-		FundingSessionError, SaveRefusal, Settlement, StartedFunds, load_sessions, named_funds,
-		retained, store_sessions,
+		FundingSessionError, FundingSessionSummary, SaveRefusal, Settlement, StartedFunds,
+		load_pack, load_sessions, named_funds, pack_blob, retained, store_pack, store_sessions,
 	},
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
@@ -81,6 +81,10 @@ struct Announcements {
 #[derive(Default)]
 pub struct FundingRegistry {
 	sessions: Mutex<HashMap<String, FundingSession>>,
+	/// Recorded sessions compacted out of [`Self::sessions`], by intent. A
+	/// session can sit in both after a write that stored its summary but not
+	/// the trimmed sessions; the full record then wins.
+	pack: Mutex<HashMap<String, FundingSessionSummary>>,
 	/// Sessions whose overlay is still up: live in memory, so the overlay can
 	/// quote and pick a provider for them, but not stored until the user
 	/// starts them.
@@ -427,10 +431,35 @@ impl FundingRegistry {
 		sessions
 	}
 
+	/// Recorded sessions compacted into the pack, for the host's history:
+	/// newest first, each held once.
+	pub fn pack(&self) -> Vec<FundingSessionSummary> {
+		let mut pack: Vec<_> = {
+			let sessions = self.lock_sessions();
+			self.lock_pack()
+				.values()
+				.filter(|summary| !sessions.contains_key(&summary.intent))
+				.cloned()
+				.collect()
+		};
+		pack.sort_by_key(|summary| core::cmp::Reverse(summary.settled_at_ms()));
+		pack
+	}
+
+	/// Who opened session `intent`, held in full or in the pack: `None` when
+	/// no such session is held, `Some(None)` when the host opened it.
+	pub fn owner(&self, intent: &str) -> Option<Option<String>> {
+		if let Some(session) = self.lock_sessions().get(intent) {
+			return Some(session.owner_product_id.clone());
+		}
+		self.lock_pack().get(intent).map(|summary| summary.owner_product_id.clone())
+	}
+
 	/// Record that the host has written ended session `intent` into its own
-	/// history, so it is no longer handed over. Its owner can still read how it
-	/// ended until newer recorded sessions push it out. Returns whether the
-	/// session was ended and not yet acknowledged.
+	/// history, so it is no longer handed over. Once newer recorded sessions
+	/// push it out of the full record it is compacted into the pack, where its
+	/// owner can still read how it ended. Returns whether the session was ended
+	/// and not yet acknowledged.
 	pub async fn acknowledge(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -531,8 +560,8 @@ impl FundingRegistry {
 	/// Watch one session: its current stage at once, then one item per change,
 	/// in commit order and never repeated. The stream ends after a terminal
 	/// stage, so a session that has already ended, including one the host
-	/// recorded, yields that one item. It never errors; dropping it stops
-	/// watching. `None` when no such session is held.
+	/// recorded or one compacted into the pack, yields that one item. It never
+	/// errors; dropping it stops watching. `None` when no such session is held.
 	pub fn subscribe(
 		&self,
 		intent: &str,
@@ -540,7 +569,10 @@ impl FundingRegistry {
 		// A commit fans out under this lock after writing, so holding it from
 		// the read to the registration means no change is missed.
 		let mut subscribers = self.lock_subscribers();
-		let session = self.get(intent)?;
+		let Some(session) = self.get(intent) else {
+			let item = self.lock_pack().get(intent)?.wire_item();
+			return Some(stream::once(async move { item }).boxed());
+		};
 		let terminal = session.is_terminal();
 		let current = stream::once(async move { session.wire_item() });
 		if terminal {
@@ -653,6 +685,9 @@ impl FundingRegistry {
 			for session in load_sessions(storage).await? {
 				working.entry(session.intent.clone()).or_insert(session);
 			}
+			let stored = load_pack(storage).await?;
+			self.lock_pack()
+				.extend(stored.into_iter().map(|summary| (summary.intent.clone(), summary)));
 		}
 		let (result, edited) = edit(&mut working);
 		// A session the host is told about must be stored too, which covers
@@ -682,7 +717,7 @@ impl FundingRegistry {
 		// The write lock keeps the in-memory map unchanged until this commit
 		// replaces it, so it still holds the sessions as they were before `edit`.
 		if !*loaded || announces || working != *self.lock_sessions() {
-			let kept = retained(working.into_values());
+			let (kept, compacted) = retained(working.into_values());
 			// An assigned session is stored even while its overlay is up, as
 			// its provider's reports are stored before they are answered.
 			let (started, stored_set_changed) = {
@@ -704,12 +739,20 @@ impl FundingRegistry {
 					});
 				(started, !unchanged)
 			};
-			if (!*loaded || announces || stored_set_changed) &&
-				let Err(error) = store_sessions(storage, &started).await
-			{
-				*self.lock_presenting() = presenting_before;
-				return Err(error);
+			if !*loaded || announces || stored_set_changed {
+				// The pack first, so no session leaves the sessions blob before
+				// its summary is stored.
+				let written = match self.store_compacted(storage, &compacted).await {
+					Ok(()) => store_sessions(storage, &started).await,
+					Err(error) => Err(error),
+				};
+				if let Err(error) = written {
+					*self.lock_presenting() = presenting_before;
+					return Err(error);
+				}
 			}
+			self.lock_pack()
+				.extend(compacted.into_iter().map(|summary| (summary.intent.clone(), summary)));
 			*self.lock_sessions() =
 				kept.into_iter().map(|session| (session.intent.clone(), session)).collect();
 		}
@@ -798,6 +841,29 @@ impl FundingRegistry {
 		if let Some(senders) = self.lock_servers().get_mut(provider_id) {
 			senders.retain(|sender| sender.unbounded_send(item.clone()).is_ok());
 		}
+	}
+
+	/// Store the pack with `compacted` added; nothing to write when it is
+	/// empty. The blob is encoded under the pack lock, so the pack is not
+	/// copied to write it.
+	async fn store_compacted(
+		&self,
+		storage: &(impl CoreStorage + ?Sized),
+		compacted: &[FundingSessionSummary],
+	) -> Result<(), FundingSessionError> {
+		if compacted.is_empty() {
+			return Ok(());
+		}
+		let blob = {
+			let pack = self.lock_pack();
+			// A summary stored by a commit whose sessions write then failed is
+			// compacted again; it is written once.
+			let held = pack
+				.values()
+				.filter(|summary| !compacted.iter().any(|fresh| fresh.intent == summary.intent));
+			pack_blob(held.chain(compacted))
+		};
+		store_pack(storage, blob).await
 	}
 
 	/// Load persisted sessions if they are not loaded yet and expire the
@@ -940,6 +1006,10 @@ impl FundingRegistry {
 
 	fn lock_sweep_alarm(&self) -> MutexGuard<'_, Option<(u64, mpsc::UnboundedSender<()>)>> {
 		self.sweep_alarm.lock().unwrap_or_else(PoisonError::into_inner)
+	}
+
+	fn lock_pack(&self) -> MutexGuard<'_, HashMap<String, FundingSessionSummary>> {
+		lock(&self.pack)
 	}
 
 	fn lock_presenting(&self) -> MutexGuard<'_, HashSet<String>> {
@@ -1446,7 +1516,10 @@ mod tests {
 	use futures::{FutureExt, executor::block_on};
 	use truapi::latest::FundingFailure;
 
-	use crate::{host_logic::funding::FundingStage, test_support::stub_platform};
+	use crate::{
+		host_logic::funding::{FundingStage, RECORDED_PER_OWNER},
+		test_support::stub_platform,
+	};
 
 	const NOW: u64 = 1_700_000_000_000;
 	const DAY_MS: u64 = 24 * 60 * 60 * 1_000;
@@ -1958,6 +2031,48 @@ mod tests {
 				after.subscribe("fs_9").is_none()
 			),
 			(vec![expired], Vec::new(), true)
+		);
+	}
+
+	// A recorded session pushed out by newer ones of its owner is compacted,
+	// not dropped: after a restart its owner still reads how it ended, and
+	// the host lists it as history.
+	#[test]
+	fn a_compacted_session_still_answers_its_owner_after_a_restart() {
+		let storage = stub_platform();
+		let before = FundingRegistry::default();
+		let recorded = |n: u64| FundingSession {
+			acknowledged: true,
+			stage: FundingStage::Delivered { credited: u128::from(n) + 1, settled_at_ms: NOW + n },
+			..session(&format!("fs_{n}"), NOW)
+		};
+		block_on(before.commit(storage.as_ref(), NOW, |sessions| {
+			for n in 0..=RECORDED_PER_OWNER as u64 {
+				sessions.insert(format!("fs_{n}"), recorded(n));
+			}
+			((), Vec::new())
+		}))
+		.expect("stored");
+
+		let after = FundingRegistry::default();
+		block_on(after.sweep(storage.as_ref(), NOW)).expect("loaded");
+		let replay = after.subscribe("fs_0").expect("compacted session kept");
+
+		assert_eq!(
+			(
+				after.get("fs_0"),
+				block_on(replay.collect::<Vec<_>>()),
+				after.owner("fs_0"),
+				after.pack(),
+				after.get("fs_1").is_some(),
+			),
+			(
+				None,
+				vec![HostFundingStatusSubscribeItem::Delivered { credited: 1 }],
+				Some(Some("wallet.dot".to_string())),
+				vec![FundingSessionSummary::from(recorded(0))],
+				true,
+			)
 		);
 	}
 
