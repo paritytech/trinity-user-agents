@@ -234,6 +234,17 @@ struct PocketCardScreenTests {
 
         #expect(face?.safeAreaRegions == [])
     }
+
+    /// The same 16 pt Android leaves, so a product page lines up under the
+    /// card on both.
+    @Test
+    func leavesTheCardSixteenPointsFromEitherEdge() {
+        let screen = laidOutScreen(product: StubSPAView())
+
+        let card = screen.cardFrame(in: screen.view)
+
+        #expect([card.minX, screenSize.width - card.maxX] == [16, 16])
+    }
 }
 
 // MARK: - Fixtures
