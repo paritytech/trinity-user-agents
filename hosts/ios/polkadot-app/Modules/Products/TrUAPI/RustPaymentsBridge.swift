@@ -8,9 +8,10 @@ import TrUAPIHost
 /// Serves the Rust core's top-up, payment and balance platforms from the engines the JS bridge
 /// uses, through the same ``ProductPayments`` steps. Installed once on the shared runtime.
 ///
-/// The core checks the session, the source keys, a positive amount and balance access itself, so
-/// none of that is repeated here, and a short balance is always `InsufficientBalance`: the core
-/// turns it into `Rejected` for a product without balance access.
+/// The core checks the session, the source keys and balance access itself, so none of that is
+/// repeated here, and a short balance is always `InsufficientBalance`: the core turns it into
+/// `Rejected` for a product without balance access. Amounts arrive as decimal strings, so they are
+/// still parsed here, and one that does not parse to a positive number is `InvalidAmount`.
 ///
 /// The core asks a top-up's or payment's current status once, then expects every later one pushed.
 /// So each id is followed, once, on its engine's status stream from the first time the core asks
@@ -168,8 +169,9 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
 // MARK: - Balance
 
 private extension RustPaymentsBridge {
-    /// One subscription for the runtime's lifetime, resubscribed after a failure (the balance
-    /// service is unavailable until Coinage is set up).
+    /// One balance subscription for the bridge's lifetime, ended when the bridge is released.
+    /// Whenever the stream ends or fails (the balance service is unavailable until Coinage is set
+    /// up), it subscribes again after ``balanceResubscribeDelay``.
     func followBalance() {
         lock.lock()
         defer { lock.unlock() }
@@ -188,6 +190,8 @@ private extension RustPaymentsBridge {
             }
         }
     }
+
+    static let balanceResubscribeDelay: Duration = .seconds(5)
 }
 
 // MARK: - Wire reasons
@@ -200,7 +204,6 @@ private extension RustPaymentsBridge {
     static let balanceUnavailable = "balance is unavailable"
     static let onlyMainPurse = "only the main purse is supported"
     static let paymentDidNotComplete = "payment did not complete"
-    static let balanceResubscribeDelay: Duration = .seconds(5)
 }
 
 // MARK: - Runtime target
@@ -314,7 +317,7 @@ final class EngineStatusFollowers<Status>: @unchecked Sendable {
         return nil
     }
 
-    /// Whether `key` is followed, or its final status kept.
+    /// Whether `key` is followed, or its final status kept. Lets tests observe eviction.
     func isFollowing(_ key: EngineStatusKey) -> Bool {
         condition.lock()
         defer { condition.unlock() }
@@ -324,8 +327,9 @@ final class EngineStatusFollowers<Status>: @unchecked Sendable {
 
 private extension EngineStatusFollowers {
     /// The entry following `key`, starting one when there is none. Each status is remembered, then
-    /// pushed. Following ends after a final status, which is kept, or when the stream ends, and then
-    /// the entry is dropped so a later read follows afresh from the engine's record.
+    /// pushed. Following stops at a final status or when the stream ends or fails. An entry with a
+    /// final status is kept, up to ``EngineStatusFollowing/finalCapacity`` of them; any other entry
+    /// is dropped, so a later read follows afresh from the engine's record.
     func entry(for key: EngineStatusKey) -> Entry {
         condition.lock()
         if let existing = entries[key] {

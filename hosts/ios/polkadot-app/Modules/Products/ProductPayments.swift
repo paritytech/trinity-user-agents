@@ -32,10 +32,10 @@ struct ProductPayments {
 
     // MARK: - Payment
 
-    /// Shows the payment request sheet (auto-approved for allowlisted products), then warns whenever
-    /// private vouchers alone cannot pay — a voucher still gaining privacy or a coin loaded just to
-    /// be unloaded gives up privacy — unless the preset is `minPrivacy`. The privacy warning is never
-    /// allowlisted. `false` when the user declined either.
+    /// Shows the payment request sheet (auto-approved for allowlisted products), then, unless the
+    /// preset is `minPrivacy`, warns whenever private vouchers alone cannot pay: spending a voucher
+    /// still gaining privacy, or a coin loaded just to be unloaded, gives up privacy. The privacy
+    /// warning is never allowlisted. `false` when the user declined either.
     func awaitUserConsent(productId: String, amount: Balance, destination: AccountId) async throws -> Bool {
         let decision = await approvalRequester.requestApproval(
             productId: productId,
@@ -120,6 +120,8 @@ extension CoinageBalance {
 
 private extension ProductPayments {
     /// The engines key records by these strings, so both bridges must spell an id the same way.
+    /// Payments are keyed with the `0x` prefix and top-ups without, as their stored records already
+    /// are; changing either spelling would orphan those records.
     static func paymentKey(_ id: PaymentRequestId) -> String {
         id.toHex(includePrefix: true)
     }
@@ -128,9 +130,9 @@ private extension ProductPayments {
         id.toHex()
     }
 
-    /// Describes the product-facing source as the persisted bytes the claim is later resolved from —
+    /// Describes the product-facing source as the persisted bytes the claim is later resolved from:
     /// the full derivation **path** for a product account (never a derived key), the raw key otherwise.
-    /// Resolution + validation happen later, in `IncomingPaymentSourceResolver`.
+    /// `IncomingPaymentSourceResolver` resolves and validates it later.
     static func incomingPaymentDescriptor(
         from source: PaymentTopUpSource,
         productId: String
