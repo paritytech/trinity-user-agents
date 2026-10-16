@@ -423,16 +423,21 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   overlay is installed.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
-  `funding_session`, `funding_sessions`, `select_funding_provider`,
+  `funding_session`, `funding_sessions`, `funding_session_pack`,
+  `select_funding_provider`,
   `cancel_funding`, `confirm_funding_cancel` and `acknowledge_funding_session`. Amounts cross the FFI as decimal
   strings.
   The host owns the funding history. A session is stored only once the user
   starts it in the overlay. `funding_sessions` lists sessions in flight first,
   then ended ones the host has not recorded, each newest first. An ended
   session is handed to the host through `funding_session_changed` each time
-  funding resumes until the host calls `acknowledge_funding_session`, after
-  which the core drops it, so the host's history writes every outcome once.
-  The core keeps at most the 200 newest unrecorded sessions. Products see a
+  funding resumes until the host calls `acknowledge_funding_session`, so the
+  host's history writes every outcome once. After that the core keeps the
+  newest 64 recorded sessions per product in full and compacts older ones
+  into the session pack (intent, owner, direction, amounts, outcome and
+  times), which it never trims: `funding_session_pack` lists it newest
+  first, and a product watching a compacted session still gets its terminal
+  item. The core keeps at most the 200 newest unrecorded sessions. Products see a
   session in flight as `InProgress`.
   `select_funding_provider` hands a session to the provider the user chose.
   That provider's worker runs it through the `FundingProvider` trait:

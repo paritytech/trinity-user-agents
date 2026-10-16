@@ -297,6 +297,12 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_sessions()
 	}
 
+	/// Recorded funding sessions compacted out of the full record, newest
+	/// first, for the host's history.
+	pub fn funding_session_pack(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
+		self.runtime.funding_session_pack()
+	}
+
 	/// Record that the host wrote ended session `intent` into its own
 	/// history; until then it is handed over again on each resume.
 	pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
