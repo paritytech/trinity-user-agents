@@ -344,6 +344,7 @@ pub struct ProductRuntimeHost {
     pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
     profile_platform: Option<Arc<dyn crate::platform::ProfilePlatform>>,
     game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
+    scanner_platform: Option<Arc<dyn crate::platform::ScannerPlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
     expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
     open_operations: Mutex<HashSet<u32>>,
@@ -387,6 +388,7 @@ impl ProductRuntimeHost {
             profile_platform: adapters.profile_platform,
             expanded_card: adapters.expanded_card,
             game_platform: adapters.game_platform,
+            scanner_platform: adapters.scanner_platform,
             open_operations: Mutex::new(HashSet::new()),
         }
     }
@@ -528,6 +530,7 @@ impl ProductRuntimeHost {
             profile_platform: None,
             expanded_card: None,
             game_platform: None,
+            scanner_platform: None,
             open_operations: Mutex::new(HashSet::new()),
         };
         (host, pairing_host)
