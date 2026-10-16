@@ -27,7 +27,10 @@ fn stderr(output: &Output) -> String {
 	String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-fn write_model(dir: &Path, name: &str, expires_at: Option<&str>) -> String {
+/// 2020-01-01T00:00:00Z, long past.
+const LONG_AGO: u32 = 1_577_836_800;
+
+fn write_model(dir: &Path, name: &str, expires_at: Option<u32>) -> String {
 	let mut model = serde_json::json!({
 		"id": "local", "name": name, "network": "local", "tld": "local", "services": [],
 		"chains": [{
@@ -118,7 +121,7 @@ fn publish_checks_the_url_before_writing_anything() {
 #[test]
 fn verify_fails_on_an_expired_stack_but_still_prints_it() {
 	let dir = tempfile::tempdir().unwrap();
-	let model = write_model(dir.path(), "Gone", Some("2020-01-01T00:00:00Z"));
+	let model = write_model(dir.path(), "Gone", Some(LONG_AGO));
 	let site = dir.path().join("site");
 	let published =
 		stack(&["publish", &model, "--generation", "g1", "--out", site.to_str().unwrap()]);
@@ -170,12 +173,8 @@ fn bundle_refuses_an_expired_stack_and_never_lowers_sequence() {
 	let state = state.to_str().unwrap();
 	let older = publish(dir.path(), &write_model(dir.path(), "Older", None), key_file, state);
 	let newer = publish(dir.path(), &write_model(dir.path(), "Newer", None), key_file, state);
-	let expired = publish(
-		dir.path(),
-		&write_model(dir.path(), "Expired", Some("2020-01-01T00:00:00Z")),
-		key_file,
-		state,
-	);
+	let expired =
+		publish(dir.path(), &write_model(dir.path(), "Expired", Some(LONG_AGO)), key_file, state);
 	let out = dir.path().join("bundled.json");
 	let out = out.to_str().unwrap();
 
